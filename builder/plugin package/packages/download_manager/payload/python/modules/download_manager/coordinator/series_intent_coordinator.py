@@ -22,6 +22,23 @@ _INTENT_TRACE_ENABLED = os.environ.get("AIPACS_INTENT_PRIORITY_TRACE", "0") == "
 _INTENT_VERBOSE_TAGS = {"tick", "defer"}
 
 
+def _intent_handoff_v2_enabled() -> bool:
+    """Return True if the F3.5.2 wall-clock retry path is enabled.
+
+    Defaults to False per ``INTENT_HANDOFF_V2_DEFAULT``. Override with
+    ``AIPACS_INTENT_HANDOFF_V2=1`` (or 0) to flip per-process. Read at every
+    chain start so tests can flip it without re-importing the module.
+    """
+    val = os.environ.get("AIPACS_INTENT_HANDOFF_V2")
+    if val is None:
+        try:
+            from ..core.constants import INTENT_HANDOFF_V2_DEFAULT
+            return bool(INTENT_HANDOFF_V2_DEFAULT)
+        except Exception:
+            return False
+    return val.strip() == "1"
+
+
 class SeriesIntentCoordinator:
     """Coordinate viewer/patient intent with scheduler state transitions."""
 
@@ -109,16 +126,19 @@ class SeriesIntentCoordinator:
         recovery: bool = False,
         pool_busy: bool = False,
         branch: Optional[str] = None,
+        reason: Optional[str] = None,
     ) -> None:
         """Emit a structured `[INTENT_PRIORITY]` log line for KPI harness parsing.
 
         Format (stable; round-tripped by tests/performance/test_priority_handoff_kpi_parser.py):
             [INTENT_PRIORITY] tag=<TAG> study=<UID40> series=<SN> attempt=<N>/<M>
               recovery=<BOOL> pool_busy=<BOOL> pool_capacity=<U>/<T> state=<S>
-              auto_paused=<BOOL> elapsed_ms=<INT> token=<INT> [branch=<B>]
+              auto_paused=<BOOL> elapsed_ms=<INT> token=<INT> [branch=<B>] [reason=<R>]
 
-        Verbose tags (tick / defer) are suppressed unless
-        AIPACS_INTENT_PRIORITY_TRACE=1.
+        F3.5.2 — `reason` field is appended to ``exhaust`` emissions of the V2
+        wall-clock path (``pool_busy``, ``reclaimed``, ``state_lost``,
+        ``timeout``). Legacy emissions never set it. Verbose tags (tick /
+        defer) are suppressed unless AIPACS_INTENT_PRIORITY_TRACE=1.
         """
         if tag in _INTENT_VERBOSE_TAGS and not _INTENT_TRACE_ENABLED:
             return
@@ -164,6 +184,8 @@ class SeriesIntentCoordinator:
         ]
         if branch is not None:
             parts.append(f"branch={branch}")
+        if reason is not None:
+            parts.append(f"reason={reason}")
         logger.info(" ".join(parts), extra={"component": "download"})
 
     def request_study_priority(self, study_uid: str, priority: DownloadPriority) -> bool:
@@ -305,6 +327,13 @@ class SeriesIntentCoordinator:
         _recovery: bool = False,
         _token: Optional[int] = None,
     ) -> None:
+        # F3.5.2 — fork to V2 wall-clock retry on chain entry when enabled.
+        # Only fork on the *first* call (when the caller hasn't supplied a
+        # token); continuation ticks of an in-flight legacy chain stay on
+        # the legacy path even if the env flips mid-chain.
+        if _token is None and _intent_handoff_v2_enabled():
+            self._schedule_priority_start_retry_v2(study_uid)
+            return
         if _token is None:
             _token = self._begin_priority_retry(study_uid)
             if _token is None:
@@ -472,5 +501,211 @@ class SeriesIntentCoordinator:
                 _attempt + 1,
                 _recovery,
                 _token,
+            ),
+        )
+
+    # ────────────────────────────────────────────────────────────────────
+    # F3.5.2 — V2 wall-clock priority-handoff retry
+    # ────────────────────────────────────────────────────────────────────
+    # Replaces the legacy 90-attempt × 200 ms primary chain followed by a
+    # 5 s deferred 3-attempt × 3 s recovery chain with a single wall-clock
+    # budget (default 60 s, INTENT_HANDOFF_HARD_TIMEOUT_MS). Ticks at
+    # INTENT_HANDOFF_V2_INTERVAL_MS (default 250 ms). Detects the
+    # reclamation-race condition where ``can_add_worker()`` reports True
+    # but ``_start_download_worker`` returns False, and reports it via
+    # ``reason=reclaimed`` on the eventual exhaust emission.
+    #
+    # Default-off via INTENT_HANDOFF_V2_DEFAULT (False). Enable per-process
+    # with AIPACS_INTENT_HANDOFF_V2=1. Will flip to default-on in F3.5.4
+    # after cross-PC baseline confirms the regression budget.
+    def _schedule_priority_start_retry_v2(self, study_uid: str) -> None:
+        token = self._begin_priority_retry(study_uid)
+        if token is None:
+            # Another retry chain (legacy or V2) is already active for this
+            # study — defer to it.
+            return
+        # Read constants lazily so tests can monkeypatch them.
+        try:
+            from ..core.constants import (
+                INTENT_HANDOFF_HARD_TIMEOUT_MS,
+                INTENT_HANDOFF_V2_INTERVAL_MS,
+            )
+        except Exception:
+            INTENT_HANDOFF_HARD_TIMEOUT_MS = 60000
+            INTENT_HANDOFF_V2_INTERVAL_MS = 250
+
+        self._emit_intent_priority(
+            tag="begin",
+            study_uid=study_uid,
+            attempt=0,
+            max_attempts=int(INTENT_HANDOFF_HARD_TIMEOUT_MS),
+            recovery=False,
+            branch="v2",
+        )
+        self._priority_retry_v2_tick(
+            study_uid,
+            token=token,
+            attempt=0,
+            hard_timeout_ms=int(INTENT_HANDOFF_HARD_TIMEOUT_MS),
+            interval_ms=int(INTENT_HANDOFF_V2_INTERVAL_MS),
+            last_branch=None,
+        )
+
+    def _priority_retry_v2_tick(
+        self,
+        study_uid: str,
+        *,
+        token: int,
+        attempt: int,
+        hard_timeout_ms: int,
+        interval_ms: int,
+        last_branch: Optional[str],
+    ) -> None:
+        if self._priority_retry_tokens.get(study_uid) != token:
+            # Stale tick from a chain that was cancelled or replaced.
+            return
+
+        # Wall-clock deadline check (F3.5.2 core fix — no attempt count).
+        started_ms = self._priority_retry_started_ms.get(study_uid)
+        if started_ms is None:
+            # Chain was cleared between defer and tick — exit silently.
+            return
+        elapsed_ms = (time.monotonic() - started_ms) * 1000.0
+        if elapsed_ms >= hard_timeout_ms:
+            reason = last_branch or "timeout"
+            state = self.state_store.get(study_uid)
+            state_error_l = str(getattr(state, "error_message", "") or "").lower() if state else ""
+            expected_preemption_window = bool(
+                state
+                and (
+                    getattr(state, "is_auto_paused", False)
+                    or "preemption" in state_error_l
+                    or "higher priority" in state_error_l
+                )
+            )
+            if expected_preemption_window:
+                logger.info(
+                    "[INTENT] Priority retry V2 ended in expected preemption window for %s",
+                    study_uid,
+                )
+            else:
+                logger.warning(
+                    "[INTENT] Priority retry V2 wall-clock budget exhausted for %s "
+                    "(elapsed_ms=%d reason=%s)",
+                    study_uid,
+                    int(elapsed_ms),
+                    reason,
+                )
+            self._emit_intent_priority(
+                tag="exhaust",
+                study_uid=study_uid,
+                attempt=attempt,
+                max_attempts=hard_timeout_ms,
+                recovery=False,
+                branch="v2",
+                reason=reason,
+            )
+            self._clear_priority_retry(study_uid, token)
+            return
+
+        # State sanity check — exit if no longer schedulable.
+        state = self.state_store.get(study_uid)
+        if state is None:
+            self._emit_intent_priority(
+                tag="exhaust",
+                study_uid=study_uid,
+                attempt=attempt,
+                max_attempts=hard_timeout_ms,
+                recovery=False,
+                branch="v2",
+                reason="state_lost",
+            )
+            self._clear_priority_retry(study_uid, token)
+            return
+        if state.status not in (DownloadStatus.PENDING, DownloadStatus.PAUSED):
+            # Worker started by another path or download terminal — done.
+            self._clear_priority_retry(study_uid, token)
+            return
+
+        # Try start. Reclamation race: can_add says True but start fails.
+        next_branch = last_branch
+        try:
+            can_add = self.worker_pool.can_add_worker()
+        except Exception:
+            can_add = False
+        if can_add:
+            # Flip PAUSED→PENDING via CAS so we never race a writer.
+            if state.status == DownloadStatus.PAUSED:
+                self.state_store.update_if_status(
+                    study_uid,
+                    DownloadStatus.PAUSED,
+                    DownloadStatus.PENDING,
+                    is_auto_paused=False,
+                    error_message=None,
+                )
+            try:
+                started = self._start_download_worker(study_uid)
+            except Exception as exc:
+                logger.warning(
+                    "[INTENT] V2 start_download_worker raised for %s: %s",
+                    study_uid,
+                    exc,
+                )
+                started = False
+            if started:
+                self._emit_intent_priority(
+                    tag="started",
+                    study_uid=study_uid,
+                    attempt=attempt,
+                    max_attempts=hard_timeout_ms,
+                    recovery=False,
+                    branch="v2",
+                )
+                self._clear_priority_retry(study_uid, token)
+                return
+            # Reclamation race detected — slot reportedly free but start
+            # failed. Could be the dying worker still releasing its slot,
+            # or the rule engine deferred the start. Tag and continue
+            # ticking; defer fall-through path will also nudge the
+            # central scheduler.
+            self._emit_intent_priority(
+                tag="defer",
+                study_uid=study_uid,
+                attempt=attempt,
+                max_attempts=hard_timeout_ms,
+                recovery=False,
+                pool_busy=False,
+                branch="v2",
+                reason="reclaimed",
+            )
+            next_branch = "reclaimed"
+            # Nudge the scheduler in case _start_next_pending picks a
+            # different study (e.g. R2 critical-running guard).
+            try:
+                self._defer(0, self._start_next_pending)
+            except Exception:
+                pass
+        else:
+            self._emit_intent_priority(
+                tag="defer",
+                study_uid=study_uid,
+                attempt=attempt,
+                max_attempts=hard_timeout_ms,
+                recovery=False,
+                pool_busy=True,
+                branch="v2",
+            )
+            next_branch = "pool_busy"
+
+        # Re-arm next tick.
+        self._defer(
+            interval_ms,
+            lambda: self._priority_retry_v2_tick(
+                study_uid,
+                token=token,
+                attempt=attempt + 1,
+                hard_timeout_ms=hard_timeout_ms,
+                interval_ms=interval_ms,
+                last_branch=next_branch,
             ),
         )

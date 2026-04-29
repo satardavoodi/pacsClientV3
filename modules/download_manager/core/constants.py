@@ -46,6 +46,15 @@ PRIORITY_CHANGE_DEBOUNCE_MS = 150  # 150ms debounce (R36)
 DATABASE_BATCH_INSERT_SIZE = 50    # Batch insert size (R37)
 UI_UPDATE_THROTTLE_MS = 100        # UI update throttling
 
+# F3.5.2 — Priority handoff wall-clock retry (V2; default-off)
+# Replaces the legacy 90 attempts × 200 ms primary + 3 × 3000 ms recovery
+# split with a single wall-clock budget. Default-off via
+# AIPACS_INTENT_HANDOFF_V2 env var; will flip to default-on in F3.5.4 after
+# cross-PC baseline confirms.
+INTENT_HANDOFF_V2_DEFAULT = False
+INTENT_HANDOFF_HARD_TIMEOUT_MS = 60000   # 60 s wall-clock budget
+INTENT_HANDOFF_V2_INTERVAL_MS = 250      # tick cadence for V2 retry
+
 # File System Configuration
 DICOM_FILE_EXTENSION = '.dcm'
 THUMBNAIL_FORMAT = 'JPEG'

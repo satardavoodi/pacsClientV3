@@ -187,6 +187,26 @@ Tags:
 
 `tick` and `defer` are suppressed unless the env flag `AIPACS_INTENT_PRIORITY_TRACE=1` is set, so production logs stay quiet by default while still capturing all state transitions (`begin`, `recover`, `exhaust`, `started`). The KPI harness (`tools/performance/clearcanvas_aipacs_kpi_harness.py parse-priority-handoff-log`) consumes this format and produces `overlap_priority_handoff_latency_p50_ms`, `overlap_priority_handoff_latency_p95_ms`, `overlap_priority_handoff_pool_busy_ratio_pct`, and primary/recovery exhaust counts. Format is contract-tested by `tests/performance/test_priority_handoff_kpi_parser.py`; instrumentation behavior (begin → started, exhaust clears `_priority_retry_started_ms`, dedup) is verified by `tests/download_manager/test_priority_handoff_instrumentation.py`.
 
+### V2 wall-clock priority-handoff retry (F3.5.2, v2.4.7 — default-off)
+
+The legacy chain (90×200 ms primary + 5 s gap + 3×3000 ms recovery, total ~33 s) hard-exits as `recovery_exhaust` if the peer worker holds its slot longer than the budget. A second failure mode is the **reclamation race**: `WorkerPool.can_add_worker()` reports `True` while `_start_download_worker()` returns `False` because the rule engine has not yet finished freeing the prior worker — the legacy path silently treats this as a normal retry.
+
+The V2 path replaces both with:
+
+- A **wall-clock budget** (`INTENT_HANDOFF_HARD_TIMEOUT_MS = 60_000` ms) instead of an attempt cap.
+- A **fixed tick cadence** (`INTENT_HANDOFF_V2_INTERVAL_MS = 250` ms) — no primary/recovery split, no 5 s deferred recovery gap.
+- **Reclamation-race detection**: when `can_add_worker()=True` but `start_download_worker()=False`, the tick emits `tag=defer pool_busy=False branch=v2 reason=reclaimed`, sets `next_branch="reclaimed"`, AND nudges the central scheduler via `_defer(0, _start_next_pending)`.
+- **CAS state promotion**: PAUSED→PENDING flips through the new `DownloadStateStore.update_if_status` helper, eliminating the read-modify-write race against concurrent state writers.
+- **Four exhaust reasons**: `pool_busy` (budget elapsed while pool full), `reclaimed` (race never resolved), `state_lost` (state row vanished mid-chain), `timeout` (default fallback).
+
+Activation gate: `AIPACS_INTENT_HANDOFF_V2=1` (default `0`). The fork is decided at chain start (`_token is None and _intent_handoff_v2_enabled()`), so legacy in-flight chains are not yanked mid-flight if the env flips.
+
+KPI harness adds: `v2_begin_count`, `v2_started_count`, `v2_defer_reclaimed_count`, `v2_exhaust_pool_busy_count`, `v2_exhaust_reclaimed_count`, `v2_exhaust_state_lost_count`, `v2_exhaust_timeout_count`, `overlap_priority_handoff_v2_total_exhaust_count`. All zero on the legacy path.
+
+Synthetic baselines (no Qt window, no real socket): `tools/performance/synthetic_priority_handoff_runner.py` drives 20 simulated CRITICAL promotions with a peer-held slot for 25 s and a 3-of-20 reclamation-race overlay. Output: `generated-files/benchmarks/priority_handoff_v2_pre.json` (env=0) and `priority_handoff_v2_post.json` (env=1). Pre baseline shows 20 `primary_exhaust` events (legacy 18 s primary cap is hit on every handoff before the 25 s peer release); post baseline shows 0 primary/recovery exhausts and 12 `v2_defer_reclaimed_count` (3 race-flagged handoffs × 4 ticks each in their 1 s reclamation window).
+
+V2 path tests: `tests/download_manager/test_priority_handoff_v2.py` (9 tests). `update_if_status` CAS helper test: `tests/download_manager/test_priority_handoff_v2.py::test_update_if_status_cas_helper`. KPI parser V2 round-trips: `tests/performance/test_priority_handoff_kpi_parser.py` (10 V2 tests).
+
 ## Validation Rules (R17) أ¢â‚¬â€‌ Duplicate/Resume Detection
 
 Located in `modules/download_manager/rules/validation_rules.py`:

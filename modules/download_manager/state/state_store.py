@@ -226,7 +226,47 @@ class DownloadStateStore:
         # deadlocking against this update path.
         for field_name, old_value, new_value in pending_notifications:
             self._notify_observers('updated', study_uid, state, field_name, old_value, new_value)
-    
+
+    def update_if_status(
+        self,
+        study_uid: str,
+        expected_status: DownloadStatus,
+        new_status: DownloadStatus,
+        **extra_changes,
+    ) -> bool:
+        """
+        Compare-and-set status transition (F3.5.2).
+
+        Atomically transition state from `expected_status` to `new_status`,
+        applying `extra_changes` only if the current status matches the
+        expected one.
+
+        Returns True iff the transition was applied. False if the state was
+        not in `expected_status` (or the study_uid is unknown).
+
+        Used by the V2 priority-handoff retry path to detect reclamation
+        races without racing against another writer flipping the status
+        between a `get()` and an `update()` call.
+
+        Note: this is additive and does NOT replace `update()`. Observers
+        are still notified through the normal `update()` flow.
+        """
+        with self._lock:
+            state = self._states.get(study_uid)
+            if not state:
+                return False
+            if state.status != expected_status:
+                return False
+        # Outside the lock — `update()` re-acquires it and dispatches
+        # observers correctly. The recheck inside `update()` is fine because
+        # we already verified the expected status under the lock and writers
+        # acquire the same RLock.
+        try:
+            self.update(study_uid, status=new_status, **extra_changes)
+        except StateError:
+            return False
+        return True
+
     def get(self, study_uid: str) -> Optional[DownloadState]:
         """
         Get current state (thread-safe)

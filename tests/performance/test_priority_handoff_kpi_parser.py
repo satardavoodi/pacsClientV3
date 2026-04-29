@@ -44,6 +44,7 @@ def _emit(
     elapsed_ms=0,
     token=1,
     branch=None,
+    reason=None,
 ):
     parts = [
         f"[INTENT_PRIORITY] tag={tag}",
@@ -60,6 +61,8 @@ def _emit(
     ]
     if branch is not None:
         parts.append(f"branch={branch}")
+    if reason is not None:
+        parts.append(f"reason={reason}")
     return " ".join(parts)
 
 
@@ -279,3 +282,87 @@ def test_parse_priority_handoff_log_text_aggregates_p50_p95_across_handoffs():
     # p95 must approach the max but not exceed it.
     assert payload["overlap_priority_handoff_latency_p95_ms"] >= 1920.0
     assert payload["overlap_priority_handoff_latency_p95_ms"] <= 3840.0
+
+
+# ---------------------------------------------------------------------------
+# F3.5.2 — V2 wall-clock retry path: branch=v2 + reason=<R> aggregation.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_priority_handoff_log_text_round_trip_v2_begin():
+    line = _emit(tag="begin", branch="v2", attempt=0, max_attempts=60000)
+    payload = parse_priority_handoff_log_text(line)
+    assert payload["v2_begin_count"] == 1
+    assert payload["begin_count"] == 1
+
+
+def test_parse_priority_handoff_log_text_round_trip_v2_started():
+    line = _emit(tag="started", branch="v2", elapsed_ms=25000, attempt=100)
+    payload = parse_priority_handoff_log_text(line)
+    assert payload["v2_started_count"] == 1
+    assert payload["started_count"] == 1
+    assert payload["overlap_priority_handoff_latency_max_ms"] == 25000.0
+
+
+def test_parse_priority_handoff_log_text_round_trip_v2_defer_reclaimed():
+    line = _emit(
+        tag="defer", branch="v2", reason="reclaimed", pool_busy=False, attempt=5
+    )
+    payload = parse_priority_handoff_log_text(line)
+    assert payload["v2_defer_reclaimed_count"] == 1
+    assert payload["defer_count"] == 1
+    # pool_busy=False means it should NOT count toward the busy ratio numerator.
+    assert payload["overlap_priority_handoff_pool_busy_ratio_pct"] == 0.0
+
+
+@pytest.mark.parametrize(
+    "reason,counter_key",
+    [
+        ("pool_busy", "v2_exhaust_pool_busy_count"),
+        ("reclaimed", "v2_exhaust_reclaimed_count"),
+        ("state_lost", "v2_exhaust_state_lost_count"),
+        ("timeout", "v2_exhaust_timeout_count"),
+    ],
+)
+def test_parse_priority_handoff_log_text_v2_exhaust_partitioned_by_reason(
+    reason, counter_key
+):
+    line = _emit(tag="exhaust", branch="v2", reason=reason, attempt=240)
+    payload = parse_priority_handoff_log_text(line)
+    assert payload[counter_key] == 1
+    assert payload["overlap_priority_handoff_v2_total_exhaust_count"] == 1
+    # V2 exhaust does NOT inflate primary_exhaust or recovery_exhaust.
+    assert payload["primary_exhaust_count"] == 0
+    assert payload["recovery_exhaust_count"] == 0
+
+
+def test_intent_priority_re_captures_optional_reason_field():
+    line = _emit(tag="exhaust", branch="v2", reason="timeout")
+    m = _INTENT_PRIORITY_RE.search(line)
+    assert m is not None
+    assert m.group("branch") == "v2"
+    assert m.group("reason") == "timeout"
+
+
+def test_intent_priority_re_legacy_line_without_reason_still_matches():
+    line = _emit(tag="exhaust", branch="primary")
+    m = _INTENT_PRIORITY_RE.search(line)
+    assert m is not None
+    assert m.group("branch") == "primary"
+    assert m.group("reason") is None
+
+
+def test_parse_priority_handoff_log_text_v2_full_chain_with_reclamation_race():
+    # 1 V2 begin -> 2 reclaimed defers -> 1 started: legitimate F3.5.2 success path.
+    lines = [
+        _emit(tag="begin", branch="v2"),
+        _emit(tag="defer", branch="v2", reason="reclaimed", attempt=1, pool_busy=False),
+        _emit(tag="defer", branch="v2", reason="reclaimed", attempt=2, pool_busy=False),
+        _emit(tag="started", branch="v2", elapsed_ms=25500, attempt=100),
+    ]
+    payload = parse_priority_handoff_log_text("\n".join(lines))
+    assert payload["v2_begin_count"] == 1
+    assert payload["v2_started_count"] == 1
+    assert payload["v2_defer_reclaimed_count"] == 2
+    assert payload["overlap_priority_handoff_v2_total_exhaust_count"] == 0
+    assert payload["recovery_exhaust_count"] == 0

@@ -89,7 +89,8 @@ _ADVANCED_SCROLL_SUBTIMING_RE = re.compile(
     r"Render=(?P<render>[0-9.]+)ms\s+total=(?P<total>[0-9.]+)ms"
 )
 # F3.5.1 — DM coordinator priority-handoff structured emit. Tags:
-# begin / tick / defer / recover / exhaust / started. Optional branch=primary|recovery.
+# begin / tick / defer / recover / exhaust / started. Optional branch=primary|recovery|v2.
+# F3.5.2 — Optional reason=pool_busy|reclaimed|state_lost|timeout (V2 exhaust + reclaimed defer).
 _INTENT_PRIORITY_RE = re.compile(
     r"\[INTENT_PRIORITY\]\s+tag=(?P<tag>\w+)\s+study=(?P<study>\S*)\s+series=(?P<series>\S*)\s+"
     r"attempt=(?P<attempt>\d+)/(?P<max_attempts>\d+)\s+recovery=(?P<recovery>True|False)\s+"
@@ -97,6 +98,7 @@ _INTENT_PRIORITY_RE = re.compile(
     r"state=(?P<state>\S+)\s+auto_paused=(?P<auto_paused>True|False)\s+"
     r"elapsed_ms=(?P<elapsed_ms>\d+)\s+token=(?P<token>\d+)"
     r"(?:\s+branch=(?P<branch>\w+))?"
+    r"(?:\s+reason=(?P<reason>\w+))?"
 )
 _STAGE_TIMING_RE = re.compile(
     r"component=(?P<component>\w+)\s+role=(?P<role>[^|]+)\s+\|.*?"
@@ -1131,10 +1133,20 @@ def parse_priority_handoff_log_text(text: str) -> Dict[str, Any]:
     pool_busy_true = 0
     pool_busy_total = 0
     samples = 0
+    # F3.5.2 — V2 wall-clock retry path bookkeeping.
+    v2_begin = 0
+    v2_started = 0
+    v2_exhaust_pool_busy = 0
+    v2_exhaust_reclaimed = 0
+    v2_exhaust_state_lost = 0
+    v2_exhaust_timeout = 0
+    v2_defer_reclaimed = 0
 
     for m in _INTENT_PRIORITY_RE.finditer(text or ""):
         samples += 1
         tag = m.group("tag")
+        branch = m.group("branch")
+        reason = m.group("reason")
         if tag in counts:
             counts[tag] += 1
         if tag == "started":
@@ -1146,18 +1158,33 @@ def parse_priority_handoff_log_text(text: str) -> Dict[str, Any]:
             pool_busy_total += 1
             if m.group("pool_busy") == "True":
                 pool_busy_true += 1
+            if branch == "v2" and reason == "reclaimed":
+                v2_defer_reclaimed += 1
         # `recover` marks primary chain expiration (entering recovery round).
         if tag == "recover":
             primary_exhaust += 1
         if tag == "exhaust":
-            branch = m.group("branch")
             if branch == "primary":
                 primary_exhaust += 1
             elif branch == "recovery":
                 recovery_exhaust += 1
+            elif branch == "v2":
+                # V2 wall-clock budget exhaust — partition by reason.
+                if reason == "pool_busy":
+                    v2_exhaust_pool_busy += 1
+                elif reason == "reclaimed":
+                    v2_exhaust_reclaimed += 1
+                elif reason == "state_lost":
+                    v2_exhaust_state_lost += 1
+                else:
+                    v2_exhaust_timeout += 1
             else:
                 # Defensive: branch missing — count as recovery (legacy path).
                 recovery_exhaust += 1
+        if tag == "begin" and branch == "v2":
+            v2_begin += 1
+        if tag == "started" and branch == "v2":
+            v2_started += 1
 
     if started_elapsed_ms:
         p50 = round(_percentile(started_elapsed_ms, 50), 2)
@@ -1190,6 +1217,20 @@ def parse_priority_handoff_log_text(text: str) -> Dict[str, Any]:
         "overlap_priority_retry_primary_exhaust_count": primary_exhaust,
         "overlap_priority_retry_recovery_exhaust_count": recovery_exhaust,
         "overlap_priority_handoff_pool_busy_ratio_pct": pool_busy_ratio,
+        # F3.5.2 — V2 wall-clock retry counters (zeros when V2 disabled).
+        "v2_begin_count": v2_begin,
+        "v2_started_count": v2_started,
+        "v2_exhaust_pool_busy_count": v2_exhaust_pool_busy,
+        "v2_exhaust_reclaimed_count": v2_exhaust_reclaimed,
+        "v2_exhaust_state_lost_count": v2_exhaust_state_lost,
+        "v2_exhaust_timeout_count": v2_exhaust_timeout,
+        "v2_defer_reclaimed_count": v2_defer_reclaimed,
+        "overlap_priority_handoff_v2_total_exhaust_count": (
+            v2_exhaust_pool_busy
+            + v2_exhaust_reclaimed
+            + v2_exhaust_state_lost
+            + v2_exhaust_timeout
+        ),
     }
 
 
