@@ -479,6 +479,78 @@ if __name__ == "__main__":
         logging.getLogger(__name__).warning("[CPU_BUDGET] Priority boost skipped: %s", _pri_exc)
     # ─────────────────────────────────────────────────────────────────────
 
+    # ── F8: MAIN-THREAD STALL PROBE (observation-only) ───────────────────
+    # Fires a QTimer at 50ms cadence on the main thread. When the actual
+    # interval since the last fire exceeds AIPACS_STALL_THRESHOLD_MS (default
+    # 100ms), the gap is logged as [MAIN_THREAD_STALL]. Because the timer
+    # itself runs on the main thread, any gap > 50ms means the event loop
+    # was blocked by some other slot — ideally during a drag burst this
+    # correlates with the ui_lag_max_ms outliers in [FAST_DRAG_KPI].
+    # Disable: AIPACS_MAIN_THREAD_PROBE=0
+    try:
+        if os.environ.get("AIPACS_MAIN_THREAD_PROBE", "1") == "1":
+            from PySide6.QtCore import QTimer as _ProbeQTimer
+            import time as _probe_time
+
+            _STALL_THRESHOLD_MS = float(os.environ.get("AIPACS_STALL_THRESHOLD_MS", "100"))
+            _STALL_INTERVAL_MS = 50
+            _stall_logger = logging.getLogger("aipacs.main_thread_probe")
+
+            class _StallProbeState:
+                __slots__ = ("last_fire_ms", "stall_count", "max_gap_ms", "started_at_ms")
+
+                def __init__(self) -> None:
+                    self.last_fire_ms = _probe_time.perf_counter() * 1000.0
+                    self.stall_count = 0
+                    self.max_gap_ms = 0.0
+                    self.started_at_ms = self.last_fire_ms
+
+            _probe_state = _StallProbeState()
+
+            def _probe_tick() -> None:
+                now_ms = _probe_time.perf_counter() * 1000.0
+                gap_ms = now_ms - _probe_state.last_fire_ms
+                _probe_state.last_fire_ms = now_ms
+                if gap_ms >= _STALL_THRESHOLD_MS:
+                    _probe_state.stall_count += 1
+                    if gap_ms > _probe_state.max_gap_ms:
+                        _probe_state.max_gap_ms = gap_ms
+                    # Probe whether a FAST drag is currently active so we can
+                    # tag the stall context. Importing here keeps cold-start
+                    # cost zero when the probe never fires.
+                    drag_active = False
+                    try:
+                        from modules.viewer.fast.ui_throttle import is_protected_drag_active as _is_drag
+                        drag_active = bool(_is_drag())
+                    except Exception:
+                        drag_active = False
+                    _stall_logger.info(
+                        "[MAIN_THREAD_STALL] gap_ms=%.1f threshold_ms=%.1f "
+                        "drag_active=%s stalls_total=%d max_gap_ms=%.1f t_since_start_s=%.1f",
+                        gap_ms,
+                        _STALL_THRESHOLD_MS,
+                        drag_active,
+                        _probe_state.stall_count,
+                        _probe_state.max_gap_ms,
+                        (now_ms - _probe_state.started_at_ms) / 1000.0,
+                        extra={"component": "viewer"},
+                    )
+
+            _stall_probe_timer = _ProbeQTimer()
+            _stall_probe_timer.setInterval(_STALL_INTERVAL_MS)
+            _stall_probe_timer.setTimerType(Qt.PreciseTimer)
+            _stall_probe_timer.timeout.connect(_probe_tick)
+            _stall_probe_timer.start()
+            app._main_thread_stall_probe_timer = _stall_probe_timer  # keepalive
+            app._main_thread_stall_probe_state = _probe_state
+            logging.getLogger(__name__).info(
+                "[F8] MAIN_THREAD_STALL_PROBE armed: cadence=%dms threshold=%.1fms",
+                _STALL_INTERVAL_MS, _STALL_THRESHOLD_MS,
+            )
+    except Exception as _probe_exc:
+        logging.getLogger(__name__).warning("[F8] Stall probe install failed: %s", _probe_exc)
+    # ─────────────────────────────────────────────────────────────────────
+
     # ========================================================================
     # SINGLE-INSTANCE LOCK: Ensure only one AIPacs instance can run at a time
     # ========================================================================
