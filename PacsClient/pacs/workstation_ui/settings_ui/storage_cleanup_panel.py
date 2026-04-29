@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import logging
 from typing import Dict
 
-from PySide6.QtCore import Signal, Qt
+from PySide6.QtCore import Signal, Qt, QThread, QObject, Slot
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
@@ -22,6 +23,40 @@ from PacsClient.utils.config import BASE_PATH
 from modules.storage.local_storage_cleanup_manager import LocalStorageCleanupManager
 
 
+_logger = logging.getLogger(__name__)
+
+
+class _FolderUsageWorker(QObject):
+    """Worker that computes folder-size breakdown off the main thread.
+
+    Heavy `rglob("*") + stat()` over patient / education / cache / printing /
+    offline-cloud roots used to run synchronously inside
+    `StorageCleanupPanelWidget.__init__`, blocking the Qt event loop for
+    hundreds of ms to multiple seconds (see G6/G9 stall analysis 2026-04-29).
+    Moving it to a QThread keeps the settings panel construction snappy.
+    """
+
+    finished = Signal(dict)
+    failed = Signal(str)
+
+    def __init__(self, manager: LocalStorageCleanupManager, force_refresh: bool):
+        super().__init__()
+        self._manager = manager
+        self._force_refresh = bool(force_refresh)
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            sizes = self._manager.get_folder_usage_breakdown(force_refresh=self._force_refresh)
+            self.finished.emit(dict(sizes or {}))
+        except Exception as exc:
+            _logger.exception("[STORAGE_PANEL] folder usage worker failed: %s", exc)
+            try:
+                self.failed.emit(str(exc))
+            except Exception:
+                pass
+
+
 class StorageCleanupPanelWidget(QWidget):
     """Reusable panel for storage insights + cleanup actions."""
 
@@ -35,8 +70,14 @@ class StorageCleanupPanelWidget(QWidget):
         self.cleanup_rows_layout: QVBoxLayout | None = None
         self.drive_usage_container: QVBoxLayout | None = None
         self.storage_summary_label: QLabel | None = None
+        # Deferred folder-size refresh state (T1 fix 2026-04-29).
+        self._folder_size_thread: QThread | None = None
+        self._folder_size_worker: _FolderUsageWorker | None = None
+        self._folder_size_pending: bool = False
         self._setup_ui()
-        self.refresh_storage_insights(force_refresh=True)
+        # Drives section is fast (shutil.disk_usage); render it sync so the
+        # panel never appears blank. Folder sizes are deferred to a worker.
+        self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -103,7 +144,7 @@ class StorageCleanupPanelWidget(QWidget):
             "QPushButton:hover { background-color: #2563eb; }"
         )
         refresh_btn.setCursor(Qt.PointingHandCursor)
-        refresh_btn.clicked.connect(lambda: self.refresh_storage_insights(force_refresh=True))
+        refresh_btn.clicked.connect(lambda: self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True))
         refresh_row.addWidget(refresh_btn)
         refresh_row.addStretch(1)
         folders_card_layout.addLayout(refresh_row)
@@ -288,7 +329,7 @@ class StorageCleanupPanelWidget(QWidget):
                     f"DB rows affected: {result.db_rows_affected}"
                 ),
             )
-            self.refresh_storage_insights(force_refresh=True)
+            self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True)
             self.storageChanged.emit()
         except Exception as e:
             QMessageBox.critical(
@@ -538,12 +579,12 @@ class StorageCleanupPanelWidget(QWidget):
                 ),
             )
             parent.accept()
-            self.refresh_storage_insights(force_refresh=True)
+            self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True)
             self.storageChanged.emit()
         except Exception as e:
             QMessageBox.critical(parent, "Cleanup Failed", f"Could not complete cleanup:\n{e}")
 
-    def refresh_storage_insights(self, force_refresh: bool = False):
+    def refresh_storage_insights(self, force_refresh: bool = False, defer_folder_sizes: bool = False):
         if self.drive_usage_container is None:
             return
 
@@ -603,7 +644,80 @@ class StorageCleanupPanelWidget(QWidget):
             drive_widget.setLayout(drive_row)
             self.drive_usage_container.addWidget(drive_widget)
 
+        # Stash drive_rows so the async folder-size completion can recompute the
+        # used-disk anchor without re-querying disk usage.
+        self._last_drive_rows = list(drive_rows)
+
+        if defer_folder_sizes:
+            # Show a placeholder and kick off the heavy walk in a worker thread.
+            if self.storage_summary_label is not None:
+                self.storage_summary_label.setText(
+                    "Calculating managed folder sizes in the background…"
+                )
+            for label in self.folder_size_labels.values():
+                label.setText("…")
+            for label in self.folder_comp_labels.values():
+                label.setText("…")
+            self._kickoff_folder_sizes_refresh(force_refresh=force_refresh)
+            return
+
         folder_sizes = self.cleanup_manager.get_folder_usage_breakdown(force_refresh=force_refresh)
+        self._apply_folder_sizes(folder_sizes)
+
+    def _kickoff_folder_sizes_refresh(self, force_refresh: bool) -> None:
+        """Run `get_folder_usage_breakdown` on a QThread; apply via signal.
+
+        Coalesces concurrent requests: if a worker is already running, the
+        latest force_refresh request is honored when the running worker
+        finishes (handled in `_on_folder_sizes_ready`).
+        """
+        if self._folder_size_thread is not None:
+            # A refresh is already in flight; remember that we want a follow-up
+            # refresh once it lands so user-triggered refresh is never dropped.
+            self._folder_size_pending = self._folder_size_pending or bool(force_refresh)
+            return
+
+        thread = QThread(self)
+        worker = _FolderUsageWorker(self.cleanup_manager, force_refresh)
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_folder_sizes_ready)
+        worker.failed.connect(self._on_folder_sizes_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(self._on_folder_size_thread_finished)
+        self._folder_size_thread = thread
+        self._folder_size_worker = worker
+        thread.start()
+
+    @Slot(dict)
+    def _on_folder_sizes_ready(self, folder_sizes: dict) -> None:
+        try:
+            self._apply_folder_sizes(folder_sizes)
+        except Exception:
+            _logger.exception("[STORAGE_PANEL] failed to apply folder sizes")
+
+    @Slot(str)
+    def _on_folder_sizes_failed(self, error_text: str) -> None:
+        if self.storage_summary_label is not None:
+            self.storage_summary_label.setText(
+                f"Could not calculate folder sizes: {error_text}"
+            )
+
+    @Slot()
+    def _on_folder_size_thread_finished(self) -> None:
+        self._folder_size_thread = None
+        self._folder_size_worker = None
+        if self._folder_size_pending:
+            self._folder_size_pending = False
+            self._kickoff_folder_sizes_refresh(force_refresh=True)
+
+    def _apply_folder_sizes(self, folder_sizes: dict) -> None:
+        if self.drive_usage_container is None:
+            return
+        drive_rows = getattr(self, "_last_drive_rows", None) or self.cleanup_manager.get_drive_usage_info()
         current_drive_anchor = str(BASE_PATH.anchor or "").upper()
         current_drive_used = 0
         for row in drive_rows:
@@ -614,7 +728,7 @@ class StorageCleanupPanelWidget(QWidget):
             current_drive_used = int(drive_rows[0].get("used", 0))
 
         total_managed = 0
-        for key, value in folder_sizes.items():
+        for key, value in (folder_sizes or {}).items():
             size_bytes = int(value or 0)
             total_managed += size_bytes
             if key in self.folder_size_labels:
