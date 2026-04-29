@@ -551,6 +551,88 @@ if __name__ == "__main__":
         logging.getLogger(__name__).warning("[F8] Stall probe install failed: %s", _probe_exc)
     # ─────────────────────────────────────────────────────────────────────
 
+    # ── F11: MAIN-THREAD STACK SAMPLER (observation-only) ───────────────
+    # Daemon thread that samples main-thread frames via sys._current_frames()
+    # whenever the F8 stall probe's last_fire_ms is stale by more than
+    # AIPACS_STALL_TRACE_THRESHOLD_MS (default 400ms). Dumps the deepest
+    # ~15 stack frames as [MAIN_THREAD_STALL_TRACE] so we know exactly
+    # which slot/function is holding the GIL during a drag freeze.
+    # Rate-limited to one dump per AIPACS_STALL_TRACE_COOLDOWN_MS (default 1000ms).
+    # Disable: AIPACS_MAIN_THREAD_TRACE=0
+    try:
+        if (
+            os.environ.get("AIPACS_MAIN_THREAD_PROBE", "1") == "1"
+            and os.environ.get("AIPACS_MAIN_THREAD_TRACE", "1") == "1"
+            and "_probe_state" in dir()
+        ):
+            import threading as _f11_threading
+            import traceback as _f11_traceback
+            import sys as _f11_sys
+            import time as _f11_time
+
+            _F11_THRESHOLD_MS = float(os.environ.get("AIPACS_STALL_TRACE_THRESHOLD_MS", "400"))
+            _F11_COOLDOWN_MS = float(os.environ.get("AIPACS_STALL_TRACE_COOLDOWN_MS", "1000"))
+            _F11_SAMPLE_MS = 50
+            _F11_FRAMES_DEEP = 15
+            _f11_logger = logging.getLogger("aipacs.main_thread_probe")
+            _main_tid = _f11_threading.get_ident()
+            _f11_state = {"last_dump_ms": 0.0}
+
+            def _f11_sampler() -> None:
+                # Lazy-bind drag probe; tolerate missing import.
+                try:
+                    from modules.viewer.fast.ui_throttle import is_protected_drag_active as _is_drag
+                except Exception:
+                    _is_drag = lambda: False  # noqa: E731
+                while True:
+                    try:
+                        now_ms = _f11_time.perf_counter() * 1000.0
+                        gap_ms = now_ms - _probe_state.last_fire_ms
+                        if (
+                            gap_ms >= _F11_THRESHOLD_MS
+                            and (now_ms - _f11_state["last_dump_ms"]) >= _F11_COOLDOWN_MS
+                        ):
+                            _f11_state["last_dump_ms"] = now_ms
+                            frames = _f11_sys._current_frames()
+                            main_frame = frames.get(_main_tid)
+                            if main_frame is not None:
+                                stack = _f11_traceback.format_stack(main_frame, limit=_F11_FRAMES_DEEP)
+                                # Compact: strip newlines inside each frame entry,
+                                # join with " >> ".
+                                compact = " >> ".join(
+                                    s.strip().replace("\n", " | ") for s in stack
+                                )
+                                try:
+                                    drag = bool(_is_drag())
+                                except Exception:
+                                    drag = False
+                                _f11_logger.warning(
+                                    "[MAIN_THREAD_STALL_TRACE] gap_ms=%.1f drag_active=%s "
+                                    "frames=%d stack=%s",
+                                    gap_ms, drag, len(stack), compact,
+                                    extra={"component": "viewer"},
+                                )
+                        _f11_time.sleep(_F11_SAMPLE_MS / 1000.0)
+                    except Exception:
+                        # Never let the sampler die on transient errors.
+                        try:
+                            _f11_time.sleep(0.5)
+                        except Exception:
+                            return
+
+            _f11_thread = _f11_threading.Thread(
+                target=_f11_sampler, name="aipacs-mainthread-trace", daemon=True,
+            )
+            _f11_thread.start()
+            app._f11_stack_sampler_thread = _f11_thread  # keepalive
+            logging.getLogger(__name__).info(
+                "[F11] MAIN_THREAD_STALL_TRACE armed: sample=%dms threshold=%.1fms cooldown=%.0fms",
+                _F11_SAMPLE_MS, _F11_THRESHOLD_MS, _F11_COOLDOWN_MS,
+            )
+    except Exception as _f11_exc:
+        logging.getLogger(__name__).warning("[F11] Stack sampler install failed: %s", _f11_exc)
+    # ─────────────────────────────────────────────────────────────────────
+
     # ========================================================================
     # SINGLE-INSTANCE LOCK: Ensure only one AIPacs instance can run at a time
     # ========================================================================
