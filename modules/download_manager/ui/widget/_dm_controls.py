@@ -493,7 +493,9 @@ class _DMControlsMixin:
         try:
             during_rebuild = bool(getattr(self, "_refresh_table_order_in_progress", False))
             current_uid = getattr(self, "_selected_study_uid", None) or ""
-            logger.info(
+            # WARNING level: component=download default threshold is
+            # WARNING in diagnostic_logging — INFO would be dropped.
+            logger.warning(
                 "[DM_PRIORITY_TRANSITION] event=combo_changed new=%s "
                 "study=%s during_rebuild=%s",
                 new_priority,

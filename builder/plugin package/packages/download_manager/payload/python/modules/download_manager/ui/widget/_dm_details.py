@@ -662,7 +662,9 @@ class _DMDetailsMixin:
         # widget churn and corrupting state.
         if getattr(self, "_refresh_table_order_in_progress", False):
             try:
-                logger.info(
+                # WARNING level: component=download default threshold is
+                # WARNING in diagnostic_logging — INFO would be dropped.
+                logger.warning(
                     "[DM_REBUILD] event=reenter_skip depth=%d caller=%s",
                     int(getattr(self, "_dm_rebuild_depth", 0)),
                     self._dm_rebuild_caller_frame(),
@@ -678,7 +680,8 @@ class _DMDetailsMixin:
         rebuild_t0 = _dm_rebuild_time.perf_counter()
 
         try:
-            logger.info(
+            # WARNING level: see comment in reenter_skip branch.
+            logger.warning(
                 "[DM_REBUILD] event=enter depth=%d caller=%s",
                 depth,
                 self._dm_rebuild_caller_frame(),
@@ -761,7 +764,8 @@ class _DMDetailsMixin:
             self._suppressing_selection_signals = False
             duration_ms = (_dm_rebuild_time.perf_counter() - rebuild_t0) * 1000.0
             try:
-                logger.info(
+                # WARNING level: see comment in reenter_skip branch.
+                logger.warning(
                     "[DM_REBUILD] event=exit depth=%d duration_ms=%.3f rows=%d",
                     depth,
                     duration_ms,
