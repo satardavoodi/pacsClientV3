@@ -504,6 +504,21 @@ def _get_layer2b_defer_retry_map(obj):
     return counter
 
 
+def _get_terminal_grow_defer_retry_map(obj):
+    """[F10] Return or lazily create the per-series terminal-grow retry counter.
+
+    Used by ``_flush_progressive_grow_impl`` to defer terminal
+    ``_grow_progressive_fast`` calls when a viewer is in a hot FAST drag.
+    R4 says terminal completion always fires; F10 honors that by
+    force-running after _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES retries.
+    """
+    counter = getattr(obj, '_terminal_grow_defer_retry_count', None)
+    if counter is None:
+        counter = {}
+        setattr(obj, '_terminal_grow_defer_retry_count', counter)
+    return counter
+
+
 def _match_viewers_for_series(obj, sn: str) -> list:
     """[F9] Quick scan returning [(vtk_w, node)] for viewers showing series ``sn``.
 
@@ -1335,6 +1350,46 @@ class _VCProgressiveMixin:
                 visible_target = pending
                 if not is_terminal and admit_batch > 0:
                     visible_target = min(pending, last_grow + admit_batch)
+                # ── F10: defer TERMINAL grow during hot FAST drag ──────────
+                # Live log (4/29/2026) showed _grow_progressive_fast taking
+                # 546 ms on a terminal completion mid-drag, blocking the
+                # main thread independently of F9's Layer 2b defer.
+                # R4 says terminal completion fires; we honor that by
+                # force-running after _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES.
+                if is_terminal and _is_fast_progressive_interaction_hot(viewers):
+                    f10_map = _get_terminal_grow_defer_retry_map(self)
+                    f10_retry = int(f10_map.get(sn, 0))
+                    if f10_retry < _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES:
+                        f10_delay = max(
+                            float(_progressive_grow_interval_ms()),
+                            float(
+                                _FAST_PROGRESSIVE_FINALIZE_DEFER_BASE_MS
+                                + f10_retry * _FAST_PROGRESSIVE_FINALIZE_DEFER_STEP_MS
+                            ),
+                        )
+                        f10_map[sn] = f10_retry + 1
+                        info["pending_downloaded"] = pending
+                        if not self._progressive_grow_timer.isActive():
+                            _restart_progressive_grow_timer(self, f10_delay)
+                        self.logger.info(
+                            "[F10] terminal grow deferred series=%s retry=%d/%d delay_ms=%.0f "
+                            "pending=%d total=%d (FAST drag active; avoids ~500ms+ main-thread freeze)",
+                            sn, f10_retry + 1,
+                            _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES,
+                            f10_delay, pending, total,
+                        )
+                        continue
+                    # Retry budget exhausted — force-run to honor R4.
+                    f10_map.pop(sn, None)
+                    self.logger.warning(
+                        "[F10] terminal grow force-running after %d defer retries series=%s "
+                        "(drag still hot — accepting freeze to satisfy R4)",
+                        f10_retry, sn,
+                    )
+                else:
+                    # Clear any stale terminal-grow retry counter.
+                    _get_terminal_grow_defer_retry_map(self).pop(sn, None)
+                # ───────────────────────────────────────────────────────────
                 if not is_terminal and _is_fast_progressive_interaction_hot(viewers):
                     info["pending_downloaded"] = pending
                     if not self._progressive_grow_timer.isActive():
