@@ -1218,6 +1218,14 @@ class QtViewerBridge:
             'ui_lag_ms': [],
             'accepted_targets': 0,
         }
+        # F7 (observability-only): arm a paint-cost sample list on the Qt viewer
+        # so paintEvent can append per-frame ms. Cleared in _log_drag_metrics_summary.
+        try:
+            qv = getattr(self, 'qt_viewer', None)
+            if qv is not None:
+                qv._drag_paint_samples = []
+        except Exception:
+            pass
 
     def _log_drag_metrics_summary(self, pipeline_stats: Optional[Dict[str, Any]] = None) -> None:
         metrics = self._drag_metrics or {}
@@ -1231,10 +1239,24 @@ class QtViewerBridge:
         prefetch_submitted = int(pipe_stats.get('prefetch_submitted', 0) or 0)
         background_decode_count = int(pipe_stats.get('background_decode_count', 0) or 0)
         prefetch_per_s = (prefetch_submitted / duration_s) if duration_s > 0.0 else 0.0
+        # F7 (observability-only): pull paint samples accumulated by qt_viewer.paintEvent.
+        paint_samples: list = []
+        try:
+            qv = getattr(self, 'qt_viewer', None)
+            if qv is not None:
+                paint_samples = list(getattr(qv, '_drag_paint_samples', None) or [])
+                qv._drag_paint_samples = None
+        except Exception:
+            paint_samples = []
+        paint_count = len(paint_samples)
+        paint_p50 = _percentile(paint_samples, 50) if paint_samples else 0.0
+        paint_p95 = _percentile(paint_samples, 95) if paint_samples else 0.0
+        paint_max = max(paint_samples) if paint_samples else 0.0
         logger.info(
             "[FAST_DRAG_KPI] bridge=%s viewer=%s duration_s=%.3f targets=%d "
             "event_p50_ms=%.1f event_p95_ms=%.1f handler_p50_ms=%.1f handler_p95_ms=%.1f "
-            "ui_lag_max_ms=%.1f prefetch_per_s=%.1f background_decode_count=%d",
+            "ui_lag_max_ms=%.1f prefetch_per_s=%.1f background_decode_count=%d "
+            "paint_count=%d paint_p50_ms=%.1f paint_p95_ms=%.1f paint_max_ms=%.1f",
             getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
             getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
             duration_s,
@@ -1246,6 +1268,10 @@ class QtViewerBridge:
             max(ui_lag) if ui_lag else 0.0,
             prefetch_per_s,
             background_decode_count,
+            paint_count,
+            paint_p50,
+            paint_p95,
+            paint_max,
         )
         self._drag_metrics = None
 

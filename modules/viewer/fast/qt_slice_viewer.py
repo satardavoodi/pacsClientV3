@@ -1094,6 +1094,16 @@ class QtSliceViewer(QWidget):
             painter.end()
 
         self._last_paint_ms = (time.perf_counter() - t_start) * 1000.0
+        # F7 (observability-only): when a drag-burst metrics session is armed,
+        # append per-frame paint cost so the bridge can include paint p50/p95/max
+        # in the [FAST_DRAG_KPI] summary. This isolates Qt paint cost from our
+        # set_slice handler cost — the two are completely disjoint Qt slots.
+        _drag_paint_log = getattr(self, '_drag_paint_samples', None)
+        if _drag_paint_log is not None:
+            try:
+                _drag_paint_log.append(self._last_paint_ms)
+            except Exception:
+                pass
 
     def _notify_parent_view_selected(self) -> None:
         """Notify the parent viewport that this FAST viewer was clicked."""
