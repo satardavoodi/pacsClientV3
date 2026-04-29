@@ -25,6 +25,15 @@ from PacsClient.utils.series_identity import resolve_series_identifier as _resol
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
 
 try:
+    from modules.viewer.fast.slot_timing import time_slot as _g6_time_slot
+except Exception:  # pragma: no cover
+    from contextlib import contextmanager
+
+    @contextmanager
+    def _g6_time_slot(*_a, **_k):  # type: ignore[no-redef]
+        yield
+
+try:
     from modules.viewer.fast.ui_throttle import (
         progress_update_interval_ms as _progress_update_interval_ms,
         should_admit as _ui_should_admit,
@@ -433,6 +442,10 @@ class HomeDownloadService:
                 if uid != study_uid or not widget_ref():
                     return
                 sn = _resolve_sn(series_uid)
+                with _g6_time_slot("home_download.on_series_completed", series=str(sn)):
+                    _on_series_completed_impl(uid, sn)
+
+            def _on_series_completed_impl(uid, sn):
                 if not _progress_normalizer.mark_completed(sn):
                     _logger.debug(
                         "[FAST-SERIES-DOWNLOAD-COMPLETE-DROP] study=%s series=%s reason=duplicate_completion",

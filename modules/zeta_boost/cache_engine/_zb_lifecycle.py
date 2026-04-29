@@ -35,14 +35,24 @@ class _ZBLifecycleMixin:
         Call when ANY study download completes or is cancelled.
         Unblocks warmup/background lanes when no more downloads are active.
         """
-        with cls._get_global_lock():
-            cls._global_active_download_count = max(0, cls._global_active_download_count - 1)
-        import logging as _logging
-        _logging.getLogger(__name__).info(
-            f"[ZetaBoost][Global] Download stopped. "
-            f"Active downloads: {cls._global_active_download_count}",
-            extra={"component": "zetaboost"},
-        )
+        try:
+            from modules.viewer.fast.slot_timing import time_slot as _ts
+        except Exception:
+            from contextlib import contextmanager
+
+            @contextmanager
+            def _ts(*_a, **_k):
+                yield
+
+        with _ts("zetaboost.notify_global_download_stop"):
+            with cls._get_global_lock():
+                cls._global_active_download_count = max(0, cls._global_active_download_count - 1)
+            import logging as _logging
+            _logging.getLogger(__name__).info(
+                f"[ZetaBoost][Global] Download stopped. "
+                f"Active downloads: {cls._global_active_download_count}",
+                extra={"component": "zetaboost"},
+            )
 
     def _log_info(self, message: str):
         msg = f"[ZetaBoost] {message}"

@@ -100,6 +100,18 @@ _INTENT_PRIORITY_RE = re.compile(
     r"(?:\s+branch=(?P<branch>\w+))?"
     r"(?:\s+reason=(?P<reason>\w+))?"
 )
+# G6 — Slot-timing observability emitted by `modules/viewer/fast/slot_timing.py`.
+# Format (kept stable; extend with optional groups only):
+#   [SLOT_TIMING] tag=<TAG> duration_ms=<F.3> drag_active=<True|False>
+#                 threshold_ms=<F.1> series=<SN|none> extra=<k1=v1;k2=v2>
+_SLOT_TIMING_RE = re.compile(
+    r"\[SLOT_TIMING\]\s+tag=(?P<tag>\S+)\s+"
+    r"duration_ms=(?P<duration_ms>[0-9.]+)\s+"
+    r"drag_active=(?P<drag_active>True|False)\s+"
+    r"threshold_ms=(?P<threshold_ms>[0-9.]+)\s+"
+    r"series=(?P<series>\S+)"
+    r"(?:\s+extra=(?P<extra>\S*))?"
+)
 _STAGE_TIMING_RE = re.compile(
     r"component=(?P<component>\w+)\s+role=(?P<role>[^|]+)\s+\|.*?"
     r"fn=(?P<function>\S+)\s+stage=(?P<stage>\S+)\s+result=(?P<result>\S+)\s+\|.*?"
@@ -1242,6 +1254,125 @@ def parse_priority_handoff_log_file(path: Path) -> Dict[str, Any]:
         "scenario": "aipacs_dm_priority_handoff",
         "log_path": str(path),
         "priority_handoff_metrics": parse_priority_handoff_log_text(text),
+    }
+
+
+def parse_slot_timing_log_text(text: str) -> Dict[str, Any]:
+    """Parse `[SLOT_TIMING]` records emitted by `modules/viewer/fast/slot_timing.py` (G6+).
+
+    Aggregates per-tag percentiles and totals so the harness can attribute
+    drag-active main-thread stalls to specific Qt slots / callsites without
+    requiring a per-call attribution from the F11 stack sampler.
+
+    Returned dict (stable contract):
+      - samples: total `[SLOT_TIMING]` lines parsed.
+      - drag_sample_count / idle_sample_count: counts split by `drag_active`.
+      - per_tag: ``{tag: {samples, drag_samples, p50_ms, p95_ms, max_ms,
+                           drag_p95_ms, drag_max_ms, drag_total_ms}}``.
+        Idle thresholds (default 30 ms) and drag thresholds (default 8 ms)
+        differ, so `drag_*` percentiles are computed from the drag-only subset.
+      - top_drag_tags: top 5 tags by `drag_total_ms` (sum of durations whose
+        `drag_active=True`). This is the prime "where is the silent blocker"
+        signal — the tag with the largest drag_total_ms is the candidate for
+        the next G-step defer.
+      - overlap_slot_timing_drag_blocked_ms_total: sum of drag_total_ms across
+        all tags. A budget overrun on this single number proves the user-visible
+        freeze surface is in observed slots and not in unobserved code.
+      - overlap_slot_timing_worst_drag_call_ms: max single-call duration among
+        drag-active samples (any tag).
+
+    The parser is robust to legacy / future variations: missing `extra=` is
+    accepted; unknown tags are bucketed normally.
+    """
+    samples = 0
+    drag_count = 0
+    idle_count = 0
+    worst_drag_ms = 0.0
+    worst_drag_tag = ""
+
+    # Per-tag working lists.
+    tag_all: Dict[str, list] = {}
+    tag_drag: Dict[str, list] = {}
+    tag_drag_total: Dict[str, float] = {}
+
+    for m in _SLOT_TIMING_RE.finditer(text or ""):
+        samples += 1
+        tag = m.group("tag")
+        try:
+            duration_ms = float(m.group("duration_ms"))
+        except (TypeError, ValueError):
+            continue
+        drag_active = m.group("drag_active") == "True"
+
+        tag_all.setdefault(tag, []).append(duration_ms)
+        if drag_active:
+            drag_count += 1
+            tag_drag.setdefault(tag, []).append(duration_ms)
+            tag_drag_total[tag] = tag_drag_total.get(tag, 0.0) + duration_ms
+            if duration_ms > worst_drag_ms:
+                worst_drag_ms = duration_ms
+                worst_drag_tag = tag
+        else:
+            idle_count += 1
+
+    per_tag: Dict[str, Dict[str, Any]] = {}
+    for tag, all_values in tag_all.items():
+        drag_values = tag_drag.get(tag, [])
+        per_tag[tag] = {
+            "samples": len(all_values),
+            "drag_samples": len(drag_values),
+            "p50_ms": round(_percentile(all_values, 50), 2),
+            "p95_ms": round(_percentile(all_values, 95), 2),
+            "max_ms": round(float(max(all_values)), 2),
+            "drag_p95_ms": (
+                round(_percentile(drag_values, 95), 2) if drag_values else 0.0
+            ),
+            "drag_max_ms": (
+                round(float(max(drag_values)), 2) if drag_values else 0.0
+            ),
+            "drag_total_ms": round(tag_drag_total.get(tag, 0.0), 2),
+        }
+
+    # Rank top drag tags by total drag-active time (the budget signal).
+    ranked = sorted(
+        per_tag.items(), key=lambda kv: kv[1]["drag_total_ms"], reverse=True
+    )
+    top_drag_tags = [
+        {
+            "tag": tag,
+            "drag_total_ms": stats["drag_total_ms"],
+            "drag_samples": stats["drag_samples"],
+            "drag_p95_ms": stats["drag_p95_ms"],
+            "drag_max_ms": stats["drag_max_ms"],
+        }
+        for tag, stats in ranked[:5]
+        if stats["drag_total_ms"] > 0.0
+    ]
+
+    drag_blocked_total = round(
+        sum(stats["drag_total_ms"] for stats in per_tag.values()), 2
+    )
+
+    return {
+        "samples": samples,
+        "drag_sample_count": drag_count,
+        "idle_sample_count": idle_count,
+        "per_tag": per_tag,
+        "top_drag_tags": top_drag_tags,
+        "overlap_slot_timing_drag_blocked_ms_total": drag_blocked_total,
+        "overlap_slot_timing_worst_drag_call_ms": round(worst_drag_ms, 2),
+        "overlap_slot_timing_worst_drag_tag": worst_drag_tag,
+    }
+
+
+def parse_slot_timing_log_file(path: Path) -> Dict[str, Any]:
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    return {
+        "viewer": "AI-PACS",
+        "mode": "slot-timing-parse",
+        "scenario": "aipacs_fast_silent_blocker_triage",
+        "log_path": str(path),
+        "slot_timing_metrics": parse_slot_timing_log_text(text),
     }
 
 

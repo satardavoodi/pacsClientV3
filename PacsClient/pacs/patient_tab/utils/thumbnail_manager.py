@@ -22,6 +22,8 @@ from modules.viewer.fast.ui_throttle import (
     thumbnail_log_interval_ms,
     thumbnail_progress_interval_ms,
 )
+from modules.viewer.fast.slot_timing import time_slot as _g6_time_slot
+from modules.viewer.fast.slot_timing import slot_timing as _g6_slot_timing
 
 _tm_logger = logging.getLogger(__name__)
 
@@ -1135,6 +1137,7 @@ class ThumbnailManager(QObject):
         except Exception as e:
             _tm_logger.debug("apply_border_states error: %s", e)
     
+    @_g6_slot_timing("thumbnail.apply_border_states_new")
     def apply_border_states_new(self, immediate: bool = False):
         """
         Apply border states using new CircularProgressborder - OPTIMIZED VERSION
@@ -1848,6 +1851,7 @@ class ThumbnailManager(QObject):
             _tm_logger.debug("error highlighting priority series: %s", e)
 
 
+    @_g6_slot_timing("thumbnail.update_series_progress", series_arg="series_number")
     def update_series_progress(self, series_number, progress_percent, status_text="", *, _force=False):
         """
         Update download progress with PRIORITY indicator
@@ -2156,6 +2160,7 @@ class ThumbnailManager(QObject):
             _tm_logger.debug("error hiding overlay (safe): %s", e)
 
 
+    @_g6_slot_timing("thumbnail.start_series_download", series_arg="series_number")
     def start_series_download(self, series_number, total_images=None):
         """
         Mark series as starting download - THREAD SAFE
@@ -2298,6 +2303,7 @@ class ThumbnailManager(QObject):
         except Exception as e:
             _tm_logger.exception("ThumbnailManager: error in start_series_download: %s", e)
     
+    @_g6_slot_timing("thumbnail.complete_series_download", series_arg="series_number")
     def complete_series_download(self, series_number, total_images=None):
         """
         Mark series as download complete AND ready for display - با سیستم اولویت‌دار

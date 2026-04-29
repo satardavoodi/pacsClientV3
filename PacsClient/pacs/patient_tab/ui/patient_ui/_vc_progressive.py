@@ -36,6 +36,12 @@ except Exception:  # pragma: no cover - defensive for stripped test envs
     def _ui_should_admit(task_type, context=None) -> bool:
         return True
 
+try:
+    from modules.viewer.fast.slot_timing import emit_slot_timing as _g6_emit_slot_timing
+except Exception:  # pragma: no cover
+    def _g6_emit_slot_timing(*_a, **_k) -> bool:
+        return False
+
 logger = logging.getLogger(__name__)
 
 
@@ -637,6 +643,10 @@ def _finalize_progressive_series(
 
     _get_progressive_finalize_defer_set(obj).discard(sn)
 
+    # G6: time the actual terminal work block (force-run path is the suspect).
+    _g6_t0 = time.perf_counter()
+    _g6_was_force = bool(_defer_retry >= _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES)
+
     _mark_progressive_finalized(obj, sn)
     _mark_progressive_terminal_complete_guard(obj, sn)
     _mark_series_download_completed(obj, sn)
@@ -678,6 +688,20 @@ def _finalize_progressive_series(
         "progressive: finalized series=%s count=%d source=%s",
         sn, final_count, source,
     )
+    try:
+        _g6_emit_slot_timing(
+            "progressive.finalize_terminal",
+            (time.perf_counter() - _g6_t0) * 1000.0,
+            series=sn,
+            extra={
+                "source": source,
+                "force": "1" if _g6_was_force else "0",
+                "viewers": len(matched_viewers),
+                "final_count": int(final_count),
+            },
+        )
+    except Exception:
+        pass
     return True
 
 
