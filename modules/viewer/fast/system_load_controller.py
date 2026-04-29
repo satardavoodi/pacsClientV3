@@ -26,6 +26,13 @@ class WorkClass(Enum):
     PROGRESSIVE_GROW = "progressive_grow"
     THUMBNAIL_UI = "thumbnail_ui"
     PREFETCH = "prefetch"
+    # F6.1: Frame prefetch (W/L + QImage build for an already-decoded
+    # pixel slice). Distinct from PREFETCH (pixel decode) so the protected
+    # drag P1 lane can admit frame prefetch without bypassing R3's
+    # PREFETCH-during-drag denial of P2+ work. Caller enforces the
+    # in-flight cap; admission gating only applies under protected drag
+    # (handled in `ui_throttle.should_admit`, mirroring PREFETCH P1 rule).
+    FRAME_PREFETCH = "frame_prefetch"
     CACHE_WARM = "cache_warm"
     DIAGNOSTIC_LOG = "diagnostic_log"
 
@@ -63,6 +70,7 @@ _WORK_CLASS_TO_BLOCK: dict[WorkClass, BlockId] = {
     WorkClass.PROGRESSIVE_SIGNAL: BlockId.BLOCK_3_CACHE_SCROLL_ORCHESTRATION,
     WorkClass.PROGRESSIVE_GROW: BlockId.BLOCK_3_CACHE_SCROLL_ORCHESTRATION,
     WorkClass.PREFETCH: BlockId.BLOCK_3_CACHE_SCROLL_ORCHESTRATION,
+    WorkClass.FRAME_PREFETCH: BlockId.BLOCK_3_CACHE_SCROLL_ORCHESTRATION,
     WorkClass.CACHE_WARM: BlockId.BLOCK_3_CACHE_SCROLL_ORCHESTRATION,
     WorkClass.DIAGNOSTIC_LOG: BlockId.BLOCK_3_CACHE_SCROLL_ORCHESTRATION,
 }
@@ -370,7 +378,12 @@ class SystemLoadController:
             now_ms=now,
         )
 
-        if work_class in {WorkClass.INTERACTION, WorkClass.FINAL_RENDER}:
+        if work_class in {WorkClass.INTERACTION, WorkClass.FINAL_RENDER, WorkClass.FRAME_PREFETCH}:
+            # F6.1: FRAME_PREFETCH is always admitted at the load-controller
+            # level. Caller enforces the in-flight cap (`_frame_prefetch_inflight`)
+            # and pending-set dedup. The protected-drag priority gate lives
+            # in `ui_throttle.should_admit` so non-drag callers continue to
+            # work without changes (priority=None bypasses the gate).
             self._record_admission_outcome(work_class, "admitted")
             return True
 

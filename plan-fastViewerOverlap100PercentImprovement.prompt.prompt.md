@@ -435,6 +435,65 @@ Done-When revised:
 
 ---
 
+## Drag-burst evidence & phase reordering (2026-04-29 PM live log)
+
+### Source data
+
+`user_data/logs/viewer_diagnostics.log` (mtime 2026-04-29 10:56) — captured on PC A after F3.5.3 ship at `e3ceaaaf`. Twelve `[FAST_DRAG_KPI]` end-of-burst summaries from a real download-overlap drag session:
+
+| Burst | duration_s | targets | event_p95_ms | handler_p95_ms | ui_lag_max_ms | prefetch_per_s | bg_decode_count |
+|---|---|---|---|---|---|---|---|
+| 1 | 0.911 | 11 | 141.9 | 60.7 | 162.8 | 11.0 | 10 |
+| 2 | **3.991** | 22 | 337.7 | 6.4 | **2496.2** | 0.0 | 0 |
+| 6 | 1.876 | 17 | 222.4 | 9.7 | 356.9 | 6.9 | 13 |
+| 9 | 0.916 | 8 | 168.2 | 21.5 | 153.8 | 12.0 | 11 |
+| 11 | 1.426 | 18 | 199.9 | 11.0 | 245.4 | 13.3 | 19 |
+| 12 | **3.825** | 16 | **559.1** | 5.8 | **1842.8** | 0.3 | 1 |
+
+### Two pivots from this evidence
+
+**Pivot A — Pipeline compute is decisively NOT the bottleneck.** Across 12 bursts, `handler_p95_ms` peaks at 60.7 ms (one outlier — Burst 1, with `bg_decode=10`) and is otherwise 3.2–22 ms. The user-perceived freezes (`ui_lag_max_ms` 1842–2496 ms) occur in bursts where `prefetch_per_s ≈ 0` AND `bg_decode_count ≈ 0` — the FAST pipeline is **idle** during the worst freezes. The main thread is being blocked by something **outside the FAST pipeline** for 1.8–2.5 seconds.
+
+**Pivot B — F4 (foreground decode lane) and F5 (decode coalescing) are low-leverage at this evidence level.** F4's win condition is reducing `overlap_decode_p95_ms` and `overlap_foreground_wait_p95_ms` when prefetch saturates the executor. But foreground decode is already isolated (it runs inline, NOT through `_decode_executor`). And `handler_p95_ms` (which envelops decode) is 3–22 ms in real drag — far below F4's worst-case justification. Synthetic harsh shows `overlap_decode_only_p95_ms=75.23 ms` for the 4.74% of frames that fall into the decode source, but the real-world drag handler stays low because surrogate covers most navigation. Adding executor-submission overhead to inline decode does not fix a non-bottleneck.
+
+### Updated phase priority (post-2026-04-29 PM)
+
+**F4 → DEFERRED.** Re-evaluate only if F0.5b real-world capture (≥30 settled samples, sentinel decode≥1) shows `overlap_decode_only_p95_ms > 30 ms` AND `overlap_decode_sample_share_pct > 5%`. Until then, F4 cannot move the Tier-2 KPIs (`overlap_drag_event_p95_max_ms`, `overlap_drag_ui_lag_max_max_ms`).
+
+**F5 → DEFERRED.** Same rationale — coalescing two decode paths only matters when both are competing, but in real drags only one decode lane is active at a time (foreground inline OR P1 prefetch via executor, never simultaneously for the same idx in the live capture).
+
+**F6 → PROMOTED to next-implement (already labeled "highest leverage" in plan index).** Win condition: when P1 neighbor pixels are already cached (the common case after a few drag steps), the user still pays W/L+QImage on the main thread per drag step. Frame prefetch eliminates that cost. Even if it only saves 5 ms/frame on cache-hit drag, that compounds across 30+ frames per second.
+
+**F11 → BLOCKED on real-world correlation.** The 2.5 s `ui_lag` freezes with `prefetch=0, bg_decode=0` are NOT necessarily progressive grow (the live log doesn't carry grow-apply timestamps inside the drag-KPI summary). F11 stays optional pending grow-apply correlation evidence from F0.5b.
+
+### Synthetic harsh anchor (pre-F6, captured 2026-04-29 PM)
+
+`generated-files/benchmarks/pre_f4_harsh.json` (renamed pre-F6 baseline once F6 ships):
+
+| KPI | Value | Tier-1 target | Status |
+|---|---|---|---|
+| `overlap_decode_only_p95_ms` | 75.23 | ≤7.0 | far off — but per Pivot A this is not a real-world bottleneck |
+| `overlap_decode_only_max_ms` | 111.81 | ≤40.0 | far off |
+| `overlap_decode_sample_share_pct` | 4.74 | ≤2.5 | close |
+| `overlap_slow_frame_count_16ms` | 73 | ≤1 | all 73 are decode-source — addressable only by avoiding decode (more cache hits) |
+| `overlap_cache_hit_ratio_pct` | 95.26 | ≥85 | pass |
+| `overlap_effective_fps` | 55.05 | ≥30 | pass |
+
+### Updated Phase Index (priority order)
+
+| Phase | Status | Notes |
+|---|---|---|
+| F4 | DEFERRED | Low leverage given live evidence; trigger = F0.5b decode share > 5% |
+| F5 | DEFERRED | Same trigger as F4 |
+| **F6** | **NEXT — coding now** | Frame prefetch during protected drag; eliminates W/L cost on cache-hit drag steps |
+| F7 | DEFERRED | cache_hit=95% already; gain marginal |
+| F8 | NEXT after F6 | Header pre-warm via DM completion hook (low risk, addresses cold-cache decode share) |
+| F9 | OPT-IN, opt later | DM disk-flush backpressure |
+| F10 | After F6+F8 | Acceptance + release |
+| F11 | OPTIONAL | Defer terminal grow during drag (pending F0.5b grow-apply correlation) |
+
+---
+
 ## Phase F0 — Baseline & Tooling
 
 **Phase goal:** Establish a reproducible overlap baseline and the parser pipeline so every later step has a numeric before/after.
@@ -1086,6 +1145,52 @@ Done-When revised:
 
 **Phase goal:** Convert cache-hit drag frames from 5–10 ms (W/L+QImage on main) to ≤0.5 ms (paint only) by pre-rendering the directional next frame on a background thread.
 
+### Status (2026-04-29 PM)
+
+**SHIPPED to working tree (uncommitted at time of write).** Implementation:
+
+- `modules/viewer/fast/system_load_controller.py` (+ mirror): added `WorkClass.FRAME_PREFETCH = "frame_prefetch"`, mapped to `BLOCK_3_CACHE_SCROLL_ORCHESTRATION`. Always admitted at controller level (caller enforces in-flight cap).
+- `modules/viewer/fast/ui_throttle.py` (+ mirror): added FRAME_PREFETCH branch in `should_admit` parallel to PREFETCH P1 rule — under `is_protected_drag_active()`, admit only if `ctx["priority"] <= 1` (`FastWorkPriority.P1_NEIGHBOR`); deny everything else (priority>1 or default 999). Outside protected drag → always admit.
+- `modules/viewer/fast/lightweight_2d_pipeline.py` (+ mirror):
+  - `__init__`: added `_frame_prefetch_inflight: int = 0` (in-flight cap counter for priority-driven submissions only).
+  - `close_series`: resets `_frame_prefetch_inflight = 0` alongside the existing pending-set clear.
+  - `_submit_frame_prefetch(idx, *, priority=None)`: new optional `priority` kwarg. When set, the call goes through `should_admit(WorkClass.FRAME_PREFETCH)`, enforces in-flight cap of 1 (returns immediately if a tracked submission is already running), and decrements the counter in the `_render_into_cache` finally block. Legacy callers (priority=None) keep the original pending-set dedup behavior (no admission gate, no in-flight cap).
+  - `_render_into_cache(idx, tracked=False)`: extra `tracked` flag controls whether the finally block decrements the in-flight counter (only true for priority-driven calls).
+  - `_prefetch_around` protected-drag P1 branch: after the existing pixel P1 loop, scan `ordered_targets` for the FIRST target whose pixel is already in `_pixel_cache`; submit one `_submit_frame_prefetch(target, priority=int(FastWorkPriority.P1_NEIGHBOR))` and break. This is the user-visible win path: when the next directional neighbor's pixels are already cached, its rendered frame is built in the background instead of on the main thread.
+- Plugin-mirror parity verified (SHA-equal for all three files).
+
+**Validation:**
+
+| Suite | Result |
+|---|---|
+| F1 overlap regression bundle (`run_overlap_regression.ps1`) | 43/43 GREEN |
+| `tests/viewer/test_b34_interaction_aware_policy.py` (Prefetch + DirectionReversal + DragStartWarmup + new F6 classes) | 21/21 GREEN |
+| New `TestProtectedDragFramePrefetch` (3 tests) | GREEN — confirms exactly one P1 frame prefetch per drag P1 call, only for cached-pixel targets |
+| New `TestFramePrefetchAdmission` (3 tests) | GREEN — confirms admission table: P1 admitted under drag, P2+ denied, default-priority denied, unrestricted outside drag |
+| Pre-existing 14 failures in same file | unrelated (`SimpleNamespace` missing `_mark_interaction_event` on `QtViewerBridge` stubs) — confirmed pre-existing on `e3ceaaaf` via `git stash` |
+
+**Synthetic harsh comparison (`pre_f4_harsh.json` → `post_f6_harsh.json`):** essentially flat / within run-to-run noise.
+
+| KPI | pre-F6 | post-F6 | Note |
+|---|---|---|---|
+| `overlap_decode_only_p95_ms` | 75.23 | 81.98 | within noise |
+| `overlap_decode_only_max_ms` | 111.81 | 162.84 | run-to-run variance |
+| `overlap_decode_sample_share_pct` | 4.74 | 5.33 | within noise |
+| `overlap_slow_frame_count_16ms` | 73 | 72 | within noise |
+| `overlap_cache_hit_ratio_pct` | 95.26 | 94.67 | within noise |
+| `overlap_effective_fps` | 55.05 | 50.24 | within noise |
+| `overlap_drag_event_p95_max_ms` | 0.0 | 0.0 | synthetic doesn't emit FAST_DRAG_KPI |
+| `overlap_drag_ui_lag_max_max_ms` | 0.0 | 0.0 | synthetic doesn't emit FAST_DRAG_KPI |
+
+**Why synthetic is flat:** the synthetic harness (`tools/performance/synthetic_overlap_runner.py`) does NOT activate `is_protected_drag_active()`. F6's entire effect lives on the protected-drag P1 lane in `_prefetch_around`, which the synthetic stub never enters. This is expected and was true of F3.1/F3.2 as well — those landed without synthetic deltas and still produced the live-log drag-burst KPIs in the cross-PC workflow.
+
+**Win condition validation requires a live log from PC A.** Specifically: a stack-drag burst on a partly-cached series during heavy download. The win signature in the next `[FAST_DRAG_KPI]` line(s) should be:
+
+- `handler_p95_ms` lower in bursts where `bg_decode_count == 0` (cache-hit drags, where the live log shows handler 5–22 ms today). Target: shift down toward 1–5 ms once frame prefetch covers the cached-pixel directional step.
+- `event_p95_ms` correspondingly lower on cache-hit cycles (because the main thread no longer pays the W/L+QImage build per step).
+- No regression in `bg_decode_count` (frame prefetch lane is separate from the pixel decode executor; in-flight cap of 1 prevents executor saturation).
+- No regression in `prefetch_per_s` (pixel P1 branch is unchanged; frame branch fires after, only for already-cached pixels).
+
 ### Step F6.1 — New `WorkClass.FRAME_PREFETCH` admission rule
 
 **Goal:** `ui_throttle.should_admit` accepts a new work class with priority gating.
@@ -1108,6 +1213,8 @@ Done-When revised:
 **Success criteria:** unit test green.
 
 **Done-When:** test green; admission table verified.
+
+**STATUS: DONE.** See "Status (2026-04-29 PM)" above. All admission tests green.
 
 ---
 

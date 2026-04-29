@@ -285,8 +285,8 @@ class _FakePipeline:
     def _submit_prefetch(self, idx, gen, *, request_epoch=0):
         self._submitted_prefetch.append(idx)
 
-    def _submit_frame_prefetch(self, idx):
-        self._submitted_frame_prefetch.append(idx)
+    def _submit_frame_prefetch(self, idx, *, priority=None):
+        self._submitted_frame_prefetch.append((idx, priority) if priority is not None else idx)
 
 
 def _build_pipeline_stub(**kwargs):
@@ -397,6 +397,112 @@ class TestPrefetchInteractionAware:
         assert set(p._submitted_prefetch) == {52, 53}
         assert p._active_prefetch_targets == {52, 53}
         assert p._prefetch_request_epoch == 1
+
+
+class TestProtectedDragFramePrefetch:
+    """F6.2: protected-drag fires P1 frame prefetch for first cached-pixel target."""
+
+    def test_protected_drag_fires_frame_prefetch_for_cached_pixel_target(self):
+        """When a directional neighbor's pixel is cached but its frame is not,
+        the protected-drag P1 lane submits exactly ONE frame prefetch with
+        priority=P1_NEIGHBOR."""
+        p = _build_pipeline_stub(slice_count=18, radius=5)
+        p._fast_interaction = True
+        p._fast_interaction_mode = 'drag'
+        p._protected_drag_active = True
+        p._estimate_scroll_velocity = lambda: 25.0
+        # 10 (forward) is cached, 11 is not
+        p._pixel_cache = {10: b"data"}
+
+        p._prefetch_around(9, direction=1)
+
+        # Pixel prefetch: only uncached forward+behind submitted
+        assert 11 in p._submitted_prefetch  # forward uncached
+        assert 8 in p._submitted_prefetch   # behind uncached
+        # 10 NOT in pixel prefetch (already cached)
+        assert 10 not in p._submitted_prefetch
+        # F6.2: exactly one frame prefetch, for cached target (10), with P1
+        from modules.viewer.fast.stack_interaction_scheduler import FastWorkPriority
+        assert p._submitted_frame_prefetch == [(10, int(FastWorkPriority.P1_NEIGHBOR))]
+
+    def test_protected_drag_no_frame_prefetch_when_no_cached_targets(self):
+        """If no directional neighbors are cached, no frame prefetch fires."""
+        p = _build_pipeline_stub(slice_count=18, radius=5)
+        p._fast_interaction = True
+        p._fast_interaction_mode = 'drag'
+        p._protected_drag_active = True
+        p._estimate_scroll_velocity = lambda: 25.0
+        p._pixel_cache = {}  # nothing cached
+
+        p._prefetch_around(9, direction=1)
+
+        assert p._submitted_frame_prefetch == []
+
+    def test_protected_drag_only_one_frame_prefetch_per_call(self):
+        """Even if multiple directional neighbors are cached, only the FIRST
+        gets a frame prefetch (in-flight cap of 1)."""
+        p = _build_pipeline_stub(slice_count=18, radius=5)
+        p._fast_interaction = True
+        p._fast_interaction_mode = 'drag'
+        p._protected_drag_active = True
+        p._estimate_scroll_velocity = lambda: 25.0
+        # Both 10 and 11 cached
+        p._pixel_cache = {10: b"data", 11: b"data"}
+
+        p._prefetch_around(9, direction=1)
+
+        from modules.viewer.fast.stack_interaction_scheduler import FastWorkPriority
+        # Only the first ordered target (10, the immediate forward neighbor)
+        assert p._submitted_frame_prefetch == [(10, int(FastWorkPriority.P1_NEIGHBOR))]
+
+
+class TestFramePrefetchAdmission:
+    """F6.1: WorkClass.FRAME_PREFETCH admission via ui_throttle.should_admit."""
+
+    def test_frame_prefetch_admitted_outside_protected_drag(self):
+        """Without protected drag, FRAME_PREFETCH is always admitted."""
+        from modules.viewer.fast import ui_throttle
+        from modules.viewer.fast.system_load_controller import WorkClass
+        # Ensure protected drag is OFF
+        ui_throttle.record_protected_drag(False)
+        ui_throttle.record_advanced_protected_interaction(False)
+        admitted = ui_throttle.should_admit(WorkClass.FRAME_PREFETCH, {"priority": 999})
+        assert admitted is True
+
+    def test_frame_prefetch_p1_admitted_during_protected_drag(self):
+        """Under protected drag, P1_NEIGHBOR (priority=1) is admitted."""
+        from modules.viewer.fast import ui_throttle
+        from modules.viewer.fast.system_load_controller import WorkClass
+        from modules.viewer.fast.stack_interaction_scheduler import FastWorkPriority
+        ui_throttle.record_protected_drag(True)
+        try:
+            admitted = ui_throttle.should_admit(
+                WorkClass.FRAME_PREFETCH,
+                {"priority": int(FastWorkPriority.P1_NEIGHBOR)},
+            )
+            assert admitted is True
+        finally:
+            ui_throttle.record_protected_drag(False)
+
+    def test_frame_prefetch_p2_denied_during_protected_drag(self):
+        """Under protected drag, anything above P1_NEIGHBOR is denied."""
+        from modules.viewer.fast import ui_throttle
+        from modules.viewer.fast.system_load_controller import WorkClass
+        ui_throttle.record_protected_drag(True)
+        try:
+            admitted = ui_throttle.should_admit(
+                WorkClass.FRAME_PREFETCH,
+                {"priority": 2},  # any P2+
+            )
+            assert admitted is False
+            # Default priority (999) also denied
+            admitted2 = ui_throttle.should_admit(
+                WorkClass.FRAME_PREFETCH,
+                {},
+            )
+            assert admitted2 is False
+        finally:
+            ui_throttle.record_protected_drag(False)
 
 
 class TestPrefetchDedup:

@@ -1,0 +1,72 @@
+{
+  "viewer": "AI-PACS",
+  "mode": "overlap-log-parse",
+  "scenario": "aipacs_live_download_overlap",
+  "log_path": "C:\\Users\\vahid\\AppData\\Local\\Temp\\aipacs_synth_overlap_otrldgh_\\overlap.log",
+  "overlap_metrics": {
+    "overlap_sample_count": 1500,
+    "overlap_set_slice_present_p95_ms": 15.17,
+    "overlap_set_slice_present_p50_ms": 0.0,
+    "overlap_decode_p95_ms": 9.33,
+    "overlap_decode_p50_ms": 0.0,
+    "overlap_wl_p95_ms": 2.93,
+    "overlap_cache_hit_ratio_pct": 94.67,
+    "overlap_cache_breakdown": {
+      "hit": 440,
+      "surrogate": 980,
+      "decode": 80
+    },
+    "overlap_settled_breakdown": {
+      "settled_true": 1,
+      "settled_false": 1499
+    },
+    "overlap_slow_frame_count_16ms": 72,
+    "overlap_slow_frame_pct_16ms": 4.8,
+    "overlap_slow_frame_source_breakdown": {
+      "hit": 0,
+      "surrogate": 0,
+      "decode": 72
+    },
+    "overlap_hit_present_p95_ms": 0.0,
+    "overlap_surrogate_present_p95_ms": 0.0,
+    "overlap_decode_only_p95_ms": 81.98,
+    "overlap_decode_only_max_ms": 162.84,
+    "overlap_decode_sample_count": 80,
+    "overlap_decode_sample_share_pct": 5.33,
+    "overlap_settled_present_p95_ms": 0.0,
+    "overlap_settled_sample_count": 1,
+    "overlap_effective_fps": 50.24,
+    "overlap_effective_fps_source": "wall_clock",
+    "overlap_foreground_wait_p95_ms": 0.0,
+    "overlap_pixel_hash_match_pct_settled": null,
+    "overlap_pixel_hash_match_pct_surrogate": null,
+    "overlap_sentinel_breakdown": {
+      "decode": 80,
+      "drag_begin": 0,
+      "drag_end": 1,
+      "other": 0
+    },
+    "overlap_sentinel_emit_count": 81,
+    "overlap_drag_burst_count": 0,
+    "overlap_drag_event_p95_max_ms": 0.0,
+    "overlap_drag_event_p95_p95_ms": 0.0,
+    "overlap_drag_handler_p95_max_ms": 0.0,
+    "overlap_drag_ui_lag_max_max_ms": 0.0,
+    "overlap_drag_ui_lag_max_p95_ms": 0.0,
+    "overlap_drag_prefetch_per_s_avg": 0.0,
+    "overlap_drag_background_decode_count_total": 0
+  },
+  "runner": {
+    "name": "synthetic_overlap_runner",
+    "version": "F0.6",
+    "duration_s": 45.634,
+    "frames_driven": 1500,
+    "set_slice_hz": 60,
+    "drip_hz": 1,
+    "sample_rate": 1,
+    "n_slices": 240,
+    "rows": 512,
+    "cols": 512,
+    "preset": "harsh"
+  }
+}

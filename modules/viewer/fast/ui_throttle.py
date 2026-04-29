@@ -488,6 +488,17 @@ def should_admit(task_type: WorkClass | str, context: Optional[dict] = None) -> 
                 priority = 999
             if priority > 1:  # FastWorkPriority.P1_NEIGHBOR == 1
                 return False
+        if task_type == WorkClass.FRAME_PREFETCH:
+            # F6.1: mirror PREFETCH P1 rule for frame prefetch. During
+            # protected drag the W/L+QImage build for the next directional
+            # cached-pixel target is still useful (eliminates per-step
+            # main-thread W/L cost); only admit P1, deny everything else.
+            try:
+                priority = int(ctx.get("priority", 999))
+            except Exception:
+                priority = 999
+            if priority > 1:  # FastWorkPriority.P1_NEIGHBOR == 1
+                return False
     return get_system_load_controller().should_admit(
         task_type,
         ctx,

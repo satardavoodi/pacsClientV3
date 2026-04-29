@@ -349,6 +349,11 @@ class Lightweight2DPipeline(QObject):
         # Prefetch
         self._prefetch_pending: set = set()
         self._frame_prefetch_pending: set = set()
+        # F6.2: in-flight cap for frame prefetch when invoked from the
+        # protected-drag P1 lane. Only ever incremented for priority-driven
+        # submissions; legacy callers (priority=None) use the pending-set
+        # dedup unchanged so non-drag warmup still parallelizes.
+        self._frame_prefetch_inflight: int = 0
         self._prefetch_lock = threading.Lock()
         # v2.3.6 GC#5 surrogate-staleness break: when the cache is sparse,
         # the nearest-cached surrogate can return the SAME pixels for many
@@ -484,6 +489,7 @@ class Lightweight2DPipeline(QObject):
         with self._prefetch_lock:
             self._prefetch_pending.clear()
             self._frame_prefetch_pending.clear()
+            self._frame_prefetch_inflight = 0
             self._prefetch_generation += 1  # invalidate any in-flight tasks
             self._prefetch_request_epoch += 1
             self._active_prefetch_targets.clear()
@@ -2015,6 +2021,23 @@ class Lightweight2DPipeline(QObject):
                     },
                 ):
                     self._submit_prefetch(target, gen, request_epoch=request_epoch)
+            # F6.2: For the FIRST cached-pixel target in the drag direction
+            # whose rendered frame is NOT yet cached, fire a P1 frame
+            # prefetch. This pays the W/L+QImage build in the background
+            # so the next drag step can reuse the cached frame on the main
+            # thread (eliminates ~5-10 ms/step of W/L cost on cache-hit drag).
+            # The in-flight cap (1) inside `_submit_frame_prefetch` keeps
+            # this lane shallow and never starves the pixel P1 lane above.
+            for target in ordered_targets:
+                if not (0 <= target < n):
+                    continue
+                if target not in self._pixel_cache:
+                    continue
+                self._submit_frame_prefetch(
+                    target,
+                    priority=int(FastWorkPriority.P1_NEIGHBOR),
+                )
+                break
             return
 
         for offset in range(1, adaptive_radius + 1):
@@ -2105,12 +2128,46 @@ class Lightweight2DPipeline(QObject):
             drag_session_token,
         )
 
-    def _submit_frame_prefetch(self, idx: int) -> None:
+    def _submit_frame_prefetch(self, idx: int, *, priority: Optional[int] = None) -> None:
+        # F6.2: optional `priority` argument. When set (drag P1 lane), the
+        # call goes through `should_admit(WorkClass.FRAME_PREFETCH)` and
+        # respects the in-flight cap (max 1 priority-driven inflight) so
+        # a slow render does not block the next drag step. Legacy callers
+        # (priority=None) keep the original pending-set dedup behavior.
+        tracked = False
         with self._prefetch_lock:
             if idx in self._frame_prefetch_pending:
                 return
+            if priority is not None:
+                if int(self._frame_prefetch_inflight or 0) >= 1:
+                    return
+                self._frame_prefetch_inflight = int(self._frame_prefetch_inflight or 0) + 1
+                tracked = True
             self._frame_prefetch_pending.add(idx)
-        self._frame_executor.submit(self._render_into_cache, idx)
+        if priority is not None:
+            try:
+                admitted = should_admit(
+                    WorkClass.FRAME_PREFETCH,
+                    {
+                        "priority": int(priority),
+                        "key": f"frame:{idx}",
+                    },
+                )
+            except Exception:
+                admitted = True
+            if not admitted:
+                with self._prefetch_lock:
+                    self._frame_prefetch_pending.discard(idx)
+                    if tracked:
+                        self._frame_prefetch_inflight = max(0, int(self._frame_prefetch_inflight or 0) - 1)
+                return
+        try:
+            self._frame_executor.submit(self._render_into_cache, idx, tracked)
+        except Exception:
+            with self._prefetch_lock:
+                self._frame_prefetch_pending.discard(idx)
+                if tracked:
+                    self._frame_prefetch_inflight = max(0, int(self._frame_prefetch_inflight or 0) - 1)
 
     def _decode_into_cache(
         self,
@@ -2254,7 +2311,7 @@ class Lightweight2DPipeline(QObject):
             if _pm.enabled and abs(idx - self._current_index) > self._config.prefetch_radius:
                 _pm.record_stale_task()
 
-    def _render_into_cache(self, idx: int) -> None:
+    def _render_into_cache(self, idx: int, tracked: bool = False) -> None:
         try:
             ww, wc = self._resolve_window_level(idx)
             filter_enabled = self._config.opencv_filter_enabled
@@ -2267,6 +2324,8 @@ class Lightweight2DPipeline(QObject):
         finally:
             with self._prefetch_lock:
                 self._frame_prefetch_pending.discard(idx)
+                if tracked:
+                    self._frame_prefetch_inflight = max(0, int(self._frame_prefetch_inflight or 0) - 1)
 
     # ── Private: window/level ─────────────────────────────────────────
 
