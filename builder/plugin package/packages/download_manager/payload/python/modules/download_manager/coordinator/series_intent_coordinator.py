@@ -236,7 +236,13 @@ class SeriesIntentCoordinator:
             parts.append(f"branch={branch}")
         if reason is not None:
             parts.append(f"reason={reason}")
-        logger.info(" ".join(parts), extra={"component": "download"})
+        # Emit at WARNING level: the `download` component threshold is WARNING
+        # in PacsClient/utils/diagnostic_logging.py, so INFO emits are silently
+        # dropped before reaching the file handler (same trap as R13 [SP] and
+        # R22 [DM_REBUILD]). The verbose tags (tick/defer) are still gated by
+        # _INTENT_TRACE_ENABLED above, so production logs are not flooded
+        # unless AIPACS_INTENT_PRIORITY_TRACE=1 is explicitly set.
+        logger.warning(" ".join(parts), extra={"component": "download"})
 
     def request_study_priority(self, study_uid: str, priority: DownloadPriority) -> bool:
         state = self.state_store.get(study_uid)

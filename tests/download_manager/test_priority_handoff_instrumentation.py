@@ -87,8 +87,13 @@ def _emitted_tags(caplog):
 
 @pytest.fixture
 def caplog_intent(caplog):
-    """Configure caplog to capture INFO from the coordinator module."""
-    caplog.set_level(logging.INFO, logger=sic_module.__name__)
+    """Configure caplog to capture WARNING-or-higher from the coordinator module.
+
+    `_emit_intent_priority` now emits at WARNING (was INFO) so the lines are not
+    silently dropped by the `download` component threshold filter in
+    `PacsClient/utils/diagnostic_logging.py` (the same trap as R13/R22).
+    """
+    caplog.set_level(logging.WARNING, logger=sic_module.__name__)
     return caplog
 
 
@@ -350,3 +355,48 @@ def test_no_emit_when_chain_already_active_for_same_study(caplog_intent):
 
     tags = [t for t, _b in _emitted_tags(caplog_intent)]
     assert tags.count("begin") == 1
+
+
+def test_intent_priority_emits_at_warning_level_not_info(caplog_intent):
+    """Contract test: `[INTENT_PRIORITY]` lines MUST emit at WARNING (or higher)
+    so they are admitted by the `download` component threshold filter in
+    `PacsClient/utils/diagnostic_logging.py` (download = WARNING). Emits at
+    INFO are silently dropped before reaching the file handler -- confirmed in
+    production log 2026-04-30 pid=32956 where 0 INTENT_PRIORITY lines reached
+    disk despite a clear `Priority start retry exhausted` event.
+
+    This test is the regression alarm for that root-cause; flipping back to
+    `logger.info` will fail it.
+    """
+    store = DownloadStateStore()
+    task = _make_task("study-warn-level")
+    store.create(task)
+    store.update(task.study_uid, status=DownloadStatus.PENDING)
+
+    coordinator = SeriesIntentCoordinator(
+        state_store=store,
+        rule_engine=_RuleEngineStub(),
+        worker_pool=_PoolFree(),
+        tasks_ref={task.study_uid: task},
+        pause_downloads_for_preemption=lambda _uids: None,
+        start_download_worker=lambda _uid: True,
+        start_next_pending=lambda: None,
+        refresh_table_order=lambda: None,
+        check_auto_resume=lambda: None,
+        defer_call=lambda _delay, _cb: None,
+    )
+
+    coordinator.schedule_priority_start_retry(task.study_uid)
+
+    intent_records = [
+        rec for rec in caplog_intent.records
+        if "[INTENT_PRIORITY]" in rec.getMessage()
+    ]
+    assert intent_records, "Expected at least one [INTENT_PRIORITY] emission (begin/started)"
+    for rec in intent_records:
+        assert rec.levelno >= logging.WARNING, (
+            f"[INTENT_PRIORITY] line emitted at {rec.levelname} (level={rec.levelno}); "
+            f"required >= WARNING ({logging.WARNING}) so it survives the "
+            f"`download` component threshold filter. "
+            f"Message: {rec.getMessage()[:120]}"
+        )
