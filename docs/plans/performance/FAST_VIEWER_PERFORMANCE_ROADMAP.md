@@ -1,5 +1,7 @@
 # FAST Viewer Performance Roadmap (Planning-First)
 
+> **⚠ Superseded for "what to do next" by [`FAST_VIEWER_OPTIMIZATION_STATE_2026-04-29.md`](FAST_VIEWER_OPTIMIZATION_STATE_2026-04-29.md)** (2026-04-29). The roadmap structure below remains valid as the high-level reasoning frame, but the consolidated state-of-system document is the single source of truth for current phase status, near-optimal areas, and the prioritized next steps after F0–F11.
+
 **Date:** 2026-04-14  
 **Scope:** FAST viewer only (`BACKEND_PYDICOM_QT`) with concurrent download/viewing reality.  
 **Purpose:** Controlled, KPI-driven execution order before implementation.

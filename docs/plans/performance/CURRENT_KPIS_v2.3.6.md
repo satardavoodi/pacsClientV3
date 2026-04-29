@@ -1,5 +1,7 @@
 # Current KPIs — v2.3.6 (2026-04-22)
 
+> **⚠ Superseded for "what to do next" by [`FAST_VIEWER_OPTIMIZATION_STATE_2026-04-29.md`](FAST_VIEWER_OPTIMIZATION_STATE_2026-04-29.md)** (2026-04-29). That document is the consolidated post-F0–F11 state. The KPI tables in this v2.3.6 file remain valid as a historical snapshot for log 96; live Tier-2 numbers and current targets are tracked in the state-of-system doc.
+
 **Source log: `log 96.txt`** (low-config test PC, 150-series CT study, active download during interaction)
 **Baseline for comparison:** log 93 (v2.3.5 — "mostly smooth but occasional stuck image")
 

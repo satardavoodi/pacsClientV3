@@ -1,5 +1,17 @@
 # Plan: FAST Viewer Same-Series Download+Stack — Step-Based 100% Improvement Plan
 
+> **⚠ Read first (added 2026-04-29):** Before opening any phase below, read
+> [`docs/plans/performance/FAST_VIEWER_OPTIMIZATION_STATE_2026-04-29.md`](docs/plans/performance/FAST_VIEWER_OPTIMIZATION_STATE_2026-04-29.md).
+> That document is the consolidated state of the system after F0–F11
+> (10 shipped phases) and explains:
+> - which areas are already near-optimal (pipeline compute, cache hit ratio, decode lanes, R-rules)
+> - which areas are still blocking the user freeze (`ui_lag_max ≈ 1.8–2.5 s` on real drag bursts, `handler_p95 ≤ 22 ms` — pipeline is idle during freezes)
+> - the namespace fix for the `F7–F11` commit-tag collision (recent ad-hoc work re-labeled as **G1–G5**)
+> - the single ordered priority list for the next session (G5 live log → G6 defer of whatever G5 names)
+> Master-plan F-step bodies below are still authoritative for individual
+> step actions, but the prioritization and "what to do next" answer lives
+> in the state-of-system doc.
+
 Date: 2026-04-28
 Owner: FAST viewer team
 Scope: FAST mode only (`pydicom_qt`). Advanced viewer untouched. Only shared services that demonstrably impact overlap scenario are in scope.
