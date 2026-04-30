@@ -421,3 +421,36 @@ Prep step before any DM widget structural split: codify R22's `blockSignals` dis
 - Current state: production scan returns zero violations â€” the v2.4.7 R22 fix (`_dm_details.py:246-250` and `_dm_details.py:394-396`) plus the existing wraps in `_dm_queue.py:514-516` and `_dm_controls.py:530-532` are all caught as safe; the only `_dm_ui_setup.py:747` write is correctly classified as init-time (occurs before `.connect` on line 748).
 - This is a prerequisite for Phase 2.1-2.3 (DM widget View/Presenter/Commands split) â€” having the contract enforced by lint means the structural rewrite cannot regress R22 by accident. Same philosophy as the Phase 0 silent-drop lint.
 
+**Phase 2.1-prep â€” V/P/C structural contracts + drift detector. STATUS: COMPLETE (2026-04-30).**
+
+High-level supervisory pass before mechanical extraction. Surveyed all 9 `_dm_*.py` mixins (~5115 lines total) and classified each by responsibility:
+
+| Layer | Mixins | Notes |
+|---|---|---|
+| **View** | `_dm_ui_setup`, `_dm_theming`, `_dm_queue` | Widget construction, idempotent property writes, table rendering. `_dm_theming` has one observer (`_on_app_theme_changed`) â€” secondary Presenter classification documented. |
+| **Presenter** | `_dm_workers`, `_dm_reception`, `_dm_details` (split) | Observer callbacks, state â†’ view translation. `_dm_workers` also calls Commands (`_start_download_worker`, `_start_next_pending`) â€” secondary Commands classification documented. `_dm_details` straddles View+Presenter and is flagged `MIXED` â€” must split during 2.1 extraction. |
+| **Commands** | `_dm_controls`, `_dm_retry`, `_dm_priority` | User-action handlers (button clicks, combo signals, retry, priority change), coordinator/state-store invocation. |
+
+Files added:
+
+- `modules/download_manager/ui/widget/_dm_contracts.py` â€” the Phase 2.1 specification:
+  - Three `@runtime_checkable typing.Protocol`s defining the eventual `DownloadManagerView` / `DownloadManagerPresenter` / `DownloadManagerCommands` public surfaces.
+  - `MIXIN_RESPONSIBILITY_MAP` â€” every current `_dm_*.py` mixin â†’ `(primary_layer, secondary_layer_or_None)`.
+  - `MIXIN_PUBLIC_METHODS` â€” baseline list of public methods per mixin (drift baseline).
+  - **No behavior** â€” pure spec module.
+- `tests/architecture/test_dm_widget_responsibilities.py` â€” 8 tests, all green:
+  - `test_responsibility_map_uses_known_layers` â€” layer enum integrity.
+  - `test_responsibility_map_covers_every_mixin_file_on_disk` â€” file-system â†” plan parity (catches new mixin files added without classification).
+  - `test_public_methods_baseline_matches_source` â€” drift detector (catches methods added to source without plan update, OR methods removed from source still listed in plan).
+  - `test_every_classified_mixin_has_methods_baseline` â€” plan-internal consistency.
+  - `test_view_protocol_has_no_state_or_coordinator_words` â€” View Protocol vocabulary check.
+  - `test_commands_protocol_does_not_expose_observers` â€” Commands has no `on_*` callbacks.
+  - `test_presenter_protocol_has_attach_and_detach` â€” Presenter lifecycle.
+  - `test_protocols_are_runtime_checkable` â€” enables future `isinstance` smoke tests on extracted classes.
+
+Combined architecture + utils verification: 120/120 green in 44 s. Combined `pytest tests/architecture/ tests/utils/` is now the canonical "architectural contract green" gate.
+
+**What this unlocks for Phase 2.1 proper:** the mechanical extraction can now proceed file-by-file with a machine-readable plan. Each mixin's methods migrate to the layer named in `MIXIN_RESPONSIBILITY_MAP`; the `MIXED` flag on `_dm_details` is the pre-marked split point. The drift test will fail on any deviation, so half-done migrations cannot land silently.
+
+**Phase 2.2-7 â€” see Section 6.** Will be revisited after Phase 2.1 extraction lands and the next live log is captured.
+
