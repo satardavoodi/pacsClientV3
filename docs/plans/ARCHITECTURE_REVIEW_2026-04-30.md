@@ -409,3 +409,15 @@ Combined Phase 1 verification: `pytest tests/utils/` â€” 104/104 green in 1
 
 **Phase 2-7 â€” see Section 6.** Will be revisited after Phase 1 wiring and the next live log is captured.
 
+**Phase 2.0 â€” R22 combo-signal hygiene lint. STATUS: COMPLETE (2026-04-30).**
+
+Prep step before any DM widget structural split: codify R22's `blockSignals` discipline as a pytest lint instead of memory.
+
+- `tests/architecture/test_dm_combo_signal_hygiene.py` â€” 1 production scan + 7 scanner self-tests, all green.
+- Scanner scope: `modules/download_manager/ui/widget/_dm_*.py`. Scans for `setCurrentText` / `setCurrentIndex` / `setCurrentData` calls on widgets that have `currentTextChanged` / `currentIndexChanged` / `activated` / `highlighted` signal connections in the same file. Each call must satisfy ONE of:
+  1. Source-order before the `.connect(...)` (init/setup time, no handler attached yet).
+  2. Wrapped in `widget.blockSignals(True)` / `widget.blockSignals(False)` within Â±6 lines.
+  3. Explicit `# noqa: combo-signal` opt-out on the same line.
+- Current state: production scan returns zero violations â€” the v2.4.7 R22 fix (`_dm_details.py:246-250` and `_dm_details.py:394-396`) plus the existing wraps in `_dm_queue.py:514-516` and `_dm_controls.py:530-532` are all caught as safe; the only `_dm_ui_setup.py:747` write is correctly classified as init-time (occurs before `.connect` on line 748).
+- This is a prerequisite for Phase 2.1-2.3 (DM widget View/Presenter/Commands split) â€” having the contract enforced by lint means the structural rewrite cannot regress R22 by accident. Same philosophy as the Phase 0 silent-drop lint.
+
