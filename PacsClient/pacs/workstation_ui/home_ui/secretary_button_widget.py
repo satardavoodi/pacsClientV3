@@ -173,6 +173,11 @@ class SecretaryOrbButton(QToolButton):
         return pixmap
 
     def _detect_texture_focus(self, pixmap):
+        # NOTE (2026-04-30): the original implementation called QColor(img.pixel(x, y))
+        # in a Python double loop over every (step) pixel of an Echo-Mind PNG. F11
+        # main-thread sampler captured a single 22.2 s startup stall in this method
+        # on a fresh launch (pid 39244, 2026-04-30). Vectorized via numpy on the
+        # QImage byte buffer; observed runtime drops from seconds to a few ms.
         if pixmap.isNull():
             return 0.62, 0.50
 
@@ -182,32 +187,48 @@ class SecretaryOrbButton(QToolButton):
         if width <= 1 or height <= 1:
             return 0.62, 0.50
 
+        try:
+            bytes_per_line = img.bytesPerLine()
+            ptr = img.constBits()
+            # PySide6 returns a memoryview-like; bytes() copy is cheap relative
+            # to the previous Python pixel loop and avoids lifetime issues.
+            buf = bytes(ptr)[: bytes_per_line * height]
+            arr = np.frombuffer(buf, dtype=np.uint8).reshape((height, bytes_per_line))
+            arr = arr[:, : width * 4].reshape((height, width, 4))
+            # Format_RGB32 on little-endian Windows lays out as BGRA bytes.
+            b_full = arr[..., 0].astype(np.int16)
+            g_full = arr[..., 1].astype(np.int16)
+            r_full = arr[..., 2].astype(np.int16)
+        except Exception:
+            # On any unexpected layout/conversion failure, fall back to the
+            # documented neutral default so the orb still renders correctly.
+            return 0.62, 0.50
+
         step = max(1, min(width, height) // 380)
         right_start = int(width * 0.24)
-        col_weights = [0.0] * width
-        total_weight = 0.0
+        if right_start >= width:
+            return 0.62, 0.50
 
-        for y in range(0, height, step):
-            for x in range(right_start, width, step):
-                c = QColor(img.pixel(x, y))
-                r = c.red()
-                g = c.green()
-                b = c.blue()
+        rs = r_full[::step, right_start::step]
+        gs = g_full[::step, right_start::step]
+        bs = b_full[::step, right_start::step]
 
-                cyan_like = (b > 92 and g > 76 and b > (r + 14) and g > (r + 8))
-                bright_white = (r > 208 and g > 208 and b > 208)
-                if not (cyan_like or bright_white):
-                    continue
+        cyan_like = (bs > 92) & (gs > 76) & (bs > (rs + 14)) & (gs > (rs + 8))
+        bright_white = (rs > 208) & (gs > 208) & (bs > 208)
+        mask = cyan_like | bright_white
 
-                luminance = (0.2126 * r) + (0.7152 * g) + (0.0722 * b)
-                cyan_bias = max(0.0, (b - r) * 1.2) + max(0.0, (g - r) * 0.9)
-                weight = max(0.0, (luminance * 0.35) + cyan_bias)
-                if weight <= 0.0:
-                    continue
+        luminance = 0.2126 * rs + 0.7152 * gs + 0.0722 * bs
+        cyan_bias = np.maximum(0.0, (bs - rs) * 1.2) + np.maximum(0.0, (gs - rs) * 0.9)
+        weight = luminance * 0.35 + cyan_bias
+        weight = np.where(mask & (weight > 0.0), weight, 0.0)
 
-                col_weights[x] += weight
-                total_weight += weight
-
+        # Project subsampled columns back into the full-width column-weight vector.
+        col_sum = weight.sum(axis=0)
+        col_weights = np.zeros(width, dtype=np.float64)
+        sampled_xs = right_start + np.arange(col_sum.shape[0]) * step
+        valid = sampled_xs < width
+        col_weights[sampled_xs[valid]] = col_sum[valid]
+        total_weight = float(col_weights.sum())
         if total_weight <= 0.0:
             return 0.62, 0.50
 
@@ -215,26 +236,21 @@ class SecretaryOrbButton(QToolButton):
         if window >= width:
             window = max(32, width - 1)
 
-        current_sum = sum(col_weights[:window])
-        best_sum = current_sum
-        best_start = 0
-        for start in range(1, width - window):
-            current_sum += col_weights[start + window - 1] - col_weights[start - 1]
-            if current_sum > best_sum:
-                best_sum = current_sum
-                best_start = start
+        # Sliding-window sum via cumulative-sum; equivalent to the original
+        # incremental running sum over col_weights.
+        csum = np.concatenate(([0.0], np.cumsum(col_weights)))
+        win_sums = csum[window:width] - csum[: width - window]
+        if win_sums.size == 0:
+            return 0.62, 0.50
+        best_start = int(np.argmax(win_sums))
 
         band_start = best_start
         band_end = min(width, best_start + window)
-        band_weight = 0.0
-        weighted_x = 0.0
-        for x in range(band_start, band_end):
-            w = col_weights[x]
-            band_weight += w
-            weighted_x += x * w
-
+        band = col_weights[band_start:band_end]
+        band_weight = float(band.sum())
         if band_weight <= 0.0:
             return 0.62, 0.50
+        weighted_x = float((band * np.arange(band_start, band_end)).sum())
 
         center_x = weighted_x / band_weight
         x_ratio = max(0.0, min(1.0, center_x / float(width)))
