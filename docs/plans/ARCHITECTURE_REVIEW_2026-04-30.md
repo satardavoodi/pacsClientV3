@@ -387,9 +387,25 @@ The next log you send will give us R19's diagnostic data **regardless** of which
 - Regression: DM 27 scenarios / 129 assertions all PASS; 7 pre-existing failures in `test_fast_viewer_pipeline.py` and `test_b32_adaptive_prefetch.py` confirmed unrelated (also fail on git-stash baseline).
 - Outcome: the silent-drop bug class is now caught by `pytest tests/utils/` in 36 s and cannot regress without an explicit `# noqa` opt-out.
 
-**Phase 1 â€” Extract two facades. STATUS: NOT STARTED.**
-- `PacsClient/utils/ui_dispatch.py` (post / schedule / latch / cancel-on-destroy)
-- `modules/cache_manager.py` (named regions: pixels, rendered_frames, metadata, volume; single byte budget)
+**Phase 1 â€” Extract two facades. STATUS: COMPLETE (2026-04-30).**
 
-**Phase 2-7 â€” see Section 6.** Will be revisited after Phase 1 lands and the next live log is captured.
+Phase 1.1 â€” `PacsClient/utils/ui_dispatch.py` (~250 lines):
+- `Handle` class (`__slots__`, idempotent `cancel()` â†’ stops + deleteLater on timer; `cancelled`/`fired` properties).
+- `post(callback) -> Handle` â‰¡ `schedule(0, callback)`.
+- `schedule(ms, callback) -> Handle` validates `callable(callback)` (TypeError) + `ms >= 0` (ValueError); when `_QT_AVAILABLE=False` runs callback inline (try/finally + mark fired); when Qt available creates `QTimer().setSingleShot(True)`, connects timeout â†’ runs callback in try/except logger.exception.
+- `cancel_on_destroy(widget, handle)` â€” no-ops on None / cancelled / fired / no `destroyed` signal; swallows connect exceptions.
+- `Latch` class (`__slots__`, `RLock`-protected) with `begin/keepalive/end(tail_grace_ms)/reset/active` + context manager. **Independent** of FAST/Advanced `ui_throttle` latches â€” those still drive cross-pipeline policy.
+- Tests: `tests/utils/test_ui_dispatch.py` â€” 34/34 green.
+
+Phase 1.2 â€” `PacsClient/utils/cache_manager.py` (~340 lines):
+- `RegionStats` frozen dataclass (entries / bytes / max_entries / max_bytes / hit_count / miss_count / eviction_count + `hit_ratio`).
+- `CacheRegion` (`__slots__`, `RLock`-protected) â€” OrderedDict-backed LRU with optional byte budget. `get` promotes to MRU; `peek` does not. `put` removes-and-replaces if existing key, then evicts on entries-cap first, then on bytes-cap if `max_bytes > 0`. `_MISSING` sentinel for `pop()` default-vs-raise. size_fn exception OR negative return both treated as 0. `set_max_entries`/`set_max_bytes` re-evict immediately. `keys()` snapshots LRU order.
+- `CacheManager` (`__slots__`, `RLock`-protected) â€” registry of named regions: `create_region` (raises ValueError on duplicate), `get_or_create_region` (preserves config), `region(name)` (raises KeyError), `has_region`, `remove_region`, `clear_all`, `names() -> tuple`, `stats() -> Dict[str, RegionStats]`, `total_bytes`, `total_entries`. **Per-region byte budget only** â€” no global byte budget (matches existing pipeline behavior).
+- `get_global_cache_manager()` / `reset_global_cache_manager()` singleton with `_GLOBAL_LOCK`.
+- Tests: `tests/utils/test_cache_manager.py` â€” 47/47 green.
+- Existing pipeline caches (`Lightweight2DPipeline._pixel_cache` / `_frame_cache`) **untouched** â€” Phase 1 ships facade only. Future phase wires existing caches through the manager.
+
+Combined Phase 1 verification: `pytest tests/utils/` â€” 104/104 green in 156 s. DM regression 27 scenarios / 127 passed (2 environmental S22 latency warnings â€” `Max latency 5.042 ms` slightly over 5 ms threshold; not related to Phase 1 changes which are facade-only with no call-site wiring).
+
+**Phase 2-7 â€” see Section 6.** Will be revisited after Phase 1 wiring and the next live log is captured.
 
