@@ -216,8 +216,9 @@ class _VWSeriesMixin:
                     self.slider.setValue(target_slice)
                 finally:
                     self.slider.blockSignals(False)
-            bridge.apply_default_window_level(target_slice)
-            bridge.set_slice(target_slice)
+            if target_slice != current_slice:
+                bridge.apply_default_window_level(target_slice)
+                bridge.set_slice(target_slice)
             self.last_series_show = series_index
             self._sync_progressive_available_after_switch()
             self._sync_qt_viewer_presentation(refit_view=False)

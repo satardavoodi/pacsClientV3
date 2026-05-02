@@ -81,14 +81,14 @@ def _env_positive_int(name: str, default: int) -> int:
 # Per-entry cost (typical 512×512):
 #   pixel_cache: ~0.5 MB (int16/uint16) → 192 entries ≈ 96 MB per viewer
 #   frame_cache: ~0.25 MB (uint8 QImage) → 192 entries ≈ 48 MB per viewer
-# Peak adaptive (per viewer):
-#   384 × (0.5 + 0.25) ≈ 288 MB. A 2×2 layout at peak ≈ 1.15 GB worst case.
+# Peak adaptive (per viewer, default cap 512):
+#   512 × (0.5 + 0.25) ≈ 384 MB. A 2×2 layout at peak ≈ 1.5 GB worst case.
 # Env overrides: AIPACS_PIXEL_CACHE_SIZE, AIPACS_FRAME_CACHE_SIZE,
 # AIPACS_ADAPTIVE_CACHE_MAX. Values ≤0 or unset fall back to defaults.
 _DEFAULT_PIXEL_CACHE_SIZE = _env_positive_int("AIPACS_PIXEL_CACHE_SIZE", 192)
 _DEFAULT_FRAME_CACHE_SIZE = _env_positive_int("AIPACS_FRAME_CACHE_SIZE", 192)
 _DEFAULT_ADAPTIVE_CACHE_MAX_SIZE = _env_positive_int(
-    "AIPACS_ADAPTIVE_CACHE_MAX", 384
+    "AIPACS_ADAPTIVE_CACHE_MAX", 512
 )
 _DRAG_START_WARM_RADIUS = 2
 _DRAG_STEADY_PREFETCH_RADIUS = 1
@@ -345,6 +345,8 @@ class Lightweight2DPipeline(QObject):
         # Caches (LRU via OrderedDict)
         self._pixel_cache: "OrderedDict[int, np.ndarray]" = OrderedDict()
         self._frame_cache: "OrderedDict[Tuple[int, float, float, bool], QImage]" = OrderedDict()
+        self._geometry_cache_signature: Optional[Tuple[str, ...]] = None
+        self._geometry_cache: Dict[str, Any] = {}
 
         # Prefetch
         self._prefetch_pending: set = set()
@@ -462,6 +464,7 @@ class Lightweight2DPipeline(QObject):
 
         self._slices = self._sort_slices(self._slices)
         self._attach_spacing_between_slices()
+        self._invalidate_geometry_cache()
         self._current_index = 0
         self._is_open = True
 
@@ -494,6 +497,7 @@ class Lightweight2DPipeline(QObject):
             self._prefetch_request_epoch += 1
             self._active_prefetch_targets.clear()
         self._slices.clear()
+        self._invalidate_geometry_cache()
         self._current_index = 0
         self._window = None
         self._level = None
@@ -651,7 +655,15 @@ class Lightweight2DPipeline(QObject):
         """
         if not self._series_path:
             return len(self._slices)
-        existing_paths = {s.path for s in self._slices}
+        old_slices = list(self._slices)
+        old_count = len(old_slices)
+        old_current_index = self._current_index
+        old_current_path = (
+            old_slices[old_current_index].path
+            if 0 <= old_current_index < old_count
+            else None
+        )
+        existing_paths = {s.path for s in old_slices}
         new_entries = scan_series_header_entries(
             self._series_path,
             existing_paths=existing_paths,
@@ -662,17 +674,80 @@ class Lightweight2DPipeline(QObject):
         new_slices = [self._slice_meta_from_entry(entry) for entry in new_entries]
 
         if new_slices:
+            old_pixel_cache_size = len(self._pixel_cache)
+            old_frame_cache_size = len(self._frame_cache)
             self._slices.extend(new_slices)
             self._slices = self._sort_slices(self._slices)
-            # Invalidate rendered-frame cache so new slices get fresh frames;
-            # pixel cache is keyed by path so existing decoded pixels are kept.
-            self._frame_cache.clear()
+            self._remap_indexed_caches_after_resort(old_slices)
+            if old_current_path is not None:
+                new_index_by_path = {s.path: i for i, s in enumerate(self._slices)}
+                self._current_index = self._clamp(
+                    new_index_by_path.get(old_current_path, old_current_index)
+                )
+            self._invalidate_geometry_cache()
             self._prune_caches_to_effective_limits()
-            logger.debug(
-                "lw2d-pipeline refresh_file_list: +%d files total=%d path=%s",
-                len(new_slices), len(self._slices), self._series_path,
+            logger.info(
+                "FAST:additive_cache_grow path=%s old_count=%d new_count=%d "
+                "added=%d current_before=%d current_after=%d "
+                "pixel_preserved=%d/%d frame_preserved=%d/%d",
+                self._series_path,
+                old_count,
+                len(self._slices),
+                len(new_slices),
+                old_current_index,
+                self._current_index,
+                len(self._pixel_cache),
+                old_pixel_cache_size,
+                len(self._frame_cache),
+                old_frame_cache_size,
             )
         return len(self._slices)
+
+    def _remap_indexed_caches_after_resort(self, old_slices: Sequence[SliceMeta]) -> None:
+        """Preserve index-keyed caches across additive growth and sorting.
+
+        FAST caches are keyed by slice index for hot-path speed.  Progressive
+        downloads can append files and then re-sort by DICOM order, so old index
+        keys may no longer point at the same image.  Remap by file path and drop
+        only entries whose source slice is no longer present.
+        """
+        old_path_by_index = {i: s.path for i, s in enumerate(old_slices)}
+        new_index_by_path = {s.path: i for i, s in enumerate(self._slices)}
+
+        remapped_pixels: "OrderedDict[int, np.ndarray]" = OrderedDict()
+        for old_idx, arr in self._pixel_cache.items():
+            path = old_path_by_index.get(int(old_idx))
+            if path is None:
+                continue
+            new_idx = new_index_by_path.get(path)
+            if new_idx is None:
+                continue
+            remapped_pixels[int(new_idx)] = arr
+        self._pixel_cache = remapped_pixels
+
+        remapped_frames: "OrderedDict[Tuple[int, float, float, bool], QImage]" = OrderedDict()
+        for key, image in self._frame_cache.items():
+            if not key:
+                continue
+            old_idx = int(key[0])
+            path = old_path_by_index.get(old_idx)
+            if path is None:
+                continue
+            new_idx = new_index_by_path.get(path)
+            if new_idx is None:
+                continue
+            remapped_frames[(int(new_idx), *key[1:])] = image
+        self._frame_cache = remapped_frames
+
+        remapped_filter_first = set()
+        for old_idx in self._filter_first_slices:
+            path = old_path_by_index.get(int(old_idx))
+            if path is None:
+                continue
+            new_idx = new_index_by_path.get(path)
+            if new_idx is not None:
+                remapped_filter_first.add(int(new_idx))
+        self._filter_first_slices = remapped_filter_first
 
     def set_window_level(
         self,
@@ -740,6 +815,88 @@ class Lightweight2DPipeline(QObject):
             cols=sm.cols,
         )
 
+    def _invalidate_geometry_cache(self) -> None:
+        self._geometry_cache_signature = None
+        self._geometry_cache.clear()
+
+    def _geometry_signature(self) -> Tuple[str, ...]:
+        return tuple(
+            "|".join(
+                (
+                    str(s.path),
+                    repr(tuple(float(v) for v in s.ipp)),
+                    repr(tuple(float(v) for v in s.iop)),
+                    repr(tuple(float(v) for v in s.pixel_spacing)),
+                    str(int(s.rows or 0)),
+                    str(int(s.cols or 0)),
+                )
+            )
+            for s in self._slices
+        )
+
+    def _ensure_geometry_cache(self) -> Dict[str, Any]:
+        signature = self._geometry_signature()
+        if self._geometry_cache_signature != signature:
+            self._geometry_cache_signature = signature
+            self._geometry_cache = {}
+        return self._geometry_cache
+
+    def get_cached_slice_basis(self, slice_index: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, float, float]:
+        """Return cached row/column/IPP vectors and pixel spacing for one slice."""
+        idx = self._clamp(slice_index)
+        cache = self._ensure_geometry_cache()
+        basis_cache = cache.setdefault("basis", {})
+        basis = basis_cache.get(idx)
+        if basis is not None:
+            return basis
+        sm = self._slices[idx]
+        basis = (
+            np.asarray(sm.iop[0:3], dtype=np.float64),
+            np.asarray(sm.iop[3:6], dtype=np.float64),
+            np.asarray(sm.ipp, dtype=np.float64),
+            float(sm.pixel_spacing[1]) or 1.0,
+            float(sm.pixel_spacing[0]) or 1.0,
+        )
+        basis_cache[idx] = basis
+        return basis
+
+    def get_cached_slice_normal(self) -> Optional[np.ndarray]:
+        """Return the cached stack normal derived from the first slice IOP."""
+        if not self._slices:
+            return None
+        cache = self._ensure_geometry_cache()
+        if "slice_normal" in cache:
+            return cache["slice_normal"]
+        row = np.asarray(self._slices[0].iop[0:3], dtype=np.float64)
+        col = np.asarray(self._slices[0].iop[3:6], dtype=np.float64)
+        normal = np.cross(row, col)
+        norm = float(np.linalg.norm(normal))
+        if norm <= 1e-9:
+            cache["slice_normal"] = None
+            return None
+        normal = normal / norm
+        cache["slice_normal"] = normal
+        return normal
+
+    def get_cached_slice_positions(self) -> Optional[List[float]]:
+        """Return cached slice positions along the stack normal."""
+        if not self._slices:
+            return None
+        cache = self._ensure_geometry_cache()
+        if "slice_positions" in cache:
+            return cache["slice_positions"]
+        normal = self.get_cached_slice_normal()
+        if normal is None:
+            cache["slice_positions"] = None
+            return None
+        ipp0 = np.asarray(self._slices[0].ipp, dtype=np.float64)
+        positions = [
+            float(np.dot(np.asarray(sm.ipp, dtype=np.float64) - ipp0, normal))
+            for sm in self._slices
+        ]
+        cache["slice_positions"] = positions
+        return positions
+
     def get_slice_meta(self, slice_index: int) -> SliceMeta:
         return self._slices[self._clamp(slice_index)]
 
@@ -754,24 +911,15 @@ class Lightweight2DPipeline(QObject):
     def image_xy_to_patient_xyz(
         self, x: float, y: float, slice_index: int
     ) -> Tuple[float, float, float]:
-        sm = self._slices[self._clamp(slice_index)]
-        row = np.asarray(sm.iop[0:3], dtype=np.float64)
-        col = np.asarray(sm.iop[3:6], dtype=np.float64)
-        ipp = np.asarray(sm.ipp, dtype=np.float64)
-        sx, sy = float(sm.pixel_spacing[1]), float(sm.pixel_spacing[0])
+        row, col, ipp, sx, sy = self.get_cached_slice_basis(slice_index)
         p = ipp + float(x) * sx * row + float(y) * sy * col
         return float(p[0]), float(p[1]), float(p[2])
 
     def patient_xyz_to_image_xy(
         self, xyz: Tuple[float, float, float], slice_index: int
     ) -> Tuple[float, float]:
-        sm = self._slices[self._clamp(slice_index)]
-        row = np.asarray(sm.iop[0:3], dtype=np.float64)
-        col = np.asarray(sm.iop[3:6], dtype=np.float64)
-        ipp = np.asarray(sm.ipp, dtype=np.float64)
+        row, col, ipp, sx, sy = self.get_cached_slice_basis(slice_index)
         d = np.asarray(xyz, dtype=np.float64) - ipp
-        sx = float(sm.pixel_spacing[1]) or 1.0
-        sy = float(sm.pixel_spacing[0]) or 1.0
         return float(np.dot(d, row) / sx), float(np.dot(d, col) / sy)
 
     def get_rendered_frame(self, slice_index: int, *, interaction_type: str = '') -> RenderedFrame:
@@ -2090,9 +2238,9 @@ class Lightweight2DPipeline(QObject):
         # in flight. Cancellations bump `cancelled_task` for KPI parity
         # with the post-decode counters.
         with self._prefetch_lock:
-            current_gen = self._prefetch_generation
-            active_epoch = self._prefetch_request_epoch
-            active_target_hit = idx in self._active_prefetch_targets
+            current_gen = int(getattr(self, "_prefetch_generation", 0) or 0)
+            active_epoch = int(getattr(self, "_prefetch_request_epoch", 0) or 0)
+            active_target_hit = idx in getattr(self, "_active_prefetch_targets", set())
         if generation > 0 and generation != current_gen:
             PerfMetrics.get().record_cancelled_task()
             return

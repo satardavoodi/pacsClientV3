@@ -12,6 +12,12 @@ from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_switch as _vc_switch_m
 from PacsClient.pacs.patient_tab.ui.patient_ui import _vc_warmup as _vc_warmup_mod
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core import _pw_metadata as _pw_metadata_mod
 from PacsClient.pacs.patient_tab.utils import image_io as image_io_mod
+from PySide6.QtGui import QImage
+import numpy as np
+
+from modules.viewer.fast.dicom_header_scan import DicomHeaderEntry
+from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline, PipelineConfig, SliceMeta
+from modules.viewer.fast.qt_viewer_bridge import QtViewerBridge
 
 
 class _DummyVtkImage:
@@ -20,6 +26,57 @@ class _DummyVtkImage:
 
     def GetDimensions(self):
         return self._dims
+
+    def _set_dims(self, dims):
+        self._dims = dims
+
+
+def _slice_meta(path, instance_number, z=None):
+    z_pos = float(instance_number if z is None else z)
+    return SliceMeta(
+        path=str(path),
+        rows=2,
+        cols=2,
+        pixel_spacing=(1.0, 1.0),
+        iop=(1.0, 0.0, 0.0, 0.0, 1.0, 0.0),
+        ipp=(0.0, 0.0, z_pos),
+        slice_thickness=1.0,
+        spacing_between_slices=1.0,
+        photometric="MONOCHROME2",
+        bits_allocated=16,
+        pixel_representation=1,
+        samples_per_pixel=1,
+        window_width=400.0,
+        window_center=40.0,
+        slope=1.0,
+        intercept=0.0,
+        instance_number=int(instance_number),
+        is_rgb=False,
+    )
+
+
+def _header_entry(path, instance_number, z=None):
+    sm = _slice_meta(path, instance_number, z=z)
+    return DicomHeaderEntry(
+        path=sm.path,
+        rows=sm.rows,
+        cols=sm.cols,
+        pixel_spacing=sm.pixel_spacing,
+        iop=sm.iop,
+        ipp=sm.ipp,
+        slice_thickness=sm.slice_thickness,
+        spacing_between_slices=sm.spacing_between_slices,
+        photometric=sm.photometric,
+        bits_allocated=sm.bits_allocated,
+        pixel_representation=sm.pixel_representation,
+        samples_per_pixel=sm.samples_per_pixel,
+        window_width=sm.window_width,
+        window_center=sm.window_center,
+        slope=sm.slope,
+        intercept=sm.intercept,
+        instance_number=sm.instance_number,
+        is_rgb=sm.is_rgb,
+    )
 
 
 def _build_controller():
@@ -51,6 +108,106 @@ def _build_controller():
     )
     controller._get_series_expected_slices = lambda sn: 0
     return controller
+
+
+def test_lightweight_refresh_file_list_preserves_caches_by_slice_identity(monkeypatch, tmp_path):
+    pipeline = Lightweight2DPipeline(
+        PipelineConfig(pixel_cache_size=10, frame_cache_size=10, adaptive_cache_sizing=False)
+    )
+    pipeline._series_path = str(tmp_path)
+    pipeline._is_open = True
+    old_a = _slice_meta(tmp_path / "a.dcm", 10, z=10)
+    old_c = _slice_meta(tmp_path / "c.dcm", 30, z=30)
+    pipeline._slices = [old_a, old_c]
+    pipeline._current_index = 1
+    pipeline._pixel_cache[0] = np.array([[10]], dtype=np.int16)
+    pipeline._pixel_cache[1] = np.array([[30]], dtype=np.int16)
+    frame_key = pipeline._frame_cache_key(1, 400.0, 40.0, True)
+    frame = QImage(1, 1, QImage.Format.Format_Grayscale8)
+    pipeline._frame_cache[frame_key] = frame
+    pipeline._filter_first_slices.add(1)
+
+    monkeypatch.setattr(
+        "modules.viewer.fast.lightweight_2d_pipeline.scan_series_header_entries",
+        lambda *args, **kwargs: [_header_entry(tmp_path / "b.dcm", 20, z=20)],
+    )
+
+    assert pipeline.refresh_file_list() == 3
+
+    assert [s.path for s in pipeline._slices] == [
+        str(tmp_path / "a.dcm"),
+        str(tmp_path / "b.dcm"),
+        str(tmp_path / "c.dcm"),
+    ]
+    assert pipeline._current_index == 2
+    assert list(pipeline._pixel_cache.keys()) == [0, 2]
+    assert pipeline._pixel_cache[2][0, 0] == 30
+    assert list(pipeline._frame_cache.keys()) == [
+        pipeline._frame_cache_key(2, 400.0, 40.0, True)
+    ]
+    assert pipeline._frame_cache[pipeline._frame_cache_key(2, 400.0, 40.0, True)] is frame
+    assert pipeline._filter_first_slices == {2}
+
+
+def test_qt_bridge_grow_updates_count_without_calling_set_slice(monkeypatch):
+    class _Pipeline:
+        current_index = 20
+
+        def __init__(self):
+            self.refresh_calls = 0
+
+        def refresh_file_list(self):
+            self.refresh_calls += 1
+            return 25
+
+        def set_slice_index(self, index):
+            raise AssertionError("growth must not navigate via set_slice_index")
+
+    class _QtViewer:
+        def __init__(self):
+            self._current_slice_index = 20
+
+        def set_total_slices_hint(self, count):
+            self.total_hint = count
+
+    bridge = SimpleNamespace(
+        pipeline=_Pipeline(),
+        _slice_count=20,
+        _current_slice=20,
+        qt_viewer=_QtViewer(),
+        vtk_widget=None,
+        vtk_image_data=_DummyVtkImage((2, 2, 20)),
+        _sync_interaction_slice_count_hint=lambda: 25,
+    )
+
+    assert QtViewerBridge.grow(bridge) == 25
+    assert bridge._slice_count == 25
+    assert bridge._current_slice == 20
+    assert bridge.qt_viewer._current_slice_index == 20
+    assert bridge.vtk_image_data.GetDimensions() == (2, 2, 25)
+
+
+def test_lightweight_geometry_cache_reuses_basis_until_metadata_changes():
+    pipeline = Lightweight2DPipeline(PipelineConfig(adaptive_cache_sizing=False))
+    pipeline._slices = [
+        _slice_meta("a.dcm", 1, z=1),
+        _slice_meta("b.dcm", 2, z=2),
+    ]
+
+    basis_first = pipeline.get_cached_slice_basis(1)
+    basis_second = pipeline.get_cached_slice_basis(1)
+    positions_first = pipeline.get_cached_slice_positions()
+    positions_second = pipeline.get_cached_slice_positions()
+
+    assert basis_first is basis_second
+    assert positions_first is positions_second
+    assert positions_first == [0.0, 1.0]
+
+    pipeline._slices.append(_slice_meta("c.dcm", 3, z=3))
+    positions_after_growth = pipeline.get_cached_slice_positions()
+
+    assert positions_after_growth == [0.0, 1.0, 2.0]
+    assert positions_after_growth is not positions_first
 
 
 def test_apply_loaded_series_data_rehydrates_parent_cache_without_refresh(tmp_path):

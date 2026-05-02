@@ -93,10 +93,21 @@ def log_stage_timing(
     extra = {"component": component, "function": function, "stage": stage, "result": result}
     extra.update({k: v for k, v in fields.items() if v is not None})
     suffix = _format_timing_fields(fields)
+    log_fn = getattr(logger_, "log", None)
+    if log_fn is None:
+        log_fn = getattr(logger_, "info", None)
+    if log_fn is None:
+        return elapsed_ms
     if suffix:
-        logger_.log(level, "stage-timing duration_ms=%.2f %s", elapsed_ms, suffix, extra=extra)
+        try:
+            log_fn(level, "stage-timing duration_ms=%.2f %s", elapsed_ms, suffix, extra=extra)
+        except TypeError:
+            log_fn("stage-timing duration_ms=%.2f %s", elapsed_ms, suffix)
     else:
-        logger_.log(level, "stage-timing duration_ms=%.2f", elapsed_ms, extra=extra)
+        try:
+            log_fn(level, "stage-timing duration_ms=%.2f", elapsed_ms, extra=extra)
+        except TypeError:
+            log_fn("stage-timing duration_ms=%.2f", elapsed_ms)
     return elapsed_ms
 
 

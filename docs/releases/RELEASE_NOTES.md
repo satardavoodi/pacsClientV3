@@ -1,8 +1,32 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.4.6 (2026-04-26)
-**Release Date:** 2026-04-26
-**Branch:** main
+**Current Stable Version:** v2.4.7c (2026-05-02)
+**Release Date:** 2026-05-02
+**Branch:** matab-conservative
+
+---
+
+## v2.4.7c (2026-05-02) — Conservative FAST additive cache growth
+
+### Summary
+
+Conservative FAST-mode cache stabilization release.  Progressive download growth
+now preserves compatible pixel/frame cache entries instead of clearing the whole
+FAST cache, keeps current-slice ownership stable during additive growth, and
+adds reusable geometry metadata caching for active FAST viewers.
+Full details in [`VERSION_2.4.7c_RELEASE.md`](VERSION_2.4.7c_RELEASE.md).
+
+### Fixes
+
+- **Additive cache growth** — new downloaded slices are appended and sorted while
+  existing cache entries are remapped by slice file identity.
+- **Stable current slice** — additive growth updates availability and slice count
+  without forcing `set_slice()` or resetting the viewer position.
+- **Geometry metadata cache** — repeated sync/reference-line geometry work can
+  reuse cached basis vectors, stack normal, and slice positions.
+- **Stacking jitter analysis** — documented that small stack-drag twitches are
+  most likely caused by drag-time surrogate frames at cache edges, not by
+  additive growth or `setSlice`.
 
 ---
 
