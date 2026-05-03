@@ -111,6 +111,61 @@ Do not substitute:
   - `builder/output/installer/SHA256.txt`
 - Run installer validation using `builder/docs/INSTALLER_QA_CHECKLIST.md`
 
+### Source / Plugin / Dist parity gate (must pass)
+
+For every runtime-critical code fix, verify the same behavior in:
+
+- `modules/...` (source)
+- `builder/plugin package/packages/.../payload/python/modules/...` (plugin payload)
+- `builder/output/dist/AIPacs/engine/modules/...` (built dist)
+
+Minimum acceptance:
+- No stale logic in plugin payload that would override source behavior in production.
+- No stale logic in built dist that differs from source on the shipped release.
+
+### FAST clinical consistency gate (must pass)
+
+For FAST viewer release candidates, confirm all three states produce consistent clinical appearance:
+
+1. wheel stacking
+2. drag stacking
+3. settled (post interaction)
+
+Acceptance:
+- Filtered output must not switch appearance between drag/wheel/settled for the same slice and window/level.
+- Sync/reference-line slice selection must remain physically consistent while stacking.
+
+### Advanced MPR startup-script compatibility gate (must pass)
+
+Run this check on the target PC after install (or after module re-install):
+
+```powershell
+$markers = @('_REMOTE_SERVER_STARTED','NEWMPR2_REMOTE_PORT','start_remote_command_server')
+$roots = @(
+  "$env:LOCALAPPDATA\AIPacs\modules_runtime\advanced_mpr",
+  "$env:ProgramData\AIPacs\module_packages\advanced_mpr\payload"
+)
+foreach ($root in $roots) {
+  Write-Host "\nROOT $root"
+  $candidates = @(
+    (Join-Path $root "bin\Python\startup_script.py"),
+    (Join-Path $root "python\modules\mpr\advanced_3d_slicer\slicer_custom_app\startup_script.py")
+  )
+  foreach ($path in $candidates) {
+    if (Test-Path $path) {
+      $text = Get-Content -Path $path -Raw -ErrorAction SilentlyContinue
+      $missing = @($markers | Where-Object { $text -notmatch [regex]::Escape($_) })
+      Write-Host "  $path"
+      Write-Host "    missing markers: $($missing -join ', ')"
+    }
+  }
+}
+```
+
+Acceptance rule:
+- At least one startup script path per installed runtime root must contain all markers.
+- If both paths miss markers, treat as release blocker for Advanced MPR.
+
 ### Build log scan (no real errors expected)
 ```powershell
 Select-String -Path "builder\output\build_v*.log" -Pattern "ModuleNotFoundError|No module named|Failed to collect" | ForEach-Object { $_.Line.Trim() } | Sort-Object -Unique

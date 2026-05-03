@@ -1,27 +1,27 @@
 {
-    "format_version":  1,
-    "app_name":  "AIPacs",
-    "module_id":  "advanced_mpr",
-    "title":  "Advanced MPR",
-    "tier":  "optional",
-    "version":  "2.4.7",
-    "package_kind":  "runtime_payload",
-    "payload_dir":  "",
-    "python_paths":  [
-
-                     ],
-    "requires_restart":  true,
-    "healthcheck_import":  "",
-    "healthcheck_path":  "AIPacsAdvancedViewer.exe",
-    "integration_points":  [
-                               "patient.advanced_mpr_launcher",
-                               "external.runtime"
-                           ],
-    "install_channels":  [
-                             "installer",
-                             "settings",
-                             "store"
-                         ],
-    "sdk_entrypoint_group":  "aipacs.plugins",
-    "sdk_entrypoint_name":  "advanced_mpr"
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "advanced_mpr",
+  "title": "Advanced MPR",
+  "tier": "optional",
+  "version": "2.4.8c",
+  "package_kind": "runtime_payload",
+  "payload_dir": "payload",
+  "python_paths": [
+    "python"
+  ],
+  "requires_restart": true,
+  "healthcheck_import": "",
+  "healthcheck_path": "AIPacsAdvancedViewer.exe",
+  "integration_points": [
+    "patient.advanced_mpr_launcher",
+    "external.runtime"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "advanced_mpr"
 }

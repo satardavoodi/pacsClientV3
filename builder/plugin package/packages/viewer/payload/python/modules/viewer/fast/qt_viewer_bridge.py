@@ -1000,11 +1000,15 @@ class QtViewerBridge:
             instances = self.metadata.get("instances") or []
             if not instances:
                 return None
+            # FAST sync must remain on the FAST DICOM geometry path only.
+            # Metadata instances may be geometry-sorted for sync/reference-line,
+            # so do not mix pipeline-cache ordering here.
             iop = instances[0].get('image_orientation_patient')
             n_t = compute_slice_normal(iop)
             if n_t is None:
                 return None
             positions = compute_slice_positions(instances, n_t)
+
             k, _d_src, _min_dist = find_closest_slice_physical(
                 np.asarray(patient_lps, dtype=float), instances, n_t,
                 positions=positions
@@ -1130,14 +1134,27 @@ class QtViewerBridge:
             return self._slice_count
 
         if new_count > self._slice_count:
+            old_slice = self._current_slice
             self._slice_count = new_count
+            try:
+                pipeline_index = int(getattr(self.pipeline, "current_index", old_slice))
+            except Exception:
+                pipeline_index = old_slice
+            target_slice = max(0, min(pipeline_index, max(0, self._slice_count - 1)))
+            self._current_slice = target_slice
+            self.qt_viewer._current_slice_index = target_slice
             self._sync_interaction_slice_count_hint()
             # Update mock vtk_image_data slice dimension so callers that
             # inspect GetDimensions() see the correct z-count.
             if self.vtk_image_data is not None:
                 dims = self.vtk_image_data.GetDimensions()
                 self.vtk_image_data._dims = (dims[0], dims[1], new_count)
-            logger.debug("qt-viewer-bridge grow: %d slices", new_count)
+            logger.info(
+                "qt-viewer-bridge additive grow: slices=%d current_before=%d current_after=%d",
+                new_count,
+                old_slice,
+                target_slice,
+            )
         return self._slice_count
 
     # ── Curved MPR stubs ───────────────────────────────────────────────

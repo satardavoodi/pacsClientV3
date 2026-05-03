@@ -1,25 +1,23 @@
 {
-    "format_version":  1,
-    "app_name":  "AIPacs",
-    "module_id":  "viewer",
-    "title":  "Viewer",
-    "tier":  "basic",
-    "version":  "2.4.7",
-    "package_kind":  "core",
-    "payload_dir":  "payload",
-    "python_paths":  [
-
-                     ],
-    "requires_restart":  true,
-    "healthcheck_import":  "",
-    "healthcheck_path":  "",
-    "integration_points":  [
-                               "patient.viewer_surface",
-                               "viewer.backends"
-                           ],
-    "install_channels":  [
-                             "core_bundle"
-                         ],
-    "sdk_entrypoint_group":  "aipacs.plugins",
-    "sdk_entrypoint_name":  "viewer"
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "viewer",
+  "title": "Viewer",
+  "tier": "basic",
+  "version": "2.4.8c",
+  "package_kind": "core",
+  "payload_dir": "payload",
+  "python_paths": [],
+  "requires_restart": true,
+  "healthcheck_import": "",
+  "healthcheck_path": "",
+  "integration_points": [
+    "patient.viewer_surface",
+    "viewer.backends"
+  ],
+  "install_channels": [
+    "core_bundle"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "viewer"
 }

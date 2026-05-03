@@ -157,6 +157,17 @@ a = Analysis(
     ],
     excludes=excludes,
     noarchive=False,
+    # Fix for namespace-package shadowing: data files for
+    # modules.mpr.advanced_3d_slicer.slicer_custom_app are bundled to
+    # engine/modules/mpr/advanced_3d_slicer/... which creates an on-disk
+    # namespace `modules.mpr` that shadows the PYZ-frozen package at runtime,
+    # making `from modules.mpr.curved_mpr...` raise ModuleNotFoundError.
+    # Forcing `pyz+py` for the `modules` package collects every submodule
+    # source onto disk under engine/modules/, so the on-disk tree is a real
+    # (regular) package matching every PYZ entry. This MUST be a constructor
+    # argument — assigning to `a.module_collection_mode` after Analysis()
+    # is too late because graph assembly happens in __init__.
+    module_collection_mode={"modules": "pyz+py"},
 )
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)

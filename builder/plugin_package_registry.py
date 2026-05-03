@@ -115,6 +115,20 @@ def _normalize_definition(payload: dict[str, Any], path: Path) -> dict[str, Any]
         source = PROJECT_ROOT / relative
         if not source.exists():
             raise FileNotFoundError(f"Plugin package source path does not exist: {source}")
+        # Guard: source_paths must never point directly at an __init__.py file.
+        # Including an __init__.py converts a namespace package into a regular package
+        # in the plugin payload, which can shadow the engine's complete package tree
+        # and make engine subpackages unreachable (the R24 / advanced_mpr crash pattern).
+        # Always specify the containing DIRECTORY instead of individual __init__.py files.
+        if Path(relative).name == "__init__.py":
+            raise ValueError(
+                f"Plugin '{definition['module_id']}': source_paths must not reference an "
+                f"__init__.py file directly: '{relative}'\n"
+                f"Include the package DIRECTORY instead (e.g. 'modules/mpr/advanced_3d_slicer'). "
+                f"Shipping an __init__.py from a package that also exists in the engine bundle "
+                f"creates a partial namespace shadow and causes ModuleNotFoundError at runtime. "
+                f"See R24 in copilot-instructions.md."
+            )
     return definition
 
 

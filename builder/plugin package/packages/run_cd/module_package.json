@@ -1,27 +1,27 @@
 {
-    "format_version":  1,
-    "app_name":  "AIPacs",
-    "module_id":  "run_cd",
-    "title":  "Run CD Module",
-    "tier":  "optional",
-    "version":  "2.4.7",
-    "package_kind":  "bundled_unlock",
-    "payload_dir":  "payload",
-    "python_paths":  [
-                         "python"
-                     ],
-    "requires_restart":  true,
-    "healthcheck_import":  "modules.cd_burner.cd_burn_dialog",
-    "healthcheck_path":  "",
-    "integration_points":  [
-                               "home.cd_burn_action",
-                               "settings.lightviewer_tab"
-                           ],
-    "install_channels":  [
-                             "installer",
-                             "settings",
-                             "store"
-                         ],
-    "sdk_entrypoint_group":  "aipacs.plugins",
-    "sdk_entrypoint_name":  "run_cd"
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "run_cd",
+  "title": "Run CD Module",
+  "tier": "optional",
+  "version": "2.4.8c",
+  "package_kind": "bundled_unlock",
+  "payload_dir": "payload",
+  "python_paths": [
+    "python"
+  ],
+  "requires_restart": true,
+  "healthcheck_import": "modules.cd_burner.cd_burn_dialog",
+  "healthcheck_path": "",
+  "integration_points": [
+    "home.cd_burn_action",
+    "settings.lightviewer_tab"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "run_cd"
 }

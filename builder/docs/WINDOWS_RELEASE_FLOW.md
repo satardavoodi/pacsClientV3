@@ -259,6 +259,31 @@ The Advanced MPR module is treated as an external runtime, not ordinary Python f
 python tools/slicer/assemble_slicer_runtime.py
 ```
 
+### Release Guardrails (Do Not Skip)
+
+1. Plugin namespace-shadow guard (R24)
+- `source_paths` in plugin definitions must never point to `__init__.py` files.
+- Build/materialize shadow checks must stay enabled:
+  - `builder/materialize_plugin_packages.py::_validate_plugin_no_namespace_shadow`
+  - `builder/build_release.py::_validate_staged_plugin_no_namespace_shadow`
+- Runtime plugin Python paths must be appended, never prepended.
+
+2. Advanced MPR startup-script compatibility gate
+- Validate both startup script locations, not just one:
+  - `payload/bin/Python/startup_script.py`
+  - `payload/python/modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py`
+- Required markers:
+  - `_REMOTE_SERVER_STARTED`
+  - `NEWMPR2_REMOTE_PORT`
+  - `start_remote_command_server`
+- Launcher readiness checks must pass when at least one path is compatible.
+- Do not block launch solely because the legacy `bin/Python/startup_script.py`
+  is stale if the plugin Python startup script is current.
+
+3. Build env required every run
+- `AIPACS_ALLOW_MISSING_ADVANCED_MPR=1` (only when intentionally allowing missing runtime)
+- `PYTHONUTF8=1`
+
 ## Verification Checklist
 
 After a release run:

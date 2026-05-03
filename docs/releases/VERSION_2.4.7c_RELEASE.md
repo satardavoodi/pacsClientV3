@@ -65,13 +65,17 @@ Less likely sources after v2.4.7c:
 Handling policy:
 - Keep wheel scrolling exact; wheel precision browsing never uses surrogate
   frames.
-- Keep drag surrogate support for responsiveness, but treat surrogate distance
-  and repeat count as the jitter control knobs.
-- If live validation still shows objectionable jitter, the next conservative
-  change should be to tighten drag surrogate admission near cache edges, for
-  example by allowing only distance-1 surrogates by default and forcing exact
-  decode after the first repeated surrogate.  This should be guarded by tests
-  and KPIs rather than changed blindly.
+- Keep drag surrogate support for responsiveness, but bound visible surrogate
+  use with a fidelity guard.
+- Terminal slices force exact rendering during drag so the last slice does not
+  wait for mouse release to appear.
+- Far cached substitutes fall through to exact decode instead of being displayed
+  as the requested slice.
+- Repeated reuse of the same non-near surrogate breaks to exact decode sooner,
+  reducing large-stack "one slice behind" behavior while preserving
+  near-neighbor smoothness.
+- Overlap diagnostics include `source_idx` and `source_dist` to make future log
+  reviews distinguish requested slice from displayed source slice.
 
 ## Verification
 
@@ -81,6 +85,8 @@ Validated with internal tests:
 - `.venv\Scripts\python.exe -m pytest tests\viewer\test_fast_viewer_pipeline.py tests\viewer\test_fast_viewer_reset_slider.py`
 - `.venv\Scripts\python.exe -m pytest tests\viewer\test_dragdrop_progressive.py`
 - `.venv\Scripts\python.exe -m pytest tests\fast\test_sync_reference_line_geometry.py tests\fast\test_sync_sparse_stack.py tests\fast_viewer\test_reference_lines.py tests\fast_viewer\test_geometry_coordinates.py`
+- `.venv\Scripts\python.exe -m pytest tests\viewer\test_fast_viewer_pipeline.py -k "surrogate or b41"`
+- `.venv\Scripts\python.exe -m pytest tests\viewer\test_overlap_pixel_quality_drag.py tests\viewer\test_stack_cache_profile.py`
 
 Results:
 - FAST pipeline/reset-slider: `166 passed`

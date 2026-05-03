@@ -67,6 +67,64 @@ Typical commands:
 - Do not mix `builder/` flags with `builder nuitka/` commands.
 - Do not write PyInstaller troubleshooting into the Nuitka plan, and do not write Nuitka recovery steps into the PyInstaller build document unless explicitly cross-referencing the other build system.
 
+## Current Python Build Structure (v2.4.8c)
+
+The production release contract for the Python/PyInstaller chain is:
+
+1. Source of truth
+- Version from `pyproject.toml` only.
+- Build orchestration from `builder/build_release.py`.
+
+2. Bundle layout
+- `builder/output/dist/AIPacs/AIPacs.exe`
+- `builder/output/dist/AIPacs/engine/` (PyInstaller runtime payload)
+
+3. Staging/layout outputs
+- `builder/output/stage/`
+- `builder/output/packages/`
+- `builder/output/updates/`
+
+4. Installer outputs
+- `builder/output/installer/ai-pacs installer.exe`
+- `builder/output/installer/ai-pacs installer v<version>.exe`
+
+5. Optional module payloads
+- Built from `builder/plugin package/definitions/*/plugin_package.json`
+- Materialized to `builder/plugin package/packages/*`
+- Installed runtime roots under ProgramData and LocalAppData must satisfy runtime marker checks.
+
+## No-Regression Release Gates (Mandatory)
+
+Before marking any release complete, pass all gates below.
+
+1. Builder chain gate
+- Run PyInstaller chain only for Python release builds.
+- Do not substitute Nuitka commands or flags.
+
+2. Runtime marker gate (Advanced MPR)
+- Required markers in at least one startup script candidate per runtime root:
+  - `_REMOTE_SERVER_STARTED`
+  - `NEWMPR2_REMOTE_PORT`
+  - `start_remote_command_server`
+
+3. Source/mirror/dist parity gate
+- For every changed runtime-sensitive module, verify parity across:
+  - source (`modules/...`)
+  - plugin payload mirror (`builder/plugin package/packages/.../payload/python/modules/...`)
+  - built dist (`builder/output/dist/AIPacs/engine/modules/...`)
+
+4. Post-install runtime gate
+- Validate installed launch-critical files under:
+  - `C:/Program Files/AIPacs/engine/...`
+  - `C:/ProgramData/AIPacs/module_packages/...`
+  - `%LOCALAPPDATA%/AIPacs/modules_runtime/...`
+
+5. Clinical-view consistency gate (FAST viewer)
+- During wheel and drag stack interaction, filtered appearance must match settled appearance.
+- Sync/reference-line slice selection must reuse cached geometry when available.
+
+If any gate fails, treat the release as blocked.
+
 ## Regression Guardrails (v2.4.7)
 
 The stable reference for build structure is the v2.4.6 backup snapshot under `backups/v2.4.6_2026-04-27_081245_full/`.

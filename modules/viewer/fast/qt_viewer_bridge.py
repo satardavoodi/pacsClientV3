@@ -1000,11 +1000,15 @@ class QtViewerBridge:
             instances = self.metadata.get("instances") or []
             if not instances:
                 return None
+            # FAST sync must remain on the FAST DICOM geometry path only.
+            # Metadata instances may be geometry-sorted for sync/reference-line,
+            # so do not mix pipeline-cache ordering here.
             iop = instances[0].get('image_orientation_patient')
             n_t = compute_slice_normal(iop)
             if n_t is None:
                 return None
             positions = compute_slice_positions(instances, n_t)
+
             k, _d_src, _min_dist = find_closest_slice_physical(
                 np.asarray(patient_lps, dtype=float), instances, n_t,
                 positions=positions

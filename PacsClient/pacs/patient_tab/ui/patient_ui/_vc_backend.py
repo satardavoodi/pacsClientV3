@@ -68,15 +68,22 @@ class _VCBackendMixin:
 
     def _get_requested_viewer_backend(self) -> str:
         try:
+            configured_backend = str(
+                load_viewer_backend(default=BACKEND_PYDICOM_QT) or BACKEND_PYDICOM_QT
+            ).strip()
+
             override_backend = str(
                 getattr(self.parent_widget, "viewer_backend_override", "") or ""
             ).strip()
-            if override_backend:
+            # Respect temporary per-widget override only while the global
+            # Viewer Mode remains FAST. When user selects Advanced mode in
+            # settings, the persisted backend must become authoritative.
+            if override_backend and configured_backend in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT):
                 return override_backend
 
             resolution = resolve_viewer_backend(
                 metadata=None,
-                settings=load_viewer_backend(default=BACKEND_PYDICOM_QT),
+                settings=configured_backend,
             )
             return str(resolution.get("requested_backend", BACKEND_PYDICOM_QT) or BACKEND_PYDICOM_QT)
         except Exception:

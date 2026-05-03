@@ -7,7 +7,6 @@
   "package_kind": "runtime_payload",
   "build_strategy": "runtime_payload",
   "source_paths": [
-    "modules/mpr/__init__.py",
     "modules/mpr/advanced_3d_slicer"
   ],
   "python_paths": [

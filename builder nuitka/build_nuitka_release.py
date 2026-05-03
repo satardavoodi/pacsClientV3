@@ -646,7 +646,19 @@ def create_nuitka_command(
     cmd.append(f"--output-dir={output_root}")
     cmd.append(f"--output-filename={APP_NAME}.exe")
     cmd.append("--product-name=AIPacs")
-    cmd.append(f"--product-version={ctx.version}")
+    # Nuitka requires --product-version to be up to 4 dot-separated integers.
+    # Sanitize the human-facing version (e.g. "2.4.7c") to a numeric tuple
+    # ("2.4.7") for Nuitka while keeping ctx.version intact for Inno Setup.
+    _numeric_parts: list[str] = []
+    for _part in str(ctx.version).split("."):
+        _digits = "".join(_ch for _ch in _part if _ch.isdigit())
+        if not _digits:
+            break
+        _numeric_parts.append(_digits)
+        if len(_numeric_parts) >= 4:
+            break
+    _nuitka_version = ".".join(_numeric_parts) if _numeric_parts else "0"
+    cmd.append(f"--product-version={_nuitka_version}")
     cmd.append("--company-name=AIPacs")
     cmd.append("--file-description=AIPacs - staged Nuitka build")
     cmd.append("--windows-console-mode=disable")

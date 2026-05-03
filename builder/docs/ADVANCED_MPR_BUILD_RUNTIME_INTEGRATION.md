@@ -51,6 +51,36 @@ ship partially, or regress in installed builds.
 
 If any are missing, treat as release blocker.
 
+## Startup Script Compatibility Contract (Critical)
+
+Advanced MPR startup validation checks three candidate startup-script locations:
+
+- Packaged module script (mirrors launcher first-choice path):
+  `modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py`
+- Legacy runtime script: `bin/Python/startup_script.py`
+- Plugin Python script: `python/modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py`
+
+The launcher compatibility gate must consider both paths and pass when at least one
+startup script contains the required remote-command markers:
+
+- `_REMOTE_SERVER_STARTED`
+- `NEWMPR2_REMOTE_PORT`
+- `start_remote_command_server`
+
+Why this is required:
+
+- In some builds, legacy runtime script can be stale while the plugin Python script
+  is current and fully compatible.
+- Blocking launch based only on `bin/Python/startup_script.py` creates a false
+  "outdated runtime" error and prevents Advanced MPR from launching even though the
+  correct script is present.
+
+Regression signature:
+
+- UI shows Advanced MPR startup/readiness error immediately.
+- Runtime check reports missing markers in `bin/Python/startup_script.py`.
+- `python/modules/.../startup_script.py` actually contains all markers.
+
 ## Launch Readiness Contract (UI Behavior)
 
 Loading overlay must remain visible until startup readiness is confirmed.
@@ -67,6 +97,7 @@ Do not close loading overlay at process spawn time.
 `SlicerLauncherWorker._check_runtime_installed()` must verify:
 - runtime folder exists
 - `AIPacsAdvancedViewer.exe` exists
+- startup-script compatibility using the dual-path contract above
 
 If check fails, show actionable message and do not launch.
 
@@ -82,6 +113,11 @@ If check fails, show actionable message and do not launch.
 3. Local runtime payload
 - `C:\Users\<user>\AppData\Local\AIPacs\modules_runtime\advanced_mpr\...`
 - required files present.
+
+3a. Startup-script marker check (must pass in at least one location)
+- `...\advanced_mpr\bin\Python\startup_script.py`
+- `...\advanced_mpr\python\modules\mpr\advanced_3d_slicer\slicer_custom_app\startup_script.py`
+- markers: `_REMOTE_SERVER_STARTED`, `NEWMPR2_REMOTE_PORT`, `start_remote_command_server`
 
 4. Logs
 - `C:\Program Files\AIPacs\User Data\logs\viewer_diagnostics.log`
@@ -103,6 +139,8 @@ If check fails, show actionable message and do not launch.
 - Do not write launcher diagnostics to Program Files writable paths.
   Use user-writable log location from `_resolve_user_writable_launch_dir()`.
 - Keep startup script path fallback logic intact in installed mode.
+- Do not validate only one startup-script path in launcher readiness checks.
+  The dual-path compatibility contract is mandatory.
 
 ## Ownership Map
 

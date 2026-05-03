@@ -1,8 +1,50 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.4.7c (2026-05-02)
-**Release Date:** 2026-05-02
+**Current Stable Version:** v2.4.8c (2026-05-03)
+**Release Date:** 2026-05-03
 **Branch:** matab-conservative
+
+---
+
+## v2.4.8c (2026-05-02) - Advanced MPR launch/install reliability build
+
+### Summary
+
+Reliability follow-up release to ensure installed builds always use the latest
+Advanced MPR startup compatibility logic and cleanly upgrade from previous
+installations.
+Full details in [`VERSION_2.4.8c_RELEASE.md`](VERSION_2.4.8c_RELEASE.md).
+
+### Fixes
+
+- **Advanced MPR startup validation now checks all runtime script locations** -
+  launcher compatibility validation accepts any valid runtime script among:
+  source module path, legacy runtime `bin/Python/startup_script.py`, and
+  plugin-python runtime path.
+- **Clearer stale-runtime diagnostics** - when no compatible script is found,
+  the message reports searched paths and missing markers, reducing false
+  guidance and support ambiguity.
+- **Release upgrade hygiene** - version bump to `2.4.8c` guarantees installer
+  upgrade flow replaces old launcher code in deployed builds.
+- **FAST clinical consistency during stacking** - OpenCV filtering remains
+  enabled across wheel, drag, and settled frames so physicians see stable
+  image appearance while navigating.
+- **Sync slice mapping reuses geometry cache** - Qt bridge closest-slice lookup
+  now uses pipeline-cached slice normal and positions when available, reducing
+  repeated geometry recomputation during lock-sync/reference workflows.
+- **Advanced backend switch persistence hotfix (2026-05-03)** - fixed installed
+  behavior where explicit Advanced selection in Settings could be ignored:
+  - `seed_user_config_defaults()` now preserves existing user backend config
+    files instead of overwriting them at startup.
+  - `_get_requested_viewer_backend()` now honors parent override only when
+    configured backend is FAST; configured Advanced remains authoritative.
+  - Added/updated backend precedence tests to prevent future regression.
+
+### Verification
+
+- Source launcher contains multi-candidate validation markers:
+  `source_module_script` and `candidate_scripts`.
+- Build completed and produced installer artifacts for this version.
 
 ---
 
@@ -24,9 +66,11 @@ Full details in [`VERSION_2.4.7c_RELEASE.md`](VERSION_2.4.7c_RELEASE.md).
   without forcing `set_slice()` or resetting the viewer position.
 - **Geometry metadata cache** — repeated sync/reference-line geometry work can
   reuse cached basis vectors, stack normal, and slice positions.
-- **Stacking jitter analysis** — documented that small stack-drag twitches are
-  most likely caused by drag-time surrogate frames at cache edges, not by
-  additive growth or `setSlice`.
+- **Stacking jitter guard** — drag-time surrogates remain available for
+  smoothness, but terminal slices, visibly far substitutes, and repeated
+  non-near surrogates now fall through to exact rendering.
+- **Surrogate diagnostics** — overlap logs now include `source_idx` and
+  `source_dist` so requested-slice/displayed-source mismatches are measurable.
 
 ---
 

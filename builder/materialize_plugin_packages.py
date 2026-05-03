@@ -66,6 +66,84 @@ def _copy_source_tree(package_dir: Path, source_dirs: list[str]) -> bool:
     return copied
 
 
+def _validate_plugin_no_namespace_shadow(package_dir: Path, module_id: str) -> None:
+    """
+    Validate that a plugin payload does not create Python namespace package shadows.
+
+    A plugin's payload/python/modules/ directory is used as a namespace extension:
+    activate_optional_module_runtime() appends it to modules.__path__ so the plugin
+    can contribute NEW subpackages (e.g. modules.mpr.advanced_3d_slicer). It must
+    NEVER contain an __init__.py at a level where the engine already has a package
+    with MORE subpackages, because that would make the plugin's regular package win
+    over the engine's and hide engine subpackages from the import system.
+
+    Failure pattern (the R24 / advanced_mpr bug):
+      Plugin payload:  modules/mpr/__init__.py  +  modules/mpr/advanced_3d_slicer/
+      Engine bundle:   modules/mpr/__init__.py  +  modules/mpr/curved_mpr/
+                                                 +  modules/mpr/zeta_mpr/
+                                                 +  modules/mpr/orthogonal/
+                                                 +  modules/mpr/advanced_3d_slicer/
+      Result with prepend: modules.mpr is resolved to plugin's partial copy →
+        "ModuleNotFoundError: No module named 'modules.mpr.curved_mpr'"
+
+    Rules enforced:
+      1. payload/python/modules/__init__.py must NEVER exist (shadows top-level namespace)
+      2. payload/python/modules/<X>/__init__.py must NOT exist when the engine's
+         modules/<X>/ has subdirectories not present in the plugin's copy
+         (partial package shadow).
+    """
+    payload_modules = package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME / "python" / "modules"
+    if not payload_modules.exists():
+        return
+
+    # Rule 1: No top-level modules/__init__.py
+    top_init = payload_modules / "__init__.py"
+    if top_init.exists():
+        raise ValueError(
+            f"[SHADOW_CHECK] Plugin '{module_id}': payload contains 'modules/__init__.py' which "
+            f"would shadow the engine's top-level modules namespace package and break ALL module "
+            f"imports. Remove it from source_paths. See R24 in copilot-instructions.md."
+        )
+
+    # Rule 2: No partial subpackage __init__.py that would hide engine siblings
+    engine_modules = PROJECT_ROOT / "modules"
+    for subpkg_dir in payload_modules.iterdir():
+        if not subpkg_dir.is_dir():
+            continue
+        subpkg_name = subpkg_dir.name
+        engine_subpkg = engine_modules / subpkg_name
+        if not engine_subpkg.is_dir():
+            continue  # Plugin contributes a brand-new module not in engine — safe
+
+        plugin_init = subpkg_dir / "__init__.py"
+        if not plugin_init.exists():
+            continue  # No __init__.py in plugin copy — namespace package behavior — safe
+
+        # Only compare real Python subpackages (dirs with __init__.py or that could
+        # be namespace packages). Exclude bytecode caches and tool artefacts.
+        _NON_PACKAGE_DIRS = frozenset({"__pycache__", ".git", ".mypy_cache", ".pytest_cache"})
+
+        def _is_python_subpkg(d: Path) -> bool:
+            return d.is_dir() and d.name not in _NON_PACKAGE_DIRS and not d.name.startswith(".")
+
+        plugin_subdirs = {d.name for d in subpkg_dir.iterdir() if _is_python_subpkg(d)}
+        engine_subdirs = {d.name for d in engine_subpkg.iterdir() if _is_python_subpkg(d)}
+        missing_in_plugin = engine_subdirs - plugin_subdirs
+        if missing_in_plugin:
+            raise ValueError(
+                f"[SHADOW_CHECK] Plugin '{module_id}': "
+                f"payload/python/modules/{subpkg_name}/__init__.py creates a PARTIAL namespace shadow "
+                f"of the engine's 'modules.{subpkg_name}' package.\n"
+                f"  Engine subpackages missing from plugin: {sorted(missing_in_plugin)}\n"
+                f"  If the plugin path is added to modules.__path__, those engine subpackages become "
+                f"unreachable and produce ModuleNotFoundError at runtime.\n"
+                f"  Fix: remove modules/{subpkg_name}/__init__.py from source_paths. "
+                f"Include only the specific leaf subpackage directory that the plugin needs "
+                f"(e.g. 'modules/{subpkg_name}/advanced_3d_slicer'). "
+                f"See R24 in copilot-instructions.md."
+            )
+
+
 def _local_appdata_advanced_mpr_runtime_root() -> Path:
     base = os.environ.get("LOCALAPPDATA")
     root = Path(base) if base else Path.home() / "AppData" / "Local"
@@ -156,6 +234,7 @@ def materialize_plugin_packages(*, include_runtime_payloads: bool = False) -> li
         build_strategy = str(definition.get("build_strategy") or "")
         if build_strategy == "source_tree":
             has_payload = _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
+            _validate_plugin_no_namespace_shadow(package_dir, module_id)
         elif build_strategy == "runtime_payload":
             runtime_source = _runtime_payload_source(module_id)
             missing_runtime_files = _missing_runtime_payload_files(module_id, runtime_source)
@@ -171,6 +250,7 @@ def materialize_plugin_packages(*, include_runtime_payloads: bool = False) -> li
                     dirs_exist_ok=True,
                 )
                 _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
+                _validate_plugin_no_namespace_shadow(package_dir, module_id)
                 has_payload = True
             else:
                 _write_runtime_payload_placeholder(package_dir, definition)

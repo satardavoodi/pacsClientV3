@@ -2118,16 +2118,45 @@ def test_display_loaded_series_hides_spinner_immediately_after_success():
     assert hide_calls == [target_widget]
 
 
-def test_get_requested_viewer_backend_prefers_parent_override(monkeypatch):
+def test_get_requested_viewer_backend_uses_configured_advanced_over_parent_override(monkeypatch):
     controller = _build_controller()
     controller.parent_widget = SimpleNamespace(
         viewer_backend_override=controller_mod.BACKEND_PYDICOM,
     )
 
     monkeypatch.setattr(
-        controller_mod,
+        _vc_backend_mod,
         "load_viewer_backend",
         lambda default=controller_mod.BACKEND_VTK: controller_mod.BACKEND_VTK,
+    )
+    monkeypatch.setattr(
+        _vc_backend_mod,
+        "resolve_viewer_backend",
+        lambda metadata=None, settings=None: {
+            "requested_backend": str(settings or controller_mod.BACKEND_PYDICOM_QT),
+        },
+    )
+
+    assert controller._get_requested_viewer_backend() == controller_mod.BACKEND_VTK
+
+
+def test_get_requested_viewer_backend_prefers_parent_override_when_configured_fast(monkeypatch):
+    controller = _build_controller()
+    controller.parent_widget = SimpleNamespace(
+        viewer_backend_override=controller_mod.BACKEND_PYDICOM,
+    )
+
+    monkeypatch.setattr(
+        _vc_backend_mod,
+        "load_viewer_backend",
+        lambda default=controller_mod.BACKEND_PYDICOM_QT: controller_mod.BACKEND_PYDICOM_QT,
+    )
+    monkeypatch.setattr(
+        _vc_backend_mod,
+        "resolve_viewer_backend",
+        lambda metadata=None, settings=None: {
+            "requested_backend": str(settings or controller_mod.BACKEND_PYDICOM_QT),
+        },
     )
 
     assert controller._get_requested_viewer_backend() == controller_mod.BACKEND_PYDICOM
@@ -5776,6 +5805,57 @@ def test_b41_drag_navigation_can_use_surrogate(monkeypatch):
     assert frame.decode_ms == 0.0, "surrogate decode_ms must be 0.0"
 
 
+def test_drag_surrogate_far_source_forces_exact_decode(monkeypatch):
+    """Large-stack drag should not display a far cached slice as the target."""
+    import numpy as np
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._pixel_cache.clear()
+    pipe._pixel_cache[48] = np.zeros((4, 4), dtype=np.int16)
+
+    frame = pipe.get_rendered_frame(55, interaction_type='drag')
+
+    assert frame is not None
+    assert 55 in decode_calls
+    assert frame.source_slice_index in (None, 55)
+
+
+def test_drag_surrogate_terminal_slice_forces_exact_decode(monkeypatch):
+    """Stack endpoints must show the real first/last slice during drag."""
+    import numpy as np
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._pixel_cache.clear()
+    pipe._pixel_cache[98] = np.zeros((4, 4), dtype=np.int16)
+
+    frame = pipe.get_rendered_frame(99, interaction_type='drag')
+
+    assert frame is not None
+    assert 99 in decode_calls
+    assert frame.source_slice_index in (None, 99)
+
+
+def test_drag_surrogate_repeated_far_source_breaks_to_exact(monkeypatch):
+    """Repeated reuse of the same non-near surrogate should not look frozen."""
+    import numpy as np
+
+    pipe, decode_calls = _make_b41_pipeline(monkeypatch)
+    pipe._fast_interaction = True
+    pipe._pixel_cache.clear()
+    pipe._pixel_cache[50] = np.zeros((4, 4), dtype=np.int16)
+
+    first = pipe.get_rendered_frame(53, interaction_type='drag')
+    second = pipe.get_rendered_frame(54, interaction_type='drag')
+
+    assert first is not None
+    assert first.source_slice_index == 50
+    assert 53 not in decode_calls
+    assert second is not None
+    assert 54 in decode_calls
+
+
 def test_b41_default_interaction_type_no_surrogate(monkeypatch):
     """B4.1: empty/default interaction_type MUST decode exact slice (non-interactive)."""
     pipe, decode_calls = _make_b41_pipeline(monkeypatch)
@@ -6058,8 +6138,8 @@ def test_b41_set_slice_index_prepares_prefetch_once_before_render(monkeypatch):
     assert prefetch_calls == [(50, 1)]
 
 
-def test_b41_drag_during_heavy_download_widens_surrogate_window(monkeypatch):
-    """Incomplete viewed series may widen drag surrogate search to avoid foreground decode."""
+def test_b41_drag_during_heavy_download_rejects_visibly_far_surrogate(monkeypatch):
+    """Incomplete viewed series may search wider, but not display a far surrogate."""
     import numpy as np
     import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
 
@@ -6076,8 +6156,8 @@ def test_b41_drag_during_heavy_download_widens_surrogate_window(monkeypatch):
     frame = pipe.get_rendered_frame(50, interaction_type='drag')
 
     assert frame is not None
-    assert frame.decode_ms == 0.0
-    assert 50 not in decode_calls
+    assert 50 in decode_calls
+    assert frame.source_slice_index in (None, 50)
 
 
 def test_b41_drag_complete_series_keeps_standard_surrogate_window(monkeypatch):
@@ -6102,8 +6182,8 @@ def test_b41_drag_complete_series_keeps_standard_surrogate_window(monkeypatch):
     assert frame.decode_ms >= 0.0
 
 
-def test_b41_drag_complete_series_high_velocity_can_widen_surrogate_window(monkeypatch):
-    """Very fast drag may widen the surrogate window even for completed series."""
+def test_b41_drag_complete_series_high_velocity_rejects_visibly_far_surrogate(monkeypatch):
+    """Very fast drag keeps smoothness aids, but exactness wins over far display mismatch."""
     import numpy as np
     import modules.viewer.fast.lightweight_2d_pipeline as pipe_mod
 
@@ -6121,8 +6201,8 @@ def test_b41_drag_complete_series_high_velocity_can_widen_surrogate_window(monke
     frame = pipe.get_rendered_frame(50, interaction_type='drag')
 
     assert frame is not None
-    assert frame.decode_ms == 0.0
-    assert 50 not in decode_calls
+    assert 50 in decode_calls
+    assert frame.source_slice_index in (None, 50)
 
 
 def test_b41_drag_reuses_nearest_cached_frame_before_rewindowing(monkeypatch):

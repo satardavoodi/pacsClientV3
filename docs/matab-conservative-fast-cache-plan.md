@@ -245,13 +245,18 @@ Less likely after the conservative implementation:
 
 Handling:
 - Keep wheel scrolling exact; wheel interaction must not use surrogates.
-- Keep drag surrogates for responsiveness, but track them as the jitter control
-  point.
-- If live validation still shows objectionable jitter, the next conservative
-  change should tighten surrogate admission near cache edges, such as distance-1
-  surrogate only by default and earlier exact-decode fallback after a repeated
-  surrogate.  That follow-up should be KPI/test-gated rather than applied as a
-  broad behavior change.
+- Keep drag surrogates for responsiveness, but bound their visible use with a
+  fidelity guard.
+- Terminal slices now force exact rendering during drag, so the first and last
+  slice do not wait for mouse release to become visually exact.
+- Far cached substitutes now fall through to exact decode instead of being
+  displayed as the requested target.
+- Repeated reuse of the same non-near surrogate now breaks to exact decode
+  sooner, reducing the "one slice behind" feeling in large stacks without
+  removing near-neighbor surrogate smoothness.
+- Overlap diagnostics now include `source_idx` and `source_dist` so future logs
+  can distinguish logical slice state from the actual image source used for a
+  surrogate frame.
 
 ## Assumptions
 

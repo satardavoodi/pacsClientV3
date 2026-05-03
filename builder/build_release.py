@@ -496,6 +496,73 @@ def _copy_package_source_tree(package_dir: Path, source_dirs: list[str]) -> bool
     return copied
 
 
+def _validate_staged_plugin_no_namespace_shadow(package_dir: Path, module_id: str) -> None:
+    """
+    Fail-fast guard: a staged plugin package must NOT place a modules/<X>/__init__.py
+    that makes modules.X a partial regular package, hiding engine subpackages from
+    the import system. Called during build_module_packages() for every plugin.
+
+    The engine ships a COMPLETE modules/ tree bundled in the PYZ + on-disk under
+    engine/modules/.  Optional plugin payloads are ADDITIVE: they may contribute
+    entirely new subpackages but must never shadow an existing one with a partial copy.
+
+    Two rules enforced:
+      1. payload/python/modules/__init__.py must NEVER exist.
+      2. payload/python/modules/<X>/__init__.py must NOT exist when the project's
+         modules/<X>/ has subdirectories absent from the plugin's copy — that is a
+         partial namespace shadow.
+
+    This check mirrors the one in materialize_plugin_packages.py and acts as a
+    second gate specifically for the release-staging path so build errors are caught
+    as close to the source as possible.  See R24 in copilot-instructions.md.
+    """
+    payload_modules = package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME / "python" / "modules"
+    if not payload_modules.exists():
+        return
+
+    # Rule 1: No top-level modules/__init__.py
+    top_init = payload_modules / "__init__.py"
+    if top_init.exists():
+        raise ValueError(
+            f"[SHADOW_CHECK] Staged plugin '{module_id}': payload contains 'modules/__init__.py' "
+            f"which would shadow the engine's top-level modules namespace package. "
+            f"Remove it from source_paths. See R24 in copilot-instructions.md."
+        )
+
+    # Rule 2: No partial subpackage shadow
+    engine_modules = PROJECT_ROOT / "modules"
+    for subpkg_dir in payload_modules.iterdir():
+        if not subpkg_dir.is_dir():
+            continue
+        subpkg_name = subpkg_dir.name
+        engine_subpkg = engine_modules / subpkg_name
+        if not engine_subpkg.is_dir():
+            continue  # Brand-new module contributed by plugin — safe
+
+        plugin_init = subpkg_dir / "__init__.py"
+        if not plugin_init.exists():
+            continue  # Namespace package behavior — safe
+
+        # Only compare real Python subpackages. Exclude bytecode caches and artefacts.
+        _NON_PACKAGE_DIRS = frozenset({"__pycache__", ".git", ".mypy_cache", ".pytest_cache"})
+
+        def _is_python_subpkg(d: Path) -> bool:
+            return d.is_dir() and d.name not in _NON_PACKAGE_DIRS and not d.name.startswith(".")
+
+        plugin_subdirs = {d.name for d in subpkg_dir.iterdir() if _is_python_subpkg(d)}
+        engine_subdirs = {d.name for d in engine_subpkg.iterdir() if _is_python_subpkg(d)}
+        missing_in_plugin = engine_subdirs - plugin_subdirs
+        if missing_in_plugin:
+            raise ValueError(
+                f"[SHADOW_CHECK] Staged plugin '{module_id}': "
+                f"payload/python/modules/{subpkg_name}/__init__.py creates a PARTIAL namespace shadow "
+                f"of the engine's 'modules.{subpkg_name}' package.\n"
+                f"  Engine subpackages missing from plugin: {sorted(missing_in_plugin)}\n"
+                f"  Fix: remove modules/{subpkg_name}/__init__.py from source_paths; "
+                f"keep only specific leaf subpackage dirs. See R24 in copilot-instructions.md."
+            )
+
+
 def _write_package_archive(source_dir: Path, archive_path: Path) -> str:
     archive_path.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
@@ -578,10 +645,12 @@ def build_module_packages(
                     dirs_exist_ok=True,
                 )
                 _copy_package_source_tree(package_dir, list(definition.get("source_paths") or []))
+                _validate_staged_plugin_no_namespace_shadow(package_dir, module_id)
                 has_payload = True
         else:
             package_dir.mkdir(parents=True, exist_ok=True)
             has_payload = _copy_package_source_tree(package_dir, list(definition.get("source_paths") or []))
+            _validate_staged_plugin_no_namespace_shadow(package_dir, module_id)
 
         manifest = {
             "format_version": MODULE_PACKAGE_FORMAT_VERSION,

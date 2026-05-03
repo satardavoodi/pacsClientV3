@@ -1,116 +1,126 @@
 {
-    "app_name":  "AIPacs",
-    "version":  "2.4.7",
-    "packages":  [
-                     {
-                         "module_id":  "advanced_mpr",
-                         "title":  "Advanced MPR",
-                         "version":  "2.4.7",
-                         "package_kind":  "runtime_payload",
-                         "available":  false,
-                         "materialized_payload":  false,
-                         "package_path":  "advanced_mpr",
-                         "build_strategy":  "runtime_payload"
-                     },
-                     {
-                         "module_id":  "download_manager",
-                         "title":  "Download Manager",
-                         "version":  "2.4.7",
-                         "package_kind":  "core",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "download_manager",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "echomind",
-                         "title":  "EchoMind Module",
-                         "version":  "2.4.7",
-                         "package_kind":  "bundled_unlock",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "echomind",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "education",
-                         "title":  "Education Module",
-                         "version":  "2.4.7",
-                         "package_kind":  "core",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "education",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "offline_cloud_server",
-                         "title":  "Offline Cloud Server",
-                         "version":  "2.4.7",
-                         "package_kind":  "core",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "offline_cloud_server",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "printing",
-                         "title":  "Printing Module",
-                         "version":  "2.4.7",
-                         "package_kind":  "bundled_unlock",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "printing",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "run_cd",
-                         "title":  "Run CD Module",
-                         "version":  "2.4.7",
-                         "package_kind":  "bundled_unlock",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "run_cd",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "stitching",
-                         "title":  "Stitching Module",
-                         "version":  "2.4.7",
-                         "package_kind":  "core",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "stitching",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "viewer",
-                         "title":  "Viewer",
-                         "version":  "2.4.7",
-                         "package_kind":  "core",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "viewer",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "web_browser",
-                         "title":  "Web Browser Module",
-                         "version":  "2.4.7",
-                         "package_kind":  "bundled_unlock",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "web_browser",
-                         "build_strategy":  "source_tree"
-                     },
-                     {
-                         "module_id":  "zeta_boost",
-                         "title":  "ZetaBoost",
-                         "version":  "2.4.7",
-                         "package_kind":  "core",
-                         "available":  true,
-                         "materialized_payload":  true,
-                         "package_path":  "zeta_boost",
-                         "build_strategy":  "source_tree"
-                     }
-                 ]
+  "app_name": "AIPacs",
+  "version": "2.4.8c",
+  "packages": [
+    {
+      "module_id": "advanced_mpr",
+      "title": "Advanced MPR",
+      "version": "2.4.8c",
+      "package_kind": "runtime_payload",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "advanced_mpr",
+      "build_strategy": "runtime_payload"
+    },
+    {
+      "module_id": "data_analysis",
+      "title": "Data Analysis",
+      "version": "2.4.8c",
+      "package_kind": "bundled_unlock",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "data_analysis",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "download_manager",
+      "title": "Download Manager",
+      "version": "2.4.8c",
+      "package_kind": "core",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "download_manager",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "echomind",
+      "title": "EchoMind Module",
+      "version": "2.4.8c",
+      "package_kind": "bundled_unlock",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "echomind",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "education",
+      "title": "Education Module",
+      "version": "2.4.8c",
+      "package_kind": "core",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "education",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "offline_cloud_server",
+      "title": "Offline Cloud Server",
+      "version": "2.4.8c",
+      "package_kind": "core",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "offline_cloud_server",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "printing",
+      "title": "Printing Module",
+      "version": "2.4.8c",
+      "package_kind": "bundled_unlock",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "printing",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "run_cd",
+      "title": "Run CD Module",
+      "version": "2.4.8c",
+      "package_kind": "bundled_unlock",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "run_cd",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "stitching",
+      "title": "Stitching Module",
+      "version": "2.4.8c",
+      "package_kind": "core",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "stitching",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "viewer",
+      "title": "Viewer",
+      "version": "2.4.8c",
+      "package_kind": "core",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "viewer",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "web_browser",
+      "title": "Web Browser Module",
+      "version": "2.4.8c",
+      "package_kind": "bundled_unlock",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "web_browser",
+      "build_strategy": "source_tree"
+    },
+    {
+      "module_id": "zeta_boost",
+      "title": "ZetaBoost",
+      "version": "2.4.8c",
+      "package_kind": "core",
+      "available": true,
+      "materialized_payload": true,
+      "package_path": "zeta_boost",
+      "build_strategy": "source_tree"
+    }
+  ]
 }

@@ -97,6 +97,18 @@ _PROTECTED_DRAG_BEHIND_RADIUS = 1
 _STACK_SETTLE_AHEAD_RADIUS = 10
 _STACK_SETTLE_BEHIND_RADIUS = 6
 _DRAG_PREFETCH_THROTTLE_S = 0.09
+_DRAG_SURROGATE_STRICT_DISTANCE = _env_positive_int(
+    "AIPACS_DRAG_SURROGATE_STRICT_DISTANCE", 2
+)
+_DRAG_SURROGATE_MAX_VISIBLE_DISTANCE = _env_positive_int(
+    "AIPACS_DRAG_SURROGATE_MAX_VISIBLE_DISTANCE", 4
+)
+_DRAG_SURROGATE_NEAR_REPEAT_LIMIT = _env_positive_int(
+    "AIPACS_DRAG_SURROGATE_NEAR_REPEAT_LIMIT", 3
+)
+_DRAG_SURROGATE_FAR_REPEAT_LIMIT = _env_positive_int(
+    "AIPACS_DRAG_SURROGATE_FAR_REPEAT_LIMIT", 1
+)
 
 # F2.1 (2026-04-28): structured per-frame KPI tag for the
 # "download + scroll same series" overlap scenario. We sample 1-in-N
@@ -163,6 +175,8 @@ class RenderedFrame:
     filter_ms: float
     wl_ms: float
     total_ms: float
+    source_slice_index: Optional[int] = None
+    cache_source: str = "decode"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -927,13 +941,9 @@ class Lightweight2DPipeline(QObject):
         Get a fully-rendered frame for display (decode + filter + W/L + QImage).
         Uses cache when available.
 
-        During fast interaction (_fast_interaction=True), filtering is
-        interaction-class aware:
-
-        - wheel: keep the filtered appearance for precision browsing
-        - drag: skip the OpenCV filter to reduce per-frame cost by 3-5ms
-
-        Drag-time approximation is refined on scroll-stop.
+        During fast interaction (_fast_interaction=True), keep filtering
+        enabled so stacked and settled images have identical clinical
+        appearance.
 
         B4.1 interaction_type:
           - 'wheel': precision browsing — NEVER serve surrogate (always exact slice)
@@ -943,12 +953,9 @@ class Lightweight2DPipeline(QObject):
         idx = self._clamp(slice_index)
         sm = self._slices[idx]
         ww, wc = self._resolve_window_level(idx)
-        # During fast interaction, wheel keeps the exact filtered appearance
-        # while drag skips the filter for lower latency.
-        _keep_filter_during_fast = self._fast_interaction and interaction_type == 'wheel'
-        filter_enabled = self._config.opencv_filter_enabled and (
-            not self._fast_interaction or _keep_filter_during_fast
-        )
+        # Medical consistency policy: filter stays on for wheel/drag/settled.
+        # Cache key still includes filter_enabled for backward compatibility.
+        filter_enabled = bool(self._config.opencv_filter_enabled)
         cache_key = self._frame_cache_key(idx, ww, wc, filter_enabled)
         # B2.5: sample queue depths on every frame request
         _pm = PerfMetrics.get()
@@ -1084,9 +1091,17 @@ class Lightweight2DPipeline(QObject):
                     return
 
             settled = not bool(getattr(self, "_fast_interaction", False))
+            requested_idx = int(getattr(frame, "slice_index", -1))
+            source_idx = getattr(frame, "source_slice_index", None)
+            if source_idx is None:
+                source_idx = requested_idx
+            source_idx = int(source_idx)
             logger.info(
-                "[OVERLAP_SCENARIO] frame idx=%d cache=%s decode_ms=%.2f wl_ms=%.2f total_ms=%.2f settled=%s sentinel=%s",
-                int(getattr(frame, "slice_index", -1)),
+                "[OVERLAP_SCENARIO] frame idx=%d source_idx=%d source_dist=%d "
+                "cache=%s decode_ms=%.2f wl_ms=%.2f total_ms=%.2f settled=%s sentinel=%s",
+                requested_idx,
+                source_idx,
+                abs(requested_idx - source_idx),
                 str(cache_source),
                 float(getattr(frame, "decode_ms", 0.0) or 0.0),
                 float(getattr(frame, "wl_ms", 0.0) or 0.0),
@@ -1099,7 +1114,7 @@ class Lightweight2DPipeline(QObject):
             pass
 
     def set_fast_interaction(self, fast: bool, interaction_type: str = '') -> None:
-        """Set fast-interaction mode. When True, filter is skipped during scroll."""
+        """Set fast-interaction mode for surrogate/defer policy control."""
         prev = bool(getattr(self, "_fast_interaction", False))
         new_state = bool(fast)
         self._fast_interaction = new_state
@@ -1115,9 +1130,9 @@ class Lightweight2DPipeline(QObject):
             self._overlap_force_emit_reason = "drag_end"
 
     def rerender_current_filtered(self) -> Optional[RenderedFrame]:
-        """Re-render current slice with filter enabled (called on scroll-stop).
+        """Ensure a filtered frame exists for the current slice.
 
-        Returns the filtered frame if filter was skipped, None if already cached.
+        Returns a filtered frame on miss, None when already cached.
         """
         if not self._config.opencv_filter_enabled or not self._slices:
             return None
@@ -1143,6 +1158,8 @@ class Lightweight2DPipeline(QObject):
         filter_ms: float = 0.0,
         wl_ms: float = 0.0,
         total_ms: float = 0.0,
+        source_slice_index: Optional[int] = None,
+        cache_source: str = "hit",
     ) -> RenderedFrame:
         return RenderedFrame(
             qimage=qimg,
@@ -1156,6 +1173,8 @@ class Lightweight2DPipeline(QObject):
             filter_ms=filter_ms,
             wl_ms=wl_ms,
             total_ms=total_ms,
+            source_slice_index=slice_index if source_slice_index is None else int(source_slice_index),
+            cache_source=str(cache_source or "hit"),
         )
 
     def _touch_frame_cache_entry(self, key: Tuple[int, float, float, bool]) -> Optional[QImage]:
@@ -1245,25 +1264,8 @@ class Lightweight2DPipeline(QObject):
         )
         if nearest_frame is not None:
             nearest_idx, qimg = nearest_frame
-            # v2.3.6 GC#5 staleness-break: if the same surrogate was already
-            # served for the previous 2 consecutive (different) targets,
-            # the user is dragging past the cache edge and sees a frozen
-            # image while the slider moves. Fall through to synchronous
-            # decode once so the actual target pixels appear. Counter is
-            # reset when a new surrogate index is used, so smooth drag
-            # over cached regions still flies.
-            if nearest_idx != idx:
-                _last_surr = getattr(self, '_last_surrogate_pixel_idx', -1)
-                _surr_cnt = getattr(self, '_surrogate_repeat_count', 0)
-                if _last_surr == nearest_idx:
-                    if _surr_cnt >= 2:
-                        self._surrogate_repeat_count = 0
-                        self._last_surrogate_pixel_idx = -1
-                        return None  # force caller to decode
-                    self._surrogate_repeat_count = _surr_cnt + 1
-                else:
-                    self._surrogate_repeat_count = 1
-                    self._last_surrogate_pixel_idx = int(nearest_idx)
+            if self._should_force_exact_drag_frame(idx, nearest_idx):
+                return None
             perf_metrics.record_cache_hit()
             perf_metrics.record_frame_render(0.0)
             if logger.isEnabledFor(logging.DEBUG):
@@ -1281,6 +1283,8 @@ class Lightweight2DPipeline(QObject):
                 window_width=ww,
                 window_center=wc,
                 photometric=sm.photometric,
+                source_slice_index=nearest_idx,
+                cache_source="surrogate_frame",
             )
 
         if idx in self._pixel_cache:
@@ -1293,18 +1297,8 @@ class Lightweight2DPipeline(QObject):
         if nearest_idx is None:
             return None
 
-        # v2.3.6 GC#5 staleness-break (pixel-cache path, same policy).
-        _last_surr = getattr(self, '_last_surrogate_pixel_idx', -1)
-        _surr_cnt = getattr(self, '_surrogate_repeat_count', 0)
-        if _last_surr == nearest_idx:
-            if _surr_cnt >= 2:
-                self._surrogate_repeat_count = 0
-                self._last_surrogate_pixel_idx = -1
-                return None  # force caller to decode
-            self._surrogate_repeat_count = _surr_cnt + 1
-        else:
-            self._surrogate_repeat_count = 1
-            self._last_surrogate_pixel_idx = int(nearest_idx)
+        if self._should_force_exact_drag_frame(idx, nearest_idx):
+            return None
 
         t_surr = time.perf_counter()
         surrogate = self._render_frame_uncached(
@@ -1332,7 +1326,64 @@ class Lightweight2DPipeline(QObject):
             filter_ms=surrogate.filter_ms,
             wl_ms=surrogate.wl_ms,
             total_ms=surr_ms,
+            source_slice_index=nearest_idx,
+            cache_source="surrogate_pixel",
         )
+
+    def _should_force_exact_drag_frame(self, idx: int, surrogate_idx: int) -> bool:
+        """Return True when a drag surrogate would be visibly stale.
+
+        Large-stack drag must remain smooth, so we still allow very near cached
+        neighbors.  The guard only blocks cases that users perceive as a
+        backward/forward jump: terminal targets, far substitutes, or repeated
+        reuse of the same non-near source while the logical slice advances.
+        """
+        try:
+            target = self._clamp(idx)
+            source = self._clamp(surrogate_idx)
+        except Exception:
+            return True
+
+        if source == target:
+            self._last_surrogate_pixel_idx = -1
+            self._surrogate_repeat_count = 0
+            return False
+
+        last_index = max(0, len(getattr(self, "_slices", ()) or ()) - 1)
+        if target <= 0 or target >= last_index:
+            self._last_surrogate_pixel_idx = -1
+            self._surrogate_repeat_count = 0
+            return True
+
+        dist = abs(target - source)
+        max_visible = max(
+            int(_DRAG_SURROGATE_STRICT_DISTANCE),
+            int(_DRAG_SURROGATE_MAX_VISIBLE_DISTANCE),
+        )
+        if dist > max_visible:
+            self._last_surrogate_pixel_idx = -1
+            self._surrogate_repeat_count = 0
+            return True
+
+        last_source = int(getattr(self, "_last_surrogate_pixel_idx", -1) or -1)
+        repeat_count = int(getattr(self, "_surrogate_repeat_count", 0) or 0)
+        allowed_repeats = (
+            int(_DRAG_SURROGATE_NEAR_REPEAT_LIMIT)
+            if dist <= int(_DRAG_SURROGATE_STRICT_DISTANCE)
+            else int(_DRAG_SURROGATE_FAR_REPEAT_LIMIT)
+        )
+        allowed_repeats = max(1, allowed_repeats)
+
+        if last_source == source:
+            if repeat_count >= allowed_repeats:
+                self._last_surrogate_pixel_idx = -1
+                self._surrogate_repeat_count = 0
+                return True
+            self._surrogate_repeat_count = repeat_count + 1
+        else:
+            self._last_surrogate_pixel_idx = source
+            self._surrogate_repeat_count = 1
+        return False
 
     def _render_frame_uncached(
         self,

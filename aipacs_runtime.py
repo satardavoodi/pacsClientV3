@@ -644,8 +644,15 @@ def activate_optional_module_runtime(profile: dict[str, Any] | None = None) -> l
 
     for candidate in runtime_paths:
         candidate_str = str(candidate)
+        # Append (not prepend) so the engine's bundled `modules` package always wins
+        # for any module name it provides. Optional plugin payloads must be additive
+        # only — they may contribute NEW modules but must never shadow an existing
+        # engine package. Prepending caused `modules.mpr` from advanced_mpr's
+        # payload (which only contains advanced_3d_slicer) to mask the engine's
+        # complete `modules.mpr` tree, breaking imports of `modules.mpr.curved_mpr`,
+        # `zeta_mpr`, and `orthogonal`. See R24 in copilot-instructions.md.
         if candidate_str not in sys.path:
-            sys.path.insert(0, candidate_str)
+            sys.path.append(candidate_str)
             added.append(candidate_str)
         parent_str = str(candidate.resolve())
         if parent_str.lower() not in current_lower:
@@ -664,7 +671,24 @@ def activate_optional_module_runtime(profile: dict[str, Any] | None = None) -> l
 
                 package_paths = list(getattr(modules_package, "__path__", []))
                 if str(modules_dir) not in package_paths:
-                    modules_package.__path__.insert(0, str(modules_dir))
+                    # Append so engine `modules\mpr\__init__.py` (regular package)
+                    # is found before any plugin-shipped `modules\mpr\__init__.py`
+                    # and remains the authoritative resolver for `modules.mpr.*`.
+                    modules_package.__path__.append(str(modules_dir))
+
+                # Runtime sanity: verify the append did not move engine paths
+                # away from index 0.  The engine path must always be first in
+                # modules.__path__ so the PYZ/on-disk package beats plugin copies.
+                final_paths = list(getattr(modules_package, "__path__", []))
+                if final_paths and str(modules_dir) == final_paths[0]:
+                    import logging as _logging
+                    _logging.getLogger(__name__).warning(
+                        "[R24_SANITY] activate_optional_module_runtime: plugin modules dir "
+                        "ended up at index 0 of modules.__path__ — this should not happen "
+                        "with append-only logic.  Path: %s  Full path list: %s",
+                        modules_dir,
+                        final_paths[:5],
+                    )
             except Exception:
                 pass
 
@@ -1344,17 +1368,58 @@ def bootstrap_installer_selected_module_packages(
     }
     installed_records: list[dict[str, Any]] = []
 
+    def _normalized_python_paths(payload: dict[str, Any] | None) -> list[str]:
+        values = (payload or {}).get("python_paths") or []
+        return [str(item).strip() for item in values if str(item).strip()]
+
     for module_id in module_catalog_map().keys():
         enabled = bool(configured.get(module_id, False))
         installer_selected = module_id in selected_by_installer
         if not enabled and not installer_selected:
             continue
         state = package_state.get(module_id)
+        package = available.get(module_id)
         record = _package_record(module_id, state=state, enabled=True)
-        if record["tier"] == "basic" or record["installed"]:
+        if record["tier"] == "basic":
             continue
 
-        package = available.get(module_id)
+        # Heal stale runtime-payload manifest metadata for installer-selected
+        # modules (for example old advanced_mpr manifests with empty
+        # python_paths that block import-path activation at startup).
+        if record["installed"] and installer_selected and package:
+            package_kind = str(package.get("package_kind") or "")
+            if package_kind == "runtime_payload":
+                installed_manifest = load_installed_module_manifest(module_id) or {}
+                bundled_paths = _normalized_python_paths(package)
+                installed_paths = _normalized_python_paths(installed_manifest)
+                if bundled_paths and installed_paths != bundled_paths:
+                    try:
+                        installed_records.append(
+                            install_module_package(
+                                str(package.get("source_path") or ""),
+                                expected_module_id=module_id,
+                                enable_on_install=True,
+                            )
+                        )
+                    except Exception as exc:
+                        save_runtime_profile(
+                            {
+                                "modules": {module_id: False},
+                                "module_packages": {
+                                    module_id: {
+                                        "status": "install_failed",
+                                        "installed_from": str(package.get("source_path") or ""),
+                                        "requires_restart": True,
+                                        "warning": f"Bundled package refresh failed: {exc}",
+                                    }
+                                },
+                            }
+                        )
+                    continue
+
+        if record["installed"]:
+            continue
+
         if not package:
             if str((state or {}).get("status") or "") == "selected_for_install" or str(
                 (state or {}).get("installed_from") or ""
@@ -1704,17 +1769,17 @@ def seed_user_config_defaults() -> None:
 
     dst_root.mkdir(parents=True, exist_ok=True)
     skip_names = {INSTALLATION_PROFILE_FILENAME}
-    # v2.3.3+ migration: always overwrite viewer_backend_settings.json so that
-    # installations that were seeded with the wrong "vtk_simpleitk" default
-    # are corrected to "pydicom_qt" on the next app launch.
-    force_overwrite_names = {"viewer_backend_settings.json"}
     copied, skipped, failed = [], [], []
     for src in src_root.iterdir():
         if not src.is_file() or src.name in skip_names:
             continue
         dst = dst_root / src.name
         try:
-            if not dst.exists() or src.name in force_overwrite_names:
+            # Do not overwrite existing user config here.
+            # In frozen installs, this function runs on every startup, so
+            # unconditional overwrite would erase user-selected settings
+            # (for example Viewer Mode: Advanced/FAST) each launch.
+            if not dst.exists():
                 shutil.copy2(src, dst)
                 copied.append(src.name)
             else:

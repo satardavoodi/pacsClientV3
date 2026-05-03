@@ -373,43 +373,79 @@ class SlicerLauncherWorker(QThread):
         In that state Slicer may open in a generic four-up/fourth-box flow instead of the
         intended Advanced MPR startup path.
         """
-        startup_script = runtime_root / "bin" / "Python" / "startup_script.py"
-        if not startup_script.exists():
-            return (
-                "The Advanced MPR runtime is missing startup_script.py.\n\n"
-                "Try re-installing the module:\n"
-                "  Settings -> Installation -> Advanced MPR -> Re-install\n\n"
-                f"Expected file:\n{startup_script}"
-            )
-
-        try:
-            startup_text = startup_script.read_text(encoding="utf-8", errors="ignore")
-        except Exception as exc:
-            return (
-                "The Advanced MPR startup script could not be read.\n\n"
-                "Try re-installing the module:\n"
-                "  Settings -> Installation -> Advanced MPR -> Re-install\n\n"
-                f"File:\n{startup_script}\n\n"
-                f"Read error: {exc}"
-            )
-
         required_markers = (
             "_REMOTE_SERVER_STARTED",
             "NEWMPR2_REMOTE_PORT",
             "start_remote_command_server",
         )
-        missing = [marker for marker in required_markers if marker not in startup_text]
-        if missing:
+
+        # Canonical module path (mirrors launch_slicer.py first candidate).
+        source_module_script = (
+            Path(__file__).resolve().parent
+            / "slicer_custom_app"
+            / "startup_script.py"
+        )
+        # Legacy runtime path used by older Slicer bundles.
+        legacy_runtime_script = runtime_root / "bin" / "Python" / "startup_script.py"
+        # Canonical plugin Python path used by current optional-module packaging.
+        plugin_python_script = (
+            runtime_root
+            / "python"
+            / "modules"
+            / "mpr"
+            / "advanced_3d_slicer"
+            / "slicer_custom_app"
+            / "startup_script.py"
+        )
+
+        candidate_scripts = [source_module_script, legacy_runtime_script, plugin_python_script]
+        existing_scripts = [script for script in candidate_scripts if script.exists()]
+        if not existing_scripts:
             return (
-                "The installed Advanced MPR runtime is outdated and incompatible with this workstation build.\n\n"
-                "Symptom: launch may fall back to an unexpected four-up/fourth-box behavior instead of Advanced MPR mode.\n\n"
-                "Fix:\n"
+                "The Advanced MPR runtime is missing startup_script.py.\n\n"
+                "Try re-installing the module:\n"
                 "  Settings -> Installation -> Advanced MPR -> Re-install\n\n"
-                f"Runtime file:\n{startup_script}\n"
-                f"Missing compatibility markers: {', '.join(missing)}"
+                "Checked paths:\n"
+                + "\n".join(str(path) for path in candidate_scripts)
             )
 
-        return None
+        marker_failures: list[tuple[Path, list[str]]] = []
+        read_failures: list[tuple[Path, Exception]] = []
+
+        for startup_script in existing_scripts:
+            try:
+                startup_text = startup_script.read_text(encoding="utf-8", errors="ignore")
+            except Exception as exc:
+                read_failures.append((startup_script, exc))
+                continue
+
+            missing = [marker for marker in required_markers if marker not in startup_text]
+            if not missing:
+                return None
+            marker_failures.append((startup_script, missing))
+
+        if read_failures and not marker_failures:
+            first_path, first_exc = read_failures[0]
+            return (
+                "The Advanced MPR startup script could not be read.\n\n"
+                "Try re-installing the module:\n"
+                "  Settings -> Installation -> Advanced MPR -> Re-install\n\n"
+                f"File:\n{first_path}\n\n"
+                f"Read error: {first_exc}"
+            )
+
+        details = []
+        for script_path, missing_markers in marker_failures:
+            details.append(f"{script_path} -> missing: {', '.join(missing_markers)}")
+
+        return (
+            "The installed Advanced MPR runtime is outdated and incompatible with this workstation build.\n\n"
+            "Symptom: launch may fail or fall back to unexpected behavior instead of Advanced MPR mode.\n\n"
+            "Fix:\n"
+            "  Settings -> Installation -> Advanced MPR -> Re-install\n\n"
+            "Startup script compatibility failures:\n"
+            + "\n".join(details)
+        )
 
     @staticmethod
     def _check_runtime_installed() -> Optional[str]:

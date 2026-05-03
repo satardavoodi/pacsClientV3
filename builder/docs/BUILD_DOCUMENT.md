@@ -140,6 +140,23 @@ When this document says "build" it means the `builder/` chain unless a line expl
   - Document external runtime requirement and expected discovery locations/env vars
   - Do NOT assume stock `Slicer.exe` fallback (audit shows code explicitly rejects stock Slicer fallback)
 
+### Advanced MPR Runtime Compatibility Notes
+
+- Advanced MPR startup uses a remote-command bootstrap contract; startup script compatibility
+  must be verified by marker presence, not by file existence alone.
+- Required startup markers:
+  - `_REMOTE_SERVER_STARTED`
+  - `NEWMPR2_REMOTE_PORT`
+  - `start_remote_command_server`
+- Startup compatibility validation checks these candidate locations:
+  - `modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py` (packaged module path)
+  - `bin/Python/startup_script.py` (legacy runtime layout)
+  - `python/modules/mpr/advanced_3d_slicer/slicer_custom_app/startup_script.py` (plugin Python layout)
+- Build/release validation and launcher readiness checks must evaluate both locations and
+  accept the runtime when at least one startup script is marker-compatible.
+- Treat "legacy script stale but plugin Python script compatible" as valid; rejecting this
+  case causes false launch failures in installed builds.
+
 ### Database Package Packaging Notes
 
 - The `database/` **Python package** (project root) is the centralised DB layer: connection pool,
