@@ -1,6 +1,6 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v2.4.8c (2026-05-03) — Includes Advanced MPR launch/install reliability updates plus backend-switch persistence hotfix: frozen startup config seeding preserves existing user backend settings, and explicit global Advanced selection is no longer masked by per-widget FAST override. See `docs/releases/VERSION_2.4.8c_RELEASE.md`.
+**Current Stable Version:** v2.4.9 (2026-05-03) — EchoMind OpenAI direct-connection with SOCKS5 proxy support, PySocks dependency added to all requirement files and PyInstaller hidden imports, all OpenAI model/parameter UI fields fully wired end-to-end (text/report/vision/secretary/transcription models, reasoning effort, temperature, max tokens, timeout), and Settings test button now uses the shared proxy-aware test path. See `docs/releases/VERSION_2.4.9_RELEASE.md`.
 
 **In-flight (dev):** v2.3.8 R15 — Advanced (VTK) viewer joins the unified protected-interaction latch so R3/R4/R5 auto-extend to Advanced wheel/stack bursts. See R15 below. Plus R22 (G7+G8) — DM table-rebuild storm fix: `blockSignals` discipline on `_clear_details_panel` priority combo + reentrancy guard on `_refresh_table_order` + `[DM_REBUILD]`/`[DM_PRIORITY_TRANSITION]` instrumentation.
 
