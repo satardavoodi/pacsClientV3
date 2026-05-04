@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QLabel, QProgressDialog, QSlider, QWidget
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
 from PacsClient.pacs.patient_tab.utils import NodeViewer
+from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
 
 # Redirect print() to logger to avoid synchronous console I/O on Windows.
 _print_logger = _logging.getLogger(__name__)
@@ -224,13 +225,27 @@ class _PWViewersMixin:
         self._critical_sections_running -= 1
 
     def _create_lightweight_vtk_placeholder(self):
-        """Create a lightweight VTK widget that defers rendering until data is loaded
+        """Create a lightweight viewer placeholder that defers rendering until data is loaded
         
-        ✅ FLICKER FIX: This creates a VTK widget with minimal initialization
-        to avoid the black screen flicker while maintaining all required methods
+        ✅ FLICKER FIX: In FAST mode (BACKEND_PYDICOM_QT) returns a QtFastContainer
+        (no GPU context), otherwise returns a VTKWidget with minimal initialization.
         """
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
+
+            # ── FAST mode: allocate VTK-free container ───────────────────────
+            requested_backend = (
+                self._get_requested_viewer_backend()
+                if hasattr(self, '_get_requested_viewer_backend')
+                else None
+            )
+            if requested_backend == BACKEND_PYDICOM_QT:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import QtFastContainer
+                container = QtFastContainer(height_viewer=height, patient_widget=self)
+                container._is_placeholder = True
+                return container
+
+            # ── Advanced mode: original VTK path ─────────────────────────────
             vtk_widget = VTKWidget(height_viewer=height, patient_widget=self)
             if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
@@ -266,6 +281,18 @@ class _PWViewersMixin:
     def creator_vtk_widget(self):
         try:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
+
+            # ── FAST mode: VTK-free container ────────────────────────────────
+            requested_backend = (
+                self._get_requested_viewer_backend()
+                if hasattr(self, '_get_requested_viewer_backend')
+                else None
+            )
+            if requested_backend == BACKEND_PYDICOM_QT:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import QtFastContainer
+                return QtFastContainer(height_viewer=height, patient_widget=self)
+
+            # ── Advanced mode: full VTK widget ───────────────────────────────
             return VTKWidget(height_viewer=height, patient_widget=self)
         except Exception as e:
             print(f"❌ Error in creator_vtk_widget: {e}")

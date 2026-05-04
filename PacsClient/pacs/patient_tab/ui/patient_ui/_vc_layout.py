@@ -16,7 +16,7 @@ from PySide6.QtCore import Qt, QTimer
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
 from PacsClient.pacs.patient_tab.ui.patient_ui._slice_tick_slider import SliceTickSlider
 from PacsClient.pacs.patient_tab.utils import NodeViewer
-from modules.viewer.viewer_backend_config import BACKEND_VTK, BACKEND_PYDICOM
+from modules.viewer.viewer_backend_config import BACKEND_VTK, BACKEND_PYDICOM, BACKEND_PYDICOM_QT
 import logging
 
 logger = logging.getLogger(__name__)
@@ -538,23 +538,34 @@ class _VCLayoutMixin:
         return new_node
 
     def _create_lightweight_vtk_placeholder(self):
-        """Create a lightweight VTK widget that defers rendering until data is loaded"""
+        """Create a lightweight viewer placeholder that defers rendering until data is loaded"""
         try:
             # Use parent_widget's create_dummy_vtk_widget if available (supports AIVTKWidget override)
             if hasattr(self.parent_widget, 'create_dummy_vtk_widget'):
                 return self.parent_widget.create_dummy_vtk_widget()
             
-            # Fallback to default VTKWidget creation
+            # Fallback: decide widget type by backend (mirrors _pw_viewers.py logic)
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
+            requested_backend = (
+                self._get_requested_viewer_backend()
+                if hasattr(self, '_get_requested_viewer_backend')
+                else None
+            )
+            if requested_backend == BACKEND_PYDICOM_QT:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import QtFastContainer
+                container = QtFastContainer(height_viewer=height, patient_widget=self.parent_widget)
+                container._is_placeholder = True
+                return container
+
             vtk_widget = VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
 
             if vtk_widget is None:
                 raise RuntimeError("VTKWidget constructor returned None")
 
-            # âœ… CRITICAL: Set solid background FIRST to prevent any flash
+            # ✅ CRITICAL: Set solid background FIRST to prevent any flash
             if hasattr(vtk_widget, 'renderer'):
                 vtk_widget.renderer.SetBackground(0.10, 0.10, 0.18)  # #1a1a2e in RGB
-                # â‌Œ FLICKER FIX: DO NOT call Render() here - it causes initial flash
+                # ❌ FLICKER FIX: DO NOT call Render() here - it causes initial flash
                 # The background will be set when the widget is first shown
 
             # Minimize rendering updates until real data is loaded
@@ -566,7 +577,7 @@ class _VCLayoutMixin:
 
             return vtk_widget
         except Exception as e:
-            logger.error(f"â‌Œ Error creating lightweight VTK widget: {e}")
+            logger.error(f"❌ Error creating lightweight VTK widget: {e}")
             self.logger.error(f"Error creating lightweight VTK widget: {e}", exc_info=True)
             return None
 
@@ -700,11 +711,19 @@ class _VCLayoutMixin:
             # Use parent_widget's creator method if available (supports AIVTKWidget override)
             if hasattr(self.parent_widget, 'creator_vtk_widget'):
                 return self.parent_widget.creator_vtk_widget()
-            # Fallback to default VTKWidget creation
+            # Fallback: decide widget type by backend (mirrors _pw_viewers.py logic)
             height = self.parent_widget.sidebar.height() if hasattr(self.parent_widget, 'sidebar') and self.parent_widget.sidebar else 480
+            requested_backend = (
+                self._get_requested_viewer_backend()
+                if hasattr(self, '_get_requested_viewer_backend')
+                else None
+            )
+            if requested_backend == BACKEND_PYDICOM_QT:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import QtFastContainer
+                return QtFastContainer(height_viewer=height, patient_widget=self.parent_widget)
             return VTKWidget(height_viewer=height, patient_widget=self.parent_widget)
         except Exception as e:
-            logger.error(f"â‌Œ Error in creator_vtk_widget: {e}")
+            logger.error(f"❌ Error in creator_vtk_widget: {e}")
             self.logger.error(f"Error in creator_vtk_widget: {e}", exc_info=True)
             return None
 

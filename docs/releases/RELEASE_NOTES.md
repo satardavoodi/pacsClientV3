@@ -1,8 +1,39 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
 **Current Stable Version:** v2.5.0 (2026-05-04)
+**In-flight Beta:** v2.5.0 beta — FAST 2D cell separation (2026-05-05, branch: beta-version)
 **Release Date:** 2026-05-04
 **Branch:** matab-conservative
+
+---
+
+## v2.5.0 beta (2026-05-05) - FAST 2D cell separation: VTK-free viewer cells
+
+### Summary
+
+Replaces `VTKWidget` (which allocates a GPU context) with a lightweight
+`QtFastContainer(QWidget)` in FAST mode (`BACKEND_PYDICOM_QT`).  Eliminates
+40–80 MB GPU allocation and 100–400 ms initialisation time per cell in FAST
+mode.  Advanced/VTK path is completely unchanged.
+Full details in [`VERSION_2.5.0_RELEASE.md`](VERSION_2.5.0_RELEASE.md)
+(beta section).
+
+### Changes
+
+- **`QtFastContainer`** — new VTK-free cell widget with `_NullVtkObject` /
+  `_NullImageViewer` stubs.  Crash-site register C1–C9 covered.  Eagle Eye
+  guard respected.
+- **Package export** — `QtFastContainer` and `_NullVtkObject` exported from
+  `vtk_widget` package.
+- **`is_vtk_widget()`** — accepts `(VTKWidget, QtFastContainer, CurvedMPRViewport)`.
+- **Factory switch** — both primary (`_pw_viewers.py`) and fallback
+  (`_vc_layout.py`) factory methods return `QtFastContainer` when backend is
+  `BACKEND_PYDICOM_QT`.
+
+### Verification
+
+- `pytest tests/viewer/test_fast_viewer_pipeline.py` → 167 passed, 1
+  pre-existing failure (timing, unrelated to this change).
 
 ---
 

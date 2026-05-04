@@ -1357,10 +1357,11 @@ class ToolbarManager:
     def is_vtk_widget(self, widget):
         """Check if widget is a VTKWidget (not MPR or other custom widgets)"""
         from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
+        from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import QtFastContainer
         from modules.mpr.curved_mpr.curved_mpr_panoramic_view import CurvedMPRViewport
         
-        # Accept VTKWidget or CurvedMPRViewport
-        return isinstance(widget, (VTKWidget, CurvedMPRViewport))
+        # Accept VTKWidget, QtFastContainer (FAST mode), or CurvedMPRViewport
+        return isinstance(widget, (VTKWidget, QtFastContainer, CurvedMPRViewport))
 
     def is_mpr_viewer(self, widget):
         """Check if widget is an MPR viewer"""

@@ -14,3 +14,7 @@ from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (  
     unregister_download_subprocess,
     _create_qt_viewer_bridge,
 )
+from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import (  # noqa: F401
+    QtFastContainer,
+    _NullVtkObject,
+)
