@@ -13,7 +13,9 @@ This folder is the canonical home for active planning documents, recovery plans,
 - `plan.md` - master planning ledger
 - `analysis/` - evaluation notes, block reviews, baselines, and ClearCanvas handoff planning
 - `performance/FAST_STORM_AND_PERFORMANCE_PLAN_vNEXT.md` - canonical next-step FAST storm/performance plan
+- `performance/FAST_2D_CELL_SEPARATION_PLAN.md` - **✅ COMPLETED (Step 1 of performance surgery)** VTK-free FAST mode viewer cells
 - `performance/` - performance roadmaps, KPI playbooks, and execution plans
+- `VIEWER_CELL_SEPARATION_SAFETY_PLAN.md` - multi-phase surgery safety plan (P1 done, P2–P7 pending)
 - `development/` - development/refactoring plans
 - `implementation/` - implementation/refactor plans
 - `pipelines/` - pipeline planning docs

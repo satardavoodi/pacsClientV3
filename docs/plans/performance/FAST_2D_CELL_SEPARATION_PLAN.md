@@ -1,10 +1,14 @@
 # FAST 2D Viewer Cell VTK Separation Plan
 
-**Status:** PLANNING — No code changed yet  
+**Status:** ✅ COMPLETED — Steps A, B, C done (2026-05-05)  
 **Date:** 2026-05-04  
-**Branch:** `matab-conservative` (do NOT merge or switch)  
+**Completed:** 2026-05-05  
+**Branch:** `beta-version` (commit `18ab5fc`)  
 **Canonical location:** `docs/plans/performance/FAST_2D_CELL_SEPARATION_PLAN.md`  
 **Supersedes:** `docs/plans/VIEWER_CELL_SEPARATION_SAFETY_PLAN.md` (first-pass plan — preserved for reference)
+
+> **This is Step 1 of the FAST mode performance surgery.**  
+> Steps A–C are shipped and verified. Step D (full VTK-free bridge init directly in `__init__`) is the immediate next milestone — see Section 5 Step D below.
 
 ---
 
@@ -198,6 +202,19 @@ Adding `if vtk_widget.render_window:` guards at C1–C9 would require modifying 
 ---
 
 ## 5. Implementation Steps
+
+### Completion status (2026-05-05)
+
+| Step | Status | Commit | Notes |
+|------|--------|--------|-------|
+| A — Create `QtFastContainer` skeleton | ✅ Done | `18ab5fc` | `_NullVtkObject`, `_NullImageViewer`, `QtFastContainer` created; all stub assertions pass |
+| B — Update `is_vtk_widget()` | ✅ Done | `18ab5fc` | Accepts `(VTKWidget, QtFastContainer, CurvedMPRViewport)` |
+| C — Factory switch | ✅ Done | `18ab5fc` | Both `_pw_viewers.py` and `_vc_layout.py` fallback paths updated |
+| D — Full VTK-free `__init__` | ⏳ Pending | — | Wire `QtViewerBridge` directly in `__init__`; remove residual null stubs |
+
+**Test result at completion:** 167/168 passing. 1 pre-existing failure (`test_b41_drag_fast_interaction_still_skips_filter` — timing threshold unrelated to cell separation).
+
+---
 
 Each step is independently committable and independently reversible. Steps must be executed in order. **Do NOT combine steps into a single commit.**
 

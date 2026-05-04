@@ -6,6 +6,36 @@
 
 ---
 
+## Performance Surgery Tracker (2026-05-05)
+
+> The "performance surgery" is a phased architectural programme to eliminate all
+> remaining overhead in FAST mode at the cell/widget, service, and UI layers.
+> Each phase is independently committed, gate-tested, and merged before the next starts.
+> Full safety constraints in `docs/plans/VIEWER_CELL_SEPARATION_SAFETY_PLAN.md`.
+
+| Phase | Name | Status | Branch | Plan doc |
+|-------|------|--------|--------|----------|
+| **P1** | FAST 2D Cell Separation — `QtFastContainer` replaces `VTKWidget` in FAST mode | ✅ **DONE** (Steps A–C) | `beta-version` @ `18ab5fc` | `docs/plans/performance/FAST_2D_CELL_SEPARATION_PLAN.md` |
+| **P1-D** | Full VTK-free `QtFastContainer.__init__` — wire `QtViewerBridge` directly | ⏳ Next | `beta-version` | same |
+| **P2** | Catalog Service — decouple series-list queries from VTK load path | 🔲 Planned | — | `docs/plans/VIEWER_CELL_SEPARATION_SAFETY_PLAN.md §4` |
+| **P3** | DM Control-Plane Subprocess — move coordinator to background process | 🔲 Planned | — | `docs/plans/VIEWER_CELL_SEPARATION_SAFETY_PLAN.md §5` |
+| **P4** | DM UI Rate Limiting — coalesce DM table rebuilds | 🔲 Planned | — | `docs/plans/VIEWER_CELL_SEPARATION_SAFETY_PLAN.md §6` |
+| **P5** | CPU Budget File — shared load-shedding config | 🔲 Planned | — | `docs/plans/VIEWER_CELL_SEPARATION_SAFETY_PLAN.md §7` |
+| **P6** | Signal Routing — direct signal paths, eliminate fan-out | 🔲 Planned | — | `docs/plans/VIEWER_CELL_SEPARATION_SAFETY_PLAN.md §8` |
+| **P7** | Architecture Tests — automated regression guards for all phases | 🔲 Planned | — | `docs/plans/VIEWER_CELL_SEPARATION_SAFETY_PLAN.md §9` |
+
+### P1 completion notes (2026-05-05)
+- `QtFastContainer(QWidget)` created with `_NullVtkObject` / `_NullImageViewer` stubs
+- All crash sites C1–C9 covered by null stubs (zero call-site changes needed)
+- Eagle Eye / MPR / Advanced VTK path completely unaffected
+- `is_vtk_widget()` updated to accept `QtFastContainer`
+- Factory switch in `_pw_viewers.py` (primary) and `_vc_layout.py` (fallback)
+- Test gate: **167/168 passing** (1 pre-existing timing failure, unrelated)
+- `_qt_bridge` wired at series-load time by existing `_bind_backend_from_metadata` — no bridge changes needed
+- **Step D** (wire `QtViewerBridge` directly in `__init__`) is the immediate next step
+
+---
+
 ## <u>Prompt (Execution Contract)</u>
 
 - Keep FAST and Advanced pipelines strictly separate.

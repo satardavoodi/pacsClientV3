@@ -1,8 +1,12 @@
 # Viewer-Cell Separation — Comprehensive Safety Plan
 **Date:** 2026-05-05  
-**Branch:** `matab-conservative`  
+**Branch:** `beta-version` (commit `18ab5fc`)  
 **Previous attempt result:** Catastrophic — required full code re-download. Root cause: incomplete API contract + missing call-site guards + simultaneous multi-phase execution.  
-**Approach:** This plan sequences every sub-step, identifies every dependency surface, specifies every guard, and defines rollback at each commit boundary. **No code is written until this document is agreed.**
+**Approach:** This plan sequences every sub-step, identifies every dependency surface, specifies every guard, and defines rollback at each commit boundary.
+
+> ✅ **Phase P1 (Viewer-Cell Separation) is COMPLETE as of 2026-05-05.**  
+> See `docs/plans/performance/FAST_2D_CELL_SEPARATION_PLAN.md` for the authoritative spec and completion record.  
+> Phases P2–P7 below remain the planned next steps of the performance surgery.
 
 ---
 
