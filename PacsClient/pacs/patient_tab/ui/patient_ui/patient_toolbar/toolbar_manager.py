@@ -2764,6 +2764,80 @@ class ToolbarManager:
             import traceback
             traceback.print_exc()
 
+    def _show_wl_presets_dropdown(self, button):
+        """Show CT Window/Level preset dropdown next to the WL split-button."""
+        CT_PRESETS = [
+            ('Lung', 1500, -600, '#60a5fa'),
+            ('Abdomen', 400, 40, '#34d399'),
+            ('Brain', 80, 40, '#a78bfa'),
+            ('Bone', 2000, 500, '#f59e0b'),
+        ]
+        try:
+            dropdown = QWidget(self.patient_widget)
+            dropdown.setWindowFlags(Qt.Popup | Qt.FramelessWindowHint)
+            dropdown.setAttribute(Qt.WA_DeleteOnClose)
+            dropdown.setStyleSheet("""
+                QWidget {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                        stop:0 #1f2937, stop:1 #111827);
+                    border: 2px solid #374151;
+                    border-radius: 10px;
+                }
+            """)
+            layout = QVBoxLayout(dropdown)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(8)
+            from PySide6.QtWidgets import QLabel
+            header = QLabel("CT Window Presets")
+            header.setStyleSheet("""
+                QLabel {
+                    color: #f7fafc;
+                    font-size: 15px;
+                    font-weight: 700;
+                    font-family: 'Roboto', sans-serif;
+                    padding: 6px 8px;
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                        stop:0 #0369a1, stop:1 #0284c7);
+                    border-radius: 6px;
+                    margin-bottom: 4px;
+                }
+            """)
+            layout.addWidget(header)
+
+            def _apply_preset(ww, wl):
+                try:
+                    selected_widget = self.patient_widget.selected_widget
+                    if selected_widget is None:
+                        return
+                    if self.is_mpr_viewer(selected_widget):
+                        mpr_widget = self.get_mpr_widget(selected_widget)
+                        if mpr_widget and hasattr(mpr_widget, 'set_window_level'):
+                            mpr_widget.set_window_level(ww, wl)
+                        return
+                    image_viewer = getattr(selected_widget, 'image_viewer', None)
+                    if image_viewer and hasattr(image_viewer, 'set_window_level'):
+                        image_viewer.set_window_level(ww, wl)
+                    elif hasattr(selected_widget, 'set_window_level'):
+                        selected_widget.set_window_level(ww, wl)
+                except Exception as e:
+                    logger.warning(f"[WL_PRESET] Failed to apply preset WW={ww} WL={wl}: {e}")
+
+            for label, ww, wl, color in CT_PRESETS:
+                btn = create_dropdown_tool(f'{label}  (WW:{ww} / WL:{wl})', None, color)
+                btn.clicked.connect((lambda _ww, _wl: lambda: [_apply_preset(_ww, _wl), dropdown.close()])(ww, wl))
+                layout.addWidget(btn)
+
+            button_pos = button.mapToGlobal(QPoint(0, button.height()))
+            dropdown.move(button_pos)
+            dropdown.setFixedWidth(280)
+            dropdown.raise_()
+            dropdown.activateWindow()
+            dropdown.show()
+        except Exception as e:
+            print(f"[ERROR] Failed to show WL presets dropdown: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _show_mpr_dropdown(self, button):
         """Show dropdown menu for MIP/MinIP/Thick Slab options"""
         try:
@@ -5983,10 +6057,27 @@ class ToolbarManager:
         toolbar_layout.addWidget(zoom_btn)
         self.tools_button[self.tool_access.ZOOM] = zoom_btn
 
-        # Window Level button
+        # Window Level split-button (hamburger = CT presets, main = W/L toggle)
+        wl_container = QWidget()
+        wl_layout = QHBoxLayout(wl_container)
+        wl_layout.setContentsMargins(0, 0, 0, 0)
+        wl_layout.setSpacing(0)
+        wl_layout.setAlignment(Qt.AlignVCenter)
+        wl_menu_btn = QPushButton()
+        wl_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+        wl_menu_btn.setIconSize(QSize(16, 16))
+        wl_menu_btn.setToolTip('CT Window Presets')
+        wl_menu_btn.setCursor(Qt.PointingHandCursor)
+        wl_menu_btn.setProperty('_theme_style_type', 'split_left')
+        _apply_split_left_style(wl_menu_btn, self._theme)
+        wl_menu_btn.clicked.connect(lambda: self._show_wl_presets_dropdown(wl_menu_btn))
         window_level_btn = create_tool_btn(self.patient_widget, 'Window Level', 'contrast.png')
         window_level_btn.clicked.connect(lambda: self.toggle_window_level(self.patient_widget.selected_widget))
-        toolbar_layout.addWidget(window_level_btn)
+        window_level_btn.setProperty('_theme_style_type', 'split_right')
+        _apply_split_right_style(window_level_btn, self._theme)
+        wl_layout.addWidget(wl_menu_btn)
+        wl_layout.addWidget(window_level_btn)
+        toolbar_layout.addWidget(wl_container)
         self.tools_button[self.tool_access.WINDOW_LEVEL] = window_level_btn
 
         # Pan button
@@ -6004,7 +6095,6 @@ class ToolbarManager:
 
         # ============================================================
         # CATEGORY 5: IMAGE TRANSFORM TOOLS
-        # ============================================================
         rotate_container = QWidget()
         rotate_layout = QHBoxLayout(rotate_container)
         rotate_layout.setContentsMargins(0, 0, 0, 0)

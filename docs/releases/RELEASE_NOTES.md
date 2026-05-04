@@ -1,8 +1,31 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.4.8c (2026-05-03)
-**Release Date:** 2026-05-03
+**Current Stable Version:** v2.5.0 (2026-05-04)
+**Release Date:** 2026-05-04
 **Branch:** matab-conservative
+
+---
+
+## v2.5.0 (2026-05-04) - Window Level split-button and toolbar stability release
+
+### Summary
+
+This release adds a split-button CT preset menu next to the Window Level tool and rolls in the required toolbar repairs so patient opening remains stable after the WL feature work.
+Full details in [`VERSION_2.5.0_RELEASE.md`](VERSION_2.5.0_RELEASE.md).
+
+### Fixes
+
+- **Window Level split-button presets** - the toolbar now exposes CT presets for Lung, Abdomen, Brain, and Bone through a hamburger dropdown next to the main Window Level action.
+- **FAST and Advanced support** - preset application routes to the active viewer target for both FAST and Advanced workflows.
+- **Toolbar construction repair** - microphone timer/state initialization was restored so `ToolbarManager` setup does not break patient tab opening.
+- **Toolbar wiring cleanup** - restored the AI Analyze button click path and removed an accidental stray callback from an unrelated error path.
+- **Focused diff cleanup** - reverted unrelated Curved MPR drift so this release stays scoped to the WL feature and its follow-up repair.
+
+### Verification
+
+- `pytest tests/gui/qt/test_main_window_basic.py -q` passed.
+- Offscreen `PatientWidget()` construction smoke passed.
+- Latest May 4 log review showed no fresh runtime `ERROR` or `CRITICAL` entries for the validated run.
 
 ---
 
