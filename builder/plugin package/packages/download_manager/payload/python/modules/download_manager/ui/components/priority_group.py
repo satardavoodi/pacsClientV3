@@ -16,6 +16,21 @@ from ..styles.animations import AnimationManager
 
 logger = logging.getLogger(__name__)
 
+# Module-level QIcon cache — qta.icon() loads font glyphs and renders a pixmap
+# on every call (~10-30 ms each on Windows).  With 4 group headers × 2 icons
+# and N data rows × 4 action-button icons per rebuild, uncached calls dominate
+# the DM_REBUILD hot path.  The cache is keyed by (icon_name, sorted_kwargs)
+# and persists for the lifetime of the process.
+_QTA_ICON_CACHE: dict = {}
+
+
+def _qta_cached(name: str, **kwargs):
+    """Return a cached QIcon for *name*, creating it once on first access."""
+    key = (name, tuple(sorted(kwargs.items())))
+    if key not in _QTA_ICON_CACHE:
+        _QTA_ICON_CACHE[key] = qta.icon(name, **kwargs)
+    return _QTA_ICON_CACHE[key]
+
 
 class PriorityGroupHeader(QWidget):
     """
@@ -75,7 +90,7 @@ class PriorityGroupHeader(QWidget):
         
         # Collapse/expand button
         self.collapse_btn = QPushButton()
-        self.collapse_btn.setIcon(qta.icon('fa5s.chevron-down', color='white'))
+        self.collapse_btn.setIcon(_qta_cached('fa5s.chevron-down', color='white'))
         self.collapse_btn.setFixedSize(28, 28)
         self.collapse_btn.clicked.connect(self._toggle_collapse)
         layout.addWidget(self.collapse_btn)
@@ -83,7 +98,7 @@ class PriorityGroupHeader(QWidget):
         # Priority icon
         icon_label = QLabel()
         icon_label.setFixedSize(36, 36)
-        icon_label.setPixmap(qta.icon(self.icon_name, color='white').pixmap(20, 20))
+        icon_label.setPixmap(_qta_cached(self.icon_name, color='white').pixmap(20, 20))
         icon_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(icon_label)
         
@@ -145,7 +160,7 @@ class PriorityGroupHeader(QWidget):
         
         # Update icon with animation
         icon_name = 'fa5s.chevron-up' if self.is_collapsed else 'fa5s.chevron-down'
-        self.collapse_btn.setIcon(qta.icon(icon_name, color='white'))
+        self.collapse_btn.setIcon(_qta_cached(icon_name, color='white'))
         
         # Emit signal
         self.collapsed_changed.emit(self.priority.name, self.is_collapsed)

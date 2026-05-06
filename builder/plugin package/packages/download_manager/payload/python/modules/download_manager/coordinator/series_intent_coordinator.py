@@ -558,6 +558,27 @@ class SeriesIntentCoordinator:
                     self._clear_priority_retry(study_uid, _token)
                     return
 
+        # Phase 1C Layer 3 — active-worker short-circuit.
+        # If there is already a worker running for this study in the pool, the
+        # priority and viewed_series_number updates were already written to the
+        # state_store by request_critical_series().  The running worker will
+        # download the correct series (or, if it was just interrupted,
+        # on_worker_removed → _start_next_pending will restart it when the old
+        # worker finishes — independent of this retry chain).  Keeping the chain
+        # alive for 18–48 s while the pool is busy with this study's own worker
+        # produces a spurious INTENT_PRIORITY exhaust without any benefit.
+        _wbs = getattr(self.worker_pool, 'worker_by_study', {}) or {}
+        if study_uid in _wbs:
+            self._emit_intent_priority(
+                tag="started",
+                study_uid=study_uid,
+                attempt=_attempt,
+                max_attempts=max_retries,
+                recovery=_recovery,
+            )
+            self._clear_priority_retry(study_uid, _token)
+            return
+
         if self.worker_pool.can_add_worker():
             if state.status == DownloadStatus.PAUSED:
                 self.state_store.update(study_uid, status=DownloadStatus.PENDING)

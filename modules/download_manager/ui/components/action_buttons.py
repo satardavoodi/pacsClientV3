@@ -14,6 +14,20 @@ from ...core.enums import DownloadStatus
 
 logger = logging.getLogger(__name__)
 
+# Module-level QIcon cache — same rationale as priority_group.py: qta.icon()
+# renders font glyphs on every call (~10-30 ms each on Windows).  ActionButtons
+# creates 4 buttons per data row, so every full DM table rebuild pays 4×N icon
+# costs.  The cache reduces subsequent rebuild cost to essentially zero.
+_QTA_ICON_CACHE: dict = {}
+
+
+def _qta_cached(name: str, **kwargs):
+    """Return a cached QIcon for *name*, creating it once on first access."""
+    key = (name, tuple(sorted(kwargs.items())))
+    if key not in _QTA_ICON_CACHE:
+        _QTA_ICON_CACHE[key] = qta.icon(name, **kwargs)
+    return _QTA_ICON_CACHE[key]
+
 
 class ActionButtons(QWidget):
     """
@@ -102,7 +116,7 @@ class ActionButtons(QWidget):
     def _create_button(self, icon: str, color: str, tooltip: str) -> QPushButton:
         """Create styled icon button"""
         btn = QPushButton()
-        btn.setIcon(qta.icon(icon, color=color))
+        btn.setIcon(_qta_cached(icon, color=color))
         btn.setIconSize(QSize(18, 18))
         btn.setFixedSize(36, 36)
         btn.setToolTip(tooltip)
