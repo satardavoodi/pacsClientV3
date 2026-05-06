@@ -54,7 +54,7 @@ class _DMRetryMixin:
 
             # Refresh the table to reflect the status change
             logger.info(f"🔄 Refreshing table after pause for {study_uid[:40]}...")
-            self._refresh_table_order()
+            self.refresh_table_order()
 
             # Update button states after status change
             updated_state = self.state_store.get(study_uid)
@@ -124,7 +124,7 @@ class _DMRetryMixin:
 
             # Refresh the table to reflect the status change
             logger.info(f"🔄 Refreshing table after resume for {study_uid[:40] if study_uid else 'None'}...")
-            self._refresh_table_order()
+            self.refresh_table_order()
 
             # Update button states after status change
             updated_state = self.state_store.get(study_uid)
@@ -183,7 +183,7 @@ class _DMRetryMixin:
 
             # Refresh the table to reflect the status change
             logger.info(f"🔄 Refreshing table after cancel for {study_uid[:40] if study_uid else 'None'}...")
-            self._refresh_table_order()
+            self.refresh_table_order()
 
             # Update button states after status change
             updated_state = self.state_store.get(study_uid)
@@ -381,7 +381,8 @@ class _DMRetryMixin:
 
             # Final consolidated table refresh after ALL state changes
             # (priority→CRITICAL, others→PAUSED, this→PENDING) are applied.
-            QTimer.singleShot(50, self._refresh_table_order)
+            # Use coalesced public API — do NOT call _refresh_table_order() directly.
+            self.refresh_table_order()
 
             # ──────────────────────────────────────────────────────────
             # SLOW PATH — offloaded to a background thread
@@ -447,7 +448,7 @@ class _DMRetryMixin:
                         if not started:
                             QTimer.singleShot(150, self._start_next_pending)
 
-                        self._refresh_table_order()
+                        self.refresh_table_order()
                         updated_state = self.state_store.get(study_uid)
                         if updated_state and self._selected_study_uid == study_uid:
                             self._update_button_states(updated_state)
@@ -461,9 +462,6 @@ class _DMRetryMixin:
 
             threading.Thread(target=_bg_series_retry, daemon=True, name="series-retry-io").start()
             logger.info(f"🔄 [SERIES RETRY] Background I/O thread started for series {_series_key}")
-
-            # Immediate UI feedback
-            self._refresh_table_order()
 
         except Exception as e:
             logger.error(f"❌ [SERIES RETRY] Error in series retry: {e}")
@@ -576,7 +574,7 @@ class _DMRetryMixin:
                         logger.info(f"🚀 Starting download worker for retry: {study_uid[:40] if study_uid else 'None'}...")
                         self._start_download_worker(study_uid)
 
-                        self._refresh_table_order()
+                        self.refresh_table_order()
                         updated_state = self.state_store.get(study_uid)
                         if updated_state and self._selected_study_uid == study_uid:
                             self._update_button_states(updated_state)
@@ -590,9 +588,6 @@ class _DMRetryMixin:
 
             threading.Thread(target=_bg_patient_retry, daemon=True, name="patient-retry-io").start()
             logger.info(f"🔄 [RETRY] Background I/O thread started for {study_uid[:40] if study_uid else 'None'}...")
-
-            # Immediate UI feedback
-            self._refresh_table_order()
 
         except Exception as e:
             logger.error(f"❌ Error in per-patient retry: {e}")

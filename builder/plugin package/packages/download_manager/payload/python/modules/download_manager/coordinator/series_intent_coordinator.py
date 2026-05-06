@@ -273,16 +273,26 @@ class SeriesIntentCoordinator:
         # requested, cancel the worker so it restarts with the viewed series
         # first.  Without this, the user must wait for the entire current series
         # to finish before the viewed series begins downloading.
+        #
+        # Also covers VALIDATING state: the subprocess is still in its startup /
+        # server-handshake phase and holds the pool slot without having downloaded
+        # anything.  current_series_number is None during this phase, so we fall
+        # back to the old viewed_series_number (still the pre-update value because
+        # `state` was captured before the state_store.update() call above).
         current_series = getattr(state, 'current_series_number', None)
+        effective_current = current_series or (
+            getattr(state, 'viewed_series_number', None)
+            if state.status == DownloadStatus.VALIDATING else None
+        )
         if (
-            state.status == DownloadStatus.DOWNLOADING
-            and current_series
-            and str(current_series) != str(series_number)
+            state.status in (DownloadStatus.DOWNLOADING, DownloadStatus.VALIDATING)
+            and effective_current
+            and str(effective_current) != str(series_number)
         ):
             logger.info(
-                "[INTENT] Series interrupt: study=%s downloading series %s "
+                "[INTENT] Series interrupt: study=%s %s series %s "
                 "but viewer requested series %s — cancelling worker",
-                study_uid[:40], current_series, series_number,
+                study_uid[:40], state.status.value, effective_current, series_number,
             )
             self._pause_downloads_for_preemption([study_uid])
             # Override PAUSED→PENDING so _start_next_pending picks it up
@@ -294,7 +304,9 @@ class SeriesIntentCoordinator:
             )
 
         self.negotiate_priority_change(study_uid, DownloadPriority.CRITICAL)
-        self._refresh_table_order()
+        # NOTE: Do NOT call _refresh_table_order() here. The state_store.update(priority=CRITICAL)
+        # above already triggers UIObserver → refresh_table_order() (deferred). Adding a direct
+        # synchronous call here caused a ~300-977ms main-thread stall on every drag-drop (Phase1A).
         return True
 
     def clear_series_intent(self, study_uid: str) -> bool:
@@ -308,7 +320,8 @@ class SeriesIntentCoordinator:
             priority=DownloadPriority.HIGH,
         )
 
-        self._refresh_table_order()
+        # NOTE: Do NOT call _refresh_table_order() here — same reasoning as request_critical_series.
+        # UIObserver deferred path handles the rebuild for the priority/viewed_series field changes.
         self._check_auto_resume()
 
         self._defer(100, self._start_next_pending)

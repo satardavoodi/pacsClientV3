@@ -62,6 +62,7 @@ class DownloadStateMachine:
         DownloadStatus.VALIDATING: {
             DownloadStatus.PENDING,       # Needs re-queue
             DownloadStatus.DOWNLOADING,   # Validation passed, start download
+            DownloadStatus.PAUSED,        # Preempted by higher-priority series request
             DownloadStatus.FAILED,        # Validation failed
             DownloadStatus.CANCELLED,     # User cancelled
         },

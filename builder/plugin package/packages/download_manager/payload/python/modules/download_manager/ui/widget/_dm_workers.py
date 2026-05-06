@@ -546,7 +546,7 @@ class _DMWorkersMixin:
                         f"⏸️ [COMPLETION] Ignoring failure for preempted study "
                         f"{study_uid[:40]}... status={state.status.value} — will be re-queued automatically"
                     )
-                    self._refresh_table_order()
+                    self.refresh_table_order()
                     self._check_auto_resume()
                     QTimer.singleShot(0, self._start_next_pending)
                     return
@@ -558,7 +558,7 @@ class _DMWorkersMixin:
 
             # Refresh table to show updated status
             logger.info("   Refreshing table order...")
-            self._refresh_table_order()
+            self.refresh_table_order()
             logger.info("   Table refreshed")
 
             # Check for auto-paused downloads that should auto-resume (Rule R5)
@@ -687,9 +687,27 @@ class _DMWorkersMixin:
         )
         # Classic preemption: state was already flipped to PAUSED+is_auto_paused by the
         # coordinator/executor before the worker finished — no message marker needed.
-        _is_expected_preemption = bool(
-            (_has_preemption_marker or _is_classic_preemption) and not _is_user_cancel
+        # A user-cancel with state=PENDING means _on_series_retry already set the
+        # study back to PENDING before cancelling the worker (the fast-path sets
+        # state=PENDING synchronously, then kicks off the background I/O thread
+        # which will restart the download via _main_thread_continue).  Treating
+        # this as an error would flip the state to FAILED and block the restart.
+        _is_series_retry_cancel = bool(
+            _is_user_cancel
+            and current_state
+            and current_state.status == DownloadStatus.PENDING
         )
+        _is_expected_preemption = bool(
+            _is_classic_preemption
+            or (_has_preemption_marker and not _is_user_cancel)
+        )
+        if _is_series_retry_cancel:
+            logger.info(
+                f"⏸️ [WORKER_ERROR] User-cancel with state=PENDING for {study_uid[:40]}... "
+                f"— series-retry in progress; letting _main_thread_continue handle restart"
+            )
+            self._check_auto_resume()
+            return
         if _is_expected_preemption:
             logger.info(
                 f"Expected preemption worker completion for {study_uid[:40]}... "

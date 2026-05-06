@@ -2086,9 +2086,10 @@ def scenario_critical_series_roundtrip():
     ok = task_main.study_uid not in calls["paused"]
     _kpi.record(SCENARIO, "Main study NOT self-paused", ok, "", ok)
 
-    # UI refresh called
-    ok = calls["refresh"] >= 1
-    _kpi.record(SCENARIO, "refresh_table_order called (UI visible)", ok, "", ok)
+    # UI refresh: Phase 1A — refresh_table_order is now deferred via UIObserver
+    # (QTimer.singleShot + 50ms coalesce). The coordinator no longer calls it
+    # synchronously, so calls["refresh"]==0 here is the CORRECT new behaviour.
+    _kpi.record(SCENARIO, "refresh_table_order deferred (Phase1A, via UIObserver)", calls["refresh"] == 0, "", None)
 
     # Queue recheck scheduled
     ok = calls["start"] >= 1
@@ -2258,8 +2259,8 @@ def scenario_series_interrupt_same_study():
     ok = task_a.study_uid in calls["retry_uid"] or calls["worker_started"] >= 1
     _kpi.record(SCENARIO, "schedule_priority_start_retry called", ok, "", ok)
 
-    ok = calls["refresh"] >= 1
-    _kpi.record(SCENARIO, "refresh_table_order called", ok, "", ok)
+    # Phase 1A: refresh_table_order is now deferred via UIObserver (no direct sync call).
+    _kpi.record(SCENARIO, "refresh_table_order deferred (Phase1A, via UIObserver)", calls["refresh"] == 0, "", None)
 
     # ── Verify: requesting the SAME series that's already downloading does NOT cancel ──
     # Reset state: downloading series 5 now

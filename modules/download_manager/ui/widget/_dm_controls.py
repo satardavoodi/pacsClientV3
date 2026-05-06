@@ -147,7 +147,7 @@ class _DMControlsMixin:
 
             # Step 9: Refresh table to show updated statuses
             logger.info(f"[PLAY-9] Refreshing table order...")
-            self._refresh_table_order()
+            self.refresh_table_order()
 
             logger.info("=" * 80)
             logger.info("▶ PLAY COMPLETED")
@@ -203,7 +203,7 @@ class _DMControlsMixin:
 
             # Step 3: Update UI
             self._update_status_label()
-            self._refresh_table_order()
+            self.refresh_table_order()
 
             logger.info("⏸ PAUSE COMPLETED")
 
@@ -271,7 +271,7 @@ class _DMControlsMixin:
                     
                     # Refresh the table to reflect the status change
                     logger.info(f"🔄 Refreshing table after resume selected for {self._selected_study_uid[:40]}...")
-                    self._refresh_table_order()
+                    self.refresh_table_order()
                     
                     # Update button states after status change
                     updated_state = self.state_store.get(self._selected_study_uid)
@@ -301,7 +301,7 @@ class _DMControlsMixin:
 
                     # Refresh the table to reflect the status change
                     logger.info(f"🔄 Refreshing table after failed->pending resume for {self._selected_study_uid[:40]}...")
-                    self._refresh_table_order()
+                    self.refresh_table_order()
 
                     # Update button states after status change
                     updated_state = self.state_store.get(self._selected_study_uid)
@@ -326,7 +326,7 @@ class _DMControlsMixin:
                     
                     # Refresh the table to reflect the status change
                     logger.info(f"🔄 Refreshing table after restart selected for {self._selected_study_uid[:40]}...")
-                    self._refresh_table_order()
+                    self.refresh_table_order()
                     
                     # Update button states after status change
                     updated_state = self.state_store.get(self._selected_study_uid)
@@ -357,7 +357,7 @@ class _DMControlsMixin:
             
             # Refresh the table to reflect the status change
             logger.info(f"🔄 Refreshing table after pause selected for {self._selected_study_uid[:40] if self._selected_study_uid else 'None'}...")
-            self._refresh_table_order()
+            self.refresh_table_order()
             
             logger.info("🟢 [BUTTON SUCCESS] Pause Selected operation completed")
         else:
@@ -372,7 +372,7 @@ class _DMControlsMixin:
             
             # Refresh the table to reflect the status change
             logger.info(f"🔄 Refreshing table after cancel selected for {self._selected_study_uid[:40] if self._selected_study_uid else 'None'}...")
-            self._refresh_table_order()
+            self.refresh_table_order()
             
             logger.info("🟢 [BUTTON SUCCESS] Cancel Selected operation completed")
         else:
@@ -387,7 +387,7 @@ class _DMControlsMixin:
             
             # Refresh the table to reflect the status change
             logger.info(f"🔄 Refreshing table after retry selected for {self._selected_study_uid[:40] if self._selected_study_uid else 'None'}...")
-            self._refresh_table_order()
+            self.refresh_table_order()
             
             logger.info("🟢 [BUTTON SUCCESS] Retry Selected operation completed")
         else:
@@ -467,7 +467,7 @@ class _DMControlsMixin:
             self.log_message(f"✅ Reset {reset_count} downloads - all ready to restart")
             
             # Refresh entire table
-            self._refresh_table_order()
+            self.refresh_table_order()
             
             # Update status label
             self._update_status_label()
@@ -535,7 +535,7 @@ class _DMControlsMixin:
                 # Update state
                 self.state_store.update(study_uid, priority=priority)
                 self.intent_coordinator.negotiate_priority_change(study_uid, priority)
-                self._refresh_table_order()
+                self.refresh_table_order()
                 
                 # Update button states after priority change
                 state = self.state_store.get(study_uid)

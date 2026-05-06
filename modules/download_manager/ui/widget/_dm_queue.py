@@ -280,7 +280,7 @@ class _DMQueueMixin:
         """Add download row to table (called by UIObserver) - triggers full refresh"""
         logger.debug(f"📥 add_download_row called for {study_uid[:40]}...")
         # Instead of adding individual rows, refresh the entire table with priority grouping
-        QTimer.singleShot(0, self._refresh_table_order)
+        self.refresh_table_order()
 
     def update_progress_bar(self, study_uid: str, progress: float) -> None:
         """Update progress (called by UIObserver)"""
@@ -494,20 +494,17 @@ class _DMQueueMixin:
         QTimer.singleShot(0, lambda: self._do_update_priority_badge(study_uid, priority))
 
     def _do_update_priority_badge(self, study_uid: str, priority: DownloadPriority) -> None:
-        """Actually update priority badge (runs in main thread)"""
+        """Actually update priority badge (runs in main thread).
+
+        Phase 1A: No longer calls _refresh_table_order() here. The UIObserver
+        simultaneously queues a refresh_table_order() deferred call for every
+        priority field change, which handles row reordering. Calling
+        _refresh_table_order() here was a duplicate 233-516ms rebuild.
+        """
         try:
-            logger.debug(f"📊 update_priority_badge for {study_uid[:40]}... → {priority.display_name}")
-            
-            # INLINE: Refresh table order immediately (NO nested QTimer)
-            try:
-                if hasattr(self, '_refresh_table_order_inline'):
-                    self._refresh_table_order_inline()
-                else:
-                    self._refresh_table_order()
-            except Exception as e:
-                logger.error(f"Error refreshing table order: {e}")
-            
-            # INLINE: Update details panel (NO nested QTimer)
+            logger.debug(f"\U0001f4ca update_priority_badge for {study_uid[:40]}... \u2192 {priority.display_name}")
+
+            # Update details panel priority combo if this study is selected.
             try:
                 if study_uid == self._selected_study_uid:
                     if hasattr(self, 'priority_combo'):
@@ -516,9 +513,9 @@ class _DMQueueMixin:
                         self.priority_combo.blockSignals(False)
             except Exception as e:
                 logger.error(f"Error updating priority combo: {e}")
-        
+
         except Exception as e:
-            logger.error(f"❌ Error in priority badge update: {e}", exc_info=True)
+            logger.error(f"\u274c Error in priority badge update: {e}", exc_info=True)
 
     def update_current_series(self, study_uid: str) -> None:
         """Update current series (called by UIObserver)"""
@@ -578,7 +575,7 @@ class _DMQueueMixin:
             del self._speed_label_widgets[study_uid]
         
         # Refresh entire table to maintain priority grouping
-        QTimer.singleShot(0, self._refresh_table_order)
+        self.refresh_table_order()
         
         # Clear details if this was the selected download
         if study_uid == self._selected_study_uid:
@@ -586,10 +583,25 @@ class _DMQueueMixin:
             self._clear_details_panel()
 
     def refresh_table_order(self) -> None:
-        """Public method to refresh table order - delegates to _refresh_table_order"""
-        # CRITICAL: Defer to main thread to avoid "QObject::setParent" errors
+        """Public method to refresh table order - coalesces rapid-fire calls.
+
+        Phase 1A: Multiple callers (UIObserver fires once per changed state field,
+        so 2 fields updated = 2 calls here) could previously trigger 2+ full
+        rebuilds. Now uses a coalesce flag so that only ONE rebuild is scheduled
+        no matter how many calls arrive within the same event-loop burst.
+        The 50 ms window covers all deferred QTimer(0) callbacks that fire in
+        the same event-loop tick.
+        """
         from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, self._refresh_table_order)
+        if getattr(self, '_rebuild_coalesce_pending', False):
+            return  # Already scheduled; the pending timer will rebuild once
+        self._rebuild_coalesce_pending = True
+        QTimer.singleShot(50, self._fire_coalesced_rebuild)
+
+    def _fire_coalesced_rebuild(self) -> None:
+        """Called by the coalesce timer — executes one rebuild."""
+        self._rebuild_coalesce_pending = False
+        self._refresh_table_order()
 
     def _rebuild_row_index(self) -> None:
         """Rebuild row index after row removal"""

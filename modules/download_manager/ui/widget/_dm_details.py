@@ -656,6 +656,84 @@ class _DMDetailsMixin:
         if hasattr(self, 'series_layout') and self.series_layout:
             self.series_layout.addStretch()
 
+    # Phase 1B — ordered priority names; used by structure-key + in-place-update helpers.
+    _PRIORITY_ORDER_TUPLE = ("Critical", "High", "Normal", "Low")
+
+    def _compute_table_structure_key(self, all_downloads):
+        """Return a hashable key representing which study_uids are in each priority group.
+
+        The key is a tuple of ``(priority_name, (study_uid, ...))`` pairs in
+        canonical priority order.  Two calls with the same set of studies
+        assigned to the same priority groups yield identical keys.
+        """
+        groups = {"Critical": [], "High": [], "Normal": [], "Low": []}
+        for state in all_downloads:
+            pname = state.priority.display_name
+            if pname in groups:
+                groups[pname].append(state.study_uid)
+        return tuple(
+            (pname, tuple(groups[pname]))
+            for pname in self._PRIORITY_ORDER_TUPLE
+        )
+
+    def _try_inplace_table_update(self, all_downloads, desired_key):
+        """Update widget data without tearing down and rebuilding table rows.
+
+        Returns ``True`` when the table structure is unchanged and all widgets
+        were updated successfully in-place (the common case: a download is
+        progressing).  Returns ``False`` to signal that a full rebuild is
+        required (study added/removed, priority changed, or a widget error).
+        """
+        current_key = getattr(self, '_table_structure_key', None)
+        if current_key != desired_key:
+            return False  # Structure changed — fall through to full rebuild
+
+        if not self._priority_group_widgets:
+            # No widgets exist yet (first call) — need full rebuild
+            return False
+
+        state_map = {s.study_uid: s for s in all_downloads}
+
+        try:
+            # Update each download row in-place
+            for study_uid, row in list(self.download_rows.items()):
+                state = state_map.get(study_uid)
+                if state is None:
+                    return False  # Unexpected mismatch — full rebuild
+
+                # Column 0: StatusBadge — update only when status changed
+                status_w = self.download_table.cellWidget(row, 0)
+                if isinstance(status_w, StatusBadge) and status_w.status != state.status:
+                    status_w.update_status(state.status)
+
+                # Column 3: QProgressBar — update value + format when changed
+                pb = self.download_table.cellWidget(row, 3)
+                if isinstance(pb, QProgressBar):
+                    new_val = int(state.progress_percent)
+                    if pb.value() != new_val:
+                        pb.setValue(new_val)
+                        pb.setFormat(
+                            f"{state.progress_percent:.1f}%"
+                            f" ({state.downloaded_count}/{state.total_count} images)"
+                        )
+
+            # Update priority group header counts
+            group_counts = {"Critical": 0, "High": 0, "Normal": 0, "Low": 0}
+            for state in all_downloads:
+                pname = state.priority.display_name
+                if pname in group_counts:
+                    group_counts[pname] += 1
+            for pname, header_w in self._priority_group_widgets.items():
+                if isinstance(header_w, PriorityGroupHeader):
+                    new_count = group_counts.get(pname, 0)
+                    if header_w.count != new_count:
+                        header_w.update_count(new_count)
+
+        except (RuntimeError, AttributeError):
+            return False  # Widget deleted or attribute missing
+
+        return True
+
     def _refresh_table_order(self):
         """Refresh table with priority grouping - shows all 4 priority groups.
 
@@ -665,12 +743,16 @@ class _DMDetailsMixin:
         ``priority_combo.setCurrentText`` in ``_clear_details_panel``;
         the guard provides defense-in-depth even if a future caller
         re-introduces a similar signal).
+
+        Phase 1B — incremental rebuild: tries an in-place data update first
+        (O(rows) widget-property writes, no ``setRowCount(0)``, no widget
+        construction).  Falls back to a full teardown+rebuild only when the
+        study set or priority assignments have changed, and wraps that rebuild
+        in ``setUpdatesEnabled(False)`` to suppress per-row repaint overhead.
         """
         import time as _dm_rebuild_time
 
-        # G8.2 — re-entrancy guard. Without this, an unguarded combo
-        # signal mid-rebuild would call us recursively, doubling the
-        # widget churn and corrupting state.
+        # G8.2 — re-entrancy guard.
         if getattr(self, "_refresh_table_order_in_progress", False):
             try:
                 # WARNING level: component=download default threshold is
@@ -688,103 +770,102 @@ class _DMDetailsMixin:
         self._refresh_table_order_in_progress = True
         depth = int(getattr(self, "_dm_rebuild_depth", 0)) + 1
         self._dm_rebuild_depth = depth
-        rebuild_t0 = _dm_rebuild_time.perf_counter()
 
-        try:
-            # WARNING level: see comment in reenter_skip branch.
-            logger.warning(
-                "[DM_REBUILD] event=enter depth=%d caller=%s",
-                depth,
-                self._dm_rebuild_caller_frame(),
-                extra={"component": "download"},
-            )
-        except Exception:
-            pass
-
-        # finally: suppression flag is always reset at method exit
+        # finally: suppression flag + depth + in-progress flag are always reset
         self._suppressing_selection_signals = True
         try:
-            # ✅ WIDGET VALIDITY: Check if table still exists before accessing
+            # ── Widget validity ──────────────────────────────────────────────
             if not self.download_table or not hasattr(self, 'download_table'):
                 logger.debug("⚠️ download_table not available (widget may be deleted)")
                 return
-
-            # Additional check: verify widget is not deleted
             try:
-                _ = self.download_table.rowCount()  # Try to access a property
+                _ = self.download_table.rowCount()
             except RuntimeError:
                 logger.debug("⚠️ download_table deleted, skipping refresh")
                 return
 
-            logger.debug("🔄 [TABLE-REFRESH] Refreshing table order with priority groups...")
-
-            # Get all downloads grouped by priority
             all_downloads = self.state_store.get_all_downloads()
-            logger.debug("🔄 [TABLE-REFRESH] Total downloads in state: %d", len(all_downloads))
+            desired_key = self._compute_table_structure_key(all_downloads)
 
-            # Group by priority
-            priority_groups = {
-                "Critical": [],
-                "High": [],
-                "Normal": [],
-                "Low": []
-            }
+            # ── Phase 1B: in-place update (most common path) ─────────────────
+            # When the study set and priority assignments haven't changed, skip
+            # the full teardown+rebuild entirely and just update widget data.
+            # [DM_REBUILD] enter/exit are NOT emitted for in-place updates
+            # because no rebuild occurs (the KPI target is zero rebuilds, not
+            # every state change).
+            if self._try_inplace_table_update(all_downloads, desired_key):
+                return  # finally block still runs to reset flags
 
-            for state in all_downloads:
-                priority_name = state.priority.display_name
-                priority_groups[priority_name].append(state)
-
-            # Clear table
-            self.download_table.setRowCount(0)
-            self.download_rows.clear()
-            self._priority_group_widgets.clear()
-            self._priority_group_rows.clear()
-            self._speed_label_widgets.clear()  # Clear speed label widget references
-
-            row_count = 0
-            # Add priority groups to table
-            for priority_name in ["Critical", "High", "Normal", "Low"]:
-                group_items = priority_groups[priority_name]
-
-                # Skip empty groups if configured (but we show them by default)
-                if not group_items and not self._show_empty_groups:
-                    continue
-
-                # Add priority group header
-                self._add_priority_group_header(priority_name, len(group_items))
-
-                # Add items in this group
-                for state in group_items:
-                    self._add_download_row_to_table(state)
-                    row_count += 1
-
-                # Add spacer after group
-                self._add_priority_group_spacer()
-
-            # Restore selection after rebuild (keeps details panel in sync)
-            if self._selected_study_uid:
-                self._select_study_row(self._selected_study_uid, ensure_visible=False)
-
-            logger.debug("✅ [TABLE-REFRESH] Table order refreshed successfully (%d rows)", row_count)
-
-        except Exception as e:
-            logger.error(f"❌ [TABLE-REFRESH] Error refreshing table order: {e}")
-            import traceback
-            logger.error(traceback.format_exc())
-        finally:
-            self._suppressing_selection_signals = False
-            duration_ms = (_dm_rebuild_time.perf_counter() - rebuild_t0) * 1000.0
+            # ── Full rebuild (structure changed) ─────────────────────────────
+            rebuild_t0 = _dm_rebuild_time.perf_counter()
             try:
                 # WARNING level: see comment in reenter_skip branch.
                 logger.warning(
-                    "[DM_REBUILD] event=exit depth=%d duration_ms=%.3f rows=%d",
+                    "[DM_REBUILD] event=enter depth=%d caller=%s",
                     depth,
-                    duration_ms,
-                    int(locals().get("row_count", 0)),
+                    self._dm_rebuild_caller_frame(),
                     extra={"component": "download"},
                 )
             except Exception:
                 pass
+
+            row_count = 0
+            # Freeze viewport to suppress per-row repaint overhead during rebuild.
+            self.download_table.setUpdatesEnabled(False)
+            try:
+                priority_groups = {"Critical": [], "High": [], "Normal": [], "Low": []}
+                for state in all_downloads:
+                    pname = state.priority.display_name
+                    if pname in priority_groups:
+                        priority_groups[pname].append(state)
+
+                self.download_table.setRowCount(0)
+                self.download_rows.clear()
+                self._priority_group_widgets.clear()
+                self._priority_group_rows.clear()
+                self._speed_label_widgets.clear()
+
+                for priority_name in self._PRIORITY_ORDER_TUPLE:
+                    group_items = priority_groups[priority_name]
+                    if not group_items and not self._show_empty_groups:
+                        continue
+                    self._add_priority_group_header(priority_name, len(group_items))
+                    for state in group_items:
+                        self._add_download_row_to_table(state)
+                        row_count += 1
+                    self._add_priority_group_spacer()
+
+                if self._selected_study_uid:
+                    self._select_study_row(self._selected_study_uid, ensure_visible=False)
+
+                logger.debug(
+                    "✅ [TABLE-REFRESH] Table order refreshed successfully (%d rows)",
+                    row_count,
+                )
+            except Exception as e:
+                logger.error(f"❌ [TABLE-REFRESH] Error refreshing table order: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+            finally:
+                self.download_table.setUpdatesEnabled(True)
+
+            # Cache structure key so the next call can attempt in-place update
+            self._table_structure_key = desired_key
+
+            duration_ms = (_dm_rebuild_time.perf_counter() - rebuild_t0) * 1000.0
+            try:
+                logger.warning(
+                    "[DM_REBUILD] event=exit depth=%d duration_ms=%.3f rows=%d",
+                    depth,
+                    duration_ms,
+                    row_count,
+                    extra={"component": "download"},
+                )
+            except Exception:
+                pass
+
+        finally:
+            self._suppressing_selection_signals = False
             self._dm_rebuild_depth = depth - 1
             self._refresh_table_order_in_progress = False
 
@@ -792,15 +873,13 @@ class _DMDetailsMixin:
     def _dm_rebuild_caller_frame() -> str:
         """Return the immediate caller's `<file>:<func>` for `[DM_REBUILD]`."""
         try:
-            import inspect
-
-            stack = inspect.stack()
-            # 0 = this helper, 1 = _refresh_table_order, 2 = real caller
-            if len(stack) >= 3:
-                frame = stack[2]
-                fn = frame.function
-                fname = frame.filename.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
-                return f"{fname}:{fn}"
+            import sys
+            # sys._getframe(2): 0=here, 1=_refresh_table_order, 2=real caller
+            # Avoids inspect.stack() which reads source + resolves realpath for ALL frames (~2s).
+            frame = sys._getframe(2)
+            fn = frame.f_code.co_name
+            fname = frame.f_code.co_filename.rsplit("\\", 1)[-1].rsplit("/", 1)[-1]
+            return f"{fname}:{fn}"
         except Exception:
             pass
         return "unknown"
@@ -879,7 +958,7 @@ class _DMDetailsMixin:
             self._collapsed_groups.discard(priority_name)
         
         # Refresh table to show/hide items
-        self._refresh_table_order()
+        self.refresh_table_order()
 
     def _add_download_row_to_table(self, state: DownloadState):
         """Add a download row to the table"""

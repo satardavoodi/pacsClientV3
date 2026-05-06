@@ -293,7 +293,9 @@ class _DMPriorityMixin:
 
             # ========== STEP 5: REFRESH UI ==========
             logger.info(f"🔄 [UI] Refreshing UI after priority download setup...")
-            self._refresh_table_order()
+            # Rebuild is coalesced — observers from state_store.create + set_viewed_series
+            # already queued coalesced rebuilds; this merges with those (no-op if one pending).
+            self.refresh_table_order()
             QTimer.singleShot(0, lambda: self._select_study_row(study_uid))
 
             # ========== STEP 6: START DOWNLOAD IMMEDIATELY ==========
@@ -381,9 +383,10 @@ class _DMPriorityMixin:
                 f"⚡ [VIEWED-SERIES] Study {study_uid[:40]}… series {series_number} → CRITICAL "
                 f"(was viewing: {old_viewed or 'none'})"
             )
-
-            # Refresh the UI table ordering so the CRITICAL badge shows up
-            self._refresh_table_order()
+            # NOTE: Do NOT call _refresh_table_order() here (Phase 1A).
+            # request_critical_series() above updates state → UIObserver fires
+            # refresh_table_order() (deferred + coalesced) which handles the rebuild.
+            # Adding a direct sync call here caused ~400-540ms main-thread stall per drag-drop.
 
         except Exception as e:
             logger.error(f"❌ [VIEWED-SERIES] Error setting viewed series: {e}")

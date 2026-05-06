@@ -72,6 +72,7 @@ class SecretaryOrbButton(QToolButton):
         self._texture = self._load_texture()
         self._texture_focus = self._detect_texture_focus(self._texture)
         self._texture_cache = {}
+        self._icon_pixmap_cache = {}  # key=(size, color) → QPixmap; avoids 121 qta calls per rebuild
 
         self._frame_timer = QTimer(self)
         self._frame_timer.setInterval(70)
@@ -325,18 +326,28 @@ class SecretaryOrbButton(QToolButton):
         self._error_frame_index = 0
 
     def _secretary_icon(self, size, active, error=False):
+        """Return a QPixmap for the secretary icon.  Cached by (size, color) to prevent
+        qta.icon().pixmap() being called 121 times per _rebuild_frames() (was 36-40 s stall)."""
         if error:
             color = "#a05548"
         else:
             color = "#dcf8ff" if active else "#7f91a8"
+        cache_key = (size, color)
+        cached = self._icon_pixmap_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        result = None
         for icon_name in ("fa5s.user-tie", "fa5s.robot", "fa5s.microphone"):
             try:
-                return qta.icon(icon_name, color=color).pixmap(size, size)
+                result = qta.icon(icon_name, color=color).pixmap(size, size)
+                break
             except Exception:
                 continue
-        fallback = QPixmap(size, size)
-        fallback.fill(Qt.transparent)
-        return fallback
+        if result is None:
+            result = QPixmap(size, size)
+            result.fill(Qt.transparent)
+        self._icon_pixmap_cache[cache_key] = result
+        return result
 
     def _draw_base_orb(self, painter, orb_rect, active, error=False):
         circle = QPainterPath()

@@ -190,7 +190,7 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
             pause_downloads_for_preemption=self._pause_downloads_for_preemption,
             start_download_worker=self._start_download_worker,
             start_next_pending=self._start_next_pending,
-            refresh_table_order=self._refresh_table_order,
+            refresh_table_order=self.refresh_table_order,
             check_auto_resume=self._check_auto_resume,
         )
         # F3.5.3 — register priority-handoff failure observer (default-on).
@@ -306,7 +306,7 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         self._app_theme_manager.themeChanged.connect(self._on_app_theme_changed)
         
         # Initial table refresh to show empty priority groups
-        QTimer.singleShot(100, self._refresh_table_order)
+        QTimer.singleShot(100, self.refresh_table_order)
         
         # Pipeline health check timer - ensures queue never gets stuck
         # This is a backup mechanism that runs periodically to ensure forward progress
