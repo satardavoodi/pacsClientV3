@@ -284,10 +284,26 @@ class SeriesIntentCoordinator:
             getattr(state, 'viewed_series_number', None)
             if state.status == DownloadStatus.VALIDATING else None
         )
+        # Phase 1C — don't interrupt the worker if the requested series is already
+        # fully downloaded.  Common pattern: user drags a completed series (e.g. 201,
+        # done 1 s ago) while a later series (e.g. 202) is still in flight.  Without
+        # this guard the interrupt would set state→PENDING and start a 35-second retry
+        # chain that exhausts harmlessly while the existing worker finishes correctly.
+        _ic_task = self._tasks.get(study_uid)
+        _requested_done = (
+            _ic_task is not None
+            and bool(state.completed_series)
+            and any(
+                si.series_uid in state.completed_series
+                for si in _ic_task.series_list
+                if str(si.series_number) == str(series_number)
+            )
+        )
         if (
             state.status in (DownloadStatus.DOWNLOADING, DownloadStatus.VALIDATING)
             and effective_current
             and str(effective_current) != str(series_number)
+            and not _requested_done
         ):
             logger.info(
                 "[INTENT] Series interrupt: study=%s %s series %s "
@@ -518,6 +534,29 @@ class SeriesIntentCoordinator:
         if state.status not in (DownloadStatus.PENDING, DownloadStatus.PAUSED):
             self._clear_priority_retry(study_uid, _token)
             return
+        # Phase 1C — safety-net: if the viewed series is already in completed_series
+        # the priority handoff succeeded by another path (e.g. the worker finished the
+        # series before this tick).  Treat it as a successful start so the chain clears
+        # cleanly instead of exhausting and emitting a spurious INTENT_PRIORITY exhaust.
+        _rt_viewed_sn = str(getattr(state, 'viewed_series_number', '') or '')
+        if _rt_viewed_sn:
+            _rt_task = self._tasks.get(study_uid)
+            if _rt_task and state.completed_series:
+                _rt_done = any(
+                    si.series_uid in state.completed_series
+                    for si in _rt_task.series_list
+                    if str(si.series_number) == _rt_viewed_sn
+                )
+                if _rt_done:
+                    self._emit_intent_priority(
+                        tag="started",
+                        study_uid=study_uid,
+                        attempt=_attempt,
+                        max_attempts=max_retries,
+                        recovery=_recovery,
+                    )
+                    self._clear_priority_retry(study_uid, _token)
+                    return
 
         if self.worker_pool.can_add_worker():
             if state.status == DownloadStatus.PAUSED:
