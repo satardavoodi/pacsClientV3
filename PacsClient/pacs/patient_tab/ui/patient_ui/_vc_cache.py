@@ -4,6 +4,7 @@ Tab lifecycle, full-series cache, metadata refresh, disk file counts.
 """
 from __future__ import annotations
 import os
+import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -426,8 +427,13 @@ class _VCCacheMixin:
                 "_on_headers_filled sync failed for %s: %s", series_number, exc
             )
 
-    def _refresh_stored_metadata_instances(self, series_number: str,
-                                           current_disk_count: int):
+    def _refresh_stored_metadata_instances(
+        self,
+        series_number: str,
+        current_disk_count: int,
+        *,
+        max_new_entries: int | None = None,
+    ):
         """Sync lst_thumbnails_data metadata['instances'] with actual files on disk.
 
         When a series is opened during download, the metadata stored in
@@ -478,13 +484,33 @@ class _VCCacheMixin:
                 if p:
                     existing_paths.add(str(p).lower())
 
-            # Scan disk for new files
-            from natsort import natsorted
-            all_dcm = natsorted(
-                [f for f in Path(series_path).iterdir()
-                 if f.is_file() and f.suffix.lower() in (".dcm", ".dicom")],
-                key=lambda p: str(p),
-            )
+            # Scan disk for new files using scandir (lower syscall overhead than Path.iterdir).
+            # Sort only the new file paths using a filename natural key to preserve
+            # Instance_NNNN style ordering while avoiding natsort overhead.
+            def _natural_name_key(path_str: str):
+                name = os.path.basename(path_str).lower()
+                return [int(tok) if tok.isdigit() else tok for tok in re.split(r"(\d+)", name)]
+
+            new_file_paths = []
+            with os.scandir(series_path) as entries:
+                for entry in entries:
+                    if not entry.is_file(follow_symlinks=False):
+                        continue
+                    name_lower = entry.name.lower()
+                    if not (name_lower.endswith(".dcm") or name_lower.endswith(".dicom")):
+                        continue
+                    file_path = str(entry.path)
+                    if file_path.lower() in existing_paths:
+                        continue
+                    new_file_paths.append(file_path)
+
+            if not new_file_paths:
+                return
+
+            if isinstance(max_new_entries, int) and max_new_entries > 0 and len(new_file_paths) > max_new_entries:
+                new_file_paths = new_file_paths[:max_new_entries]
+
+            new_file_paths.sort(key=_natural_name_key)
 
             # Build template from first complete instance so stubs inherit
             # shared per-series fields (window_width, rows, etc.).  Without
@@ -505,12 +531,10 @@ class _VCCacheMixin:
 
             new_instances = list(existing_instances)  # shallow copy
             stubs_needing_headers = []
-            for dcm_file in all_dcm:
-                if str(dcm_file).lower() in existing_paths:
-                    continue
+            for dcm_file_path in new_file_paths:
                 stub = {
                     "instance_number": len(new_instances),
-                    "instance_path": str(dcm_file),
+                    "instance_path": dcm_file_path,
                 }
                 stub.update(template_fields)
                 # B3.5: DICOM header reads (IPP, IOP, per-slice W/L) are
@@ -721,13 +745,23 @@ class _VCCacheMixin:
                 except Exception:
                     pass
 
-    def _refresh_and_sync_metadata(self, series_number, new_count: int):
+    def _refresh_and_sync_metadata(
+        self,
+        series_number,
+        new_count: int,
+        *,
+        max_new_entries: int | None = None,
+    ):
         """Refresh source metadata instances AND sync to live viewers.
 
         Ensures ``_refresh_stored_metadata_instances`` and
         ``_sync_viewer_metadata_instances`` are always called as a pair.
         """
-        self._refresh_stored_metadata_instances(series_number, new_count)
+        self._refresh_stored_metadata_instances(
+            series_number,
+            new_count,
+            max_new_entries=max_new_entries,
+        )
         self._sync_viewer_metadata_instances(series_number)
 
     def _get_disk_count_cache(self):

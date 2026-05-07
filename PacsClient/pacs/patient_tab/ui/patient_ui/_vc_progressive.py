@@ -53,9 +53,18 @@ _PROGRESSIVE_STATE_DONE = "DONE"
 _FAST_PROGRESSIVE_INTERACTION_COOLDOWN_S = 1.25
 _FAST_PROGRESSIVE_NONTERMINAL_GROW_MIN_INTERVAL_MS = 900.0
 _FAST_PROGRESSIVE_NONTERMINAL_GROW_MAX_INTERVAL_MS = 2500.0
+_FAST_PROGRESSIVE_METADATA_APPEND_CAP = 16
+_FAST_PROGRESSIVE_METADATA_SYNC_MIN_INTERVAL_MS = 700.0
 _FAST_PROGRESSIVE_FINALIZE_DEFER_BASE_MS = 350
 _FAST_PROGRESSIVE_FINALIZE_DEFER_STEP_MS = 200
-_FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES = 6
+# Raised from 6 to 10 to reduce drag-time force-runs of Layer 2b/F10 terminal
+# grow on long stack-drag bursts; this preserves eventual R4 force-run behavior
+# while lowering the probability of mid-drag main-thread freeze outliers.
+_FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES = 10
+# Minimum download completeness fraction before _start_progressive_display
+# is allowed to run for an untargeted series during heavy-download overlap.
+# Do NOT lower below 0.20 — it causes repeated failed load attempts that spike CPU.
+_PROGRESSIVE_MIN_COMPLETENESS = 0.30
 
 
 def _h10_log_progressive_mutation(obj, fn_name: str, mutated_sn: str, action: str):
@@ -1030,7 +1039,7 @@ class _VCProgressiveMixin:
                     "progressive: one-shot final grow series=%s downloaded=%d total=%d",
                     sn, downloaded, total,
                 )
-                self._grow_progressive_fast(sn, downloaded, [(vtk_w, node)])
+                self._grow_progressive_fast(sn, downloaded, [(vtk_w, node)], terminal=True)
             return  # Handled â€” exit after first matching viewer
 
         # No viewer showing this series yet â€” start first progressive display.
@@ -1131,7 +1140,7 @@ class _VCProgressiveMixin:
                         _vtk_w.enter_progressive_mode(total, sn)
                         _vtk_w.update_available_slice_count(_current_count)
                         _viewers_shot = [(_vtk_w, _node)]
-                    self._grow_progressive_fast(sn, downloaded, _viewers_shot)
+                    self._grow_progressive_fast(sn, downloaded, _viewers_shot, terminal=True)
                     return
                 # No viewer needs a grow for this completed series — nothing to do.
                 # IMPORTANT: do NOT fall through to the inflight block below; that
@@ -1478,6 +1487,7 @@ class _VCProgressiveMixin:
                         pending,
                         viewers,
                         visible_count=visible_target,
+                        terminal=is_terminal,
                     ) or 0.0)
                     if not is_terminal:
                         info["_last_nonterminal_grow_mono_ms"] = float(time.perf_counter() * 1000.0)
@@ -1610,6 +1620,7 @@ class _VCProgressiveMixin:
         viewers: list,
         *,
         visible_count: int | None = None,
+        terminal: bool = False,
     ):
         """Fast mode growth: refresh PyDicom backend file list & update counts.
 
@@ -1737,8 +1748,61 @@ class _VCProgressiveMixin:
             except Exception as exc:
                 self.logger.debug("progressive-fast: booster update_paths failed: %s", exc)
 
-        # 5+6. Update stored metadata and sync to live viewers
-        self._refresh_and_sync_metadata(series_number, new_count)
+        # 5+6. Update stored metadata and sync to live viewers.
+        # Non-terminal: defer metadata sync to the next event-loop tick so
+        # the grow itself does not block drag events for
+        # 50–150 ms.  Terminal: run synchronously so the user sees complete
+        # W/L immediately on series completion (R4 terminal-always-fires).
+        if terminal:
+            try:
+                _meta_last = getattr(self, "_progressive_meta_sync_last_ms", None)
+                if isinstance(_meta_last, dict):
+                    _meta_last.pop(str(series_number), None)
+            except Exception:
+                pass
+            self._refresh_and_sync_metadata(series_number, new_count)
+        else:
+            should_schedule_meta_sync = True
+            if _is_fast_progressive_interaction_hot(viewers):
+                try:
+                    _meta_last = getattr(self, "_progressive_meta_sync_last_ms", None)
+                    if _meta_last is None:
+                        _meta_last = {}
+                        setattr(self, "_progressive_meta_sync_last_ms", _meta_last)
+                    _now_ms = time.monotonic() * 1000.0
+                    _sn = str(series_number)
+                    _last_ms = float(_meta_last.get(_sn, -1.0))
+                    if _last_ms >= 0.0 and (_now_ms - _last_ms) < _FAST_PROGRESSIVE_METADATA_SYNC_MIN_INTERVAL_MS:
+                        should_schedule_meta_sync = False
+                    else:
+                        _meta_last[_sn] = _now_ms
+                except Exception:
+                    pass
+
+            def _deferred_meta_sync(
+                _s=series_number,
+                _c=new_count,
+                _max_new=_FAST_PROGRESSIVE_METADATA_APPEND_CAP,
+            ):
+                try:
+                    self._refresh_and_sync_metadata(
+                        _s,
+                        _c,
+                        max_new_entries=_max_new,
+                    )
+                except Exception:
+                    pass
+            if should_schedule_meta_sync:
+                QTimer.singleShot(0, _deferred_meta_sync)
+                self.logger.debug(
+                    "progressive-fast: metadata sync deferred series=%s new_count=%d",
+                    series_number, new_count,
+                )
+            else:
+                self.logger.debug(
+                    "progressive-fast: metadata sync throttled series=%s new_count=%d",
+                    series_number, new_count,
+                )
 
         info["last_grow_count"] = admitted_count
         self.logger.info(

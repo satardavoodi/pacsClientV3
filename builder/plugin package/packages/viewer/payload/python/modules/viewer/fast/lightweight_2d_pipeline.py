@@ -24,7 +24,7 @@ import os
 import threading
 import time
 from collections import OrderedDict
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -87,6 +87,23 @@ def _env_positive_int(name: str, default: int) -> int:
 # AIPACS_ADAPTIVE_CACHE_MAX. Values ≤0 or unset fall back to defaults.
 _DEFAULT_PIXEL_CACHE_SIZE = _env_positive_int("AIPACS_PIXEL_CACHE_SIZE", 192)
 _DEFAULT_FRAME_CACHE_SIZE = _env_positive_int("AIPACS_FRAME_CACHE_SIZE", 192)
+
+# Maximum new DICOM header entries processed per ``refresh_file_list`` call
+# during progressive download. Each header read costs ~3+ ms of main-thread
+# I/O on lower-end disks/CPUs; at 16 files the cap is typically kept under
+# ~50-60 ms/tick, leaving headroom for Qt/widget work in the same event-loop
+# window. Remaining files are picked up on subsequent ticks.
+# Env override: AIPACS_MAX_GROW_ENTRIES (positive int, capped at 512).
+_MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK: int = _env_positive_int("AIPACS_MAX_GROW_ENTRIES", 16)
+# During active heavy download the disk I/O subsystem is under contention
+# (download writer + grow reader competing for the same disk/OS cache).
+# Each pydicom.dcmread(stop_before_pixels=True) on a loaded HDD can take
+# 60-120 ms — 16 reads × 90 ms = 1440 ms blocks the main thread.
+# Cap to 6 reads during overlap so a single grow tick stays under ~600 ms.
+# The grow timer interval under overlap is already elevated (500-1500 ms) so
+# the remaining new files are picked up on the next tick without visible lag.
+# Env override: AIPACS_MAX_GROW_ENTRIES_HEAVY (positive int, capped at 512).
+_MAX_PROGRESSIVE_GROW_ENTRIES_HEAVY: int = _env_positive_int("AIPACS_MAX_GROW_ENTRIES_HEAVY", 6)
 _DEFAULT_ADAPTIVE_CACHE_MAX_SIZE = _env_positive_int(
     "AIPACS_ADAPTIVE_CACHE_MAX", 512
 )
@@ -94,6 +111,12 @@ _DRAG_START_WARM_RADIUS = 2
 _DRAG_STEADY_PREFETCH_RADIUS = 1
 _PROTECTED_DRAG_AHEAD_RADIUS = 2
 _PROTECTED_DRAG_BEHIND_RADIUS = 1
+_PROTECTED_DRAG_AHEAD_RADIUS_LARGE_STACK = _env_positive_int(
+    "AIPACS_PROTECTED_DRAG_AHEAD_RADIUS_LARGE_STACK", 2
+)
+_PROTECTED_DRAG_BEHIND_RADIUS_LARGE_STACK = _env_positive_int(
+    "AIPACS_PROTECTED_DRAG_BEHIND_RADIUS_LARGE_STACK", 2
+)
 _STACK_SETTLE_AHEAD_RADIUS = 10
 _STACK_SETTLE_BEHIND_RADIUS = 6
 _DRAG_PREFETCH_THROTTLE_S = 0.09
@@ -108,6 +131,12 @@ _DRAG_SURROGATE_NEAR_REPEAT_LIMIT = _env_positive_int(
 )
 _DRAG_SURROGATE_FAR_REPEAT_LIMIT = _env_positive_int(
     "AIPACS_DRAG_SURROGATE_FAR_REPEAT_LIMIT", 1
+)
+_DRAG_START_BOOST_MS_BASE = _env_positive_int(
+    "AIPACS_DRAG_START_BOOST_MS_BASE", 350
+)
+_DRAG_START_BOOST_MS_OVERLAP = _env_positive_int(
+    "AIPACS_DRAG_START_BOOST_MS_OVERLAP", 600
 )
 
 # F2.1 (2026-04-28): structured per-frame KPI tag for the
@@ -386,6 +415,13 @@ class Lightweight2DPipeline(QObject):
             max_workers=max(2, min(4, int(self._config.prefetch_workers))),
             thread_name_prefix="LW2D-Frame",
         )
+        # Single-worker background executor for progressive grow header reads.
+        # Moves pydicom.dcmread off the main thread; see refresh_file_list().
+        self._grow_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="LW2D-Grow",
+        )
+        self._grow_future: Optional[Future] = None  # in-flight background scan
 
         # B3.2: Generation-gated adaptive prefetch state
         self._prefetch_generation: int = 0           # monotonic generation counter
@@ -501,6 +537,7 @@ class Lightweight2DPipeline(QObject):
 
     def close_series(self) -> None:
         """Release all resources."""
+        self._grow_future = None  # discard any stale in-flight grow scan
         self._pixel_cache.clear()
         self._frame_cache.clear()
         with self._prefetch_lock:
@@ -552,15 +589,33 @@ class Lightweight2DPipeline(QObject):
         except Exception:
             return
 
-        self._drag_start_boost_until = time.perf_counter() + 0.35
+        boost_ms = Lightweight2DPipeline._get_drag_start_boost_ms(self)
+        self._drag_start_boost_until = time.perf_counter() + (float(boost_ms) / 1000.0)
         self._last_prefetch_center = -1
         logger.debug(
             "FAST:drag_start_warmup center=%d slice_count=%d boost_ms=%d",
             idx,
             len(self._slices),
-            350,
+            int(boost_ms),
         )
         self._prefetch_around(idx, direction=0)
+
+    def _get_drag_start_boost_ms(self) -> int:
+        """Return drag-start boost duration in milliseconds.
+
+        Overlap mode (active heavy download + incomplete viewed series) gets a
+        longer warmup window so early drag frames can stay cache-assisted while
+        prefetch catches up.
+        """
+        base_ms = int(_DRAG_START_BOOST_MS_BASE)
+        overlap_ms = int(_DRAG_START_BOOST_MS_OVERLAP)
+        series_number = getattr(self, '_series_number', None)
+        viewed_complete = bool(
+            series_number is not None and is_viewed_series_complete(series_number)
+        )
+        if is_heavy_download_active() and not viewed_complete:
+            return max(base_ms, overlap_ms)
+        return base_ms
 
     def begin_protected_drag_session(self) -> None:
         """Enter the strict real-time drag lane for this series."""
@@ -656,66 +711,6 @@ class Lightweight2DPipeline(QObject):
 
     def get_file_paths(self) -> List[str]:
         return [s.path for s in self._slices]
-
-    def refresh_file_list(self) -> int:
-        """Re-scan the series directory for newly-downloaded DICOM files.
-
-        Only reads headers for files not already in ``_slices``.  Existing
-        SliceMeta entries (and their cached pixel data) are preserved.
-        Returns the new slice count.
-
-        This mirrors ``PyDicom2DBackend.refresh_file_list()`` and is called by
-        ``QtViewerBridge.grow()`` during progressive download.
-        """
-        if not self._series_path:
-            return len(self._slices)
-        old_slices = list(self._slices)
-        old_count = len(old_slices)
-        old_current_index = self._current_index
-        old_current_path = (
-            old_slices[old_current_index].path
-            if 0 <= old_current_index < old_count
-            else None
-        )
-        existing_paths = {s.path for s in old_slices}
-        new_entries = scan_series_header_entries(
-            self._series_path,
-            existing_paths=existing_paths,
-        )
-        if not new_entries:
-            return len(self._slices)
-
-        new_slices = [self._slice_meta_from_entry(entry) for entry in new_entries]
-
-        if new_slices:
-            old_pixel_cache_size = len(self._pixel_cache)
-            old_frame_cache_size = len(self._frame_cache)
-            self._slices.extend(new_slices)
-            self._slices = self._sort_slices(self._slices)
-            self._remap_indexed_caches_after_resort(old_slices)
-            if old_current_path is not None:
-                new_index_by_path = {s.path: i for i, s in enumerate(self._slices)}
-                self._current_index = self._clamp(
-                    new_index_by_path.get(old_current_path, old_current_index)
-                )
-            self._invalidate_geometry_cache()
-            self._prune_caches_to_effective_limits()
-            logger.info(
-                "FAST:additive_cache_grow path=%s old_count=%d new_count=%d "
-                "added=%d current_before=%d current_after=%d "
-                "pixel_preserved=%d/%d frame_preserved=%d/%d",
-                self._series_path,
-                old_count,
-                len(self._slices),
-                len(new_slices),
-                old_current_index,
-                self._current_index,
-                len(self._pixel_cache),
-                old_pixel_cache_size,
-                len(self._frame_cache),
-                old_frame_cache_size,
-            )
-        return len(self._slices)
 
     def _remap_indexed_caches_after_resort(self, old_slices: Sequence[SliceMeta]) -> None:
         """Preserve index-keyed caches across additive growth and sorting.
@@ -1542,7 +1537,7 @@ class Lightweight2DPipeline(QObject):
     def shutdown(self) -> None:
         """Clean shutdown of background threads."""
         self.close_series()
-        for executor_attr in ("_decode_executor", "_frame_executor"):
+        for executor_attr in ("_decode_executor", "_frame_executor", "_grow_executor"):
             executor = getattr(self, executor_attr, None)
             if executor is None:
                 continue
@@ -1759,6 +1754,38 @@ class Lightweight2DPipeline(QObject):
         if is_heavy_download_active() and not viewed_complete:
             return int(profile.widened_surrogate_distance)
         return int(profile.surrogate_distance)
+
+    def _get_protected_drag_ahead_radius(self) -> int:
+        """Return protected-drag ahead radius with stack-size awareness.
+
+        Small stacks keep the existing tiny directional lane (2 ahead / 1 behind)
+        so we do not over-submit work. Larger stacks can safely admit one extra
+        ahead neighbor to reduce decode-only misses during fast drag.
+        """
+        n = int(self._effective_policy_slice_count())
+        if n <= 140:
+            return int(_PROTECTED_DRAG_AHEAD_RADIUS)
+        return max(
+            int(_PROTECTED_DRAG_AHEAD_RADIUS),
+            int(_PROTECTED_DRAG_AHEAD_RADIUS_LARGE_STACK),
+        )
+
+    def _get_protected_drag_behind_radius(self, *, direction: int = 0) -> int:
+        """Return protected-drag behind radius with stack-size awareness.
+
+        Keep 1 behind for small/medium stacks. Very large stacks admit one
+        additional trailing neighbor only when the drag direction flips.
+        """
+        base = int(_PROTECTED_DRAG_BEHIND_RADIUS)
+        n = int(self._effective_policy_slice_count())
+        if n <= 140:
+            return base
+        if int(direction or 0) == 0:
+            return base
+        last_dir = int(getattr(self, '_last_prefetch_direction', 0) or 0)
+        if last_dir != 0 and int(direction) != last_dir:
+            return max(base, int(_PROTECTED_DRAG_BEHIND_RADIUS_LARGE_STACK))
+        return base
 
     def _put_pixel_cache(self, idx: int, arr: np.ndarray) -> None:
         self._pixel_cache[idx] = arr
@@ -2079,7 +2106,7 @@ class Lightweight2DPipeline(QObject):
             adaptive_radius = min(adaptive_radius, _DRAG_START_WARM_RADIUS)
         elif drag_mode:
             if bool(getattr(self, '_protected_drag_active', False)):
-                adaptive_radius = _PROTECTED_DRAG_AHEAD_RADIUS
+                adaptive_radius = self._get_protected_drag_ahead_radius()
             else:
                 adaptive_radius = min(adaptive_radius, _DRAG_STEADY_PREFETCH_RADIUS)
             last_drag_submit = float(getattr(self, '_last_drag_prefetch_submit_ts', 0.0) or 0.0)
@@ -2144,10 +2171,19 @@ class Lightweight2DPipeline(QObject):
                     ordered_targets.append(target)
                     target_indices.add(target)
             else:
+                ahead_radius = max(1, int(self._get_protected_drag_ahead_radius()))
+                behind_radius = max(
+                    1,
+                    int(self._get_protected_drag_behind_radius(direction=direction)),
+                )
                 if direction > 0:
-                    offsets = [1, 2, -1]
+                    offsets = list(range(1, ahead_radius + 1)) + [
+                        -i for i in range(1, behind_radius + 1)
+                    ]
                 else:
-                    offsets = [-1, -2, 1]
+                    offsets = [
+                        -i for i in range(1, ahead_radius + 1)
+                    ] + list(range(1, behind_radius + 1))
                 for offset in offsets:
                     target = center + offset
                     if 0 <= target < n and target not in target_indices:
@@ -2666,3 +2702,87 @@ class Lightweight2DPipeline(QObject):
         if not self._slices:
             raise IndexError("No series loaded")
         return max(0, min(int(index), len(self._slices) - 1))
+
+    def refresh_file_list(self) -> int:
+        """Re-scan the series directory for newly-downloaded DICOM files.
+
+        Only reads headers for files not already in ``_slices``.  Existing
+        SliceMeta entries (and their cached pixel data) are preserved.
+        Returns the new slice count.
+
+        This mirrors ``PyDicom2DBackend.refresh_file_list()`` and is called by
+        ``QtViewerBridge.grow()`` during progressive download.
+
+        Header reads (``pydicom.dcmread``) are dispatched to a single-worker
+        background thread so the grow timer tick costs only ~2 ms (os.scandir)
+        on the main thread.  Results are applied on the NEXT grow tick, adding
+        one timer-interval of latency (~150 ms idle, 500–750 ms overlap) which
+        is imperceptible versus the previous 163–1368 ms main-thread block.
+        """
+        if not self._series_path:
+            return len(self._slices)
+
+        # ── 1. Apply results from a previously completed background scan ──────
+        if self._grow_future is not None and self._grow_future.done():
+            try:
+                new_entries = self._grow_future.result()
+            except Exception:
+                new_entries = []
+            self._grow_future = None
+            if new_entries and self._is_open:
+                old_slices = list(self._slices)
+                old_count = len(old_slices)
+                old_current_index = self._current_index
+                old_current_path = (
+                    old_slices[old_current_index].path
+                    if 0 <= old_current_index < old_count
+                    else None
+                )
+                new_slices = [self._slice_meta_from_entry(e) for e in new_entries]
+                old_pixel_cache_size = len(self._pixel_cache)
+                old_frame_cache_size = len(self._frame_cache)
+                self._slices.extend(new_slices)
+                self._slices = self._sort_slices(self._slices)
+                self._remap_indexed_caches_after_resort(old_slices)
+                if old_current_path is not None:
+                    new_index_by_path = {s.path: i for i, s in enumerate(self._slices)}
+                    self._current_index = self._clamp(
+                        new_index_by_path.get(old_current_path, old_current_index)
+                    )
+                self._invalidate_geometry_cache()
+                self._prune_caches_to_effective_limits()
+                logger.info(
+                    "FAST:additive_cache_grow path=%s old_count=%d new_count=%d "
+                    "added=%d current_before=%d current_after=%d "
+                    "pixel_preserved=%d/%d frame_preserved=%d/%d",
+                    self._series_path,
+                    old_count,
+                    len(self._slices),
+                    len(new_slices),
+                    old_current_index,
+                    self._current_index,
+                    len(self._pixel_cache),
+                    old_pixel_cache_size,
+                    len(self._frame_cache),
+                    old_frame_cache_size,
+                )
+
+        # ── 2. Submit a new background scan if none is currently in flight ────
+        if self._grow_future is None and self._is_open and self._series_path:
+            existing_paths = {s.path for s in self._slices}
+            _max_grow = (
+                _MAX_PROGRESSIVE_GROW_ENTRIES_HEAVY
+                if is_heavy_download_active()
+                else _MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK
+            )
+            try:
+                self._grow_future = self._grow_executor.submit(
+                    scan_series_header_entries,
+                    self._series_path,
+                    existing_paths=existing_paths,
+                    max_new_entries=_max_grow,
+                )
+            except Exception:
+                pass
+
+        return len(self._slices)
