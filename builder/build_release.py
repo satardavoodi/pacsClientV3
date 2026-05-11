@@ -127,13 +127,22 @@ def _sync_tree_incremental(src: Path, dst: Path) -> tuple[int, int, int]:
         if p.is_file():
             src_index[str(p.relative_to(src))] = p
 
-    copied = skipped = removed = 0
+    copied = skipped = removed = vanished = 0
 
     # Copy new or changed files
     for rel, src_file in src_index.items():
         dst_file = dst / rel
+        if not src_file.exists():
+            # Source file can disappear between rglob() inventory and copy
+            # (e.g. transient build artifact churn on Windows). Skip safely.
+            vanished += 1
+            continue
         if dst_file.exists():
-            ss = src_file.stat()
+            try:
+                ss = src_file.stat()
+            except FileNotFoundError:
+                vanished += 1
+                continue
             ds = dst_file.stat()
             # shutil.copy2 preserves mtime, so this comparison is reliable
             if ss.st_size == ds.st_size and abs(ss.st_mtime - ds.st_mtime) < 2.0:
@@ -144,7 +153,11 @@ def _sync_tree_incremental(src: Path, dst: Path) -> tuple[int, int, int]:
                 skipped += 1
                 continue
         dst_file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src_file, dst_file)
+        try:
+            shutil.copy2(src_file, dst_file)
+        except FileNotFoundError:
+            vanished += 1
+            continue
         copied += 1
 
     # Remove files that were deleted from src
@@ -161,6 +174,9 @@ def _sync_tree_incremental(src: Path, dst: Path) -> tuple[int, int, int]:
                 d.rmdir()  # only succeeds when empty
             except OSError:
                 pass
+
+    if vanished:
+        print(f"[WARN] Incremental sync skipped {vanished} vanished source files")
 
     return copied, skipped, removed
 
@@ -812,19 +828,21 @@ def compile_installer(version: str) -> Path | None:
         return None
 
     INSTALLER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    compile_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    compile_basename = f"{PRIMARY_INSTALLER_BASENAME} build {compile_stamp}"
     run_command(
         [
             str(iscc),
             f"/DMyAppVersion={version}",
             f"/DStageDir={STAGE_DIR}",
             f"/DInstallerOutputDir={INSTALLER_OUTPUT_DIR}",
-            f"/DInstallerBaseName={PRIMARY_INSTALLER_BASENAME}",
+            f"/DInstallerBaseName={compile_basename}",
             str(INSTALLER_SCRIPT),
         ],
         cwd=BUILDER_DIR / "installer",
     )
 
-    expected = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME}.exe"
+    expected = INSTALLER_OUTPUT_DIR / f"{compile_basename}.exe"
     if expected.exists():
         return expected
 
@@ -847,8 +865,23 @@ def normalize_installer_artifacts(compiled_installer: Path, version: str) -> dic
     versioned = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME} v{version}.exe"
 
     if compiled_installer.resolve() != primary.resolve():
-        shutil.copy2(compiled_installer, primary)
-    shutil.copy2(primary, versioned)
+        try:
+            shutil.copy2(compiled_installer, primary)
+        except OSError as exc:
+            print(f"[WARN] Could not write primary installer at {primary}: {exc}")
+            print("[WARN] Using compiled installer artifact as primary output for this run.")
+            primary = compiled_installer
+
+    try:
+        if primary.resolve() != versioned.resolve():
+            shutil.copy2(primary, versioned)
+    except OSError as exc:
+        fallback_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        fallback_versioned = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME} v{version} {fallback_stamp}.exe"
+        print(f"[WARN] Could not write versioned installer at {versioned}: {exc}")
+        print(f"[WARN] Writing versioned installer fallback to {fallback_versioned}")
+        shutil.copy2(primary, fallback_versioned)
+        versioned = fallback_versioned
 
     return {
         "compiled": str(compiled_installer),
