@@ -42,6 +42,7 @@ from modules.viewer.fast.lightweight_2d_pipeline import (
 from modules.viewer.fast.qt_slice_viewer import (
     QtSliceViewer,
 )
+from modules.viewer.fast.object_cache import is_noop_object_cache
 from modules.viewer.fast.stack_interaction_scheduler import FastWorkPriority, StackInteractionScheduler
 from modules.viewer.fast.ui_throttle import record_fast_interaction, record_protected_drag, record_ui_heartbeat
 from modules.viewer.tools.coord_resolver import CoordinateResolver
@@ -1369,13 +1370,11 @@ class QtViewerBridge:
                     # these are currently pure overhead (Noop returns
                     # False for everything). Auto-re-activates when
                     # ``set_object_cache()`` wires a real implementation.
-                    try:
-                        from modules.viewer.fast.object_cache import (
-                            is_noop_object_cache,
-                        )
-                        _skip_object_loop = is_noop_object_cache()
-                    except Exception:
-                        _skip_object_loop = False
+                    # NOTE: is_noop_object_cache is imported at module level
+                    # so tests can reliably patch
+                    # modules.viewer.fast.qt_viewer_bridge.is_noop_object_cache
+                    # without being affected by test execution order.
+                    _skip_object_loop = is_noop_object_cache()
                     if not _skip_object_loop:
                         for item in decision.work_items:
                             has_object = False

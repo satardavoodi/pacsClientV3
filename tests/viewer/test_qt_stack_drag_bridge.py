@@ -611,7 +611,7 @@ class TestQtStackDragBridge:
 
     def test_stack_drag_object_requests_use_series_uid_from_pipeline(self, monkeypatch):
         monkeypatch.setattr(
-            'modules.viewer.fast.object_cache.is_noop_object_cache',
+            'modules.viewer.fast.qt_viewer_bridge.is_noop_object_cache',
             lambda: False,
         )
         bridge = _build_bridge_stub(slice_count=200)
@@ -636,7 +636,7 @@ class TestQtStackDragBridge:
 
     def test_stack_drag_object_requests_skip_local_hits_via_has_object(self, monkeypatch):
         monkeypatch.setattr(
-            'modules.viewer.fast.object_cache.is_noop_object_cache',
+            'modules.viewer.fast.qt_viewer_bridge.is_noop_object_cache',
             lambda: False,
         )
         bridge = _build_bridge_stub(slice_count=200)
@@ -667,7 +667,7 @@ class TestQtStackDragBridge:
 
     def test_stack_drag_object_requests_fallback_when_has_object_missing(self, monkeypatch):
         monkeypatch.setattr(
-            'modules.viewer.fast.object_cache.is_noop_object_cache',
+            'modules.viewer.fast.qt_viewer_bridge.is_noop_object_cache',
             lambda: False,
         )
         bridge = _build_bridge_stub(slice_count=200)
