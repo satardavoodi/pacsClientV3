@@ -35,6 +35,7 @@ class RenderContext:
     slice_index: int
     backend: Any = None
     hovered_model: Any = None  # ToolModel currently hovered (for highlight rendering)
+    hovered_handle_idx: int = -2  # Hovered handle code for active interaction rendering
 
 
 class AbstractToolRenderer(ABC):

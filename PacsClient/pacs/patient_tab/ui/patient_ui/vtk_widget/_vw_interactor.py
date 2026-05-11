@@ -455,6 +455,12 @@ class _VWInteractorMixin:
         except Exception:
             pass
 
+        try:
+            if getattr(self, 'current_style', None) is not None and hasattr(self.current_style, 'deactivate'):
+                self.current_style.deactivate()
+        except Exception:
+            pass
+
         interactorstyle: AbstractInteractorStyle = style(self.image_viewer)
 
         # load widgets on new interactor style
@@ -487,6 +493,11 @@ class _VWInteractorMixin:
         try:
             if _saved_camera_state is not None and hasattr(self.image_viewer, "lock_camera_state"):
                 self.image_viewer.lock_camera_state(_saved_camera_state, duration_ms=350)
+        except Exception:
+            pass
+        try:
+            if getattr(self, 'current_style', None) is not None and hasattr(self.current_style, 'deactivate'):
+                self.current_style.deactivate()
         except Exception:
             pass
             

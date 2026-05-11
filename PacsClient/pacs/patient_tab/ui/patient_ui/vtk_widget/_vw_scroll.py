@@ -1249,6 +1249,15 @@ class _VWScrollMixin:
             
             key = event.key()
             modifiers = event.modifiers()
+
+            current_style = getattr(self, 'current_style', None)
+            if key == Qt.Key_Escape and current_style is not None:
+                try:
+                    if hasattr(current_style, 'handle_key_press') and current_style.handle_key_press('Escape'):
+                        event.accept()
+                        return
+                except Exception:
+                    logger.debug("Escape forwarding to current_style failed", exc_info=True)
             
             # Curved MPR shortcuts (when mode is active)
             if hasattr(self.image_viewer, 'curved_mpr_mode') and self.image_viewer.curved_mpr_mode:

@@ -1721,6 +1721,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # v2.2.3.0.7: if user manually changes WL, clear the scroll-cache so
         # the next apply_default_window_level (after a WL reset) always re-applies.
         if not flag_default:
+            self.flag_set_custom_window_level = True
             self._wl_scroll_cache_ww = None
             self._wl_scroll_cache_wc = None
 

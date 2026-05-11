@@ -61,15 +61,15 @@ class PooyanFilterParams:
     """
     Parameters for the PooyanPacs ``FilterCenter`` unsharp-mask filter.
 
-    Defaults match C# ``DisplayRenderOptions`` exactly:
-        sigmaX=1.0, alpha=1.4, beta=-0.5
+    Defaults match the current AIPacs FAST-viewer tuning:
+        sigmaX=1.0, alpha=1.4, beta=-0.45
 
     The C# code: ``Cv2.GaussianBlur(mat, dst, (0,0), sigmaX)``
     followed by: ``Cv2.AddWeighted(mat, alpha, dst, beta, 0, dst)``
     """
     sigma_x: float = 1.0       # GaussianBlur sigma (auto kernel from sigma)
     alpha: float = 1.4         # weight for original image
-    beta: float = -0.5         # weight for blurred image (negative = sharpen)
+    beta: float = -0.45        # weight for blurred image (negative = sharpen)
     enabled: bool = True       # master enable flag
     small_threshold: int = 280  # pixels; triggers dilate + 2× resize path
     preserve_dimensions: bool = False  # if True, skip small-image resize

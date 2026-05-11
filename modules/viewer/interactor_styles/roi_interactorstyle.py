@@ -346,6 +346,27 @@ class RoiInteractorStyle(AbstractInteractorStyle):
         self._drag_hit_distance_px = 10
         self._drag_edge_ratio = 0.1
 
+    def _reset_active_widget(self):
+        try:
+            if getattr(self, 'active_widget', None) is not None:
+                self.active_widget.Off()
+        except Exception:
+            pass
+        self.active_widget = self.create_contour_widget()
+        self.active_widget.Off()
+        self._dragging_obj = None
+        self._drag_start_world = None
+        self._drag_start_nodes = None
+        self._hover_obj = None
+
+    def handle_key_press(self, key: str) -> bool:
+        if key != 'Escape':
+            return False
+        self._set_cursor(vtk.VTK_CURSOR_ARROW)
+        self._reset_active_widget()
+        self.auto_deactivate_tool()
+        return True
+
     def get_statistics(self, obj: ContourWidget):
         spacing = self.image_viewer.vtk_image_data.GetSpacing()
         # slope = self.image_viewer.metadata['meta_fixed']['rescale_slope']
@@ -575,7 +596,7 @@ class RoiInteractorStyle(AbstractInteractorStyle):
         self.active_widget.On()
 
     def deactivate(self, tool=None):
-        self.active_widget.Off()
+        self._reset_active_widget()
 
     def create_text_actor(self, world_position, dict_statistics: dict):
         _mean = dict_statistics['mean']
@@ -662,6 +683,32 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
         self._hover_circle_obj = None
         self._drag_hit_distance_px = 10
         self._drag_edge_ratio = 0.1
+
+    def _reset_active_widget(self):
+        try:
+            if getattr(self, 'active_widget', None) is not None:
+                self.active_widget.Off()
+        except Exception:
+            pass
+        self.active_widget = self._create_circle_widget()
+        self.active_widget.Off()
+        self._drawing = False
+        self._center_world = None
+        self._drag_mode = None
+        self._drag_start_world = None
+        self._drag_start_center = None
+        self._drag_start_radius = None
+        self._active_circle_obj = None
+        self._hover_circle_obj = None
+
+    def handle_key_press(self, key: str) -> bool:
+        if key != 'Escape':
+            return False
+        if hasattr(self.image_viewer.image_interactor, 'SetCursor'):
+            self.image_viewer.image_interactor.SetCursor(vtk.VTK_CURSOR_ARROW)
+        self._reset_active_widget()
+        self.auto_deactivate_tool()
+        return True
 
     def _create_circle_widget(self):
         widget = CircleRoiWidget(self.image_viewer, self.color)
@@ -989,11 +1036,10 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
         super().on_left_button_release(obj, event)
 
     def activate(self, tool=None):
-        self._drawing = False
-        self.active_widget.Off()
+        self._reset_active_widget()
 
     def deactivate(self, tool=None):
-        self.active_widget.Off()
+        self._reset_active_widget()
 
     def create_text_actor(self, world_position, dict_statistics: dict):
         _mean = dict_statistics['mean']

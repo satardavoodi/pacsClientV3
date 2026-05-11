@@ -30,6 +30,9 @@ from threading import Thread
 from modules.zeta_sync.sync_types import SyncMode
 
 
+logger = logging.getLogger(__name__)
+
+
 def _resolve_theme(theme=None):
     return theme if theme else get_theme_manager().current_theme()
 
@@ -2344,15 +2347,28 @@ class ToolbarManager:
             btn.setToolTip('Sync Options (Lock Sync)')
 
     def update_capture_counter(self):
-        study_uid = self.patient_widget.study_uid
+        study_uid = self._get_study_uid()
         if not study_uid:
-            study_uid=str(random.randint(10000,100000))  
-            print(f"generated study_uid is :{study_uid}")      
+            return
         attach_path = ATTACHMENT_PATH / study_uid
         lst_images = list_files_in_folder(folder_path=attach_path, patterns=["*.png", "*.jpg"])
+        count = len(lst_images)
 
         capture_btn: BadgeButton = self.tools_button[self.tool_access.CAPTURE]
-        capture_btn.setCount(len(lst_images))
+        capture_btn.setCount(count)
+
+        # Update hamburger icon color: green when files exist, default gray when empty
+        menu_btn = getattr(self, '_capture_menu_btn', None)
+        if menu_btn is not None:
+            try:
+                if count > 0:
+                    menu_btn.setIcon(qta.icon('fa5s.bars', color='#10b981', scale_factor=0.9))
+                    menu_btn.setToolTip(f'View Captured Images ({count})')
+                else:
+                    menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+                    menu_btn.setToolTip('View Captured Images')
+            except RuntimeError:
+                pass
 
     def _update_soundbox_position(self):
         try:
@@ -2450,15 +2466,28 @@ class ToolbarManager:
             return True
 
     def update_audio_counter(self):
-        study_uid = self.patient_widget.study_uid
+        study_uid = self._get_study_uid()
         if not study_uid:
-            study_uid=str(random.randint(10000,100000))  
-            print(f"generated study_uid is : {study_uid}")
+            return
         attach_path = ATTACHMENT_PATH / study_uid
         lst_images = list_files_in_folder(folder_path=attach_path, patterns=["*.mp3", "*.wav", "*.m4a", "*.ogg", "*.webm"])
+        count = len(lst_images)
 
         mic_btn: BadgeButton = self.tools_button[self.tool_access.MICROPHONE]
-        mic_btn.setCount(len(lst_images))
+        mic_btn.setCount(count)
+
+        # Update hamburger icon color: green when recordings exist, default gray when empty
+        menu_btn = getattr(self, '_mic_menu_btn', None)
+        if menu_btn is not None:
+            try:
+                if count > 0:
+                    menu_btn.setIcon(qta.icon('fa5s.bars', color='#10b981', scale_factor=0.9))
+                    menu_btn.setToolTip(f'View Audio Recordings ({count})')
+                else:
+                    menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+                    menu_btn.setToolTip('View Audio Recordings')
+            except RuntimeError:
+                pass
 
     def get_soundbox(self):
         """Get the VoiceWidget instance"""
@@ -2575,16 +2604,22 @@ class ToolbarManager:
         self._update_mic_record_ui()
 
     def _get_study_uid(self):
-        """Get study UID from selected widget"""
-        if not hasattr(self.patient_widget, 'selected_widget') or not self.patient_widget.selected_widget:
-            return None
+        """Get study UID — patient context is always available after patient open.
+        Primary: patient_widget.study_uid (set at PatientWidget init).
+        Fallback: selected_widget.image_viewer.metadata_fixed (after series load)."""
+        # Primary source: study_uid is set on PatientWidget at construction time
+        uid = getattr(self.patient_widget, 'study_uid', None)
+        if uid:
+            return uid
 
-        selected_widget = self.patient_widget.selected_widget
-
-        # Try to get study_uid from image_viewer
-        if hasattr(selected_widget, 'image_viewer') and selected_widget.image_viewer:
-            if hasattr(selected_widget.image_viewer, 'metadata_fixed'):
-                return selected_widget.image_viewer.metadata_fixed.get('study_uid')
+        # Fallback: series is already loaded into a layout
+        selected_widget = getattr(self.patient_widget, 'selected_widget', None)
+        if selected_widget:
+            image_viewer = getattr(selected_widget, 'image_viewer', None)
+            if image_viewer:
+                meta = getattr(image_viewer, 'metadata_fixed', None)
+                if meta:
+                    return meta.get('study_uid')
 
         return None
 
@@ -2805,6 +2840,14 @@ class ToolbarManager:
             """)
             layout.addWidget(header)
 
+            def _mark_manual_window_level(target):
+                for candidate in (target, getattr(target, 'image_viewer', None)):
+                    if candidate is not None and hasattr(candidate, 'flag_set_custom_window_level'):
+                        try:
+                            candidate.flag_set_custom_window_level = True
+                        except Exception:
+                            pass
+
             def _apply_preset(ww, wl):
                 try:
                     selected_widget = self.patient_widget.selected_widget
@@ -2813,12 +2856,15 @@ class ToolbarManager:
                     if self.is_mpr_viewer(selected_widget):
                         mpr_widget = self.get_mpr_widget(selected_widget)
                         if mpr_widget and hasattr(mpr_widget, 'set_window_level'):
+                            _mark_manual_window_level(mpr_widget)
                             mpr_widget.set_window_level(ww, wl)
                         return
                     image_viewer = getattr(selected_widget, 'image_viewer', None)
                     if image_viewer and hasattr(image_viewer, 'set_window_level'):
+                        _mark_manual_window_level(image_viewer)
                         image_viewer.set_window_level(ww, wl)
                     elif hasattr(selected_widget, 'set_window_level'):
+                        _mark_manual_window_level(selected_widget)
                         selected_widget.set_window_level(ww, wl)
                 except Exception as e:
                     logger.warning(f"[WL_PRESET] Failed to apply preset WW={ww} WL={wl}: {e}")
@@ -6334,6 +6380,7 @@ class ToolbarManager:
         capture_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(capture_menu_btn, self._theme)
         capture_menu_btn.clicked.connect(lambda: self._show_capture_dropdown(capture_menu_btn))
+        self._capture_menu_btn = capture_menu_btn
 
         capture_btn = BadgeButton(self.patient_widget)
         capture_btn.setCheckable(True)
@@ -6434,6 +6481,7 @@ class ToolbarManager:
         mic_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(mic_menu_btn, self._theme)
         mic_menu_btn.clicked.connect(lambda: self._show_audio_dropdown(mic_menu_btn))
+        self._mic_menu_btn = mic_menu_btn
 
         mic_btn = BadgeButton(self.patient_widget)
         mic_btn.setCheckable(True)
@@ -6723,12 +6771,13 @@ class ToolbarManager:
         upload_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(upload_menu_btn, self._theme)
         upload_menu_btn.clicked.connect(lambda: self._show_status_upload_dropdown(upload_menu_btn))
+        self._upload_menu_btn = upload_menu_btn
 
         upload_layout.addWidget(upload_menu_btn)
 
         # Sync button
         sync_btn = QPushButton(self.patient_widget)
-        sync_btn.setToolTip('Sync patient data with server\n(Uploads attachments & sets status to "Awaiting Secretary Approval")')
+        sync_btn.setToolTip('Sync patient data with server, close patient, and return to Home')
         sync_btn.setCursor(Qt.PointingHandCursor)
         
         try:
@@ -6777,7 +6826,7 @@ class ToolbarManager:
         sync_btn.setProperty('_theme_style_type', 'split_right')
         _apply_split_right_style(sync_btn, self._theme)
         
-        sync_btn.clicked.connect(self._start_patient_sync)
+        sync_btn.clicked.connect(lambda: self._start_patient_sync(close_after_sync=True, show_completion_message=True))
         self.sync_button = sync_btn
         upload_layout.addWidget(sync_btn)
         toolbar_layout.addWidget(upload_container)
@@ -7327,9 +7376,14 @@ class ToolbarManager:
             
             layout.addSpacing(8)
             
-            # Sync and go home button at bottom
-            sync_btn = create_dropdown_tool('🔄 Sync and Return Home', 'fa5s.cloud-upload-alt', '#10b981')
-            sync_btn.clicked.connect(lambda: [dropdown.close(), self._sync_and_go_home()])
+            # Sync-only button at bottom
+            sync_btn = create_dropdown_tool('🔄 Sync', 'fa5s.cloud-upload-alt', '#10b981')
+            sync_btn.clicked.connect(
+                lambda: [
+                    dropdown.close(),
+                    self._start_patient_sync(close_after_sync=False, show_completion_message=True),
+                ]
+            )
             layout.addWidget(sync_btn)
             
             # Position dropdown inside visible screen bounds
@@ -7413,31 +7467,8 @@ class ToolbarManager:
             )
     
     def _sync_and_go_home(self):
-        """Sync patient data and return to home page"""
-        try:
-            print("[Toolbar] Sync and go home triggered")
-            
-            # First sync
-            self._start_patient_sync()
-            
-            # Then close patient tab and go home (delayed to allow sync to start)
-            from PySide6.QtCore import QTimer
-            
-            def go_home():
-                try:
-                    if hasattr(self.patient_widget, 'close_and_remove_patient_tab'):
-                        self.patient_widget.close_and_remove_patient_tab()
-                        print("[Toolbar] Returned to home page")
-                except Exception as e:
-                    print(f"[Toolbar] Error closing tab: {e}")
-            
-            # Wait a bit for sync to initialize, then go home
-            QTimer.singleShot(500, go_home)
-            
-        except Exception as e:
-            print(f"[ERROR] Failed to sync and go home: {e}")
-            import traceback
-            traceback.print_exc()
+        """Backward-compatible alias for sync + close + return home."""
+        self._start_patient_sync(close_after_sync=True, show_completion_message=True)
     
     def _update_report_status_display(self):
         """Update the report status badge display - handles both badge types safely"""
@@ -7518,6 +7549,18 @@ class ToolbarManager:
             # Update tooltip on sync button if it exists
             if hasattr(self, 'sync_button') and self.sync_button:
                 self.sync_button.setToolTip(f"Status: {status_label}\nClick to sync and return")
+
+            upload_menu_btn = getattr(self, '_upload_menu_btn', None)
+            if upload_menu_btn is not None:
+                try:
+                    if current_status and current_status != 'pending':
+                        upload_menu_btn.setIcon(qta.icon('fa5s.bars', color=status_color, scale_factor=0.9))
+                        upload_menu_btn.setToolTip(f'Status: {status_label} (click to change)')
+                    else:
+                        upload_menu_btn.setIcon(qta.icon('fa5s.bars', color='#9ca3af', scale_factor=0.9))
+                        upload_menu_btn.setToolTip('Select status')
+                except RuntimeError:
+                    pass
             
             print(f"[Toolbar] Status display updated: {current_status} -> {indicator_text}")
             
@@ -7565,8 +7608,23 @@ class ToolbarManager:
         self.check_and_deactivate_tools()
         self.handle_buttons_checked()
     
-    def _start_patient_sync(self):
-        """Start patient data synchronization with server"""
+    def _disconnect_patient_sync_signals(self, sync_service):
+        """Disconnect prior sync callbacks to prevent duplicate dialogs and actions."""
+        handlers = getattr(self, '_patient_sync_signal_handlers', None) or {}
+        for signal_name, callback in handlers.items():
+            try:
+                getattr(sync_service, signal_name).disconnect(callback)
+            except Exception:
+                pass
+        self._patient_sync_signal_handlers = {}
+
+    def _start_patient_sync(self, *, close_after_sync: bool = False, show_completion_message: bool = True):
+        """Start patient data synchronization with server.
+
+        Args:
+            close_after_sync: Close the patient tab after a successful sync.
+            show_completion_message: Show the success dialog after sync completion.
+        """
         try:
             from PySide6.QtWidgets import QProgressDialog, QMessageBox
             from PySide6.QtCore import QTimer
@@ -7647,6 +7705,7 @@ class ToolbarManager:
             
             # Get sync service
             sync_service = get_patient_sync_service()
+            self._disconnect_patient_sync_signals(sync_service)
             
             # Connect signals
             def on_sync_started(uid):
@@ -7665,6 +7724,7 @@ class ToolbarManager:
                 if uid == study_uid:
                     progress_dialog.setValue(100)
                     progress_dialog.close()
+                    self._disconnect_patient_sync_signals(sync_service)
                     
                     # Re-enable sync button
                     if hasattr(self, 'sync_button'):
@@ -7681,23 +7741,24 @@ class ToolbarManager:
                             home_widget.patient_table_widget.update_visited_status(study_uid, status='synced')
                     except Exception:
                         pass
-                    
-                    # Show success message
-                    success_msg = f"✅ Synchronization completed!\n\n"
-                    success_msg += f"📤 Uploaded: {result['attachments_uploaded']} files\n"
-                    if result['attachments_failed'] > 0:
-                        success_msg += f"❌ Failed: {result['attachments_failed']} files\n"
-                    success_msg += f"📋 Status: Set to 'Awaiting Secretary Approval'"
-                    
-                    QMessageBox.information(
-                        self.patient_widget,
-                        "Sync Completed",
-                        success_msg
-                    )
+
+                    if show_completion_message:
+                        QMessageBox.information(
+                            self.patient_widget,
+                            "Sync Completed",
+                            "Sync completed successfully."
+                        )
+
+                    if close_after_sync and hasattr(self.patient_widget, 'close_and_remove_patient_tab'):
+                        try:
+                            self.patient_widget.close_and_remove_patient_tab()
+                        except Exception as close_err:
+                            print(f"[Toolbar] Error closing patient after sync: {close_err}")
             
             def on_sync_failed(uid, error_msg):
                 if uid == study_uid:
                     progress_dialog.close()
+                    self._disconnect_patient_sync_signals(sync_service)
                     
                     # Re-enable sync button
                     if hasattr(self, 'sync_button'):
@@ -7714,9 +7775,16 @@ class ToolbarManager:
             sync_service.sync_progress.connect(on_sync_progress)
             sync_service.sync_completed.connect(on_sync_completed)
             sync_service.sync_failed.connect(on_sync_failed)
+            self._patient_sync_signal_handlers = {
+                'sync_started': on_sync_started,
+                'sync_progress': on_sync_progress,
+                'sync_completed': on_sync_completed,
+                'sync_failed': on_sync_failed,
+            }
             
             # Handle cancel button
             def on_cancel():
+                self._disconnect_patient_sync_signals(sync_service)
                 # Re-enable sync button
                 if hasattr(self, 'sync_button'):
                     self.sync_button.setEnabled(True)

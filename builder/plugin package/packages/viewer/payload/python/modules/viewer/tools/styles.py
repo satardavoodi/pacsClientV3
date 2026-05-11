@@ -31,8 +31,13 @@ CIRCLE_ROI_LINE_WIDTH = 2
 # ── Endpoint / Handle Sizes (pixels) ────────────────────────────────────
 
 RULER_ENDPOINT_SIZE = 7
+RULER_HANDLE_SIZE = 10
 ANGLE_POINT_SIZE = 5
+ANGLE_HANDLE_SIZE = 10
 CIRCLE_ROI_HANDLE_SIZE = 10
+ROI_RECT_HANDLE_SIZE = 9
+ROI_RECT_CENTER_HANDLE_SIZE = 10
+ARROW_ENDPOINT_SIZE = 9
 ARROW_HEAD_HEIGHT = 42
 ARROW_HEAD_WIDTH_RATIO = 0.45
 
@@ -50,3 +55,8 @@ LABEL_FORMAT_ANGLE = "{:.1f}\u00b0"
 SELECTION_HIGHLIGHT_WIDTH = 2      # extra pixels on selected annotation
 ERASER_HIT_TOLERANCE = 15         # pixels (generous for touch/imprecise click)
 SELECTION_HIT_TOLERANCE = 12      # pixels (annotation click-to-select)
+
+HANDLE_FILL_COLOR = (18, 24, 32)
+HANDLE_OUTLINE_COLOR = (235, 235, 235)
+HANDLE_HOVER_FILL_COLOR = (255, 255, 255)
+HANDLE_HOVER_OUTLINE_COLOR = (0, 230, 0)

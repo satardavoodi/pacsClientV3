@@ -104,6 +104,7 @@ def nearest_handle(
     py: float,
     model: ToolModel,
     threshold: float = 12.0,
+    body_threshold: float | None = None,
 ) -> int:
     """Return handle/body hit for one annotation in image coordinates.
 
@@ -115,10 +116,62 @@ def nearest_handle(
     """
     pts = model.points_image
 
-    # Handle points first
+    best_handle = -2
+    best_handle_dist = float("inf")
+
+    def consider_handle(code: int, hx: float, hy: float) -> None:
+        nonlocal best_handle, best_handle_dist
+        dist = math.hypot(px - hx, py - hy)
+        if dist <= threshold and dist < best_handle_dist:
+            best_handle = code
+            best_handle_dist = dist
+
     for i, (hx, hy) in enumerate(pts):
-        if math.hypot(px - hx, py - hy) <= threshold:
-            return i
+        consider_handle(i, hx, hy)
+
+    if isinstance(model, ROIRectModel) and len(pts) >= 2:
+        x1, y1 = pts[0]
+        x2, y2 = pts[1]
+        left, right = min(x1, x2), max(x1, x2)
+        top, bottom = min(y1, y2), max(y1, y2)
+        cx = (left + right) * 0.5
+        cy = (top + bottom) * 0.5
+        rect_handles = (
+            (100, (left, top)),
+            (101, (right, top)),
+            (102, (right, bottom)),
+            (103, (left, bottom)),
+            (104, (cx, top)),
+            (105, (right, cy)),
+            (106, (cx, bottom)),
+            (107, (left, cy)),
+            (108, (cx, cy)),
+        )
+        for code, (hx, hy) in rect_handles:
+            consider_handle(code, hx, hy)
+
+    if isinstance(model, ROICircleModel) and len(pts) >= 2:
+        cx, cy = pts[0]
+        radius = math.hypot(pts[1][0] - cx, pts[1][1] - cy)
+        if radius > 0.0:
+            diag = radius / math.sqrt(2.0)
+            circle_handles = (
+                (200, (cx + radius, cy)),
+                (201, (cx, cy - radius)),
+                (202, (cx - radius, cy)),
+                (203, (cx, cy + radius)),
+                (204, (cx + diag, cy - diag)),
+                (205, (cx - diag, cy - diag)),
+                (206, (cx - diag, cy + diag)),
+                (207, (cx + diag, cy + diag)),
+            )
+            for code, (hx, hy) in circle_handles:
+                consider_handle(code, hx, hy)
+
+    if best_handle >= -1:
+        return best_handle
+
+    body_tol = float(threshold if body_threshold is None else body_threshold)
 
     # Then body/perimeter
     if isinstance(model, ROIRectModel) and len(pts) >= 2:
@@ -127,10 +180,10 @@ def nearest_handle(
     elif isinstance(model, ROICircleModel) and len(pts) >= 2:
         cx, cy = pts[0]
         radius = math.hypot(pts[1][0] - cx, pts[1][1] - cy)
-        if math.hypot(px - cx, py - cy) <= radius + threshold:
+        if math.hypot(px - cx, py - cy) <= radius + body_tol:
             return -1
     else:
-        if _min_distance_to_model(px, py, model) <= threshold:
+        if _min_distance_to_model(px, py, model) <= body_tol:
             return -1
 
     return -2

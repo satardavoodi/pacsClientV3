@@ -656,7 +656,7 @@ def apply_filters(
     laplacian_sharpening + adaptive_sharpening = 7+ full 3D Gaussian passes)
     with a lightweight 2-stage XY-only pipeline derived from PooyanPacs:
 
-    1. XY-only Gaussian noise reduction (σ=0.25, no Z-pass)
+1. XY-only Gaussian noise reduction (σ=0.275, no Z-pass)
     2. Single XY-only unsharp mask (σ=1.0, amount=0.25, clamped)
 
     The PooyanPacs unsharp mask formula:
@@ -686,8 +686,8 @@ def apply_filters(
             "min_slices": 4,
             "noise_reduction": {
                 "enabled": True,
-                "sigma": 0.25,
-                "mild_sigma": 0.30,
+                "sigma": 0.275,
+                "mild_sigma": 0.33,
             },
             "multiscale_sharpening": {
                 "enabled": True,
@@ -716,8 +716,8 @@ def apply_filters(
             "min_slices": 4,
             "noise_reduction": {
                 "enabled": True,
-                "sigma": 0.25,
-                "mild_sigma": 0.30,
+                "sigma": 0.275,
+                "mild_sigma": 0.33,
             },
         },
     }

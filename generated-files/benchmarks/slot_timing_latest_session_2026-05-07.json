@@ -1,0 +1,28 @@
+{
+  "viewer": "AI-PACS",
+  "mode": "slot-timing-latest-session",
+  "log_path": "user_data\\logs\\viewer_diagnostics.log",
+  "latest_session": "sess-3f233c8238a8",
+  "slot_lines_in_latest_session": 6,
+  "overlap_slot_timing_drag_blocked_ms_total_latest_session": 49.434,
+  "top_drag_tags_latest_session": [
+    {
+      "tag": "progressive.finalize_terminal",
+      "drag_samples": 2,
+      "drag_total_ms": 24.682,
+      "drag_max_ms": 14.988
+    },
+    {
+      "tag": "thumbnail.complete_series_download",
+      "drag_samples": 1,
+      "drag_total_ms": 16.375,
+      "drag_max_ms": 16.375
+    },
+    {
+      "tag": "thumbnail.start_series_download",
+      "drag_samples": 1,
+      "drag_total_ms": 8.377,
+      "drag_max_ms": 8.377
+    }
+  ]
+}

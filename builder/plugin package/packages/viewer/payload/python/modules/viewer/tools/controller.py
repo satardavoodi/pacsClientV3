@@ -109,8 +109,17 @@ class ToolController:
         img_y: float,
         slice_index: int,
         coord_resolver: Optional[CoordinateResolver] = None,
+        hit_threshold: float = 12.0,
     ) -> bool:
         if self._active_tool is None:
+            if self._hovered_model is None or self._hovered_handle_idx < -1:
+                self._resolve_hover_target(
+                    img_x,
+                    img_y,
+                    slice_index,
+                    handle_threshold=hit_threshold,
+                    body_threshold=max(4.0, hit_threshold * 0.7),
+                )
             if self._hovered_model is not None and self._hovered_handle_idx >= -1:
                 self._drag_model = self._hovered_model
                 self._drag_handle_idx = self._hovered_handle_idx
@@ -120,7 +129,12 @@ class ToolController:
                 self._hovered_model.is_selected = True
                 self._state = ToolState.DRAGGING
                 return True
-            return self._try_select(img_x, img_y, slice_index)
+            return self._try_select(
+                img_x,
+                img_y,
+                slice_index,
+                threshold_px=max(4.0, hit_threshold * 0.7),
+            )
 
         if self._active_tool == ToolType.RULER:
             return self._ruler_press(img_x, img_y, slice_index, coord_resolver)
@@ -201,12 +215,13 @@ class ToolController:
         if self._state == ToolState.PLACING:
             return (prev_model is not None) or (prev_idx != -2)
 
-        for ann in self._store.get_for_slice(slice_index):
-            hit_idx = nearest_handle(img_x, img_y, ann, threshold)
-            if hit_idx >= -1:
-                self._hovered_model = ann
-                self._hovered_handle_idx = hit_idx
-                break
+        self._resolve_hover_target(
+            img_x,
+            img_y,
+            slice_index,
+            handle_threshold=threshold,
+            body_threshold=max(4.0, threshold * 0.7),
+        )
 
         if self._hovered_model is not None:
             self._state = ToolState.HOVERING
@@ -245,6 +260,7 @@ class ToolController:
             coord=coord_resolver,
             slice_index=slice_index,
             hovered_model=self._hovered_model,
+            hovered_handle_idx=self._hovered_handle_idx,
         )
 
         for model in self._store.get_for_slice(slice_index):
@@ -624,14 +640,25 @@ class ToolController:
                 return True
         return False
 
-    def _try_select(self, img_x: float, img_y: float, slice_index: int) -> bool:
+    def _try_select(
+        self,
+        img_x: float,
+        img_y: float,
+        slice_index: int,
+        threshold_px: Optional[float] = None,
+    ) -> bool:
         from . import styles
 
         annotations = self._store.get_for_slice(slice_index)
         if not annotations:
             return False
 
-        hit = nearest_annotation(img_x, img_y, annotations, threshold_px=styles.SELECTION_HIT_TOLERANCE)
+        hit = nearest_annotation(
+            img_x,
+            img_y,
+            annotations,
+            threshold_px=(styles.SELECTION_HIT_TOLERANCE if threshold_px is None else float(threshold_px)),
+        )
         if hit is None:
             self._store.deselect_all()
             return False
@@ -639,6 +666,29 @@ class ToolController:
         self._store.deselect_all()
         hit.is_selected = True
         return True
+
+    def _resolve_hover_target(
+        self,
+        img_x: float,
+        img_y: float,
+        slice_index: int,
+        handle_threshold: float,
+        body_threshold: Optional[float] = None,
+    ) -> None:
+        self._hovered_model = None
+        self._hovered_handle_idx = -2
+        for ann in self._store.get_for_slice(slice_index):
+            hit_idx = nearest_handle(
+                img_x,
+                img_y,
+                ann,
+                threshold=handle_threshold,
+                body_threshold=body_threshold,
+            )
+            if hit_idx >= -1:
+                self._hovered_model = ann
+                self._hovered_handle_idx = hit_idx
+                return
 
     def _do_drag(self, img_x: float, img_y: float) -> None:
         if self._drag_model is None or self._drag_start_img is None or self._drag_start_points is None:
@@ -648,13 +698,133 @@ class ToolController:
         dy = img_y - self._drag_start_img[1]
         new_points = list(self._drag_start_points)
 
-        if self._drag_handle_idx == -1:
+        if isinstance(self._drag_model, ROIRectModel) and len(new_points) >= 2:
+            new_points = self._drag_rect_model(new_points, dx, dy, self._drag_handle_idx)
+        elif isinstance(self._drag_model, ROICircleModel) and len(new_points) >= 2:
+            new_points = self._drag_circle_model(new_points, img_x, img_y, dx, dy, self._drag_handle_idx)
+        elif self._drag_handle_idx == -1:
             new_points = [(p[0] + dx, p[1] + dy) for p in new_points]
         elif 0 <= self._drag_handle_idx < len(new_points):
             h = self._drag_handle_idx
             new_points[h] = (new_points[h][0] + dx, new_points[h][1] + dy)
 
         self._drag_model.points_image = new_points
+        self._refresh_live_model_state(self._drag_model)
+
+    def _compute_ruler_distance_mm(
+        self,
+        p1: Tuple[float, float],
+        p2: Tuple[float, float],
+        slice_index: int,
+    ) -> float:
+        import math
+
+        row_spacing_mm, col_spacing_mm = self._get_pixel_spacing_mm(slice_index)
+        dx_mm = (float(p2[0]) - float(p1[0])) * col_spacing_mm
+        dy_mm = (float(p2[1]) - float(p1[1])) * row_spacing_mm
+        return math.hypot(dx_mm, dy_mm)
+
+    def _refresh_live_model_state(self, model: ToolModel) -> None:
+        import math
+
+        points = model.points_image
+        if isinstance(model, RulerModel) and len(points) >= 2:
+            model.distance_mm = self._compute_ruler_distance_mm(points[0], points[1], model.slice_index)
+        elif isinstance(model, AngleModel) and len(points) >= 3:
+            model.angle_degrees = angle_3pt(points[0], points[1], points[2])
+        elif isinstance(model, TwoLineAngleModel) and len(points) >= 4:
+            model.angle_degrees = angle_2line(points[0], points[1], points[2], points[3])
+        elif isinstance(model, ROICircleModel) and len(points) >= 2:
+            cx, cy = points[0]
+            ex, ey = points[1]
+            model.radius_image_px = math.hypot(ex - cx, ey - cy)
+
+    def _drag_rect_model(
+        self,
+        points: List[Tuple[float, float]],
+        dx: float,
+        dy: float,
+        handle_idx: int,
+    ) -> List[Tuple[float, float]]:
+        x1, y1 = points[0]
+        x2, y2 = points[1]
+
+        if handle_idx in (-1, 108):
+            return [(x1 + dx, y1 + dy), (x2 + dx, y2 + dy)]
+
+        if handle_idx == 100:
+            x1 += dx
+            y1 += dy
+        elif handle_idx == 101:
+            x2 += dx
+            y1 += dy
+        elif handle_idx == 102:
+            x2 += dx
+            y2 += dy
+        elif handle_idx == 103:
+            x1 += dx
+            y2 += dy
+        elif handle_idx == 104:
+            y1 += dy
+        elif handle_idx == 105:
+            x2 += dx
+        elif handle_idx == 106:
+            y2 += dy
+        elif handle_idx == 107:
+            x1 += dx
+
+        min_span = 0.5
+        if abs(x2 - x1) < min_span:
+            if handle_idx in (100, 103, 107):
+                x1 = x2 - (min_span if x1 <= x2 else -min_span)
+            else:
+                x2 = x1 + (min_span if x1 <= x2 else -min_span)
+        if abs(y2 - y1) < min_span:
+            if handle_idx in (100, 101, 104):
+                y1 = y2 - (min_span if y1 <= y2 else -min_span)
+            else:
+                y2 = y1 + (min_span if y1 <= y2 else -min_span)
+
+        return [(x1, y1), (x2, y2)]
+
+    def _drag_circle_model(
+        self,
+        points: List[Tuple[float, float]],
+        img_x: float,
+        img_y: float,
+        dx: float,
+        dy: float,
+        handle_idx: int,
+    ) -> List[Tuple[float, float]]:
+        import math
+
+        cx, cy = points[0]
+        ex, ey = points[1]
+
+        if handle_idx in (-1, 0):
+            return [(cx + dx, cy + dy), (ex + dx, ey + dy)]
+
+        if handle_idx == 1:
+            return [(cx, cy), (ex + dx, ey + dy)]
+
+        direction_map = {
+            200: (1.0, 0.0),
+            201: (0.0, -1.0),
+            202: (-1.0, 0.0),
+            203: (0.0, 1.0),
+            204: (0.70710678, -0.70710678),
+            205: (-0.70710678, -0.70710678),
+            206: (-0.70710678, 0.70710678),
+            207: (0.70710678, 0.70710678),
+        }
+        vec = direction_map.get(handle_idx)
+        if vec is None:
+            return [(cx, cy), (ex, ey)]
+
+        radius = math.hypot(float(img_x) - float(cx), float(img_y) - float(cy))
+        radius = max(0.5, float(radius))
+        nx, ny = vec
+        return [(cx, cy), (cx + nx * radius, cy + ny * radius)]
 
     def _finalize_drag(self) -> None:
         model = self._drag_model
@@ -662,6 +832,7 @@ class ToolController:
             return
 
         try:
+            self._refresh_live_model_state(model)
             if isinstance(model, ROIRectModel) and len(model.points_image) >= 2:
                 model.stats = self._compute_roi_rect_stats(
                     model.points_image[0],

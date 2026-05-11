@@ -81,6 +81,7 @@ def _build_bridge_stub(slice_count: int = 200):
     bridge._last_set_slice_ui_lag_ms = 0.0
     bridge.last_index_slice_saved = 0
     bridge.vtk_widget = None
+    bridge._mark_interaction_event = lambda: None
     bridge.qt_viewer = SimpleNamespace(
         set_total_slices_hint=lambda count: bridge._slice_hint_calls.append(("qt", int(count))),
     )
@@ -608,7 +609,11 @@ class TestQtStackDragBridge:
 
         assert bridge._set_slice_calls == [(27, True, 'drag')]
 
-    def test_stack_drag_object_requests_use_series_uid_from_pipeline(self):
+    def test_stack_drag_object_requests_use_series_uid_from_pipeline(self, monkeypatch):
+        monkeypatch.setattr(
+            'modules.viewer.fast.object_cache.is_noop_object_cache',
+            lambda: False,
+        )
         bridge = _build_bridge_stub(slice_count=200)
         object_calls = []
         begin_calls = []
@@ -629,7 +634,11 @@ class TestQtStackDragBridge:
         assert {call[1] for call in object_calls} == {"series-uid-actual"}
         assert begin_calls == [((27,), {"generation": 2, "direction": 0, "p01_indices": (27, 28, 29, 26)})]
 
-    def test_stack_drag_object_requests_skip_local_hits_via_has_object(self):
+    def test_stack_drag_object_requests_skip_local_hits_via_has_object(self, monkeypatch):
+        monkeypatch.setattr(
+            'modules.viewer.fast.object_cache.is_noop_object_cache',
+            lambda: False,
+        )
         bridge = _build_bridge_stub(slice_count=200)
         has_calls = []
         object_calls = []
@@ -656,7 +665,11 @@ class TestQtStackDragBridge:
         assert all(call[2] != 27 for call in object_calls), "local P0 target should not be re-requested"
         assert object_calls, "missing P1 neighbors should still be escalated"
 
-    def test_stack_drag_object_requests_fallback_when_has_object_missing(self):
+    def test_stack_drag_object_requests_fallback_when_has_object_missing(self, monkeypatch):
+        monkeypatch.setattr(
+            'modules.viewer.fast.object_cache.is_noop_object_cache',
+            lambda: False,
+        )
         bridge = _build_bridge_stub(slice_count=200)
         object_calls = []
         bridge.pipeline = SimpleNamespace(

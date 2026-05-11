@@ -3,7 +3,7 @@
     "version": "2.2.3.4.1",
     "sigma_x": 1.0,
     "alpha": 1.4,
-    "beta": -0.5,
+    "beta": -0.45,
     "enabled": true,
     "invert": false,
     "preserve_dimensions": true,

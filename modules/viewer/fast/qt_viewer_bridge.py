@@ -812,6 +812,7 @@ class QtViewerBridge:
                 return
 
         if not flag_default:
+            self.flag_set_custom_window_level = True
             self._wl_scroll_cache_ww = None
             self._wl_scroll_cache_wc = None
 

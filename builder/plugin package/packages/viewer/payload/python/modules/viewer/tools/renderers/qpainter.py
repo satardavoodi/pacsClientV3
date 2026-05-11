@@ -21,6 +21,68 @@ from .base import AbstractToolRenderer, RenderContext
 class QPainterToolRenderer(AbstractToolRenderer):
     """Render tool annotations via QPainter."""
 
+    def _draw_handle(
+        self,
+        painter: Any,
+        x: float,
+        y: float,
+        size: float,
+        *,
+        hovered: bool = False,
+        square: bool = False,
+    ) -> None:
+        from PySide6.QtCore import QPointF, QRectF
+        from PySide6.QtGui import QColor, QPen
+
+        fill = QColor(*(styles.HANDLE_HOVER_FILL_COLOR if hovered else styles.HANDLE_FILL_COLOR))
+        outline = QColor(*(styles.HANDLE_HOVER_OUTLINE_COLOR if hovered else styles.HANDLE_OUTLINE_COLOR))
+        pen = QPen(outline, 1.6)
+        pen.setCosmetic(True)
+        painter.setPen(pen)
+        painter.setBrush(fill)
+
+        r = float(size) * 0.5
+        if square:
+            painter.drawRect(QRectF(float(x) - r, float(y) - r, float(size), float(size)))
+        else:
+            painter.drawEllipse(QPointF(float(x), float(y)), r, r)
+
+    @staticmethod
+    def _rect_interaction_handles(p1w: Tuple[float, float], p2w: Tuple[float, float]):
+        x1, y1 = p1w
+        x2, y2 = p2w
+        left, right = min(x1, x2), max(x1, x2)
+        top, bottom = min(y1, y2), max(y1, y2)
+        cx = (left + right) * 0.5
+        cy = (top + bottom) * 0.5
+        return {
+            100: (left, top),
+            101: (right, top),
+            102: (right, bottom),
+            103: (left, bottom),
+            104: (cx, top),
+            105: (right, cy),
+            106: (cx, bottom),
+            107: (left, cy),
+            108: (cx, cy),
+        }
+
+    @staticmethod
+    def _circle_interaction_handles(cw: Tuple[float, float], radius_w: float):
+        cx, cy = cw
+        diag = radius_w / 1.41421356237
+        return {
+            0: (cx, cy),
+            200: (cx + radius_w, cy),
+            201: (cx, cy - radius_w),
+            202: (cx - radius_w, cy),
+            203: (cx, cy + radius_w),
+            204: (cx + diag, cy - diag),
+            205: (cx - diag, cy - diag),
+            206: (cx - diag, cy + diag),
+            207: (cx + diag, cy + diag),
+        }
+
     # ── public API ───────────────────────────────────────────────────
 
     def render_tool(
@@ -93,10 +155,9 @@ class QPainterToolRenderer(AbstractToolRenderer):
         painter.setBrush(color)
         painter.drawLine(QPointF(*p1w), QPointF(*p2w))
 
-        # ---- endpoints (filled circles) ----
-        r = styles.RULER_ENDPOINT_SIZE / 2.0
-        painter.drawEllipse(QPointF(*p1w), r, r)
-        painter.drawEllipse(QPointF(*p2w), r, r)
+        hovered_idx = ctx.hovered_handle_idx if ctx.hovered_model is model else -2
+        self._draw_handle(painter, p1w[0], p1w[1], styles.RULER_HANDLE_SIZE, hovered=(hovered_idx == 0))
+        self._draw_handle(painter, p2w[0], p2w[1], styles.RULER_HANDLE_SIZE, hovered=(hovered_idx == 1))
 
         # ---- label ----
         if model.distance_mm is not None:
@@ -171,10 +232,15 @@ class QPainterToolRenderer(AbstractToolRenderer):
         painter.drawLine(QPointF(*vw), QPointF(*p1w))
         painter.drawLine(QPointF(*vw), QPointF(*p3w))
 
-        # Endpoint dots
-        r = styles.ANGLE_POINT_SIZE / 2.0
-        for pw in pts_w:
-            painter.drawEllipse(QPointF(*pw), r, r)
+        hovered_idx = ctx.hovered_handle_idx if ctx.hovered_model is model else -2
+        for idx, pw in enumerate(pts_w):
+            self._draw_handle(
+                painter,
+                pw[0],
+                pw[1],
+                styles.ANGLE_HANDLE_SIZE,
+                hovered=(hovered_idx == idx),
+            )
 
         # Arc at vertex
         arc_radius = 30.0
@@ -236,10 +302,15 @@ class QPainterToolRenderer(AbstractToolRenderer):
         painter.drawLine(QPointF(*a1w), QPointF(*a2w))
         painter.drawLine(QPointF(*b1w), QPointF(*b2w))
 
-        # Endpoint dots
-        r = styles.ANGLE_POINT_SIZE / 2.0
-        for pw in pts_w:
-            painter.drawEllipse(QPointF(*pw), r, r)
+        hovered_idx = ctx.hovered_handle_idx if ctx.hovered_model is model else -2
+        for idx, pw in enumerate(pts_w):
+            self._draw_handle(
+                painter,
+                pw[0],
+                pw[1],
+                styles.ANGLE_HANDLE_SIZE,
+                hovered=(hovered_idx == idx),
+            )
 
         # Label at midpoint of the two lines' midpoints
         label = styles.LABEL_FORMAT_ANGLE.format(model.angle_degrees)
@@ -331,6 +402,19 @@ class QPainterToolRenderer(AbstractToolRenderer):
         rect = QRectF(min(x1, x2), min(y1, y2), abs(x2 - x1), abs(y2 - y1))
         painter.drawRect(rect)
 
+        if model.is_selected or ctx.hovered_model is model:
+            hovered_idx = ctx.hovered_handle_idx if ctx.hovered_model is model else -2
+            for code, (hx, hy) in self._rect_interaction_handles(p1w, p2w).items():
+                is_center = code == 108
+                self._draw_handle(
+                    painter,
+                    hx,
+                    hy,
+                    styles.ROI_RECT_CENTER_HANDLE_SIZE if is_center else styles.ROI_RECT_HANDLE_SIZE,
+                    hovered=(hovered_idx == code),
+                    square=(not is_center),
+                )
+
         # Stats label — drawn below the ROI box, centred horizontally
         if model.stats is not None:
             lines = [
@@ -412,11 +496,17 @@ class QPainterToolRenderer(AbstractToolRenderer):
         center_pt = QPointF(*cw)
         painter.drawEllipse(center_pt, radius_w, radius_w)
 
-        # Handles at center and edge point
-        painter.setBrush(color)
-        hr = styles.CIRCLE_ROI_HANDLE_SIZE / 2.0
-        painter.drawEllipse(center_pt, hr, hr)
-        painter.drawEllipse(QPointF(*ew), hr, hr)
+        if model.is_selected or ctx.hovered_model is model:
+            hovered_idx = ctx.hovered_handle_idx if ctx.hovered_model is model else -2
+            for code, (hx, hy) in self._circle_interaction_handles(cw, radius_w).items():
+                self._draw_handle(
+                    painter,
+                    hx,
+                    hy,
+                    styles.CIRCLE_ROI_HANDLE_SIZE,
+                    hovered=(hovered_idx == code),
+                    square=(code != 0),
+                )
 
         # Stats label — drawn below the circle, centred horizontally
         if model.stats is not None:
@@ -494,6 +584,10 @@ class QPainterToolRenderer(AbstractToolRenderer):
 
         # Shaft
         painter.drawLine(QPointF(*tail_w), QPointF(*head_w))
+
+        hovered_idx = ctx.hovered_handle_idx if ctx.hovered_model is model else -2
+        self._draw_handle(painter, tail_w[0], tail_w[1], styles.ARROW_ENDPOINT_SIZE, hovered=(hovered_idx == 0))
+        self._draw_handle(painter, head_w[0], head_w[1], styles.ARROW_ENDPOINT_SIZE, hovered=(hovered_idx == 1))
 
         # Arrowhead triangle at head
         dx = head_w[0] - tail_w[0]
