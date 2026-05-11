@@ -1,9 +1,9 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v2.5.0 (2026-05-04)
-**In-flight Beta:** v2.5.0 beta — FAST 2D cell separation (2026-05-05, branch: beta-version)
-**Release Date:** 2026-05-04
-**Branch:** matab-conservative
+**Current Stable Version:** v2.5.3 (2026-05-11)
+**Previous Stable:** v2.5.0 (2026-05-04)
+**Release Date:** 2026-05-11
+**Branch:** beta-version
 
 ---
 

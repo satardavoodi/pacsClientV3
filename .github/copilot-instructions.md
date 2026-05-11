@@ -1,8 +1,8 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v2.5.0 (2026-05-04) — Toolbar Window Level now uses a split-button with CT presets (Lung, Abdomen, Brain, Bone) in both FAST and Advanced workflows, and the toolbar regression repairs keep PatientWidget construction/opening healthy after the WL feature work. See `docs/releases/VERSION_2.5.0_RELEASE.md`.
+**Current Stable Version:** v2.5.3 (2026-05-11) — FAST viewer progressive display stabilization (R27 metadata append cap + R28 metadata sync throttle = 50-1000x improve in progressive_grow_apply_ms). Toolbar WL split-button with CT presets present from v2.5.0. See `docs/releases/VERSION_2.5.3_RELEASE.md`.
 
-**In-flight (dev):** v2.3.8 R15 — Advanced (VTK) viewer joins the unified protected-interaction latch so R3/R4/R5 auto-extend to Advanced wheel/stack bursts. See R15 below. Plus R22 (G7+G8) — DM table-rebuild storm fix: `blockSignals` discipline on `_clear_details_panel` priority combo + reentrancy guard on `_refresh_table_order` + `[DM_REBUILD]`/`[DM_PRIORITY_TRANSITION]` instrumentation.
+**Previous Stable:** v2.5.0 (2026-05-04) — Toolbar Window Level now uses a split-button with CT presets (Lung, Abdomen, Brain, Bone) in both FAST and Advanced workflows. See `docs/releases/VERSION_2.5.0_RELEASE.md`.
 
 ## Architecture map (start here)
 - App entry is `main.py` → `AppHandler` (login) → `MainWindowWidget` → `ControlPanelInterface` → `HomePanelWidget` for patient list and downloads.
