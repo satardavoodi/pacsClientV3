@@ -3,7 +3,6 @@ Series management mixin for VTKWidget.
 switch_series, start_process_series, reset_image, cleanup_image_viewer.
 """
 from __future__ import annotations
-import gc
 import logging
 import os
 import time
@@ -730,9 +729,6 @@ class _VWSeriesMixin:
         else:
             self._active_backend = _preserved_backend
         self._update_backend_badge()
-
-        # Run garbage collection to help free memory
-        gc.collect()
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
                       metadata_fixed=None, progressive_total: int = 0):

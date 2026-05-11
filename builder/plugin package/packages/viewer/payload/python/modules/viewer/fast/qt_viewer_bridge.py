@@ -1116,7 +1116,7 @@ class QtViewerBridge:
         self._build_mock_vtk_data()
         return True
 
-    def grow(self) -> int:
+    def grow(self, force_flush: bool = False) -> int:
         """Grow the pipeline with any new files downloaded to the series directory.
 
         Called from ``_grow_progressive_fast`` during progressive download when
@@ -1125,12 +1125,16 @@ class QtViewerBridge:
         ``_slice_count`` so that ``set_slice()`` no longer clamps at the initial
         batch size, which was causing the viewer to appear "stuck".
 
+        ``force_flush=True`` bypasses the batch-accumulation threshold in the
+        pipeline so that all buffered entries are applied immediately (used on
+        terminal download completion to show the complete slice count at once).
+
         Returns the new (possibly unchanged) slice count.
         """
         new_count = self._slice_count
         try:
             if hasattr(self.pipeline, "refresh_file_list"):
-                new_count = self.pipeline.refresh_file_list()
+                new_count = self.pipeline.refresh_file_list(force_flush=force_flush)
         except Exception as exc:
             logger.debug("qt-viewer-bridge grow: refresh_file_list failed: %s", exc)
             return self._slice_count

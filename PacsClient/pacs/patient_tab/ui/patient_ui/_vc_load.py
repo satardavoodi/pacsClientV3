@@ -2326,10 +2326,10 @@ class _VCLoadMixin:
         try:
             series_key = self.parent_widget.resolve_series_key(series_key)
 
-            # Just mark ready â€” load_series_on_demand handles display via signal
+            # Just mark ready - completion already scheduled the border repaint,
+            # and load_series_on_demand handles display via series_downloaded.
             if hasattr(self.parent_widget, 'thumbnail_manager') and self.parent_widget.thumbnail_manager:
                 self.parent_widget.thumbnail_manager.set_series_ready(str(series_key))
-                self.parent_widget.thumbnail_manager.apply_border_states_new()
         except Exception as e:
             logger.error(f"âڑ ï¸ڈ Error triggering priority display: {e}")
 

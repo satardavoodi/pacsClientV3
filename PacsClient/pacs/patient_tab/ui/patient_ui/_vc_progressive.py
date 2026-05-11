@@ -1721,7 +1721,12 @@ class _VCProgressiveMixin:
                     # original batch size and the image appears "stuck".
                     bridge = getattr(vtk_w, "image_viewer", None)
                     if bridge is not None and hasattr(bridge, "grow"):
-                        new_count = bridge.grow()
+                        # force_flush when terminal OR when stale retries are
+                        # active: bypass the batch-accumulation threshold and
+                        # drain any in-flight background scan so a stuck viewer
+                        # self-corrects without waiting for STALE-EXHAUSTED.
+                        _stale_ff = info.get("_stale_retry_count", 0) > 0
+                        new_count = bridge.grow(force_flush=terminal or _stale_ff)
             except Exception as exc:
                 self.logger.debug("progressive-fast: refresh_file_list/grow failed: %s", exc)
 
@@ -2184,7 +2189,7 @@ class _VCProgressiveMixin:
                     elif getattr(vtk_w, "_qt_bridge_active", False):
                         bridge = getattr(vtk_w, "image_viewer", None)
                         if bridge is not None and hasattr(bridge, "grow"):
-                            new_count = bridge.grow()
+                            new_count = bridge.grow(force_flush=True)
                             final_count = max(final_count, new_count)
                             self._update_vtk_slice_range(vtk_w, node, new_count)
                             self.logger.info(

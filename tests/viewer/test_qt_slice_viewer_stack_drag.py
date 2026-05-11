@@ -91,7 +91,7 @@ class TestQtSliceViewerStackDrag:
         assert large_threshold < small_threshold
         assert large_cap >= small_cap
 
-    def test_stack_profile_distinguishes_20_100_200_slice_stacks(self):
+    def test_stack_profile_distinguishes_20_100_250_slice_stacks(self):
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -102,11 +102,11 @@ class TestQtSliceViewerStackDrag:
         viewer.set_total_slices_hint(100)
         t100, c100 = viewer._get_stack_drag_profile()
 
-        viewer.set_total_slices_hint(200)
-        t200, c200 = viewer._get_stack_drag_profile()
+        viewer.set_total_slices_hint(250)
+        t250, c250 = viewer._get_stack_drag_profile()
 
-        assert t20 > t100 > t200
-        assert c20 < c100 < c200
+        assert t20 > t100 > t250
+        assert c20 < c100 < c250
 
     def test_medium_large_stack_caps_per_event_burst_more_tightly(self):
         viewer = QtSliceViewer()
@@ -216,12 +216,11 @@ class TestQtSliceViewerStackDrag:
         assert max_steps == 1
         assert estimated_full_drag_steps <= 32
 
-    def test_stack_profile_uses_visible_height(self):
+    def test_stack_profile_uses_full_viewer_height(self):
         viewer = QtSliceViewer()
         viewer.set_stack_drag_policy("adaptive")
 
         viewer.set_image(QImage(128, 128, QImage.Format.Format_Grayscale8))
-        viewer.set_zoom(2.0)
         viewer.set_total_slices_hint(60)
 
         viewer.resize(256, 256)
@@ -231,6 +230,53 @@ class TestQtSliceViewerStackDrag:
         short_threshold, _ = viewer._get_stack_drag_profile()
 
         assert tall_threshold > short_threshold
+
+    def test_stack_profile_is_independent_of_image_zoomed_height(self):
+        viewer = QtSliceViewer()
+        viewer.resize(256, 256)
+        viewer.set_stack_drag_policy("adaptive")
+        viewer.set_image(QImage(128, 128, QImage.Format.Format_Grayscale8))
+        viewer.set_total_slices_hint(60)
+
+        viewer.set_zoom(0.5)
+        threshold_small_zoom, _ = viewer._get_stack_drag_profile()
+
+        viewer.set_zoom(3.0)
+        threshold_large_zoom, _ = viewer._get_stack_drag_profile()
+
+        assert threshold_small_zoom == threshold_large_zoom
+
+    def test_stack_drag_stays_active_inside_layout_even_outside_image(self):
+        viewer = QtSliceViewer()
+        viewer.resize(512, 512)
+        viewer.set_stack_drag_policy("adaptive")
+        viewer.set_total_slices_hint(120)
+        viewer.set_image(QImage(128, 128, QImage.Format.Format_Grayscale8))
+
+        emitted: list[int] = []
+        viewer.stack_drag_target_requested.connect(lambda target: emitted.append(target))
+        viewer.set_current_slice_index(20)
+
+        press = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPointF(256, 256),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        viewer.mousePressEvent(press)
+
+        move = QMouseEvent(
+            QMouseEvent.Type.MouseMove,
+            QPointF(480, 340),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        viewer.mouseMoveEvent(move)
+
+        assert viewer._stacked_dragging is True
+        assert emitted
 
     def test_consume_stack_drag_delta_uses_threshold(self):
         viewer = QtSliceViewer()
@@ -257,20 +303,20 @@ class TestQtSliceViewerStackDrag:
         # create momentum for later mouse moves.
         assert 0.0 <= abs(viewer._stacked_accum) < threshold
 
-    def test_high_speed_large_stack_allows_higher_bounded_per_event_cap(self):
+    def test_high_speed_large_stack_raises_bounded_cap_before_skip_lane(self):
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
         viewer.set_total_slices_hint(220)
         threshold, max_steps = viewer._get_stack_drag_profile()
 
-        viewer._stacked_first_step_pending = False
-
-        emit = viewer._consume_stack_drag_delta(
-            threshold * (max_steps + 8),
+        cap = viewer._get_speed_boosted_step_cap(
+            base_max_steps=max_steps,
             speed_px_per_sec=threshold * 150.0,
+            threshold_px=threshold,
         )
-        assert emit == max_steps + 2
+
+        assert cap == max_steps + 2
 
     def test_first_drag_step_uses_smaller_start_threshold_without_burst(self):
         viewer = QtSliceViewer()

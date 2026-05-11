@@ -92,6 +92,7 @@ def scan_series_header_entries(
     series_path: str | Path,
     *,
     existing_paths: Optional[Iterable[str]] = None,
+    max_new_entries: Optional[int] = None,
 ) -> list[DicomHeaderEntry]:
     series_dir = Path(series_path)
     if not series_dir.is_dir():
@@ -107,6 +108,8 @@ def scan_series_header_entries(
 
     out: list[DicomHeaderEntry] = []
     for path in sorted(files):
+        if max_new_entries is not None and len(out) >= max_new_entries:
+            break
         try:
             ds = pydicom.dcmread(str(path), stop_before_pixels=True, force=True)
             out.append(entry_from_dataset(str(path), ds))

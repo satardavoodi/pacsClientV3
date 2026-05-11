@@ -132,6 +132,12 @@ def test_lightweight_refresh_file_list_preserves_caches_by_slice_identity(monkey
         lambda *args, **kwargs: [_header_entry(tmp_path / "b.dcm", 20, z=20)],
     )
 
+    # Pre-set a completed Future so the single call finds the result immediately
+    # (the new batch-accumulator defers applying entries until the Future is done).
+    from concurrent.futures import Future as _ConcFuture
+    _f = _ConcFuture()
+    _f.set_result([_header_entry(tmp_path / "b.dcm", 20, z=20)])
+    pipeline._grow_future = _f
     assert pipeline.refresh_file_list() == 3
 
     assert [s.path for s in pipeline._slices] == [
@@ -149,6 +155,218 @@ def test_lightweight_refresh_file_list_preserves_caches_by_slice_identity(monkey
     assert pipeline._filter_first_slices == {2}
 
 
+def test_lightweight_refresh_file_list_filters_duplicate_and_existing_entries(tmp_path):
+    pipeline = Lightweight2DPipeline(
+        PipelineConfig(pixel_cache_size=10, frame_cache_size=10, adaptive_cache_sizing=False)
+    )
+    pipeline._series_path = str(tmp_path)
+    pipeline._is_open = True
+    pipeline._slices = [
+        _slice_meta(tmp_path / "a.dcm", 10, z=10),
+        _slice_meta(tmp_path / "c.dcm", 30, z=30),
+    ]
+
+    from concurrent.futures import Future as _ConcFuture
+    _f = _ConcFuture()
+    _f.set_result([
+        _header_entry(tmp_path / "b.dcm", 20, z=20),
+        _header_entry(tmp_path / "b.dcm", 20, z=20),
+        _header_entry(tmp_path / "a.dcm", 10, z=10),
+    ])
+    pipeline._grow_future = _f
+
+    assert pipeline.refresh_file_list() == 3
+    assert [s.path for s in pipeline._slices] == [
+        str(tmp_path / "a.dcm"),
+        str(tmp_path / "b.dcm"),
+        str(tmp_path / "c.dcm"),
+    ]
+    assert pipeline._pending_grow_entries == []
+
+
+def test_scan_series_header_entries_max_new_entries_limits_output(tmp_path):
+    """max_new_entries caps how many headers scan_series_header_entries returns.
+
+    Regression for the silent-TypeError bug: before the fix, calling
+    refresh_file_list passed max_new_entries= to scan_series_header_entries
+    which did NOT accept that kwarg, causing every background scan to raise
+    TypeError (silently swallowed) and return no entries.
+    """
+    from modules.viewer.fast.dicom_header_scan import (
+        scan_series_header_entries,
+        DicomHeaderEntry,
+    )
+    import pydicom
+    from pydicom.dataset import Dataset, FileMetaDataset
+    from pydicom.uid import ExplicitVRLittleEndian
+
+    # Create 5 minimal DICOM files in tmp_path
+    for i in range(5):
+        ds = Dataset()
+        ds.file_meta = FileMetaDataset()
+        ds.file_meta.MediaStorageSOPClassUID = "1.2.840.10008.5.1.4.1.1.2"
+        ds.file_meta.MediaStorageSOPInstanceUID = f"1.2.3.{i}"
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.is_implicit_VR = False
+        ds.is_little_endian = True
+        ds.Rows = 10
+        ds.Columns = 10
+        ds.BitsAllocated = 16
+        ds.SamplesPerPixel = 1
+        ds.InstanceNumber = i + 1
+        ds.ensure_file_meta()
+        pydicom.dcmwrite(str(tmp_path / f"slice_{i:03d}.dcm"), ds)
+
+    # Without max_new_entries: should return all 5
+    all_entries = scan_series_header_entries(str(tmp_path))
+    assert len(all_entries) == 5
+
+    # With max_new_entries=3: should return at most 3
+    limited = scan_series_header_entries(str(tmp_path), max_new_entries=3)
+    assert len(limited) == 3
+
+    # With max_new_entries=0: should return nothing
+    empty = scan_series_header_entries(str(tmp_path), max_new_entries=0)
+    assert len(empty) == 0
+
+    # With max_new_entries=10 (more than available): should return all 5
+    capped = scan_series_header_entries(str(tmp_path), max_new_entries=10)
+    assert len(capped) == 5
+
+
+def test_lightweight_refresh_file_list_force_flush_drains_inflight_future(tmp_path):
+    """force_flush=True must synchronously drain an in-flight (not-done) grow future.
+
+    Regression for stuck-at-13 bug: before the fix, refresh_file_list only
+    collected from a DONE future.  On force_flush=True (terminal/stale-retry),
+    an in-flight future's results were silently dropped, so _pending_grow_entries
+    stayed empty and the batch flush never fired.
+    """
+    from concurrent.futures import Future as _ConcFuture
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline, PipelineConfig
+
+    pipeline = Lightweight2DPipeline(
+        PipelineConfig(pixel_cache_size=10, frame_cache_size=10, adaptive_cache_sizing=False)
+    )
+    pipeline._series_path = str(tmp_path)
+    pipeline._is_open = True
+    pipeline._slices = [
+        _slice_meta(tmp_path / "a.dcm", 10, z=10),
+        _slice_meta(tmp_path / "b.dcm", 20, z=20),
+    ]
+    pipeline._interaction_slice_count_hint = 0
+
+    # Simulate an in-flight (not yet done) background scan with 3 new results
+    new_entries = [
+        _header_entry(tmp_path / "c.dcm", 30, z=30),
+        _header_entry(tmp_path / "d.dcm", 40, z=40),
+        _header_entry(tmp_path / "e.dcm", 50, z=50),
+    ]
+    future = _ConcFuture()
+    # Do NOT call future.set_result yet — it will be set just after submission
+    # to simulate "completes very quickly" (as in real scans).
+    # But for the test we set it before calling refresh_file_list so result()
+    # does not actually block.
+    future.set_result(new_entries)
+
+    # Mark as NOT done using a wrapper so we test the force_flush drain path
+    class _SlowFuture:
+        """Pretends not to be done on the first done() call, then resolves."""
+        def __init__(self, inner):
+            self._inner = inner
+            self._done_calls = 0
+
+        def done(self):
+            # First call returns False to exercise the drain branch
+            self._done_calls += 1
+            if self._done_calls == 1:
+                return False
+            return self._inner.done()
+
+        def cancel(self):
+            return self._inner.cancel()
+
+        def result(self, timeout=None):
+            return self._inner.result(timeout=timeout)
+
+    pipeline._grow_future = _SlowFuture(future)
+
+    future_wrapper = pipeline._grow_future
+
+    # With force_flush=True the future should be synchronously drained
+    count = pipeline.refresh_file_list(force_flush=True)
+
+    # All 3 new entries should have been flushed into _slices (batch threshold
+    # bypassed by force_flush) regardless of done() returning False initially.
+    # Note: section 2 of refresh_file_list re-submits a new scan immediately,
+    # so _grow_future will be a fresh Future rather than None — that is correct.
+    assert count == 5, f"expected 5 slices after force_flush drain, got {count}"
+    assert pipeline._pending_grow_entries == [], "pending buffer should be empty after flush"
+    assert pipeline._grow_future is not future_wrapper, "original future must have been replaced"
+
+
+def test_lightweight_refresh_file_list_force_flush_bypasses_batch_threshold(tmp_path):
+    """force_flush=True must flush pending entries even below the batch threshold.
+
+    Regression: for large series (>=300 slices) the threshold is 50.  Without
+    force_flush, entries accumulate for ~8 ticks before flushing; with
+    force_flush=True the viewer should see them immediately.
+    """
+    from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline, PipelineConfig
+
+    pipeline = Lightweight2DPipeline(
+        PipelineConfig(pixel_cache_size=10, frame_cache_size=10, adaptive_cache_sizing=False)
+    )
+    pipeline._series_path = str(tmp_path)
+    pipeline._is_open = True
+    # 300-slice hint → threshold = 50
+    pipeline._interaction_slice_count_hint = 300
+    pipeline._slices = [_slice_meta(tmp_path / f"s{i:03d}.dcm", i, z=float(i)) for i in range(13)]
+
+    # Put 10 entries in pending (below threshold of 50)
+    for i in range(13, 23):
+        pipeline._pending_grow_entries.append(
+            _header_entry(tmp_path / f"s{i:03d}.dcm", i, z=float(i))
+        )
+
+    assert pipeline._grow_batch_flush_threshold() == 50
+
+    # Without force_flush: no flush (10 < 50)
+    count_no_flush = pipeline.refresh_file_list(force_flush=False)
+    assert count_no_flush == 13  # _slices unchanged; pending still buffered
+
+    # With force_flush=True: flush all 10 pending entries immediately
+    count_flushed = pipeline.refresh_file_list(force_flush=True)
+    assert count_flushed == 23  # 13 original + 10 pending
+    assert pipeline._pending_grow_entries == []
+
+
+def test_lightweight_close_series_cancels_pending_grow_and_clears_buffer(tmp_path):
+    pipeline = Lightweight2DPipeline(PipelineConfig(adaptive_cache_sizing=False))
+    pipeline._series_path = str(tmp_path)
+    pipeline._is_open = True
+    pipeline._pending_grow_entries = [_header_entry(tmp_path / "b.dcm", 20, z=20)]
+
+    class _CancelableFuture:
+        def __init__(self):
+            self.cancel_called = False
+
+        def cancel(self):
+            self.cancel_called = True
+            return True
+
+    future = _CancelableFuture()
+    pipeline._grow_future = future
+
+    pipeline.close_series()
+
+    assert future.cancel_called is True
+    assert pipeline._grow_future is None
+    assert pipeline._pending_grow_entries == []
+    assert pipeline._series_path is None
+    assert pipeline._is_open is False
+
+
 def test_qt_bridge_grow_updates_count_without_calling_set_slice(monkeypatch):
     class _Pipeline:
         current_index = 20
@@ -156,7 +374,7 @@ def test_qt_bridge_grow_updates_count_without_calling_set_slice(monkeypatch):
         def __init__(self):
             self.refresh_calls = 0
 
-        def refresh_file_list(self):
+        def refresh_file_list(self, force_flush=False):
             self.refresh_calls += 1
             return 25
 
@@ -2503,7 +2721,7 @@ def _make_mock_viewer(series_number, slice_count=120, progressive=True, grow_tar
         def get_file_paths(self):
             return list(self._paths)
 
-        def refresh_file_list(self):
+        def refresh_file_list(self, force_flush=False):
             pass
 
     class _FakeLoader:
@@ -2848,7 +3066,8 @@ def test_completion_sweep_grows_stale_and_removes():
     controller.lst_nodes_viewer = [node]
 
     controller._count_series_files_on_disk = lambda sn: 100
-    controller._refresh_stored_metadata_instances = lambda sn, c: None
+    # Accept max_new_entries kwarg added in R27 (v2.5.1)
+    controller._refresh_stored_metadata_instances = lambda sn, c, **kw: None
 
     controller._completion_sweep_tick()
 
@@ -3267,7 +3486,7 @@ def test_flush_progressive_grow_caps_nonterminal_visible_window():
 
     grow_calls = []
 
-    def _capture(sn, pending, viewers, *, visible_count=None):
+    def _capture(sn, pending, viewers, *, visible_count=None, **kwargs):
         grow_calls.append((sn, pending, visible_count, viewers))
 
     controller._grow_progressive_fast = _capture
@@ -3291,7 +3510,7 @@ def test_flush_progressive_grow_keeps_terminal_visible_window_uncapped():
 
     grow_calls = []
 
-    def _capture(sn, pending, viewers, *, visible_count=None):
+    def _capture(sn, pending, viewers, *, visible_count=None, **kwargs):
         grow_calls.append((sn, pending, visible_count, viewers))
 
     controller._grow_progressive_fast = _capture

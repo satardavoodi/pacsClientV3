@@ -2360,13 +2360,40 @@ class PatientTableWidget(QWidget):
         self._center_checkbox_in_cell(row, COL['select'])
 
         # شمارنده و سایز
+        if getattr(self, '_bulk_insert_depth', 0) > 0:
+            self._bulk_insert_dirty = True
+        else:
+            self._finalize_bulk_insert_ui()
+
+        # افزایش شماره درج برای ردیف بعدی
+        self._insert_seq += 1
+
+    def begin_bulk_insert(self):
+        """Suspend expensive whole-table refresh work during batched inserts."""
+        depth = int(getattr(self, '_bulk_insert_depth', 0)) + 1
+        self._bulk_insert_depth = depth
+        if depth == 1:
+            self._bulk_insert_dirty = False
+            self.results_table.setUpdatesEnabled(False)
+
+    def end_bulk_insert(self):
+        """Resume updates and perform one consolidated refresh for the batch."""
+        depth = int(getattr(self, '_bulk_insert_depth', 0))
+        if depth <= 0:
+            return
+        depth -= 1
+        self._bulk_insert_depth = depth
+        if depth == 0:
+            self.results_table.setUpdatesEnabled(True)
+            if getattr(self, '_bulk_insert_dirty', False):
+                self._finalize_bulk_insert_ui()
+            self._bulk_insert_dirty = False
+
+    def _finalize_bulk_insert_ui(self):
         self._update_results_count()
         self.refresh_table_anti_aliasing()
         self.auto_resize_columns()
         self.results_table.viewport().update()
-
-        # افزایش شماره درج برای ردیف بعدی
-        self._insert_seq += 1
     
     def _on_report_status_clicked(self, study_uid: str, current_status: str, patient_name: str, patient_id: str):
         """Handle click on report status icon"""

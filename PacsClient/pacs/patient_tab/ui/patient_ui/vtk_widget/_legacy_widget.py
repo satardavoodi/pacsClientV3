@@ -2235,9 +2235,6 @@ class VTKWidget(QVTKRenderWindowInteractor):
         # del self.current_style
         # self.current_style = None
 
-        # Run garbage collection to help free memory
-        gc.collect()
-
     # v2.2.3.1.0: Removed switch_series_backup() ├تظéشظإ dead code, superseded by switch_series().
     # Was ~72 lines with no callers in the codebase.
 

@@ -5,6 +5,10 @@ May 8, 2026
 This document outlines safeguards and monitoring to prevent regression of the
 May 8, 2026 optimization (50-1000x improvement: 200-3000ms → 2-4ms).
 
+May 12, 2026 addendum: FAST additive grow batching hardening is documented in
+`docs/plans/FAST_GROW_BATCHING_HARDENING_2026-05-12.md`. The guards below now
+also protect against duplicate/stale grow admission and teardown leakage.
+
 ====================================================================
 GUARD 1: Metadata Append Cap (16 entries max per tick)
 ====================================================================
@@ -101,6 +105,45 @@ Guard rule:
 Test: No specific test, but KPI will show if latency regresses
 
 ====================================================================
+GUARD 6: Additive Grow Buffering and Terminal Force-Flush
+====================================================================
+
+Location: modules/viewer/fast/lightweight_2d_pipeline.py
+Related files:
+- modules/viewer/fast/qt_viewer_bridge.py
+- PacsClient/pacs/patient_tab/ui/patient_ui/_vc_progressive.py
+- builder/plugin package/.../modules/viewer/fast/lightweight_2d_pipeline.py
+
+Why?
+- Same-series overlap should not mutate `_slices` on every small downloaded batch.
+- Expensive work in the grow path is not file discovery itself; it is the
+    structural mutation sequence: sort + cache remap + geometry invalidation +
+    cache prune.
+- Buffering reduces those mutations while terminal force-flush preserves exact
+    completion behavior.
+
+Guard rules:
+- `_grow_batch_flush_threshold()` must preserve the size-aware policy:
+    - `< 50`: `1`
+    - `<= 100`: `10`
+    - `<= 200`: `25`
+    - `> 200`: `50`
+- Scan submission must exclude both already-applied paths and
+    `_pending_grow_entries` paths.
+- Completed scan results must be filtered again before buffering so duplicate
+    or stale paths do not enter the pending buffer.
+- Terminal completion must continue to pass `force_flush=True` through the Qt
+    bridge path.
+- `close_series()` must clear `_pending_grow_entries` and attempt
+    `_grow_future.cancel()` before dropping the future reference.
+
+Tests:
+- tests/viewer/test_fast_viewer_pipeline.py::test_lightweight_refresh_file_list_preserves_caches_by_slice_identity
+- tests/viewer/test_fast_viewer_pipeline.py::test_lightweight_refresh_file_list_filters_duplicate_and_existing_entries
+- tests/viewer/test_fast_viewer_pipeline.py::test_lightweight_close_series_cancels_pending_grow_and_clears_buffer
+- tests/viewer/test_fast_viewer_pipeline.py::test_qt_bridge_grow_updates_count_without_calling_set_slice
+
+====================================================================
 REGRESSION DETECTION RULES (Quick checks)
 ====================================================================
 
@@ -110,6 +153,9 @@ RED FLAGS:
 3. Duplicate method definitions in refresh_file_list → shadowing bug
 4. Metadata scan > 10ms for 100-entry series → os.scandir replaced with slower path
 5. Terminal completions delayed by 700ms intervals → terminal=True not passed
+6. Repeated `FAST:additive_cache_grow` lines for tiny same-series download batches → buffering bypassed or force-flush leaked into non-terminal path
+7. Duplicate slice paths in `_slices` or pending grow state after progressive download → stale/duplicate filter regressed
+8. Growth appears after close/reopen without new files → pending buffer or stale future leaked across teardown
 
 DETECTION:
 - Parse viewer_diagnostics.log after each test run
@@ -128,6 +174,9 @@ When modifying progressive grow code:
 - [ ] Check terminal=True passed to sync path in completion handlers
 - [ ] Grep for duplicate refresh_file_list definitions (should be 1)
 - [ ] Verify os.scandir used in _count_series_files_on_disk and _refresh_stored_metadata_instances
+- [ ] Verify `_grow_batch_flush_threshold()` still uses 1/10/25/50 policy
+- [ ] Verify completed grow scan results are filtered against both `_slices` and `_pending_grow_entries`
+- [ ] Verify `close_series()` clears pending grow state and attempts `_grow_future.cancel()`
 - [ ] Run overlap regression (43 tests) — must all pass
 - [ ] Run B34 tests (40 tests) — must all pass
 - [ ] Parse KPI: grow_p95 < 10ms, DM rebuilds = 0
@@ -143,6 +192,7 @@ Metrics to track per test session:
 - dm_rebuild_count: target = 0 (R22 related)
 - metadata_sync_count_per_session: should be ~1 per 700ms, not per 150ms
 - os_scandir_latency_ms_per_100_entries: target ~2ms, warn > 5ms
+- additive_cache_grow_flush_count_per_same_series_session: lower is better, expect major reduction on 200+ slice series
 
 ====================================================================
 """

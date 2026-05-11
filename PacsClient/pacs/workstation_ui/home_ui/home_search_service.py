@@ -52,6 +52,41 @@ class HomeSearchService:
     def _thread_pool(self) -> ThreadPoolExecutor:
         return self._home.thread_pool
 
+    @staticmethod
+    def _backfill_missing_patient_fields(patients: list[dict] | None) -> list[dict]:
+        """Backfill missing local-study fields away from the UI thread."""
+        if not patients:
+            return patients or []
+
+        from PacsClient.utils.db_manager import find_study_pk_with_study_uid, update_study_missing_fields
+
+        for patient in patients:
+            try:
+                study_uid = patient.get('study_uid')
+                study_path = patient.get('study_path')
+                if not study_path and study_uid:
+                    study_path = str(SOURCE_PATH / study_uid)
+                    patient['study_path'] = study_path
+
+                modality = patient.get('modality')
+                study_date = patient.get('study_date')
+                if modality not in (None, '', 'Unknown') and study_date not in (None, '', 'Unknown'):
+                    continue
+                if not study_path:
+                    continue
+
+                HomeSearchService._backfill_modality_date(
+                    patient,
+                    study_path,
+                    study_uid,
+                    find_study_pk_with_study_uid,
+                    update_study_missing_fields,
+                )
+            except Exception:
+                continue
+
+        return patients
+
     # ------------------------------------------------------------------
     # Local DB search
     # ------------------------------------------------------------------
@@ -80,6 +115,13 @@ class HomeSearchService:
 
             patients = await loop.run_in_executor(self._thread_pool(), search_patients_local, search_data_local)
 
+            if patients:
+                patients = await loop.run_in_executor(
+                    self._thread_pool(),
+                    self._backfill_missing_patient_fields,
+                    patients,
+                )
+
             if self._cancelled:
                 raise asyncio.CancelledError()
 
@@ -93,86 +135,88 @@ class HomeSearchService:
 
             if patients:
                 from PacsClient.pacs.patient_tab.utils.utils import has_subfolders
-                from PacsClient.utils.db_manager import find_study_pk_with_study_uid, update_study_missing_fields
+                from PacsClient.utils.db_manager import find_study_pk_with_study_uid
 
-                for i, patient in enumerate(patients, start=1):
-                    if self._cancelled:
-                        raise asyncio.CancelledError()
+                home.patient_table_widget.begin_bulk_insert()
+                try:
+                    for i, patient in enumerate(patients, start=1):
+                        if self._cancelled:
+                            raise asyncio.CancelledError()
 
-                    study_path = patient.get('study_path')
-                    study_uid = patient.get('study_uid')
+                        study_path = patient.get('study_path')
+                        study_uid = patient.get('study_uid')
 
-                    # Fallback path resolution
-                    _need_fallback = False
-                    if not study_path:
-                        _need_fallback = True
-                    elif study_uid:
-                        try:
-                            if not Path(study_path).exists():
-                                _need_fallback = True
-                        except Exception:
+                        # Fallback path resolution
+                        _need_fallback = False
+                        if not study_path:
                             _need_fallback = True
+                        elif study_uid:
+                            try:
+                                if not Path(study_path).exists():
+                                    _need_fallback = True
+                            except Exception:
+                                _need_fallback = True
 
-                    if _need_fallback and study_uid:
-                        try:
-                            fallback_path = SOURCE_PATH / study_uid
-                            if fallback_path.exists() and has_subfolders(fallback_path):
-                                study_path = str(fallback_path)
-                                patient['study_path'] = study_path
-                                study_pk = find_study_pk_with_study_uid(study_uid)
-                                if study_pk:
-                                    from database.manager import force_update_study_path
-                                    force_update_study_path(study_pk, study_path)
-                        except Exception:
-                            pass
+                        if _need_fallback and study_uid:
+                            try:
+                                fallback_path = SOURCE_PATH / study_uid
+                                if fallback_path.exists() and has_subfolders(fallback_path):
+                                    study_path = str(fallback_path)
+                                    patient['study_path'] = study_path
+                                    study_pk = find_study_pk_with_study_uid(study_uid)
+                                    if study_pk:
+                                        from database.manager import force_update_study_path
+                                        force_update_study_path(study_pk, study_path)
+                            except Exception:
+                                pass
 
-                    if not study_path:
-                        if study_uid:
-                            study_path = str(SOURCE_PATH / study_uid)
-                    if not study_path:
-                        skipped += 1
-                        continue
-
-                    _has_dicom = False
-                    try:
-                        _has_dicom = has_subfolders(study_path)
-                    except Exception:
-                        pass
-                    if not _has_dicom:
-                        from PacsClient.pacs.patient_tab.utils.utils import THUMBNAIL_PATH
-                        _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
-                        if not (_thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir())):
+                        if not study_path:
+                            if study_uid:
+                                study_path = str(SOURCE_PATH / study_uid)
+                        if not study_path:
                             skipped += 1
                             continue
 
-                    # Backfill missing modality / study_date from first DICOM
-                    _disp_modality = patient.get('modality')
-                    _disp_date = patient.get('study_date')
-                    if (_disp_modality in (None, '', 'Unknown') or _disp_date in (None, '', 'Unknown')):
-                        self._backfill_modality_date(patient, study_path, study_uid, find_study_pk_with_study_uid, update_study_missing_fields)
+                        _has_dicom = False
+                        try:
+                            _has_dicom = has_subfolders(study_path)
+                        except Exception:
+                            pass
+                        if not _has_dicom:
+                            from PacsClient.pacs.patient_tab.utils.utils import THUMBNAIL_PATH
+                            _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
+                            if not (_thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir())):
+                                skipped += 1
+                                continue
+
                         _disp_modality = patient.get('modality')
                         _disp_date = patient.get('study_date')
 
-                    home.add_data2patient_list_table(
-                        patient_id=patient.get('patient_id'),
-                        patient_name=patient.get('patient_name'),
-                        study_date=_disp_date,
-                        description=patient.get('study_description'),
-                        modality=_disp_modality,
-                        study_uid=patient.get('study_uid'),
-                        series_count=patient.get('number_of_series'),
-                        images_count=patient.get('number_of_instances'),
-                        is_downloaded=True,
-                        body_part=patient.get('body_part'),
-                        study_time=patient.get('study_time'),
-                        age=patient.get('age'),
-                    )
-                    added += 1
+                        home.add_data2patient_list_table(
+                            patient_id=patient.get('patient_id'),
+                            patient_name=patient.get('patient_name'),
+                            study_date=_disp_date,
+                            description=patient.get('study_description'),
+                            modality=_disp_modality,
+                            study_uid=patient.get('study_uid'),
+                            series_count=patient.get('number_of_series'),
+                            images_count=patient.get('number_of_instances'),
+                            is_downloaded=True,
+                            body_part=patient.get('body_part'),
+                            study_time=patient.get('study_time'),
+                            age=patient.get('age'),
+                        )
+                        added += 1
 
-                    if (i % CHUNK == 0) or (i == total):
-                        home.search_progress.setValue(i)
-                        QApplication.processEvents()
-                        await asyncio.sleep(0)
+                        if (i % CHUNK == 0) or (i == total):
+                            home.patient_table_widget.end_bulk_insert()
+                            home.search_progress.setValue(i)
+                            QApplication.processEvents()
+                            await asyncio.sleep(0)
+                            if i != total:
+                                home.patient_table_widget.begin_bulk_insert()
+                finally:
+                    home.patient_table_widget.end_bulk_insert()
 
             home._update_connection_indicator_by_status('online', f'Local DB - Found {added} studies')
 
@@ -222,24 +266,31 @@ class HomeSearchService:
 
                 total = len(studies or [])
                 home.search_progress.setRange(0, max(1, total))
-                for i, study in enumerate(studies or [], start=1):
-                    home.add_data2patient_list_table(
-                        patient_id=study.get("patient_id"),
-                        patient_name=study.get("patient_name"),
-                        study_date=study.get("study_date"),
-                        study_time=study.get("study_time"),
-                        description=study.get("description"),
-                        modality=study.get("modality"),
-                        study_uid=study.get("study_uid"),
-                        series_count=study.get("series_count"),
-                        images_count=study.get("images_count"),
-                        body_part=study.get("body_part"),
-                        report_status=study.get("report_status") or "pending",
-                    )
-                    home.search_progress.setValue(i)
-                    if (i % 25 == 0) or (i == total):
-                        QApplication.processEvents()
-                        await asyncio.sleep(0)
+                home.patient_table_widget.begin_bulk_insert()
+                try:
+                    for i, study in enumerate(studies or [], start=1):
+                        home.add_data2patient_list_table(
+                            patient_id=study.get("patient_id"),
+                            patient_name=study.get("patient_name"),
+                            study_date=study.get("study_date"),
+                            study_time=study.get("study_time"),
+                            description=study.get("description"),
+                            modality=study.get("modality"),
+                            study_uid=study.get("study_uid"),
+                            series_count=study.get("series_count"),
+                            images_count=study.get("images_count"),
+                            body_part=study.get("body_part"),
+                            report_status=study.get("report_status") or "pending",
+                        )
+                        home.search_progress.setValue(i)
+                        if (i % 25 == 0) or (i == total):
+                            home.patient_table_widget.end_bulk_insert()
+                            QApplication.processEvents()
+                            await asyncio.sleep(0)
+                            if i != total:
+                                home.patient_table_widget.begin_bulk_insert()
+                finally:
+                    home.patient_table_widget.end_bulk_insert()
 
                 if total:
                     home._update_connection_indicator_by_status(
@@ -302,15 +353,23 @@ class HomeSearchService:
 
             CHUNK = 25
             if patients:
-                for i, patient in enumerate(patients, start=1):
-                    if self._cancelled:
-                        raise asyncio.CancelledError()
-                    home._add_socket_patient_to_table(patient)
+                home.patient_table_widget.begin_bulk_insert()
+                try:
+                    for i, patient in enumerate(patients, start=1):
+                        if self._cancelled:
+                            raise asyncio.CancelledError()
+                        home._add_socket_patient_to_table(patient)
 
-                    if (i % CHUNK == 0) or (i == total):
-                        home.search_progress.setValue(i)
-                        QApplication.processEvents()
-                        await asyncio.sleep(0)
+                        if (i % CHUNK == 0) or (i == total):
+                            home.patient_table_widget.end_bulk_insert()
+                            home.search_progress.setValue(i)
+                            QApplication.processEvents()
+                            await asyncio.sleep(0)
+                            if i != total:
+                                home.patient_table_widget.begin_bulk_insert()
+
+                finally:
+                    home.patient_table_widget.end_bulk_insert()
 
                 home._update_connection_indicator_by_status('online', f'Socket Connected - Found {total} patients')
             else:

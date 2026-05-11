@@ -11,6 +11,7 @@ This folder is the canonical home for active planning documents, recovery plans,
 ## Current layout
 
 - `plan.md` - master planning ledger
+- `FAST_GROW_BATCHING_HARDENING_2026-05-12.md` - FAST additive grow batching, reliability hardening, KPI contract, and validation notes
 - `analysis/` - evaluation notes, block reviews, baselines, and ClearCanvas handoff planning
 - `performance/FAST_STORM_AND_PERFORMANCE_PLAN_vNEXT.md` - canonical next-step FAST storm/performance plan
 - `performance/FAST_2D_CELL_SEPARATION_PLAN.md` - **✅ COMPLETED (Step 1 of performance surgery)** VTK-free FAST mode viewer cells

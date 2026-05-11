@@ -210,8 +210,8 @@ class _HPSeriesMixin:
             if thumbnails and hasattr(self, 'right_panel_widget'):
                 # Use await to yield control and prevent blocking
                 await asyncio.sleep(0)
-                # Show immediately for downloaded studies (no progressive delay)
-                self.right_panel_widget.display_thumbnails(thumbnails, progressive=False)
+                # Stream cached thumbnails too to avoid a full synchronous rebuild.
+                self.right_panel_widget.display_thumbnails(thumbnails, progressive=True)
                 print(f"[OK] Displayed {len(thumbnails)} cached thumbnails for study {study_uid}")
                 print(f"[PROFILE] thumbnails cache display: {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
             

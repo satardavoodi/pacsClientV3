@@ -422,6 +422,12 @@ class Lightweight2DPipeline(QObject):
             thread_name_prefix="LW2D-Grow",
         )
         self._grow_future: Optional[Future] = None  # in-flight background scan
+        # Buffer of DicomHeaderEntry objects collected from completed background
+        # scans but not yet applied to _slices.  Flushed to _slices in one batch
+        # when the buffer reaches _grow_batch_flush_threshold() entries (or when
+        # force_flush=True is passed, e.g. on terminal download completion).
+        # This reduces sort/remap/prune churn during active download.
+        self._pending_grow_entries: list = []
 
         # B3.2: Generation-gated adaptive prefetch state
         self._prefetch_generation: int = 0           # monotonic generation counter
@@ -537,7 +543,14 @@ class Lightweight2DPipeline(QObject):
 
     def close_series(self) -> None:
         """Release all resources."""
+        grow_future = self._grow_future
         self._grow_future = None  # discard any stale in-flight grow scan
+        if grow_future is not None:
+            try:
+                grow_future.cancel()
+            except Exception:
+                pass
+        self._pending_grow_entries.clear()  # discard buffered-but-not-applied entries
         self._pixel_cache.clear()
         self._frame_cache.clear()
         with self._prefetch_lock:
@@ -2703,73 +2716,153 @@ class Lightweight2DPipeline(QObject):
             raise IndexError("No series loaded")
         return max(0, min(int(index), len(self._slices) - 1))
 
-    def refresh_file_list(self) -> int:
+    def _grow_batch_flush_threshold(self) -> int:
+        """Return the minimum pending-entry count that triggers a batch flush.
+
+        The threshold scales with series size so small series remain responsive
+        (threshold=1) while large series accumulate enough new slices to make
+        each sort/remap/prune cycle worthwhile (threshold=50).
+
+        The estimate uses the larger of the current known slice count and the
+        interaction hint so that a series announced as 300 slices (but only 20
+        downloaded so far) already uses the 300-slice policy from the start.
+        """
+        n = max(len(self._slices), self._interaction_slice_count_hint)
+        if n < 50:
+            return 1    # tiny series: apply every entry immediately
+        if n <= 100:
+            return 10   # medium-small series: batch ~10
+        if n <= 200:
+            return 25   # medium series: batch ~25
+        return 50       # large series: batch in 50-slice chunks
+
+    def _filter_pending_grow_entries(
+        self,
+        entries: Sequence[DicomHeaderEntry],
+    ) -> List[DicomHeaderEntry]:
+        """Return only truly new grow entries, preserving order.
+
+        Background scans should not be able to re-add a path already present in
+        ``_slices`` or already queued in ``_pending_grow_entries``. Filter again
+        here as a defensive boundary so stale/duplicate results do not trigger
+        unnecessary sort/remap/prune work or duplicate SliceMeta rows.
+        """
+        existing_paths = {s.path for s in self._slices}
+        pending_paths = {e.path for e in self._pending_grow_entries}
+        accepted: List[DicomHeaderEntry] = []
+        seen_paths: set[str] = set()
+        for entry in entries or []:
+            path = str(getattr(entry, "path", "") or "")
+            if not path:
+                continue
+            if path in existing_paths or path in pending_paths or path in seen_paths:
+                continue
+            seen_paths.add(path)
+            accepted.append(entry)
+        return accepted
+
+    def refresh_file_list(self, force_flush: bool = False) -> int:
         """Re-scan the series directory for newly-downloaded DICOM files.
 
-        Only reads headers for files not already in ``_slices``.  Existing
-        SliceMeta entries (and their cached pixel data) are preserved.
-        Returns the new slice count.
+        Only reads headers for files not already in ``_slices`` or the pending
+        buffer.  Existing SliceMeta entries (and their cached pixel data) are
+        preserved.  Returns the new slice count.
 
-        This mirrors ``PyDicom2DBackend.refresh_file_list()`` and is called by
-        ``QtViewerBridge.grow()`` during progressive download.
+        During active download new entries are buffered in
+        ``_pending_grow_entries`` and only flushed to ``_slices`` (triggering
+        sort/remap/prune) once ``_grow_batch_flush_threshold()`` entries have
+        accumulated, or when ``force_flush=True`` (terminal download complete).
+        This cuts sort/remap/prune frequency by ~5–8× for 200+ slice series.
 
         Header reads (``pydicom.dcmread``) are dispatched to a single-worker
         background thread so the grow timer tick costs only ~2 ms (os.scandir)
-        on the main thread.  Results are applied on the NEXT grow tick, adding
-        one timer-interval of latency (~150 ms idle, 500–750 ms overlap) which
-        is imperceptible versus the previous 163–1368 ms main-thread block.
+        on the main thread.
         """
         if not self._series_path:
             return len(self._slices)
 
-        # ── 1. Apply results from a previously completed background scan ──────
-        if self._grow_future is not None and self._grow_future.done():
-            try:
-                new_entries = self._grow_future.result()
-            except Exception:
-                new_entries = []
-            self._grow_future = None
-            if new_entries and self._is_open:
-                old_slices = list(self._slices)
-                old_count = len(old_slices)
-                old_current_index = self._current_index
-                old_current_path = (
-                    old_slices[old_current_index].path
-                    if 0 <= old_current_index < old_count
-                    else None
-                )
-                new_slices = [self._slice_meta_from_entry(e) for e in new_entries]
-                old_pixel_cache_size = len(self._pixel_cache)
-                old_frame_cache_size = len(self._frame_cache)
-                self._slices.extend(new_slices)
-                self._slices = self._sort_slices(self._slices)
-                self._remap_indexed_caches_after_resort(old_slices)
-                if old_current_path is not None:
-                    new_index_by_path = {s.path: i for i, s in enumerate(self._slices)}
-                    self._current_index = self._clamp(
-                        new_index_by_path.get(old_current_path, old_current_index)
+        # ── 1. Collect results from completed background scan into buffer ─────
+        if self._grow_future is not None:
+            if force_flush and not self._grow_future.done():
+                # Terminal/stale-retry flush: synchronously drain the in-flight
+                # background scan.  Each scan reads ≤16 headers (~2 ms each)
+                # so the worst-case block is ≤32 ms — within the 150 ms grow
+                # interval.  A 1 s timeout prevents a hung worker from freezing
+                # the main thread; on timeout the partial result is discarded.
+                try:
+                    new_entries = self._filter_pending_grow_entries(
+                        self._grow_future.result(timeout=1.0)
                     )
-                self._invalidate_geometry_cache()
-                self._prune_caches_to_effective_limits()
-                logger.info(
-                    "FAST:additive_cache_grow path=%s old_count=%d new_count=%d "
-                    "added=%d current_before=%d current_after=%d "
-                    "pixel_preserved=%d/%d frame_preserved=%d/%d",
-                    self._series_path,
-                    old_count,
-                    len(self._slices),
-                    len(new_slices),
-                    old_current_index,
-                    self._current_index,
-                    len(self._pixel_cache),
-                    old_pixel_cache_size,
-                    len(self._frame_cache),
-                    old_frame_cache_size,
-                )
+                except Exception:
+                    new_entries = []
+                self._grow_future = None
+                if new_entries:
+                    self._pending_grow_entries.extend(new_entries)
+            elif self._grow_future.done():
+                try:
+                    new_entries = self._filter_pending_grow_entries(
+                        self._grow_future.result()
+                    )
+                except Exception:
+                    new_entries = []
+                self._grow_future = None
+                if new_entries:
+                    self._pending_grow_entries.extend(new_entries)
 
-        # ── 2. Submit a new background scan if none is currently in flight ────
+        # ── 1b. Flush buffered entries once batch threshold is reached ────────
+        threshold = self._grow_batch_flush_threshold()
+        if (
+            (force_flush or len(self._pending_grow_entries) >= threshold)
+            and self._pending_grow_entries
+            and self._is_open
+        ):
+            flush_entries = list(self._pending_grow_entries)
+            self._pending_grow_entries = []
+            old_slices = list(self._slices)
+            old_count = len(old_slices)
+            old_current_index = self._current_index
+            old_current_path = (
+                old_slices[old_current_index].path
+                if 0 <= old_current_index < old_count
+                else None
+            )
+            new_slices = [self._slice_meta_from_entry(e) for e in flush_entries]
+            old_pixel_cache_size = len(self._pixel_cache)
+            old_frame_cache_size = len(self._frame_cache)
+            self._slices.extend(new_slices)
+            self._slices = self._sort_slices(self._slices)
+            self._remap_indexed_caches_after_resort(old_slices)
+            if old_current_path is not None:
+                new_index_by_path = {s.path: i for i, s in enumerate(self._slices)}
+                self._current_index = self._clamp(
+                    new_index_by_path.get(old_current_path, old_current_index)
+                )
+            self._invalidate_geometry_cache()
+            self._prune_caches_to_effective_limits()
+            logger.info(
+                "FAST:additive_cache_grow path=%s old_count=%d new_count=%d "
+                "added=%d force_flush=%s threshold=%d current_before=%d current_after=%d "
+                "pixel_preserved=%d/%d frame_preserved=%d/%d",
+                self._series_path,
+                old_count,
+                len(self._slices),
+                len(new_slices),
+                force_flush,
+                threshold,
+                old_current_index,
+                self._current_index,
+                len(self._pixel_cache),
+                old_pixel_cache_size,
+                len(self._frame_cache),
+                old_frame_cache_size,
+            )
+
+        # ── 2. Submit next background scan (exclude applied AND pending paths) ─
         if self._grow_future is None and self._is_open and self._series_path:
-            existing_paths = {s.path for s in self._slices}
+            # Include pending-buffer paths in the exclusion set so the next
+            # scan does not re-discover files already waiting to be flushed.
+            pending_paths = {e.path for e in self._pending_grow_entries}
+            existing_paths = {s.path for s in self._slices} | pending_paths
             _max_grow = (
                 _MAX_PROGRESSIVE_GROW_ENTRIES_HEAVY
                 if is_heavy_download_active()

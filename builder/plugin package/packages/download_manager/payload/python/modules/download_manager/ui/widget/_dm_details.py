@@ -526,17 +526,92 @@ class _DMDetailsMixin:
         if not hasattr(self, 'series_layout') or not self.series_layout:
             logger.warning("📋 [SERIES-BREAKDOWN] series_layout not available, skipping update")
             return
-            
-        # Clear existing series widgets
-        while self.series_layout.count():
-            item = self.series_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
+
+        if not hasattr(self, '_series_breakdown_widgets'):
+            self._series_breakdown_widgets = {}
+        if not hasattr(self, '_series_breakdown_structure_key'):
+            self._series_breakdown_structure_key = None
+
+        def _series_key(series_info) -> str:
+            series_uid = str(getattr(series_info, 'series_uid', '') or '').strip()
+            if series_uid:
+                return series_uid
+            return str(getattr(series_info, 'series_number', '') or '').strip()
+
+        def _structure_key(download_task: DownloadTask) -> tuple:
+            return tuple(
+                (
+                    _series_key(series_info),
+                    str(getattr(series_info, 'series_number', '') or ''),
+                )
+                for series_info in getattr(download_task, 'series_list', []) or []
+            )
+
+        def _set_label_text(label, text: str) -> None:
+            if label and label.text() != text:
+                label.setText(text)
+
+        def _update_series_widget(widget_info: dict, *, status_text: str, status_color: str,
+                                  series_progress: float, downloaded_images: int,
+                                  total_images: int, remaining_images: int) -> None:
+            status_label = widget_info.get('status_label')
+            progress_bar = widget_info.get('progress_bar')
+            counts_label = widget_info.get('counts_label')
+            series_title = widget_info.get('series_title')
+
+            _set_label_text(status_label, status_text)
+            if status_label:
+                status_label.setStyleSheet(
+                    f"color: {status_color}; font-size: 10px; font-weight: 700;"
+                )
+
+            if progress_bar:
+                new_value = int(series_progress)
+                if progress_bar.value() != new_value:
+                    progress_bar.setValue(new_value)
+                new_format = f"{series_progress:.1f}% ({downloaded_images}/{total_images} images)"
+                if progress_bar.format() != new_format:
+                    progress_bar.setFormat(new_format)
+
+            if counts_label:
+                new_counts = f"Downloaded: {downloaded_images} | Remaining: {remaining_images}"
+                _set_label_text(counts_label, new_counts)
+
+            if series_title:
+                series_title.setStyleSheet("color: #e2e8f0; font-size: 11px; font-weight: 600;")
+
+        current_structure_key = _structure_key(task)
+        structure_changed = current_structure_key != self._series_breakdown_structure_key
+        series_container = getattr(self, 'details_container', None) or getattr(self, 'series_scroll_area', None)
+        updates_suppressed = False
+
+        if structure_changed:
+            if series_container is not None:
+                series_container.setUpdatesEnabled(False)
+                updates_suppressed = True
+            self._series_breakdown_structure_key = current_structure_key
+            self._series_breakdown_widgets = {}
+
+            # Clear existing series widgets only when the structure actually changed.
+            while self.series_layout.count():
+                item = self.series_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
 
         if not task or not task.series_list:
+            if structure_changed or self._series_breakdown_widgets or self.series_layout.count() > 0:
+                self._series_breakdown_widgets = {}
+                self._series_breakdown_structure_key = current_structure_key
+                while self.series_layout.count():
+                    item = self.series_layout.takeAt(0)
+                    if item.widget():
+                        item.widget().deleteLater()
             empty_label = QLabel("No series information available")
             empty_label.setStyleSheet("color: #64748b; font-size: 11px; padding: 8px;")
             self.series_layout.addWidget(empty_label)
+            if updates_suppressed and series_container is not None:
+                series_container.setUpdatesEnabled(True)
+            return
         else:
             # If the whole study is done every series must be done too, even if
             # the main-process state.completed_series list is incomplete (it is
@@ -544,6 +619,7 @@ class _DMDetailsMixin:
             study_fully_complete = state.status == DownloadStatus.COMPLETED
 
             for series_info in task.series_list:
+                series_key = _series_key(series_info)
                 is_completed = (
                     study_fully_complete
                     or series_info.series_uid in state.completed_series
@@ -583,78 +659,114 @@ class _DMDetailsMixin:
 
                 remaining_images = max(0, total_images - downloaded_images)
 
-                series_frame = QFrame()
-                series_frame.setStyleSheet(f"""
-                    QFrame {{
-                        background: #111827;
-                        border: 1px solid {'#06b6d4' if is_current else '#374151'};
-                        border-radius: 6px;
-                        padding: 6px;
-                    }}
-                """)
+                widget_info = self._series_breakdown_widgets.get(series_key)
+                if structure_changed or not widget_info:
+                    series_frame = QFrame()
+                    series_frame.setStyleSheet(f"""
+                        QFrame {{
+                            background: #111827;
+                            border: 1px solid {'#06b6d4' if is_current else '#374151'};
+                            border-radius: 6px;
+                            padding: 6px;
+                        }}
+                    """)
 
-                frame_layout = QVBoxLayout(series_frame)
-                frame_layout.setContentsMargins(8, 6, 8, 6)
-                frame_layout.setSpacing(6)
+                    frame_layout = QVBoxLayout(series_frame)
+                    frame_layout.setContentsMargins(8, 6, 8, 6)
+                    frame_layout.setSpacing(6)
 
-                header_layout = QHBoxLayout()
-                series_title = QLabel(
-                    f"{series_info.series_number} • {series_info.series_description or 'Series'}"
-                )
-                series_title.setStyleSheet("color: #e2e8f0; font-size: 11px; font-weight: 600;")
+                    header_layout = QHBoxLayout()
+                    series_title = QLabel(
+                        f"{series_info.series_number} • {series_info.series_description or 'Series'}"
+                    )
+                    series_title.setStyleSheet("color: #e2e8f0; font-size: 11px; font-weight: 600;")
 
-                status_label = QLabel(status_text)
-                status_label.setStyleSheet(
-                    f"color: {status_color}; font-size: 10px; font-weight: 700;"
-                )
+                    status_label = QLabel(status_text)
+                    status_label.setStyleSheet(
+                        f"color: {status_color}; font-size: 10px; font-weight: 700;"
+                    )
 
-                header_layout.addWidget(series_title)
-                header_layout.addStretch()
-                header_layout.addWidget(status_label)
+                    header_layout.addWidget(series_title)
+                    header_layout.addStretch()
+                    header_layout.addWidget(status_label)
 
-                progress_bar = QProgressBar()
-                progress_bar.setRange(0, 100)
-                progress_bar.setValue(int(series_progress))
-                progress_bar.setTextVisible(True)
-                progress_bar.setFormat(
-                    f"{series_progress:.1f}% ({downloaded_images}/{total_images} images)"
-                )
-                progress_bar.setStyleSheet("""
-                    QProgressBar {
-                        border: 1px solid #374151;
-                        border-radius: 4px;
-                        background: #0f172a;
-                        height: 18px;
-                        color: #e2e8f0;
-                        font-size: 10px;
-                        font-weight: 600;
+                    progress_bar = QProgressBar()
+                    progress_bar.setRange(0, 100)
+                    progress_bar.setValue(int(series_progress))
+                    progress_bar.setTextVisible(True)
+                    progress_bar.setFormat(
+                        f"{series_progress:.1f}% ({downloaded_images}/{total_images} images)"
+                    )
+                    progress_bar.setStyleSheet("""
+                        QProgressBar {
+                            border: 1px solid #374151;
+                            border-radius: 4px;
+                            background: #0f172a;
+                            height: 18px;
+                            color: #e2e8f0;
+                            font-size: 10px;
+                            font-weight: 600;
+                        }
+                        QProgressBar::chunk {
+                            background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                                stop:0 #06b6d4, stop:1 #0891b2);
+                            border-radius: 3px;
+                        }
+                    """)
+
+                    counts_label = QLabel(
+                        f"Downloaded: {downloaded_images} | Remaining: {remaining_images}"
+                    )
+                    counts_label.setStyleSheet("color: #94a3b8; font-size: 10px;")
+
+                    frame_layout.addLayout(header_layout)
+                    frame_layout.addWidget(progress_bar)
+                    frame_layout.addWidget(counts_label)
+
+                    # Check if series_layout still exists before adding widget
+                    if hasattr(self, 'series_layout') and self.series_layout:
+                        self.series_layout.addWidget(series_frame)
+                    else:
+                        logger.warning("📋 [SERIES-BREAKDOWN] series_layout deleted during update, stopping update")
+                        break
+                    widget_info = {
+                        'frame': series_frame,
+                        'series_title': series_title,
+                        'status_label': status_label,
+                        'progress_bar': progress_bar,
+                        'counts_label': counts_label,
                     }
-                    QProgressBar::chunk {
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                            stop:0 #06b6d4, stop:1 #0891b2);
-                        border-radius: 3px;
-                    }
-                """)
-
-                counts_label = QLabel(
-                    f"Downloaded: {downloaded_images} | Remaining: {remaining_images}"
-                )
-                counts_label.setStyleSheet("color: #94a3b8; font-size: 10px;")
-
-                frame_layout.addLayout(header_layout)
-                frame_layout.addWidget(progress_bar)
-                frame_layout.addWidget(counts_label)
-
-                # Check if series_layout still exists before adding widget
-                if hasattr(self, 'series_layout') and self.series_layout:
-                    self.series_layout.addWidget(series_frame)
+                    self._series_breakdown_widgets[series_key] = widget_info
                 else:
-                    logger.warning("📋 [SERIES-BREAKDOWN] series_layout deleted during update, stopping update")
-                    break
+                    # Reuse the existing widget tree and only update values.
+                    if widget_info.get('frame'):
+                        widget_info['frame'].setStyleSheet(f"""
+                            QFrame {{
+                                background: #111827;
+                                border: 1px solid {'#06b6d4' if is_current else '#374151'};
+                                border-radius: 6px;
+                                padding: 6px;
+                            }}
+                        """)
+
+                # Make sure newly created widgets and reused widgets are both refreshed.
+                if widget_info:
+                    _update_series_widget(
+                        widget_info,
+                        status_text=status_text,
+                        status_color=status_color,
+                        series_progress=series_progress,
+                        downloaded_images=downloaded_images,
+                        total_images=total_images,
+                        remaining_images=remaining_images,
+                    )
 
         # Add stretch only if series_layout still exists
         if hasattr(self, 'series_layout') and self.series_layout:
-            self.series_layout.addStretch()
+            if structure_changed or self.series_layout.count() == 0:
+                self.series_layout.addStretch()
+        if updates_suppressed and series_container is not None:
+            series_container.setUpdatesEnabled(True)
 
     # Phase 1B — ordered priority names; used by structure-key + in-place-update helpers.
     _PRIORITY_ORDER_TUPLE = ("Critical", "High", "Normal", "Low")

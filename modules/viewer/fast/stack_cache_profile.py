@@ -31,11 +31,12 @@ def build_stack_cache_profile(total_slices: int) -> StackCacheProfile:
     """Return the shared drag/cache policy for *total_slices*.
 
     Design intent:
-    - small stacks: deliberate drag, aggressive cache fill
-    - medium stacks: balanced drag, moderate prefetch
-    - large stacks: faster drag, wider surrogate/cache windows
-    - heavy-download protection is still enforced elsewhere by
-      ``SystemLoadController`` / ``cap_prefetch_radius``.
+    - below 50 slices: keep the whole stack hot whenever practical
+    - 50 to 100: mild cache expansion, still conservative
+    - 100 to 200: faster drag requires a noticeably wider hot band
+    - 200 to 300: larger stacks need wider surrogate and prefetch windows
+    - 300 to 400: widen the hot working set again to avoid immediate cache gaps
+    - above 400: keep scaling, but remain bounded for safety
     """
     n = max(0, int(total_slices or 0))
 
@@ -51,14 +52,8 @@ def build_stack_cache_profile(total_slices: int) -> StackCacheProfile:
             decode_relevance_window=1,
         )
 
-    if n <= 24:
+    if n < 50:
         full_series_radius = max(1, n - 1)
-        # Small stacks still benefit from fully warming in idle mode, but
-        # drag/wheel interaction should not try to submit almost the entire
-        # series at once. A tighter fast radius keeps the visible path smooth
-        # while trimming background CPU on 18–24 slice stacks where the
-        # visible drag path is already hot but the background decode band can
-        # still spike CPU right after a cold open.
         fast_radius = min(full_series_radius, 4)
         return StackCacheProfile(
             drag_fullscreen_slices=max(1, n - 1),
@@ -71,49 +66,61 @@ def build_stack_cache_profile(total_slices: int) -> StackCacheProfile:
             decode_relevance_window=max(8, full_series_radius),
         )
 
-    if n <= 80:
+    if n <= 100:
         return StackCacheProfile(
-            drag_fullscreen_slices=min(n - 1, 32),
+            drag_fullscreen_slices=min(n - 1, 36),
             drag_max_steps_per_event=2,
-            fast_prefetch_radius=4,
-            medium_prefetch_radius=5,
-            idle_prefetch_radius=7,
-            surrogate_distance=8,
-            widened_surrogate_distance=16,
-            decode_relevance_window=14,
-        )
-
-    if n <= 140:
-        return StackCacheProfile(
-            drag_fullscreen_slices=min(n - 1, 40),
-            drag_max_steps_per_event=2,
-            fast_prefetch_radius=16,
+            fast_prefetch_radius=8,
             medium_prefetch_radius=6,
             idle_prefetch_radius=8,
             surrogate_distance=10,
-            widened_surrogate_distance=20,
-            decode_relevance_window=24,
+            widened_surrogate_distance=18,
+            decode_relevance_window=18,
         )
 
-    if n <= 220:
+    if n <= 200:
         return StackCacheProfile(
-            drag_fullscreen_slices=min(n - 1, 56),
-            drag_max_steps_per_event=3,
-            fast_prefetch_radius=20,
-            medium_prefetch_radius=10,
+            drag_fullscreen_slices=min(n - 1, 54),
+            drag_max_steps_per_event=2,
+            fast_prefetch_radius=18,
+            medium_prefetch_radius=8,
             idle_prefetch_radius=12,
-            surrogate_distance=16,
+            surrogate_distance=14,
+            widened_surrogate_distance=24,
+            decode_relevance_window=28,
+        )
+
+    if n <= 300:
+        return StackCacheProfile(
+            drag_fullscreen_slices=min(n - 1, 72),
+            drag_max_steps_per_event=3,
+            fast_prefetch_radius=24,
+            medium_prefetch_radius=12,
+            idle_prefetch_radius=16,
+            surrogate_distance=18,
             widened_surrogate_distance=32,
-            decode_relevance_window=32,
+            decode_relevance_window=36,
+        )
+
+    if n <= 400:
+        return StackCacheProfile(
+            drag_fullscreen_slices=min(n - 1, 96),
+            drag_max_steps_per_event=4,
+            fast_prefetch_radius=28,
+            medium_prefetch_radius=14,
+            idle_prefetch_radius=18,
+            surrogate_distance=22,
+            widened_surrogate_distance=40,
+            decode_relevance_window=44,
         )
 
     return StackCacheProfile(
-        drag_fullscreen_slices=min(n - 1, 90),
-        drag_max_steps_per_event=3,
-        fast_prefetch_radius=20,
-        medium_prefetch_radius=10,
-        idle_prefetch_radius=12,
-        surrogate_distance=20,
-        widened_surrogate_distance=40,
-        decode_relevance_window=40,
+        drag_fullscreen_slices=min(n - 1, 120),
+        drag_max_steps_per_event=4,
+        fast_prefetch_radius=32,
+        medium_prefetch_radius=16,
+        idle_prefetch_radius=20,
+        surrogate_distance=26,
+        widened_surrogate_distance=48,
+        decode_relevance_window=52,
     )

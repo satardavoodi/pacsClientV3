@@ -787,26 +787,18 @@ class QtSliceViewer(QWidget):
             return False
 
     def _is_stack_position_valid(self, pos: QPointF) -> bool:
-        """Stack drag is valid only while pointer stays in viewer + image area."""
-        return self._is_point_in_viewport(pos) and self._is_point_in_image_area(
-            pos,
-            grace_px=self.STACK_DRAG_EDGE_GRACE_PX,
-        )
+        """Stack drag is valid across the full viewer layout, not image bounds.
+
+        Mouse-driven stack navigation must remain consistent when the image is
+        zoomed, letterboxed, or temporarily rendered smaller than the host.
+        The gesture therefore uses the viewer/page bounds as its active lane and
+        only stops once the pointer leaves the full viewport.
+        """
+        return self._is_point_in_viewport(pos)
 
     def _get_stack_active_height_px(self) -> float:
-        """Visible on-screen height available for stack drag, in pixels."""
-        widget_h = float(max(64, self.height()))
-        if self._image_width <= 0 or self._image_height <= 0:
-            return widget_h
-
-        base_w = float(self._image_width) * float(max(self._display_scale_x, 1e-9))
-        base_h = float(self._image_height) * float(max(self._display_scale_y, 1e-9))
-        if self._rotation_angle in (90, 270):
-            rendered_h = base_w * float(max(self._zoom, 0.1))
-        else:
-            rendered_h = base_h * float(max(self._zoom, 0.1))
-
-        return float(max(64.0, min(widget_h, rendered_h)))
+        """Full viewer-layout height available for stack drag, in pixels."""
+        return float(max(64, self.height()))
 
     def _consume_stack_drag_delta(self, dy: float, *, speed_px_per_sec: float = 0.0) -> int:
         """Convert vertical drag delta to bounded slice steps.
