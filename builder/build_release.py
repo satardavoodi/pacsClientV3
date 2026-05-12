@@ -831,6 +831,34 @@ def write_manifest(
     )
 
 
+def cleanup_old_installer_builds() -> int:
+    """Remove timestamp-stamped build artifacts to reduce folder size clutter.
+    
+    Keeps only:
+    - ai-pacs installer.exe (primary)
+    - ai-pacs installer v<version>.exe (versioned release copy)
+    
+    Removes:
+    - ai-pacs installer build YYYYMMDD-HHMMSS.exe (intermediate build artifacts)
+    
+    Returns the count of files removed.
+    """
+    if not INSTALLER_OUTPUT_DIR.exists():
+        return 0
+    
+    removed_count = 0
+    pattern = f"{PRIMARY_INSTALLER_BASENAME} build *.exe"
+    
+    for artifact in INSTALLER_OUTPUT_DIR.glob(pattern):
+        try:
+            artifact.unlink()
+            removed_count += 1
+        except OSError as exc:
+            print(f"[WARN] Could not remove old build artifact {artifact.name}: {exc}")
+    
+    return removed_count
+
+
 def find_iscc() -> Path | None:
     local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
     candidates = [
@@ -1273,6 +1301,9 @@ def main() -> int:
             compiled_installer = compile_installer(version)
             if compiled_installer is not None:
                 installer_artifacts = normalize_installer_artifacts(compiled_installer, version)
+                removed = cleanup_old_installer_builds()
+                if removed > 0:
+                    print(f"[INFO] Cleaned up {removed} old build artifact(s) from installer folder.")
                 write_installer_release_metadata(installer_artifacts, version)
 
         publish_update_bundle(version, module_packages, installer_artifacts)

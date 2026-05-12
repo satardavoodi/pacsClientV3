@@ -34,6 +34,28 @@ This release is intended for production handoff and end-user packaging.
 
 This release is intended to be built via the PyInstaller release pipeline from the project root/builder flow and delivered as an executable + installer for end users.
 
+### Build System Improvements (v2.5.4)
+
+- **PyInstaller Version Auto-Detection**: Build system now detects and enforces PyInstaller version consistency between build and development environments. Mixed versions are automatically corrected via clean-build forcing. See [BUILD_PYINSTALLER_VERSIONING.md](../architecture/BUILD_PYINSTALLER_VERSIONING.md) for details.
+- **Installer Artifact Cleanup**: Old timestamp build artifacts are automatically cleaned up to reduce folder size and remove ambiguity about the deliverable file.
+- **Installer File Lock Hardening**: Unique compile-time basenames prevent ISCC.exe from locking previous builds during incremental pipelines.
+
+---
+
+## Upgrading to v2.5.4
+
+### For End Users
+
+Simply download and run the installer (`ai-pacs installer.exe`). The versioned copy `ai-pacs installer v2.5.4.exe` is identical and is provided for release tracking.
+
+### For Multi-PC Deployments / Build Environments
+
+If building v2.5.4 on multiple machines:
+
+1. Ensure both `.venv_build` and `.venv` have the **same PyInstaller version**
+2. If you see `[WARN] PyInstaller cache version mismatch detected`, the build system will automatically correct it (via clean-build)
+3. See [BUILD_PYINSTALLER_VERSIONING.md](../architecture/BUILD_PYINSTALLER_VERSIONING.md) for diagnosis and prevention
+
 ---
 
 ## Notes
