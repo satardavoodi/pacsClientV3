@@ -94,6 +94,35 @@ def load_version() -> str:
     return str((data.get("project") or {}).get("version") or "0.0.0")
 
 
+def current_pyinstaller_version() -> str:
+    try:
+        import PyInstaller  # type: ignore
+
+        return str(getattr(PyInstaller, "__version__", "unknown"))
+    except Exception:
+        return "unknown"
+
+
+def _pyinstaller_version_marker_path() -> Path:
+    return BUILD_DIR / ".pyinstaller_version"
+
+
+def read_cached_pyinstaller_version() -> str:
+    marker = _pyinstaller_version_marker_path()
+    if not marker.exists():
+        return ""
+    try:
+        return marker.read_text(encoding="utf-8").strip()
+    except Exception:
+        return ""
+
+
+def write_cached_pyinstaller_version(version: str) -> None:
+    marker = _pyinstaller_version_marker_path()
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(str(version).strip(), encoding="utf-8")
+
+
 def run_command(args: list[str], cwd: Path | None = None) -> None:
     print(f"[RUN] {' '.join(str(arg) for arg in args)}")
     completed = subprocess.run(
@@ -1158,6 +1187,21 @@ def main() -> int:
             clean_outputs(preserve_build=False, preserve_installer=False)
             return 0
 
+        requested_pyinstaller_version = current_pyinstaller_version()
+        cached_pyinstaller_version = read_cached_pyinstaller_version()
+        if (
+            not args.skip_pyinstaller
+            and not args.clean_build
+            and cached_pyinstaller_version
+            and cached_pyinstaller_version != requested_pyinstaller_version
+        ):
+            print(
+                "[WARN] PyInstaller cache version mismatch detected: "
+                f"cached={cached_pyinstaller_version}, current={requested_pyinstaller_version}."
+            )
+            print("[WARN] Forcing --clean-build to avoid mixed bootstrap/runtime artifacts.")
+            args.clean_build = True
+
         # On incremental runs preserve both the PyInstaller work-cache (BUILD_DIR)
         # and cached dist/stage bundles so that:
         #   - PyInstaller reuses Analysis-00.toc -> skips 3-4 min dependency scan.
@@ -1191,6 +1235,7 @@ def main() -> int:
                         shutil.rmtree(tmp_dist, ignore_errors=True)
             else:
                 source_dir = build_pyinstaller(force_clean=True)
+            write_cached_pyinstaller_version(requested_pyinstaller_version)
         elif not (source_dir / "AIPacs.exe").exists():
             raise SystemExit("--skip-pyinstaller was used but builder/output/dist/AIPacs/AIPacs.exe is missing.")
 
