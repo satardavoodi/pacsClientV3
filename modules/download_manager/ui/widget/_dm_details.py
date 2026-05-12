@@ -12,6 +12,11 @@ from ...core.enums import DownloadPriority, DownloadStatus
 from ...core.models import DownloadTask, DownloadState
 from ..components.priority_group import PriorityGroupHeader
 from ..components.status_badge import StatusBadge
+from PacsClient.utils.runtime_correlation import (
+    now_mono_ms as _corr_now_mono_ms,
+    record_event as _corr_record_event,
+    session_id as _corr_session_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -551,19 +556,37 @@ class _DMDetailsMixin:
             if label and label.text() != text:
                 label.setText(text)
 
+        def _series_frame_style(border_color: str) -> str:
+            return (
+                "QFrame {"
+                "background: #111827;"
+                f"border: 1px solid {border_color};"
+                "border-radius: 6px;"
+                "padding: 6px;"
+                "}"
+            )
+
         def _update_series_widget(widget_info: dict, *, status_text: str, status_color: str,
                                   series_progress: float, downloaded_images: int,
-                                  total_images: int, remaining_images: int) -> None:
+                                  total_images: int, remaining_images: int,
+                                  is_current: bool) -> None:
             status_label = widget_info.get('status_label')
             progress_bar = widget_info.get('progress_bar')
             counts_label = widget_info.get('counts_label')
-            series_title = widget_info.get('series_title')
+            frame = widget_info.get('frame')
+
+            if frame:
+                border_color = '#06b6d4' if is_current else '#374151'
+                if widget_info.get('_last_border_color') != border_color:
+                    frame.setStyleSheet(_series_frame_style(border_color))
+                    widget_info['_last_border_color'] = border_color
 
             _set_label_text(status_label, status_text)
-            if status_label:
+            if status_label and widget_info.get('_last_status_color') != status_color:
                 status_label.setStyleSheet(
                     f"color: {status_color}; font-size: 10px; font-weight: 700;"
                 )
+                widget_info['_last_status_color'] = status_color
 
             if progress_bar:
                 new_value = int(series_progress)
@@ -576,9 +599,6 @@ class _DMDetailsMixin:
             if counts_label:
                 new_counts = f"Downloaded: {downloaded_images} | Remaining: {remaining_images}"
                 _set_label_text(counts_label, new_counts)
-
-            if series_title:
-                series_title.setStyleSheet("color: #e2e8f0; font-size: 11px; font-weight: 600;")
             
         current_structure_key = _structure_key(task)
         structure_changed = current_structure_key != self._series_breakdown_structure_key
@@ -662,14 +682,6 @@ class _DMDetailsMixin:
                 widget_info = self._series_breakdown_widgets.get(series_key)
                 if structure_changed or not widget_info:
                     series_frame = QFrame()
-                    series_frame.setStyleSheet(f"""
-                        QFrame {{
-                            background: #111827;
-                            border: 1px solid {'#06b6d4' if is_current else '#374151'};
-                            border-radius: 6px;
-                            padding: 6px;
-                        }}
-                    """)
 
                     frame_layout = QVBoxLayout(series_frame)
                     frame_layout.setContentsMargins(8, 6, 8, 6)
@@ -735,19 +747,10 @@ class _DMDetailsMixin:
                         'status_label': status_label,
                         'progress_bar': progress_bar,
                         'counts_label': counts_label,
+                        '_last_border_color': None,
+                        '_last_status_color': None,
                     }
                     self._series_breakdown_widgets[series_key] = widget_info
-                else:
-                    # Reuse the existing widget tree and only update values.
-                    if widget_info.get('frame'):
-                        widget_info['frame'].setStyleSheet(f"""
-                            QFrame {{
-                                background: #111827;
-                                border: 1px solid {'#06b6d4' if is_current else '#374151'};
-                                border-radius: 6px;
-                                padding: 6px;
-                            }}
-                        """)
 
                 # Make sure newly created widgets and reused widgets are both refreshed.
                 if widget_info:
@@ -759,6 +762,7 @@ class _DMDetailsMixin:
                         downloaded_images=downloaded_images,
                         total_images=total_images,
                         remaining_images=remaining_images,
+                        is_current=is_current,
                     )
 
         # Add stretch only if series_layout still exists
@@ -798,10 +802,12 @@ class _DMDetailsMixin:
         """
         current_key = getattr(self, '_table_structure_key', None)
         if current_key != desired_key:
+            self._last_inplace_update_reason = "table_structure_key_changed"
             return False  # Structure changed — fall through to full rebuild
 
         if not self._priority_group_widgets:
             # No widgets exist yet (first call) — need full rebuild
+            self._last_inplace_update_reason = "priority_group_widgets_missing"
             return False
 
         state_map = {s.study_uid: s for s in all_downloads}
@@ -811,6 +817,7 @@ class _DMDetailsMixin:
             for study_uid, row in list(self.download_rows.items()):
                 state = state_map.get(study_uid)
                 if state is None:
+                    self._last_inplace_update_reason = "state_map_missing_study_uid"
                     return False  # Unexpected mismatch — full rebuild
 
                 # Column 0: StatusBadge — update only when status changed
@@ -842,8 +849,10 @@ class _DMDetailsMixin:
                         header_w.update_count(new_count)
 
         except (RuntimeError, AttributeError):
+            self._last_inplace_update_reason = "widget_runtime_or_attribute_error"
             return False  # Widget deleted or attribute missing
 
+        self._last_inplace_update_reason = "inplace_success"
         return True
 
     def _refresh_table_order(self):
@@ -882,6 +891,10 @@ class _DMDetailsMixin:
         self._refresh_table_order_in_progress = True
         depth = int(getattr(self, "_dm_rebuild_depth", 0)) + 1
         self._dm_rebuild_depth = depth
+        rebuild_id = -1
+        rebuild_reason = "unknown"
+        model_reset = False
+        interaction_active = False
 
         # finally: suppression flag + depth + in-progress flag are always reset
         self._suppressing_selection_signals = True
@@ -907,15 +920,42 @@ class _DMDetailsMixin:
             # every state change).
             if self._try_inplace_table_update(all_downloads, desired_key):
                 return  # finally block still runs to reset flags
+            rebuild_reason = str(getattr(self, "_last_inplace_update_reason", "unknown") or "unknown")
+            try:
+                from modules.viewer.fast.ui_throttle import is_protected_drag_active as _is_drag
+                interaction_active = bool(_is_drag())
+            except Exception:
+                interaction_active = False
 
             # ── Full rebuild (structure changed) ─────────────────────────────
             rebuild_t0 = _dm_rebuild_time.perf_counter()
+            corr_event = _corr_record_event(
+                "DM_REBUILD",
+                phase="enter",
+                caller=self._dm_rebuild_caller_frame(),
+                reason=rebuild_reason,
+                row_count=int(len(all_downloads)),
+                full_rebuild=True,
+                model_reset=False,
+                interaction_active=bool(interaction_active),
+            )
+            rebuild_id = int(corr_event.get("event_id", -1) or -1)
             try:
                 # WARNING level: see comment in reenter_skip branch.
                 logger.warning(
-                    "[DM_REBUILD] event=enter depth=%d caller=%s",
+                    "[DM_REBUILD] event=enter rebuild_id=%d depth=%d caller=%s reason=%s "
+                    "row_count=%d full_rebuild=%s model_reset=%s interaction_active=%s "
+                    "corr_session=%s corr_mono_ms=%.3f",
+                    rebuild_id,
                     depth,
                     self._dm_rebuild_caller_frame(),
+                    rebuild_reason,
+                    int(len(all_downloads)),
+                    True,
+                    False,
+                    bool(interaction_active),
+                    _corr_session_id(),
+                    float(corr_event.get("mono_ms", _corr_now_mono_ms())),
                     extra={"component": "download"},
                 )
             except Exception:
@@ -932,6 +972,7 @@ class _DMDetailsMixin:
                         priority_groups[pname].append(state)
 
                 self.download_table.setRowCount(0)
+                model_reset = True
                 self.download_rows.clear()
                 self._priority_group_widgets.clear()
                 self._priority_group_rows.clear()
@@ -965,12 +1006,42 @@ class _DMDetailsMixin:
             self._table_structure_key = desired_key
 
             duration_ms = (_dm_rebuild_time.perf_counter() - rebuild_t0) * 1000.0
+            _corr_record_event(
+                "DM_REBUILD",
+                phase="exit",
+                rebuild_id=int(rebuild_id),
+                caller=self._dm_rebuild_caller_frame(),
+                reason=rebuild_reason,
+                row_count=int(row_count),
+                full_rebuild=True,
+                model_reset=bool(model_reset),
+                duration_ms=float(duration_ms),
+                interaction_active=bool(interaction_active),
+            )
+            _corr_record_event(
+                "TABLE_REFRESH",
+                phase="dm_details_full_rebuild",
+                rebuild_id=int(rebuild_id),
+                reason=rebuild_reason,
+                row_count=int(row_count),
+                model_reset=bool(model_reset),
+                duration_ms=float(duration_ms),
+            )
             try:
                 logger.warning(
-                    "[DM_REBUILD] event=exit depth=%d duration_ms=%.3f rows=%d",
+                    "[DM_REBUILD] event=exit rebuild_id=%d depth=%d duration_ms=%.3f "
+                    "row_count=%d full_rebuild=%s model_reset=%s interaction_active=%s "
+                    "reason=%s corr_session=%s corr_mono_ms=%.3f",
+                    rebuild_id,
                     depth,
                     duration_ms,
                     row_count,
+                    True,
+                    bool(model_reset),
+                    bool(interaction_active),
+                    rebuild_reason,
+                    _corr_session_id(),
+                    _corr_now_mono_ms(),
                     extra={"component": "download"},
                 )
             except Exception:

@@ -609,6 +609,24 @@ class TestQtStackDragBridge:
 
         assert bridge._set_slice_calls == [(27, True, 'drag')]
 
+    def test_stack_drag_target_schedules_reference_line_during_drag(self):
+        bridge = _build_bridge_stub(slice_count=200)
+        rl_calls = []
+        patient_widget = SimpleNamespace(
+            _schedule_reference_line_update=lambda: rl_calls.append("scheduled"),
+        )
+        bridge.vtk_widget = SimpleNamespace(
+            slider=None,
+            image_viewer=None,
+            patient_widget=patient_widget,
+            _on_slice_changed_cb=None,
+        )
+
+        bridge._on_stack_drag_target(27)
+
+        assert bridge._current_slice == 27
+        assert rl_calls == ["scheduled"]
+
     def test_stack_drag_object_requests_use_series_uid_from_pipeline(self, monkeypatch):
         monkeypatch.setattr(
             'modules.viewer.fast.qt_viewer_bridge.is_noop_object_cache',

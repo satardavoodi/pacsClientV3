@@ -551,19 +551,37 @@ class _DMDetailsMixin:
             if label and label.text() != text:
                 label.setText(text)
 
+        def _series_frame_style(border_color: str) -> str:
+            return (
+                "QFrame {"
+                "background: #111827;"
+                f"border: 1px solid {border_color};"
+                "border-radius: 6px;"
+                "padding: 6px;"
+                "}"
+            )
+
         def _update_series_widget(widget_info: dict, *, status_text: str, status_color: str,
                                   series_progress: float, downloaded_images: int,
-                                  total_images: int, remaining_images: int) -> None:
+                                  total_images: int, remaining_images: int,
+                                  is_current: bool) -> None:
             status_label = widget_info.get('status_label')
             progress_bar = widget_info.get('progress_bar')
             counts_label = widget_info.get('counts_label')
-            series_title = widget_info.get('series_title')
+            frame = widget_info.get('frame')
+
+            if frame:
+                border_color = '#06b6d4' if is_current else '#374151'
+                if widget_info.get('_last_border_color') != border_color:
+                    frame.setStyleSheet(_series_frame_style(border_color))
+                    widget_info['_last_border_color'] = border_color
 
             _set_label_text(status_label, status_text)
-            if status_label:
+            if status_label and widget_info.get('_last_status_color') != status_color:
                 status_label.setStyleSheet(
                     f"color: {status_color}; font-size: 10px; font-weight: 700;"
                 )
+                widget_info['_last_status_color'] = status_color
 
             if progress_bar:
                 new_value = int(series_progress)
@@ -576,10 +594,7 @@ class _DMDetailsMixin:
             if counts_label:
                 new_counts = f"Downloaded: {downloaded_images} | Remaining: {remaining_images}"
                 _set_label_text(counts_label, new_counts)
-
-            if series_title:
-                series_title.setStyleSheet("color: #e2e8f0; font-size: 11px; font-weight: 600;")
-
+            
         current_structure_key = _structure_key(task)
         structure_changed = current_structure_key != self._series_breakdown_structure_key
         series_container = getattr(self, 'details_container', None) or getattr(self, 'series_scroll_area', None)
@@ -662,14 +677,6 @@ class _DMDetailsMixin:
                 widget_info = self._series_breakdown_widgets.get(series_key)
                 if structure_changed or not widget_info:
                     series_frame = QFrame()
-                    series_frame.setStyleSheet(f"""
-                        QFrame {{
-                            background: #111827;
-                            border: 1px solid {'#06b6d4' if is_current else '#374151'};
-                            border-radius: 6px;
-                            padding: 6px;
-                        }}
-                    """)
 
                     frame_layout = QVBoxLayout(series_frame)
                     frame_layout.setContentsMargins(8, 6, 8, 6)
@@ -735,19 +742,10 @@ class _DMDetailsMixin:
                         'status_label': status_label,
                         'progress_bar': progress_bar,
                         'counts_label': counts_label,
+                        '_last_border_color': None,
+                        '_last_status_color': None,
                     }
                     self._series_breakdown_widgets[series_key] = widget_info
-                else:
-                    # Reuse the existing widget tree and only update values.
-                    if widget_info.get('frame'):
-                        widget_info['frame'].setStyleSheet(f"""
-                            QFrame {{
-                                background: #111827;
-                                border: 1px solid {'#06b6d4' if is_current else '#374151'};
-                                border-radius: 6px;
-                                padding: 6px;
-                            }}
-                        """)
 
                 # Make sure newly created widgets and reused widgets are both refreshed.
                 if widget_info:
@@ -759,6 +757,7 @@ class _DMDetailsMixin:
                         downloaded_images=downloaded_images,
                         total_images=total_images,
                         remaining_images=remaining_images,
+                        is_current=is_current,
                     )
 
         # Add stretch only if series_layout still exists

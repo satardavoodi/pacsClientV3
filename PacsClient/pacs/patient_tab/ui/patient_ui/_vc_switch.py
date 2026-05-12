@@ -21,6 +21,13 @@ from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
 from PacsClient.pacs.patient_tab.utils.image_io import load_series_preview
 from modules.zeta_boost import ImageSliceBooster
 from PacsClient.utils.diagnostic_logging import new_correlation_id, set_log_context
+from PacsClient.utils.runtime_correlation import (
+    find_recent_event as _corr_find_recent_event,
+    now_mono_ms as _corr_now_mono_ms,
+    record_event as _corr_record_event,
+    session_id as _corr_session_id,
+    set_active_viewer_state as _corr_set_active_viewer_state,
+)
 import logging
 
 logger = logging.getLogger(__name__)
@@ -846,8 +853,39 @@ class _VCSwitchMixin:
 
             metadata = self._clone_metadata_for_switch(metadata)
             series_number = str(metadata.get('series', {}).get('series_number', ''))
+            series_uid = str(metadata.get('series', {}).get('series_uid', '') or '')
             series_name = str(metadata.get('series', {}).get('series_name', ''))
             _t_psso = time.perf_counter()
+            switch_start_mono_ms = _corr_now_mono_ms()
+            switch_corr_id = f"switch-{series_number}-{int(switch_start_mono_ms)}"
+            try:
+                setattr(vtk_widget, '_corr_switch_id', switch_corr_id)
+            except Exception:
+                pass
+            _corr_set_active_viewer_state(
+                viewer_state="switch_start",
+                series_uid=series_uid,
+                series_number=series_number,
+                interaction_active=False,
+            )
+            start_event = _corr_record_event(
+                "VIEWER_SWITCH",
+                phase="switch_start",
+                switch_id=switch_corr_id,
+                series_number=series_number,
+                series_uid=series_uid,
+                viewer_id=str(getattr(vtk_widget, 'id_vtk_widget', '?')),
+            )
+            logger.info(
+                "[VIEWER_SWITCH] phase=switch_start switch_id=%s series=%s series_uid=%s "
+                "viewer=%s corr_session=%s corr_mono_ms=%.3f",
+                switch_corr_id,
+                series_number,
+                series_uid,
+                str(getattr(vtk_widget, 'id_vtk_widget', '?')),
+                _corr_session_id(),
+                float(start_event.get('mono_ms', switch_start_mono_ms)),
+            )
 
             # --- DEBUG: log series image counts (thumbnail vs viewer) ---
             try:
@@ -942,6 +980,14 @@ class _VCSwitchMixin:
                     self.parent_widget.metadata_fixed
                 )
                 _t_switch_ms = (time.perf_counter() - _t0_sw) * 1000
+                _corr_record_event(
+                    "VIEWER_SWITCH",
+                    phase="switch_series_call",
+                    switch_id=switch_corr_id,
+                    series_number=series_number,
+                    duration_ms=float(_t_switch_ms),
+                    switch_returned=bool(flag_switch),
+                )
 
                 if flag_switch:
                     # Quick slider configuration (without blocking)
@@ -1071,6 +1117,75 @@ class _VCSwitchMixin:
                     logger.info(
                         "[UX_VIEWER_INTERACTIVE] series=%s psso_total_ms=%.1f",
                         series_number, (time.perf_counter() - _t_psso) * 1000,
+                    )
+                    _corr_set_active_viewer_state(
+                        viewer_state="switch_complete",
+                        series_uid=series_uid,
+                        series_number=series_number,
+                        interaction_active=False,
+                    )
+                    switch_total_ms = (time.perf_counter() - _t_psso) * 1000.0
+                    _corr_record_event(
+                        "VIEWER_SWITCH",
+                        phase="switch_complete",
+                        switch_id=switch_corr_id,
+                        series_number=series_number,
+                        series_uid=series_uid,
+                        switch_series_ms=float(_t_switch_ms),
+                        reset_slider_ms=float(_t_reset_ms),
+                        boost_set_ms=float(_t_boost_ms),
+                        corners_ms=float(_t_corners_ms),
+                        refline_ms=float(_t_refline_ms),
+                        total_ms=float(switch_total_ms),
+                    )
+
+                    now_mono = _corr_now_mono_ms()
+                    create_ev = _corr_find_recent_event(
+                        "VIEWER_SWITCH",
+                        within_ms=5000.0,
+                        now_ms=now_mono,
+                        match={"switch_id": switch_corr_id, "phase": "widget_created"},
+                    )
+                    first_render_ev = _corr_find_recent_event(
+                        "VIEWER_SWITCH",
+                        within_ms=5000.0,
+                        now_ms=now_mono,
+                        match={"switch_id": switch_corr_id, "phase": "first_render_request"},
+                    )
+                    first_visible_ev = _corr_find_recent_event(
+                        "VIEWER_SWITCH",
+                        within_ms=5000.0,
+                        now_ms=now_mono,
+                        match={"switch_id": switch_corr_id, "phase": "first_image_visible"},
+                    )
+                    widget_create_ms = -1.0
+                    first_render_request_ms = -1.0
+                    first_image_visible_ms = -1.0
+                    if create_ev is not None:
+                        try:
+                            widget_create_ms = float(create_ev.get("fields", {}).get("widget_create_ms", -1.0))
+                        except Exception:
+                            widget_create_ms = -1.0
+                    if first_render_ev is not None:
+                        first_render_request_ms = max(0.0, float(first_render_ev.get("mono_ms", switch_start_mono_ms)) - switch_start_mono_ms)
+                    if first_visible_ev is not None:
+                        first_image_visible_ms = max(0.0, float(first_visible_ev.get("mono_ms", switch_start_mono_ms)) - switch_start_mono_ms)
+                    logger.info(
+                        "[VIEWER_SWITCH] phase=phase_summary switch_id=%s series=%s series_uid=%s "
+                        "switch_start_ms=%.3f switch_series_ms=%.1f total_ms=%.1f "
+                        "widget_creation_ms=%.1f first_render_request_ms=%.1f first_image_visible_ms=%.1f "
+                        "corr_session=%s corr_mono_ms=%.3f",
+                        switch_corr_id,
+                        series_number,
+                        series_uid,
+                        switch_start_mono_ms,
+                        _t_switch_ms,
+                        switch_total_ms,
+                        widget_create_ms,
+                        first_render_request_ms,
+                        first_image_visible_ms,
+                        _corr_session_id(),
+                        now_mono,
                     )
         
         except Exception as e:

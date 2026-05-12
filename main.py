@@ -35,6 +35,14 @@ import logging
 import subprocess
 import importlib.util
 from pathlib import Path
+from PacsClient.utils.runtime_correlation import (
+    format_near_event as _corr_format_near,
+    get_active_viewer_state as _corr_get_active_state,
+    nearest_previous as _corr_nearest_previous,
+    now_mono_ms as _corr_now_mono_ms,
+    record_event as _corr_record_event,
+    session_id as _corr_session_id,
+)
 
 
 def _maybe_nuitka_smoke_test_exit() -> None:
@@ -510,6 +518,7 @@ if __name__ == "__main__":
             def _probe_tick() -> None:
                 now_ms = _probe_time.perf_counter() * 1000.0
                 gap_ms = now_ms - _probe_state.last_fire_ms
+                stall_start_ms = _probe_state.last_fire_ms
                 _probe_state.last_fire_ms = now_ms
                 if gap_ms >= _STALL_THRESHOLD_MS:
                     _probe_state.stall_count += 1
@@ -524,12 +533,53 @@ if __name__ == "__main__":
                         drag_active = bool(_is_drag())
                     except Exception:
                         drag_active = False
+                    corr_now_ms = _corr_now_mono_ms()
+                    active_state = _corr_get_active_state()
+                    near_dm = _corr_nearest_previous(["DM_REBUILD"], now_ms=corr_now_ms, within_ms=1000.0)
+                    near_switch = _corr_nearest_previous(["VIEWER_SWITCH"], now_ms=corr_now_ms, within_ms=1000.0)
+                    near_progressive = _corr_nearest_previous(
+                        ["PROGRESSIVE_GROW", "PROGRESSIVE_APPEND"],
+                        now_ms=corr_now_ms,
+                        within_ms=1000.0,
+                    )
+                    near_drag = _corr_nearest_previous(["FAST_DRAG"], now_ms=corr_now_ms, within_ms=1000.0)
+                    near_table = _corr_nearest_previous(["TABLE_REFRESH"], now_ms=corr_now_ms, within_ms=1000.0)
+                    _corr_record_event(
+                        "MAIN_THREAD_STALL",
+                        stall_start_ms=round(float(stall_start_ms), 3),
+                        stall_duration_ms=round(float(gap_ms), 3),
+                        interaction_active=bool(drag_active),
+                        viewer_state=str(active_state.get("viewer_state", "unknown") or "unknown"),
+                        series_uid=str(active_state.get("series_uid", "") or ""),
+                        series_number=str(active_state.get("series_number", "") or ""),
+                        nearest_dm_rebuild=_corr_format_near(near_dm, now_ms=corr_now_ms),
+                        nearest_viewer_switch=_corr_format_near(near_switch, now_ms=corr_now_ms),
+                        nearest_progressive=_corr_format_near(near_progressive, now_ms=corr_now_ms),
+                        nearest_fast_drag=_corr_format_near(near_drag, now_ms=corr_now_ms),
+                        nearest_table_refresh=_corr_format_near(near_table, now_ms=corr_now_ms),
+                    )
                     _stall_logger.info(
-                        "[MAIN_THREAD_STALL] gap_ms=%.1f threshold_ms=%.1f "
-                        "drag_active=%s stalls_total=%d max_gap_ms=%.1f t_since_start_s=%.1f",
+                        "[MAIN_THREAD_STALL] stall_start_ms=%.3f stall_duration_ms=%.1f "
+                        "gap_ms=%.1f threshold_ms=%.1f interaction_active=%s "
+                        "active_viewer_state=%s active_series_uid=%s active_series_number=%s "
+                        "nearest_dm_rebuild=%s nearest_viewer_switch=%s nearest_progressive=%s "
+                        "nearest_fast_drag=%s nearest_table_refresh=%s corr_session=%s corr_mono_ms=%.3f "
+                        "stalls_total=%d max_gap_ms=%.1f t_since_start_s=%.1f",
+                        stall_start_ms,
+                        gap_ms,
                         gap_ms,
                         _STALL_THRESHOLD_MS,
                         drag_active,
+                        str(active_state.get("viewer_state", "unknown") or "unknown"),
+                        str(active_state.get("series_uid", "") or ""),
+                        str(active_state.get("series_number", "") or ""),
+                        _corr_format_near(near_dm, now_ms=corr_now_ms),
+                        _corr_format_near(near_switch, now_ms=corr_now_ms),
+                        _corr_format_near(near_progressive, now_ms=corr_now_ms),
+                        _corr_format_near(near_drag, now_ms=corr_now_ms),
+                        _corr_format_near(near_table, now_ms=corr_now_ms),
+                        _corr_session_id(),
+                        corr_now_ms,
                         _probe_state.stall_count,
                         _probe_state.max_gap_ms,
                         (now_ms - _probe_state.started_at_ms) / 1000.0,

@@ -46,6 +46,13 @@ from modules.viewer.fast.object_cache import is_noop_object_cache
 from modules.viewer.fast.stack_interaction_scheduler import FastWorkPriority, StackInteractionScheduler
 from modules.viewer.fast.ui_throttle import record_fast_interaction, record_protected_drag, record_ui_heartbeat
 from modules.viewer.tools.coord_resolver import CoordinateResolver
+from PacsClient.utils.runtime_correlation import (
+    count_events_between as _corr_count_events_between,
+    now_mono_ms as _corr_now_mono_ms,
+    record_event as _corr_record_event,
+    session_id as _corr_session_id,
+    set_active_viewer_state as _corr_set_active_viewer_state,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -680,6 +687,27 @@ class QtViewerBridge:
                 "[UX_FIRST_IMAGE_VISIBLE] series=%s slice=%d decode_ms=%.1f total_ms=%.1f",
                 _series_no, idx, frame.decode_ms, total_ms,
             )
+            switch_id = str(getattr(self, '_corr_switch_id', '') or '')
+            first_visible_event = _corr_record_event(
+                'VIEWER_SWITCH',
+                phase='first_image_visible',
+                switch_id=switch_id,
+                series_number=str(_series_no),
+                requested_slice=int(idx),
+                total_ms=float(total_ms),
+                decode_ms=float(frame.decode_ms),
+            )
+            logger.info(
+                "[VIEWER_SWITCH] phase=first_image_visible switch_id=%s series=%s slice=%d "
+                "decode_ms=%.1f total_ms=%.1f corr_session=%s corr_mono_ms=%.3f",
+                switch_id,
+                _series_no,
+                int(idx),
+                float(frame.decode_ms),
+                float(total_ms),
+                _corr_session_id(),
+                float(first_visible_event.get('mono_ms', _corr_now_mono_ms())),
+            )
             logger.info(
                 "FAST:viewer_interactive_ready series=%s slice=%d total_ms=%.1f",
                 _series_no, idx, total_ms,
@@ -1241,6 +1269,7 @@ class QtViewerBridge:
             'ui_lag_ms': [],
             'accepted_targets': 0,
         }
+        self._drag_session_start_mono_ms = _corr_now_mono_ms()
         # F7 (observability-only): arm a paint-cost sample list on the Qt viewer
         # so paintEvent can append per-frame ms. Cleared in _log_drag_metrics_summary.
         try:
@@ -1262,6 +1291,19 @@ class QtViewerBridge:
         prefetch_submitted = int(pipe_stats.get('prefetch_submitted', 0) or 0)
         background_decode_count = int(pipe_stats.get('background_decode_count', 0) or 0)
         prefetch_per_s = (prefetch_submitted / duration_s) if duration_s > 0.0 else 0.0
+        event_p50_ms = _percentile(event_intervals, 50)
+        event_p95_ms = _percentile(event_intervals, 95)
+        handler_p50_ms = _percentile(handler_total, 50)
+        handler_p95_ms = _percentile(handler_total, 95)
+        ui_lag_max_ms = max(ui_lag) if ui_lag else 0.0
+        drag_session_id = str(getattr(self, '_drag_session_id', '') or '')
+        drag_start_mono_ms = float(getattr(self, '_drag_session_start_mono_ms', 0.0) or 0.0)
+        drag_end_mono_ms = _corr_now_mono_ms()
+        dm_rebuild_during_drag = False
+        stall_during_drag = False
+        if drag_start_mono_ms > 0.0 and drag_end_mono_ms >= drag_start_mono_ms:
+            dm_rebuild_during_drag = _corr_count_events_between('DM_REBUILD', drag_start_mono_ms, drag_end_mono_ms) > 0
+            stall_during_drag = _corr_count_events_between('MAIN_THREAD_STALL', drag_start_mono_ms, drag_end_mono_ms) > 0
         # F7 (observability-only): pull paint samples accumulated by qt_viewer.paintEvent.
         paint_samples: list = []
         try:
@@ -1276,25 +1318,53 @@ class QtViewerBridge:
         paint_p95 = _percentile(paint_samples, 95) if paint_samples else 0.0
         paint_max = max(paint_samples) if paint_samples else 0.0
         logger.info(
-            "[FAST_DRAG_KPI] bridge=%s viewer=%s duration_s=%.3f targets=%d "
+            "[FAST_DRAG_KPI] drag_session_id=%s bridge=%s viewer=%s duration_s=%.3f targets=%d "
             "event_p50_ms=%.1f event_p95_ms=%.1f handler_p50_ms=%.1f handler_p95_ms=%.1f "
             "ui_lag_max_ms=%.1f prefetch_per_s=%.1f background_decode_count=%d "
-            "paint_count=%d paint_p50_ms=%.1f paint_p95_ms=%.1f paint_max_ms=%.1f",
+            "paint_count=%d paint_p50_ms=%.1f paint_p95_ms=%.1f paint_max_ms=%.1f "
+            "dm_rebuild_during_drag=%s main_thread_stall_during_drag=%s "
+            "drag_start_mono_ms=%.3f drag_end_mono_ms=%.3f corr_session=%s corr_mono_ms=%.3f",
+            drag_session_id,
             getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
             getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
             duration_s,
             accepted,
-            _percentile(event_intervals, 50),
-            _percentile(event_intervals, 95),
-            _percentile(handler_total, 50),
-            _percentile(handler_total, 95),
-            max(ui_lag) if ui_lag else 0.0,
+            event_p50_ms,
+            event_p95_ms,
+            handler_p50_ms,
+            handler_p95_ms,
+            ui_lag_max_ms,
             prefetch_per_s,
             background_decode_count,
             paint_count,
             paint_p50,
             paint_p95,
             paint_max,
+            dm_rebuild_during_drag,
+            stall_during_drag,
+            drag_start_mono_ms,
+            drag_end_mono_ms,
+            _corr_session_id(),
+            drag_end_mono_ms,
+        )
+        _corr_record_event(
+            'FAST_DRAG',
+            phase='kpi',
+            drag_session_id=drag_session_id,
+            event_p95_ms=float(event_p95_ms),
+            ui_lag_max_ms=float(ui_lag_max_ms),
+            dm_rebuild_during_drag=bool(dm_rebuild_during_drag),
+            main_thread_stall_during_drag=bool(stall_during_drag),
+            duration_s=float(duration_s),
+        )
+        _corr_record_event(
+            'FAST_DRAG',
+            phase='end',
+            drag_session_id=drag_session_id,
+            dm_rebuild_during_drag=bool(dm_rebuild_during_drag),
+            main_thread_stall_during_drag=bool(stall_during_drag),
+            drag_start_mono_ms=float(drag_start_mono_ms),
+            drag_end_mono_ms=float(drag_end_mono_ms),
         )
         self._drag_metrics = None
 
@@ -1437,17 +1507,16 @@ class QtViewerBridge:
             pass
 
         reference_ms = 0.0
-        if not self._stack_drag_active:
-            try:
-                _pw = getattr(self.vtk_widget, 'patient_widget', None)
-                if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
-                    if (now_ms - self._last_stack_reference_ms) >= 160.0:
-                        self._last_stack_reference_ms = now_ms
-                        t_stage = time.perf_counter()
-                        _pw._schedule_reference_line_update()
-                        reference_ms = (time.perf_counter() - t_stage) * 1000.0
-            except Exception:
-                pass
+        try:
+            _pw = getattr(self.vtk_widget, 'patient_widget', None)
+            if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
+                if (now_ms - self._last_stack_reference_ms) >= 160.0:
+                    self._last_stack_reference_ms = now_ms
+                    t_stage = time.perf_counter()
+                    _pw._schedule_reference_line_update()
+                    reference_ms = (time.perf_counter() - t_stage) * 1000.0
+        except Exception:
+            pass
 
         total_ms = (time.perf_counter() - t_total) * 1000.0
         if total_ms >= _SET_SLICE_STAGE_LOG_THRESHOLD_MS and not self._stack_drag_active:
@@ -1509,6 +1578,7 @@ class QtViewerBridge:
         self._protected_drag_active = active
         record_protected_drag(active)
         if active:
+            self._drag_session_id = f"drag-{getattr(self, '_debug_bridge_id', id(self))}-{int(time.time() * 1000)}"
             scheduler = getattr(self, '_stack_scheduler', None)
             if scheduler is None:
                 scheduler = StackInteractionScheduler()
@@ -1555,6 +1625,28 @@ class QtViewerBridge:
                 max_steps,
                 int(getattr(self, '_settle_arm_seq', 0) or 0),
             )
+            _corr_set_active_viewer_state(
+                viewer_state='fast_drag_active',
+                interaction_active=True,
+            )
+            drag_start_event = _corr_record_event(
+                'FAST_DRAG',
+                phase='start',
+                drag_session_id=str(getattr(self, '_drag_session_id', '') or ''),
+                slice=int(self._current_slice),
+                bridge_id=str(getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}")),
+                viewer_id=str(getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}")),
+            )
+            logger.info(
+                "[FAST_DRAG_SESSION] phase=start drag_session_id=%s slice=%d bridge=%s viewer=%s "
+                "corr_session=%s corr_mono_ms=%.3f",
+                str(getattr(self, '_drag_session_id', '') or ''),
+                int(self._current_slice),
+                str(getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}")),
+                str(getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}")),
+                _corr_session_id(),
+                float(drag_start_event.get('mono_ms', _corr_now_mono_ms())),
+            )
         else:
             try:
                 scheduler = getattr(self, '_stack_scheduler', None)
@@ -1583,6 +1675,10 @@ class QtViewerBridge:
                 self._current_slice,
                 self._settle_arm_seq,
                 QtViewerBridge._timer_is_active(getattr(self, '_interaction_settle_timer', None)),
+            )
+            _corr_set_active_viewer_state(
+                viewer_state='fast_drag_inactive',
+                interaction_active=False,
             )
 
     def _on_interaction_settled(self) -> None:

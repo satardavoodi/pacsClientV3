@@ -10,6 +10,12 @@ from PySide6.QtCore import QTimer
 from modules.zeta_boost import ImageSliceBooster
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 from PacsClient.utils.series_completeness import build_series_completeness_snapshot
+from PacsClient.utils.runtime_correlation import (
+    now_mono_ms as _corr_now_mono_ms,
+    record_event as _corr_record_event,
+    session_id as _corr_session_id,
+    set_active_viewer_state as _corr_set_active_viewer_state,
+)
 import logging
 
 try:
@@ -757,6 +763,22 @@ class _VCProgressiveMixin:
         sn = str(series_number)
         if total <= 0 or downloaded <= 0:
             return
+        fanout_event = _corr_record_event(
+            "SIGNAL_FANOUT",
+            source="series_images_progress",
+            series_number=sn,
+            downloaded=int(downloaded),
+            total=int(total),
+        )
+        logger.info(
+            "[SIGNAL_FANOUT] source=series_images_progress series=%s downloaded=%d total=%d "
+            "corr_session=%s corr_mono_ms=%.3f",
+            sn,
+            int(downloaded),
+            int(total),
+            _corr_session_id(),
+            float(fanout_event.get("mono_ms", _corr_now_mono_ms())),
+        )
 
         def _has_viewer_interest_for_series() -> bool:
             for node in self.lst_nodes_viewer or []:
@@ -1640,6 +1662,11 @@ class _VCProgressiveMixin:
         info = self._progressive_series.get(series_number, {})
         total = info.get("total", 0)
         _t_grow = now_ms()
+        _corr_set_active_viewer_state(
+            viewer_state="progressive_grow",
+            series_number=str(series_number),
+            interaction_active=False,
+        )
         target_visible_count = max(
             0,
             min(
@@ -1653,6 +1680,23 @@ class _VCProgressiveMixin:
             _PROGRESSIVE_STATE_PROGRESSIVE,
             source="_grow_progressive_fast",
             reason="grow_tick",
+        )
+        grow_event = _corr_record_event(
+            "PROGRESSIVE_GROW",
+            series_number=str(series_number),
+            pending_count=int(pending_count),
+            visible_target=int(target_visible_count),
+            terminal=bool(terminal),
+        )
+        logger.info(
+            "[PROGRESSIVE_GROW] phase=start series=%s pending=%d visible_target=%d terminal=%s "
+            "corr_session=%s corr_mono_ms=%.3f",
+            str(series_number),
+            int(pending_count),
+            int(target_visible_count),
+            bool(terminal),
+            _corr_session_id(),
+            float(grow_event.get("mono_ms", _corr_now_mono_ms())),
         )
 
         for vtk_w, node in viewers:
@@ -1799,11 +1843,27 @@ class _VCProgressiveMixin:
                     pass
             if should_schedule_meta_sync:
                 QTimer.singleShot(0, _deferred_meta_sync)
+                _corr_record_event(
+                    "PROGRESSIVE_APPEND",
+                    series_number=str(series_number),
+                    count=int(new_count),
+                    max_new_entries=int(_FAST_PROGRESSIVE_METADATA_APPEND_CAP),
+                    throttled=False,
+                    terminal=False,
+                )
                 self.logger.debug(
                     "progressive-fast: metadata sync deferred series=%s new_count=%d",
                     series_number, new_count,
                 )
             else:
+                _corr_record_event(
+                    "PROGRESSIVE_APPEND",
+                    series_number=str(series_number),
+                    count=int(new_count),
+                    max_new_entries=int(_FAST_PROGRESSIVE_METADATA_APPEND_CAP),
+                    throttled=True,
+                    terminal=False,
+                )
                 self.logger.debug(
                     "progressive-fast: metadata sync throttled series=%s new_count=%d",
                     series_number, new_count,
@@ -1826,6 +1886,16 @@ class _VCProgressiveMixin:
             total=total,
         )
         grow_total_ms = float(now_ms() - _t_grow)
+        _corr_record_event(
+            "PROGRESSIVE_GROW",
+            phase="end",
+            series_number=str(series_number),
+            pending_count=int(pending_count),
+            visible_target=int(target_visible_count),
+            actual_count=int(new_count),
+            terminal=bool(terminal),
+            duration_ms=float(grow_total_ms),
+        )
 
         # â”€â”€ Stale-grow guard â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         # loader.grow() may return fewer slices than expected if the OS has

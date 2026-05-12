@@ -12,6 +12,11 @@ from ...core.enums import DownloadPriority, DownloadStatus
 from ...core.models import DownloadTask, DownloadState
 from ..components.status_badge import StatusBadge
 from typing import List, Dict, Optional
+from PacsClient.utils.runtime_correlation import (
+    now_mono_ms as _corr_now_mono_ms,
+    record_event as _corr_record_event,
+    session_id as _corr_session_id,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -593,13 +598,78 @@ class _DMQueueMixin:
         the same event-loop tick.
         """
         from PySide6.QtCore import QTimer
+        stats = getattr(self, '_dm_refresh_queue_stats', None)
+        if stats is None:
+            stats = {
+                "queued_refresh_count": 0,
+                "coalesced_refresh_count": 0,
+                "skipped_refresh_count": 0,
+                "last_flush_mono_ms": 0.0,
+            }
+            self._dm_refresh_queue_stats = stats
         if getattr(self, '_rebuild_coalesce_pending', False):
+            stats["skipped_refresh_count"] = int(stats.get("skipped_refresh_count", 0)) + 1
+            _corr_record_event(
+                "TABLE_REFRESH",
+                phase="queue_skip_pending",
+                queued_refresh_count=int(stats.get("queued_refresh_count", 0)),
+                coalesced_refresh_count=int(stats.get("coalesced_refresh_count", 0)),
+                skipped_refresh_count=int(stats.get("skipped_refresh_count", 0)),
+            )
             return  # Already scheduled; the pending timer will rebuild once
+        stats["queued_refresh_count"] = int(stats.get("queued_refresh_count", 0)) + 1
         self._rebuild_coalesce_pending = True
+        logger.warning(
+            "[DM_REFRESH_QUEUE] event=queued queued_refresh_count=%d coalesced_refresh_count=%d "
+            "skipped_refresh_count=%d flush_ts_mono_ms=%.3f corr_session=%s",
+            int(stats.get("queued_refresh_count", 0)),
+            int(stats.get("coalesced_refresh_count", 0)),
+            int(stats.get("skipped_refresh_count", 0)),
+            float(stats.get("last_flush_mono_ms", 0.0) or 0.0),
+            _corr_session_id(),
+            extra={"component": "download"},
+        )
+        _corr_record_event(
+            "TABLE_REFRESH",
+            phase="queue_queued",
+            queued_refresh_count=int(stats.get("queued_refresh_count", 0)),
+            coalesced_refresh_count=int(stats.get("coalesced_refresh_count", 0)),
+            skipped_refresh_count=int(stats.get("skipped_refresh_count", 0)),
+        )
         QTimer.singleShot(50, self._fire_coalesced_rebuild)
 
     def _fire_coalesced_rebuild(self) -> None:
         """Called by the coalesce timer — executes one rebuild."""
+        stats = getattr(self, '_dm_refresh_queue_stats', None)
+        if stats is None:
+            stats = {
+                "queued_refresh_count": 0,
+                "coalesced_refresh_count": 0,
+                "skipped_refresh_count": 0,
+                "last_flush_mono_ms": 0.0,
+            }
+            self._dm_refresh_queue_stats = stats
+        flush_mono_ms = _corr_now_mono_ms()
+        stats["coalesced_refresh_count"] = int(stats.get("coalesced_refresh_count", 0)) + 1
+        stats["last_flush_mono_ms"] = float(flush_mono_ms)
+        logger.warning(
+            "[DM_REFRESH_QUEUE] event=flush queued_refresh_count=%d coalesced_refresh_count=%d "
+            "skipped_refresh_count=%d flush_ts_mono_ms=%.3f corr_session=%s",
+            int(stats.get("queued_refresh_count", 0)),
+            int(stats.get("coalesced_refresh_count", 0)),
+            int(stats.get("skipped_refresh_count", 0)),
+            float(flush_mono_ms),
+            _corr_session_id(),
+            extra={"component": "download"},
+        )
+        _corr_record_event(
+            "TABLE_REFRESH",
+            phase="queue_flush",
+            queued_refresh_count=int(stats.get("queued_refresh_count", 0)),
+            coalesced_refresh_count=int(stats.get("coalesced_refresh_count", 0)),
+            skipped_refresh_count=int(stats.get("skipped_refresh_count", 0)),
+            flush_mono_ms=float(flush_mono_ms),
+        )
         self._rebuild_coalesce_pending = False
         self._refresh_table_order()
 
