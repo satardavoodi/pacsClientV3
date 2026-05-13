@@ -21,6 +21,34 @@ DOWNLOAD_LOG = ROOT / "user_data" / "logs" / "download_diagnostics.log"
 TAG_RE = re.compile(r"\[(?P<tag>[A-Z0-9_]+)\]")
 KV_RE = re.compile(r"(?P<k>[a-zA-Z0-9_]+)=(?P<v>[^\s]+)")
 
+_SECOND_LEVEL_TAGS = {
+    "TIMER_CALLBACK": ("TIMER_CALLBACK",),
+    "MAIN_THREAD_DISK_IO": ("MAIN_THREAD_DISK_IO",),
+    "MAIN_THREAD_DB": ("MAIN_THREAD_DB",),
+    "SIGNAL_SLOT_LONG": ("SIGNAL_SLOT_LONG",),
+    "MODEL_LAYOUT": ("MODEL_LAYOUT",),
+    "STARTUP_SCAN": ("STARTUP_SCAN",),
+    "GC_PAUSE": ("GC_PAUSE",),
+    "IMPORT_LAZY_INIT": ("IMPORT_LAZY_INIT",),
+}
+
+
+def _second_level_bucket_from_event(ev: Dict) -> Optional[str]:
+    """Map an event to second-level UNKNOWN bucket.
+
+    Supports both formats:
+    1) [TIMER_CALLBACK] ... (direct bracket tag)
+    2) [UNKNOWN_ATTR] category=TIMER_CALLBACK ...
+    """
+    tag = str(ev.get("tag", "") or "")
+    if tag in _SECOND_LEVEL_TAGS:
+        return tag
+    if tag == "UNKNOWN_ATTR":
+        cat = str(ev.get("fields", {}).get("category", "") or "")
+        if cat in _SECOND_LEVEL_TAGS:
+            return cat
+    return None
+
 
 def _parse_ts_ms(line: str) -> Optional[float]:
     try:
@@ -132,6 +160,29 @@ def _bucket_for_stall(ev: Dict, all_events: List[Dict]) -> Tuple[str, Optional[D
     return best_bucket, best_event
 
 
+def _unknown_bucket_for_stall(ev: Dict, all_events: List[Dict]) -> Tuple[str, Optional[Dict]]:
+    ts = ev["ts_ms"]
+    best_bucket = "UNKNOWN_REMAINING"
+    best_event: Optional[Dict] = None
+    best_age = 10**18
+
+    # Use nearest prior second-level event within 1000ms, regardless of whether
+    # it arrived as a direct bracket tag or UNKNOWN_ATTR category field.
+    for cand in all_events:
+        bucket = _second_level_bucket_from_event(cand)
+        if bucket is None:
+            continue
+        age = ts - cand["ts_ms"]
+        if age < 0.0 or age > 1000.0:
+            continue
+        if age < best_age:
+            best_age = age
+            best_bucket = bucket
+            best_event = cand
+
+    return best_bucket, best_event
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--viewer-log", default=str(VIEWER_LOG))
@@ -171,6 +222,36 @@ def main() -> int:
 
     stalls_enriched.sort(key=lambda x: x["duration"], reverse=True)
 
+    unknown_breakdown: Dict[str, int] = {
+        "TIMER_CALLBACK": 0,
+        "MAIN_THREAD_DISK_IO": 0,
+        "MAIN_THREAD_DB": 0,
+        "SIGNAL_SLOT_LONG": 0,
+        "MODEL_LAYOUT": 0,
+        "STARTUP_SCAN": 0,
+        "GC_PAUSE": 0,
+        "IMPORT_LAZY_INIT": 0,
+        "UNKNOWN_REMAINING": 0,
+    }
+    unknown_over_200 = []
+
+    for item in stalls_enriched:
+        if item["bucket"] != "UNKNOWN":
+            continue
+        ubucket, unearest = _unknown_bucket_for_stall(item["stall"], all_events)
+        unknown_breakdown[ubucket] = int(unknown_breakdown.get(ubucket, 0)) + 1
+        if item["duration"] > 200.0:
+            unknown_over_200.append(
+                {
+                    "duration": item["duration"],
+                    "stall": item["stall"],
+                    "bucket": ubucket,
+                    "nearest": unearest,
+                }
+            )
+
+    unknown_over_200.sort(key=lambda x: x["duration"], reverse=True)
+
     dm_during_drag = 0
     for dm in dm_rebuild_events:
         for start, end in drag_intervals:
@@ -207,6 +288,41 @@ def main() -> int:
     print("\n=== Likely Attribution Per Stall (Top Ordered) ===")
     for idx, item in enumerate(stalls_enriched[: max(1, int(args.top))], start=1):
         print(f"{idx}. {item['bucket']}")
+
+    print("\n=== UNKNOWN Breakdown ===")
+    for key in [
+        "TIMER_CALLBACK",
+        "MAIN_THREAD_DISK_IO",
+        "MAIN_THREAD_DB",
+        "SIGNAL_SLOT_LONG",
+        "MODEL_LAYOUT",
+        "STARTUP_SCAN",
+        "GC_PAUSE",
+        "IMPORT_LAZY_INIT",
+        "UNKNOWN_REMAINING",
+    ]:
+        print(f"{key}={int(unknown_breakdown.get(key, 0))}")
+
+    print("\n=== UNKNOWN >200ms Nearest Instrumented Event (<=1000ms) ===")
+    if not unknown_over_200:
+        print("none")
+    else:
+        for idx, item in enumerate(unknown_over_200, start=1):
+            near = item["nearest"]
+            near_desc = "none"
+            if near is not None:
+                near_cat = str(near.get("fields", {}).get("category", "") or "")
+                near_tag = str(near.get("tag", "") or "")
+                near_label = near_tag
+                if near_tag == "UNKNOWN_ATTR" and near_cat:
+                    near_label = f"UNKNOWN_ATTR:{near_cat}"
+                near_desc = (
+                    f"{near_label} age_ms={item['stall']['ts_ms'] - near['ts_ms']:.1f} "
+                    f"duration_ms={_to_float(near['fields'].get('duration_ms')):.1f}"
+                )
+            print(
+                f"{idx}. stall_ms={item['duration']:.1f} bucket={item['bucket']} nearest={near_desc}"
+            )
 
     if not stalls_enriched:
         print("No MAIN_THREAD_STALL events found.")

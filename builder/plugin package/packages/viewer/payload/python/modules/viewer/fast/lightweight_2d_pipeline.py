@@ -53,6 +53,10 @@ from modules.viewer.fast.ui_throttle import (
     should_admit,
 )
 from modules.zeta_boost.cache_engine import _zb_globals
+from PacsClient.utils.runtime_correlation import (
+    count_events_between as _corr_count_events_between,
+    now_mono_ms as _corr_now_mono_ms,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +210,7 @@ class RenderedFrame:
     total_ms: float
     source_slice_index: Optional[int] = None
     cache_source: str = "decode"
+    io_probe: Optional[Dict[str, Any]] = None
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -468,6 +473,9 @@ class Lightweight2DPipeline(QObject):
         self._drag_prefetch_submitted: int = 0
         self._drag_background_decode_count: int = 0
         self._stack_drag_p01_slices: Tuple[int, ...] = ()
+        self._foreground_probe_thread_id: int = 0
+        self._foreground_probe: Optional[Dict[str, Any]] = None
+        self._last_additive_flush_mono_ms: float = 0.0
 
         # F2.1: 1-in-N counter for [OVERLAP_SCENARIO] KPI emission.
         self._overlap_log_counter: int = 0
@@ -959,6 +967,10 @@ class Lightweight2DPipeline(QObject):
           - '' (default): non-interactive call — no surrogate
         """
         idx = self._clamp(slice_index)
+        fg_probe_active = bool(self._fast_interaction and interaction_type == 'drag')
+        fg_probe_start_ms = _corr_now_mono_ms() if fg_probe_active else 0.0
+        if fg_probe_active:
+            self._begin_foreground_probe(idx)
         sm = self._slices[idx]
         ww, wc = self._resolve_window_level(idx)
         # Medical consistency policy: filter stays on for wheel/drag/settled.
@@ -981,6 +993,9 @@ class Lightweight2DPipeline(QObject):
             _pm,
         )
         if cached_frame is not None:
+            if fg_probe_active:
+                self._mark_foreground_probe(source="memory_cache", cache_hit=True)
+                cached_frame = self._finalize_foreground_probe(cached_frame, fg_probe_start_ms)
             self._maybe_emit_overlap_tag(cached_frame, "hit")
             return cached_frame
         if logger.isEnabledFor(logging.DEBUG):
@@ -1014,12 +1029,17 @@ class Lightweight2DPipeline(QObject):
             _pm,
         )
         if surrogate_frame is not None:
+            if fg_probe_active:
+                self._mark_foreground_probe(source="memory_cache", cache_hit=True)
+                surrogate_frame = self._finalize_foreground_probe(surrogate_frame, fg_probe_start_ms)
             self._maybe_emit_overlap_tag(surrogate_frame, "surrogate")
             return surrogate_frame
         # ── End B3.7 ──────────────────────────────────────────────────
 
         _pm.record_cache_miss()
         frame = self._render_frame_uncached(idx, ww, wc, filter_enabled, record_metrics=True)
+        if fg_probe_active:
+            frame = self._finalize_foreground_probe(frame, fg_probe_start_ms)
         # B2.5: record foreground wait (main-thread decode on cache miss)
         if frame.decode_ms > 0:
             _pm.record_foreground_wait(frame.decode_ms)
@@ -1034,6 +1054,96 @@ class Lightweight2DPipeline(QObject):
             self._ensure_prefetch_prepared(idx)
         self._maybe_emit_overlap_tag(frame, "decode")
         return frame
+
+    def _begin_foreground_probe(self, idx: int) -> None:
+        self._foreground_probe_thread_id = int(threading.get_ident())
+        self._foreground_probe = {
+            "slice_index": int(idx),
+            "source": "memory_cache",
+            "cache_hit": True,
+            "cache_lookup_ms": 0.0,
+            "disk_wait_ms": 0.0,
+            "decode_wait_ms": 0.0,
+            "file_open_count": 0,
+            "foreground_disk_reads": 0,
+            "foreground_bytes_read": 0,
+            "disk_cache_hit": False,
+            "foreground_frame_ready_immediate": True,
+        }
+
+    def _mark_foreground_probe(self, **fields: Any) -> None:
+        probe = getattr(self, "_foreground_probe", None)
+        if probe is None or int(threading.get_ident()) != int(getattr(self, "_foreground_probe_thread_id", 0) or 0):
+            return
+        for key, value in fields.items():
+            if key in {"cache_lookup_ms", "disk_wait_ms", "decode_wait_ms"}:
+                probe[key] = float(probe.get(key, 0.0) or 0.0) + float(value or 0.0)
+            elif key in {"file_open_count", "foreground_disk_reads", "foreground_bytes_read"}:
+                probe[key] = int(probe.get(key, 0) or 0) + int(value or 0)
+            else:
+                probe[key] = value
+
+    def _finalize_foreground_probe(self, frame: RenderedFrame, start_mono_ms: float) -> RenderedFrame:
+        probe = dict(getattr(self, "_foreground_probe", None) or {})
+        self._foreground_probe = None
+        self._foreground_probe_thread_id = 0
+        if not probe:
+            return frame
+
+        probe["decode_wait_ms"] = float(max(float(frame.decode_ms or 0.0), float(probe.get("decode_wait_ms", 0.0) or 0.0)))
+        if probe.get("foreground_disk_reads", 0) > 0:
+            probe["source"] = "direct_dicom_read"
+            probe["cache_hit"] = False
+        elif bool(probe.get("disk_cache_hit", False)):
+            probe["source"] = "disk_cache"
+            probe["cache_hit"] = True
+        elif float(frame.decode_ms or 0.0) > 0.0 and str(probe.get("source", "memory_cache")) == "memory_cache":
+            probe["source"] = "decode_wait"
+            probe["cache_hit"] = False
+
+        with self._prefetch_lock:
+            decode_queue_depth = int(len(self._prefetch_pending))
+        try:
+            disk_stats = dict(get_disk_pixel_cache().stats() or {})
+        except Exception:
+            disk_stats = {}
+        probe["decode_queue_depth"] = decode_queue_depth
+        probe["disk_cache_queue_depth"] = int(disk_stats.get("write_queue_depth", 0) or 0)
+        probe["cache_grow_overlap"] = bool(
+            (getattr(self, "_grow_future", None) is not None and not getattr(self, "_grow_future", None).done())
+            or bool(getattr(self, "_pending_grow_entries", None) or [])
+        )
+        now_ms = _corr_now_mono_ms()
+        probe["additive_flush_overlap"] = bool(
+            float(getattr(self, "_last_additive_flush_mono_ms", 0.0) or 0.0) > 0.0
+            and (now_ms - float(getattr(self, "_last_additive_flush_mono_ms", 0.0) or 0.0)) <= 750.0
+        )
+        if start_mono_ms > 0.0 and now_ms >= start_mono_ms:
+            probe["sqlite_overlap_count"] = int(_corr_count_events_between("MAIN_THREAD_DB", start_mono_ms, now_ms))
+        else:
+            probe["sqlite_overlap_count"] = 0
+        probe["foreground_frame_ready_immediate"] = bool(
+            bool(probe.get("cache_hit", False))
+            and float(frame.decode_ms or 0.0) <= 0.0
+            and float(probe.get("disk_wait_ms", 0.0) or 0.0) <= 0.0
+        )
+
+        return RenderedFrame(
+            qimage=frame.qimage,
+            width=frame.width,
+            height=frame.height,
+            slice_index=frame.slice_index,
+            window_width=frame.window_width,
+            window_center=frame.window_center,
+            photometric=frame.photometric,
+            decode_ms=frame.decode_ms,
+            filter_ms=frame.filter_ms,
+            wl_ms=frame.wl_ms,
+            total_ms=frame.total_ms,
+            source_slice_index=frame.source_slice_index,
+            cache_source=frame.cache_source,
+            io_probe=probe,
+        )
 
     # F2.1b: minimum gap between forced (sentinel) emits, in milliseconds.
     # Prevents log storm if many decode misses fire back-to-back. Sampled
@@ -1563,11 +1673,13 @@ class Lightweight2DPipeline(QObject):
         if idx in self._pixel_cache:
             arr = self._pixel_cache.pop(idx)
             self._pixel_cache[idx] = arr
+            self._mark_foreground_probe(source="memory_cache", cache_hit=True)
             logger.debug(
                 "FAST:pixel_cache source=hit idx=%d cache_size=%d",
                 idx, len(self._pixel_cache),
             )
             return arr
+        self._mark_foreground_probe(cache_hit=False)
         logger.debug(
             "FAST:pixel_cache source=miss idx=%d cache_size=%d",
             idx, len(self._pixel_cache),
@@ -1599,15 +1711,34 @@ class Lightweight2DPipeline(QObject):
         # B3.12: Disk cache lookup (L2 cache)
         disk_cache = get_disk_pixel_cache()
         study_uid = self._series_path or ""
+        t_lookup = time.perf_counter()
         cached = disk_cache.get(
             sop_instance_uid=sm.path,
             study_uid=study_uid,
             expected_shape=(sm.rows, sm.cols),
         )
+        lookup_ms = (time.perf_counter() - t_lookup) * 1000.0
+        self._mark_foreground_probe(cache_lookup_ms=lookup_ms, disk_wait_ms=lookup_ms)
         if cached is not None:
+            self._mark_foreground_probe(source="disk_cache", cache_hit=True, disk_cache_hit=True)
             return cached
 
+        t_read = time.perf_counter()
         ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
+        read_ms = (time.perf_counter() - t_read) * 1000.0
+        file_size = 0
+        try:
+            file_size = int(os.path.getsize(sm.path) or 0)
+        except Exception:
+            file_size = 0
+        self._mark_foreground_probe(
+            source="direct_dicom_read",
+            cache_hit=False,
+            disk_wait_ms=read_ms,
+            file_open_count=1,
+            foreground_disk_reads=1,
+            foreground_bytes_read=file_size,
+        )
         arr = np.asarray(ds.pixel_array)
 
         if arr.ndim == 3 and sm.samples_per_pixel < 3:
@@ -2778,6 +2909,9 @@ class Lightweight2DPipeline(QObject):
         background thread so the grow timer tick costs only ~2 ms (os.scandir)
         on the main thread.
         """
+        self._last_additive_flush_ms = 0.0
+        self._last_slice_list_extend_ms = 0.0
+        self._last_cache_index_update_ms = 0.0
         if not self._series_path:
             return len(self._slices)
 
@@ -2816,6 +2950,7 @@ class Lightweight2DPipeline(QObject):
             and self._pending_grow_entries
             and self._is_open
         ):
+            t_flush_start = time.perf_counter()
             flush_entries = list(self._pending_grow_entries)
             self._pending_grow_entries = []
             old_slices = list(self._slices)
@@ -2826,23 +2961,38 @@ class Lightweight2DPipeline(QObject):
                 if 0 <= old_current_index < old_count
                 else None
             )
+            t_slice_list_extend_start = time.perf_counter()
             new_slices = [self._slice_meta_from_entry(e) for e in flush_entries]
             old_pixel_cache_size = len(self._pixel_cache)
             old_frame_cache_size = len(self._frame_cache)
             self._slices.extend(new_slices)
             self._slices = self._sort_slices(self._slices)
+            self._last_slice_list_extend_ms = max(
+                0.0,
+                (time.perf_counter() - t_slice_list_extend_start) * 1000.0,
+            )
+            t_cache_index_update_start = time.perf_counter()
             self._remap_indexed_caches_after_resort(old_slices)
             if old_current_path is not None:
                 new_index_by_path = {s.path: i for i, s in enumerate(self._slices)}
                 self._current_index = self._clamp(
                     new_index_by_path.get(old_current_path, old_current_index)
                 )
+            self._last_cache_index_update_ms = max(
+                0.0,
+                (time.perf_counter() - t_cache_index_update_start) * 1000.0,
+            )
             self._invalidate_geometry_cache()
             self._prune_caches_to_effective_limits()
+            self._last_additive_flush_ms = max(
+                0.0,
+                (time.perf_counter() - t_flush_start) * 1000.0,
+            )
             logger.info(
                 "FAST:additive_cache_grow path=%s old_count=%d new_count=%d "
                 "added=%d force_flush=%s threshold=%d current_before=%d current_after=%d "
-                "pixel_preserved=%d/%d frame_preserved=%d/%d",
+                "pixel_preserved=%d/%d frame_preserved=%d/%d "
+                "pipeline_additive_flush_ms=%.3f slice_list_extend_ms=%.3f cache_index_update_ms=%.3f",
                 self._series_path,
                 old_count,
                 len(self._slices),
@@ -2855,7 +3005,11 @@ class Lightweight2DPipeline(QObject):
                 old_pixel_cache_size,
                 len(self._frame_cache),
                 old_frame_cache_size,
+                self._last_additive_flush_ms,
+                self._last_slice_list_extend_ms,
+                self._last_cache_index_update_ms,
             )
+            self._last_additive_flush_mono_ms = _corr_now_mono_ms()
 
         # ── 2. Submit next background scan (exclude applied AND pending paths) ─
         if self._grow_future is None and self._is_open and self._series_path:

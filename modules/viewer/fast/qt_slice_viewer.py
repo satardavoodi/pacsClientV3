@@ -37,6 +37,9 @@ from PySide6.QtWidgets import QWidget
 
 from modules.viewer.fast.stack_drag_profile import build_stack_drag_profile
 from modules.viewer.fast import ui_throttle
+from modules.viewer.fast.event_loop_diagnostics import (
+    record_event as _event_diag_record_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -308,6 +311,26 @@ class QtSliceViewer(QWidget):
         old_w, old_h = self._image_width, self._image_height
         self._image_width = qimage.width()
         self._image_height = qimage.height()
+        _pending_depth = int(getattr(self, '_pending_set_image_depth', 0) or 0)
+        if _pending_depth > 0:
+            setattr(
+                self,
+                '_drag_qt_update_pending_count',
+                int(getattr(self, '_drag_qt_update_pending_count', 0) or 0) + 1,
+            )
+            setattr(
+                self,
+                '_drag_superseded_frame_count',
+                int(getattr(self, '_drag_superseded_frame_count', 0) or 0) + 1,
+            )
+        _pending_depth += 1
+        self._pending_set_image_depth = _pending_depth
+        _depth_log = getattr(self, '_drag_update_backlog_depth_samples', None)
+        if _depth_log is not None:
+            try:
+                _depth_log.append(float(_pending_depth))
+            except Exception:
+                pass
         # If image dimensions changed (e.g. first frame after series switch) and
         # fit-to-viewport is active, recalculate zoom immediately so the image
         # fills the viewport correctly even if zoom_to_fit() is not called
@@ -316,6 +339,16 @@ class QtSliceViewer(QWidget):
             self._zoom = self._calculate_fit_zoom()
             self._pan_offset = QPointF(0.0, 0.0)
         self.update()
+        try:
+            _event_diag_record_event(
+                "UpdateRequest",
+                "update_call",
+                widget_name="QtSliceViewer",
+            )
+        except Exception:
+            pass
+        # F8: record call time so paintEvent can compute Qt repaint-scheduling delay.
+        self._set_image_mono_ms: float = time.perf_counter() * 1000.0
 
     def set_pixmap(self, pixmap: QPixmap) -> None:
         """Directly set a QPixmap for display."""
@@ -1058,7 +1091,27 @@ class QtSliceViewer(QWidget):
 
     def paintEvent(self, event) -> None:
         """Render the medical image with QPainter."""
+        # F8: capture Qt repaint-scheduling delay (set_image → paintEvent)
+        # BEFORE any render work. This measures how long Qt kept the repaint
+        # queued in the event loop before executing it.
+        _repaint_delay_ms = 0.0
+        _simg_ms = getattr(self, '_set_image_mono_ms', 0.0)
+        if _simg_ms > 0.0:
+            _repaint_delay_ms = time.perf_counter() * 1000.0 - _simg_ms
+            self._set_image_mono_ms = 0.0  # consumed; re-armed on next set_image
+            self._pending_set_image_depth = max(
+                0,
+                int(getattr(self, '_pending_set_image_depth', 0) or 0) - 1,
+            )
         t_start = time.perf_counter()
+        try:
+            _event_diag_record_event(
+                "Paint",
+                "paint",
+                widget_name="QtSliceViewer",
+            )
+        except Exception:
+            pass
         painter = QPainter(self)
 
         try:
@@ -1094,6 +1147,19 @@ class QtSliceViewer(QWidget):
         if _drag_paint_log is not None:
             try:
                 _drag_paint_log.append(self._last_paint_ms)
+            except Exception:
+                pass
+        # F8: append Qt repaint-scheduling delay to drag-armed delay list.
+        _drag_delay_log = getattr(self, '_drag_paint_delay_samples', None)
+        if _drag_delay_log is not None and _repaint_delay_ms > 0.0:
+            try:
+                _drag_delay_log.append(_repaint_delay_ms)
+            except Exception:
+                pass
+        _presented_slice_log = getattr(self, '_drag_presented_slice_indices', None)
+        if _presented_slice_log is not None:
+            try:
+                _presented_slice_log.append(int(getattr(self, '_current_slice_index', 0) or 0))
             except Exception:
                 pass
 

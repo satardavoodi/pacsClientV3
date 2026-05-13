@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v2.4.7c (2026-05-02)
+> **Current Stable Version:** v3.0.2 (2026-05-13)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -83,6 +83,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) — Current consolidated release history
+- [Version 3.0.2 Release](releases/VERSION_3.0.2_RELEASE.md) — FAST smoothness validation build for multi-PC testing
 - [Version 2.4.7c Release](releases/VERSION_2.4.7c_RELEASE.md) — Current conservative FAST cache release notes
 - [Version 2.4.6 Release](releases/VERSION_2.4.6_RELEASE.md) — Previous stable release notes
 - [Version 2.4.5 Release](releases/VERSION_2.4.5_RELEASE.md) — Previous stable release notes

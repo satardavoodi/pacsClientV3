@@ -121,6 +121,24 @@ def test_parse_aipacs_log_text_tracks_unified_fast_advanced_and_shared_metrics()
     assert metrics["viewer_mode_counts"]["Shared"] >= 1
 
 
+def test_parse_aipacs_log_text_extracts_fast_queue_wait_attribution():
+    text = """
+    2026-05-13 | INFO | component=viewer role=main | modules.viewer.fast.qt_viewer_bridge._log_drag_metrics_summary | action=sess study=s series=1 job=- viewevt=v fn=- stage=- result=- | [FAST_EVENT_PACING] drag_session_id=drag-a bridge=b1 viewer=q1 duration_s=1.000 total_events=20 accepted_events=15 same_slice_rejected=5 scheduler_rejected=0 same_slice_ratio_pct=25.0 coalesce_ratio_pct=25.0 raw_input_event_count=20 accepted_input_event_count=15 coalesced_input_event_count=5 stale_slice_request_count=0 set_slice_request_count=15 set_slice_executed_count=15 frame_present_count=14 requested_slice_count=20 presented_slice_count=14 dropped_or_superseded_slice_request_count=6 event_jitter_p95_ms=44.0 event_jitter_max_ms=91.0 input_event_gap_p95_ms=112.0 input_event_gap_max_ms=184.0 request_to_execute_p95_ms=8.0 request_to_execute_max_ms=12.0 set_to_image_p50_ms=0.9 set_to_image_p95_ms=1.6 set_to_image_max_ms=1.9 execute_to_frame_ready_p95_ms=1.6 execute_to_frame_ready_max_ms=1.9 frame_ready_to_paint_p95_ms=21.0 frame_ready_to_paint_max_ms=30.0 paint_to_present_p95_ms=1.7 paint_to_present_max_ms=2.0 render_clock_gap_p95_ms=70.0 render_clock_gap_max_ms=120.0 frame_present_interval_p50_ms=16.0 frame_present_interval_p95_ms=95.0 frame_present_interval_max_ms=180.0 implied_queue_wait_p95_ms=104.0 implied_queue_wait_max_ms=187.0 pending_set_slice_queue_depth_p95=2.0 pending_set_slice_queue_depth_max=4.0 qt_update_pending_count=9 queue_wait_classification=INPUT_DELIVERY_GAP qt_repaint_delay_p50_ms=6.0 qt_repaint_delay_p95_ms=21.0 qt_repaint_delay_max_ms=30.0 corr_session=s corr_mono_ms=1.0
+    2026-05-13 | INFO | component=viewer role=main | modules.viewer.fast.qt_viewer_bridge._log_drag_metrics_summary | action=sess study=s series=1 job=- viewevt=v fn=- stage=- result=- | [FAST_EVENT_PACING] drag_session_id=drag-b bridge=b1 viewer=q1 duration_s=1.000 total_events=20 accepted_events=18 same_slice_rejected=2 scheduler_rejected=0 same_slice_ratio_pct=10.0 coalesce_ratio_pct=10.0 raw_input_event_count=20 accepted_input_event_count=18 coalesced_input_event_count=2 stale_slice_request_count=0 set_slice_request_count=18 set_slice_executed_count=18 frame_present_count=17 requested_slice_count=20 presented_slice_count=17 dropped_or_superseded_slice_request_count=3 event_jitter_p95_ms=38.0 event_jitter_max_ms=80.0 input_event_gap_p95_ms=45.0 input_event_gap_max_ms=75.0 request_to_execute_p95_ms=96.0 request_to_execute_max_ms=150.0 set_to_image_p50_ms=1.2 set_to_image_p95_ms=2.3 set_to_image_max_ms=3.0 execute_to_frame_ready_p95_ms=2.3 execute_to_frame_ready_max_ms=3.0 frame_ready_to_paint_p95_ms=9.0 frame_ready_to_paint_max_ms=14.0 paint_to_present_p95_ms=1.9 paint_to_present_max_ms=2.2 render_clock_gap_p95_ms=77.0 render_clock_gap_max_ms=132.0 frame_present_interval_p50_ms=21.0 frame_present_interval_p95_ms=87.0 frame_present_interval_max_ms=161.0 implied_queue_wait_p95_ms=121.0 implied_queue_wait_max_ms=220.0 pending_set_slice_queue_depth_p95=3.0 pending_set_slice_queue_depth_max=5.0 qt_update_pending_count=12 queue_wait_classification=SET_SLICE_QUEUE_WAIT qt_repaint_delay_p50_ms=4.0 qt_repaint_delay_p95_ms=9.0 qt_repaint_delay_max_ms=14.0 corr_session=s corr_mono_ms=1.0
+    """
+
+    metrics = parse_aipacs_log_text(text)
+
+    assert metrics["fast_queue_wait_session_count"] == 2
+    assert metrics["fast_queue_wait_class_counts"]["INPUT_DELIVERY_GAP"] == 1
+    assert metrics["fast_queue_wait_class_counts"]["SET_SLICE_QUEUE_WAIT"] == 1
+    assert metrics["fast_queue_wait_top_sessions"][0]["drag_session_id"] == "drag-b"
+    assert metrics["fast_queue_wait_top_sessions"][0]["dominant_queue_wait_stage"] in {
+        "SET_SLICE_QUEUE_WAIT",
+        "FRAME_PRESENT_DELAY",
+    }
+
+
 def test_compare_payloads_flags_aipacs_overhead():
     left = {
         "viewer": "AI-PACS",

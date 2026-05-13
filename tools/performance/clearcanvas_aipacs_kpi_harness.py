@@ -382,6 +382,8 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
     fast_drag_ui_lag_max_ms: List[float] = []
     fast_drag_prefetch_per_s: List[float] = []
     fast_drag_background_decode_count: List[float] = []
+    fast_queue_wait_sessions: List[Dict[str, Any]] = []
+    fast_queue_wait_class_counts: Counter[str] = Counter()
     advanced_set_slice_ms: List[float] = []
     advanced_wl_ms: List[float] = []
     advanced_render_ms: List[float] = []
@@ -481,6 +483,43 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
             fast_drag_ui_lag_max_ms.append(float(m.group("ui_lag_max")))
             fast_drag_prefetch_per_s.append(float(m.group("prefetch_per_s")))
             fast_drag_background_decode_count.append(float(m.group("background_decode_count")))
+
+        if "[FAST_EVENT_PACING]" in line:
+            fields = _parse_kv_fields(line)
+            implied_queue_wait_p95 = _to_float(fields.get("implied_queue_wait_p95_ms"))
+            if implied_queue_wait_p95 is not None:
+                drag_session_id = str(fields.get("drag_session_id", ""))
+                queue_wait_class = str(fields.get("queue_wait_classification", "UNKNOWN_QUEUE_WAIT"))
+                input_gap_p95 = _to_float(fields.get("input_event_gap_p95_ms")) or 0.0
+                request_to_execute_p95 = _to_float(fields.get("request_to_execute_p95_ms")) or 0.0
+                frame_ready_to_paint_p95 = _to_float(fields.get("frame_ready_to_paint_p95_ms")) or 0.0
+                paint_to_present_p95 = _to_float(fields.get("paint_to_present_p95_ms")) or 0.0
+                frame_present_interval_p95 = _to_float(fields.get("frame_present_interval_p95_ms")) or 0.0
+                stage_candidates = {
+                    "INPUT_DELIVERY_GAP": float(input_gap_p95),
+                    "SET_SLICE_QUEUE_WAIT": float(request_to_execute_p95),
+                    "QT_UPDATE_PAINT_DELAY": float(frame_ready_to_paint_p95),
+                    "FRAME_PRESENT_DELAY": float(frame_present_interval_p95),
+                    "PAINT_TO_PRESENT": float(paint_to_present_p95),
+                }
+                dominant_stage = max(stage_candidates.items(), key=lambda kv: kv[1])[0]
+                fast_queue_wait_sessions.append({
+                    "drag_session_id": drag_session_id,
+                    "queue_wait_classification": queue_wait_class,
+                    "implied_queue_wait_p95_ms": float(implied_queue_wait_p95),
+                    "implied_queue_wait_max_ms": float(_to_float(fields.get("implied_queue_wait_max_ms")) or 0.0),
+                    "input_event_gap_p95_ms": float(input_gap_p95),
+                    "request_to_execute_p95_ms": float(request_to_execute_p95),
+                    "frame_ready_to_paint_p95_ms": float(frame_ready_to_paint_p95),
+                    "paint_to_present_p95_ms": float(paint_to_present_p95),
+                    "frame_present_interval_p95_ms": float(frame_present_interval_p95),
+                    "qt_update_pending_count": int(_to_float(fields.get("qt_update_pending_count")) or 0),
+                    "pending_set_slice_queue_depth_p95": float(_to_float(fields.get("pending_set_slice_queue_depth_p95")) or 0.0),
+                    "stale_slice_request_count": int(_to_float(fields.get("stale_slice_request_count")) or 0),
+                    "dropped_or_superseded_slice_request_count": int(_to_float(fields.get("dropped_or_superseded_slice_request_count")) or 0),
+                    "dominant_queue_wait_stage": dominant_stage,
+                })
+                fast_queue_wait_class_counts[queue_wait_class] += 1
 
         m = _ADVANCED_SCROLL_SUBTIMING_RE.search(line)
         if m:
@@ -698,6 +737,12 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
     total_fast_drag_kpi = len(fast_drag_event_p95_ms)
     fast_prefetch_zero_drag_count = sum(1 for value in fast_drag_prefetch_per_s if value == 0.0)
     dicom_file_write_metric_ms = dicom_file_write_ms or dicom_file_write_summary_ms
+    fast_queue_wait_sessions_sorted = sorted(
+        fast_queue_wait_sessions,
+        key=lambda item: float(item.get("implied_queue_wait_p95_ms", 0.0) or 0.0),
+        reverse=True,
+    )
+    fast_queue_wait_top_sessions = fast_queue_wait_sessions_sorted[:5]
 
     return {
         "viewer_mode_counts": dict(viewer_mode_counts),
@@ -745,6 +790,17 @@ def parse_aipacs_log_text(text: str) -> Dict[str, Any]:
         "fast_drag_ui_lag_max_ms": round(max(fast_drag_ui_lag_max_ms) if fast_drag_ui_lag_max_ms else 0.0, 2),
         "fast_prefetch_zero_drag_ratio_pct": round((fast_prefetch_zero_drag_count / total_fast_drag_kpi) * 100.0, 2) if total_fast_drag_kpi else 0.0,
         "fast_background_decode_count": int(sum(fast_drag_background_decode_count)),
+        "fast_queue_wait_session_count": len(fast_queue_wait_sessions),
+        "fast_queue_wait_class_counts": dict(fast_queue_wait_class_counts),
+        "fast_queue_wait_p95_ms": round(
+            _percentile([float(item.get("implied_queue_wait_p95_ms", 0.0) or 0.0) for item in fast_queue_wait_sessions], 95),
+            2,
+        ),
+        "fast_queue_wait_max_ms": round(
+            max([float(item.get("implied_queue_wait_max_ms", 0.0) or 0.0) for item in fast_queue_wait_sessions], default=0.0),
+            2,
+        ),
+        "fast_queue_wait_top_sessions": fast_queue_wait_top_sessions,
         "fast_foreground_decode_during_drag_count": int(fast_foreground_decode_during_drag_count),
         "fast_cached_display_p95_ms": round(_percentile(fast_cached_display_ms, 95), 2),
         "fast_pixel_cache_hit_ratio_pct": round((src_counts.get("hit", 0) / total_scroll) * 100.0, 2) if total_scroll else 0.0,

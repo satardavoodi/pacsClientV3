@@ -26,14 +26,21 @@ Version: v1.0.0 (2026-03-02)
 from __future__ import annotations
 
 import logging
+import os
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
 from modules.viewer.fast.perf_metrics import PerfMetrics
 
+try:
+    import psutil
+except Exception:
+    psutil = None
+
 import numpy as np
 from PySide6.QtCore import QObject, QTimer
 
+from modules.viewer.fast.disk_pixel_cache import get_disk_pixel_cache
 from modules.viewer.fast.lightweight_2d_pipeline import (
     Lightweight2DPipeline,
     PipelineConfig,
@@ -44,7 +51,18 @@ from modules.viewer.fast.qt_slice_viewer import (
 )
 from modules.viewer.fast.object_cache import is_noop_object_cache
 from modules.viewer.fast.stack_interaction_scheduler import FastWorkPriority, StackInteractionScheduler
-from modules.viewer.fast.ui_throttle import record_fast_interaction, record_protected_drag, record_ui_heartbeat
+from modules.viewer.fast.ui_throttle import (
+    get_live_block_telemetry_snapshot,
+    get_load_debug_snapshot,
+    record_fast_interaction,
+    record_protected_drag,
+    record_ui_heartbeat,
+)
+from modules.viewer.fast.event_loop_diagnostics import (
+    start_session as _event_diag_start_session,
+    stop_session as _event_diag_stop_session,
+    record_event as _event_diag_record_event,
+)
 from modules.viewer.tools.coord_resolver import CoordinateResolver
 from PacsClient.utils.runtime_correlation import (
     count_events_between as _corr_count_events_between,
@@ -58,6 +76,11 @@ logger = logging.getLogger(__name__)
 
 
 _SET_SLICE_STAGE_LOG_THRESHOLD_MS = 16.0
+_FAST_STACK_PRESSURE_SAMPLE_MIN_INTERVAL_MS = 125.0
+_FAST_RENDER_CLOCK_BASE_INTERVAL_MS = 33
+_FAST_RENDER_CLOCK_FAST_INTERVAL_MS = 16
+_FAST_RENDER_CLOCK_IDLE_STOP_MS = 260.0
+_FAST_RENDER_CLOCK_MAX_MISSED_TICKS = 12
 
 
 def _percentile(values: List[float], pct: float) -> float:
@@ -68,6 +91,217 @@ def _percentile(values: List[float], pct: float) -> float:
     lo = int(pos)
     hi = min(lo + 1, len(ordered) - 1)
     return float(ordered[lo] + (pos - lo) * (ordered[hi] - ordered[lo]))
+
+
+def _float_or_zero(value: Any) -> float:
+    try:
+        return float(value)
+    except Exception:
+        return 0.0
+
+
+def _int_or_zero(value: Any) -> int:
+    try:
+        return int(value)
+    except Exception:
+        return 0
+
+
+def _sample_percentile(samples: List[Dict[str, Any]], key: str, pct: float) -> float:
+    return _percentile([_float_or_zero(sample.get(key, 0.0)) for sample in samples], pct)
+
+
+def _sample_max(samples: List[Dict[str, Any]], key: str) -> float:
+    values = [_float_or_zero(sample.get(key, 0.0)) for sample in samples]
+    return max(values) if values else 0.0
+
+
+def _sample_min(samples: List[Dict[str, Any]], key: str) -> float:
+    values = [_float_or_zero(sample.get(key, 0.0)) for sample in samples]
+    return min(values) if values else 0.0
+
+
+def _classify_queue_wait_source(
+    *,
+    input_event_gap_p95_ms: float,
+    request_to_execute_p95_ms: float,
+    frame_ready_to_paint_p95_ms: float,
+    paint_to_present_p95_ms: float,
+    frame_present_interval_p95_ms: float,
+    stale_ratio_pct: float,
+    dropped_or_superseded_slice_request_count: int,
+    wheel_compression_suspected: bool,
+    timer_heartbeat_steady: bool,
+    timer_gap_p95_ms: float,
+) -> str:
+    if wheel_compression_suspected:
+        return "EVENT_COMPRESSION"
+    if (not timer_heartbeat_steady) and timer_gap_p95_ms >= 100.0:
+        return "QASYNC_TIMER_INTERFERENCE"
+    if input_event_gap_p95_ms >= max(80.0, request_to_execute_p95_ms * 1.35):
+        return "INPUT_DELIVERY_GAP"
+    if request_to_execute_p95_ms >= max(20.0, frame_ready_to_paint_p95_ms * 1.25):
+        return "SET_SLICE_QUEUE_WAIT"
+    if stale_ratio_pct >= 25.0 and dropped_or_superseded_slice_request_count > 0:
+        return "STALE_REQUEST_BACKLOG"
+    if frame_ready_to_paint_p95_ms >= max(20.0, paint_to_present_p95_ms * 1.2):
+        return "QT_UPDATE_PAINT_DELAY"
+    expected_present_ms = frame_ready_to_paint_p95_ms + paint_to_present_p95_ms
+    if frame_present_interval_p95_ms >= max(60.0, expected_present_ms + 20.0):
+        return "FRAME_PRESENT_DELAY"
+    return "UNKNOWN_QUEUE_WAIT"
+
+
+def _pressure_phase(*, active_download_count: int, progressive_visible: bool) -> str:
+    if active_download_count > 0 and progressive_visible:
+        return 'download_progressive'
+    if active_download_count > 0:
+        return 'download_only'
+    if progressive_visible:
+        return 'progressive_only'
+    return 'baseline'
+
+
+class _FastDragPressureSampler:
+    def __init__(self) -> None:
+        self._samples: List[Dict[str, Any]] = []
+        self._last_sample_mono_ms: float = 0.0
+        self._last_wall_s: float = time.perf_counter()
+        self._process = psutil.Process() if psutil is not None else None
+        self._last_proc_cpu_s: Optional[float] = self._read_proc_cpu_s()
+        self._last_proc_write_bytes: Optional[int] = self._read_proc_write_bytes()
+        self._last_disk_write_bytes: Optional[int] = self._read_disk_write_bytes()
+
+    def _read_proc_cpu_s(self) -> Optional[float]:
+        if self._process is None:
+            return None
+        try:
+            cpu_times = self._process.cpu_times()
+            return float(getattr(cpu_times, 'user', 0.0) or 0.0) + float(getattr(cpu_times, 'system', 0.0) or 0.0)
+        except Exception:
+            return None
+
+    def _read_proc_write_bytes(self) -> Optional[int]:
+        if self._process is None:
+            return None
+        try:
+            io_counters = self._process.io_counters()
+            return int(getattr(io_counters, 'write_bytes', 0) or 0)
+        except Exception:
+            return None
+
+    def _read_disk_write_bytes(self) -> Optional[int]:
+        if psutil is None:
+            return None
+        try:
+            io_counters = psutil.disk_io_counters()
+            return int(getattr(io_counters, 'write_bytes', 0) or 0) if io_counters is not None else None
+        except Exception:
+            return None
+
+    def _read_rss_mb(self) -> float:
+        if self._process is None:
+            return 0.0
+        try:
+            return float(getattr(self._process.memory_info(), 'rss', 0) or 0) / (1024.0 * 1024.0)
+        except Exception:
+            return 0.0
+
+    def _read_available_ram_mb(self) -> float:
+        if psutil is None:
+            return 0.0
+        try:
+            return float(getattr(psutil.virtual_memory(), 'available', 0) or 0) / (1024.0 * 1024.0)
+        except Exception:
+            return 0.0
+
+    def sample(self, bridge: Any, *, force: bool = False, reason: str = '') -> Optional[Dict[str, Any]]:
+        now_mono_ms = _corr_now_mono_ms()
+        if (
+            not force
+            and self._last_sample_mono_ms > 0.0
+            and (now_mono_ms - self._last_sample_mono_ms) < _FAST_STACK_PRESSURE_SAMPLE_MIN_INTERVAL_MS
+        ):
+            return None
+
+        perf_snapshot = PerfMetrics.get().snapshot()
+        try:
+            load_snapshot = dict(get_load_debug_snapshot() or {})
+        except Exception:
+            load_snapshot = {}
+        try:
+            block_snapshot = dict(get_live_block_telemetry_snapshot(label='fast_drag_pressure') or {})
+        except Exception:
+            block_snapshot = {}
+        try:
+            disk_stats = dict(get_disk_pixel_cache().stats() or {})
+        except Exception:
+            disk_stats = {}
+
+        orchestrator = dict(block_snapshot.get('orchestrator', {}) or {})
+        active_download_count = _int_or_zero(orchestrator.get('active_download_count', 0))
+        progressive_visible = bool(getattr(getattr(bridge, 'vtk_widget', None), '_progressive_mode', False))
+        phase = _pressure_phase(
+            active_download_count=active_download_count,
+            progressive_visible=progressive_visible,
+        )
+
+        wall_s = time.perf_counter()
+        elapsed_s = max(wall_s - self._last_wall_s, 1e-6)
+        proc_cpu_s = self._read_proc_cpu_s()
+        proc_cpu_pct = 0.0
+        if proc_cpu_s is not None and self._last_proc_cpu_s is not None:
+            proc_cpu_pct = max(0.0, ((proc_cpu_s - self._last_proc_cpu_s) / elapsed_s) * 100.0)
+
+        proc_write_bytes = self._read_proc_write_bytes()
+        proc_write_mb_s = 0.0
+        if proc_write_bytes is not None and self._last_proc_write_bytes is not None:
+            proc_write_mb_s = max(0.0, (proc_write_bytes - self._last_proc_write_bytes) / elapsed_s / (1024.0 * 1024.0))
+
+        disk_write_bytes = self._read_disk_write_bytes()
+        disk_write_mb_s = 0.0
+        if disk_write_bytes is not None and self._last_disk_write_bytes is not None:
+            disk_write_mb_s = max(0.0, (disk_write_bytes - self._last_disk_write_bytes) / elapsed_s / (1024.0 * 1024.0))
+
+        stall_delta = 0
+        dm_rebuild_delta = 0
+        if self._last_sample_mono_ms > 0.0 and now_mono_ms >= self._last_sample_mono_ms:
+            stall_delta = _corr_count_events_between('MAIN_THREAD_STALL', self._last_sample_mono_ms, now_mono_ms)
+            dm_rebuild_delta = _corr_count_events_between('DM_REBUILD', self._last_sample_mono_ms, now_mono_ms)
+
+        sample = {
+            'reason': str(reason or ''),
+            'mono_ms': float(now_mono_ms),
+            'phase': phase,
+            'proc_cpu_pct': float(proc_cpu_pct),
+            'rss_mb': float(self._read_rss_mb()),
+            'available_ram_mb': float(self._read_available_ram_mb()),
+            'proc_write_mb_s': float(proc_write_mb_s),
+            'disk_write_mb_s': float(disk_write_mb_s),
+            'decode_q': _int_or_zero(perf_snapshot.get('decode_queue_depth_p95', 0)),
+            'frame_q': _int_or_zero(perf_snapshot.get('frame_queue_depth_p95', 0)),
+            'disk_write_q': _int_or_zero(disk_stats.get('write_queue_depth', 0)),
+            'disk_deferred_q': _int_or_zero(disk_stats.get('deferred_queue_depth', 0)),
+            'cache_hit_ratio_pct': _float_or_zero(perf_snapshot.get('cache_hit_ratio_pct', 0.0)),
+            'longest_ui_gap_ms': _float_or_zero(perf_snapshot.get('longest_ui_gap_ms', 0.0)),
+            'active_download_count': active_download_count,
+            'progressive_visible': bool(progressive_visible),
+            'protected_ui_cadence': bool(load_snapshot.get('protected_ui_cadence', False)),
+            'prefetch_shedding_active': bool(load_snapshot.get('prefetch_shedding_active', False)),
+            'ui_event_loop_lag_ms': _float_or_zero(load_snapshot.get('ui_event_loop_lag_ms', 0.0)),
+            'stall_count_delta': int(stall_delta),
+            'dm_rebuild_count_delta': int(dm_rebuild_delta),
+        }
+        self._samples.append(sample)
+        self._last_sample_mono_ms = now_mono_ms
+        self._last_wall_s = wall_s
+        self._last_proc_cpu_s = proc_cpu_s
+        self._last_proc_write_bytes = proc_write_bytes
+        self._last_disk_write_bytes = disk_write_bytes
+        return sample
+
+    def samples(self) -> List[Dict[str, Any]]:
+        return list(self._samples)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -367,6 +601,29 @@ class QtViewerBridge:
         self._interaction_settle_timer.setInterval(200)
         self._interaction_settle_timer.timeout.connect(self._on_interaction_settled)
 
+        # Experimental FAST render clock (off-by-default).
+        self._fast_render_clock_timer = QTimer()
+        self._fast_render_clock_timer.setSingleShot(False)
+        self._fast_render_clock_timer.setInterval(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)
+        self._fast_render_clock_timer.timeout.connect(self._on_fast_render_clock_tick)
+        self._fast_render_clock_enabled_cached: Optional[bool] = None
+        self._fast_clock_fallback_active: bool = False
+        self._fast_latest_requested_slice: Optional[int] = None
+        self._fast_pending_interaction_type: str = ''
+        self._fast_latest_interaction_ts_ms: float = 0.0
+        self._fast_request_generation: int = 0
+        self._fast_last_presented_generation: int = 0
+        self._fast_clock_tick_interval_ms: float = float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)
+        self._fast_clock_missed_tick_count: int = 0
+        self._fast_clock_superseded_count: int = 0
+        self._fast_clock_last_tick_mono_ms: float = 0.0
+        self._fast_clock_last_request_mono_ms: float = 0.0
+        self._fast_latest_admitted_target: Optional[int] = None
+        self._fast_last_presented_slice: Optional[int] = None
+        self._fast_pending_slider_value: Optional[int] = None
+        self._fast_pending_sync_update: bool = False
+        self._fast_pending_reference_update: bool = False
+
         # Initialize ToolController for measurement annotations
         self._init_tool_controller()
 
@@ -380,6 +637,29 @@ class QtViewerBridge:
             self._debug_viewer_id,
             self._slice_count,
         )
+
+        # Diagnostic: log FAST_RENDER_CLOCK_CONFIG at startup
+        # to trace activation failure if clock mode doesn't work
+        try:
+            env_value = str(os.getenv('AIPACS_FAST_RENDER_CLOCK_EXPERIMENT', '') or '').strip()
+            enabled = (env_value == '1')
+            fallback_active = bool(getattr(self, '_fast_clock_fallback_active', False))
+            bridge_module_file = __file__
+            viewer_backend = 'pydicom_qt'  # default for this bridge
+            fast_mode_active = True  # this is the FAST bridge itself
+            
+            logger.warning(
+                "[FAST_RENDER_CLOCK_CONFIG] env_value=%s enabled=%s fallback_active=%s "
+                "bridge_module_file=%s viewer_backend=%s fast_mode_active=%s",
+                repr(env_value) if env_value else 'unset',
+                str(enabled),
+                str(fallback_active),
+                str(bridge_module_file),
+                str(viewer_backend),
+                str(fast_mode_active),
+            )
+        except Exception as diag_exc:
+            logger.error("[FAST_RENDER_CLOCK_CONFIG] diagnostic failed: %s", diag_exc, exc_info=True)
 
     def _init_tool_controller(self) -> None:
         """Create and attach a ToolController to the Qt viewer."""
@@ -576,6 +856,10 @@ class QtViewerBridge:
             pass
 
     def set_slice(self, slice_index: int, fast_interaction: bool = False, *, interaction_type: str = '') -> None:
+        """Public slice setter. Default behavior delegates to implementation."""
+        self._set_slice_impl(slice_index, fast_interaction=fast_interaction, interaction_type=interaction_type)
+
+    def _set_slice_impl(self, slice_index: int, fast_interaction: bool = False, *, interaction_type: str = '') -> None:
         """
         Main set_slice called from vtk_widget._call_image_viewer_set_slice.
 
@@ -645,6 +929,9 @@ class QtViewerBridge:
         self._window = float(frame.window_width)
         self._level = float(frame.window_center)
         display_ms = (time.perf_counter() - t_stage) * 1000.0
+        # F8: set-to-image elapsed — entry to frame delivered to Qt widget.
+        # Excludes annotation/metrics work that comes after set_image().
+        self._last_set_to_image_ms: float = (time.perf_counter() - t_start) * 1000.0
 
         # Skip annotation update during fast scroll for lower latency
         annotation_ms = 0.0
@@ -665,6 +952,14 @@ class QtViewerBridge:
         _pm.record_first_image(total_ms)
         _pm.record_longest_ui_gap(ui_lag_ms)
         metrics_ms = (time.perf_counter() - t_stage) * 1000.0
+
+        if fast_interaction and interaction_type == 'drag':
+            self._emit_foreground_disk_event(
+                idx=idx,
+                frame=frame,
+                ui_lag_ms=ui_lag_ms,
+                total_ms=total_ms,
+            )
 
         if not self._first_image_logged:
             self._first_image_logged = True
@@ -763,6 +1058,65 @@ class QtViewerBridge:
                 frame.wl_ms,
             )
 
+    def _emit_foreground_disk_event(
+        self,
+        *,
+        idx: int,
+        frame: RenderedFrame,
+        ui_lag_ms: float,
+        total_ms: float,
+    ) -> None:
+        try:
+            probe = dict(getattr(frame, 'io_probe', None) or {})
+            source = str(probe.get('source', 'memory_cache') or 'memory_cache')
+            cache_hit = bool(probe.get('cache_hit', source in {'memory_cache', 'disk_cache'}))
+            disk_wait_ms = float(probe.get('disk_wait_ms', 0.0) or 0.0)
+            decode_wait_ms = float(probe.get('decode_wait_ms', float(frame.decode_ms or 0.0)) or 0.0)
+            cache_lookup_ms = float(probe.get('cache_lookup_ms', 0.0) or 0.0)
+            file_open_count = int(probe.get('file_open_count', 0) or 0)
+            foreground_disk_reads = int(probe.get('foreground_disk_reads', 0) or 0)
+            foreground_bytes_read = int(probe.get('foreground_bytes_read', 0) or 0)
+            cache_grow_overlap = bool(probe.get('cache_grow_overlap', False))
+            additive_flush_overlap = bool(probe.get('additive_flush_overlap', False))
+            disk_cache_queue_depth = int(probe.get('disk_cache_queue_depth', 0) or 0)
+            decode_queue_depth = int(probe.get('decode_queue_depth', 0) or 0)
+            foreground_frame_ready_immediate = bool(
+                probe.get('foreground_frame_ready_immediate', cache_hit and decode_wait_ms <= 0.0 and disk_wait_ms <= 0.0)
+            )
+            sqlite_overlap_count = int(probe.get('sqlite_overlap_count', 0) or 0)
+            logger.info(
+                "[FAST_FG_DISK] drag_session_id=%s bridge=%s viewer=%s slice=%d "
+                "source=%s cache_hit=%s disk_wait_ms=%.3f decode_wait_ms=%.3f "
+                "cache_lookup_ms=%.3f file_open_count=%d foreground_disk_reads=%d "
+                "foreground_bytes_read=%d cache_grow_overlap=%s additive_flush_overlap=%s "
+                "disk_cache_queue_depth=%d decode_queue_depth=%d foreground_frame_ready_immediate=%s "
+                "ui_lag_ms=%.3f frame_total_ms=%.3f sqlite_overlap_count=%d corr_session=%s corr_mono_ms=%.3f",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                str(getattr(self, '_bridge_instance_id', '') or '-'),
+                str(getattr(self.qt_viewer, '_viewer_instance_id', '') or '-'),
+                int(idx),
+                source,
+                cache_hit,
+                disk_wait_ms,
+                decode_wait_ms,
+                cache_lookup_ms,
+                file_open_count,
+                foreground_disk_reads,
+                foreground_bytes_read,
+                cache_grow_overlap,
+                additive_flush_overlap,
+                disk_cache_queue_depth,
+                decode_queue_depth,
+                foreground_frame_ready_immediate,
+                float(ui_lag_ms or 0.0),
+                float(total_ms or 0.0),
+                sqlite_overlap_count,
+                _corr_session_id(),
+                _corr_now_mono_ms(),
+            )
+        except Exception:
+            pass
+
     def end_fast_interaction(self) -> None:
         """Called when scroll/drag stops. Re-renders current slice with filter.
 
@@ -776,6 +1130,9 @@ class QtViewerBridge:
         filter is enabled.
         """
         logger.debug("[B3.4_DIAG] END_FAST_INTERACTION slice=%d", self._current_slice)
+        _force_present = getattr(self, '_force_present_pending_on_settle', None)
+        if callable(_force_present):
+            _force_present(reason='end_fast_interaction')
         self.pipeline.set_fast_interaction(False)
         record_fast_interaction(False)
         self._set_thumbnail_scroll_active(False)
@@ -817,6 +1174,9 @@ class QtViewerBridge:
             frame.filter_ms,
             frame.wl_ms,
         )
+        _stop_clock = getattr(self, '_stop_render_clock_if_idle', None)
+        if callable(_stop_clock):
+            _stop_clock()
 
     def apply_default_window_level(self, slice_index: int = 0) -> None:
         """Apply default W/L for the given slice."""
@@ -971,6 +1331,10 @@ class QtViewerBridge:
             self._interaction_settle_timer.stop()
         except Exception:
             pass
+        try:
+            self._fast_render_clock_timer.stop()
+        except Exception:
+            pass
         _scroll_active = False
         try:
             scroll_timer = getattr(self.qt_viewer, '_scroll_stop_timer', None)
@@ -1001,6 +1365,14 @@ class QtViewerBridge:
             pass
         self._stack_drag_active = False
         self._last_stack_target_slice = None
+        self._fast_latest_requested_slice = None
+        self._fast_latest_admitted_target = None
+        self._fast_last_presented_slice = None
+        self._fast_pending_interaction_type = ''
+        self._fast_latest_interaction_ts_ms = 0.0
+        self._fast_pending_slider_value = None
+        self._fast_pending_sync_update = False
+        self._fast_pending_reference_update = False
         try:
             self.pipeline.shutdown()
         except Exception:
@@ -1160,9 +1532,15 @@ class QtViewerBridge:
         Returns the new (possibly unchanged) slice count.
         """
         new_count = self._slice_count
+        t_bridge_grow_start = time.perf_counter()
+        refresh_ms = 0.0
+        sync_hint_ms = 0.0
+        mock_dims_ms = 0.0
         try:
             if hasattr(self.pipeline, "refresh_file_list"):
+                t_refresh_start = time.perf_counter()
                 new_count = self.pipeline.refresh_file_list(force_flush=force_flush)
+                refresh_ms = max(0.0, (time.perf_counter() - t_refresh_start) * 1000.0)
         except Exception as exc:
             logger.debug("qt-viewer-bridge grow: refresh_file_list failed: %s", exc)
             return self._slice_count
@@ -1177,17 +1555,52 @@ class QtViewerBridge:
             target_slice = max(0, min(pipeline_index, max(0, self._slice_count - 1)))
             self._current_slice = target_slice
             self.qt_viewer._current_slice_index = target_slice
+            t_sync_hint_start = time.perf_counter()
             self._sync_interaction_slice_count_hint()
+            sync_hint_ms = max(0.0, (time.perf_counter() - t_sync_hint_start) * 1000.0)
             # Update mock vtk_image_data slice dimension so callers that
             # inspect GetDimensions() see the correct z-count.
             if self.vtk_image_data is not None:
+                t_mock_dims_start = time.perf_counter()
                 dims = self.vtk_image_data.GetDimensions()
                 self.vtk_image_data._dims = (dims[0], dims[1], new_count)
+                mock_dims_ms = max(0.0, (time.perf_counter() - t_mock_dims_start) * 1000.0)
+            pipeline_additive_flush_ms = float(getattr(self.pipeline, "_last_additive_flush_ms", 0.0) or 0.0)
+            slice_list_extend_ms = float(getattr(self.pipeline, "_last_slice_list_extend_ms", 0.0) or 0.0)
+            cache_index_update_ms = float(getattr(self.pipeline, "_last_cache_index_update_ms", 0.0) or 0.0)
+            bridge_additive_grow_ms = max(0.0, (time.perf_counter() - t_bridge_grow_start) * 1000.0)
+            grow_overlap_with_drag = False
+            try:
+                grow_overlap_with_drag = bool(getattr(self, "_stack_drag_active", False))
+                if not grow_overlap_with_drag:
+                    grow_overlap_with_drag = bool(self.is_recent_interaction_hot(window_s=1.0))
+            except Exception:
+                pass
             logger.info(
                 "qt-viewer-bridge additive grow: slices=%d current_before=%d current_after=%d",
                 new_count,
                 old_slice,
                 target_slice,
+            )
+            logger.info(
+                "[PROGRESSIVE_GROW_SPLIT] phase=bridge_additive_grow series=%s "
+                "bridge_additive_grow_ms=%.3f refresh_file_list_ms=%.3f "
+                "pipeline_additive_flush_ms=%.3f slice_list_extend_ms=%.3f cache_index_update_ms=%.3f "
+                "sync_hint_ms=%.3f mock_dims_ms=%.3f repaint_request_ms=0.000 grow_overlap_with_drag=%s "
+                "current_before=%d current_after=%d actual_count=%d force_flush=%s",
+                str(getattr(self.pipeline, "_series_number", "") or getattr(self, "_series_number", "") or "-"),
+                bridge_additive_grow_ms,
+                refresh_ms,
+                pipeline_additive_flush_ms,
+                slice_list_extend_ms,
+                cache_index_update_ms,
+                sync_hint_ms,
+                mock_dims_ms,
+                grow_overlap_with_drag,
+                old_slice,
+                target_slice,
+                new_count,
+                bool(force_flush),
             )
         return self._slice_count
 
@@ -1268,6 +1681,21 @@ class QtViewerBridge:
             'handler_total_ms': [],
             'ui_lag_ms': [],
             'accepted_targets': 0,
+            'last_pressure_phase': 'baseline',
+            'phase_metrics': {},
+            'pressure_sampler': _FastDragPressureSampler(),
+            # F8: event pacing instrumentation
+            'total_drag_events': 0,
+            'same_slice_rejected': 0,
+            'scheduler_rejected': 0,
+            'requested_slice_indices': [],
+            'executed_slice_indices': [],
+            'set_to_image_ms': [],
+            'request_to_execute_ms': [],
+            'execute_mono_ms': [],
+            'frame_present_interval_ms': [],
+            'implied_queue_wait_ms': [],
+            '_last_present_mono_ms': 0.0,
         }
         self._drag_session_start_mono_ms = _corr_now_mono_ms()
         # F7 (observability-only): arm a paint-cost sample list on the Qt viewer
@@ -1276,8 +1704,59 @@ class QtViewerBridge:
             qv = getattr(self, 'qt_viewer', None)
             if qv is not None:
                 qv._drag_paint_samples = []
+                qv._drag_paint_delay_samples = []  # F8: Qt repaint-scheduling delay
+                qv._drag_update_backlog_depth_samples = []
+                qv._drag_presented_slice_indices = []
+                qv._drag_qt_update_pending_count = 0
+                qv._drag_superseded_frame_count = 0
         except Exception:
             pass
+        # G0: Event-loop diagnostics start instrumentation session
+        drag_session_id = str(getattr(self, '_drag_session_id', '') or '')
+        try:
+            _event_diag_start_session(f"drag-{drag_session_id}")
+        except Exception as e:
+            logger.debug(f"Failed to start event-loop diagnostics: {e}")
+
+    def _sample_drag_pressure(self, *, force: bool = False, reason: str = '') -> str:
+        metrics = self._drag_metrics or {}
+        sampler = metrics.get('pressure_sampler')
+        if sampler is None:
+            return str(metrics.get('last_pressure_phase', 'baseline') or 'baseline')
+        try:
+            sample = sampler.sample(self, force=force, reason=reason)
+        except Exception:
+            sample = None
+        if sample is None:
+            return str(metrics.get('last_pressure_phase', 'baseline') or 'baseline')
+        phase = str(sample.get('phase', 'baseline') or 'baseline')
+        metrics['last_pressure_phase'] = phase
+        return phase
+
+    def _record_drag_phase_metrics(
+        self,
+        phase: str,
+        *,
+        event_interval_ms: Optional[float],
+        handler_total_ms: Optional[float],
+        ui_lag_ms: Optional[float],
+    ) -> None:
+        metrics = self._drag_metrics or {}
+        phase_metrics = metrics.setdefault('phase_metrics', {})
+        bucket = phase_metrics.setdefault(
+            str(phase or 'baseline'),
+            {
+                'event_interval_ms': [],
+                'handler_total_ms': [],
+                'ui_lag_ms': [],
+            },
+        )
+        if event_interval_ms is not None:
+            bucket['event_interval_ms'].append(float(event_interval_ms))
+        if handler_total_ms is not None:
+            bucket['handler_total_ms'].append(float(handler_total_ms))
+        if ui_lag_ms is not None:
+            bucket['ui_lag_ms'].append(float(ui_lag_ms))
 
     def _log_drag_metrics_summary(self, pipeline_stats: Optional[Dict[str, Any]] = None) -> None:
         metrics = self._drag_metrics or {}
@@ -1306,17 +1785,66 @@ class QtViewerBridge:
             stall_during_drag = _corr_count_events_between('MAIN_THREAD_STALL', drag_start_mono_ms, drag_end_mono_ms) > 0
         # F7 (observability-only): pull paint samples accumulated by qt_viewer.paintEvent.
         paint_samples: list = []
+        paint_delay_samples: list = []
+        update_backlog_depth_samples: list = []
+        presented_slice_indices: list = []
+        qt_update_pending_count = 0
+        superseded_frame_count = 0
         try:
             qv = getattr(self, 'qt_viewer', None)
             if qv is not None:
                 paint_samples = list(getattr(qv, '_drag_paint_samples', None) or [])
                 qv._drag_paint_samples = None
+                paint_delay_samples = list(getattr(qv, '_drag_paint_delay_samples', None) or [])
+                qv._drag_paint_delay_samples = None
+                update_backlog_depth_samples = list(getattr(qv, '_drag_update_backlog_depth_samples', None) or [])
+                qv._drag_update_backlog_depth_samples = None
+                presented_slice_indices = list(getattr(qv, '_drag_presented_slice_indices', None) or [])
+                qv._drag_presented_slice_indices = None
+                qt_update_pending_count = int(getattr(qv, '_drag_qt_update_pending_count', 0) or 0)
+                superseded_frame_count = int(getattr(qv, '_drag_superseded_frame_count', 0) or 0)
+                qv._drag_qt_update_pending_count = 0
+                qv._drag_superseded_frame_count = 0
         except Exception:
             paint_samples = []
+            paint_delay_samples = []
+            update_backlog_depth_samples = []
+            presented_slice_indices = []
+            qt_update_pending_count = 0
+            superseded_frame_count = 0
         paint_count = len(paint_samples)
         paint_p50 = _percentile(paint_samples, 50) if paint_samples else 0.0
         paint_p95 = _percentile(paint_samples, 95) if paint_samples else 0.0
         paint_max = max(paint_samples) if paint_samples else 0.0
+        # F8: event pacing aggregate
+        _total_events = int(metrics.get('total_drag_events', 0) or 0)
+        _same_slice_rej = int(metrics.get('same_slice_rejected', 0) or 0)
+        _sched_rej = int(metrics.get('scheduler_rejected', 0) or 0)
+        _s2i_list = list(metrics.get('set_to_image_ms', []) or [])
+        _r2e_list = list(metrics.get('request_to_execute_ms', []) or [])
+        _exec_mono_list = list(metrics.get('execute_mono_ms', []) or [])
+        _fpi_list = list(metrics.get('frame_present_interval_ms', []) or [])
+        _iqw_list = list(metrics.get('implied_queue_wait_ms', []) or [])
+        _requested_slices = list(metrics.get('requested_slice_indices', []) or [])
+        _executed_slices = list(metrics.get('executed_slice_indices', []) or [])
+        _jitter_list: list = []
+        for _ji in range(1, len(event_intervals)):
+            _jitter_list.append(abs(event_intervals[_ji] - event_intervals[_ji - 1]))
+        _render_clock_gap_list: list = []
+        for _ri in range(1, len(_exec_mono_list)):
+            _render_clock_gap_list.append(max(0.0, _exec_mono_list[_ri] - _exec_mono_list[_ri - 1]))
+        
+        # G0: Collect event-loop diagnostics for input jitter root-cause analysis
+        _event_loop_diag: Dict[str, Any] = {}
+        try:
+            _event_loop_diag = _event_diag_stop_session() or {}
+        except Exception as e:
+            logger.debug(f"Failed to stop event-loop diagnostics: {e}")
+        
+        pressure_phase = self._sample_drag_pressure(force=True, reason='drag_end')
+        pressure_sampler = metrics.get('pressure_sampler')
+        pressure_samples = pressure_sampler.samples() if pressure_sampler is not None else []
+        phase_metrics = dict(metrics.get('phase_metrics', {}) or {})
         logger.info(
             "[FAST_DRAG_KPI] drag_session_id=%s bridge=%s viewer=%s duration_s=%.3f targets=%d "
             "event_p50_ms=%.1f event_p95_ms=%.1f handler_p50_ms=%.1f handler_p95_ms=%.1f "
@@ -1347,6 +1875,121 @@ class QtViewerBridge:
             _corr_session_id(),
             drag_end_mono_ms,
         )
+        # F8: emit event pacing summary for jitter / frame-pacing root-cause analysis.
+        _same_ratio = (_same_slice_rej / max(1, _total_events)) * 100.0
+        _coalesce_ratio = ((_total_events - accepted) / max(1, _total_events)) * 100.0
+        _stale_ratio = (_sched_rej / max(1, _total_events)) * 100.0
+        _frame_ready_to_paint_p95 = _percentile(paint_delay_samples, 95)
+        _paint_to_present_p95 = _percentile(paint_samples, 95)
+        _input_event_gap_p95 = _percentile(event_intervals, 95)
+        _request_to_execute_p95 = _percentile(_r2e_list, 95)
+        _frame_present_interval_p95 = _percentile(_fpi_list, 95)
+        _wheel_compression = bool(_event_loop_diag.get('wheel_compression_suspected', False))
+        _timer_heartbeat_steady = bool(_event_loop_diag.get('timer_heartbeat_steady', True))
+        _timer_gap_p95 = float(_event_loop_diag.get('timer_gap_p95_ms', 0.0) or 0.0)
+        _dropped_or_superseded = int(_same_slice_rej + _sched_rej + superseded_frame_count)
+        _queue_wait_classification = _classify_queue_wait_source(
+            input_event_gap_p95_ms=float(_input_event_gap_p95),
+            request_to_execute_p95_ms=float(_request_to_execute_p95),
+            frame_ready_to_paint_p95_ms=float(_frame_ready_to_paint_p95),
+            paint_to_present_p95_ms=float(_paint_to_present_p95),
+            frame_present_interval_p95_ms=float(_frame_present_interval_p95),
+            stale_ratio_pct=float(_stale_ratio),
+            dropped_or_superseded_slice_request_count=int(_dropped_or_superseded),
+            wheel_compression_suspected=_wheel_compression,
+            timer_heartbeat_steady=_timer_heartbeat_steady,
+            timer_gap_p95_ms=float(_timer_gap_p95),
+        )
+        logger.info(
+            "[FAST_EVENT_PACING] drag_session_id=%s bridge=%s viewer=%s duration_s=%.3f "
+            "total_events=%d accepted_events=%d same_slice_rejected=%d scheduler_rejected=%d "
+            "same_slice_ratio_pct=%.1f coalesce_ratio_pct=%.1f "
+            "raw_input_event_count=%d accepted_input_event_count=%d coalesced_input_event_count=%d "
+            "stale_slice_request_count=%d set_slice_request_count=%d set_slice_executed_count=%d "
+            "frame_present_count=%d requested_slice_count=%d presented_slice_count=%d "
+            "dropped_or_superseded_slice_request_count=%d "
+            "event_jitter_p95_ms=%.1f event_jitter_max_ms=%.1f "
+            "input_event_gap_p95_ms=%.1f input_event_gap_max_ms=%.1f "
+            "request_to_execute_p95_ms=%.1f request_to_execute_max_ms=%.1f "
+            "set_to_image_p50_ms=%.1f set_to_image_p95_ms=%.1f set_to_image_max_ms=%.1f "
+            "execute_to_frame_ready_p95_ms=%.1f execute_to_frame_ready_max_ms=%.1f "
+            "frame_ready_to_paint_p95_ms=%.1f frame_ready_to_paint_max_ms=%.1f "
+            "paint_to_present_p95_ms=%.1f paint_to_present_max_ms=%.1f "
+            "render_clock_gap_p95_ms=%.1f render_clock_gap_max_ms=%.1f "
+            "frame_present_interval_p50_ms=%.1f frame_present_interval_p95_ms=%.1f frame_present_interval_max_ms=%.1f "
+            "implied_queue_wait_p95_ms=%.1f implied_queue_wait_max_ms=%.1f "
+            "pending_set_slice_queue_depth_p95=%.1f pending_set_slice_queue_depth_max=%.1f "
+            "qt_update_pending_count=%d queue_wait_classification=%s "
+            "qt_repaint_delay_p50_ms=%.1f qt_repaint_delay_p95_ms=%.1f qt_repaint_delay_max_ms=%.1f "
+            "corr_session=%s corr_mono_ms=%.3f",
+            drag_session_id,
+            getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
+            getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
+            duration_s,
+            _total_events, accepted, _same_slice_rej, _sched_rej,
+            _same_ratio, _coalesce_ratio,
+            _total_events,
+            accepted,
+            max(0, _total_events - accepted),
+            _sched_rej,
+            len(_requested_slices),
+            len(_executed_slices),
+            paint_count,
+            len(_requested_slices),
+            len(presented_slice_indices),
+            _dropped_or_superseded,
+            _percentile(_jitter_list, 95), max(_jitter_list) if _jitter_list else 0.0,
+            _percentile(event_intervals, 95), max(event_intervals) if event_intervals else 0.0,
+            _percentile(_r2e_list, 95), max(_r2e_list) if _r2e_list else 0.0,
+            _percentile(_s2i_list, 50), _percentile(_s2i_list, 95), max(_s2i_list) if _s2i_list else 0.0,
+            _percentile(_s2i_list, 95), max(_s2i_list) if _s2i_list else 0.0,
+            _percentile(paint_delay_samples, 95), max(paint_delay_samples) if paint_delay_samples else 0.0,
+            _percentile(paint_samples, 95), max(paint_samples) if paint_samples else 0.0,
+            _percentile(_render_clock_gap_list, 95), max(_render_clock_gap_list) if _render_clock_gap_list else 0.0,
+            _percentile(_fpi_list, 50), _percentile(_fpi_list, 95), max(_fpi_list) if _fpi_list else 0.0,
+            _percentile(_iqw_list, 95), max(_iqw_list) if _iqw_list else 0.0,
+            _percentile(update_backlog_depth_samples, 95),
+            max(update_backlog_depth_samples) if update_backlog_depth_samples else 0.0,
+            qt_update_pending_count,
+            _queue_wait_classification,
+            _percentile(paint_delay_samples, 50), _percentile(paint_delay_samples, 95),
+            max(paint_delay_samples) if paint_delay_samples else 0.0,
+            _corr_session_id(),
+            drag_end_mono_ms,
+        )
+        # G0: Emit event-loop diagnostics for input jitter root-cause classification
+        if _event_loop_diag:
+            jitter_source = str(_event_loop_diag.get('jitter_source_classification', 'H_UNKNOWN_INPUT_JITTER'))
+            logger.info(
+                "[FAST_INPUT_JITTER_DIAG] drag_session_id=%s bridge=%s viewer=%s "
+                "jitter_source=%s mouse_event_gap_p95_ms=%.1f mouse_event_gap_max_ms=%.1f "
+                "wheel_event_gap_p95_ms=%.1f wheel_event_gap_max_ms=%.1f "
+                "paint_event_gap_p95_ms=%.1f paint_event_gap_max_ms=%.1f "
+                "update_to_paint_p95_ms=%.1f update_to_paint_max_ms=%.1f "
+                "timer_gap_p95_ms=%.1f timer_gap_max_ms=%.1f timer_heartbeat_steady=%s "
+                "wheel_compression_suspected=%s paint_independent_of_input_suspected=%s "
+                "paint_within_50ms_of_input=%d corr_session=%s corr_mono_ms=%.3f",
+                drag_session_id,
+                getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
+                getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
+                jitter_source,
+                _event_loop_diag.get('mouse_event_gap_p95_ms', 0.0),
+                _event_loop_diag.get('mouse_event_gap_max_ms', 0.0),
+                _event_loop_diag.get('wheel_event_gap_p95_ms', 0.0),
+                _event_loop_diag.get('wheel_event_gap_max_ms', 0.0),
+                _event_loop_diag.get('paint_event_gap_p95_ms', 0.0),
+                _event_loop_diag.get('paint_event_gap_max_ms', 0.0),
+                _event_loop_diag.get('update_to_paint_p95_ms', 0.0),
+                _event_loop_diag.get('update_to_paint_max_ms', 0.0),
+                _event_loop_diag.get('timer_gap_p95_ms', 0.0),
+                _event_loop_diag.get('timer_gap_max_ms', 0.0),
+                bool(_event_loop_diag.get('timer_heartbeat_steady', True)),
+                bool(_event_loop_diag.get('wheel_compression_suspected', False)),
+                bool(_event_loop_diag.get('paint_independent_of_input_suspected', False)),
+                int(_event_loop_diag.get('paint_within_50ms_of_input', 0)),
+                _corr_session_id(),
+                drag_end_mono_ms,
+            )
         _corr_record_event(
             'FAST_DRAG',
             phase='kpi',
@@ -1366,9 +2009,90 @@ class QtViewerBridge:
             drag_start_mono_ms=float(drag_start_mono_ms),
             drag_end_mono_ms=float(drag_end_mono_ms),
         )
+        if pressure_samples:
+            phase_names = sorted({str(sample.get('phase', 'baseline') or 'baseline') for sample in pressure_samples})
+            logger.info(
+                "[FAST_STACK_PRESSURE] drag_session_id=%s bridge=%s viewer=%s duration_s=%.3f samples=%d phase_count=%d "
+                "current_phase=%s event_p95_ms=%.1f handler_p95_ms=%.1f ui_lag_max_ms=%.1f "
+                "cpu_p95_pct=%.1f cpu_max_pct=%.1f rss_p95_mb=%.1f avail_ram_min_mb=%.1f "
+                "proc_write_mb_s_p95=%.1f disk_write_mb_s_p95=%.1f decode_q_p95=%d frame_q_p95=%d "
+                "disk_write_q_max=%d disk_deferred_q_max=%d active_download_max=%d "
+                "progressive_visible_ratio_pct=%.1f protected_cadence_ratio_pct=%.1f prefetch_shedding_ratio_pct=%.1f "
+                "cache_hit_ratio_min_pct=%.1f longest_ui_gap_max_ms=%.1f main_thread_stall_count=%d dm_rebuild_count=%d",
+                drag_session_id,
+                getattr(self, '_debug_bridge_id', f"b{id(self) & 0xFFFFF:05x}"),
+                getattr(self, '_debug_viewer_id', f"q{id(getattr(self, 'qt_viewer', self)) & 0xFFFFF:05x}"),
+                duration_s,
+                len(pressure_samples),
+                len(phase_names),
+                pressure_phase,
+                event_p95_ms,
+                handler_p95_ms,
+                ui_lag_max_ms,
+                _sample_percentile(pressure_samples, 'proc_cpu_pct', 95),
+                _sample_max(pressure_samples, 'proc_cpu_pct'),
+                _sample_percentile(pressure_samples, 'rss_mb', 95),
+                _sample_min(pressure_samples, 'available_ram_mb'),
+                _sample_percentile(pressure_samples, 'proc_write_mb_s', 95),
+                _sample_percentile(pressure_samples, 'disk_write_mb_s', 95),
+                int(_sample_percentile(pressure_samples, 'decode_q', 95)),
+                int(_sample_percentile(pressure_samples, 'frame_q', 95)),
+                int(_sample_max(pressure_samples, 'disk_write_q')),
+                int(_sample_max(pressure_samples, 'disk_deferred_q')),
+                int(_sample_max(pressure_samples, 'active_download_count')),
+                (sum(1 for sample in pressure_samples if bool(sample.get('progressive_visible', False))) / len(pressure_samples)) * 100.0,
+                (sum(1 for sample in pressure_samples if bool(sample.get('protected_ui_cadence', False))) / len(pressure_samples)) * 100.0,
+                (sum(1 for sample in pressure_samples if bool(sample.get('prefetch_shedding_active', False))) / len(pressure_samples)) * 100.0,
+                _sample_min(pressure_samples, 'cache_hit_ratio_pct'),
+                _sample_max(pressure_samples, 'longest_ui_gap_ms'),
+                sum(_int_or_zero(sample.get('stall_count_delta', 0)) for sample in pressure_samples),
+                sum(_int_or_zero(sample.get('dm_rebuild_count_delta', 0)) for sample in pressure_samples),
+            )
+            for phase_name in phase_names:
+                phase_samples = [sample for sample in pressure_samples if str(sample.get('phase', 'baseline') or 'baseline') == phase_name]
+                phase_bucket = dict(phase_metrics.get(phase_name, {}) or {})
+                logger.info(
+                    "[FAST_STACK_PRESSURE_PHASE] drag_session_id=%s phase=%s samples=%d share_pct=%.1f "
+                    "event_p95_ms=%.1f handler_p95_ms=%.1f ui_lag_max_ms=%.1f "
+                    "cpu_p95_pct=%.1f rss_p95_mb=%.1f avail_ram_min_mb=%.1f "
+                    "proc_write_mb_s_p95=%.1f disk_write_mb_s_p95=%.1f decode_q_p95=%d frame_q_p95=%d "
+                    "disk_write_q_max=%d disk_deferred_q_max=%d active_download_max=%d "
+                    "progressive_visible_ratio_pct=%.1f protected_cadence_ratio_pct=%.1f prefetch_shedding_ratio_pct=%.1f "
+                    "cache_hit_ratio_min_pct=%.1f longest_ui_gap_max_ms=%.1f main_thread_stall_count=%d dm_rebuild_count=%d",
+                    drag_session_id,
+                    phase_name,
+                    len(phase_samples),
+                    (len(phase_samples) / len(pressure_samples)) * 100.0,
+                    _percentile(list(phase_bucket.get('event_interval_ms', []) or []), 95),
+                    _percentile(list(phase_bucket.get('handler_total_ms', []) or []), 95),
+                    max(list(phase_bucket.get('ui_lag_ms', []) or []) or [0.0]),
+                    _sample_percentile(phase_samples, 'proc_cpu_pct', 95),
+                    _sample_percentile(phase_samples, 'rss_mb', 95),
+                    _sample_min(phase_samples, 'available_ram_mb'),
+                    _sample_percentile(phase_samples, 'proc_write_mb_s', 95),
+                    _sample_percentile(phase_samples, 'disk_write_mb_s', 95),
+                    int(_sample_percentile(phase_samples, 'decode_q', 95)),
+                    int(_sample_percentile(phase_samples, 'frame_q', 95)),
+                    int(_sample_max(phase_samples, 'disk_write_q')),
+                    int(_sample_max(phase_samples, 'disk_deferred_q')),
+                    int(_sample_max(phase_samples, 'active_download_count')),
+                    (sum(1 for sample in phase_samples if bool(sample.get('progressive_visible', False))) / len(phase_samples)) * 100.0,
+                    (sum(1 for sample in phase_samples if bool(sample.get('protected_ui_cadence', False))) / len(phase_samples)) * 100.0,
+                    (sum(1 for sample in phase_samples if bool(sample.get('prefetch_shedding_active', False))) / len(phase_samples)) * 100.0,
+                    _sample_min(phase_samples, 'cache_hit_ratio_pct'),
+                    _sample_max(phase_samples, 'longest_ui_gap_ms'),
+                    sum(_int_or_zero(sample.get('stall_count_delta', 0)) for sample in phase_samples),
+                    sum(_int_or_zero(sample.get('dm_rebuild_count_delta', 0)) for sample in phase_samples),
+                )
         self._drag_metrics = None
 
-    def _apply_interaction_target(self, target_slice: int, *, interaction_type: str) -> bool:
+    def _apply_interaction_target(
+        self,
+        target_slice: int,
+        *,
+        interaction_type: str,
+        request_queued_mono_ms: float = 0.0,
+    ) -> bool:
         t_total = time.perf_counter()
         self._mark_interaction_event()
         nav_limit = int(self._slice_count)
@@ -1385,6 +2109,10 @@ class QtViewerBridge:
         self._sync_interaction_slice_count_hint()
 
         new_val = max(0, min(int(target_slice), nav_limit - 1))
+        drag_metrics = self._drag_metrics if interaction_type == 'drag' else None
+        if drag_metrics is not None:
+            drag_metrics.setdefault('set_slice_request_count', 0)
+            drag_metrics['set_slice_request_count'] = int(drag_metrics.get('set_slice_request_count', 0) or 0) + 1
         if new_val == self._current_slice:
             return False
 
@@ -1473,50 +2201,98 @@ class QtViewerBridge:
             self._interaction_settle_timer.stop()
             self._interaction_settle_timer.start()
 
-        t_stage = time.perf_counter()
-        self.set_slice(new_val, fast_interaction=True, interaction_type=interaction_type)
-        set_slice_ms = (time.perf_counter() - t_stage) * 1000.0
+        set_slice_ms = 0.0
+        _clock_enabled_fn = getattr(self, '_fast_clock_enabled', None)
+        _clock_enabled = bool(_clock_enabled_fn()) if callable(_clock_enabled_fn) else False
+        if _clock_enabled:
+            self._fast_latest_admitted_target = int(new_val)
+            _request_clocked = getattr(self, '_request_clocked_slice', None)
+            if callable(_request_clocked):
+                _request_clocked(
+                    new_val,
+                    interaction_type=interaction_type,
+                    reason='interaction_target',
+                )
+            self._fast_pending_slider_value = int(new_val)
+            self._fast_pending_sync_update = True
+            self._fast_pending_reference_update = True
+            self.last_index_slice_saved = new_val
+            logger.info(
+                "[FAST_CLOCK_SIDE_EFFECT_DEFERRED] drag_session_id=%s target_slice=%d "
+                "interaction=%s pending_slider=%s pending_sync=%s pending_reference=%s",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                int(new_val),
+                str(interaction_type or '-'),
+                self._fast_pending_slider_value is not None,
+                bool(getattr(self, '_fast_pending_sync_update', False)),
+                bool(getattr(self, '_fast_pending_reference_update', False)),
+                extra={"component": "viewer"},
+            )
+            return True
+        else:
+            t_stage = time.perf_counter()
+            _exec_start_mono_ms = t_stage * 1000.0
+            if drag_metrics is not None:
+                drag_metrics.setdefault('set_slice_executed_count', 0)
+                drag_metrics['set_slice_executed_count'] = int(drag_metrics.get('set_slice_executed_count', 0) or 0) + 1
+                drag_metrics.setdefault('executed_slice_indices', []).append(int(new_val))
+                drag_metrics.setdefault('execute_mono_ms', []).append(_exec_start_mono_ms)
+                if request_queued_mono_ms > 0.0 and _exec_start_mono_ms >= request_queued_mono_ms:
+                    drag_metrics.setdefault('request_to_execute_ms', []).append(
+                        _exec_start_mono_ms - request_queued_mono_ms
+                    )
+            self.set_slice(new_val, fast_interaction=True, interaction_type=interaction_type)
+            set_slice_ms = (time.perf_counter() - t_stage) * 1000.0
         self.last_index_slice_saved = new_val
 
-        slider_ms = 0.0
-        if self.vtk_widget is not None:
-            slider = getattr(self.vtk_widget, 'slider', None)
-            if slider is not None:
-                t_stage = time.perf_counter()
-                slider.blockSignals(True)
-                slider.setValue(new_val)
-                slider.blockSignals(False)
-                slider_ms = (time.perf_counter() - t_stage) * 1000.0
-            self.vtk_widget.image_viewer = self
-
-        sync_ms = 0.0
-        try:
-            _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None)
-            if _cb is not None:
-                _last = self._last_stack_sync_ms if self._stack_drag_active else getattr(self, '_last_sync_ms', 0.0)
-                _interval = 180.0 if self._stack_drag_active else 100.0
-                if now_ms - _last >= _interval:
-                    if self._stack_drag_active:
-                        self._last_stack_sync_ms = now_ms
-                    else:
-                        self._last_sync_ms = now_ms
+        # In clock mode, defer all UI updates; in normal mode, apply them immediately
+        if not _clock_enabled:
+            slider_ms = 0.0
+            if self.vtk_widget is not None:
+                slider = getattr(self.vtk_widget, 'slider', None)
+                if slider is not None:
                     t_stage = time.perf_counter()
-                    _cb(self.vtk_widget)
-                    sync_ms = (time.perf_counter() - t_stage) * 1000.0
-        except Exception:
-            pass
+                    slider.blockSignals(True)
+                    slider.setValue(new_val)
+                    slider.blockSignals(False)
+                    slider_ms = (time.perf_counter() - t_stage) * 1000.0
+                self.vtk_widget.image_viewer = self
 
-        reference_ms = 0.0
-        try:
-            _pw = getattr(self.vtk_widget, 'patient_widget', None)
-            if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
-                if (now_ms - self._last_stack_reference_ms) >= 160.0:
-                    self._last_stack_reference_ms = now_ms
+            sync_ms = 0.0
+            try:
+                _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None)
+                if _cb is not None:
+                    _last = self._last_stack_sync_ms if self._stack_drag_active else getattr(self, '_last_sync_ms', 0.0)
+                    _interval = 180.0 if self._stack_drag_active else 100.0
+                    if now_ms - _last >= _interval:
+                        if self._stack_drag_active:
+                            self._last_stack_sync_ms = now_ms
+                        else:
+                            self._last_sync_ms = now_ms
+                        t_stage = time.perf_counter()
+                        _cb(self.vtk_widget)
+                        sync_ms = (time.perf_counter() - t_stage) * 1000.0
+            except Exception:
+                pass
+
+            reference_ms = 0.0
+            try:
+                _pw = getattr(self.vtk_widget, 'patient_widget', None)
+                if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
+                    if (now_ms - self._last_stack_reference_ms) >= 160.0:
+                        self._last_stack_reference_ms = now_ms
                     t_stage = time.perf_counter()
                     _pw._schedule_reference_line_update()
                     reference_ms = (time.perf_counter() - t_stage) * 1000.0
-        except Exception:
-            pass
+            except Exception:
+                pass
+        else:
+            # Clock mode: UI updates deferred, just set image_viewer reference
+            slider_ms = 0.0
+            sync_ms = 0.0
+            reference_ms = 0.0
+            if self.vtk_widget is not None:
+                self.vtk_widget.image_viewer = self
 
         total_ms = (time.perf_counter() - t_total) * 1000.0
         if total_ms >= _SET_SLICE_STAGE_LOG_THRESHOLD_MS and not self._stack_drag_active:
@@ -1570,6 +2346,410 @@ class QtViewerBridge:
             return bool(timer.isActive())
         except Exception:
             return bool(getattr(timer, '_active', False))
+
+    def _fast_clock_enabled(self) -> bool:
+        """Return True when experimental FAST render-clock mode is active."""
+        if bool(getattr(self, '_fast_clock_fallback_active', False)):
+            return False
+        cached = getattr(self, '_fast_render_clock_enabled_cached', None)
+        if cached is not None:
+            return bool(cached)
+        enabled = str(os.getenv('AIPACS_FAST_RENDER_CLOCK_EXPERIMENT', '') or '').strip() == '1'
+        self._fast_render_clock_enabled_cached = bool(enabled)
+        if enabled:
+            logger.info(
+                "[FAST_RENDER_CLOCK] event=enabled drag_session_id=%s requested_slice=%s presented_slice=%s "
+                "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+                "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                str(getattr(self, '_fast_latest_requested_slice', None)),
+                str(getattr(self, '_current_slice', None)),
+                int(getattr(self, '_fast_request_generation', 0) or 0),
+                int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+                float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+                int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+                int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+                str(getattr(self, '_fast_pending_interaction_type', '') or '-'),
+                'env_gate',
+            )
+        return bool(enabled)
+
+    def _request_clocked_slice(self, target_slice: int, interaction_type: str, reason: str) -> bool:
+        """Request latest slice for clocked presentation (latest-wins, no FIFO)."""
+        if not self._fast_clock_enabled():
+            return False
+        nav_limit = int(self._slice_count)
+        try:
+            vtk_widget = getattr(self, 'vtk_widget', None)
+            if vtk_widget is not None and bool(getattr(vtk_widget, '_progressive_mode', False)):
+                available = int(getattr(vtk_widget, '_available_slice_count', 0) or 0)
+                if available > 0:
+                    nav_limit = min(nav_limit, available)
+        except Exception:
+            pass
+        if nav_limit <= 0:
+            return False
+        new_val = max(0, min(int(target_slice), nav_limit - 1))
+        if self._fast_latest_requested_slice is not None and int(self._fast_latest_requested_slice) != int(new_val):
+            self._fast_clock_superseded_count = int(getattr(self, '_fast_clock_superseded_count', 0) or 0) + 1
+            logger.info(
+                "[FAST_RENDER_CLOCK] event=superseded drag_session_id=%s requested_slice=%d presented_slice=%s "
+                "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+                "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                int(new_val),
+                str(getattr(self, '_current_slice', None)),
+                int(getattr(self, '_fast_request_generation', 0) or 0),
+                int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+                float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+                int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+                int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+                str(interaction_type or '-'),
+                str(reason or '-'),
+            )
+        self._fast_latest_requested_slice = int(new_val)
+        self._fast_pending_interaction_type = str(interaction_type or '')
+        self._fast_latest_interaction_ts_ms = time.perf_counter() * 1000.0
+        self._fast_request_generation = int(getattr(self, '_fast_request_generation', 0) or 0) + 1
+        self._fast_clock_last_request_mono_ms = time.perf_counter() * 1000.0
+        logger.info(
+            "[FAST_RENDER_CLOCK] event=request drag_session_id=%s requested_slice=%d presented_slice=%s "
+            "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+            "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+            str(getattr(self, '_drag_session_id', '') or '-'),
+            int(new_val),
+            str(getattr(self, '_current_slice', None)),
+            int(getattr(self, '_fast_request_generation', 0) or 0),
+            int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+            float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+            int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+            int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+            str(interaction_type or '-'),
+            str(reason or '-'),
+        )
+        self._ensure_render_clock_running()
+        return True
+
+    def _apply_present_side_effects(self, presented_slice: int, reason: str, force: bool = False) -> None:
+        """Apply deferred UI/control side effects for a presented slice in clock mode."""
+        if not self._fast_clock_enabled():
+            logger.info(
+                "[FAST_CLOCK_SIDE_EFFECT_APPLY_SKIPPED] fallback_active=%s reason=%s",
+                bool(getattr(self, '_fast_clock_fallback_active', False)),
+                str(reason or '-'),
+            )
+            return
+
+        now_ms = time.perf_counter() * 1000.0
+        presented = int(presented_slice)
+        slider_applied = False
+        sync_applied = False
+        reference_applied = False
+
+        pending_slider = getattr(self, '_fast_pending_slider_value', None)
+        pending_sync = bool(getattr(self, '_fast_pending_sync_update', False))
+        pending_reference = bool(getattr(self, '_fast_pending_reference_update', False))
+
+        if self.vtk_widget is not None:
+            slider = getattr(self.vtk_widget, 'slider', None)
+            if slider is not None and (force or pending_slider is not None):
+                target_value = presented if pending_slider is None else int(pending_slider)
+                try:
+                    slider.blockSignals(True)
+                    slider.setValue(int(target_value))
+                    slider_applied = True
+                    logger.debug(
+                        "[FAST_CLOCK_SLIDER_SET] target=%d force=%s",
+                        int(target_value),
+                        bool(force),
+                    )
+                finally:
+                    try:
+                        slider.blockSignals(False)
+                    except Exception:
+                        pass
+            self.vtk_widget.image_viewer = self
+
+        try:
+            _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None)
+            if _cb is not None and (force or pending_sync):
+                _last = self._last_stack_sync_ms if self._stack_drag_active else getattr(self, '_last_sync_ms', 0.0)
+                _interval = 180.0 if self._stack_drag_active else 100.0
+                if force or (now_ms - _last >= _interval):
+                    if self._stack_drag_active:
+                        self._last_stack_sync_ms = now_ms
+                    else:
+                        self._last_sync_ms = now_ms
+                    _cb(self.vtk_widget)
+                    sync_applied = True
+                    logger.debug(
+                        "[FAST_CLOCK_SYNC_CALLBACK] force=%s pending=%s",
+                        bool(force),
+                        bool(pending_sync),
+                    )
+        except Exception:
+            pass
+
+        try:
+            _pw = getattr(self.vtk_widget, 'patient_widget', None)
+            if _pw is not None and hasattr(_pw, '_schedule_reference_line_update') and (force or pending_reference):
+                if force or ((now_ms - self._last_stack_reference_ms) >= 160.0):
+                    self._last_stack_reference_ms = now_ms
+                    _pw._schedule_reference_line_update()
+                    reference_applied = True
+                    logger.debug(
+                        "[FAST_CLOCK_REFERENCE_UPDATE] force=%s pending=%s",
+                        bool(force),
+                        bool(pending_reference),
+                    )
+        except Exception:
+            pass
+
+        self._fast_last_presented_slice = presented
+        self._fast_pending_slider_value = None
+        self._fast_pending_sync_update = False
+        self._fast_pending_reference_update = False
+
+        logger.info(
+            "[FAST_CLOCK_SIDE_EFFECT_APPLIED] drag_session_id=%s presented_slice=%d "
+            "slider_applied=%s sync_applied=%s reference_applied=%s force=%s reason=%s",
+            str(getattr(self, '_drag_session_id', '') or '-'),
+            presented,
+            slider_applied,
+            sync_applied,
+            reference_applied,
+            bool(force),
+            str(reason or '-'),
+            extra={"component": "viewer"},
+        )
+
+    def _flush_final_side_effects_on_settle(self, reason: str) -> None:
+        """Force one final side-effect flush for the final selected slice in clock mode."""
+        if not self._fast_clock_enabled():
+            return
+
+        pending_slider = getattr(self, '_fast_pending_slider_value', None)
+        pending_sync = bool(getattr(self, '_fast_pending_sync_update', False))
+        pending_reference = bool(getattr(self, '_fast_pending_reference_update', False))
+
+        target = pending_slider
+        if target is None:
+            target = getattr(self, '_fast_last_presented_slice', None)
+        if target is None:
+            target = getattr(self, '_fast_latest_admitted_target', None)
+        if target is None:
+            target = getattr(self, '_fast_latest_requested_slice', None)
+        if target is None:
+            target = getattr(self, '_current_slice', None)
+
+        should_apply = bool((pending_slider is not None) or pending_sync or pending_reference)
+        if should_apply and target is not None:
+            self._apply_present_side_effects(int(target), reason='final_settle', force=True)
+
+        logger.info(
+            "[FAST_CLOCK_FINAL_SIDE_EFFECT_FLUSH] drag_session_id=%s target_slice=%s "
+            "had_pending_slider=%s had_pending_sync=%s had_pending_reference=%s applied=%s reason=%s",
+            str(getattr(self, '_drag_session_id', '') or '-'),
+            str(target),
+            pending_slider is not None,
+            pending_sync,
+            pending_reference,
+            bool(should_apply and target is not None),
+            str(reason or '-'),
+            extra={"component": "viewer"},
+        )
+
+    def _ensure_render_clock_running(self) -> None:
+        if not self._fast_clock_enabled():
+            return
+        interval = int(_FAST_RENDER_CLOCK_FAST_INTERVAL_MS if bool(getattr(self, '_stack_drag_active', False)) else _FAST_RENDER_CLOCK_BASE_INTERVAL_MS)
+        self._fast_clock_tick_interval_ms = float(interval)
+        if int(getattr(self._fast_render_clock_timer, 'interval', lambda: interval)() if hasattr(self._fast_render_clock_timer, 'interval') else interval) != interval:
+            try:
+                self._fast_render_clock_timer.setInterval(interval)
+            except Exception:
+                pass
+        if not QtViewerBridge._timer_is_active(self._fast_render_clock_timer):
+            try:
+                self._fast_render_clock_timer.start()
+            except Exception:
+                pass
+
+    def _on_fast_render_clock_tick(self) -> None:
+        if not self._fast_clock_enabled():
+            self._stop_render_clock_if_idle()
+            return
+        _now_ms = time.perf_counter() * 1000.0
+        _last_tick = float(getattr(self, '_fast_clock_last_tick_mono_ms', 0.0) or 0.0)
+        if _last_tick > 0.0:
+            expected = float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS)
+            delta = _now_ms - _last_tick
+            if delta > (expected * 2.5):
+                self._fast_clock_missed_tick_count = int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0) + 1
+        self._fast_clock_last_tick_mono_ms = _now_ms
+
+        if int(getattr(self, '_fast_last_presented_generation', 0) or 0) >= int(getattr(self, '_fast_request_generation', 0) or 0):
+            logger.info(
+                "[FAST_RENDER_CLOCK] event=skipped_no_new_request drag_session_id=%s requested_slice=%s presented_slice=%s "
+                "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+                "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                str(getattr(self, '_fast_latest_requested_slice', None)),
+                str(getattr(self, '_current_slice', None)),
+                int(getattr(self, '_fast_request_generation', 0) or 0),
+                int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+                float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+                int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+                int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+                str(getattr(self, '_fast_pending_interaction_type', '') or '-'),
+                'no_new_generation',
+            )
+            self._stop_render_clock_if_idle()
+            return
+        if int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0) > int(_FAST_RENDER_CLOCK_MAX_MISSED_TICKS):
+            self._fast_clock_fallback_active = True
+            logger.warning(
+                "[FAST_RENDER_CLOCK] event=fallback drag_session_id=%s requested_slice=%s presented_slice=%s "
+                "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+                "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                str(getattr(self, '_fast_latest_requested_slice', None)),
+                str(getattr(self, '_current_slice', None)),
+                int(getattr(self, '_fast_request_generation', 0) or 0),
+                int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+                float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+                int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+                int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+                str(getattr(self, '_fast_pending_interaction_type', '') or '-'),
+                'missed_ticks_threshold',
+            )
+            self._stop_render_clock_if_idle()
+            return
+        try:
+            self._present_latest_requested_slice(reason='tick')
+            logger.info(
+                "[FAST_RENDER_CLOCK] event=tick drag_session_id=%s requested_slice=%s presented_slice=%s "
+                "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+                "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                str(getattr(self, '_fast_latest_requested_slice', None)),
+                str(getattr(self, '_current_slice', None)),
+                int(getattr(self, '_fast_request_generation', 0) or 0),
+                int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+                float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+                int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+                int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+                str(getattr(self, '_fast_pending_interaction_type', '') or '-'),
+                'tick_present',
+            )
+        except Exception:
+            self._fast_clock_fallback_active = True
+            logger.exception(
+                "[FAST_RENDER_CLOCK] event=fallback drag_session_id=%s requested_slice=%s presented_slice=%s "
+                "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+                "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                str(getattr(self, '_fast_latest_requested_slice', None)),
+                str(getattr(self, '_current_slice', None)),
+                int(getattr(self, '_fast_request_generation', 0) or 0),
+                int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+                float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+                int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+                int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+                str(getattr(self, '_fast_pending_interaction_type', '') or '-'),
+                'tick_exception',
+            )
+            self._stop_render_clock_if_idle()
+
+    def _present_latest_requested_slice(self, reason: str) -> bool:
+        if self._fast_latest_requested_slice is None:
+            return False
+        req_gen = int(getattr(self, '_fast_request_generation', 0) or 0)
+        if req_gen <= int(getattr(self, '_fast_last_presented_generation', 0) or 0):
+            return False
+        idx = int(self._fast_latest_requested_slice)
+        interaction_type = str(getattr(self, '_fast_pending_interaction_type', '') or 'drag')
+        _request_start = float(getattr(self, '_fast_clock_last_request_mono_ms', 0.0) or 0.0)
+        _now = time.perf_counter() * 1000.0
+        req_to_present_ms = (_now - _request_start) if _request_start > 0.0 else 0.0
+        self._set_slice_impl(idx, fast_interaction=True, interaction_type=interaction_type)
+        self._fast_last_presented_generation = req_gen
+        _apply_side_effects = getattr(self, '_apply_present_side_effects', None)
+        if callable(_apply_side_effects):
+            _apply_side_effects(idx, reason=str(reason or '-'), force=False)
+        logger.info(
+            "[FAST_RENDER_CLOCK] event=present drag_session_id=%s requested_slice=%d presented_slice=%d "
+            "request_generation=%d last_presented_generation=%d request_to_present_ms=%.3f "
+            "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+            str(getattr(self, '_drag_session_id', '') or '-'),
+            idx,
+            int(getattr(self, '_current_slice', idx)),
+            req_gen,
+            int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+            float(req_to_present_ms),
+            float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+            int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+            int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+            interaction_type,
+            str(reason or '-'),
+        )
+        return True
+
+    def _stop_render_clock_if_idle(self) -> None:
+        if not QtViewerBridge._timer_is_active(getattr(self, '_fast_render_clock_timer', None)):
+            return
+        _now_ms = time.perf_counter() * 1000.0
+        _idle_ms = _now_ms - float(getattr(self, '_fast_latest_interaction_ts_ms', 0.0) or 0.0)
+        pending = int(getattr(self, '_fast_request_generation', 0) or 0) - int(getattr(self, '_fast_last_presented_generation', 0) or 0)
+        if pending > 0:
+            return
+        if _idle_ms < float(_FAST_RENDER_CLOCK_IDLE_STOP_MS):
+            return
+        try:
+            self._fast_render_clock_timer.stop()
+        except Exception:
+            pass
+        logger.info(
+            "[FAST_RENDER_CLOCK] event=stopped drag_session_id=%s requested_slice=%s presented_slice=%s "
+            "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+            "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+            str(getattr(self, '_drag_session_id', '') or '-'),
+            str(getattr(self, '_fast_latest_requested_slice', None)),
+            str(getattr(self, '_current_slice', None)),
+            int(getattr(self, '_fast_request_generation', 0) or 0),
+            int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+            float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+            int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+            int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+            str(getattr(self, '_fast_pending_interaction_type', '') or '-'),
+            'idle',
+        )
+
+    def _force_present_pending_on_settle(self, reason: str) -> None:
+        if not self._fast_clock_enabled():
+            return
+        did_present = False
+        if int(getattr(self, '_fast_request_generation', 0) or 0) > int(getattr(self, '_fast_last_presented_generation', 0) or 0):
+            did_present = self._present_latest_requested_slice(reason='forced_settle')
+        if did_present:
+            logger.info(
+                "[FAST_RENDER_CLOCK] event=forced_settle_present drag_session_id=%s requested_slice=%s presented_slice=%s "
+                "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
+                "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                str(getattr(self, '_fast_latest_requested_slice', None)),
+                str(getattr(self, '_current_slice', None)),
+                int(getattr(self, '_fast_request_generation', 0) or 0),
+                int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+                float(getattr(self, '_fast_clock_tick_interval_ms', float(_FAST_RENDER_CLOCK_BASE_INTERVAL_MS)) or _FAST_RENDER_CLOCK_BASE_INTERVAL_MS),
+                int(getattr(self, '_fast_clock_missed_tick_count', 0) or 0),
+                int(getattr(self, '_fast_clock_superseded_count', 0) or 0),
+                str(getattr(self, '_fast_pending_interaction_type', '') or '-'),
+                str(reason or '-'),
+            )
+        _flush_side_effects = getattr(self, '_flush_final_side_effects_on_settle', None)
+        if callable(_flush_side_effects):
+            _flush_side_effects(reason=str(reason or '-'))
 
     def _on_stack_drag_state(self, active: bool) -> None:
         """B3.4: Track stack-drag state for context-aware policy."""
@@ -1647,6 +2827,7 @@ class QtViewerBridge:
                 _corr_session_id(),
                 float(drag_start_event.get('mono_ms', _corr_now_mono_ms())),
             )
+            self._sample_drag_pressure(force=True, reason='drag_start')
         else:
             try:
                 scheduler = getattr(self, '_stack_scheduler', None)
@@ -1701,6 +2882,9 @@ class QtViewerBridge:
             int(getattr(self, '_settle_arm_seq', 0) or 0),
             getattr(self, '_last_settle_reason', 'unknown'),
         )
+        _force_present = getattr(self, '_force_present_pending_on_settle', None)
+        if callable(_force_present):
+            _force_present(reason='interaction_settled')
         self.end_fast_interaction()
         try:
             if getattr(self, '_last_settle_reason', '') == 'stack_drag_stop':
@@ -1713,19 +2897,67 @@ class QtViewerBridge:
     def _on_stack_drag_target(self, target_slice: int) -> None:
         self._mark_interaction_event()
         metrics = self._drag_metrics
+        event_interval_ms = None
+        was_same_slice = (int(target_slice) == int(self._current_slice))
+        request_queued_mono_ms = time.perf_counter() * 1000.0
+        
+        # G0: Record mouse event in event-loop diagnostics
+        try:
+            _event_diag_record_event(
+                "Wheel" if getattr(self, '_stack_drag_active', False) else "MouseMove",
+                "handler",
+                widget_name="QtSliceViewer"
+            )
+        except Exception:
+            pass
+        
         if metrics is not None:
+            metrics['total_drag_events'] = metrics.get('total_drag_events', 0) + 1
+            metrics.setdefault('raw_input_event_count', 0)
+            metrics['raw_input_event_count'] = int(metrics.get('raw_input_event_count', 0) or 0) + 1
+            metrics.setdefault('requested_slice_indices', []).append(int(target_slice))
             now = time.perf_counter()
             last_event_ts = metrics.get('last_event_ts')
             if last_event_ts is not None:
-                metrics['event_interval_ms'].append((now - float(last_event_ts)) * 1000.0)
+                event_interval_ms = (now - float(last_event_ts)) * 1000.0
+                metrics['event_interval_ms'].append(event_interval_ms)
             metrics['last_event_ts'] = now
 
         t_total = time.perf_counter()
-        changed = self._apply_interaction_target(int(target_slice), interaction_type='drag')
+        changed = self._apply_interaction_target(
+            int(target_slice),
+            interaction_type='drag',
+            request_queued_mono_ms=request_queued_mono_ms,
+        )
         if changed and metrics is not None:
             metrics['accepted_targets'] += 1
-            metrics['handler_total_ms'].append((time.perf_counter() - t_total) * 1000.0)
-            metrics['ui_lag_ms'].append(float(getattr(self, '_last_set_slice_ui_lag_ms', 0.0) or 0.0))
+            handler_total_ms = (time.perf_counter() - t_total) * 1000.0
+            ui_lag_ms = float(getattr(self, '_last_set_slice_ui_lag_ms', 0.0) or 0.0)
+            metrics['handler_total_ms'].append(handler_total_ms)
+            metrics['ui_lag_ms'].append(ui_lag_ms)
+            phase = self._sample_drag_pressure(force=False, reason='accepted_target')
+            self._record_drag_phase_metrics(
+                phase,
+                event_interval_ms=event_interval_ms,
+                handler_total_ms=handler_total_ms,
+                ui_lag_ms=ui_lag_ms,
+            )
+            # F8: event pacing metrics per accepted frame
+            _s2i_ms = float(getattr(self, '_last_set_to_image_ms', 0.0) or 0.0)
+            if _s2i_ms > 0.0:
+                metrics.setdefault('set_to_image_ms', []).append(_s2i_ms)
+            _now_ms = time.perf_counter() * 1000.0
+            _last_pres = float(metrics.get('_last_present_mono_ms', 0.0) or 0.0)
+            if _last_pres > 0.0:
+                metrics.setdefault('frame_present_interval_ms', []).append(_now_ms - _last_pres)
+            metrics['_last_present_mono_ms'] = _now_ms
+            if event_interval_ms is not None and handler_total_ms > 0.0 and event_interval_ms > handler_total_ms:
+                metrics.setdefault('implied_queue_wait_ms', []).append(event_interval_ms - handler_total_ms)
+        elif not changed and metrics is not None:
+            if was_same_slice:
+                metrics['same_slice_rejected'] = metrics.get('same_slice_rejected', 0) + 1
+            else:
+                metrics['scheduler_rejected'] = metrics.get('scheduler_rejected', 0) + 1
 
     def _on_qt_scroll(self, delta: int) -> None:
         """Handle scroll from Qt viewer — render directly + update slider.

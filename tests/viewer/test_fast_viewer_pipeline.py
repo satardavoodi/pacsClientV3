@@ -3182,13 +3182,18 @@ def _build_progressive_controller(sn="10", total=50, pending=20):
     return controller
 
 
-def test_flush_progressive_grow_survives_grow_exception():
+def test_flush_progressive_grow_survives_grow_exception(monkeypatch):
     """
     Qt-boundary guard: if _grow_progressive_fast raises, _flush_progressive_grow
     must NOT propagate the exception (which would crash via Qt's signal dispatch).
     The error must be logged exactly once with exc_info=True.
     """
     controller = _build_progressive_controller(sn="10", total=50, pending=20)
+    monkeypatch.setattr(
+        _vc_progressive_mod,
+        "_ui_should_defer_progressive_grow",
+        lambda *, terminal=False: False,
+    )
 
     # Make _grow_progressive_fast raise unconditionally
     controller._grow_progressive_fast = lambda sn, pending, viewers, **kwargs: (_ for _ in ()).throw(
@@ -3218,12 +3223,17 @@ def test_flush_progressive_grow_survives_grow_exception():
     )
 
 
-def test_flush_progressive_grow_error_logged_once():
+def test_flush_progressive_grow_error_logged_once(monkeypatch):
     """
     Spam prevention: the first failure logs at ERROR (with exc_info); subsequent
     ticks for the same series log at WARNING only.
     """
     controller = _build_progressive_controller(sn="11", total=60, pending=25)
+    monkeypatch.setattr(
+        _vc_progressive_mod,
+        "_ui_should_defer_progressive_grow",
+        lambda *, terminal=False: False,
+    )
     raise_count = [0]
 
     def _always_raise(sn, pending, viewers, **kwargs):
@@ -3478,9 +3488,14 @@ def test_flush_progressive_grow_allows_terminal_work_under_protected_ui(monkeypa
     assert grow_calls[0][3]["visible_count"] == 20
 
 
-def test_flush_progressive_grow_caps_nonterminal_visible_window():
+def test_flush_progressive_grow_caps_nonterminal_visible_window(monkeypatch):
     """Non-terminal progressive grow should admit only one viewer batch per tick."""
     controller = _build_progressive_controller(sn="14", total=100, pending=52)
+    monkeypatch.setattr(
+        _vc_progressive_mod,
+        "_ui_should_defer_progressive_grow",
+        lambda *, terminal=False: False,
+    )
     controller._progressive_series["14"]["last_grow_count"] = 20
     controller._progressive_admit_batch_size = 10
 
@@ -3521,6 +3536,71 @@ def test_flush_progressive_grow_keeps_terminal_visible_window_uncapped():
     sn, pending, visible_count, _viewers = grow_calls[0]
     assert (sn, pending) == ("15", 52)
     assert visible_count == 52
+
+
+def test_flush_progressive_terminal_hot_retry_exhausted_stays_deferred(monkeypatch):
+    """Terminal grow must stay deferred under hot interaction after retry budget."""
+    controller = _build_progressive_controller(sn="15h", total=52, pending=52)
+    controller._progressive_series["15h"]["last_grow_count"] = 20
+    controller._progressive_admit_batch_size = 10
+    controller._terminal_grow_defer_retry_count = {"15h": _vc_progressive_mod._FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES}
+
+    timer_starts = []
+    timer_intervals = []
+    timer_active = {"value": False}
+    controller._progressive_grow_timer = SimpleNamespace(
+        isActive=lambda: timer_active["value"],
+        start=lambda: (timer_starts.append("start"), timer_active.__setitem__("value", True)),
+        setInterval=lambda value: timer_intervals.append(value),
+        stop=lambda: None,
+    )
+    controller._progressive_grow_timer_default_interval_ms = 150
+
+    hot_bridge = SimpleNamespace(
+        _stack_drag_active=True,
+        _protected_drag_active=False,
+        _interaction_settle_timer=SimpleNamespace(isActive=lambda: False),
+        qt_viewer=SimpleNamespace(_scroll_stop_timer=SimpleNamespace(isActive=lambda: False)),
+        pipeline=SimpleNamespace(_fast_interaction=True),
+        is_recent_interaction_hot=lambda window_s=1.0: True,
+    )
+    controller._find_progressive_viewers = lambda sn_: [(
+        SimpleNamespace(_qt_bridge_active=True, image_viewer=hot_bridge),
+        SimpleNamespace(slider=None),
+    )]
+
+    grow_calls = []
+    controller._grow_progressive_fast = lambda *args, **kwargs: grow_calls.append((args, kwargs))
+
+    controller._flush_progressive_grow_impl()
+
+    assert grow_calls == []
+    assert timer_starts == ["start"]
+    assert timer_intervals and timer_intervals[0] >= 400
+    assert controller._progressive_series["15h"]["pending_downloaded"] == 52
+
+
+def test_flush_progressive_idle_flush_chunks_terminal_after_coalesce():
+    """Post-hot idle flush should apply terminal work in bounded chunks."""
+    controller = _build_progressive_controller(sn="15i", total=52, pending=52)
+    controller._progressive_series["15i"]["last_grow_count"] = 20
+    controller._progressive_admit_batch_size = 10
+    controller._progressive_grow_coalesced = {"15i": 3}
+
+    grow_calls = []
+
+    def _capture(sn, pending, viewers, *, visible_count=None, terminal=False, **kwargs):
+        grow_calls.append((sn, pending, visible_count, terminal))
+
+    controller._grow_progressive_fast = _capture
+    controller._flush_progressive_grow_impl()
+
+    assert len(grow_calls) == 1
+    sn, pending, visible_count, terminal = grow_calls[0]
+    assert (sn, pending) == ("15i", 52)
+    assert visible_count == 30
+    assert terminal is False
+    assert controller._progressive_grow_coalesced.get("15i") is None
 
 
 def test_get_progressive_admit_batch_size_defaults_to_eight():

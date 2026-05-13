@@ -19,6 +19,18 @@ from PacsClient.utils.runtime_correlation import (
 import logging
 
 try:
+    from PacsClient.utils.structured_logging import emit_viewer_event as _emit_viewer_event_raw
+
+    def _emit_viewer_event(_logger, _tag, **_fields):
+        try:
+            _emit_viewer_event_raw(_logger, _tag, **_fields)
+        except Exception:
+            return None
+except Exception:  # pragma: no cover
+    def _emit_viewer_event(_logger, _tag, **_fields):
+        return None
+
+try:
     from modules.viewer.fast.ui_throttle import (
         progressive_grow_interval_ms as _ui_progressive_grow_interval_ms,
         progressive_signal_interval_ms as _ui_progressive_signal_interval_ms,
@@ -61,12 +73,20 @@ _FAST_PROGRESSIVE_NONTERMINAL_GROW_MIN_INTERVAL_MS = 900.0
 _FAST_PROGRESSIVE_NONTERMINAL_GROW_MAX_INTERVAL_MS = 2500.0
 _FAST_PROGRESSIVE_METADATA_APPEND_CAP = 16
 _FAST_PROGRESSIVE_METADATA_SYNC_MIN_INTERVAL_MS = 700.0
+# R27+R28: retroactive-activation metadata sync uses same cap + throttle
+_FAST_RETROACTIVE_METADATA_APPEND_CAP = 16
+_FAST_RETROACTIVE_METADATA_SYNC_MIN_INTERVAL_MS = 700.0
 _FAST_PROGRESSIVE_FINALIZE_DEFER_BASE_MS = 350
 _FAST_PROGRESSIVE_FINALIZE_DEFER_STEP_MS = 200
 # Raised from 6 to 10 to reduce drag-time force-runs of Layer 2b/F10 terminal
 # grow on long stack-drag bursts; this preserves eventual R4 force-run behavior
 # while lowering the probability of mid-drag main-thread freeze outliers.
 _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES = 10
+# Max grow body target while interaction is hot or during post-hot idle flush.
+# Keep <= 10ms per acceptance criteria.
+_FAST_PROGRESSIVE_GROW_BUDGET_MS = 8.0
+# After interaction cools down, flush pending grow work in bounded chunks.
+_FAST_PROGRESSIVE_IDLE_FLUSH_DELAY_MS = 400.0
 # Minimum download completeness fraction before _start_progressive_display
 # is allowed to run for an untargeted series during heavy-download overlap.
 # Do NOT lower below 0.20 — it causes repeated failed load attempts that spike CPU.
@@ -409,6 +429,31 @@ def _restart_progressive_grow_timer(obj, delay_ms: float | None = None) -> None:
         timer.start()
     except Exception:
         pass
+
+
+def _is_progressive_shutdown_or_switching(obj) -> tuple[bool, str]:
+    """Best-effort detector for close/switch/finalize windows.
+
+    During these windows we keep existing done-guard/finalizer semantics and
+    avoid forcing a large terminal grow while interaction is hot.
+    """
+    try:
+        parent = getattr(obj, "parent_widget", None)
+        if bool(getattr(parent, "_is_closing", False)):
+            return True, "app_closing"
+    except Exception:
+        pass
+    try:
+        if bool(getattr(obj, "_viewer_switch_inflight", None)):
+            return True, "viewer_switch_inflight"
+    except Exception:
+        pass
+    try:
+        if bool(getattr(obj, "_async_switch_inflight", None)):
+            return True, "async_switch_inflight"
+    except Exception:
+        pass
+    return False, "none"
 
 
 def _get_progressive_admit_batch_size(obj) -> int:
@@ -1012,9 +1057,15 @@ class _VCProgressiveMixin:
 
             if downloaded < total:
                 # Still downloading â€” activate progressive mode retroactively
+                _retroactive_activate_start_ms = now_ms()
                 avail = vtk_w.image_viewer.get_count_of_slices() if vtk_w.image_viewer else 0
                 vtk_w.enter_progressive_mode(total, sn)
                 vtk_w.update_available_slice_count(avail)
+                # Mark that this series is now in retroactive + active-download mode.
+                # This flag controls metadata sync cap/throttle on next grow tick.
+                if not hasattr(self, "_retroactive_active_series"):
+                    self._retroactive_active_series = set()
+                self._retroactive_active_series.add(sn)
                 _set_progressive_lifecycle_state(
                     self,
                     sn,
@@ -1045,6 +1096,27 @@ class _VCProgressiveMixin:
                 self.logger.info(
                     "progressive: retroactive activate series=%s avail=%d total=%d",
                     sn, avail, total,
+                )
+                _retroactive_overlap = False
+                try:
+                    _bridge = getattr(vtk_w, "image_viewer", None)
+                    if _bridge is not None:
+                        _retroactive_overlap = bool(getattr(_bridge, "_stack_drag_active", False))
+                        if (not _retroactive_overlap
+                                and hasattr(_bridge, "is_recent_interaction_hot")):
+                            _retroactive_overlap = bool(_bridge.is_recent_interaction_hot(window_s=1.0))
+                except Exception:
+                    _retroactive_overlap = False
+                self.logger.info(
+                    "[PROGRESSIVE_GROW_SPLIT] phase=retroactive_activate series=%s "
+                    "retroactive_activate_ms=%.3f grow_retry_count=%d grow_overlap_with_drag=%s "
+                    "available_before=%d total=%d",
+                    sn,
+                    float(now_ms() - _retroactive_activate_start_ms),
+                    int(info.get("_stale_retry_count", 0) or 0),
+                    _retroactive_overlap,
+                    int(avail),
+                    int(total),
                 )
             else:
                 # Download COMPLETE â€” one-shot final grow so the viewer shows
@@ -1389,6 +1461,11 @@ class _VCProgressiveMixin:
         is_fast = self._is_fast_viewer_mode()
         admit_batch = _get_progressive_admit_batch_size(self)
         now_mono_ms = float(time.perf_counter() * 1000.0)
+        grow_budget_ms = float(_FAST_PROGRESSIVE_GROW_BUDGET_MS)
+        coalesced_map = getattr(self, "_progressive_grow_coalesced", None)
+        if coalesced_map is None:
+            coalesced_map = {}
+            setattr(self, "_progressive_grow_coalesced", coalesced_map)
 
         for sn, info in list(self._progressive_series.items()):
             pending = info.get("pending_downloaded", 0)
@@ -1405,13 +1482,27 @@ class _VCProgressiveMixin:
                 visible_target = pending
                 if not is_terminal and admit_batch > 0:
                     visible_target = min(pending, last_grow + admit_batch)
+                interaction_hot = _is_fast_progressive_interaction_hot(viewers)
+                if interaction_hot:
+                    coalesced_map[sn] = int(coalesced_map.get(sn, 0)) + 1
+                    _emit_viewer_event(
+                        self.logger,
+                        "PROGRESSIVE_GROW_COALESCED",
+                        series=sn,
+                        grow_budget_ms=grow_budget_ms,
+                        applied_count=0,
+                        pending_count=int(pending),
+                        interaction_active=True,
+                        terminal=bool(is_terminal),
+                        coalesced_count=int(coalesced_map.get(sn, 0)),
+                    )
                 # ── F10: defer TERMINAL grow during hot FAST drag ──────────
                 # Live log (4/29/2026) showed _grow_progressive_fast taking
                 # 546 ms on a terminal completion mid-drag, blocking the
                 # main thread independently of F9's Layer 2b defer.
                 # R4 says terminal completion fires; we honor that by
                 # force-running after _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES.
-                if is_terminal and _is_fast_progressive_interaction_hot(viewers):
+                if is_terminal and interaction_hot:
                     f10_map = _get_terminal_grow_defer_retry_map(self)
                     f10_retry = int(f10_map.get(sn, 0))
                     if f10_retry < _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES:
@@ -1433,19 +1524,51 @@ class _VCProgressiveMixin:
                             _FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES,
                             f10_delay, pending, total,
                         )
+                        _emit_viewer_event(
+                            self.logger,
+                            "PROGRESSIVE_GROW_DEFERRED_INTERACTION",
+                            series=sn,
+                            grow_budget_ms=grow_budget_ms,
+                            applied_count=0,
+                            pending_count=int(pending),
+                            interaction_active=True,
+                            terminal=True,
+                            retry=int(f10_retry + 1),
+                            reason="terminal_hot",
+                        )
                         continue
-                    # Retry budget exhausted — force-run to honor R4.
-                    f10_map.pop(sn, None)
-                    self.logger.warning(
-                        "[F10] terminal grow force-running after %d defer retries series=%s "
-                        "(drag still hot — accepting freeze to satisfy R4)",
-                        f10_retry, sn,
+                    # Retry budget exhausted — keep deferring in bounded chunks.
+                    # If switch/close/finalize context is active, keep existing
+                    # finalizer semantics and avoid forcing a large terminal grow.
+                    _shutdown_or_switching, _reason = _is_progressive_shutdown_or_switching(self)
+                    f10_delay = max(_FAST_PROGRESSIVE_IDLE_FLUSH_DELAY_MS, _progressive_grow_interval_ms())
+                    info["pending_downloaded"] = pending
+                    if not self._progressive_grow_timer.isActive():
+                        _restart_progressive_grow_timer(self, f10_delay)
+                    _emit_viewer_event(
+                        self.logger,
+                        "PROGRESSIVE_GROW_DEFERRED_INTERACTION",
+                        series=sn,
+                        grow_budget_ms=grow_budget_ms,
+                        applied_count=0,
+                        pending_count=int(pending),
+                        interaction_active=True,
+                        terminal=True,
+                        retry=int(f10_retry),
+                        reason=("terminal_hot_" + _reason) if _shutdown_or_switching else "terminal_hot_budgeted",
                     )
+                    self.logger.info(
+                        "[F10] terminal grow kept deferred after retry budget series=%s delay_ms=%.0f reason=%s",
+                        sn,
+                        f10_delay,
+                        _reason if _shutdown_or_switching else "budgeted_idle_flush",
+                    )
+                    continue
                 else:
                     # Clear any stale terminal-grow retry counter.
                     _get_terminal_grow_defer_retry_map(self).pop(sn, None)
                 # ───────────────────────────────────────────────────────────
-                if not is_terminal and _is_fast_progressive_interaction_hot(viewers):
+                if not is_terminal and interaction_hot:
                     info["pending_downloaded"] = pending
                     if not self._progressive_grow_timer.isActive():
                         _restart_progressive_grow_timer(
@@ -1455,6 +1578,17 @@ class _VCProgressiveMixin:
                     self.logger.debug(
                         "progressive-fast: interaction-hot defer series=%s pending=%d total=%d",
                         sn, pending, total,
+                    )
+                    _emit_viewer_event(
+                        self.logger,
+                        "PROGRESSIVE_GROW_DEFERRED_INTERACTION",
+                        series=sn,
+                        grow_budget_ms=grow_budget_ms,
+                        applied_count=0,
+                        pending_count=int(pending),
+                        interaction_active=True,
+                        terminal=False,
+                        reason="nonterminal_hot",
                     )
                     continue
                 if not is_terminal:
@@ -1501,6 +1635,27 @@ class _VCProgressiveMixin:
                     continue
                 # Fast mode: refresh backend file list + update available count
                 # (no VTK volume reconstruction needed).
+                # After hot interaction, flush pending grow in bounded chunks.
+                if (
+                    is_terminal
+                    and admit_batch > 0
+                    and int(coalesced_map.get(sn, 0)) > 0
+                    and visible_target > (last_grow + admit_batch)
+                ):
+                    visible_target = min(int(pending), int(last_grow + admit_batch))
+                if int(coalesced_map.get(sn, 0)) > 0:
+                    _emit_viewer_event(
+                        self.logger,
+                        "PROGRESSIVE_GROW_IDLE_FLUSH",
+                        series=sn,
+                        grow_budget_ms=grow_budget_ms,
+                        applied_count=max(0, int(visible_target) - int(last_grow)),
+                        pending_count=int(pending),
+                        interaction_active=False,
+                        coalesced_count=int(coalesced_map.get(sn, 0)),
+                        terminal=bool(is_terminal),
+                    )
+                    coalesced_map.pop(sn, None)
                 # Guard: prevent exceptions from escaping the QTimer callback.
                 # One-time-per-series traceback log avoids 150ms log spam.
                 try:
@@ -1509,8 +1664,20 @@ class _VCProgressiveMixin:
                         pending,
                         viewers,
                         visible_count=visible_target,
-                        terminal=is_terminal,
+                        terminal=is_terminal and (visible_target >= pending),
+                        grow_budget_ms=grow_budget_ms,
+                        interaction_active=False,
                     ) or 0.0)
+                    _emit_viewer_event(
+                        self.logger,
+                        "PROGRESSIVE_GROW_BUDGET_APPLY",
+                        series=sn,
+                        grow_budget_ms=grow_budget_ms,
+                        applied_count=max(0, int(visible_target) - int(last_grow)),
+                        pending_count=int(pending),
+                        interaction_active=False,
+                        terminal=bool(is_terminal and (visible_target >= pending)),
+                    )
                     if not is_terminal:
                         info["_last_nonterminal_grow_mono_ms"] = float(time.perf_counter() * 1000.0)
                         info["_last_nonterminal_grow_cost_ms"] = float(max(0.0, grow_cost_ms))
@@ -1643,6 +1810,8 @@ class _VCProgressiveMixin:
         *,
         visible_count: int | None = None,
         terminal: bool = False,
+        grow_budget_ms: float | None = None,
+        interaction_active: bool = False,
     ):
         """Fast mode growth: refresh PyDicom backend file list & update counts.
 
@@ -1667,6 +1836,7 @@ class _VCProgressiveMixin:
             series_number=str(series_number),
             interaction_active=False,
         )
+        _t_grow_admission = now_ms()
         target_visible_count = max(
             0,
             min(
@@ -1674,6 +1844,21 @@ class _VCProgressiveMixin:
                 int(pending_count if visible_count is None else visible_count),
             ),
         )
+        grow_admission_ms = float(now_ms() - _t_grow_admission)
+        grow_overlap_with_drag = bool(interaction_active)
+        try:
+            for _vtk_w_overlap, _ in viewers:
+                _bridge_overlap = getattr(_vtk_w_overlap, "image_viewer", None)
+                if _bridge_overlap is None:
+                    continue
+                if bool(getattr(_bridge_overlap, "_stack_drag_active", False)):
+                    grow_overlap_with_drag = True
+                    break
+                if hasattr(_bridge_overlap, "is_recent_interaction_hot") and _bridge_overlap.is_recent_interaction_hot(window_s=1.0):
+                    grow_overlap_with_drag = True
+                    break
+        except Exception:
+            pass
         _set_progressive_lifecycle_state(
             self,
             series_number,
@@ -1690,16 +1875,35 @@ class _VCProgressiveMixin:
         )
         logger.info(
             "[PROGRESSIVE_GROW] phase=start series=%s pending=%d visible_target=%d terminal=%s "
+            "grow_admission_ms=%.3f grow_retry_count=%d grow_overlap_with_drag=%s "
             "corr_session=%s corr_mono_ms=%.3f",
             str(series_number),
             int(pending_count),
             int(target_visible_count),
             bool(terminal),
+            grow_admission_ms,
+            int(info.get("_stale_retry_count", 0) or 0),
+            grow_overlap_with_drag,
             _corr_session_id(),
             float(grow_event.get("mono_ms", _corr_now_mono_ms())),
         )
 
         for vtk_w, node in viewers:
+            if grow_budget_ms is not None:
+                elapsed_pre_ms = float(now_ms() - _t_grow)
+                if elapsed_pre_ms >= float(grow_budget_ms):
+                    _emit_viewer_event(
+                        self.logger,
+                        "PROGRESSIVE_GROW_BUDGET_APPLY",
+                        series=str(series_number),
+                        grow_budget_ms=float(grow_budget_ms),
+                        applied_count=0,
+                        pending_count=int(pending_count),
+                        interaction_active=bool(interaction_active),
+                        terminal=bool(terminal),
+                        skipped_reason="budget_exhausted_pre_loop",
+                    )
+                    break
             new_count = pending_count  # fallback
             try:
                 # 1. Refresh the PyDicom backend file list + grow lazy volume.
@@ -1803,70 +2007,175 @@ class _VCProgressiveMixin:
         # 50–150 ms.  Terminal: run synchronously so the user sees complete
         # W/L immediately on series completion (R4 terminal-always-fires).
         if terminal:
+            # Terminal completion: unbounded metadata sync (no cap, no throttle).
+            # Clear retroactive state since download is now complete.
+            try:
+                _retro_active = getattr(self, "_retroactive_active_series", None)
+                if _retro_active is not None:
+                    _retro_active.discard(str(series_number))
+            except Exception:
+                pass
             try:
                 _meta_last = getattr(self, "_progressive_meta_sync_last_ms", None)
                 if isinstance(_meta_last, dict):
                     _meta_last.pop(str(series_number), None)
             except Exception:
                 pass
-            self._refresh_and_sync_metadata(series_number, new_count)
+            _deferred_meta_sync_start_ms = now_ms()
+            try:
+                self._refresh_and_sync_metadata(series_number, new_count)
+            except Exception:
+                pass
+            _duration_ms = float(now_ms() - _deferred_meta_sync_start_ms)
+            self.logger.info(
+                "[RETRO_META_SYNC_FINAL_FLUSH] series=%s applied_count=%d duration_ms=%.3f "
+                "interaction_active=%s terminal=True",
+                str(series_number),
+                int(new_count),
+                _duration_ms,
+                bool(interaction_active),
+            )
         else:
+            # Non-terminal metadata sync: check for retroactive to apply cap/throttle.
+            # Once a series is retroactively activated, ALL metadata syncs are capped
+            # (not just during active drag) to prevent stalls during overlap period.
+            _is_retroactive_active_grow = (
+                str(series_number) in getattr(self, "_retroactive_active_series", set())
+            )
+            
+            # Determine which cap and throttle to use
+            if _is_retroactive_active_grow:
+                _meta_cap = _FAST_RETROACTIVE_METADATA_APPEND_CAP
+                _meta_throttle_ms = _FAST_RETROACTIVE_METADATA_SYNC_MIN_INTERVAL_MS
+            else:
+                _meta_cap = _FAST_PROGRESSIVE_METADATA_APPEND_CAP
+                _meta_throttle_ms = _FAST_PROGRESSIVE_METADATA_SYNC_MIN_INTERVAL_MS
+            
             should_schedule_meta_sync = True
             if _is_fast_progressive_interaction_hot(viewers):
                 try:
-                    _meta_last = getattr(self, "_progressive_meta_sync_last_ms", None)
-                    if _meta_last is None:
-                        _meta_last = {}
-                        setattr(self, "_progressive_meta_sync_last_ms", _meta_last)
-                    _now_ms = time.monotonic() * 1000.0
-                    _sn = str(series_number)
-                    _last_ms = float(_meta_last.get(_sn, -1.0))
-                    if _last_ms >= 0.0 and (_now_ms - _last_ms) < _FAST_PROGRESSIVE_METADATA_SYNC_MIN_INTERVAL_MS:
-                        should_schedule_meta_sync = False
+                    if _is_retroactive_active_grow:
+                        # Retroactive: use separate throttle tracking
+                        _meta_last_retro = getattr(self, "_retroactive_meta_sync_last_ms", None)
+                        if _meta_last_retro is None:
+                            _meta_last_retro = {}
+                            setattr(self, "_retroactive_meta_sync_last_ms", _meta_last_retro)
+                        _now_ms = time.monotonic() * 1000.0
+                        _sn = str(series_number)
+                        _last_ms = float(_meta_last_retro.get(_sn, -1.0))
+                        if _last_ms >= 0.0 and (_now_ms - _last_ms) < _meta_throttle_ms:
+                            should_schedule_meta_sync = False
+                            # Track pending metadata for this retroactive series
+                            _pending_retro = getattr(self, "_retroactive_meta_sync_pending", None)
+                            if _pending_retro is None:
+                                _pending_retro = {}
+                                setattr(self, "_retroactive_meta_sync_pending", _pending_retro)
+                            _pending_retro[_sn] = int(new_count)
+                        else:
+                            _meta_last_retro[_sn] = _now_ms
                     else:
-                        _meta_last[_sn] = _now_ms
+                        # Non-retroactive: use standard throttle tracking
+                        _meta_last = getattr(self, "_progressive_meta_sync_last_ms", None)
+                        if _meta_last is None:
+                            _meta_last = {}
+                            setattr(self, "_progressive_meta_sync_last_ms", _meta_last)
+                        _now_ms = time.monotonic() * 1000.0
+                        _sn = str(series_number)
+                        _last_ms = float(_meta_last.get(_sn, -1.0))
+                        if _last_ms >= 0.0 and (_now_ms - _last_ms) < _meta_throttle_ms:
+                            should_schedule_meta_sync = False
+                        else:
+                            _meta_last[_sn] = _now_ms
                 except Exception:
                     pass
+
+            _deferred_meta_sync_scheduled_ms = now_ms()
+            _is_retroactive = _is_retroactive_active_grow
 
             def _deferred_meta_sync(
                 _s=series_number,
                 _c=new_count,
-                _max_new=_FAST_PROGRESSIVE_METADATA_APPEND_CAP,
+                _max_new=_meta_cap,
+                _retry_count=int(info.get("_stale_retry_count", 0) or 0),
+                _grow_overlap=bool(grow_overlap_with_drag),
+                _scheduled_ms=float(_deferred_meta_sync_scheduled_ms),
+                _is_retro=_is_retroactive,
             ):
+                _deferred_meta_sync_start_ms = now_ms()
+                _applied_count = 0
                 try:
                     self._refresh_and_sync_metadata(
                         _s,
                         _c,
                         max_new_entries=_max_new,
                     )
+                    _applied_count = _c
                 except Exception:
                     pass
+                _duration_ms = float(now_ms() - _deferred_meta_sync_start_ms)
+                if _is_retro:
+                    self.logger.info(
+                        "[RETRO_META_SYNC_CAPPED] series=%s applied_count=%d cap=%d "
+                        "duration_ms=%.3f post_grow_signal_ms=%.3f grow_retry_count=%d "
+                        "grow_overlap_with_drag=%s interaction_active=%s",
+                        str(_s),
+                        int(_applied_count),
+                        int(_max_new),
+                        _duration_ms,
+                        float(now_ms() - _deferred_meta_sync_start_ms),
+                        int(_retry_count),
+                        bool(_grow_overlap),
+                        bool(_grow_overlap),
+                    )
+                else:
+                    self.logger.info(
+                        "[PROGRESSIVE_GROW_SPLIT] phase=deferred_meta_sync series=%s "
+                        "post_grow_signal_ms=%.3f scheduled_delay_ms=%.3f grow_retry_count=%d "
+                        "grow_overlap_with_drag=%s actual_count=%d max_new_entries=%d",
+                        str(_s),
+                        _duration_ms,
+                        float(_deferred_meta_sync_start_ms - _scheduled_ms),
+                        int(_retry_count),
+                        bool(_grow_overlap),
+                        int(_c),
+                        int(_max_new),
+                    )
             if should_schedule_meta_sync:
                 QTimer.singleShot(0, _deferred_meta_sync)
                 _corr_record_event(
                     "PROGRESSIVE_APPEND",
                     series_number=str(series_number),
                     count=int(new_count),
-                    max_new_entries=int(_FAST_PROGRESSIVE_METADATA_APPEND_CAP),
+                    max_new_entries=int(_meta_cap),
                     throttled=False,
                     terminal=False,
                 )
                 self.logger.debug(
-                    "progressive-fast: metadata sync deferred series=%s new_count=%d",
-                    series_number, new_count,
+                    "progressive-fast: metadata sync deferred series=%s new_count=%d retroactive=%s",
+                    series_number, new_count, _is_retroactive_active_grow,
                 )
             else:
+                _pending_count = int(new_count)
                 _corr_record_event(
                     "PROGRESSIVE_APPEND",
                     series_number=str(series_number),
                     count=int(new_count),
-                    max_new_entries=int(_FAST_PROGRESSIVE_METADATA_APPEND_CAP),
+                    max_new_entries=int(_meta_cap),
                     throttled=True,
                     terminal=False,
                 )
+                self.logger.info(
+                    "[RETRO_META_SYNC_THROTTLED] series=%s pending_count=%d cap=%d "
+                    "throttle_ms=%.1f interaction_active=%s",
+                    str(series_number),
+                    _pending_count,
+                    int(_meta_cap),
+                    float(_meta_throttle_ms),
+                    bool(interaction_active),
+                )
                 self.logger.debug(
-                    "progressive-fast: metadata sync throttled series=%s new_count=%d",
-                    series_number, new_count,
+                    "progressive-fast: metadata sync throttled series=%s new_count=%d retroactive=%s",
+                    series_number, new_count, _is_retroactive_active_grow,
                 )
 
         info["last_grow_count"] = admitted_count

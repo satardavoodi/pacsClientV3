@@ -34,6 +34,13 @@ import multiprocessing
 import logging
 import subprocess
 import importlib.util
+import builtins
+import functools
+import gc
+import inspect
+import sqlite3
+import threading
+import time
 from pathlib import Path
 from PacsClient.utils.runtime_correlation import (
     format_near_event as _corr_format_near,
@@ -162,6 +169,351 @@ _maybe_run_tests_and_exit()
 bootstrap_installer_selected_module_packages()
 activate_optional_module_runtime()
 
+
+_UNKNOWN_HOOKS_INSTALLED = False
+
+
+def _install_unknown_stall_attribution_hooks() -> None:
+    """Install observation-only hooks to classify UNKNOWN main-thread stalls."""
+    global _UNKNOWN_HOOKS_INSTALLED
+    if _UNKNOWN_HOOKS_INSTALLED:
+        return
+
+    _UNKNOWN_HOOKS_INSTALLED = True
+    _main_tid = threading.get_ident()
+    _log = logging.getLogger("aipacs.unknown_attribution")
+
+    _disk_threshold_ms = float(os.environ.get("AIPACS_UNKNOWN_DISK_THRESHOLD_MS", "20") or "20")
+    _db_threshold_ms = float(os.environ.get("AIPACS_UNKNOWN_DB_THRESHOLD_MS", "20") or "20")
+    _import_threshold_ms = float(os.environ.get("AIPACS_UNKNOWN_IMPORT_THRESHOLD_MS", "25") or "25")
+    _gc_threshold_ms = float(os.environ.get("AIPACS_UNKNOWN_GC_THRESHOLD_MS", "50") or "50")
+
+    def _is_main_thread() -> bool:
+        return threading.get_ident() == _main_tid
+
+    def _active_fields() -> dict:
+        state = _corr_get_active_state()
+        return {
+            "viewer_state": str(state.get("viewer_state", "unknown") or "unknown"),
+            "series_uid": str(state.get("series_uid", "") or ""),
+            "series_number": str(state.get("series_number", "") or ""),
+            "interaction_active": bool(state.get("interaction_active", False)),
+        }
+
+    def _emit(cat: str, duration_ms: float, **fields) -> None:
+        try:
+            if not _is_main_thread():
+                return
+            payload = {
+                "duration_ms": round(float(duration_ms), 3),
+                **_active_fields(),
+                **fields,
+            }
+            ev = _corr_record_event(cat, **payload)
+            _log.info(
+                "[UNKNOWN_ATTR] category=%s duration_ms=%.3f viewer_state=%s series_uid=%s series_number=%s "
+                "interaction_active=%s detail=%s corr_session=%s corr_mono_ms=%.3f",
+                cat,
+                float(duration_ms),
+                payload.get("viewer_state", "unknown"),
+                payload.get("series_uid", ""),
+                payload.get("series_number", ""),
+                payload.get("interaction_active", False),
+                ";".join(f"{k}={v}" for k, v in fields.items()) if fields else "none",
+                _corr_session_id(),
+                float(ev.get("mono_ms", _corr_now_mono_ms())),
+                extra={"component": "viewer"},
+            )
+        except Exception:
+            pass
+
+    def _classify_scan_source() -> str:
+        try:
+            stack = inspect.stack(context=0)
+            markers = (
+                "_vc_switch.py",
+                "_vc_load.py",
+                "_vc_progressive.py",
+                "home_ui",
+                "thumbnail",
+                "startup",
+                "patient_table",
+            )
+            for fr in stack[2:14]:
+                filename = (fr.filename or "").replace("\\", "/").lower()
+                func = str(fr.function or "").lower()
+                if any(m in filename for m in markers):
+                    return "STARTUP_SCAN"
+                if any(k in func for k in ("startup", "switch", "load_series", "thumbnail", "scan", "enumerate")):
+                    return "STARTUP_SCAN"
+        except Exception:
+            pass
+        return "MAIN_THREAD_DISK_IO"
+
+    def _wrap_disk_fn(fn, op_name: str):
+        @functools.wraps(fn)
+        def _wrapped(*args, **kwargs):
+            if not _is_main_thread():
+                return fn(*args, **kwargs)
+            t0 = time.perf_counter()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                dur = (time.perf_counter() - t0) * 1000.0
+                if dur >= _disk_threshold_ms:
+                    cat = _classify_scan_source()
+                    _emit(
+                        cat,
+                        dur,
+                        op=op_name,
+                        path=str(args[0]) if args else "",
+                        caller=str(inspect.stack(context=0)[1].function),
+                    )
+
+        return _wrapped
+
+    # Disk / FS instrumentation (main-thread, long-only)
+    try:
+        os.listdir = _wrap_disk_fn(os.listdir, "os.listdir")
+        os.scandir = _wrap_disk_fn(os.scandir, "os.scandir")
+        os.stat = _wrap_disk_fn(os.stat, "os.stat")
+        os.path.exists = _wrap_disk_fn(os.path.exists, "os.path.exists")
+        os.path.isdir = _wrap_disk_fn(os.path.isdir, "os.path.isdir")
+        os.path.isfile = _wrap_disk_fn(os.path.isfile, "os.path.isfile")
+        Path.exists = _wrap_disk_fn(Path.exists, "Path.exists")
+        Path.stat = _wrap_disk_fn(Path.stat, "Path.stat")
+        Path.iterdir = _wrap_disk_fn(Path.iterdir, "Path.iterdir")
+        Path.glob = _wrap_disk_fn(Path.glob, "Path.glob")
+        Path.rglob = _wrap_disk_fn(Path.rglob, "Path.rglob")
+    except Exception as _disk_hook_exc:
+        _log.warning("[UNKNOWN_ATTR] disk hook install failed: %s", _disk_hook_exc)
+
+    # DICOM read instrumentation (main-thread lazy/header reads)
+    try:
+        import pydicom as _pydicom
+
+        _orig_dcmread = _pydicom.dcmread
+
+        @functools.wraps(_orig_dcmread)
+        def _instrumented_dcmread(*args, **kwargs):
+            if not _is_main_thread():
+                return _orig_dcmread(*args, **kwargs)
+            t0 = time.perf_counter()
+            try:
+                return _orig_dcmread(*args, **kwargs)
+            finally:
+                dur = (time.perf_counter() - t0) * 1000.0
+                if dur >= _disk_threshold_ms:
+                    cat = _classify_scan_source()
+                    _emit(
+                        cat,
+                        dur,
+                        op="pydicom.dcmread",
+                        path=str(args[0]) if args else "",
+                        stop_before_pixels=bool(kwargs.get("stop_before_pixels", False)),
+                        caller=str(inspect.stack(context=0)[1].function),
+                    )
+
+        _pydicom.dcmread = _instrumented_dcmread
+    except Exception as _dcm_hook_exc:
+        _log.warning("[UNKNOWN_ATTR] pydicom hook install failed: %s", _dcm_hook_exc)
+
+    # SQLite instrumentation (main-thread connection/query/commit timing)
+    try:
+        _orig_sqlite_connect = sqlite3.connect
+
+        class _InstrumentedCursor(sqlite3.Cursor):
+            def execute(self, *args, **kwargs):
+                t0 = time.perf_counter()
+                try:
+                    return super().execute(*args, **kwargs)
+                finally:
+                    dur = (time.perf_counter() - t0) * 1000.0
+                    if dur >= _db_threshold_ms:
+                        _emit(
+                            "MAIN_THREAD_DB",
+                            dur,
+                            op="cursor.execute",
+                            sql=str(args[0])[:180] if args else "",
+                            gui_thread=_is_main_thread(),
+                            caller=str(inspect.stack(context=0)[1].function),
+                        )
+
+            def executemany(self, *args, **kwargs):
+                t0 = time.perf_counter()
+                try:
+                    return super().executemany(*args, **kwargs)
+                finally:
+                    dur = (time.perf_counter() - t0) * 1000.0
+                    if dur >= _db_threshold_ms:
+                        _emit(
+                            "MAIN_THREAD_DB",
+                            dur,
+                            op="cursor.executemany",
+                            sql=str(args[0])[:180] if args else "",
+                            gui_thread=_is_main_thread(),
+                            caller=str(inspect.stack(context=0)[1].function),
+                        )
+
+        class _InstrumentedConnection(sqlite3.Connection):
+            def cursor(self, *args, **kwargs):
+                if "factory" not in kwargs:
+                    kwargs["factory"] = _InstrumentedCursor
+                return super().cursor(*args, **kwargs)
+
+            def commit(self):
+                t0 = time.perf_counter()
+                try:
+                    return super().commit()
+                finally:
+                    dur = (time.perf_counter() - t0) * 1000.0
+                    if dur >= _db_threshold_ms:
+                        _emit(
+                            "MAIN_THREAD_DB",
+                            dur,
+                            op="connection.commit",
+                            gui_thread=_is_main_thread(),
+                            caller=str(inspect.stack(context=0)[1].function),
+                        )
+
+            def execute(self, *args, **kwargs):
+                t0 = time.perf_counter()
+                try:
+                    return super().execute(*args, **kwargs)
+                finally:
+                    dur = (time.perf_counter() - t0) * 1000.0
+                    if dur >= _db_threshold_ms:
+                        _emit(
+                            "MAIN_THREAD_DB",
+                            dur,
+                            op="connection.execute",
+                            sql=str(args[0])[:180] if args else "",
+                            gui_thread=_is_main_thread(),
+                            caller=str(inspect.stack(context=0)[1].function),
+                        )
+
+        @functools.wraps(_orig_sqlite_connect)
+        def _instrumented_connect(*args, **kwargs):
+            t0 = time.perf_counter()
+            if "factory" not in kwargs:
+                kwargs["factory"] = _InstrumentedConnection
+            try:
+                return _orig_sqlite_connect(*args, **kwargs)
+            finally:
+                dur = (time.perf_counter() - t0) * 1000.0
+                if dur >= _db_threshold_ms:
+                    _emit(
+                        "MAIN_THREAD_DB",
+                        dur,
+                        op="sqlite.connect",
+                        gui_thread=_is_main_thread(),
+                        caller=str(inspect.stack(context=0)[1].function),
+                    )
+
+        sqlite3.connect = _instrumented_connect
+    except Exception as _db_hook_exc:
+        _log.warning("[UNKNOWN_ATTR] db hook install failed: %s", _db_hook_exc)
+
+    # Lazy import instrumentation
+    try:
+        _orig_import = builtins.__import__
+
+        @functools.wraps(_orig_import)
+        def _instrumented_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if not _is_main_thread():
+                return _orig_import(name, globals, locals, fromlist, level)
+            t0 = time.perf_counter()
+            try:
+                return _orig_import(name, globals, locals, fromlist, level)
+            finally:
+                dur = (time.perf_counter() - t0) * 1000.0
+                if dur >= _import_threshold_ms:
+                    _emit(
+                        "IMPORT_LAZY_INIT",
+                        dur,
+                        module=str(name),
+                        fromlist_len=int(len(fromlist or ())),
+                        caller=str(inspect.stack(context=0)[1].function),
+                    )
+
+        builtins.__import__ = _instrumented_import
+    except Exception as _imp_hook_exc:
+        _log.warning("[UNKNOWN_ATTR] import hook install failed: %s", _imp_hook_exc)
+
+    # GC pause instrumentation
+    try:
+        _gc_starts = {}
+
+        def _gc_callback(phase, info):
+            tid = threading.get_ident()
+            key = (tid, int((info or {}).get("generation", -1)))
+            if phase == "start":
+                _gc_starts[key] = time.perf_counter()
+                return
+            if phase != "stop":
+                return
+            t0 = _gc_starts.pop(key, None)
+            if t0 is None:
+                return
+            dur = (time.perf_counter() - t0) * 1000.0
+            if dur >= _gc_threshold_ms and _is_main_thread():
+                _emit(
+                    "GC_PAUSE",
+                    dur,
+                    generation=int((info or {}).get("generation", -1)),
+                    collected=int((info or {}).get("collected", -1)),
+                    uncollectable=int((info or {}).get("uncollectable", -1)),
+                )
+
+        gc.callbacks.append(_gc_callback)
+    except Exception as _gc_hook_exc:
+        _log.warning("[UNKNOWN_ATTR] gc hook install failed: %s", _gc_hook_exc)
+
+    # QTimer.singleShot callback timing (owner/module/function best effort)
+    try:
+        from PySide6.QtCore import QTimer as _HookQTimer
+
+        _orig_single_shot = _HookQTimer.singleShot
+
+        def _wrap_timer_cb(cb):
+            @functools.wraps(cb)
+            def _timed_cb(*args, **kwargs):
+                t0 = time.perf_counter()
+                try:
+                    return cb(*args, **kwargs)
+                finally:
+                    dur = (time.perf_counter() - t0) * 1000.0
+                    timer_thr = max(12.0, float(os.environ.get("AIPACS_UNKNOWN_TIMER_THRESHOLD_MS", "16") or "16"))
+                    if dur >= timer_thr and _is_main_thread():
+                        owner = ""
+                        try:
+                            _self = getattr(cb, "__self__", None)
+                            owner = type(_self).__name__ if _self is not None else ""
+                        except Exception:
+                            owner = ""
+                        _emit(
+                            "TIMER_CALLBACK",
+                            dur,
+                            source="QTimer.singleShot",
+                            owner=owner,
+                            module=str(getattr(cb, "__module__", "") or ""),
+                            function=str(getattr(cb, "__qualname__", getattr(cb, "__name__", "<callable>"))),
+                        )
+
+            return _timed_cb
+
+        def _instrumented_single_shot(*args, **kwargs):
+            if not args:
+                return _orig_single_shot(*args, **kwargs)
+            new_args = list(args)
+            if callable(new_args[-1]):
+                new_args[-1] = _wrap_timer_cb(new_args[-1])
+            return _orig_single_shot(*tuple(new_args), **kwargs)
+
+        setattr(_HookQTimer, "singleShot", staticmethod(_instrumented_single_shot))
+    except Exception as _timer_hook_exc:
+        _log.warning("[UNKNOWN_ATTR] timer hook install failed: %s", _timer_hook_exc)
+
 # ============================================================================
 # CRITICAL: Graphics/OpenGL Configuration MUST happen before any Qt/VTK imports
 # ============================================================================
@@ -257,7 +609,7 @@ if sys.platform == 'win32':
     except:
         pass
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from PySide6.QtGui import QIcon
 from PacsClient.app_handler import AppHandler
@@ -375,6 +727,7 @@ if __name__ == "__main__":
     # (QTimer callbacks, signal slots, paint events, etc.).
     class _AIPacsApplication(QApplication):
         def notify(self, receiver, event):
+            _t0_notify = time.perf_counter()
             try:
                 return super().notify(receiver, event)
             except Exception:
@@ -440,11 +793,66 @@ if __name__ == "__main__":
                 except Exception:
                     pass
                 raise
+            finally:
+                try:
+                    if event is not None and threading.get_ident() == threading.main_thread().ident:
+                        dur = (time.perf_counter() - _t0_notify) * 1000.0
+                        notify_thr = max(12.0, float(os.environ.get("AIPACS_UNKNOWN_NOTIFY_THRESHOLD_MS", "16") or "16"))
+                        if dur >= notify_thr:
+                            et = int(event.type())
+                            cat = None
+                            if et == int(QEvent.Type.Timer):
+                                cat = "TIMER_CALLBACK"
+                            elif et == int(QEvent.Type.MetaCall):
+                                cat = "SIGNAL_SLOT_LONG"
+                            elif et in {
+                                int(QEvent.Type.LayoutRequest),
+                                int(QEvent.Type.UpdateRequest),
+                                int(QEvent.Type.UpdateLater),
+                                int(QEvent.Type.Resize),
+                                int(QEvent.Type.Move),
+                                int(QEvent.Type.PolishRequest),
+                            }:
+                                cat = "MODEL_LAYOUT"
+
+                            if cat is not None:
+                                _state = _corr_get_active_state()
+                                _corr_record_event(
+                                    cat,
+                                    duration_ms=round(float(dur), 3),
+                                    receiver_class=type(receiver).__name__ if receiver is not None else "",
+                                    receiver_module=type(receiver).__module__ if receiver is not None else "",
+                                    receiver_name=(receiver.objectName() if hasattr(receiver, "objectName") else "") or "",
+                                    event_type=et,
+                                    viewer_state=str(_state.get("viewer_state", "unknown") or "unknown"),
+                                    series_uid=str(_state.get("series_uid", "") or ""),
+                                    series_number=str(_state.get("series_number", "") or ""),
+                                    interaction_active=bool(_state.get("interaction_active", False)),
+                                )
+                except Exception:
+                    pass
     # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     startup_import_folder = _extract_startup_import_folder()
 
+    # Observation-only UNKNOWN attribution hooks are expensive; keep opt-in.
+    if os.environ.get("AIPACS_UNKNOWN_STALL_HOOKS", "0") == "1":
+        _install_unknown_stall_attribution_hooks()
+
     app = _AIPacsApplication(sys.argv)
+
+    # ── G0: Install event-loop diagnostics filter (observation-only) ──────
+    # Instruments Qt events at the QApplication level to measure event delivery
+    # jitter and input dispatch latency. Used to root-cause ui_lag spikes.
+    # Enable: AIPACS_EVENT_LOOP_DIAG=1
+    try:
+        if os.environ.get("AIPACS_EVENT_LOOP_DIAG", "0") == "1":
+            from modules.viewer.fast.app_event_filter import install_app_event_filter
+            install_app_event_filter(app)
+            logging.getLogger(__name__).info("[EVENT_LOOP_DIAG] Event filter installed on QApplication")
+    except Exception as _diag_exc:
+        logging.getLogger(__name__).debug(f"Event-loop diagnostics setup failed: {_diag_exc}")
+    # ─────────────────────────────────────────────────────────────────────
 
     # ── CPU BUDGET: Raise main process priority on Windows ───────────────
     # Windows default NORMAL_PRIORITY_CLASS lets background apps (browsers,
@@ -704,7 +1112,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("2.4.7c")
+    app.setApplicationVersion("3.0.2")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
