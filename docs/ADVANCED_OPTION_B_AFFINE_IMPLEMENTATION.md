@@ -27,6 +27,14 @@ This document describes the **Option B explicit affine contract** for the Advanc
 > All geometry-sensitive logic uses an explicit `SeriesGeometryIndex` affine contract.  
 > VTK direction matrix is ignored by design (explicitly logged).
 
+### Clinical Stability Policy (v3.0.3+)
+
+- Active VTK rendering pipeline remains voxel-space by default.
+- `SourceGeometry` / `DisplayGeometry` remain authoritative for medical geometry, markers, sync, and reference mapping.
+- VTK bridge mutation (`SetOrigin` / `SetSpacing` / `SetDirectionMatrix` on active render image) is experimental and disabled by default.
+- Enable experimental mutation only with `AIPACS_ADVANCED_VTK_GEOMETRY_BRIDGE_ACTIVE=1`.
+- Future patient-space VTK rendering requires a dedicated design pass; do not opportunistically mutate the current active pipeline.
+
 ### Files Changed
 
 | File | Change | Plugin Mirror |

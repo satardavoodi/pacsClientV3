@@ -57,6 +57,8 @@ from modules.viewer.fast.ui_throttle import (
     record_fast_interaction,
     record_protected_drag,
     record_ui_heartbeat,
+    should_emit_fast_hotpath_diag,
+    should_emit_fast_hotpath_trace,
 )
 from modules.viewer.fast.event_loop_diagnostics import (
     start_session as _event_diag_start_session,
@@ -1800,12 +1802,13 @@ class QtViewerBridge:
                 qv._fast_present_trace_meta = None
         except Exception:
             pass
-        # G0: Event-loop diagnostics start instrumentation session
+        # G0: Event-loop diagnostics start instrumentation session (C3 Part 2 profile gate)
         drag_session_id = str(getattr(self, '_drag_session_id', '') or '')
-        try:
-            _event_diag_start_session(f"drag-{drag_session_id}")
-        except Exception as e:
-            logger.debug(f"Failed to start event-loop diagnostics: {e}")
+        if should_emit_fast_hotpath_diag():
+            try:
+                _event_diag_start_session(f"drag-{drag_session_id}")
+            except Exception as e:
+                logger.debug(f"Failed to start event-loop diagnostics: {e}")
 
     def _sample_drag_pressure(self, *, force: bool = False, reason: str = '') -> str:
         metrics = self._drag_metrics or {}
@@ -1867,6 +1870,12 @@ class QtViewerBridge:
         drag_session_id = str(getattr(self, '_drag_session_id', '') or '')
         drag_start_mono_ms = float(getattr(self, '_drag_session_start_mono_ms', 0.0) or 0.0)
         drag_end_mono_ms = _corr_now_mono_ms()
+        # C3 Part 2 profile gate: stop event-diag session only if it was started
+        if should_emit_fast_hotpath_diag():
+            try:
+                _event_diag_stop_session()
+            except Exception as e:
+                logger.debug(f"Failed to stop event-loop diagnostics: {e}")
         dm_rebuild_during_drag = False
         stall_during_drag = False
         if drag_start_mono_ms > 0.0 and drag_end_mono_ms >= drag_start_mono_ms:

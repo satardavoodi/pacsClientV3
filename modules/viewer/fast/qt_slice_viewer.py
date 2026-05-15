@@ -37,6 +37,7 @@ from PySide6.QtWidgets import QWidget
 
 from modules.viewer.fast.stack_drag_profile import build_stack_drag_profile
 from modules.viewer.fast import ui_throttle
+from modules.viewer.fast.ui_throttle import should_emit_fast_hotpath_diag
 from modules.viewer.fast.event_loop_diagnostics import (
     record_event as _event_diag_record_event,
 )
@@ -351,14 +352,15 @@ class QtSliceViewer(QWidget):
             self._zoom = self._calculate_fit_zoom()
             self._pan_offset = QPointF(0.0, 0.0)
         self.update()
-        try:
-            _event_diag_record_event(
-                "UpdateRequest",
-                "update_call",
-                widget_name="QtSliceViewer",
-            )
-        except Exception:
-            pass
+        if should_emit_fast_hotpath_diag():
+            try:
+                _event_diag_record_event(
+                    "UpdateRequest",
+                    "update_call",
+                    widget_name="QtSliceViewer",
+                )
+            except Exception:
+                pass
         # F8: record call time so paintEvent can compute Qt repaint-scheduling delay.
         self._set_image_mono_ms: float = time.perf_counter() * 1000.0
 
@@ -1116,14 +1118,15 @@ class QtSliceViewer(QWidget):
                 int(getattr(self, '_pending_set_image_depth', 0) or 0) - 1,
             )
         t_start = time.perf_counter()
-        try:
-            _event_diag_record_event(
-                "Paint",
-                "paint",
-                widget_name="QtSliceViewer",
-            )
-        except Exception:
-            pass
+        if should_emit_fast_hotpath_diag():
+            try:
+                _event_diag_record_event(
+                    "Paint",
+                    "paint",
+                    widget_name="QtSliceViewer",
+                )
+            except Exception:
+                pass
         painter = QPainter(self)
 
         try:

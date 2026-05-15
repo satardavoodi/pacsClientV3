@@ -51,6 +51,7 @@ from modules.viewer.fast.ui_throttle import (
     is_heavy_download_active,
     is_viewed_series_complete,
     should_admit,
+    should_emit_fast_hotpath_diag,
 )
 from modules.zeta_boost.cache_engine import _zb_globals
 from PacsClient.utils.runtime_correlation import (
@@ -1032,7 +1033,9 @@ class Lightweight2DPipeline(QObject):
             if fg_probe_active:
                 self._mark_foreground_probe(source="memory_cache", cache_hit=True)
                 surrogate_frame = self._finalize_foreground_probe(surrogate_frame, fg_probe_start_ms)
-            self._maybe_emit_overlap_tag(surrogate_frame, "surrogate")
+            # C3 Part 2 profile gate: emit overlap scenario only in diagnostic mode
+            if should_emit_fast_hotpath_diag():
+                self._maybe_emit_overlap_tag(surrogate_frame, "surrogate")
             return surrogate_frame
         # ── End B3.7 ──────────────────────────────────────────────────
 
@@ -1052,7 +1055,9 @@ class Lightweight2DPipeline(QObject):
             _pm.record_filter(frame.filter_ms)
         if not (bool(getattr(self, '_protected_drag_active', False)) and interaction_type == 'drag'):
             self._ensure_prefetch_prepared(idx)
-        self._maybe_emit_overlap_tag(frame, "decode")
+        # C3 Part 2 profile gate: emit overlap scenario only in diagnostic mode
+        if should_emit_fast_hotpath_diag():
+            self._maybe_emit_overlap_tag(frame, "decode")
         return frame
 
     def _begin_foreground_probe(self, idx: int) -> None:

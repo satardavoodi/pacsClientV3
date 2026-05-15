@@ -2219,9 +2219,24 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             ImageViewer2D._viewport_geometry_registry.register(viewport_id, dg)
 
             if self.vtk_image_data is not None:
-                bridge_active = str(os.getenv("AIPACS_ADVANCED_VTK_GEOMETRY_BRIDGE_ACTIVE", "1")).strip() not in {"0", "false", "False"}
+                bridge_active = str(os.getenv("AIPACS_ADVANCED_VTK_GEOMETRY_BRIDGE_ACTIVE", "0")).strip() not in {"0", "false", "False"}
                 if bridge_active:
+                    logger.warning(
+                        "[VTK_BRIDGE_EXPERIMENTAL_ACTIVE] series_uid=%s viewport_id=%s note=mutates_active_vtk_image_geometry_origin_spacing_direction may_affect_rendering=True",
+                        series_uid,
+                        viewport_id,
+                        extra={"component": "viewer"},
+                    )
                     apply_source_geometry_to_vtk(self.vtk_image_data, sg, dg)
+                else:
+                    logger.warning(
+                        "[VTK_BRIDGE_RENDER_MUTATION_SKIPPED] series_uid=%s viewport_id=%s reason=clinical_render_stability_default source_geometry_valid=%s display_geometry_valid=%s",
+                        series_uid,
+                        viewport_id,
+                        bool(sg.valid),
+                        bool(getattr(dg.source, "valid", False)),
+                        extra={"component": "viewer"},
+                    )
                 log_vtk_orientation_bridge_status(self.vtk_image_data, sg, dg)
 
             post_state = self._capture_render_geometry_state()

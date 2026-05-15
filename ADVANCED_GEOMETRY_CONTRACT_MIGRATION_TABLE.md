@@ -33,11 +33,14 @@ Scope: Advanced viewer runtime geometry consumers + plugin mirror parity require
 ## 3) Controlled Migration Decisions
 
 1. Medical geometry authority is SourceGeometry + DisplayGeometry.
-2. VTK origin/spacing/direction is mirrored only via vtk_bridge; never authoritative.
+2. VTK active render image remains voxel-space by default; vtk_bridge mutation is experimental only.
 3. Sync/reference-line production behavior is preserved; contract logs are added for runtime proof before full path swap.
 4. Camera-based marker code is retained only as guarded fallback; contract markers are primary.
 5. No slice-order reversal hacks were introduced.
 6. No manual axial/sagittal/coronal reversal workarounds were introduced.
+7. `AIPACS_ADVANCED_VTK_GEOMETRY_BRIDGE_ACTIVE=0` is the clinical default (skip active vtkImageData mutation).
+8. `AIPACS_ADVANCED_VTK_GEOMETRY_BRIDGE_ACTIVE=1` is experimental opt-in and emits explicit warning logs.
+9. Future patient-space VTK rendering requires a separate explicit design; do not opportunistically apply `SetOrigin` / `SetSpacing` / `SetDirectionMatrix` to the current active render pipeline.
 
 ## 4) Plugin Mirror Scope
 
