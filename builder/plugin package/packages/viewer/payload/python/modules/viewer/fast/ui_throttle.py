@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+import os
 from typing import Hashable, Optional
 
 from modules.viewer.fast.block_telemetry import LiveBlockTelemetry
@@ -23,6 +24,47 @@ from modules.viewer.fast.system_load_controller import BlockId
 from modules.viewer.fast.system_load_controller import WorkClass
 
 _logger = logging.getLogger("aipacs.ui_throttle")
+
+# C3: Central FAST hot-path profile switch (production, diagnostic, trace)
+_FAST_HOTPATH_PROFILE_CACHE: Optional[str] = None
+
+
+def get_fast_hotpath_profile() -> str:
+    """Get current FAST hot-path profile: production (default), diagnostic, or trace."""
+    global _FAST_HOTPATH_PROFILE_CACHE
+    if _FAST_HOTPATH_PROFILE_CACHE is not None:
+        return _FAST_HOTPATH_PROFILE_CACHE
+    profile = str(os.getenv('AIPACS_FAST_HOTPATH_PROFILE', 'production')).strip().lower()
+    if profile not in ('production', 'diagnostic', 'trace'):
+        profile = 'production'
+    _FAST_HOTPATH_PROFILE_CACHE = profile
+    return profile
+
+
+def is_fast_profile_production() -> bool:
+    """True if profile is production (default, low-overhead)."""
+    return get_fast_hotpath_profile() == 'production'
+
+
+def is_fast_profile_diagnostic() -> bool:
+    """True if profile is diagnostic (includes investigative detail)."""
+    return get_fast_hotpath_profile() == 'diagnostic'
+
+
+def is_fast_profile_trace() -> bool:
+    """True if profile is trace (full investigation detail)."""
+    return get_fast_hotpath_profile() == 'trace'
+
+
+def should_emit_fast_hotpath_diag() -> bool:
+    """True if diagnostic and higher detail should be emitted."""
+    profile = get_fast_hotpath_profile()
+    return profile in ('diagnostic', 'trace')
+
+
+def should_emit_fast_hotpath_trace() -> bool:
+    """True if trace-level detail should be emitted."""
+    return get_fast_hotpath_profile() == 'trace'
 
 _LOCK = threading.Lock()
 _LAST_EVENT_MS: dict[Hashable, float] = {}

@@ -2612,7 +2612,7 @@ class QtViewerBridge:
                 cancelled=True,
                 superseded=True,
             )
-            logger.info(
+            logger.debug(
                 "[FAST_RENDER_CLOCK] event=superseded drag_session_id=%s requested_slice=%d presented_slice=%s "
                 "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
                 "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
@@ -2814,7 +2814,7 @@ class QtViewerBridge:
         self._fast_clock_last_tick_mono_ms = _now_ms
 
         if int(getattr(self, '_fast_last_presented_generation', 0) or 0) >= int(getattr(self, '_fast_request_generation', 0) or 0):
-            logger.info(
+            logger.debug(
                 "[FAST_RENDER_CLOCK] event=skipped_no_new_request drag_session_id=%s requested_slice=%s presented_slice=%s "
                 "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
                 "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
@@ -2852,7 +2852,7 @@ class QtViewerBridge:
             return
         try:
             self._present_latest_requested_slice(reason='tick')
-            logger.info(
+            logger.debug(
                 "[FAST_RENDER_CLOCK] event=tick drag_session_id=%s requested_slice=%s presented_slice=%s "
                 "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
                 "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
@@ -2903,7 +2903,7 @@ class QtViewerBridge:
         _apply_side_effects = getattr(self, '_apply_present_side_effects', None)
         if callable(_apply_side_effects):
             _apply_side_effects(idx, reason=str(reason or '-'), force=False)
-        logger.info(
+        logger.debug(
             "[FAST_RENDER_CLOCK] event=present drag_session_id=%s requested_slice=%d presented_slice=%d "
             "request_generation=%d last_presented_generation=%d request_to_present_ms=%.3f "
             "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
@@ -2935,7 +2935,7 @@ class QtViewerBridge:
             self._fast_render_clock_timer.stop()
         except Exception:
             pass
-        logger.info(
+        logger.debug(
             "[FAST_RENDER_CLOCK] event=stopped drag_session_id=%s requested_slice=%s presented_slice=%s "
             "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
             "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
@@ -2958,7 +2958,7 @@ class QtViewerBridge:
         if int(getattr(self, '_fast_request_generation', 0) or 0) > int(getattr(self, '_fast_last_presented_generation', 0) or 0):
             did_present = self._present_latest_requested_slice(reason='forced_settle')
         if did_present:
-            logger.info(
+            logger.debug(
                 "[FAST_RENDER_CLOCK] event=forced_settle_present drag_session_id=%s requested_slice=%s presented_slice=%s "
                 "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
                 "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",

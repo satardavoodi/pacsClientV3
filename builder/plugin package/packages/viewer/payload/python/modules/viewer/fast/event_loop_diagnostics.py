@@ -17,6 +17,7 @@ Classification targets:
 
 import time
 import threading
+import os
 from collections import defaultdict, deque
 from typing import Optional, Dict, List, Any, Tuple
 from dataclasses import dataclass, field
@@ -27,9 +28,20 @@ logger = logging.getLogger(__name__)
 # Global diagnostics state
 _lock = threading.Lock()
 _session_enabled = False
+_diagnostics_enabled_cache: Optional[bool] = None
 _event_timeline: Dict[str, deque] = defaultdict(lambda: deque(maxlen=10000))  # ~400 events per session
 _current_session_start_ms: Optional[float] = None
 _current_session_id: Optional[str] = None
+
+
+def _is_diagnostics_enabled() -> bool:
+    """Check if event-loop diagnostics are opt-in enabled."""
+    global _diagnostics_enabled_cache
+    if _diagnostics_enabled_cache is not None:
+        return _diagnostics_enabled_cache
+    enabled = str(os.getenv('AIPACS_EVENT_LOOP_DIAG', '')).strip() == '1'
+    _diagnostics_enabled_cache = enabled
+    return enabled
 
 
 @dataclass
@@ -46,7 +58,9 @@ class EventTimestamp:
 
 
 def start_session(session_id: str) -> None:
-    """Start collecting event diagnostics for a session."""
+    """Start collecting event diagnostics for a session (opt-in via AIPACS_EVENT_LOOP_DIAG=1)."""
+    if not _is_diagnostics_enabled():
+        return
     global _session_enabled, _current_session_start_ms, _current_session_id
     with _lock:
         _session_enabled = True
@@ -57,7 +71,9 @@ def start_session(session_id: str) -> None:
 
 
 def stop_session() -> Dict[str, Any]:
-    """Stop collecting and return aggregated metrics."""
+    """Stop collecting and return aggregated metrics (opt-in via AIPACS_EVENT_LOOP_DIAG=1)."""
+    if not _is_diagnostics_enabled():
+        return {}
     global _session_enabled, _current_session_start_ms, _current_session_id
     with _lock:
         _session_enabled = False
@@ -74,8 +90,8 @@ def stop_session() -> Dict[str, Any]:
 def record_event(event_type: str, source: str, x: Optional[int] = None,
                  y: Optional[int] = None, wheel_delta: Optional[int] = None,
                  widget_name: Optional[str] = None) -> None:
-    """Record an event timestamp (thread-safe)."""
-    if not _session_enabled:
+    """Record an event timestamp (thread-safe, opt-in via AIPACS_EVENT_LOOP_DIAG=1)."""
+    if not _is_diagnostics_enabled() or not _session_enabled:
         return
     
     with _lock:
