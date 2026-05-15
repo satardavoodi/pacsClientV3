@@ -2364,54 +2364,19 @@ class QtViewerBridge:
             set_slice_ms = (time.perf_counter() - t_stage) * 1000.0
         self.last_index_slice_saved = new_val
 
-        # In clock mode, defer all UI updates; in normal mode, apply them immediately
-        if not _clock_enabled:
-            slider_ms = 0.0
-            if self.vtk_widget is not None:
-                slider = getattr(self.vtk_widget, 'slider', None)
-                if slider is not None:
-                    t_stage = time.perf_counter()
-                    slider.blockSignals(True)
-                    slider.setValue(new_val)
-                    slider.blockSignals(False)
-                    slider_ms = (time.perf_counter() - t_stage) * 1000.0
-                self.vtk_widget.image_viewer = self
-
-            sync_ms = 0.0
-            try:
-                _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None)
-                if _cb is not None:
-                    _last = self._last_stack_sync_ms if self._stack_drag_active else getattr(self, '_last_sync_ms', 0.0)
-                    _interval = 180.0 if self._stack_drag_active else 100.0
-                    if now_ms - _last >= _interval:
-                        if self._stack_drag_active:
-                            self._last_stack_sync_ms = now_ms
-                        else:
-                            self._last_sync_ms = now_ms
-                        t_stage = time.perf_counter()
-                        _cb(self.vtk_widget)
-                        sync_ms = (time.perf_counter() - t_stage) * 1000.0
-            except Exception:
-                pass
-
-            reference_ms = 0.0
-            try:
-                _pw = getattr(self.vtk_widget, 'patient_widget', None)
-                if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
-                    if (now_ms - self._last_stack_reference_ms) >= 160.0:
-                        self._last_stack_reference_ms = now_ms
-                    t_stage = time.perf_counter()
-                    _pw._schedule_reference_line_update()
-                    reference_ms = (time.perf_counter() - t_stage) * 1000.0
-            except Exception:
-                pass
-        else:
-            # Clock mode: UI updates deferred, just set image_viewer reference
-            slider_ms = 0.0
-            sync_ms = 0.0
-            reference_ms = 0.0
-            if self.vtk_widget is not None:
-                self.vtk_widget.image_viewer = self
+        # C4: Defer slider/sync/reference-line to settle-time final flush.
+        # Only the image_viewer reference assignment is kept immediate (benign
+        # same-pointer write required within this tick by other code paths).
+        # Clock mode has already returned above via the early-return branch;
+        # this code is therefore only reached from the non-clock path.
+        if self.vtk_widget is not None:
+            self.vtk_widget.image_viewer = self
+        self._fast_pending_slider_value = int(new_val)
+        self._fast_pending_sync_update = True
+        self._fast_pending_reference_update = True
+        slider_ms = 0.0
+        sync_ms = 0.0
+        reference_ms = 0.0
 
         total_ms = (time.perf_counter() - t_total) * 1000.0
         if total_ms >= _SET_SLICE_STAGE_LOG_THRESHOLD_MS and not self._stack_drag_active:
@@ -2428,6 +2393,61 @@ class QtViewerBridge:
                 interaction_type,
             )
         return True
+
+    def _flush_non_clock_side_effects_on_settle(self) -> None:
+        """C4: Apply deferred slider/sync/reference-line at settle time (non-clock path).
+
+        Mirrors the final-settle path used by the render-clock path in
+        _flush_final_side_effects_on_settle(), but runs unconditionally without
+        the _fast_clock_enabled() gate so that it works when the render clock is
+        disabled or not applicable.  Called only from _on_interaction_settled
+        after end_fast_interaction() so that fast-interaction state is already
+        cleared when side effects fire.
+
+        Final-settle contract: slider, sync and reference-line MUST reflect the
+        last accepted target.  Rate-limit guards are intentionally bypassed here
+        so no per-tick throttle can suppress the definitive settle flush.
+        """
+        final_slice = getattr(self, '_fast_pending_slider_value', None)
+        if final_slice is None:
+            final_slice = int(getattr(self, '_current_slice', 0) or 0)
+        else:
+            final_slice = int(final_slice)
+
+        # Slider: unconditional at settle so user sees correct final position.
+        if self.vtk_widget is not None:
+            slider = getattr(self.vtk_widget, 'slider', None)
+            if slider is not None:
+                try:
+                    slider.blockSignals(True)
+                    slider.setValue(final_slice)
+                finally:
+                    try:
+                        slider.blockSignals(False)
+                    except Exception:
+                        pass
+            self.vtk_widget.image_viewer = self
+
+        # Sync callback: unconditional at settle (no rate-limit).
+        try:
+            _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None)
+            if _cb is not None:
+                _cb(self.vtk_widget)
+        except Exception:
+            pass
+
+        # Reference-line: unconditional at settle (no rate-limit).
+        try:
+            _pw = getattr(self.vtk_widget, 'patient_widget', None)
+            if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
+                _pw._schedule_reference_line_update()
+        except Exception:
+            pass
+
+        # Clear pending flags.
+        self._fast_pending_slider_value = None
+        self._fast_pending_sync_update = False
+        self._fast_pending_reference_update = False
 
     def _disconnect_viewer_signals(self) -> None:
         """Disconnect Qt viewer signals owned by this bridge.
@@ -3121,6 +3141,12 @@ class QtViewerBridge:
         if callable(_force_present):
             _force_present(reason='interaction_settled')
         self.end_fast_interaction()
+        # C4: flush deferred slider/sync/reference-line for non-clock path.
+        if not self._fast_clock_enabled():
+            try:
+                self._flush_non_clock_side_effects_on_settle()
+            except Exception:
+                pass
         try:
             if getattr(self, '_last_settle_reason', '') == 'stack_drag_stop':
                 _pw = getattr(self.vtk_widget, 'patient_widget', None)
