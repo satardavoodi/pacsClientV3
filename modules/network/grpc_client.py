@@ -4,6 +4,8 @@ import logging
 import os
 import grpc
 
+from PacsClient.utils.structured_logging import emit_ui_event
+
 from . import dicom_service_pb2
 from . import dicom_service_pb2_grpc
 
@@ -117,6 +119,30 @@ class DicomGrpcClient:
         """Get study thumbnails including image data."""
         if not self._ensure_stub():
             return None
+
+        # Guardrail: thumbnail RPC must not run on the Qt GUI thread.
+        is_main_thread = False
+        try:
+            from PySide6.QtCore import QCoreApplication, QThread
+
+            app = QCoreApplication.instance()
+            if app is not None and QThread.currentThread() == app.thread():
+                is_main_thread = True
+        except Exception:
+            is_main_thread = False
+
+        if is_main_thread:
+            strict_guard = str(os.environ.get("AIPACS_THUMBNAIL_MAIN_THREAD_GUARD_STRICT", "0")) == "1"
+            emit_ui_event(
+                logger,
+                "THUMBNAIL_FETCH_MAIN_THREAD_BLOCK_PREVENTED",
+                level=logging.ERROR,
+                patient_id=str(patient_id),
+                study_uid=str(study_uid),
+                strict=bool(strict_guard),
+            )
+            if strict_guard:
+                return None
 
         call_timeout = timeout or self.timeout
         try:

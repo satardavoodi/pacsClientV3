@@ -501,13 +501,33 @@ class _VCLoadMixin:
                                 _build_metadata_headers_only,
                                 _ensure_series_meta,
                             )
+                            from PacsClient.pacs.patient_tab.utils.advanced_geometry_contract import get_series_geometry_index
+
+                            if get_series_geometry_index(metadata) is not None:
+                                logger.error(
+                                    "[ADVANCED_ORDER_CONTRACT_ERROR] caller=ViewerController._load_single_series_on_demand reason=empty_instances_repair_on_geometry_index series=%s",
+                                    series_number,
+                                    extra={"component": "viewer"},
+                                )
+                                return False
                             _repair_meta = _build_metadata_headers_only(_repair_sp, series_number)
                             if (
                                 isinstance(_repair_meta, dict)
                                 and _repair_meta.get('instances')
                             ):
                                 _repair_instances = _repair_meta.get('instances') or []
+                                _before_instances = list(metadata.get('instances') or [])
                                 metadata['instances'] = _repair_instances
+                                try:
+                                    self._emit_advanced_metadata_mutation_probe(
+                                        metadata=metadata,
+                                        before_instances=_before_instances,
+                                        after_instances=metadata.get('instances') or [],
+                                        caller="ViewerController._load_single_series_on_demand",
+                                        reason="advanced_empty_instances_repair_from_disk_headers",
+                                    )
+                                except Exception:
+                                    pass
                                 # Merge/patch series subdict (preserve existing DB fields).
                                 _existing_series = metadata.get('series') or {}
                                 _repair_series = _repair_meta.get('series') or {}

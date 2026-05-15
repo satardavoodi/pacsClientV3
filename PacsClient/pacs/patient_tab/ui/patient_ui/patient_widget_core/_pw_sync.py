@@ -6,11 +6,13 @@ This is a mixin class — do NOT instantiate directly.
 """
 
 
+import hashlib
 import logging
 import numpy as np
 import re
 import time
 from PySide6.QtCore import QTimer, Qt
+from PacsClient.pacs.patient_tab.utils.advanced_geometry_contract import assert_advanced_order_contract
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import reference_line
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
 from modules.zeta_sync import SyncContext, SyncMode, SyncTarget, ijk_to_world
@@ -610,14 +612,52 @@ class _PWSyncMixin:
             metadata = getattr(viewer, "metadata", None)
             if not isinstance(metadata, dict):
                 return
+            geometry_index = assert_advanced_order_contract(
+                metadata,
+                caller="_PWSyncMixin._ensure_instances_sorted_for_geometry",
+            )
+            if geometry_index is not None:
+                metadata["_instances_geometry_sorted"] = True
+                return
             if metadata.get("_instances_geometry_sorted", False):
                 return
             instances = metadata.get("instances")
             if not isinstance(instances, list) or len(instances) <= 1:
                 metadata["_instances_geometry_sorted"] = True
                 return
+
+            before_instances = list(instances)
+            before_paths = [str(inst.get("instance_path") or "") for inst in before_instances if isinstance(inst, dict)]
+            before_hash = hashlib.sha256("||".join(before_paths).encode("utf-8", errors="ignore")).hexdigest()[:16]
             metadata["instances"] = reference_line.rl_sort_instances_by_ipp(instances)
             metadata["_instances_geometry_sorted"] = True
+
+            after_instances = metadata.get("instances") or []
+            after_paths = [str(inst.get("instance_path") or "") for inst in after_instances if isinstance(inst, dict)]
+            after_hash = hashlib.sha256("||".join(after_paths).encode("utf-8", errors="ignore")).hexdigest()[:16]
+            before_first = str((before_instances[0].get("instance_path") if before_instances and isinstance(before_instances[0], dict) else "") or "")
+            before_last = str((before_instances[-1].get("instance_path") if before_instances and isinstance(before_instances[-1], dict) else "") or "")
+            after_first = str((after_instances[0].get("instance_path") if after_instances and isinstance(after_instances[0], dict) else "") or "")
+            after_last = str((after_instances[-1].get("instance_path") if after_instances and isinstance(after_instances[-1], dict) else "") or "")
+
+            logger.warning(
+                "[ADVANCED_METADATA_MUTATION] caller=%s reason=%s before_hash=%s after_hash=%s "
+                "before_first_path=%s after_first_path=%s before_last_path=%s after_last_path=%s "
+                "object_id_metadata=%s object_id_instances=%s",
+                "_PWSyncMixin._ensure_instances_sorted_for_geometry",
+                "reference_line_rl_sort_instances_by_ipp",
+                before_hash,
+                after_hash,
+                before_first,
+                after_first,
+                before_last,
+                after_last,
+                int(id(metadata)),
+                int(id(after_instances)),
+            )
+
+        except RuntimeError:
+            raise
         except Exception:
             pass
 
@@ -1093,6 +1133,28 @@ class _PWSyncMixin:
                         source_viewer_id, target_viewer_id, rejection_reason, ijk_diag[2],
                     )
                     return None
+
+                # Phase 2 proof-only log path: emit contract sync mapping when
+                # both viewers are contract-bound. Existing behavior remains unchanged.
+                try:
+                    from modules.viewer.geometry.geometry_api import GeometryAPI
+
+                    dg_src = getattr(source_viewer, '_display_geometry_contract', None)
+                    dg_tgt = getattr(target_viewer, '_display_geometry_contract', None)
+                    if dg_src is not None and dg_tgt is not None:
+                        src_i, src_j, src_k = source_viewer.world_to_ijk(
+                            world_pos[0], world_pos[1], world_pos[2],
+                            y_flip=True, clamp=True, as_int=False,
+                        )
+                        GeometryAPI.map_lps_between_viewports(
+                            dg_src,
+                            dg_tgt,
+                            float(src_i), float(src_j), float(src_k),
+                            log=True,
+                        )
+                except Exception:
+                    pass
+
                 outside_tag = ""
                 if was_outside:
                     outside_tag = (
@@ -1381,6 +1443,24 @@ class _PWSyncMixin:
 
             try:
                 t_slice = iv.GetSlice()
+
+                # Phase 2 proof-only log path: emit contract reference-line
+                # intersection diagnostics when both viewers are contract-bound.
+                try:
+                    from modules.viewer.geometry.geometry_api import GeometryAPI
+
+                    dg_ref = getattr(src_iv, '_display_geometry_contract', None)
+                    dg_tgt = getattr(iv, '_display_geometry_contract', None)
+                    if dg_ref is not None and dg_tgt is not None:
+                        GeometryAPI.reference_line_in_viewport(
+                            dg_ref,
+                            dg_tgt,
+                            float(src_slice),
+                            log=True,
+                        )
+                except Exception:
+                    pass
+
                 t_inst = iv.metadata['instances'][t_slice]
 
                 # Use .get() to avoid KeyError when instances come from the

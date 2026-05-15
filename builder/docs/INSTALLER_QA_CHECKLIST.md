@@ -29,6 +29,8 @@ Use this checklist for every Windows installer release to validate functionality
 Run installer and verify each wizard stage:
 
 1. Welcome / license page opens correctly.
+   - Verify the page shows proprietary AI-Pacs/AIPAX EULA text (not MIT/open-source text).
+   - Verify installation requires explicit user acceptance before continuing.
 2. Setup type page allows:
    - Core
    - Custom

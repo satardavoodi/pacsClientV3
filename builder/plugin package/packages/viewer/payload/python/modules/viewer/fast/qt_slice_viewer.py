@@ -42,6 +42,17 @@ from modules.viewer.fast.event_loop_diagnostics import (
 )
 
 logger = logging.getLogger(__name__)
+_FAST_PRESENT_TRACE_ENABLED_CACHE: Optional[bool] = None
+
+
+def _fast_present_trace_enabled() -> bool:
+    global _FAST_PRESENT_TRACE_ENABLED_CACHE
+    cached = _FAST_PRESENT_TRACE_ENABLED_CACHE
+    if cached is not None:
+        return bool(cached)
+    enabled = str(os.getenv('AIPACS_FAST_PRESENT_TRACE', '') or '').strip() == '1'
+    _FAST_PRESENT_TRACE_ENABLED_CACHE = bool(enabled)
+    return bool(enabled)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -219,6 +230,7 @@ class QtSliceViewer(QWidget):
 
         # Performance
         self._last_paint_ms: float = 0.0
+        self._fast_present_trace_meta: Optional[Dict[str, object]] = None
 
         # Background
         self._bg_color = QColor(0, 0, 0)
@@ -1162,6 +1174,50 @@ class QtSliceViewer(QWidget):
                 _presented_slice_log.append(int(getattr(self, '_current_slice_index', 0) or 0))
             except Exception:
                 pass
+        _trace_meta = getattr(self, '_fast_present_trace_meta', None)
+        if _trace_meta and _fast_present_trace_enabled():
+            try:
+                _present_mono_ms = time.perf_counter() * 1000.0
+                _request_mono_ms = float(_trace_meta.get('request_mono_ms', 0.0) or 0.0)
+                _frame_ready_mono_ms = float(_trace_meta.get('frame_ready_mono_ms', 0.0) or 0.0)
+                _request_to_present_ms = (_present_mono_ms - _request_mono_ms) if _request_mono_ms > 0.0 else 0.0
+                _frame_ready_to_present_ms = (_present_mono_ms - _frame_ready_mono_ms) if _frame_ready_mono_ms > 0.0 else 0.0
+                logger.info(
+                    "[FAST_PRESENT_TRACE] phase=paint_present drag_session_id=%s request_id=%d "
+                    "requested_slice_index=%d navigation_visible_slice_index=%d actual_presented_slice_index=%d "
+                    "request_mono_ms=%.3f frame_ready_mono_ms=%.3f present_mono_ms=%.3f "
+                    "request_to_present_ms=%.3f frame_ready_to_present_ms=%.3f "
+                    "decode_time_ms=%.3f qimage_build_time_ms=%.3f paint_time_ms=%.3f "
+                    "cache_hit=%s cache_source=%s source_slice_index=%d queue_depth=%d oldest_pending_age_ms=%.3f "
+                    "coalesced=%s cancelled=%s superseded=%s render_clock_tick_id=%d clock_generation=%d interaction_type=%s",
+                    str(_trace_meta.get('drag_session_id', '-') or '-'),
+                    int(_trace_meta.get('request_id', 0) or 0),
+                    int(_trace_meta.get('requested_slice_index', 0) or 0),
+                    int(_trace_meta.get('navigation_visible_slice_index', int(getattr(self, '_current_slice_index', 0) or 0)) or 0),
+                    int(getattr(self, '_current_slice_index', 0) or 0),
+                    float(_request_mono_ms),
+                    float(_frame_ready_mono_ms),
+                    float(_present_mono_ms),
+                    float(max(0.0, _request_to_present_ms)),
+                    float(max(0.0, _frame_ready_to_present_ms)),
+                    float(_trace_meta.get('decode_time_ms', 0.0) or 0.0),
+                    float(_trace_meta.get('qimage_build_time_ms', 0.0) or 0.0),
+                    float(self._last_paint_ms),
+                    bool(_trace_meta.get('cache_hit', False)),
+                    str(_trace_meta.get('cache_source', 'decode') or 'decode'),
+                    int(_trace_meta.get('source_slice_index', int(getattr(self, '_current_slice_index', 0) or 0)) or 0),
+                    int(_trace_meta.get('queue_depth', 0) or 0),
+                    float(_trace_meta.get('oldest_pending_age_ms', 0.0) or 0.0),
+                    bool(_trace_meta.get('coalesced', False)),
+                    bool(_trace_meta.get('cancelled', False)),
+                    bool(_trace_meta.get('superseded', False)),
+                    int(_trace_meta.get('render_clock_tick_id', 0) or 0),
+                    int(_trace_meta.get('clock_generation', 0) or 0),
+                    str(_trace_meta.get('interaction_type', '-') or '-'),
+                )
+            except Exception:
+                pass
+        self._fast_present_trace_meta = None
 
     def _notify_parent_view_selected(self) -> None:
         """Notify the parent viewport that this FAST viewer was clicked."""

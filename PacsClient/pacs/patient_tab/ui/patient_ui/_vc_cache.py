@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pydicom
 from pathlib import Path
 from PySide6.QtCore import QTimer
+from PacsClient.pacs.patient_tab.utils.advanced_geometry_contract import get_series_geometry_index
 from modules.zeta_boost import ZetaBoostEngine
 from modules.viewer.pipeline import PipelineState
 import logging
@@ -253,6 +254,15 @@ class _VCCacheMixin:
                 _fcg_ms = (time.perf_counter() - _fcg_start) * 1000
                 if _fcg_ms > 50:
                     logger.debug(f"ًں”چ [CACHE_GET] series={key_sn} source=zeta_boost {_fcg_ms:.0f}ms")
+                try:
+                    self._emit_advanced_cache_probe(
+                        "[ADVANCED_CACHE_READ]",
+                        metadata=meta,
+                        vtk_image_data=vtk_data,
+                        source="zeta_boost_full_cache",
+                    )
+                except Exception:
+                    pass
                 logger.info("[META_CACHE_HIT] series=%s elapsed_ms=%.1f", key_sn, _fcg_ms)
                 return val
         except Exception:
@@ -288,6 +298,15 @@ class _VCCacheMixin:
             return
         try:
             self.zeta_boost.put(series_number, vtk_image_data, metadata)
+            try:
+                self._emit_advanced_cache_probe(
+                    "[ADVANCED_CACHE_WRITE]",
+                    metadata=metadata,
+                    vtk_image_data=vtk_image_data,
+                    source="zeta_boost_put",
+                )
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -456,6 +475,13 @@ class _VCCacheMixin:
             metadata = item.get("metadata")
             if not isinstance(metadata, dict):
                 return
+            if get_series_geometry_index(metadata) is not None:
+                logger.error(
+                    "[ADVANCED_ORDER_CONTRACT_ERROR] caller=_refresh_stored_metadata_instances reason=attempted_cache_mutation series=%s",
+                    sn,
+                    extra={"component": "viewer"},
+                )
+                return
 
             existing_instances = metadata.get("instances") or []
             existing_count = len(existing_instances)
@@ -622,6 +648,8 @@ class _VCCacheMixin:
                     continue
                 iv_meta = getattr(iv, "metadata", None)
                 if not isinstance(iv_meta, dict):
+                    continue
+                if get_series_geometry_index(iv_meta) is not None:
                     continue
                 try:
                     viewer_sn = str(

@@ -799,6 +799,14 @@ class _VWSeriesMixin:
                 # series current-slice index can enqueue irrelevant frames and
                 # inflate dropped stale deliveries on the new series.
                 self._ensure_lazy_slice_loaded(0, mark_current=False)
+        try:
+            self._emit_advanced_series_bind(
+                metadata,
+                bind_source="switch_series_post_bind",
+                vtk_image_data=vtk_image_data,
+            )
+        except Exception:
+            pass
         
         logger.info(f"[SERIES SWITCH] ├تظô┬╢ START - Series #{series_number} [{modality}] '{series_desc}'")
         logger.info(f"[SERIES SWITCH]   Index: {series_index}, Combined: {is_combined}")

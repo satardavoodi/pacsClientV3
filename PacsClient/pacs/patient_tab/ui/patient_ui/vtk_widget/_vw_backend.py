@@ -3,6 +3,7 @@ Backend binding and lazy-loader mixin for VTKWidget.
 _bind_backend_from_metadata, _on_lazy_slice_ready, lazy loader lifecycle.
 """
 from __future__ import annotations
+import hashlib
 import logging
 import os
 import threading
@@ -45,6 +46,91 @@ class _VWBackendMixin:
         except Exception:
             pass
         return ""
+
+    def _emit_advanced_series_bind(self, metadata, *, bind_source: str = "unknown", vtk_image_data=None):
+        """Temporary forensic probe for Advanced series bind boundaries."""
+        try:
+            if not isinstance(metadata, dict):
+                return
+            parent = getattr(self, "parent_widget", None)
+            series_meta = metadata.get("series", {}) or {}
+            instances = metadata.get("instances") or []
+            if not isinstance(instances, list):
+                instances = []
+
+            paths = [str(inst.get("instance_path") or "").replace("\\", "/").lower() for inst in instances if isinstance(inst, dict)]
+            order_hash = hashlib.sha256("\n".join(paths).encode("utf-8", errors="ignore")).hexdigest()[:16] if paths else ""
+            first = instances[0] if instances and isinstance(instances[0], dict) else {}
+            last = instances[-1] if instances and isinstance(instances[-1], dict) else {}
+
+            _vtk = vtk_image_data
+            if _vtk is None:
+                try:
+                    _vtk = getattr(self.image_viewer, "vtk_image_data", None)
+                except Exception:
+                    _vtk = None
+
+            dims = ()
+            extent = ()
+            try:
+                if _vtk is not None:
+                    dims = tuple(_vtk.GetDimensions())
+            except Exception:
+                dims = ()
+            try:
+                if _vtk is not None:
+                    extent = tuple(_vtk.GetExtent())
+            except Exception:
+                extent = ()
+
+            current_slice_index = -1
+            try:
+                current_slice_index = int(self.image_viewer.GetSlice())
+            except Exception:
+                current_slice_index = -1
+
+            camera_origin = ""
+            try:
+                if getattr(self, "image_viewer", None) is not None:
+                    _img = getattr(self.image_viewer, "vtk_image_data", None)
+                    if _img is not None:
+                        camera_origin = str(tuple(_img.GetOrigin()))
+            except Exception:
+                camera_origin = ""
+
+            logger.warning(
+                "[ADVANCED_SERIES_BIND] bind_source=%s patient_id=%s patient_code=%s study_uid=%s "
+                "series_uid=%s series_number=%s n_instances=%d instances_order_contract=%s canonical_order_hash=%s "
+                "display_order_hash=%s instance_path_order_hash=%s first_path=%s last_path=%s first_ipp=%s last_ipp=%s "
+                "first_sop_uid=%s last_sop_uid=%s object_id_metadata=%s object_id_instances=%s current_slice_index=%s "
+                "camera_origin=%s vtk_extent=%s dimensions=%s",
+                str(bind_source or "unknown"),
+                str(getattr(parent, "patient_id", "") or getattr(parent, "patient_code", "") or ""),
+                str(getattr(parent, "patient_code", "") or getattr(parent, "patient_id", "") or ""),
+                str(getattr(parent, "study_uid", "") or ""),
+                str(series_meta.get("series_uid") or series_meta.get("series_instance_uid") or first.get("series_uid") or ""),
+                str(series_meta.get("series_number") or ""),
+                int(len(instances)),
+                str(metadata.get("instances_order_contract") or ""),
+                str(metadata.get("canonical_order_hash") or ""),
+                str(metadata.get("display_order_hash") or ""),
+                order_hash,
+                str(first.get("instance_path") or ""),
+                str(last.get("instance_path") or ""),
+                str(first.get("image_position_patient") or ""),
+                str(last.get("image_position_patient") or ""),
+                str(first.get("sop_uid") or ""),
+                str(last.get("sop_uid") or ""),
+                int(id(metadata)),
+                int(id(instances)),
+                str(current_slice_index),
+                str(camera_origin),
+                str(extent),
+                str(dims),
+                extra={"component": "viewer"},
+            )
+        except Exception:
+            pass
 
     def _log_backend_resolution(self, source: str, resolution: dict, metadata=None):
         try:
@@ -685,6 +771,11 @@ class _VWBackendMixin:
             logger.debug("[H11] snapshot error: %s", e)
 
     def _bind_backend_from_metadata(self, metadata, force_vtk=False, source="bind"):
+        self._emit_advanced_series_bind(
+            metadata,
+            bind_source=str(source or "unknown"),
+            vtk_image_data=getattr(getattr(self, "image_viewer", None), "vtk_image_data", None),
+        )
         # [H11] Probe 1: entry state before any mutation
         self._h11_bind_snapshot("BIND_ENTRY(%s)" % source, metadata)
         self._selected_backend = load_viewer_backend(default=BACKEND_PYDICOM_QT)

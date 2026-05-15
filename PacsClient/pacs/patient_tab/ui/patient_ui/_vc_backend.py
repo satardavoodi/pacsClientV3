@@ -3,6 +3,7 @@ Backend / warmup-eligibility mixin for ViewerController.
 Viewer backend selection, lookahead warmup, series index helpers.
 """
 from __future__ import annotations
+import hashlib
 import json
 import os
 import time
@@ -607,6 +608,153 @@ class _VCBackendMixin:
         except Exception as e:
             self.logger.debug(f"Error rebuilding series index: {e}")
 
+    def _advanced_instance_order_hash(self, instances) -> str:
+        try:
+            paths = []
+            for inst in (instances or []):
+                if isinstance(inst, dict):
+                    p = str(inst.get("instance_path") or "").replace("\\", "/").lower()
+                    paths.append(p)
+            text = "\n".join(paths)
+            return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+        except Exception:
+            return ""
+
+    def _emit_advanced_cache_probe(
+        self,
+        tag: str,
+        *,
+        metadata,
+        vtk_image_data=None,
+        source: str = "unknown",
+    ) -> None:
+        """Temporary forensic probe for Advanced series cache boundaries."""
+        try:
+            if not isinstance(metadata, dict):
+                return
+
+            parent = getattr(self, "parent_widget", None)
+            series_meta = metadata.get("series", {}) if isinstance(metadata, dict) else {}
+            instances = metadata.get("instances") or []
+            n_instances = len(instances) if isinstance(instances, list) else 0
+            first = instances[0] if n_instances > 0 and isinstance(instances[0], dict) else {}
+            last = instances[-1] if n_instances > 0 and isinstance(instances[-1], dict) else {}
+
+            series_uid = str(
+                series_meta.get("series_uid")
+                or series_meta.get("series_instance_uid")
+                or first.get("series_uid")
+                or ""
+            )
+            series_number = str(series_meta.get("series_number") or "")
+            patient_id = str(
+                getattr(parent, "patient_id", "")
+                or getattr(parent, "patient_code", "")
+                or ""
+            )
+            patient_code = str(
+                getattr(parent, "patient_code", "")
+                or getattr(parent, "patient_id", "")
+                or ""
+            )
+            study_uid = str(getattr(parent, "study_uid", "") or "")
+
+            try:
+                dims = tuple(vtk_image_data.GetDimensions()) if vtk_image_data is not None else ()
+            except Exception:
+                dims = ()
+
+            logger.warning(
+                "%s source=%s patient_id=%s patient_code=%s study_uid=%s series_uid=%s series_number=%s "
+                "n_instances=%d instances_order_contract=%s canonical_order_hash=%s display_order_hash=%s "
+                "instance_path_order_hash=%s first_path=%s last_path=%s first_ipp=%s last_ipp=%s "
+                "first_sop_uid=%s last_sop_uid=%s object_id_metadata=%s object_id_instances=%s dims=%s",
+                tag,
+                str(source or "unknown"),
+                patient_id,
+                patient_code,
+                study_uid,
+                series_uid,
+                series_number,
+                int(n_instances),
+                str(metadata.get("instances_order_contract") or ""),
+                str(metadata.get("canonical_order_hash") or ""),
+                str(metadata.get("display_order_hash") or ""),
+                self._advanced_instance_order_hash(instances),
+                str(first.get("instance_path") or ""),
+                str(last.get("instance_path") or ""),
+                str(first.get("image_position_patient") or ""),
+                str(last.get("image_position_patient") or ""),
+                str(first.get("sop_uid") or ""),
+                str(last.get("sop_uid") or ""),
+                int(id(metadata)),
+                int(id(instances)),
+                str(dims),
+                extra={"component": "viewer"},
+            )
+        except Exception:
+            pass
+
+    def _emit_advanced_metadata_mutation_probe(
+        self,
+        *,
+        metadata,
+        before_instances,
+        after_instances,
+        caller: str,
+        reason: str,
+    ) -> None:
+        """Temporary forensic probe for metadata['instances'] list mutation."""
+        try:
+            if not isinstance(metadata, dict):
+                return
+            b = before_instances if isinstance(before_instances, list) else []
+            a = after_instances if isinstance(after_instances, list) else []
+            b_first = str((b[0].get("instance_path") if b and isinstance(b[0], dict) else "") or "")
+            b_last = str((b[-1].get("instance_path") if b and isinstance(b[-1], dict) else "") or "")
+            a_first = str((a[0].get("instance_path") if a and isinstance(a[0], dict) else "") or "")
+            a_last = str((a[-1].get("instance_path") if a and isinstance(a[-1], dict) else "") or "")
+            before_hash = self._advanced_instance_order_hash(b)
+            after_hash = self._advanced_instance_order_hash(a)
+
+            logger.warning(
+                "[ADVANCED_METADATA_MUTATION] caller=%s reason=%s before_hash=%s after_hash=%s "
+                "before_first_path=%s after_first_path=%s before_last_path=%s after_last_path=%s "
+                "object_id_metadata=%s object_id_instances=%s",
+                str(caller or "unknown"),
+                str(reason or "unknown"),
+                before_hash,
+                after_hash,
+                b_first,
+                a_first,
+                b_last,
+                a_last,
+                int(id(metadata)),
+                int(id(a)),
+                extra={"component": "viewer"},
+            )
+
+            if (
+                str(metadata.get("instances_order_contract") or "").startswith("ADVANCED_")
+                and before_hash != after_hash
+            ):
+                logger.warning(
+                    "[ORDER_CONTRACT_MUTATION] caller=%s reason=%s contract=%s before_hash=%s after_hash=%s "
+                    "canonical_order_hash=%s display_order_hash=%s object_id_metadata=%s object_id_instances=%s",
+                    str(caller or "unknown"),
+                    str(reason or "unknown"),
+                    str(metadata.get("instances_order_contract") or ""),
+                    before_hash,
+                    after_hash,
+                    str(metadata.get("canonical_order_hash") or ""),
+                    str(metadata.get("display_order_hash") or ""),
+                    int(id(metadata)),
+                    int(id(a)),
+                    extra={"component": "viewer"},
+                )
+        except Exception:
+            pass
+
     def _get_series_by_number_fast(self, series_number: str) -> tuple:
         """
         âڑ، Fast O(1) series lookup using index.
@@ -644,6 +792,15 @@ class _VCBackendMixin:
         if series_str in self._hot_series_cache:
             hot_entry = self._hot_series_cache[series_str]
             if _entry_is_valid(hot_entry):
+                try:
+                    self._emit_advanced_cache_probe(
+                        "[ADVANCED_CACHE_READ]",
+                        metadata=hot_entry[1],
+                        vtk_image_data=hot_entry[0],
+                        source="hot_cache",
+                    )
+                except Exception:
+                    pass
                 logger.debug(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ HOT CACHE HIT")
                 log_stage_timing(
                     self.logger,
@@ -662,6 +819,15 @@ class _VCBackendMixin:
             result = self._series_cache[series_str]
             if _entry_is_valid(result):
                 self._hot_series_cache[series_str] = result
+                try:
+                    self._emit_advanced_cache_probe(
+                        "[ADVANCED_CACHE_READ]",
+                        metadata=result[1],
+                        vtk_image_data=result[0],
+                        source="main_cache",
+                    )
+                except Exception:
+                    pass
                 logger.debug(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ MAIN CACHE HIT")
                 log_stage_timing(
                     self.logger,
@@ -690,6 +856,15 @@ class _VCBackendMixin:
                     if len(self._hot_series_cache) > 3:  # Keep hot cache small
                         self._hot_series_cache.pop(next(iter(self._hot_series_cache)))
                     self._hot_series_cache[series_str] = result
+                    try:
+                        self._emit_advanced_cache_probe(
+                            "[ADVANCED_CACHE_WRITE]",
+                            metadata=meta,
+                            vtk_image_data=vtk_data,
+                            source="index_seed",
+                        )
+                    except Exception:
+                        pass
                     logger.debug(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ RETURNING from index lookup")
                     log_stage_timing(
                         self.logger,
@@ -713,6 +888,15 @@ class _VCBackendMixin:
             vtk_data, meta = cached_full[0], cached_full[1]
             logger.debug(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ FULL CACHE HIT: vtk={vtk_data is not None}, meta={meta is not None}")
             if vtk_data is not None and isinstance(meta, dict):
+                try:
+                    self._emit_advanced_cache_probe(
+                        "[ADVANCED_CACHE_READ]",
+                        metadata=meta,
+                        vtk_image_data=vtk_data,
+                        source="full_cache",
+                    )
+                except Exception:
+                    pass
                 # Rehydrate parent/index caches on demand.
                 # IMPORTANT: Never mutate PatientWidget list/index structures from a
                 # worker thread. Non-UI writes can race with Qt/UI operations and
@@ -766,6 +950,15 @@ class _VCBackendMixin:
                     result = (vtk_data, meta, idx)
                     self._series_cache[series_str] = result
                     self._hot_series_cache[series_str] = result
+                    try:
+                        self._emit_advanced_cache_probe(
+                            "[ADVANCED_CACHE_WRITE]",
+                            metadata=meta,
+                            vtk_image_data=vtk_data,
+                            source="full_cache_rehydrate",
+                        )
+                    except Exception:
+                        pass
                     logger.debug(f"ًں”چ [FAST_LOOKUP] series={series_str} â†’ RETURNING from full cache")
                     log_stage_timing(
                         self.logger,

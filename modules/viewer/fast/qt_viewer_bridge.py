@@ -81,6 +81,17 @@ _FAST_RENDER_CLOCK_BASE_INTERVAL_MS = 33
 _FAST_RENDER_CLOCK_FAST_INTERVAL_MS = 16
 _FAST_RENDER_CLOCK_IDLE_STOP_MS = 260.0
 _FAST_RENDER_CLOCK_MAX_MISSED_TICKS = 12
+_FAST_PRESENT_TRACE_ENABLED_CACHE: Optional[bool] = None
+
+
+def _fast_present_trace_enabled() -> bool:
+    global _FAST_PRESENT_TRACE_ENABLED_CACHE
+    cached = _FAST_PRESENT_TRACE_ENABLED_CACHE
+    if cached is not None:
+        return bool(cached)
+    enabled = str(os.getenv('AIPACS_FAST_PRESENT_TRACE', '') or '').strip() == '1'
+    _FAST_PRESENT_TRACE_ENABLED_CACHE = bool(enabled)
+    return bool(enabled)
 
 
 def _percentile(values: List[float], pct: float) -> float:
@@ -623,6 +634,10 @@ class QtViewerBridge:
         self._fast_pending_slider_value: Optional[int] = None
         self._fast_pending_sync_update: bool = False
         self._fast_pending_reference_update: bool = False
+        self._fast_present_trace_seq: int = 0
+        self._fast_present_trace_pending: Dict[int, Dict[str, Any]] = {}
+        self._fast_present_trace_latest_clock_request_id: Optional[int] = None
+        self._fast_present_trace_active_request_id: Optional[int] = None
 
         # Initialize ToolController for measurement annotations
         self._init_tool_controller()
@@ -924,8 +939,78 @@ class QtViewerBridge:
 
         # Display
         t_stage = time.perf_counter()
+        _trace_request_id = getattr(self, '_fast_present_trace_active_request_id', None)
+        _trace_item = None
+        if _trace_request_id is not None:
+            _trace_item = self._fast_present_trace_pending.get(int(_trace_request_id))
+        _pending_depth, _oldest_pending_age_ms = self._present_trace_pending_snapshot()
+        _frame_ready_mono_ms = time.perf_counter() * 1000.0
+        if _trace_item is not None:
+            _trace_meta = {
+                'drag_session_id': str(getattr(self, '_drag_session_id', '') or '-'),
+                'request_id': int(_trace_item.get('request_id', _trace_request_id) or _trace_request_id),
+                'requested_slice_index': int(_trace_item.get('requested_slice_index', idx) or idx),
+                'navigation_visible_slice_index': int(idx),
+                'request_mono_ms': float(_trace_item.get('request_mono_ms', 0.0) or 0.0),
+                'frame_ready_mono_ms': float(_frame_ready_mono_ms),
+                'decode_time_ms': float(getattr(frame, 'decode_ms', 0.0) or 0.0),
+                'qimage_build_time_ms': float(max(0.0, float(getattr(frame, 'total_ms', 0.0) or 0.0) - float(getattr(frame, 'decode_ms', 0.0) or 0.0))),
+                'cache_source': str(getattr(frame, 'cache_source', 'decode') or 'decode'),
+                'cache_hit': bool(str(getattr(frame, 'cache_source', 'decode') or 'decode') != 'decode'),
+                'source_slice_index': int(getattr(frame, 'source_slice_index', idx) if getattr(frame, 'source_slice_index', None) is not None else idx),
+                'coalesced': bool(_trace_item.get('coalesced', False)),
+                'cancelled': bool(_trace_item.get('cancelled', False)),
+                'superseded': bool(_trace_item.get('superseded', False)),
+                'queue_depth': int(_pending_depth),
+                'oldest_pending_age_ms': float(_oldest_pending_age_ms),
+                'clock_generation': int(getattr(self, '_fast_request_generation', 0) or 0),
+                'interaction_type': str(interaction_type or _trace_item.get('interaction_type', '-')),
+                'render_clock_tick_id': int(getattr(self, '_fast_last_presented_generation', 0) or 0),
+            }
+            setattr(self.qt_viewer, '_fast_present_trace_meta', _trace_meta)
+            if _fast_present_trace_enabled():
+                _request_mono_ms = float(_trace_meta.get('request_mono_ms', 0.0) or 0.0)
+                _request_to_ready_ms = (_frame_ready_mono_ms - _request_mono_ms) if _request_mono_ms > 0.0 else 0.0
+                logger.info(
+                    "[FAST_PRESENT_TRACE] phase=frame_ready drag_session_id=%s request_id=%d "
+                    "requested_slice_index=%d navigation_visible_slice_index=%d actual_presented_slice_index=%d "
+                    "request_mono_ms=%.3f frame_ready_mono_ms=%.3f request_to_present_ms=%.3f "
+                    "decode_time_ms=%.3f qimage_build_time_ms=%.3f paint_time_ms=0.000 "
+                    "cache_hit=%s cache_source=%s source_slice_index=%d queue_depth=%d oldest_pending_age_ms=%.3f "
+                    "coalesced=%s cancelled=%s superseded=%s render_clock_tick_id=%d clock_generation=%d interaction_type=%s",
+                    str(getattr(self, '_drag_session_id', '') or '-'),
+                    int(_trace_meta['request_id']),
+                    int(_trace_meta['requested_slice_index']),
+                    int(_trace_meta['navigation_visible_slice_index']),
+                    int(_trace_meta['source_slice_index']),
+                    float(_trace_meta['request_mono_ms']),
+                    float(_frame_ready_mono_ms),
+                    float(max(0.0, _request_to_ready_ms)),
+                    float(_trace_meta['decode_time_ms']),
+                    float(_trace_meta['qimage_build_time_ms']),
+                    bool(_trace_meta['cache_hit']),
+                    str(_trace_meta['cache_source']),
+                    int(_trace_meta['source_slice_index']),
+                    int(_trace_meta['queue_depth']),
+                    float(_trace_meta['oldest_pending_age_ms']),
+                    bool(_trace_meta['coalesced']),
+                    bool(_trace_meta['cancelled']),
+                    bool(_trace_meta['superseded']),
+                    int(_trace_meta['render_clock_tick_id']),
+                    int(_trace_meta['clock_generation']),
+                    str(_trace_meta['interaction_type']),
+                )
+            self._present_trace_mark_terminal(
+                _trace_request_id,
+                reason='frame_ready',
+                coalesced=bool(_trace_meta['coalesced']),
+                cancelled=bool(_trace_meta['cancelled']),
+                superseded=bool(_trace_meta['superseded']),
+            )
+            self._fast_present_trace_active_request_id = None
         self.qt_viewer.set_image(frame.qimage)
         self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
+        self._fast_present_trace_active_request_id = None
         self._window = float(frame.window_width)
         self._level = float(frame.window_center)
         display_ms = (time.perf_counter() - t_stage) * 1000.0
@@ -1698,6 +1783,9 @@ class QtViewerBridge:
             '_last_present_mono_ms': 0.0,
         }
         self._drag_session_start_mono_ms = _corr_now_mono_ms()
+        self._fast_present_trace_pending.clear()
+        self._fast_present_trace_latest_clock_request_id = None
+        self._fast_present_trace_active_request_id = None
         # F7 (observability-only): arm a paint-cost sample list on the Qt viewer
         # so paintEvent can append per-frame ms. Cleared in _log_drag_metrics_summary.
         try:
@@ -1709,6 +1797,7 @@ class QtViewerBridge:
                 qv._drag_presented_slice_indices = []
                 qv._drag_qt_update_pending_count = 0
                 qv._drag_superseded_frame_count = 0
+                qv._fast_present_trace_meta = None
         except Exception:
             pass
         # G0: Event-loop diagnostics start instrumentation session
@@ -2109,11 +2198,23 @@ class QtViewerBridge:
         self._sync_interaction_slice_count_hint()
 
         new_val = max(0, min(int(target_slice), nav_limit - 1))
+        request_id = self._present_trace_register_request(
+            requested_slice_index=int(new_val),
+            interaction_type=str(interaction_type or '-'),
+            request_queued_mono_ms=float(request_queued_mono_ms),
+        )
         drag_metrics = self._drag_metrics if interaction_type == 'drag' else None
         if drag_metrics is not None:
             drag_metrics.setdefault('set_slice_request_count', 0)
             drag_metrics['set_slice_request_count'] = int(drag_metrics.get('set_slice_request_count', 0) or 0) + 1
         if new_val == self._current_slice:
+            self._present_trace_mark_terminal(
+                request_id,
+                reason='same_slice_rejected',
+                coalesced=True,
+                cancelled=True,
+                superseded=False,
+            )
             return False
 
         now_ms = time.perf_counter() * 1000.0
@@ -2130,6 +2231,13 @@ class QtViewerBridge:
             )
             decision = scheduler.target(new_val, slice_count=nav_limit, series_uid=series_uid)
             if not decision.accepted:
+                self._present_trace_mark_terminal(
+                    request_id,
+                    reason='scheduler_rejected',
+                    coalesced=True,
+                    cancelled=True,
+                    superseded=False,
+                )
                 return False
             self._last_stack_target_slice = new_val
             if decision.direction:
@@ -2212,6 +2320,7 @@ class QtViewerBridge:
                     new_val,
                     interaction_type=interaction_type,
                     reason='interaction_target',
+                    request_id=request_id,
                 )
             self._fast_pending_slider_value = int(new_val)
             self._fast_pending_sync_update = True
@@ -2232,6 +2341,7 @@ class QtViewerBridge:
         else:
             t_stage = time.perf_counter()
             _exec_start_mono_ms = t_stage * 1000.0
+            self._fast_present_trace_active_request_id = int(request_id)
             if drag_metrics is not None:
                 drag_metrics.setdefault('set_slice_executed_count', 0)
                 drag_metrics['set_slice_executed_count'] = int(drag_metrics.get('set_slice_executed_count', 0) or 0) + 1
@@ -2347,6 +2457,103 @@ class QtViewerBridge:
         except Exception:
             return bool(getattr(timer, '_active', False))
 
+    def _present_trace_pending_snapshot(self) -> Tuple[int, float]:
+        pending = dict(getattr(self, '_fast_present_trace_pending', {}) or {})
+        if not pending:
+            return 0, 0.0
+        now_ms = time.perf_counter() * 1000.0
+        oldest_mono_ms = min(
+            float(item.get('request_mono_ms', now_ms) or now_ms)
+            for item in pending.values()
+        )
+        return len(pending), max(0.0, now_ms - oldest_mono_ms)
+
+    def _present_trace_register_request(
+        self,
+        *,
+        requested_slice_index: int,
+        interaction_type: str,
+        request_queued_mono_ms: float,
+    ) -> int:
+        self._fast_present_trace_seq = int(getattr(self, '_fast_present_trace_seq', 0) or 0) + 1
+        request_id = int(self._fast_present_trace_seq)
+        request_mono_ms = float(request_queued_mono_ms or (time.perf_counter() * 1000.0))
+        pending_depth, oldest_age_ms = self._present_trace_pending_snapshot()
+        self._fast_present_trace_pending[request_id] = {
+            'request_id': request_id,
+            'requested_slice_index': int(requested_slice_index),
+            'request_mono_ms': request_mono_ms,
+            'interaction_type': str(interaction_type or '-'),
+            'coalesced': False,
+            'cancelled': False,
+            'superseded': False,
+            'reason': '-',
+            'clock_generation': int(getattr(self, '_fast_request_generation', 0) or 0),
+            'queue_depth_at_request': int(pending_depth) + 1,
+            'oldest_pending_age_ms_at_request': float(oldest_age_ms),
+        }
+        if _fast_present_trace_enabled():
+            logger.info(
+                "[FAST_PRESENT_TRACE] phase=request drag_session_id=%s request_id=%d "
+                "requested_slice_index=%d navigation_visible_slice_index=%d actual_presented_slice_index=%d "
+                "request_mono_ms=%.3f queue_depth=%d oldest_pending_age_ms=%.3f "
+                "coalesced=false cancelled=false superseded=false interaction_type=%s clock_generation=%d",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                int(request_id),
+                int(requested_slice_index),
+                int(getattr(self, '_current_slice', requested_slice_index) or requested_slice_index),
+                int(getattr(self, '_current_slice', requested_slice_index) or requested_slice_index),
+                float(request_mono_ms),
+                int(pending_depth + 1),
+                float(oldest_age_ms),
+                str(interaction_type or '-'),
+                int(getattr(self, '_fast_request_generation', 0) or 0),
+            )
+        return request_id
+
+    def _present_trace_mark_terminal(
+        self,
+        request_id: Optional[int],
+        *,
+        reason: str,
+        coalesced: bool,
+        cancelled: bool,
+        superseded: bool,
+    ) -> None:
+        if request_id is None:
+            return
+        pending = self._fast_present_trace_pending
+        item = pending.get(int(request_id))
+        if item is None:
+            return
+        item['reason'] = str(reason or '-')
+        item['coalesced'] = bool(coalesced)
+        item['cancelled'] = bool(cancelled)
+        item['superseded'] = bool(superseded)
+        pending_depth, oldest_age_ms = self._present_trace_pending_snapshot()
+        if _fast_present_trace_enabled():
+            logger.info(
+                "[FAST_PRESENT_TRACE] phase=terminal drag_session_id=%s request_id=%d "
+                "requested_slice_index=%d navigation_visible_slice_index=%d actual_presented_slice_index=%d "
+                "request_mono_ms=%.3f queue_depth=%d oldest_pending_age_ms=%.3f "
+                "coalesced=%s cancelled=%s superseded=%s interaction_type=%s reason=%s clock_generation=%d",
+                str(getattr(self, '_drag_session_id', '') or '-'),
+                int(item.get('request_id', request_id) or request_id),
+                int(item.get('requested_slice_index', 0) or 0),
+                int(getattr(self, '_current_slice', 0) or 0),
+                int(getattr(self, '_current_slice', 0) or 0),
+                float(item.get('request_mono_ms', 0.0) or 0.0),
+                int(max(0, pending_depth - 1)),
+                float(oldest_age_ms),
+                bool(coalesced),
+                bool(cancelled),
+                bool(superseded),
+                str(item.get('interaction_type', '-') or '-'),
+                str(reason or '-'),
+                int(item.get('clock_generation', 0) or 0),
+            )
+        pending.pop(int(request_id), None)
+
     def _fast_clock_enabled(self) -> bool:
         """Return True when experimental FAST render-clock mode is active."""
         if bool(getattr(self, '_fast_clock_fallback_active', False)):
@@ -2374,7 +2581,13 @@ class QtViewerBridge:
             )
         return bool(enabled)
 
-    def _request_clocked_slice(self, target_slice: int, interaction_type: str, reason: str) -> bool:
+    def _request_clocked_slice(
+        self,
+        target_slice: int,
+        interaction_type: str,
+        reason: str,
+        request_id: Optional[int] = None,
+    ) -> bool:
         """Request latest slice for clocked presentation (latest-wins, no FIFO)."""
         if not self._fast_clock_enabled():
             return False
@@ -2392,6 +2605,13 @@ class QtViewerBridge:
         new_val = max(0, min(int(target_slice), nav_limit - 1))
         if self._fast_latest_requested_slice is not None and int(self._fast_latest_requested_slice) != int(new_val):
             self._fast_clock_superseded_count = int(getattr(self, '_fast_clock_superseded_count', 0) or 0) + 1
+            self._present_trace_mark_terminal(
+                getattr(self, '_fast_present_trace_latest_clock_request_id', None),
+                reason='clock_superseded',
+                coalesced=True,
+                cancelled=True,
+                superseded=True,
+            )
             logger.info(
                 "[FAST_RENDER_CLOCK] event=superseded drag_session_id=%s requested_slice=%d presented_slice=%s "
                 "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
@@ -2412,6 +2632,11 @@ class QtViewerBridge:
         self._fast_latest_interaction_ts_ms = time.perf_counter() * 1000.0
         self._fast_request_generation = int(getattr(self, '_fast_request_generation', 0) or 0) + 1
         self._fast_clock_last_request_mono_ms = time.perf_counter() * 1000.0
+        self._fast_present_trace_latest_clock_request_id = int(request_id) if request_id is not None else None
+        if request_id is not None:
+            item = self._fast_present_trace_pending.get(int(request_id))
+            if item is not None:
+                item['clock_generation'] = int(self._fast_request_generation)
         logger.info(
             "[FAST_RENDER_CLOCK] event=request drag_session_id=%s requested_slice=%d presented_slice=%s "
             "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
@@ -2672,6 +2897,7 @@ class QtViewerBridge:
         _request_start = float(getattr(self, '_fast_clock_last_request_mono_ms', 0.0) or 0.0)
         _now = time.perf_counter() * 1000.0
         req_to_present_ms = (_now - _request_start) if _request_start > 0.0 else 0.0
+        self._fast_present_trace_active_request_id = getattr(self, '_fast_present_trace_latest_clock_request_id', None)
         self._set_slice_impl(idx, fast_interaction=True, interaction_type=interaction_type)
         self._fast_last_presented_generation = req_gen
         _apply_side_effects = getattr(self, '_apply_present_side_effects', None)

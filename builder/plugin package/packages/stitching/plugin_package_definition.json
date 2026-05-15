@@ -23,5 +23,5 @@
   "sdk_entrypoint_group": "aipacs.plugins",
   "sdk_entrypoint_name": "stitching",
   "notes": "",
-  "definition_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder\\plugin package\\definitions\\stitching\\plugin_package.json"
+  "definition_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder\\plugin package\\definitions\\stitching\\plugin_package.json"
 }

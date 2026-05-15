@@ -1,0 +1,272 @@
+AI-PACS
+End User License Agreement (EULA)
+Version 3.0.2
+Effective Date: 2026-05-13
+
+IMPORTANT — PLEASE READ CAREFULLY
+
+BY CLICKING “I ACCEPT,” INSTALLING, COPYING, ACCESSING, DEPLOYING, OR USING THE SOFTWARE, YOU ACKNOWLEDGE THAT YOU HAVE READ, UNDERSTOOD, AND AGREE TO BE LEGALLY BOUND BY THIS END USER LICENSE AGREEMENT (“EULA”).
+
+IF YOU DO NOT AGREE TO THIS EULA, DO NOT INSTALL, ACCESS, OR USE THE SOFTWARE.
+
+1. PARTIES
+
+This EULA is a legal agreement between:
+
+AI-PACS (“Licensor”)
+
+and
+
+the individual, healthcare provider, institution, company, organization, or other legal entity using the Software (“User”).
+
+2. SOFTWARE COVERED BY THIS AGREEMENT
+
+This EULA governs the use of the AI-PACS software platform and all related components, including but not limited to:
+
+PACS software
+DICOM viewers
+AI modules
+image processing modules
+reporting modules
+workflow engines
+educational modules
+plugins
+APIs
+databases
+installers
+updates
+patches
+cloud services
+documentation
+user interfaces
+related software packages
+
+(collectively, the “Software”).
+
+The Software may operate in standalone, on-premise, cloud, hybrid, research, educational, or integrated clinical environments.
+
+3. OWNERSHIP AND INTELLECTUAL PROPERTY
+
+The Software is proprietary software owned exclusively by AI-PACS and protected by applicable intellectual property, copyright, trade secret, and software protection laws.
+
+The Software is licensed, not sold.
+
+No ownership rights are transferred to User under this EULA.
+
+All rights not expressly granted are reserved by Licensor.
+
+4. LICENSE GRANT
+
+Subject to compliance with this EULA, Licensor grants User a limited, revocable, non-exclusive, non-transferable, non-sublicensable license to install and use the Software solely for:
+
+authorized diagnostic imaging workflows,
+radiology operations,
+clinical review workflows,
+medical education,
+research activities,
+internal healthcare operations,
+AI-assisted workflow support,
+and other lawful internal professional purposes.
+
+User may not use the Software beyond the scope permitted under this EULA or any separate commercial agreement.
+
+5. RESTRICTIONS
+
+User shall not, and shall not permit any third party to:
+
+redistribute, publish, rent, lease, lend, sublicense, sell, or commercially transfer the Software;
+provide the Software as a hosted service, service bureau, SaaS offering, or timesharing platform without written authorization;
+reverse engineer, decompile, disassemble, modify, translate, or attempt to derive source code or internal architecture except where mandatory law expressly permits;
+bypass, disable, interfere with, or circumvent licensing, telemetry, activation, security, audit, or technical protection mechanisms;
+remove or alter copyright notices, branding, trademarks, legal notices, or license identifiers;
+use the Software in violation of medical, privacy, export, cybersecurity, sanctions, or healthcare laws;
+use the Software for unlawful, abusive, deceptive, fraudulent, or unauthorized activities;
+use the Software to develop competing commercial products based substantially on the Software’s architecture, workflows, interfaces, or proprietary functionality.
+6. MEDICAL AND CLINICAL USE DISCLAIMER
+
+The Software is an assistive medical imaging and workflow platform intended to support qualified healthcare professionals.
+
+THE SOFTWARE DOES NOT REPLACE PROFESSIONAL MEDICAL JUDGMENT.
+
+User acknowledges and agrees that:
+
+all diagnoses, interpretations, treatment decisions, and patient-care decisions remain solely the responsibility of licensed healthcare professionals;
+AI outputs, suggestions, measurements, prioritizations, detections, workflow recommendations, or generated content may contain errors, omissions, inaccuracies, false positives, or false negatives;
+all Software outputs must be independently reviewed and clinically validated by qualified professionals before clinical use;
+the Software must not be relied upon as the sole basis for emergency, life-support, or other high-risk medical decisions;
+medical suitability, regulatory compliance, and clinical appropriateness may vary by jurisdiction and deployment environment.
+7. REGULATORY STATUS
+
+Unless explicitly stated in separate official documentation, regulatory filings, or written agreements:
+
+the Software may not be certified, cleared, approved, or registered as a medical device in all jurisdictions;
+certain modules may be intended for research, workflow assistance, educational, or investigational use only;
+availability of diagnostic functionality may depend on local laws and regulatory approvals.
+
+User is solely responsible for determining whether deployment and usage comply with applicable healthcare and medical-device regulations in User’s jurisdiction.
+
+8. AI MODULES AND AUTOMATED FUNCTIONALITY
+
+The Software may include AI-assisted technologies, including but not limited to:
+
+NLP systems,
+image analysis modules,
+workflow prioritization,
+automated measurements,
+report assistance,
+decision-support features,
+or predictive algorithms.
+
+AI-generated content is probabilistic in nature and may produce incomplete, inaccurate, biased, or clinically inappropriate outputs.
+
+Licensor makes no guarantee regarding:
+
+diagnostic accuracy,
+clinical completeness,
+regulatory acceptance,
+or suitability for specific medical use cases.
+
+Human review and professional oversight are mandatory.
+
+9. PRIVACY, SECURITY, AND PATIENT DATA RESPONSIBILITY
+
+User remains solely responsible for:
+
+patient-data governance,
+lawful data collection,
+patient consent,
+privacy compliance,
+retention policies,
+access management,
+backup procedures,
+cybersecurity protections,
+and lawful processing of protected health information.
+
+Licensor does not assume the role of healthcare provider, data controller, or medical custodian unless separately agreed in writing.
+
+User is responsible for ensuring compliance with all applicable laws and standards, including, where applicable:
+
+HIPAA,
+GDPR,
+local health-information regulations,
+cybersecurity requirements,
+institutional policies,
+and medical confidentiality obligations.
+10. DATA BACKUP AND SYSTEM AVAILABILITY
+
+User is solely responsible for:
+
+maintaining backups,
+archive redundancy,
+disaster recovery procedures,
+data validation,
+and operational continuity.
+
+Licensor does not guarantee uninterrupted operation, permanent availability, or prevention of data loss.
+
+Healthcare environments must maintain independent validation and backup procedures.
+
+11. THIRD-PARTY COMPONENTS
+
+The Software may include or interact with third-party software, frameworks, libraries, protocols, services, hardware drivers, or open-source components.
+
+Such components remain subject to their own respective licenses and terms.
+
+Nothing in this EULA grants User rights beyond those third-party license terms.
+
+12. UPDATES, TELEMETRY, AND LICENSE VALIDATION
+
+The Software may include:
+
+update systems,
+online activation,
+telemetry,
+usage analytics,
+audit logging,
+license verification,
+and anti-abuse mechanisms.
+
+Licensor may release updates, patches, security fixes, module packages, or feature modifications at its discretion.
+
+Unless accompanied by separate terms, updates remain governed by this EULA.
+
+13. TERMINATION
+
+This EULA remains effective until terminated.
+
+Licensor may terminate this EULA immediately if User breaches any provision of this Agreement.
+
+Upon termination, User must:
+
+stop using the Software,
+uninstall or destroy all copies,
+and cease all unauthorized access.
+
+Sections intended to survive termination shall remain enforceable.
+
+14. WARRANTY DISCLAIMER
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SOFTWARE IS PROVIDED “AS IS” AND “AS AVAILABLE,” WITHOUT WARRANTIES OF ANY KIND, WHETHER EXPRESS, IMPLIED, STATUTORY, OR OTHERWISE.
+
+LICENSOR DISCLAIMS ALL WARRANTIES INCLUDING, WITHOUT LIMITATION:
+
+MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE,
+NON-INFRINGEMENT,
+CLINICAL ACCURACY,
+DIAGNOSTIC RELIABILITY,
+SYSTEM AVAILABILITY,
+SECURITY,
+OR UNINTERRUPTED OPERATION.
+15. LIMITATION OF LIABILITY
+
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, LICENSOR SHALL NOT BE LIABLE FOR:
+
+INDIRECT,
+INCIDENTAL,
+SPECIAL,
+CONSEQUENTIAL,
+EXEMPLARY,
+PUNITIVE,
+OR REGULATORY DAMAGES,
+
+INCLUDING BUT NOT LIMITED TO:
+
+LOSS OF DATA,
+LOSS OF PROFITS,
+LOSS OF BUSINESS,
+CLINICAL INTERRUPTION,
+PATIENT CLAIMS,
+REGULATORY PENALTIES,
+OR CYBERSECURITY INCIDENTS,
+
+ARISING OUT OF OR RELATED TO THE SOFTWARE OR THIS EULA.
+
+IN NO EVENT SHALL LICENSOR’S TOTAL AGGREGATE LIABILITY EXCEED THE AMOUNT ACTUALLY PAID BY USER FOR THE APPLICABLE SOFTWARE LICENSE.
+
+16. EXPORT CONTROL AND SANCTIONS
+
+User shall comply with all applicable export-control, sanctions, trade, and re-export laws related to the Software.
+
+User shall not use or transfer the Software in prohibited jurisdictions or for prohibited activities.
+
+17. GOVERNING LAW
+
+This EULA shall be governed by the law specified in the applicable commercial agreement between the parties.
+
+If no separate agreement exists, this EULA shall be governed by the laws of the Licensor’s principal place of business, excluding conflict-of-law rules.
+
+Mandatory local consumer, healthcare, and regulatory protections shall remain applicable where required by law.
+
+18. ENTIRE AGREEMENT
+
+This EULA constitutes the complete and exclusive agreement between the parties concerning the Software and supersedes all prior or contemporaneous agreements, understandings, or communications relating to the Software.
+
+19. CONTACT INFORMATION
+
+AI-PACS 
+Website: AI-PACS.com
+
+Contact Page: AI-PACS Contact Page
+
+For licensing, enterprise deployment, legal, or compliance inquiries, contact AI-PACS through authorized communication channels.

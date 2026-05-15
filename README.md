@@ -1,8 +1,26 @@
 # AIPacs
 
-Stable release: `v2.4.7c` (`2026-05-02`)
+Stable release: `v3.0.2` (`2026-05-13`)
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.
+
+## Quick Start
+
+**To build a Windows installer:**
+```powershell
+.\setup_build_env.ps1     # One-time setup on any Windows PC
+python build.py           # Builds installer automatically
+```
+
+See [BUILD.md](BUILD.md) for detailed instructions, troubleshooting, and build customization options.
+
+**To run for development:**
+```powershell
+.\setup_env.ps1           # One-time setup
+.\run_app.ps1             # Runs the app with terminal logging
+```
+
+See [Development Setup](docs/development/setup-and-tooling.md) for more details.
 
 ## Canonical Documentation
 
@@ -12,6 +30,8 @@ Modular DICOM workstation for viewing, download orchestration, printing, educati
 - [Module Catalog](docs/modules/README.md)
 - [Development Setup](docs/development/setup-and-tooling.md)
 - [Current Release Notes](docs/releases/RELEASE_NOTES.md)
+- [Version 3.0.2 Release Notes](docs/releases/VERSION_3.0.2_RELEASE.md)
+- [Version 2.5.4 Release Notes](docs/releases/VERSION_2.5.4_RELEASE.md)
 - [Version 2.4.7c Release Notes](docs/releases/VERSION_2.4.7c_RELEASE.md)
 - [Version 2.3.7 Release Notes](docs/releases/VERSION_2.3.7_RELEASE.md)
 - [Version 2.3.6 Release Notes](docs/releases/VERSION_2.3.6_RELEASE.md)

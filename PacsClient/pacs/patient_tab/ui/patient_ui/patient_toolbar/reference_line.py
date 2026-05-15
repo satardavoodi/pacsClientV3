@@ -12,16 +12,64 @@ def rl_eps() -> float:
 # ---------------------------------------------------------------------------
 
 def rl_sort_instances_by_ipp(instances):
-    """Return instances unchanged — kept for API compatibility.
+    """Sort instances into anatomical (IPP/IOP geometry) order for sync/reference-line use.
 
-    IPP-based re-sorting is no longer performed.  VTK / SimpleITK read
-    slices in the file-name order passed to ``SetFileNames()``, and files
-    are named ``Instance_NNNN.dcm`` by DICOM InstanceNumber.  Metadata
-    from the DB is already ``ORDER BY instance_number``, so it already
-    matches VTK slice indices.  Re-sorting by IPP broke reference lines
-    in v1.09.5-v1.09.7 and caused CT / diffusion ordering bugs.
+    Convention: ``normal = cross(row=[iop[0:3]], col=[iop[3:6]])`` — the
+    standard DICOM display convention, identical to the one used by
+    ``canonical_sort_instances()`` in ``image_io.py`` and by the FAST pipeline
+    (``lightweight_2d_pipeline._normal_from_iop``).
+
+    Ascending ``dot(IPP, normal)`` means:
+    - Axial HFS [row=X, col=Y] → normal = +Z → Inferior first (ascending z)
+    - Sagittal [row=Y, col=Z] → normal = +X → Left first (ascending x)
+    - Coronal [row=X, col=Z] → normal = -Y → Posterior first (descending y)
+
+    For **Advanced/VTK** viewers ``canonical_sort_instances()`` already applied
+    the same IPP sort at load time, so this call is idempotent.
+
+    For **FAST (pydicom_qt)** viewers the display pipeline orders slices by
+    InstanceNumber (``_sort_slices``).  This re-sort aligns metadata order with
+    geometry for the sync/reference-line calculation only.  A
+    ``[FAST_GEOMETRY_ORDER_MISMATCH]`` diagnostic is emitted at load time when
+    InstanceNumber order ≠ IPP order.
+
+    Falls back to the input order when:
+    - fewer than 2 instances are present, or
+    - fewer than 50 % of instances have valid IOP + IPP.
     """
-    return instances if instances else instances
+    if not instances or len(instances) <= 1:
+        return instances
+
+    # Collect normals using cross(row, col) — standard DICOM display convention.
+    normals = []
+    for inst in instances:
+        iop = inst.get("image_orientation_patient")
+        if iop and len(iop) >= 6:
+            row_v = np.asarray(iop[0:3], dtype=float)
+            col_v = np.asarray(iop[3:6], dtype=float)
+            n = np.cross(row_v, col_v)
+            n_len = float(np.linalg.norm(n))
+            if n_len > 1e-9:
+                normals.append(n / n_len)
+
+    # Need at least 50 % geometry coverage to trust the sort.
+    if len(normals) < max(1, len(instances) // 2):
+        return instances
+
+    mean_n = np.mean(normals, axis=0)
+    mean_len = float(np.linalg.norm(mean_n))
+    if mean_len <= 1e-9:
+        return instances
+    mean_n = mean_n / mean_len
+
+    # Sort ascending dot(IPP, mean_n).  Instances missing IPP land at the end.
+    def _sort_key(inst):
+        ipp = inst.get("image_position_patient")
+        if ipp and len(ipp) >= 3:
+            return float(np.dot(ipp, mean_n))
+        return float("inf")
+
+    return sorted(instances, key=_sort_key)
 
 
 def rl_clip_plane_with_quad(p_plane, n_plane, quad_pts):

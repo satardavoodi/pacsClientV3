@@ -251,8 +251,13 @@ def get_instances_by_series_pk(series_pk: int, group_id: int) -> list[dict]:
                     bits_allocated, pixel_representation
                 FROM instances
                 WHERE series_fk = ? AND group_id = ?
-                ORDER BY instance_number
+                ORDER BY instance_number, sop_uid, instance_path
                 """,
+                # ↑ Deterministic three-field ORDER BY (v3.0.2 canonical-sort fix).
+                # This is a *stable retrieval order*, NOT the final anatomical order.
+                # canonical_sort_instances() in image_io.py applies geometry-first
+                # sorting after retrieval; this tie-breaker only prevents non-
+                # deterministic ordering when instance_number has duplicates or NULLs.
                 (series_pk, group_id),
             )
             rows = cur.fetchall()

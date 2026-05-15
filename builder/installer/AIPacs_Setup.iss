@@ -31,7 +31,8 @@ ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
 DisableReadyMemo=no
 SetupIconFile=..\..\Qss\images\favicon.ico
-LicenseFile=..\..\LICENSE
+; Installer EULA must remain proprietary and require explicit acceptance.
+LicenseFile=EULA.txt
 UninstallDisplayIcon={app}\AIPacs.exe
 
 [Languages]

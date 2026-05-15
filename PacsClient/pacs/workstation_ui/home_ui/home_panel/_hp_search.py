@@ -5,6 +5,7 @@
 
 import asyncio
 import logging
+import time
 
 _logger = logging.getLogger(__name__)
 
@@ -12,6 +13,8 @@ from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve,
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit, QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox, QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QWidget
 
 import qtawesome as qta
+
+from PacsClient.utils.structured_logging import emit_ui_event
 
 from ..home_search_service import HomeSearchService
 from PacsClient.components import DicomGrpcClient
@@ -362,6 +365,9 @@ class _HPSearchMixin:
         try:
             study_uid = patient_info['StudyInstanceUID']
             patient_id = patient_info['PatientID']
+            request_token = int(getattr(self, "_thumbnail_fetch_token", 0)) + 1
+            self._thumbnail_fetch_token = request_token
+            self._thumbnail_fetch_study_uid = str(study_uid)
             if hasattr(self, '_log_open_trace'):
                 self._log_open_trace(study_uid, 'right_panel_begin', patient_id=patient_id)
 
@@ -458,9 +464,44 @@ class _HPSearchMixin:
 
                 if hasattr(self, '_log_open_trace'):
                     self._log_open_trace(study_uid, 'right_panel_grpc_start', host=server.get('host'))
-                grpc_client = DicomGrpcClient(host=server['host'], port=50051)
-                thumbnails = grpc_client.get_thumbnails(patient_id, study_uid)
-                grpc_client.close()
+                emit_ui_event(
+                    _logger,
+                    "THUMBNAIL_FETCH_STARTED",
+                    background=True,
+                    study_uid=str(study_uid),
+                    token=int(request_token),
+                )
+
+                def _fetch_in_background() -> dict | None:
+                    client = DicomGrpcClient(host=server['host'], port=50051)
+                    try:
+                        return client.get_thumbnails(patient_id, study_uid, timeout=30)
+                    finally:
+                        client.close()
+
+                _fetch_t0 = time.perf_counter()
+                thumbnails = await asyncio.wait_for(
+                    asyncio.to_thread(_fetch_in_background),
+                    timeout=35.0,
+                )
+                emit_ui_event(
+                    _logger,
+                    "THUMBNAIL_FETCH_COMPLETED",
+                    background=True,
+                    duration_ms=float((time.perf_counter() - _fetch_t0) * 1000.0),
+                    study_uid=str(study_uid),
+                    token=int(request_token),
+                    has_data=bool(thumbnails),
+                )
+
+                if int(getattr(self, "_thumbnail_fetch_token", 0)) != int(request_token) or str(getattr(self, "_thumbnail_fetch_study_uid", "")) != str(study_uid):
+                    emit_ui_event(
+                        _logger,
+                        "THUMBNAIL_FETCH_STALE_DISCARDED",
+                        study_uid=str(study_uid),
+                        token=int(request_token),
+                    )
+                    return
 
                 if thumbnails:
                     thumbnails = self.save_thumbnail(thumbnails)

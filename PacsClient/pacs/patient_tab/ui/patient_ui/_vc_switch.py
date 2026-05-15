@@ -446,6 +446,15 @@ class _VCSwitchMixin:
                         series_idx = i
                         # Cache immediately for next access
                         self._series_cache[series_number] = (vtk_image_data, metadata, series_idx)
+                        try:
+                            self._emit_advanced_cache_probe(
+                                "[ADVANCED_CACHE_WRITE]",
+                                metadata=metadata,
+                                vtk_image_data=vtk_image_data,
+                                source="switch_linear_seed",
+                            )
+                        except Exception:
+                            pass
                         break
 
             # PyDicom mode guard: cached VTK payloads must be rebuilt with lazy metadata.

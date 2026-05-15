@@ -4,7 +4,7 @@
   "module_id": "web_browser",
   "title": "Web Browser Module",
   "tier": "optional",
-  "version": "2.4.8c",
+  "version": "3.0.2",
   "package_kind": "bundled_unlock",
   "payload_dir": "payload",
   "python_paths": [

@@ -25,5 +25,5 @@
   "sdk_entrypoint_group": "aipacs.plugins",
   "sdk_entrypoint_name": "offline_cloud_server",
   "notes": "",
-  "definition_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder\\plugin package\\definitions\\offline_cloud_server\\plugin_package.json"
+  "definition_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder\\plugin package\\definitions\\offline_cloud_server\\plugin_package.json"
 }

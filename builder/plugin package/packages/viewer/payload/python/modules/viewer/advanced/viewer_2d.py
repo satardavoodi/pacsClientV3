@@ -1,6 +1,7 @@
 from math import sqrt
 import sys
 import os
+from typing import Optional
 
 import vtkmodules.all as vtk
 from PySide6.QtCore import QTimer
@@ -17,6 +18,15 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushBu
 from PySide6.QtCore import Qt
 import time
 from modules.mpr.curved_mpr.curved_mpr_module import CurvedMPRModule
+from modules.viewer.advanced.orientation_markers import DicomOrientationMarkers
+from modules.viewer.advanced.series_geometry_index import SeriesGeometryIndex
+from modules.viewer.geometry.source_geometry import SourceGeometry
+from modules.viewer.geometry.display_geometry import DisplayGeometry
+from modules.viewer.geometry.geometry_api import GeometryAPI, ViewportGeometryRegistry
+from modules.viewer.geometry.vtk_bridge import (
+    apply_source_geometry_to_vtk,
+    log_vtk_orientation_bridge_status,
+)
 import logging
 import threading
 
@@ -136,6 +146,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
     # full study preprocessed without blowing up RAM on repeated series opens.
     _PREPROCESS_CACHE_MAX_BYTES: int = 300 * 1024 * 1024  # 300 MB
     _global_preprocess_cache_lock = threading.Lock()  # Thread safety for class-level cache
+    _viewport_geometry_registry = ViewportGeometryRegistry()
 
     def __init__(self, render_window, interactor, height, vtk_image_data: vtk.vtkImageData, metadata,
                  metadata_fixed, apply_default_filter, vtk_widget):
@@ -178,6 +189,15 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.image_render_window: vtk.vtkRenderWindow = render_window
         self.image_interactor: vtk.vtkRenderWindowInteractor = interactor
         self.renderer: vtk.vtkRenderer = self.GetRenderer()
+        
+        # Orientation markers for DICOM LPS display (per-viewport, transform-aware)
+        self.orientation_markers = DicomOrientationMarkers(self.renderer)
+        self._orientation_audit_active_logged = False
+        # Option B: explicit affine contract (built after metadata is set, below)
+        self._series_geometry_index: Optional[SeriesGeometryIndex] = None
+        self._vtk_direction_ignored_logged: bool = False
+        self._source_geometry_contract: Optional[SourceGeometry] = None
+        self._display_geometry_contract: Optional[DisplayGeometry] = None
 
         self.vtk_image_data = vtk_image_data
 
@@ -198,6 +218,18 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self._local_preprocess_cache = {}
         self._skip_upsample_slice_threshold = 160
         self._skip_preprocess_cache_slice_threshold = 160
+
+        # Option B: build explicit affine contract from DICOM headers.
+        # Must be called AFTER self.metadata and self.vtk_image_data are set.
+        self._series_geometry_index = self._build_series_geometry_index()
+        self._bind_geometry_contract()
+
+        # Temporary proof log: confirm active module/function path in live runtime.
+        self._emit_orientation_audit_active(
+            event="viewer_startup",
+            slice_update_callback_entered=False,
+            audit_emit_attempted=False,
+        )
         
         # Store image properties for curved MPR
         self.origin = self.vtk_image_data.GetOrigin()
@@ -565,6 +597,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                     except Exception:
                         pass
             self._overlays = []
+            
+            # Clear orientation markers
+            if hasattr(self, 'orientation_markers') and self.orientation_markers:
+                self.orientation_markers.clear()
         except Exception:
             pass
 
@@ -1292,6 +1328,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # Update metadata
         _metadata_start = time.time()
         self.metadata = metadata
+        # Option B: rebuild geometry index for the new series
+        self._series_geometry_index = self._build_series_geometry_index()
+        self._bind_geometry_contract()
+        self._vtk_direction_ignored_logged = False
         _metadata_time = time.time() - _metadata_start
         print(f"         â€¢ Update metadata: {_metadata_time:.3f}s")
 
@@ -1390,6 +1430,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             )
 
     def _set_slice_impl(self, slice_index, fast_interaction=False, force_annotations=False):
+        self._emit_orientation_audit_active(
+            event="slice_update_enter",
+            slice_update_callback_entered=True,
+            audit_emit_attempted=False,
+            slice_index=int(slice_index),
+        )
+
         _t0 = time.perf_counter_ns()
         _fast = bool(fast_interaction)
         _now_ms = _t0 / 1_000_000.0
@@ -1436,6 +1483,72 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self._sync_all_overlays_extent()
             if _fast:
                 self._last_fast_overlay_sync_ms = _now_ms
+        
+        # 5) Update orientation markers based on current displayed geometry
+        try:
+            if hasattr(self, 'orientation_markers') and self.orientation_markers and self.metadata:
+                instances = self.metadata.get('instances', [])
+                if actual_slice_index < len(instances):
+                    inst = instances[actual_slice_index]
+                    row_cos = inst.get('ImageOrientationPatient', [1, 0, 0, 0, 1, 0])[0:3]
+                    col_cos = inst.get('ImageOrientationPatient', [1, 0, 0, 0, 1, 0])[3:6]
+                    series_data = self.metadata.get('series', {})
+                    plane = series_data.get('display_convention', 'AXIAL')
+                    body_part = series_data.get('body_part_examined', '')
+                    series_uid = series_data.get('series_uid', '')
+                    series_number = series_data.get('series_number', '')
+                    viewport_id = str(getattr(getattr(self, 'vtk_widget', None), 'id_vtk_widget', '') or id(self))
+                    # Phase 2 preferred path: geometry contract vectors (no camera authority).
+                    _dg = getattr(self, "_display_geometry_contract", None)
+                    if _dg is not None:
+                        screen_vectors = GeometryAPI.screen_edge_vectors_in_lps(_dg)
+                        self.orientation_markers.update_from_geometry_contract(
+                            viewport_id=viewport_id,
+                            screen_vectors=screen_vectors,
+                            slice_index=actual_slice_index,
+                            series_uid=series_uid,
+                            series_number=str(series_number),
+                            plane=plane,
+                            body_part=body_part,
+                        )
+                    elif getattr(self, "_series_geometry_index", None) is not None and self._series_geometry_index.valid:
+                        # Option B fallback: explicit affine contract
+                        self.orientation_markers.update_from_affine(
+                            self._series_geometry_index,
+                            viewport_id=viewport_id,
+                            slice_index=actual_slice_index,
+                            series_uid=series_uid,
+                            series_number=str(series_number),
+                            plane=plane,
+                            body_part=body_part,
+                        )
+                    else:
+                        # Fallback to legacy camera-based method when affine unavailable
+                        self.orientation_markers.update_from_geometry(
+                            tuple(row_cos),
+                            tuple(col_cos),
+                            plane,
+                            viewport_id,
+                            series_uid=series_uid,
+                            series_number=series_number,
+                            body_part=body_part,
+                            slice_index=actual_slice_index,
+                        )
+        except Exception as e:
+            logger.debug(f"Error updating orientation markers: {e}")
+
+        # 6) Emit per-viewport orientation audit diagnostics
+        self._emit_orientation_audit_active(
+            event="audit_emit_attempt",
+            slice_update_callback_entered=True,
+            audit_emit_attempted=True,
+            slice_index=int(actual_slice_index),
+        )
+        try:
+            self._emit_advanced_vtk_orientation_audit(actual_slice_index)
+        except Exception as e:
+            logger.debug(f"Error emitting orientation audit: {e}")
+        
         self.Render()
         _t4 = time.perf_counter_ns()
 
@@ -1453,6 +1566,1077 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 _total_ms,
                 extra={"component": "viewer", "function": "ImageViewer2D.set_slice", "stage": "sub_timing"},
             )
+
+    def _build_series_geometry_index(self) -> Optional["SeriesGeometryIndex"]:
+        """Build SeriesGeometryIndex from current metadata and VTK image dimensions.
+
+        Called once on init and again on reset_image_viewer (series switch).
+        Returns the index if successful, None otherwise.
+        """
+        try:
+            if not isinstance(self.metadata, dict):
+                return None
+            instances = self.metadata.get("instances") or []
+            if not instances:
+                return None
+            instances = self._hydrate_geometry_instances_for_contract(instances, stage="series_geometry_index")
+            series_meta = self.metadata.get("series") or {}
+            series_uid = str(
+                series_meta.get("series_instance_uid")
+                or series_meta.get("series_uid")
+                or ""
+            )
+            dims = (0, 0, 0)
+            try:
+                if self.vtk_image_data is not None:
+                    dims = self.vtk_image_data.GetDimensions()
+            except Exception:
+                pass
+            idx = SeriesGeometryIndex.build_from_instances(
+                instances,
+                series_uid=series_uid,
+                vtk_n_rows=int(dims[1]) if dims else 0,
+                vtk_n_cols=int(dims[0]) if dims else 0,
+                vtk_n_slices=int(dims[2]) if dims else 0,
+                apply_y_flip=True,  # Always True for Advanced VTK path
+            )
+            # Emit [ADVANCED_VTK_DIRECTION_IGNORED_BY_DESIGN] once per series
+            self._emit_vtk_direction_ignored_log(idx)
+            return idx
+        except Exception as exc:
+            logger.warning(
+                "[ADVANCED_GEOMETRY_INDEX_BUILD_FAILED] series_uid=%s exc=%s",
+                series_uid if "series_uid" in dir() else "unknown",
+                exc,
+                extra={"component": "viewer"},
+            )
+            return None
+
+    def _hydrate_geometry_instances_for_contract(
+        self,
+        instances: list[dict],
+        *,
+        stage: str,
+    ) -> list[dict]:
+        """Hydrate display metadata with camelCase DICOM keys required by geometry contracts."""
+        if not isinstance(instances, list) or not instances:
+            return instances
+
+        before = {
+            "iop": 0,
+            "ipp": 0,
+            "pixel_spacing": 0,
+            "slice_thickness": 0,
+            "spacing_between_slices": 0,
+            "rows": 0,
+            "columns": 0,
+            "sop_uid": 0,
+            "series_uid": 0,
+            "frame_uid": 0,
+        }
+        after = {
+            "iop": 0,
+            "ipp": 0,
+            "pixel_spacing": 0,
+            "slice_thickness": 0,
+            "spacing_between_slices": 0,
+            "rows": 0,
+            "columns": 0,
+            "sop_uid": 0,
+            "series_uid": 0,
+            "frame_uid": 0,
+        }
+        hydrated = False
+        series_meta = self.metadata.get("series") if isinstance(self.metadata, dict) else {}
+
+        series_uid_hint = ""
+        frame_uid_hint = ""
+        if isinstance(series_meta, dict):
+            series_uid_hint = str(
+                series_meta.get("series_instance_uid")
+                or series_meta.get("series_uid")
+                or ""
+            )
+            frame_uid_hint = str(
+                series_meta.get("frame_of_reference_uid")
+                or ""
+            )
+
+        for inst in instances:
+            if not isinstance(inst, dict):
+                continue
+
+            has_iop_before = inst.get("ImageOrientationPatient") is not None
+            has_ipp_before = inst.get("ImagePositionPatient") is not None
+            has_ps_before = inst.get("PixelSpacing") is not None
+            has_st_before = inst.get("SliceThickness") is not None
+            has_sbs_before = inst.get("SpacingBetweenSlices") is not None
+            has_rows_before = inst.get("Rows") is not None
+            has_cols_before = inst.get("Columns") is not None
+            has_sop_before = inst.get("SOPInstanceUID") is not None
+            has_series_uid_before = inst.get("SeriesInstanceUID") is not None
+            has_frame_uid_before = inst.get("FrameOfReferenceUID") is not None
+
+            if has_iop_before:
+                before["iop"] += 1
+            if has_ipp_before:
+                before["ipp"] += 1
+            if has_ps_before:
+                before["pixel_spacing"] += 1
+            if has_st_before:
+                before["slice_thickness"] += 1
+            if has_sbs_before:
+                before["spacing_between_slices"] += 1
+            if has_rows_before:
+                before["rows"] += 1
+            if has_cols_before:
+                before["columns"] += 1
+            if has_sop_before:
+                before["sop_uid"] += 1
+            if has_series_uid_before:
+                before["series_uid"] += 1
+            if has_frame_uid_before:
+                before["frame_uid"] += 1
+
+            if not has_iop_before and inst.get("image_orientation_patient") is not None:
+                inst["ImageOrientationPatient"] = list(inst.get("image_orientation_patient") or [])
+                hydrated = True
+            if not has_ipp_before and inst.get("image_position_patient") is not None:
+                inst["ImagePositionPatient"] = list(inst.get("image_position_patient") or [])
+                hydrated = True
+            if not has_ps_before and inst.get("pixel_spacing") is not None:
+                inst["PixelSpacing"] = list(inst.get("pixel_spacing") or [])
+                hydrated = True
+            if not has_st_before and inst.get("slice_thickness") is not None:
+                inst["SliceThickness"] = float(inst.get("slice_thickness") or 0.0)
+                hydrated = True
+            if not has_sbs_before and inst.get("spacing_between_slices") is not None:
+                inst["SpacingBetweenSlices"] = float(inst.get("spacing_between_slices") or 0.0)
+                hydrated = True
+            if not has_rows_before and inst.get("rows") is not None:
+                inst["Rows"] = int(inst.get("rows") or 0)
+                hydrated = True
+            if not has_cols_before and inst.get("columns") is not None:
+                inst["Columns"] = int(inst.get("columns") or 0)
+                hydrated = True
+            if not has_sop_before:
+                sop_candidate = (
+                    inst.get("sop_instance_uid")
+                    or inst.get("sop_uid")
+                )
+                if sop_candidate is not None:
+                    inst["SOPInstanceUID"] = str(sop_candidate or "")
+                    hydrated = True
+            if not has_series_uid_before:
+                series_uid_candidate = (
+                    inst.get("series_instance_uid")
+                    or inst.get("series_uid")
+                    or series_uid_hint
+                )
+                if series_uid_candidate:
+                    inst["SeriesInstanceUID"] = str(series_uid_candidate)
+                    hydrated = True
+            if not has_frame_uid_before:
+                frame_uid_candidate = (
+                    inst.get("frame_of_reference_uid")
+                    or frame_uid_hint
+                )
+                if frame_uid_candidate:
+                    inst["FrameOfReferenceUID"] = str(frame_uid_candidate)
+                    hydrated = True
+                hydrated = True
+
+            if inst.get("ImageOrientationPatient") is not None:
+                after["iop"] += 1
+            if inst.get("ImagePositionPatient") is not None:
+                after["ipp"] += 1
+            if inst.get("PixelSpacing") is not None:
+                after["pixel_spacing"] += 1
+            if inst.get("SliceThickness") is not None:
+                after["slice_thickness"] += 1
+            if inst.get("SpacingBetweenSlices") is not None:
+                after["spacing_between_slices"] += 1
+            if inst.get("Rows") is not None:
+                after["rows"] += 1
+            if inst.get("Columns") is not None:
+                after["columns"] += 1
+            if inst.get("SOPInstanceUID") is not None:
+                after["sop_uid"] += 1
+            if inst.get("SeriesInstanceUID") is not None:
+                after["series_uid"] += 1
+            if inst.get("FrameOfReferenceUID") is not None:
+                after["frame_uid"] += 1
+
+        if hydrated:
+            total = float(len(instances) or 1)
+            series_uid = ""
+            if isinstance(series_meta, dict):
+                series_uid = str(
+                    series_meta.get("series_instance_uid")
+                    or series_meta.get("series_uid")
+                    or series_meta.get("series_number")
+                    or ""
+                )
+            logger.warning(
+                "[GEOMETRY_METADATA_HYDRATED] series_uid=%s stage=%s source_chain=metadata.instances(display_instances_metadata)->viewer_runtime_instances->geometry_contract_bind "
+                "instances=%d iop_before_pct=%.1f iop_after_pct=%.1f ipp_before_pct=%.1f ipp_after_pct=%.1f "
+                "pixel_spacing_before_pct=%.1f pixel_spacing_after_pct=%.1f slice_thickness_before_pct=%.1f slice_thickness_after_pct=%.1f "
+                "spacing_between_slices_before_pct=%.1f spacing_between_slices_after_pct=%.1f rows_before_pct=%.1f rows_after_pct=%.1f "
+                "columns_before_pct=%.1f columns_after_pct=%.1f sop_uid_before_pct=%.1f sop_uid_after_pct=%.1f "
+                "series_uid_before_pct=%.1f series_uid_after_pct=%.1f frame_uid_before_pct=%.1f frame_uid_after_pct=%.1f",
+                series_uid,
+                stage,
+                len(instances),
+                100.0 * before["iop"] / total,
+                100.0 * after["iop"] / total,
+                100.0 * before["ipp"] / total,
+                100.0 * after["ipp"] / total,
+                100.0 * before["pixel_spacing"] / total,
+                100.0 * after["pixel_spacing"] / total,
+                100.0 * before["slice_thickness"] / total,
+                100.0 * after["slice_thickness"] / total,
+                100.0 * before["spacing_between_slices"] / total,
+                100.0 * after["spacing_between_slices"] / total,
+                100.0 * before["rows"] / total,
+                100.0 * after["rows"] / total,
+                100.0 * before["columns"] / total,
+                100.0 * after["columns"] / total,
+                100.0 * before["sop_uid"] / total,
+                100.0 * after["sop_uid"] / total,
+                100.0 * before["series_uid"] / total,
+                100.0 * after["series_uid"] / total,
+                100.0 * before["frame_uid"] / total,
+                100.0 * after["frame_uid"] / total,
+                extra={"component": "viewer"},
+            )
+
+        self._emit_geometry_hydration_field_map_check(instances, stage=stage)
+
+        return instances
+
+    @staticmethod
+    def _short_repr(value, max_len: int = 96) -> str:
+        text = repr(value)
+        if len(text) <= max_len:
+            return text
+        return text[:max_len - 3] + "..."
+
+    @staticmethod
+    def _normalize_numeric(value):
+        if value is None:
+            return None
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        if isinstance(value, (list, tuple)):
+            try:
+                return tuple(float(v) for v in value)
+            except Exception:
+                return tuple(value)
+        if isinstance(value, (int, float)):
+            return float(value)
+        return value
+
+    @classmethod
+    def _values_equal(cls, left, right) -> bool:
+        return cls._normalize_numeric(left) == cls._normalize_numeric(right)
+
+    @staticmethod
+    def _shape_of(value) -> str:
+        if value is None:
+            return "none"
+        if isinstance(value, np.ndarray):
+            value = value.tolist()
+        if isinstance(value, (list, tuple)):
+            return f"len={len(value)}"
+        if isinstance(value, int):
+            return "int"
+        if isinstance(value, float):
+            return "float"
+        return type(value).__name__
+
+    @staticmethod
+    def _sample_instance_indices(count: int) -> list[int]:
+        if count <= 0:
+            return []
+        idx = set(range(min(3, count)))
+        idx.update(range(max(0, count - 3), count))
+        return sorted(idx)
+
+    @staticmethod
+    def _first_present_value(inst: dict, keys: tuple[str, ...]):
+        for key in keys:
+            if key in inst and inst.get(key) is not None:
+                return inst.get(key), key
+        return None, ""
+
+    def _emit_geometry_hydration_field_map_check(self, instances: list[dict], *, stage: str) -> None:
+        if not isinstance(instances, list) or not instances:
+            return
+
+        mapping = [
+            (("image_orientation_patient",), "ImageOrientationPatient"),
+            (("image_position_patient",), "ImagePositionPatient"),
+            (("pixel_spacing",), "PixelSpacing"),
+            (("slice_thickness",), "SliceThickness"),
+            (("spacing_between_slices",), "SpacingBetweenSlices"),
+            (("rows",), "Rows"),
+            (("columns",), "Columns"),
+            (("sop_instance_uid", "sop_uid"), "SOPInstanceUID"),
+            (("series_instance_uid", "series_uid"), "SeriesInstanceUID"),
+            (("frame_of_reference_uid",), "FrameOfReferenceUID"),
+        ]
+
+        series_meta = self.metadata.get("series") if isinstance(self.metadata, dict) else {}
+        series_uid = ""
+        series_number = ""
+        if isinstance(series_meta, dict):
+            series_uid = str(
+                series_meta.get("series_instance_uid")
+                or series_meta.get("series_uid")
+                or ""
+            )
+            series_number = str(series_meta.get("series_number") or "")
+
+        for idx in self._sample_instance_indices(len(instances)):
+            inst = instances[idx]
+            if not isinstance(inst, dict):
+                continue
+            for snake_keys, camel_key in mapping:
+                snake_value, snake_field = self._first_present_value(inst, snake_keys)
+                camel_value = inst.get(camel_key)
+                equal = self._values_equal(snake_value, camel_value)
+                logger.warning(
+                    "[GEOMETRY_HYDRATION_FIELD_MAP_CHECK] series_uid=%s series_number=%s stage=%s instance_index=%d "
+                    "snake_field=%s camel_field=%s snake_value=%s camel_value=%s equal=%s parsed_numeric_shape=%s",
+                    series_uid,
+                    series_number,
+                    stage,
+                    idx,
+                    snake_field or "missing",
+                    camel_key,
+                    self._short_repr(snake_value),
+                    self._short_repr(camel_value),
+                    equal,
+                    self._shape_of(camel_value),
+                    extra={"component": "viewer"},
+                )
+
+    @staticmethod
+    def _matrix_col_norms_and_determinant(matrix_4x4: np.ndarray) -> tuple[float, float, float, float, float]:
+        M = np.asarray(matrix_4x4, dtype=float)
+        if M.shape != (4, 4):
+            return 0.0, 0.0, 0.0, 0.0, float("inf")
+        A = M[:3, :3]
+        i_norm = float(np.linalg.norm(A[:, 0]))
+        j_norm = float(np.linalg.norm(A[:, 1]))
+        k_norm = float(np.linalg.norm(A[:, 2]))
+        det = float(np.linalg.det(A))
+        try:
+            cond = float(np.linalg.cond(A))
+        except Exception:
+            cond = float("inf")
+        return i_norm, j_norm, k_norm, det, cond
+
+    def _capture_render_geometry_state(self) -> dict:
+        state = {
+            "vtk_dimensions": None,
+            "vtk_extent": None,
+            "vtk_bounds": None,
+            "actor_bounds": None,
+            "reslice_output_extent": None,
+            "reslice_output_spacing": None,
+            "camera_position": None,
+            "camera_focal_point": None,
+            "camera_view_up": None,
+            "camera_parallel_scale": None,
+            "vtk_origin": None,
+            "vtk_spacing": None,
+            "vtk_direction": None,
+            "active_mapper_uses_direction": False,
+        }
+
+        img = getattr(self, "vtk_image_data", None)
+        if img is not None:
+            try:
+                state["vtk_dimensions"] = tuple(int(v) for v in img.GetDimensions())
+                state["vtk_extent"] = tuple(int(v) for v in img.GetExtent())
+                state["vtk_bounds"] = tuple(float(v) for v in img.GetBounds())
+                state["vtk_origin"] = tuple(float(v) for v in img.GetOrigin())
+                state["vtk_spacing"] = tuple(float(v) for v in img.GetSpacing())
+            except Exception:
+                pass
+            if hasattr(img, "GetDirectionMatrix"):
+                try:
+                    mat = img.GetDirectionMatrix()
+                    state["vtk_direction"] = tuple(
+                        float(mat.GetElement(r, c))
+                        for r in range(3)
+                        for c in range(3)
+                    )
+                except Exception:
+                    state["vtk_direction"] = None
+
+        try:
+            actor = self.GetImageActor() if hasattr(self, "GetImageActor") else None
+            if actor is not None:
+                state["actor_bounds"] = tuple(float(v) for v in actor.GetBounds())
+                mapper = actor.GetMapper()
+                mapper_input = mapper.GetInput() if mapper is not None else None
+                state["active_mapper_uses_direction"] = bool(
+                    mapper_input is not None and hasattr(mapper_input, "GetDirectionMatrix")
+                )
+        except Exception:
+            pass
+
+        try:
+            if hasattr(self, "image_reslice") and self.image_reslice is not None:
+                out = self.image_reslice.GetOutput()
+                state["reslice_output_extent"] = tuple(int(v) for v in out.GetExtent())
+                state["reslice_output_spacing"] = tuple(float(v) for v in out.GetSpacing())
+        except Exception:
+            pass
+
+        try:
+            camera = self.renderer.GetActiveCamera() if self.renderer else None
+            if camera is not None:
+                state["camera_position"] = tuple(float(v) for v in camera.GetPosition())
+                state["camera_focal_point"] = tuple(float(v) for v in camera.GetFocalPoint())
+                state["camera_view_up"] = tuple(float(v) for v in camera.GetViewUp())
+                state["camera_parallel_scale"] = float(camera.GetParallelScale())
+        except Exception:
+            pass
+
+        return state
+
+    def _emit_vtk_bridge_effect_check(
+        self,
+        *,
+        series_uid: str,
+        series_number: str,
+        before_state: dict,
+        after_state: dict,
+    ) -> None:
+        before_origin = before_state.get("vtk_origin")
+        after_origin = after_state.get("vtk_origin")
+        before_spacing = before_state.get("vtk_spacing")
+        after_spacing = after_state.get("vtk_spacing")
+        before_direction = before_state.get("vtk_direction")
+        after_direction = after_state.get("vtk_direction")
+
+        render_behavior_changed = bool(
+            before_state.get("vtk_bounds") != after_state.get("vtk_bounds")
+            or before_state.get("actor_bounds") != after_state.get("actor_bounds")
+            or before_state.get("reslice_output_extent") != after_state.get("reslice_output_extent")
+            or before_state.get("reslice_output_spacing") != after_state.get("reslice_output_spacing")
+        )
+
+        logger.warning(
+            "[VTK_BRIDGE_EFFECT_CHECK] series_uid=%s series_number=%s "
+            "before_vtk_origin=%s after_vtk_origin=%s before_vtk_spacing=%s after_vtk_spacing=%s "
+            "before_vtk_direction=%s after_vtk_direction=%s active_mapper_uses_direction=%s render_behavior_changed=%s",
+            series_uid,
+            series_number,
+            self._short_repr(before_origin),
+            self._short_repr(after_origin),
+            self._short_repr(before_spacing),
+            self._short_repr(after_spacing),
+            self._short_repr(before_direction),
+            self._short_repr(after_direction),
+            bool(after_state.get("active_mapper_uses_direction")),
+            render_behavior_changed,
+            extra={"component": "viewer"},
+        )
+
+    def _emit_advanced_render_geometry_regression(
+        self,
+        *,
+        series_uid: str,
+        series_number: str,
+        sg: Optional[SourceGeometry],
+        dg: Optional[DisplayGeometry],
+        state: dict,
+        reason_hint: str = "",
+    ) -> None:
+        matrix = None
+        if dg is not None:
+            matrix = dg.effective_display_ijk_to_lps_4x4
+        elif sg is not None:
+            matrix = sg.raw_ijk_to_lps_4x4
+
+        i_norm = j_norm = k_norm = det = cond = 0.0
+        if matrix is not None:
+            i_norm, j_norm, k_norm, det, cond = self._matrix_col_norms_and_determinant(matrix)
+
+        collapse_detected = False
+        collapse_axis = "none"
+        reason_parts = []
+
+        if min(i_norm, j_norm, k_norm) < 1e-6:
+            collapse_detected = True
+            axis_idx = int(np.argmin([i_norm, j_norm, k_norm]))
+            collapse_axis = ["i", "j", "k"][axis_idx]
+            reason_parts.append("affine_axis_near_zero")
+
+        if abs(det) < 1e-9:
+            collapse_detected = True
+            reason_parts.append("affine_det_near_zero")
+
+        vtk_bounds = state.get("vtk_bounds")
+        if vtk_bounds is not None and len(vtk_bounds) == 6:
+            spans = [
+                float(vtk_bounds[1] - vtk_bounds[0]),
+                float(vtk_bounds[3] - vtk_bounds[2]),
+                float(vtk_bounds[5] - vtk_bounds[4]),
+            ]
+            max_span = max(spans) if spans else 0.0
+            if max_span > 0:
+                min_idx = int(np.argmin(spans))
+                if spans[min_idx] <= max(1e-6, max_span * 1e-4):
+                    collapse_detected = True
+                    collapse_axis = ["x", "y", "z"][min_idx]
+                    reason_parts.append("vtk_bounds_thin_axis")
+
+        if reason_hint:
+            reason_parts.append(reason_hint)
+        if cond == float("inf"):
+            reason_parts.append("affine_cond_inf")
+
+        rows = columns = n_slices = 0
+        if isinstance(self.metadata, dict):
+            inst = (self.metadata.get("instances") or [])
+            if inst:
+                rows = int(inst[0].get("Rows") or inst[0].get("rows") or 0)
+                columns = int(inst[0].get("Columns") or inst[0].get("columns") or 0)
+                n_slices = len(inst)
+        vtk_dims = state.get("vtk_dimensions")
+        if vtk_dims and len(vtk_dims) == 3:
+            if rows <= 0:
+                rows = int(vtk_dims[1])
+            if columns <= 0:
+                columns = int(vtk_dims[0])
+            if n_slices <= 0:
+                n_slices = int(vtk_dims[2])
+
+        logger.warning(
+            "[ADVANCED_RENDER_GEOMETRY_REGRESSION] series_uid=%s series_number=%s rows=%d columns=%d n_slices=%d "
+            "vtk_dimensions=%s vtk_extent=%s vtk_bounds=%s actor_bounds=%s reslice_output_extent=%s reslice_output_spacing=%s "
+            "camera_position=%s camera_focal_point=%s camera_view_up=%s camera_parallel_scale=%s "
+            "source_ijk_to_lps_4x4=%s display_effective_ijk_to_lps_4x4=%s ijk_axis_i_norm=%.9f ijk_axis_j_norm=%.9f ijk_axis_k_norm=%.9f "
+            "affine_determinant=%.12g affine_condition_number=%s source_valid=%s display_valid=%s collapse_detected=%s collapse_axis=%s reason=%s",
+            series_uid,
+            series_number,
+            rows,
+            columns,
+            n_slices,
+            self._short_repr(state.get("vtk_dimensions")),
+            self._short_repr(state.get("vtk_extent")),
+            self._short_repr(state.get("vtk_bounds")),
+            self._short_repr(state.get("actor_bounds")),
+            self._short_repr(state.get("reslice_output_extent")),
+            self._short_repr(state.get("reslice_output_spacing")),
+            self._short_repr(state.get("camera_position")),
+            self._short_repr(state.get("camera_focal_point")),
+            self._short_repr(state.get("camera_view_up")),
+            self._short_repr(state.get("camera_parallel_scale")),
+            self._short_repr(np.array2string(sg.raw_ijk_to_lps_4x4, precision=6, separator=",")) if sg is not None else "None",
+            self._short_repr(np.array2string(dg.effective_display_ijk_to_lps_4x4, precision=6, separator=",")) if dg is not None else "None",
+            i_norm,
+            j_norm,
+            k_norm,
+            det,
+            "inf" if cond == float("inf") else f"{cond:.6g}",
+            bool(sg is not None and sg.valid),
+            bool(dg is not None and getattr(dg.source, "valid", False)),
+            collapse_detected,
+            collapse_axis,
+            "|".join(reason_parts) if reason_parts else "none",
+            extra={"component": "viewer"},
+        )
+
+    def _viewer_viewport_id(self) -> str:
+        return str(getattr(getattr(self, 'vtk_widget', None), 'id_vtk_widget', '') or id(self))
+
+    def _bind_geometry_contract(self) -> None:
+        """Build SourceGeometry + DisplayGeometry and register the viewport binding.
+
+        This is Phase 2 runtime migration plumbing. It is observational and does
+        not change legacy display flow.
+        """
+        try:
+            if not isinstance(self.metadata, dict):
+                return
+            instances = self.metadata.get("instances") or []
+            if not instances:
+                return
+            instances = self._hydrate_geometry_instances_for_contract(instances, stage="source_geometry")
+            series_meta = self.metadata.get("series") or {}
+            series_uid = str(
+                series_meta.get("series_instance_uid")
+                or series_meta.get("series_uid")
+                or ""
+            )
+            series_number = str(series_meta.get("series_number") or "")
+            frame_uid = str(
+                series_meta.get("frame_of_reference_uid")
+                or instances[0].get("FrameOfReferenceUID")
+                or instances[0].get("frame_of_reference_uid")
+                or ""
+            )
+            dims = (0, 0, 0)
+            if self.vtk_image_data is not None:
+                dims = self.vtk_image_data.GetDimensions()
+            n_rows = int(dims[1]) if dims else 0
+            n_cols = int(dims[0]) if dims else 0
+            n_slices = int(dims[2]) if dims else 0
+
+            sg = SourceGeometry.build_from_instances(
+                instances,
+                series_uid=series_uid,
+                frame_of_reference_uid=frame_uid,
+                vtk_n_rows=n_rows,
+                vtk_n_cols=n_cols,
+                vtk_n_slices=n_slices,
+            )
+            pre_state = self._capture_render_geometry_state()
+            if not sg.valid:
+                self._emit_advanced_render_geometry_regression(
+                    series_uid=series_uid,
+                    series_number=series_number,
+                    sg=sg,
+                    dg=None,
+                    state=pre_state,
+                    reason_hint="source_invalid",
+                )
+                return
+
+            viewport_id = self._viewer_viewport_id()
+            dg = DisplayGeometry(sg, viewport_id=viewport_id)
+            if n_rows > 0:
+                dg.apply_y_flip(n_rows)
+
+            self._source_geometry_contract = sg
+            self._display_geometry_contract = dg
+            ImageViewer2D._viewport_geometry_registry.register(viewport_id, dg)
+
+            if self.vtk_image_data is not None:
+                bridge_active = str(os.getenv("AIPACS_ADVANCED_VTK_GEOMETRY_BRIDGE_ACTIVE", "1")).strip() not in {"0", "false", "False"}
+                if bridge_active:
+                    apply_source_geometry_to_vtk(self.vtk_image_data, sg, dg)
+                log_vtk_orientation_bridge_status(self.vtk_image_data, sg, dg)
+
+            post_state = self._capture_render_geometry_state()
+            self._emit_vtk_bridge_effect_check(
+                series_uid=series_uid,
+                series_number=series_number,
+                before_state=pre_state,
+                after_state=post_state,
+            )
+            self._emit_advanced_render_geometry_regression(
+                series_uid=series_uid,
+                series_number=series_number,
+                sg=sg,
+                dg=dg,
+                state=post_state,
+                reason_hint="bind_complete",
+            )
+
+            self._emit_advanced_viewport_geometry_bind()
+        except Exception as exc:
+            logger.warning(
+                "[ADVANCED_VIEWPORT_GEOMETRY_BIND] status=failed viewport_id=%s exc=%s",
+                self._viewer_viewport_id(),
+                exc,
+                extra={"component": "viewer"},
+            )
+
+    def _emit_advanced_viewport_geometry_bind(self) -> None:
+        """Emit required Phase 2 viewport geometry bind log."""
+        dg = getattr(self, "_display_geometry_contract", None)
+        sg = getattr(self, "_source_geometry_contract", None)
+        if dg is None or sg is None:
+            return
+
+        patient_id = ""
+        study_uid = ""
+        series_uid = str(sg.series_uid or "")
+        series_number = ""
+        plane = "UNKNOWN"
+        if isinstance(self.metadata, dict):
+            patient_meta = self.metadata.get("patient") or {}
+            study_meta = self.metadata.get("study") or {}
+            series_meta = self.metadata.get("series") or {}
+            patient_id = str(patient_meta.get("patient_id") or patient_meta.get("id") or "")
+            study_uid = str(study_meta.get("study_instance_uid") or study_meta.get("study_uid") or "")
+            series_uid = str(series_meta.get("series_instance_uid") or series_meta.get("series_uid") or series_uid)
+            series_number = str(series_meta.get("series_number") or "")
+            plane = str(series_meta.get("display_convention") or series_meta.get("geometry_plane") or plane)
+
+        cur_k = 0
+        try:
+            cur_k = int(self.GetSlice())
+        except Exception:
+            pass
+        cur_k = int(max(0, min(cur_k, max(sg.n_slices - 1, 0))))
+
+        first_sop_uid = ""
+        current_sop_uid = ""
+        try:
+            first_sop_uid = str(sg.k_to_sop_uid.get(0) or "")
+            current_sop_uid = str(sg.k_to_sop_uid.get(cur_k) or "")
+        except Exception:
+            pass
+
+        origin_lps, _, _, normal_lps = GeometryAPI.current_slice_plane_in_lps(dg, float(cur_k))
+
+        def _m4(v):
+            return np.array2string(np.asarray(v, dtype=float), precision=6, separator=",", suppress_small=False)
+
+        logger.warning(
+            "[ADVANCED_VIEWPORT_GEOMETRY_BIND] "
+            "viewport_id=%s patient_id=%s study_uid=%s series_uid=%s series_number=%s "
+            "plane=%s frame_of_reference_uid=%s "
+            "raw_ijk_to_lps_4x4=%s display_to_raw_ijk_4x4=%s "
+            "effective_display_ijk_to_lps_4x4=%s lps_to_effective_display_ijk_4x4=%s "
+            "first_sop_uid=%s current_sop_uid=%s current_slice_index=%d "
+            "current_slice_lps_origin=(%.4f,%.4f,%.4f) "
+            "current_slice_lps_normal=(%.4f,%.4f,%.4f)",
+            dg.viewport_id,
+            patient_id,
+            study_uid,
+            series_uid,
+            series_number,
+            plane,
+            str(sg.frame_of_reference_uid or ""),
+            _m4(sg.raw_ijk_to_lps_4x4),
+            _m4(dg.display_to_raw_ijk_4x4),
+            _m4(dg.effective_display_ijk_to_lps_4x4),
+            _m4(dg.lps_to_effective_display_ijk_4x4),
+            first_sop_uid,
+            current_sop_uid,
+            cur_k,
+            origin_lps[0], origin_lps[1], origin_lps[2],
+            normal_lps[0], normal_lps[1], normal_lps[2],
+            extra={"component": "viewer"},
+        )
+
+    def _emit_vtk_direction_ignored_log(self, idx: Optional["SeriesGeometryIndex"] = None) -> None:
+        """Emit [ADVANCED_VTK_DIRECTION_IGNORED_BY_DESIGN] once per series.
+
+        VTK direction matrix is always identity in the active rendering context
+        for the Advanced path.  Option B explicitly owns geometry via
+        SeriesGeometryIndex — VTK's identity direction is ignored by design.
+        """
+        if getattr(self, "_vtk_direction_ignored_logged", False):
+            return
+        try:
+            vtk_dir_is_identity = True
+            try:
+                if self.vtk_image_data is not None and hasattr(
+                    self.vtk_image_data, "GetDirectionMatrix"
+                ):
+                    dm = self.vtk_image_data.GetDirectionMatrix()
+                    if dm is not None:
+                        for i in range(3):
+                            for j in range(3):
+                                expected = 1.0 if i == j else 0.0
+                                if abs(dm.GetElement(i, j) - expected) > 1e-6:
+                                    vtk_dir_is_identity = False
+                                    break
+            except Exception:
+                pass
+
+            if idx is None:
+                idx = getattr(self, "_series_geometry_index", None)
+            geometry_valid = idx is not None and idx.valid
+            ijk_hash = idx.ijk_to_lps_hash if idx is not None else "none"
+            series_uid = idx.series_uid if idx is not None else "unknown"
+            viewport_id = str(
+                getattr(getattr(self, "vtk_widget", None), "id_vtk_widget", "")
+                or id(self)
+            )
+
+            logger.warning(
+                "[ADVANCED_VTK_DIRECTION_IGNORED_BY_DESIGN] "
+                "viewport_id=%s series_uid=%s "
+                "vtk_direction_is_identity=%s "
+                "geometry_valid=%s "
+                "option_b_active=True "
+                "ijk_to_lps_hash=%s",
+                viewport_id,
+                series_uid,
+                vtk_dir_is_identity,
+                geometry_valid,
+                ijk_hash,
+                extra={"component": "viewer"},
+            )
+            self._vtk_direction_ignored_logged = True
+        except Exception as exc:
+            logger.debug("Error in _emit_vtk_direction_ignored_log: %s", exc)
+
+    def _emit_orientation_audit_active(
+        self,
+        *,
+        event: str,
+        slice_update_callback_entered: bool,
+        audit_emit_attempted: bool,
+        slice_index: int = -1,
+    ):
+        try:
+            # Avoid startup spam while still logging per-slice proof events.
+            if event == "viewer_startup" and self._orientation_audit_active_logged:
+                return
+
+            viewport_id = str(getattr(getattr(self, 'vtk_widget', None), 'id_vtk_widget', '') or id(self))
+            orientation_module_name = getattr(DicomOrientationMarkers, "__module__", "")
+            orientation_module = sys.modules.get(orientation_module_name)
+            orientation_module_path = getattr(orientation_module, "__file__", "") if orientation_module else ""
+
+            logger.warning(
+                "[ADVANCED_ORIENTATION_AUDIT_ACTIVE] "
+                "event=%s module=%s module_path=%s function_path=%s orientation_markers_module=%s "
+                "orientation_markers_path=%s viewport_id=%s slice_index=%s "
+                "slice_update_callback_entered=%s audit_emit_attempted=%s",
+                str(event),
+                str(__name__),
+                str(__file__),
+                "ImageViewer2D._set_slice_impl",
+                str(orientation_module_name),
+                str(orientation_module_path),
+                viewport_id,
+                int(slice_index),
+                bool(slice_update_callback_entered),
+                bool(audit_emit_attempted),
+                extra={"component": "viewer"},
+            )
+
+            if event == "viewer_startup":
+                self._orientation_audit_active_logged = True
+        except Exception:
+            pass
+
+    def _safe_unit(self, vec):
+        try:
+            arr = np.asarray(vec, dtype=float)
+            n = float(np.linalg.norm(arr))
+            if n <= 1e-8:
+                return None
+            return arr / n
+        except Exception:
+            return None
+
+    def _vec_angle_deg(self, a, b):
+        au = self._safe_unit(a)
+        bu = self._safe_unit(b)
+        if au is None or bu is None:
+            return None
+        dot = float(np.clip(np.dot(au, bu), -1.0, 1.0))
+        return float(np.degrees(np.arccos(dot)))
+
+    def _matrix_to_tuple3(self, mat):
+        if mat is None:
+            return None
+        try:
+            if isinstance(mat, vtk.vtkMatrix4x4):
+                return tuple(tuple(float(mat.GetElement(r, c)) for c in range(4)) for r in range(4))
+            if isinstance(mat, vtk.vtkMatrix3x3):
+                return tuple(tuple(float(mat.GetElement(r, c)) for c in range(3)) for r in range(3))
+        except Exception:
+            return None
+        return None
+
+    def _classify_orientation_failure(
+        self,
+        *,
+        row_axis_mismatch_deg,
+        col_axis_mismatch_deg,
+        normal_mismatch_deg,
+        metadata_instance_present,
+        active_dir_present,
+        active_field_dir_present,
+        source_field_dir_present,
+        actor_matrix,
+    ):
+        if not metadata_instance_present:
+            return "D"
+        if source_field_dir_present and not active_dir_present and not active_field_dir_present:
+            return "A"
+        if source_field_dir_present and not active_dir_present:
+            return "B"
+        if actor_matrix is not None:
+            try:
+                m = np.asarray(actor_matrix, dtype=float)
+                if m.shape == (4, 4) and not np.allclose(m, np.eye(4), atol=1e-6):
+                    return "C"
+            except Exception:
+                pass
+        if (
+            row_axis_mismatch_deg is not None and row_axis_mismatch_deg > 15.0
+            and col_axis_mismatch_deg is not None and col_axis_mismatch_deg > 15.0
+        ):
+            if source_field_dir_present and not active_dir_present:
+                return "E"
+            return "F"
+        if normal_mismatch_deg is not None and normal_mismatch_deg > 15.0:
+            return "C"
+        return "F"
+
+    def _emit_advanced_vtk_orientation_audit(self, slice_index: int):
+        if not isinstance(self.metadata, dict):
+            return
+
+        instances = self.metadata.get('instances', []) or []
+        inst = instances[slice_index] if 0 <= int(slice_index) < len(instances) else None
+        metadata_instance_present = inst is not None
+        if not metadata_instance_present:
+            return
+
+        iop = inst.get('ImageOrientationPatient') or inst.get('image_orientation_patient') or [1, 0, 0, 0, 1, 0]
+        ipp = inst.get('ImagePositionPatient') or inst.get('image_position_patient') or None
+        row = self._safe_unit(np.asarray(iop[0:3], dtype=float))
+        col = self._safe_unit(np.asarray(iop[3:6], dtype=float))
+        if row is None or col is None:
+            return
+        iop_normal = self._safe_unit(np.cross(row, col))
+        if iop_normal is None:
+            return
+
+        # DICOM expectation: row points to screen-right, col points to screen-down.
+        expected_screen_right = row
+        expected_screen_up = -col
+
+        camera = self.renderer.GetActiveCamera() if self.renderer else None
+        if camera is None:
+            return
+        camera_up = self._safe_unit(np.asarray(camera.GetViewUp(), dtype=float))
+        camera_dop = self._safe_unit(np.asarray(camera.GetDirectionOfProjection(), dtype=float))
+        if camera_up is None or camera_dop is None:
+            return
+        camera_right = self._safe_unit(np.cross(camera_dop, camera_up))
+        if camera_right is None:
+            return
+
+        actual_screen_right = self._safe_unit(camera_right - np.dot(camera_right, iop_normal) * iop_normal)
+        actual_screen_up = self._safe_unit(camera_up - np.dot(camera_up, iop_normal) * iop_normal)
+        if actual_screen_right is None:
+            actual_screen_right = expected_screen_right
+        if actual_screen_up is None:
+            actual_screen_up = expected_screen_up
+
+        screen_plane_normal = self._safe_unit(np.cross(actual_screen_right, actual_screen_up))
+
+        row_axis_mismatch_deg = self._vec_angle_deg(expected_screen_right, actual_screen_right)
+        col_axis_mismatch_deg = self._vec_angle_deg(expected_screen_up, actual_screen_up)
+        normal_mismatch_deg = self._vec_angle_deg(iop_normal, screen_plane_normal)
+
+        orientation_valid = bool(
+            row_axis_mismatch_deg is not None and row_axis_mismatch_deg <= 10.0
+            and col_axis_mismatch_deg is not None and col_axis_mismatch_deg <= 10.0
+            and normal_mismatch_deg is not None and normal_mismatch_deg <= 10.0
+        )
+
+        actor_matrix = None
+        try:
+            actor = self.GetImageActor()
+            if actor is not None and actor.GetMatrix() is not None:
+                actor_matrix = self._matrix_to_tuple3(actor.GetMatrix())
+        except Exception:
+            actor_matrix = None
+
+        reslice_axes = None
+        try:
+            if hasattr(self, 'image_reslice') and self.image_reslice is not None:
+                axes = self.image_reslice.GetResliceAxes()
+                reslice_axes = self._matrix_to_tuple3(axes)
+        except Exception:
+            reslice_axes = None
+
+        vtk_direction_matrix = None
+        vtk_direction_matrix_present = False
+        active_field_dir_present = False
+        source_field_dir_present = False
+        try:
+            if hasattr(self.vtk_image_data, 'GetDirectionMatrix'):
+                vtk_direction_matrix = self._matrix_to_tuple3(self.vtk_image_data.GetDirectionMatrix())
+                vtk_direction_matrix_present = vtk_direction_matrix is not None
+            fd = self.vtk_image_data.GetFieldData() if self.vtk_image_data is not None else None
+            active_field_dir_present = bool(fd is not None and fd.GetArray('DirectionMatrix') is not None)
+            src = getattr(getattr(self, 'image_reslice', None), 'vtk_image_data', None)
+            src_fd = src.GetFieldData() if src is not None else None
+            source_field_dir_present = bool(src_fd is not None and src_fd.GetArray('DirectionMatrix') is not None)
+        except Exception:
+            pass
+
+        series_meta = self.metadata.get('series', {}) if isinstance(self.metadata.get('series', {}), dict) else {}
+        sitk_origin = series_meta.get('_orientation_audit_sitk_origin')
+        sitk_spacing = series_meta.get('_orientation_audit_sitk_spacing')
+        sitk_direction = series_meta.get('_orientation_audit_sitk_direction')
+        vtk_origin = series_meta.get('_orientation_audit_vtk_origin') or tuple(float(v) for v in self.vtk_image_data.GetOrigin())
+        vtk_spacing = series_meta.get('_orientation_audit_vtk_spacing') or tuple(float(v) for v in self.vtk_image_data.GetSpacing())
+
+        failure_class = self._classify_orientation_failure(
+            row_axis_mismatch_deg=row_axis_mismatch_deg,
+            col_axis_mismatch_deg=col_axis_mismatch_deg,
+            normal_mismatch_deg=normal_mismatch_deg,
+            metadata_instance_present=metadata_instance_present,
+            active_dir_present=vtk_direction_matrix_present,
+            active_field_dir_present=active_field_dir_present,
+            source_field_dir_present=source_field_dir_present,
+            actor_matrix=actor_matrix,
+        )
+
+        viewport_id = str(getattr(getattr(self, 'vtk_widget', None), 'id_vtk_widget', '') or id(self))
+        series_uid = str(series_meta.get('series_instance_uid', '') or series_meta.get('series_uid', '') or '')
+        series_number = str(series_meta.get('series_number', '') or '')
+        plane = str(series_meta.get('geometry_plane', '') or series_meta.get('display_convention', '') or 'UNKNOWN')
+
+        logger.warning(
+            "[ADVANCED_VTK_ORIENTATION_AUDIT] "
+            "viewport_id=%s series_uid=%s series_number=%s slice_index=%s plane=%s iop_row=%s iop_col=%s iop_normal=%s "
+            "ipp=%s pixel_spacing=%s slice_thickness=%s spacing_between_slices=%s rows=%s columns=%s sop_instance_uid=%s "
+            "sitk_origin=%s sitk_spacing=%s sitk_direction=%s "
+            "vtk_origin=%s vtk_spacing=%s vtk_direction_matrix_present=%s vtk_direction_matrix=%s "
+            "actor_matrix=%s reslice_axes=%s camera_position=%s camera_focal_point=%s camera_view_up=%s vtk_slice_plane_normal=%s "
+            "expected_screen_right_lps=%s expected_screen_up_lps=%s actual_screen_right_lps=%s actual_screen_up_lps=%s "
+            "row_axis_mismatch_deg=%s col_axis_mismatch_deg=%s normal_mismatch_deg=%s orientation_valid=%s failure_class=%s",
+            viewport_id,
+            series_uid,
+            series_number,
+            int(slice_index),
+            plane,
+            tuple(float(v) for v in row.tolist()),
+            tuple(float(v) for v in col.tolist()),
+            tuple(float(v) for v in iop_normal.tolist()),
+            ipp,
+            inst.get('PixelSpacing') or inst.get('pixel_spacing') or None,
+            inst.get('SliceThickness') or inst.get('slice_thickness') or None,
+            inst.get('SpacingBetweenSlices') or inst.get('spacing_between_slices') or None,
+            inst.get('Rows') or inst.get('rows') or None,
+            inst.get('Columns') or inst.get('columns') or None,
+            inst.get('SOPInstanceUID') or inst.get('sop_uid') or None,
+            sitk_origin,
+            sitk_spacing,
+            sitk_direction,
+            vtk_origin,
+            vtk_spacing,
+            vtk_direction_matrix_present,
+            vtk_direction_matrix,
+            actor_matrix,
+            reslice_axes,
+            tuple(float(v) for v in camera.GetPosition()),
+            tuple(float(v) for v in camera.GetFocalPoint()),
+            tuple(float(v) for v in camera.GetViewUp()),
+            tuple(float(v) for v in (screen_plane_normal.tolist() if screen_plane_normal is not None else [0.0, 0.0, 0.0])),
+            tuple(float(v) for v in expected_screen_right.tolist()),
+            tuple(float(v) for v in expected_screen_up.tolist()),
+            tuple(float(v) for v in actual_screen_right.tolist()),
+            tuple(float(v) for v in actual_screen_up.tolist()),
+            row_axis_mismatch_deg,
+            col_axis_mismatch_deg,
+            normal_mismatch_deg,
+            orientation_valid,
+            failure_class,
+            extra={"component": "viewer"},
+        )
 
     def set_viewer_type(self, viewer_type):
         self.viewer_type = viewer_type
