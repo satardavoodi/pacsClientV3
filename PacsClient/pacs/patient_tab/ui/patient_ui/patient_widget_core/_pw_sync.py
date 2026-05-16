@@ -363,7 +363,11 @@ class _PWSyncMixin:
             if getattr(viewer, 'IS_QT_BRIDGE', False):
                 try:
                     from modules.viewer.fast.dicom_sync_geometry import image_pixel_to_lps
-                    _instances = (viewer.metadata or {}).get('instances') or []
+                    _instances = _PWSyncMixin._geometry_instances_for_viewer(
+                        viewer,
+                        caller="_PWSyncMixin._do_lock_sync:qt_source",
+                        current_slice_index=int(current_slice),
+                    )
                     if current_slice < len(_instances):
                         _inst = _instances[current_slice]
                         _ipp = _inst.get('image_position_patient')
@@ -606,60 +610,198 @@ class _PWSyncMixin:
         )
 
     @staticmethod
-    def _ensure_instances_sorted_for_geometry(viewer):
-        """Ensure metadata slice order matches geometric slice order."""
+    def _hash_instance_order(instances):
+        paths = [str(inst.get("instance_path") or "") for inst in (instances or []) if isinstance(inst, dict)]
+        return hashlib.sha256("||".join(paths).encode("utf-8", errors="ignore")).hexdigest()[:16]
+
+    @staticmethod
+    def _sort_instances_by_instance_number(instances):
+        """Sort instances by InstanceNumber to match Lightweight2DPipeline._sort_slices behavior.
+        
+        The FAST pipeline sorts by InstanceNumber (acquisition order) in _sort_slices().
+        Sync/reference-line geometry must use the same order for pixel-coordinate accuracy.
+        """
+        if not instances or len(instances) <= 1:
+            return instances
+        try:
+            return sorted(instances, key=lambda s: (
+                int(s["instance_number"]) if s.get("instance_number") is not None else 10**9,
+                str(s.get("instance_path", ""))
+            ))
+        except (KeyError, TypeError, ValueError):
+            # Fallback if instance_number is missing or invalid
+            return instances
+
+    @staticmethod
+    def _detect_backend_order_domain(viewer):
+        if viewer is None:
+            return "UNKNOWN"
+        if bool(getattr(viewer, "IS_QT_BRIDGE", False)):
+            return "FAST"
+        if getattr(viewer, "vtk_image_data", None) is not None:
+            return "ADVANCED"
+        metadata = getattr(viewer, "metadata", None)
+        if isinstance(metadata, dict):
+            contract = str(metadata.get("instances_order_contract") or "")
+            if contract.startswith("ADVANCED_"):
+                return "ADVANCED"
+        if getattr(viewer, "_display_geometry_contract", None) is not None:
+            return "ADVANCED"
+        if getattr(viewer, "_source_geometry_contract", None) is not None:
+            return "ADVANCED"
+        return "UNKNOWN"
+
+    @staticmethod
+    def _emit_fast_advanced_geometry_leak_blocked(
+        *,
+        caller: str,
+        leaked_object_type: str,
+        backend: str,
+        blocked_reason: str,
+        metadata_order_contract: str,
+    ) -> None:
+        logger.warning(
+            "[FAST_ADVANCED_GEOMETRY_LEAK_BLOCKED] caller=%s leaked_object_type=%s "
+            "backend=%s blocked_reason=%s metadata_order_contract=%s action=warn_only",
+            caller,
+            leaked_object_type,
+            backend,
+            blocked_reason,
+            metadata_order_contract,
+            extra={"component": "viewer"},
+        )
+
+    @staticmethod
+    def _geometry_instances_for_viewer(viewer, *, caller: str, current_slice_index: int | None = None):
+        """Return per-viewer instances list for geometry math without mutating shared metadata.
+
+        FAST: always return metadata display order (InstanceNumber authority).
+        ADVANCED with contract: return metadata order (contract-owned).
+        ADVANCED without contract: return local IPP-sorted copy (no metadata mutation).
+        UNKNOWN: pass through metadata order.
+        """
         try:
             metadata = getattr(viewer, "metadata", None)
             if not isinstance(metadata, dict):
-                return
-            geometry_index = assert_advanced_order_contract(
-                metadata,
-                caller="_PWSyncMixin._ensure_instances_sorted_for_geometry",
-            )
-            if geometry_index is not None:
-                metadata["_instances_geometry_sorted"] = True
-                return
-            if metadata.get("_instances_geometry_sorted", False):
-                return
+                return []
+
+            backend = _PWSyncMixin._detect_backend_order_domain(viewer)
             instances = metadata.get("instances")
             if not isinstance(instances, list) or len(instances) <= 1:
-                metadata["_instances_geometry_sorted"] = True
-                return
+                logger.debug(
+                    "[SYNC_BACKEND_ORDER_DOMAIN] backend=%s metadata_order_domain=%s "
+                    "current_slice_index_domain=%s current_slice_index=%s will_mutate_metadata=False caller=%s",
+                    backend,
+                    "FAST_DISPLAY_ORDER" if backend == "FAST" else ("ADVANCED_DISPLAY_ORDER" if backend == "ADVANCED" else "UNKNOWN"),
+                    "FAST_DISPLAY_ORDER" if backend == "FAST" else ("ADVANCED_DISPLAY_ORDER" if backend == "ADVANCED" else "UNKNOWN"),
+                    current_slice_index,
+                    caller,
+                )
+                return instances or []
 
-            before_instances = list(instances)
-            before_paths = [str(inst.get("instance_path") or "") for inst in before_instances if isinstance(inst, dict)]
-            before_hash = hashlib.sha256("||".join(before_paths).encode("utf-8", errors="ignore")).hexdigest()[:16]
-            metadata["instances"] = reference_line.rl_sort_instances_by_ipp(instances)
-            metadata["_instances_geometry_sorted"] = True
+            if backend == "FAST":
+                # Guard-only enforcement: FAST must not consume Advanced contract objects.
+                leaked_object_type = None
+                if getattr(viewer, "_display_geometry_contract", None) is not None:
+                    leaked_object_type = "DisplayGeometry"
+                elif getattr(viewer, "_source_geometry_contract", None) is not None:
+                    leaked_object_type = "SourceGeometry"
+                elif getattr(viewer, "_geometry_api", None) is not None:
+                    leaked_object_type = "GeometryAPI"
+                elif getattr(viewer, "_viewport_geometry_registry", None) is not None:
+                    leaked_object_type = "ViewportGeometryRegistry"
 
-            after_instances = metadata.get("instances") or []
-            after_paths = [str(inst.get("instance_path") or "") for inst in after_instances if isinstance(inst, dict)]
-            after_hash = hashlib.sha256("||".join(after_paths).encode("utf-8", errors="ignore")).hexdigest()[:16]
-            before_first = str((before_instances[0].get("instance_path") if before_instances and isinstance(before_instances[0], dict) else "") or "")
-            before_last = str((before_instances[-1].get("instance_path") if before_instances and isinstance(before_instances[-1], dict) else "") or "")
-            after_first = str((after_instances[0].get("instance_path") if after_instances and isinstance(after_instances[0], dict) else "") or "")
-            after_last = str((after_instances[-1].get("instance_path") if after_instances and isinstance(after_instances[-1], dict) else "") or "")
+                if leaked_object_type is not None:
+                    _PWSyncMixin._emit_fast_advanced_geometry_leak_blocked(
+                        caller=caller,
+                        leaked_object_type=leaked_object_type,
+                        backend="FAST",
+                        blocked_reason="fast_path_must_not_consume_advanced_geometry_contract",
+                        metadata_order_contract=str(metadata.get("instances_order_contract") or "none"),
+                    )
 
-            logger.warning(
-                "[ADVANCED_METADATA_MUTATION] caller=%s reason=%s before_hash=%s after_hash=%s "
-                "before_first_path=%s after_first_path=%s before_last_path=%s after_last_path=%s "
-                "object_id_metadata=%s object_id_instances=%s",
-                "_PWSyncMixin._ensure_instances_sorted_for_geometry",
-                "reference_line_rl_sort_instances_by_ipp",
-                before_hash,
-                after_hash,
-                before_first,
-                after_first,
-                before_last,
-                after_last,
-                int(id(metadata)),
-                int(id(after_instances)),
+                # Sort by InstanceNumber to match Lightweight2DPipeline._sort_slices behavior (v2.3.8 fix).
+                # Early return before assert_advanced_order_contract (not applicable to FAST viewers).
+                sorted_instances = _PWSyncMixin._sort_instances_by_instance_number(instances)
+                logger.debug(
+                    "[SYNC_BACKEND_ORDER_DOMAIN] backend=FAST metadata_order_domain=FAST_DISPLAY_ORDER "
+                    "current_slice_index_domain=FAST_DISPLAY_ORDER current_slice_index=%s "
+                    "will_mutate_metadata=False caller=%s",
+                    current_slice_index,
+                    caller,
+                )
+                return sorted_instances
+
+            geometry_index = assert_advanced_order_contract(
+                metadata,
+                caller=caller,
             )
+
+            if backend == "ADVANCED" and geometry_index is not None:
+                logger.debug(
+                    "[SYNC_BACKEND_ORDER_DOMAIN] backend=ADVANCED metadata_order_domain=ADVANCED_DISPLAY_ORDER "
+                    "current_slice_index_domain=ADVANCED_DISPLAY_ORDER current_slice_index=%s "
+                    "will_mutate_metadata=False caller=%s",
+                    current_slice_index,
+                    caller,
+                )
+                return instances
+
+            if backend == "ADVANCED":
+                original_hash = _PWSyncMixin._hash_instance_order(instances)
+                geometry_instances = reference_line.rl_sort_instances_by_ipp(instances)
+                sorted_hash = _PWSyncMixin._hash_instance_order(geometry_instances)
+                if sorted_hash != original_hash:
+                    logger.warning(
+                        "[SHARED_METADATA_ORDER_MUTATION_BLOCKED] backend=%s caller=%s "
+                        "original_hash=%s attempted_hash=%s attempted_operation=rl_sort_instances_by_ipp "
+                        "reason=shared_metadata_order_must_not_be_mutated action=blocked_mutation",
+                        backend,
+                        caller,
+                        original_hash,
+                        sorted_hash,
+                        extra={"component": "viewer"},
+                    )
+                    logger.warning(
+                        "[SYNC_METADATA_ORDER_MUTATION_BLOCKED] backend=%s "
+                        "reason=shared_metadata_order_must_not_be_mutated original_hash=%s sorted_hash=%s caller=%s",
+                        backend,
+                        original_hash,
+                        sorted_hash,
+                        caller,
+                        extra={"component": "viewer"},
+                    )
+                else:
+                    logger.debug(
+                        "[SYNC_BACKEND_ORDER_DOMAIN] backend=ADVANCED metadata_order_domain=GEOMETRY_SORT_COPY "
+                        "current_slice_index_domain=GEOMETRY_SORT_COPY current_slice_index=%s "
+                        "will_mutate_metadata=False caller=%s",
+                        current_slice_index,
+                        caller,
+                    )
+                return geometry_instances
+
+            logger.debug(
+                "[SYNC_BACKEND_ORDER_DOMAIN] backend=%s metadata_order_domain=UNKNOWN "
+                "current_slice_index_domain=UNKNOWN current_slice_index=%s will_mutate_metadata=False caller=%s",
+                backend,
+                current_slice_index,
+                caller,
+            )
+            return instances
 
         except RuntimeError:
             raise
         except Exception:
-            pass
+            return (getattr(viewer, "metadata", {}) or {}).get("instances") or []
+
+    @staticmethod
+    def _ensure_instances_sorted_for_geometry(viewer):
+        """Compatibility wrapper: returns geometry-view instances without mutating metadata."""
+        return _PWSyncMixin._geometry_instances_for_viewer(
+            viewer,
+            caller="_PWSyncMixin._ensure_instances_sorted_for_geometry",
+        )
 
     @staticmethod
     def _map_sync_dicom(source_viewer, target_viewer, world_pos):
@@ -697,8 +839,6 @@ class _PWSyncMixin:
         from modules.viewer.fast.dicom_sync_geometry import (
             project_lps_to_target, compute_roundtrip_error_mm,
         )
-        _PWSyncMixin._ensure_instances_sorted_for_geometry(source_viewer)
-        _PWSyncMixin._ensure_instances_sorted_for_geometry(target_viewer)
 
         # ---- source geometry ----
         src_img   = source_viewer.vtk_image_data
@@ -721,16 +861,22 @@ class _PWSyncMixin:
             idx_src = (np.asarray(world_pos, dtype=float) - src_orig) / src_sp
             k_src   = int(round(float(np.clip(idx_src[2], 0, src_dims[2] - 1))))
 
+        src_instances = _PWSyncMixin._geometry_instances_for_viewer(
+            source_viewer,
+            caller="_PWSyncMixin._map_sync_dicom:source",
+            current_slice_index=int(k_src),
+        )
+
         # DICOM metadata for this source slice
         try:
-            s_inst = source_viewer.metadata['instances'][k_src]
+            s_inst = src_instances[k_src]
             s_iop  = s_inst['image_orientation_patient']
             s_ipp  = np.asarray(s_inst['image_position_patient'], dtype=float)
             if s_iop is None or s_ipp is None:
                 logger.info(
                     "[SYNC-DIAG] _map_sync_dicom ABORT: source slice %d has IOP=%s IPP=%s (total instances=%d)",
                     k_src, s_iop is not None, s_ipp is not None,
-                    len((source_viewer.metadata or {}).get('instances') or []),
+                    len(src_instances),
                 )
                 return None
         except (KeyError, IndexError, TypeError) as e:
@@ -777,9 +923,13 @@ class _PWSyncMixin:
         # ── Route: Qt target → pure-DICOM geometry engine ────────────────────────
         _tgt_is_qt = getattr(target_viewer, 'IS_QT_BRIDGE', False)
         _tgt_id = getattr(target_viewer, '_sync_viewer_id', '?')
+        t_instances = _PWSyncMixin._geometry_instances_for_viewer(
+            target_viewer,
+            caller="_PWSyncMixin._map_sync_dicom:target",
+            current_slice_index=int(getattr(target_viewer, "GetSlice", lambda: 0)()),
+        )
 
         if _tgt_is_qt:
-            t_instances = (target_viewer.metadata or {}).get('instances') or []
             if not t_instances:
                 logger.info("[FAST-SYNC] ABORT: target=%s has no instances", _tgt_id)
                 return None
@@ -926,16 +1076,19 @@ class _PWSyncMixin:
         tgt_sp    = np.asarray(tgt_img.GetSpacing(),     dtype=float)
         tgt_dims  = np.asarray(tgt_img.GetDimensions(),  dtype=int)
         n_slices  = int(tgt_dims[2])
+        if not t_instances:
+            return None
 
         # Read original ITK spacing from field data (NOT post-upsample spacing)
-        itk_sp_arr = tgt_img.GetFieldData().GetArray('ITKSpacing')
+        field_data = tgt_img.GetFieldData()
+        itk_sp_arr = field_data.GetArray('ITKSpacing') if field_data is not None else None
         if itk_sp_arr is not None:
             itk_sp = np.array([itk_sp_arr.GetValue(i) for i in range(3)], dtype=float)
         else:
             itk_sp = tgt_sp  # Fallback if field data not found
 
         try:
-            t0_inst = target_viewer.metadata['instances'][0]
+            t0_inst = t_instances[0]
             t_iop   = t0_inst['image_orientation_patient']
             ipp_0   = np.asarray(t0_inst['image_position_patient'], dtype=float)
             if t_iop is None or ipp_0 is None:
@@ -953,7 +1106,7 @@ class _PWSyncMixin:
             n_t /= n_len
 
             if n_slices > 1:
-                t1_inst = target_viewer.metadata['instances'][1]
+                t1_inst = t_instances[1]
                 ipp_1   = np.asarray(t1_inst['image_position_patient'], dtype=float)
                 ds      = float(np.dot(ipp_1 - ipp_0, n_t))
             else:
@@ -986,7 +1139,7 @@ class _PWSyncMixin:
 
         # IPP for chosen target slice
         try:
-            tk_inst = target_viewer.metadata['instances'][k_tgt]
+            tk_inst = t_instances[k_tgt]
             ipp_k   = np.asarray(tk_inst['image_position_patient'], dtype=float)
         except (KeyError, IndexError, TypeError):
             ipp_k = ipp_0 + k_tgt * ds * n_t
@@ -1291,7 +1444,14 @@ class _PWSyncMixin:
             self._rl_rr_index = 0  # round-robin paint index
 
         if not self._rl_throttle_timer.isActive():
-            # Leading edge — geometry only, no repaint
+            # Leading edge — geometry only, no repaint; start new drag validation session
+            self._rl_drag_session = {
+                'start_ms': time.perf_counter() * 1000,
+                'rl_updates': 1,
+                'deferred_vtk': 0,
+                'fired_vtk': 0,
+                'pending_ticks': 0,
+            }
             self.manage_reference_line(repaint=False)
             self._rl_throttle_timer.start()
         else:
@@ -1300,6 +1460,8 @@ class _PWSyncMixin:
             # Track merged (coalesced) events for instrumentation
             if hasattr(self, '_rl_merged_count'):
                 self._rl_merged_count += 1
+            if hasattr(self, '_rl_drag_session'):
+                self._rl_drag_session['rl_updates'] += 1
 
     def _rl_throttle_fire(self):
         """Trailing-edge callback — outer guard (H8, v2.2.9.3).
@@ -1333,12 +1495,29 @@ class _PWSyncMixin:
         if self._rl_pending:
             # Still scrolling — update geometry + paint ONE target (round-robin)
             self._rl_pending = False
+            if hasattr(self, '_rl_drag_session'):
+                self._rl_drag_session['pending_ticks'] += 1
             self.manage_reference_line(repaint=False)
             self._rl_repaint_next_target()
             # Re-arm for next tick
             self._rl_throttle_timer.start()
         else:
             # Scroll ended — final repaint ALL targets for visual correctness
+            import os
+            if hasattr(self, '_rl_drag_session') and os.environ.get("AIPACS_RL_VALIDATION_TRACE", "0") == "1":
+                _s = self._rl_drag_session
+                _duration_ms = time.perf_counter() * 1000 - _s.get('start_ms', 0.0)
+                logger.info(
+                    "[RL_DRAG_VALIDATE] event=session_end duration_ms=%.1f "
+                    "rl_updates=%d pending_ticks=%d deferred_vtk=%d fired_vtk=%d settle_repaint=True",
+                    _duration_ms,
+                    _s.get('rl_updates', 0),
+                    _s.get('pending_ticks', 0),
+                    _s.get('deferred_vtk', 0),
+                    _s.get('fired_vtk', 0),
+                    extra={"component": "viewer"},
+                )
+            self._rl_drag_session = {}  # clear session state
             self.manage_reference_line(repaint=True)
 
     def _rl_repaint_next_target(self):
@@ -1346,13 +1525,29 @@ class _PWSyncMixin:
 
         Limits event-loop blocking to ~20ms per tick (one VTK Render)
         instead of ~20ms × N for all targets simultaneously.
+
+        During protected drag, VTK renders on ADVANCED target viewers are skipped
+        (20-50ms stalls) so the scroll event loop stays responsive.  FAST target
+        viewers already get their visual update via set_overlay_lines() inside
+        manage_reference_line, so skipping update() here is a no-op for them.
+        At drag end, manage_reference_line(repaint=True) fires a full repaint.
         """
+        try:
+            from modules.viewer.fast.ui_throttle import is_protected_drag_active
+            if is_protected_drag_active():
+                if hasattr(self, '_rl_drag_session'):
+                    self._rl_drag_session['deferred_vtk'] += 1
+                return  # defer VTK renders to drag-end repaint
+        except Exception:
+            pass
         targets = self._rl_get_target_widgets()
         if not targets:
             return
         idx = self._rl_rr_index % len(targets)
         self._rl_rr_index = idx + 1
         targets[idx].update()
+        if hasattr(self, '_rl_drag_session'):
+            self._rl_drag_session['fired_vtk'] += 1
 
     def _rl_get_target_widgets(self):
         """Get list of VTK widgets that are reference-line targets (not source)."""
@@ -1403,10 +1598,28 @@ class _PWSyncMixin:
 
         # -------- 1) Source plane from DICOM (LPS) --------
         src_iv = self.selected_widget.image_viewer
-        self._ensure_instances_sorted_for_geometry(src_iv)
         src_slice = src_iv.GetSlice()
+        src_instances = self._geometry_instances_for_viewer(
+            src_iv,
+            caller="_PWSyncMixin.manage_reference_line:source",
+            current_slice_index=int(src_slice),
+        )
         try:
-            src_inst = src_iv.metadata['instances'][src_slice]
+            src_inst = src_instances[src_slice]
+
+            if getattr(src_iv, 'IS_QT_BRIDGE', False):
+                series_uid = str(((src_iv.metadata or {}).get('series') or {}).get('series_uid') or '')
+                logger.debug(
+                    "[FAST_REF_LINE_ORDER_PROOF] series_uid=%s current_slice_index=%s "
+                    "metadata_order_domain=FAST_DISPLAY_ORDER current_sop_uid_from_metadata=%s "
+                    "instance_number=%s ipp=%s refline_source_sop_uid=%s mutation_detected=False",
+                    series_uid,
+                    int(src_slice),
+                    str(src_inst.get('sop_uid') or ''),
+                    str(src_inst.get('instance_number') or ''),
+                    str(src_inst.get('image_position_patient') or ''),
+                    str(src_inst.get('sop_uid') or ''),
+                )
 
             src_image_orientation_patient = src_inst['image_orientation_patient']
             src_image_position_patient = src_inst['image_position_patient']
@@ -1429,7 +1642,13 @@ class _PWSyncMixin:
             iv = getattr(vtk_widget, "image_viewer", None)
             if iv is None:
                 continue
-            self._ensure_instances_sorted_for_geometry(iv)
+
+            t_slice = iv.GetSlice()
+            t_instances = self._geometry_instances_for_viewer(
+                iv,
+                caller="_PWSyncMixin.manage_reference_line:target",
+                current_slice_index=int(t_slice),
+            )
 
             # Skip drawing on the source viewer itself
             if vtk_widget is self.selected_widget:
@@ -1442,8 +1661,6 @@ class _PWSyncMixin:
                 continue
 
             try:
-                t_slice = iv.GetSlice()
-
                 # Phase 2 proof-only log path: emit contract reference-line
                 # intersection diagnostics when both viewers are contract-bound.
                 try:
@@ -1461,7 +1678,7 @@ class _PWSyncMixin:
                 except Exception:
                     pass
 
-                t_inst = iv.metadata['instances'][t_slice]
+                t_inst = t_instances[t_slice]
 
                 # Use .get() to avoid KeyError when instances come from the
                 # filesystem-load path which may not store IOP/IPP keys.

@@ -182,6 +182,35 @@ class _PWViewersMixin:
             self.on_slider_value_changed(vtk_widget, mid_slices)
             slider.valueChanged.connect(lambda val: self.on_slider_value_changed(vtk_widget, val))
             print("   ✅ Slider connected")
+            # Slider thumb-drag fast path: FAST-mode only, gated by AIPACS_SLIDER_FAST_DRAG=1.
+            # When enabled, sliderMoved routes through the full protected-drag pipeline
+            # (surrogate frames, render clock, GC suppression, FAST_DRAG_KPI).
+            # sliderPressed begins the session; sliderReleased ends it and arms the settle timer.
+            import os as _os_sfp
+            if _os_sfp.getenv('AIPACS_SLIDER_FAST_DRAG', '0') == '1':
+                try:
+                    from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import (
+                        QtFastContainer,
+                    )
+                    if isinstance(vtk_widget, QtFastContainer):
+                        vtk_widget._slider_thumb_drag_active = False
+
+                        def _sb_pressed(vw=vtk_widget):
+                            vw._slider_thumb_drag_active = True
+                            vw.begin_slider_drag_session()
+
+                        def _sb_moved(val, vw=vtk_widget):
+                            vw.set_slice_during_drag(val)
+
+                        def _sb_released(vw=vtk_widget):
+                            vw._slider_thumb_drag_active = False
+                            vw.end_slider_drag_session()
+
+                        slider.sliderPressed.connect(_sb_pressed)
+                        slider.sliderMoved.connect(_sb_moved)
+                        slider.sliderReleased.connect(_sb_released)
+                except Exception:
+                    pass  # Kill-switch block failure never breaks the standard valueChanged path
         except Exception as e:
             print(f"   ⚠️ Warning: Could not connect slider signal: {e}")
             self.logger.warning(f"Warning connecting slider signal: {e}")
@@ -421,12 +450,20 @@ class _PWViewersMixin:
             vtk_widget.set_slider(slider)
             count_slices = vtk_widget.get_count_of_slices()
             qt_bridge_active = bool(getattr(vtk_widget, '_qt_bridge_active', False))
-            mid_slices = 0  # Default to first slice for legacy/VTK path
-            if qt_bridge_active and getattr(vtk_widget, 'image_viewer', None) is not None:
+            # Read the display-domain slice the viewer already shows so we never
+            # force a spurious reset.  For the VTK backend with K-flip active,
+            # get_display_slice() converts raw_k → display_k; for the Qt bridge
+            # get_display_slice() == GetSlice() (no K-flip applied there).
+            # Previously the VTK path hardcoded mid_slices=0, which with K-flip
+            # active mapped to raw_k=N-1 and caused the "21/21 → 1/21" flicker.
+            mid_slices = 0  # fallback
+            _iv = getattr(vtk_widget, 'image_viewer', None)
+            if _iv is not None:
                 try:
-                    # FAST/Qt switch path already rendered the preferred slice.
-                    # Reuse that slice instead of forcing a second render to 0.
-                    mid_slices = max(0, int(vtk_widget.image_viewer.GetSlice()))
+                    if callable(getattr(_iv, 'get_display_slice', None)):
+                        mid_slices = max(0, _iv.get_display_slice())
+                    else:
+                        mid_slices = max(0, int(_iv.GetSlice()))
                 except Exception:
                     mid_slices = 0
             last_slices = max(0, count_slices - 1)
@@ -460,7 +497,15 @@ class _PWViewersMixin:
             self.on_slider_value_changed(vtk_widget, mid_slices)
 
             if hasattr(vtk_widget, 'image_viewer') and vtk_widget.image_viewer is not None:
-                vtk_widget.image_viewer.apply_default_window_level(mid_slices)
+                # Use raw_k (GetSlice() = 0 after series switch) — not the display_k
+                # value in mid_slices.  apply_default_window_level() indexes
+                # metadata['instances'][raw_k] directly, so passing a display_k here
+                # would look up the wrong instance's WL preset and poison the WL
+                # cache.  The correct raw_k is always GetSlice() at this point
+                # (reset to 0 by R16 FirstRender consumption).
+                vtk_widget.image_viewer.apply_default_window_level(
+                    vtk_widget.image_viewer.GetSlice()
+                )
         except Exception as e:
             slider.blockSignals(False)
             print(f"⚠️ Error in reset_slider: {e}")
@@ -474,6 +519,11 @@ class _PWViewersMixin:
         added unnecessary hasattr / timer-check overhead per slider tick.
         """
         if vtk_widget and hasattr(vtk_widget, 'set_slice'):
+            # Skip during active slider thumb drag: sliderMoved fast path handles it.
+            # Guard: only skip when bridge is present (avoids freeze if bridge is None).
+            if (getattr(vtk_widget, '_slider_thumb_drag_active', False)
+                    and getattr(vtk_widget, '_qt_bridge', None) is not None):
+                return
             vtk_widget.set_slice(value)
 
     def _ensure_loading_dialog(self):

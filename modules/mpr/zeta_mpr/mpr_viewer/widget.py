@@ -33,6 +33,15 @@ from ._mpr_layout import _MprLayoutMixin
 logger = logging.getLogger(__name__)
 
 
+def _emit_geometry_contract_missing_guard(*, feature: str, reason: str, fallback_behavior: str) -> None:
+    logger.warning(
+        "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=%s reason=%s fallback_behavior=%s action=warn_only",
+        feature,
+        reason,
+        fallback_behavior,
+    )
+
+
 class StandardMPRViewer(
     _MprLayoutMixin,
     _MprSegmentationMixin,
@@ -66,6 +75,12 @@ class StandardMPRViewer(
 
     def __init__(self, vtk_image_data, parent=None, window_width=None, window_center=None):
         super().__init__(parent)
+
+        _emit_geometry_contract_missing_guard(
+            feature="zeta_mpr_viewer_init",
+            reason="local_mpr_geometry_owner_without_advanced_contract_adapter",
+            fallback_behavior="continue_legacy_mpr_geometry_path",
+        )
 
         logger.info("=" * 80)
         logger.info("STANDARD MPR VIEWER INITIALIZATION STARTED")

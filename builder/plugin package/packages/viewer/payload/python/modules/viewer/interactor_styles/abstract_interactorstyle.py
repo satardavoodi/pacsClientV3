@@ -409,7 +409,14 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
                 return
             step = max(-int(max_step_per_event), min(int(max_step_per_event), int(step)))
 
-            base_slice = self.image_viewer.GetSlice() + self.image_viewer.skip_slices
+            # Use display-domain slice so K-flip geometry contracts produce
+            # the correct base position. get_display_slice() converts raw_k → display_k
+            # when a K-flip contract is active; identical to GetSlice() otherwise.
+            _iv_ref = self.image_viewer
+            if callable(getattr(_iv_ref, 'get_display_slice', None)):
+                base_slice = _iv_ref.get_display_slice()
+            else:
+                base_slice = int(_iv_ref.GetSlice()) + int(getattr(_iv_ref, 'skip_slices', 0))
             if hasattr(self, 'slider') and self.slider is not None:
                 try:
                     base_slice = int(self.slider.value())

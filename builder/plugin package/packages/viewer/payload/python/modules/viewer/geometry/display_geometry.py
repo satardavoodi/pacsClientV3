@@ -142,6 +142,18 @@ def _transpose_4x4() -> np.ndarray:
     return M
 
 
+def _k_flip_4x4(n_slices: int) -> np.ndarray:
+    """K-axis flip (stack reordering) for display.
+
+    k_display = (n_slices - 1) - k_raw  →  raw_k = (n_slices - 1) - disp_k.
+    This reorders the stack without changing source geometry or physical affine.
+    """
+    M = _mat4_identity()
+    M[2, 2] = -1.0
+    M[2, 3] = float(n_slices - 1)
+    return M
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # DisplayGeometry
 # ─────────────────────────────────────────────────────────────────────────────
@@ -166,6 +178,7 @@ class DisplayGeometry:
         "_effective_to_lps",     # 4×4: display indices → patient LPS
         "_lps_to_effective",     # 4×4: patient LPS → display indices
         "_operations",           # human-readable log of applied operations
+        "_k_flip_applied",       # bool: True once K-flip has been applied (prevents double-application)
     )
 
     def __init__(
@@ -178,6 +191,7 @@ class DisplayGeometry:
         self._display_to_raw_ijk: np.ndarray = _mat4_identity()
         self._raw_ijk_to_display: Optional[np.ndarray] = _mat4_identity()
         self._operations: List[str] = []
+        self._k_flip_applied: bool = False
         self._recompute()
 
     # ─────────────────────────────────────────────────────────────────────────
@@ -189,6 +203,7 @@ class DisplayGeometry:
         self._display_to_raw_ijk = _mat4_identity()
         self._raw_ijk_to_display = _mat4_identity()
         self._operations = []
+        self._k_flip_applied = False
         self._recompute()
         return self
 
@@ -236,8 +251,100 @@ class DisplayGeometry:
         self._recompute()
         return self
 
+    def apply_k_flip_for_stack_order(self, n_slices: int, reason: str = "") -> "DisplayGeometry":
+        """Apply K-axis stack reordering for clinical display convention.
+
+        This reverses the slice stack for display WITHOUT changing source geometry,
+        DICOM affine, or any LPS mappings used by markers/sync/reference-lines.
+        The effective_display_ijk_to_lps automatically remains correct.
+
+        Parameters
+        ----------
+        n_slices:
+            Total number of slices in the stack.
+        reason:
+            Human-readable reason for the flip (e.g. 'axial_superior_to_inferior').
+        """
+        # Guard: prevent double-application on reopen/rebind of the same viewport
+        if self._k_flip_applied:
+            logger.warning(
+                "[DISPLAY_POLICY_DOUBLE_APPLICATION_BLOCKED] "
+                "viewport_id=%s existing_n_slices=%s new_n_slices=%s reason=%s",
+                self.viewport_id,
+                int(round(self._display_to_raw_ijk[2, 3])) + 1,
+                n_slices,
+                reason,
+                extra={"component": "viewer"},
+            )
+            return self
+
+        self._k_flip_applied = True
+        T = _k_flip_4x4(n_slices)
+        self._display_to_raw_ijk = self._display_to_raw_ijk @ T
+        ops_label = f"k_flip(n_slices={n_slices}"
+        if reason:
+            ops_label += f",reason={reason}"
+        ops_label += ")"
+        self._operations.append(ops_label)
+        self._recompute()
+        # Emit runtime bind summary for diagnostic logs
+        display_0_raw = self.display_k_to_raw_k(0)
+        display_last_raw = self.display_k_to_raw_k(n_slices - 1)
+        logger.warning(
+            "[DISPLAY_K_RUNTIME_BIND] "
+            "viewport_id=%s n_slices=%s k_flip_active=True "
+            "display_0_raw_k=%s display_last_raw_k=%s reason=%s",
+            self.viewport_id, n_slices,
+            display_0_raw, display_last_raw,
+            reason,
+            extra={"component": "viewer"},
+        )
+        return self
+
     # ─────────────────────────────────────────────────────────────────────────
     # Read-only properties
+    # ─────────────────────────────────────────────────────────────────────────
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # K-flip slice-index conversion helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @property
+    def is_k_flip_active(self) -> bool:
+        """True when a K-flip has been applied (k-diagonal of display_to_raw is -1)."""
+        return bool(self._display_to_raw_ijk[2, 2] < 0)
+
+    @property
+    def k_flip_n_slices(self) -> Optional[int]:
+        """Number of slices used for K-flip, or None when K-flip is not active."""
+        if not self.is_k_flip_active:
+            return None
+        return int(round(self._display_to_raw_ijk[2, 3])) + 1
+
+    def display_k_to_raw_k(self, display_k: int) -> int:
+        """Convert a display-space slice index to the raw VTK k index.
+
+        When K-flip is active: raw_k = (N-1) - display_k.
+        When inactive: raw_k = display_k (identity).
+        """
+        k22 = self._display_to_raw_ijk[2, 2]
+        k23 = self._display_to_raw_ijk[2, 3]
+        return int(round(k22 * float(display_k) + k23))
+
+    def raw_k_to_display_k(self, raw_k: int) -> int:
+        """Convert a raw VTK k index to display-space slice index.
+
+        When K-flip is active: display_k = (N-1) - raw_k.
+        When inactive: display_k = raw_k (identity).
+        """
+        if self._raw_ijk_to_display is None:
+            return raw_k
+        k22 = self._raw_ijk_to_display[2, 2]
+        k23 = self._raw_ijk_to_display[2, 3]
+        return int(round(k22 * float(raw_k) + k23))
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Read-only matrix properties
     # ─────────────────────────────────────────────────────────────────────────
 
     @property
@@ -308,6 +415,90 @@ class DisplayGeometry:
         """
         origin = self.display_index_to_lps(0.0, 0.0, k)
         return origin, self.screen_right_lps(), self.screen_up_lps()
+
+    def audit_stack_order_convention(
+        self, plane: str = "", body_part: str = ""
+    ) -> tuple:
+        """Audit and recommend stack-order transforms for clinical convention.
+
+        Returns (convention_name, order_matches, recommended_transform, reason, direction_label).
+        """
+        sg = self.source
+        if sg.n_slices < 2:
+            return "UNKNOWN_SINGLE_SLICE", True, "NONE", "insufficient_slices", "?"
+
+        # Get first and last slice IPP
+        first_ipp = None
+        last_ipp = None
+        try:
+            first_key = next(iter(sg.k_to_sop_uid.keys())) if sg.k_to_sop_uid else 0
+            last_key = max(sg.k_to_sop_uid.keys()) if sg.k_to_sop_uid else sg.n_slices - 1
+            # Get from per-frame if available
+            if sg.per_frame_geometries and first_key in sg.per_frame_geometries:
+                first_ipp = sg.per_frame_geometries[first_key].ipp
+            if sg.per_frame_geometries and last_key in sg.per_frame_geometries:
+                last_ipp = sg.per_frame_geometries[last_key].ipp
+            # Fallback to origin + slice progression
+            if first_ipp is None:
+                first_ipp = sg.origin_ipp
+            if last_ipp is None:
+                last_ipp = sg.origin_ipp + float(sg.n_slices) * sg.slice_step * sg.slice_normal
+        except Exception:
+            return "ERROR_READING_GEOMETRY", False, "NONE", "geometry_read_error", "?"
+
+        # Compute direction from first to last
+        delta = last_ipp - first_ipp
+        delta_norm = float(np.linalg.norm(delta))
+        if delta_norm <= 1e-8:
+            return "UNKNOWN_COPLANAR", True, "NONE", "first_equals_last", "?"
+
+        delta_unit = delta / delta_norm
+
+        # Determine which anatomical direction delta points along
+        idx = int(np.argmax(np.abs(delta_unit)))
+        if idx == 0:
+            direction = "L" if delta_unit[0] >= 0.0 else "R"
+        elif idx == 1:
+            direction = "P" if delta_unit[1] >= 0.0 else "A"
+        else:
+            direction = "S" if delta_unit[2] >= 0.0 else "I"
+
+        plane_upper = plane.upper()
+        body_part_upper = body_part.upper()
+        axial_like = (
+            "AXIAL" in plane_upper or "AX" in plane_upper or
+            "TRA" in plane_upper or "TRANS" in plane_upper
+        )
+
+        # Determine convention and whether order matches
+        convention_name = "UNKNOWN"
+        expected_direction = "?"
+        order_matches = False
+        reason = "no_matching_convention"
+
+        if "SAGITTAL" in plane_upper or "SAG" in plane_upper:
+            convention_name = "SAGITTAL_RIGHT_TO_LEFT"
+            expected_direction = "R"  # Right → Left means ending at Left (R label on first)
+            order_matches = (direction == "R")
+            reason = "sagittal_policy" if order_matches else "sagittal_reversed"
+        elif "CORONAL" in plane_upper or "COR" in plane_upper:
+            convention_name = "CORONAL_ANTERIOR_TO_POSTERIOR"
+            expected_direction = "A"  # Anterior → Posterior means starting at A
+            order_matches = (direction == "A")
+            reason = "coronal_policy" if order_matches else "coronal_reversed"
+        elif axial_like:
+            convention_name = "AXIAL_SUPERIOR_TO_INFERIOR"
+            if "KNEE" in body_part_upper or "LEG" in body_part_upper or "EXTREMITY" in body_part_upper:
+                convention_name = "AXIAL_LIKE_PROXIMAL_TO_DISTAL"
+                expected_direction = "S"  # Proximal-to-distal typically maps to S-to-I
+            else:
+                expected_direction = "S"  # Superior → Inferior
+            order_matches = (direction == "S")
+            reason = ("axial_policy" if order_matches else "axial_reversed")
+
+        recommended_transform = "NONE" if order_matches else "K_FLIP"
+
+        return convention_name, order_matches, recommended_transform, reason, direction
 
     # ─────────────────────────────────────────────────────────────────────────
     # Internal

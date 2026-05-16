@@ -39,6 +39,18 @@ def _get_requests_proxies() -> "dict[str, str] | None":
         return None
 
 
+def _ensure_socks_proxy_support(proxies: "dict[str, str] | None") -> None:
+    if not proxies:
+        return
+    try:
+        import socks  # type: ignore  # noqa: F401
+    except Exception as exc:
+        raise LLMError(
+            "SOCKS5 proxy is selected, but SOCKS support is unavailable in this Python environment. "
+            "Install requests[socks] / PySocks for proxy-based OpenAI connections."
+        ) from exc
+
+
 class LLMError(Exception):
     """Base class for all EchoMind LLM gateway errors."""
 
@@ -410,31 +422,84 @@ def gapgpt_chat(
     ).strip()
 
 
+def test_openai_connection(
+    *,
+    api_key: str,
+    base_url: str = "https://api.openai.com/v1",
+    organization: str = "",
+    project: str = "",
+    timeout: int = 15,
+) -> dict[str, Any]:
+    resolved_api_key = str(api_key or "").strip()
+    if not resolved_api_key:
+        raise LLMNoKeyError("No OpenAI API key is configured.")
+
+    resolved_base_url = str(base_url or "https://api.openai.com/v1").strip().rstrip("/") or "https://api.openai.com/v1"
+    proxies = _get_requests_proxies()
+    _ensure_socks_proxy_support(proxies)
+
+    headers = {
+        "Authorization": f"Bearer {resolved_api_key}",
+        "Content-Type": "application/json",
+    }
+    if str(organization or "").strip():
+        headers["OpenAI-Organization"] = str(organization).strip()
+    if str(project or "").strip():
+        headers["OpenAI-Project"] = str(project).strip()
+
+    try:
+        resp = requests.get(
+            f"{resolved_base_url}/models",
+            headers=headers,
+            timeout=int(timeout or 15),
+            proxies=proxies,
+        )
+    except requests.exceptions.RequestException as exc:
+        raise LLMAPIError(f"Connection test failed: {exc}") from exc
+
+    if resp.status_code in (401, 403):
+        raise LLMAuthError("Authentication failed. Check the configured key and project settings.")
+    if resp.status_code >= 400:
+        snippet = (resp.text or "")[:240].replace("\n", " ")
+        raise LLMAPIError(f"Connection test failed with HTTP {resp.status_code}: {snippet}")
+
+    return {
+        "ok": True,
+        "provider": "openai",
+        "display_name": "OpenAI",
+    }
+
+
 def test_active_backend_connection(timeout: int = 15) -> dict[str, Any]:
     session = _resolve_active_backend()
     if session.provider == "openai":
-        url = session.api_url.rsplit("/", 2)[0] + "/models"
-        headers = _openai_headers(session)
+        return test_openai_connection(
+            api_key=session.api_key,
+            base_url=session.api_url.rsplit("/", 2)[0],
+            organization=session.organization,
+            project=session.project,
+            timeout=timeout,
+        )
     else:
         url = _API_URL
         headers = {"Authorization": f"Bearer {session.api_key}", "Content-Type": "application/json"}
 
+    proxies = _get_requests_proxies()
+    _ensure_socks_proxy_support(proxies)
+
     try:
-        if session.provider == "openai":
-            resp = requests.get(url, headers=headers, timeout=timeout, proxies=_get_requests_proxies())
-        else:
-            resp = requests.post(
-                url,
-                headers=headers,
-                json={
-                    "model": _DEFAULT_MODEL,
-                    "messages": [{"role": "user", "content": "Ping"}],
-                    "max_tokens": 8,
-                    "temperature": 0.0,
-                },
-                timeout=timeout,
-                proxies=_get_requests_proxies(),
-            )
+        resp = requests.post(
+            url,
+            headers=headers,
+            json={
+                "model": _DEFAULT_MODEL,
+                "messages": [{"role": "user", "content": "Ping"}],
+                "max_tokens": 8,
+                "temperature": 0.0,
+            },
+            timeout=timeout,
+            proxies=proxies,
+        )
     except requests.exceptions.RequestException as exc:
         raise LLMAPIError(f"Connection test failed: {exc}") from exc
 

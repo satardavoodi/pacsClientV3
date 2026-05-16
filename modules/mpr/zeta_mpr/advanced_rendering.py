@@ -15,6 +15,10 @@ Based on VTK best practices and medical imaging standards.
 import vtkmodules.all as vtk
 from typing import Optional, Tuple, Literal
 import numpy as np
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 
 class AdvancedVolumeRenderer:
@@ -174,6 +178,11 @@ class AdvancedVolumeRenderer:
         Returns:
             Reformatted image data
         """
+        logger.warning(
+            "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=zeta_mpr_advanced_rendering_thick_slab "
+            "reason=hardcoded_reslice_axes_without_advanced_contract_adapter "
+            "fallback_behavior=continue_legacy_thick_slab_path action=warn_only"
+        )
         slab = vtk.vtkImageSlabReslice()
         slab.SetInputData(self.image_data)
         slab.SetSlabThickness(slab_thickness)

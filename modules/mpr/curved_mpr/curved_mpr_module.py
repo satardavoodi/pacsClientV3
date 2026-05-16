@@ -16,8 +16,12 @@ Created: 2025-11-30
 """
 
 from typing import List, Optional, Tuple
+import logging
 import vtk
 import numpy as np
+
+
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -338,6 +342,13 @@ class CurvedMPRGenerator:
             - Width = num_samples (positions along centerline)
             - Height = slice_height (perpendicular distance from centerline)
         """
+        if not bool(getattr(self, "_guard_logged_curved_mpr_generate", False)):
+            logger.warning(
+                "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=curved_mpr_generate "
+                "reason=curved_reslice_without_advanced_contract_adapter "
+                "fallback_behavior=continue_legacy_curved_mpr_path action=warn_only"
+            )
+            self._guard_logged_curved_mpr_generate = True
         print(f"[CurvedMPRGenerator] Starting CPR generation...")
         
         # Create output image data

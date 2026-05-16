@@ -57,6 +57,90 @@ def _fast_present_trace_enabled() -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# V2 Stack-Drag Model (AIPACS_STACK_DRAG_V2=1 required to activate)
+# Default=0: current V1 model runs unchanged.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Kill switch — read once at module import.
+# Default "0" means V1 behavior is active; set "1" to activate V2.
+_USE_V2_MODEL: bool = (
+    os.environ.get("AIPACS_STACK_DRAG_V2", "0").strip() == "1"
+)
+
+# Per-band parameters for the V2 fractional drag model.
+# Keys map to band names; values define all calibration constants.
+#
+#   base_divisor  : effective_px_per_slice = active_h * base_divisor / n
+#                   At gain=1.0, a full viewport drag traverses n/base_divisor slices.
+#                   Coverage = 100/base_divisor % of the stack at gain=1.0.
+#   v_onset       : px/sec below which gain stays at 1.0  (clinical exam pace)
+#   v_max         : px/sec above which gain = gain_max
+#   gain_max      : maximum acceleration multiplier at high velocity
+#   max_per_event : hard burst cap per Qt mouse event
+_DRAG_BAND_PARAMS: dict = {
+    # n < 25: strict precision — no acceleration ever.
+    # Coverage at gain=1.0: 50 % per viewport drag.
+    "tiny":   dict(base_divisor=2.0, v_onset=1e9, v_max=1e9, gain_max=1.0, max_per_event=1),
+    # 25 ≤ n < 50: precision-first — gain only at clearly fast drag.
+    # Coverage at gain=1.0: 40 %.
+    "small":  dict(base_divisor=2.5, v_onset=220.0, v_max=580.0, gain_max=1.4, max_per_event=1),
+    # 50 ≤ n < 100: controlled smooth — minimal adaptive acceleration.
+    # Coverage at gain=1.0: 33 %.
+    "medium": dict(base_divisor=3.0, v_onset=180.0, v_max=460.0, gain_max=1.6, max_per_event=1),
+    # 100 ≤ n < 200: mild adaptive acceleration.
+    # Coverage at gain=1.0: 29 %.
+    "large":  dict(base_divisor=3.5, v_onset=140.0, v_max=380.0, gain_max=1.9, max_per_event=2),
+    # 200 ≤ n < 300: balanced adaptive acceleration.
+    # Coverage at gain=1.0: 25 %.
+    "xlarge": dict(base_divisor=4.0, v_onset=100.0, v_max=340.0, gain_max=2.2, max_per_event=2),
+    # n ≥ 300: progressive acceleration — high-speed traversal needed.
+    # Coverage at gain=1.0: 22 %.
+    "huge":   dict(base_divisor=4.5, v_onset=80.0,  v_max=300.0, gain_max=2.5, max_per_event=3),
+}
+
+# Cold-start gate: first N events run at gain=1.0 regardless of velocity.
+# Prevents accidental jumps from a press-then-fast-move gesture at drag start.
+_DRAG_WARM_EVENT_COUNT: int = 5
+
+# EMA alpha for V2 velocity smoother. Symmetric — no hold-high bias.
+# 0.35 balances responsiveness vs smoothness.
+_DRAG_VELOCITY_EMA_ALPHA: float = 0.35
+
+# First-step assist scale for V2: first advance fires at 60 % of px_per_slice.
+_DRAG_FIRST_STEP_SCALE_V2: float = 0.60
+
+
+def _v2_select_drag_band(n: int) -> dict:
+    """Return the V2 band parameter dict for *n* total slices."""
+    if n < 25:
+        return _DRAG_BAND_PARAMS["tiny"]
+    if n < 50:
+        return _DRAG_BAND_PARAMS["small"]
+    if n < 100:
+        return _DRAG_BAND_PARAMS["medium"]
+    if n < 200:
+        return _DRAG_BAND_PARAMS["large"]
+    if n < 300:
+        return _DRAG_BAND_PARAMS["xlarge"]
+    return _DRAG_BAND_PARAMS["huge"]
+
+
+def _v2_effective_px_per_slice(n: int, active_h: float, band: dict) -> float:
+    """Compute calibrated base px/slice for the V2 model.
+
+    Returns ``max(natural_1to1, calibrated_band_base, 0.5)``.
+    - natural_1to1 = active_h / n            (design invariant floor)
+    - calibrated   = active_h * base_divisor / n  (always >= natural since divisor >= 1)
+    The result is always >= the natural 1:1 mapping and >= 0.5.
+    """
+    n_f = float(max(1, n))
+    h_f = float(max(1.0, active_h))
+    natural = h_f / n_f
+    calibrated = h_f * float(band["base_divisor"]) / n_f
+    return max(natural, calibrated, 0.5)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # Corner Annotation Data
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -180,11 +264,6 @@ class QtSliceViewer(QWidget):
     STACK_DRAG_POLICY_ADAPTIVE = "adaptive"
     STACK_DRAG_POLICY_CLEARCANVAS = "clearcanvas_directional"
     STACK_DRAG_EDGE_GRACE_PX = 12.0
-    LARGE_STACK_SKIP_MIN_SLICES = 100
-    LARGE_STACK_SKIP_SPEED_MULTIPLIER = 45.0
-    LARGE_STACK_SKIP_DELTA = 2
-    LARGE_STACK_SKIP_DELTA_BOOST_1 = 3
-    LARGE_STACK_SKIP_DELTA_BOOST_2 = 4
     _MEASUREMENT_TOOLS = frozenset({
         "ruler", "angle", "two_line_angle",
         "roi_rect", "roi_circle", "arrow", "text", "eraser",
@@ -266,7 +345,9 @@ class QtSliceViewer(QWidget):
         self._stack_drag_session_first_step_scale: float = 0.65
         self._stack_drag_last_move_monotonic: Optional[float] = None
         self._stack_drag_speed_px_per_sec: float = 0.0
-        self._stack_drag_skip_lane_active: bool = False
+        self._stack_drag_session_h: float = 0.0
+        # V2 cold-start gate: counts events since drag start; gain=1.0 for first N.
+        self._drag_warm_event_count: int = 0
 
         # Current displayed slice index (used by tool controller and coord resolver)
         self._current_slice_index: int = 0
@@ -641,37 +722,38 @@ class QtSliceViewer(QWidget):
         return cls.STACK_DRAG_POLICY_ADAPTIVE
 
     def _get_stack_drag_profile_for_count(self, total_slices: int) -> tuple[float, int]:
-        """Return (threshold_px, max_steps_per_event) for stack drag.
+        """Return (px_per_slice, max_per_event) for velocity-aware fractional drag model.
+
+        px_per_slice — base cursor distance for 1 slice at gain=1.0 (slow drag).
+        Design invariant: a full viewport drag at gain=1.0 traverses all n slices.
+
+        max_per_event — hard burst cap per mouse event.
+        Small/medium stacks stay deliberate (cap=1); large stacks allow cap=2
+        to support faster velocity-driven traversal.
 
         UX policy:
         - Wheel: always one slice per notch (no skipping).
-        - Stack drag: threshold scales from visible screen pixels and stack size.
-
-        Design goals:
-        - use actual on-screen drag distance, not arbitrary slice math
-        - small stacks should feel deliberate (larger threshold)
-        - large stacks should feel more responsive (smaller threshold)
-        - one full-height drag should traverse a meaningful portion of the stack
-        - per-event jumps remain capped so drag never feels chaotic
+        - Stack drag: continuous fractional accumulation + velocity-aware gain.
+          Slow drag = precise 1:1 anatomy traversal.
+          Fast drag = controlled acceleration via _consume_stack_drag_delta gain curve.
         """
         n = int(max(0, total_slices))
         if self._stack_drag_policy == self.STACK_DRAG_POLICY_CLEARCANVAS:
             return 1.0, 1
-
         active_h = self._get_stack_active_height_px()
-
         if n <= 1:
             return min(18.0, max(8.0, active_h / 20.0)), 1
 
-        profile = build_stack_drag_profile(n)
-        desired_full_drag_steps = max(
-            1,
-            min(max(1, n - 1), int(profile.drag_fullscreen_slices)),
-        )
-        threshold_px = active_h / float(desired_full_drag_steps)
-        threshold_px = max(3.0, min(32.0, threshold_px))
+        # Natural 1:1 mapping: full viewport drag = all n slices at gain=1.0.
+        # Floor: 0.5 px minimum to avoid degenerate mapping on tiny viewers.
+        px_per_slice = max(0.5, active_h / float(n))
 
-        return float(threshold_px), int(profile.drag_max_steps_per_event)
+        # max_per_event: burst cap scales with stack size.
+        # Large stacks need cap=2 to allow faster high-velocity traversal;
+        # smaller stacks stay deliberate at cap=1.
+        max_per_event = 2 if n >= 150 else 1
+
+        return float(px_per_slice), int(max_per_event)
 
     def _get_stack_drag_profile(self) -> tuple[float, int]:
         return self._get_stack_drag_profile_for_count(self._total_slices_hint)
@@ -739,9 +821,11 @@ class QtSliceViewer(QWidget):
         self._stack_drag_session_threshold_px = float(max(1.0, threshold_px))
         self._stack_drag_session_max_steps = int(max(1, max_steps))
         self._stack_drag_session_first_step_scale = float(max(0.1, first_step_scale))
+        self._stack_drag_session_h = self._get_stack_active_height_px()
         self._stack_drag_last_move_monotonic = time.perf_counter()
         self._stack_drag_speed_px_per_sec = 0.0
-        self._stack_drag_skip_lane_active = False
+        # V2 cold-start gate: reset on every new drag gesture.
+        self._drag_warm_event_count = 0
 
     def _end_stack_drag_session(self) -> None:
         """Clear the frozen drag policy so the next gesture uses fresh hints."""
@@ -768,9 +852,10 @@ class QtSliceViewer(QWidget):
         self._stack_drag_session_threshold_px = 0.0
         self._stack_drag_session_max_steps = 1
         self._stack_drag_session_first_step_scale = 0.65
+        self._stack_drag_session_h = 0.0
         self._stack_drag_last_move_monotonic = None
         self._stack_drag_speed_px_per_sec = 0.0
-        self._stack_drag_skip_lane_active = False
+        self._drag_warm_event_count = 0
         self._stacked_last_emitted_target = None
 
     def _reenable_gc_after_drag(self) -> None:
@@ -783,7 +868,16 @@ class QtSliceViewer(QWidget):
             logger.warning("qt_slice_viewer: GC re-enable failed: %s", exc)
 
     def _update_stack_drag_speed(self, dy: float) -> float:
-        """Update smoothed drag speed for the active stack-drag gesture."""
+        """Update smoothed drag speed for the active stack-drag gesture.
+
+        V1 (default): hold-high smoother — quickly reports high speed from first
+        partial events (``max(instant, 0.72*prior + 0.28*instant)``).
+
+        V2 (AIPACS_STACK_DRAG_V2=1): symmetric EMA — no upward bias, decays
+        cleanly on deceleration.  Alpha = _DRAG_VELOCITY_EMA_ALPHA (0.35).
+        The cold-start gate in _consume_stack_drag_delta handles the first-event
+        overshoot separately, so the smoother does not need hold-high bias.
+        """
         now = time.perf_counter()
         prev = self._stack_drag_last_move_monotonic
         self._stack_drag_last_move_monotonic = now
@@ -794,10 +888,21 @@ class QtSliceViewer(QWidget):
         dt = max(1e-4, float(now - prev))
         instantaneous = abs(float(dy)) / dt
         prior = float(self._stack_drag_speed_px_per_sec)
-        if prior <= 0.0:
-            smoothed = instantaneous
+
+        if _USE_V2_MODEL:
+            # Symmetric EMA — no hold-high bias.
+            alpha = _DRAG_VELOCITY_EMA_ALPHA
+            if prior <= 0.0:
+                smoothed = instantaneous
+            else:
+                smoothed = alpha * instantaneous + (1.0 - alpha) * prior
         else:
-            smoothed = max(instantaneous, (prior * 0.72) + (instantaneous * 0.28))
+            # V1 hold-high: rapidly adopts high speeds, slowly decays.
+            if prior <= 0.0:
+                smoothed = instantaneous
+            else:
+                smoothed = max(instantaneous, (prior * 0.72) + (instantaneous * 0.28))
+
         self._stack_drag_speed_px_per_sec = float(smoothed)
         return float(smoothed)
 
@@ -848,16 +953,23 @@ class QtSliceViewer(QWidget):
         return float(max(64, self.height()))
 
     def _consume_stack_drag_delta(self, dy: float, *, speed_px_per_sec: float = 0.0) -> int:
-        """Convert vertical drag delta to bounded slice steps.
+        """Velocity-aware fractional slice accumulation.
 
-        Wheel scrolling is intentionally precise (±1 slice per event), while
-        stack drag should feel continuous but still controllable. The stack
-        profile already defines a pixel threshold and a per-event cap; the
-        live drag path must honor both.
+        V1 model (default, AIPACS_STACK_DRAG_V2 unset or "0"):
+            px_per_slice = active_h / n  (1:1 natural mapping, full-stack per drag at gain=1.0)
+            4-band gain curve (n<80 / n<150 / n<250 / else).
+            First-step assist at 65 % of px_per_slice.
 
-        Returns the signed number of slice steps to emit for this mouse move.
+        V2 model (AIPACS_STACK_DRAG_V2=1):
+            px_per_slice = active_h * base_divisor / n  (calibrated per band)
+            At gain=1.0, full viewport drag traverses n/base_divisor slices
+            (a band-defined fraction — NOT all n slices).
+            6-band gain curve with cold-start gate (first 5 events at gain=1.0).
+            Symmetric EMA speed smoother (no hold-high bias).
+            First-step assist at 60 % of px_per_slice.
         """
-        if int(max(0, self._total_slices_hint)) <= 1:
+        n = int(max(1, self._total_slices_hint))
+        if n <= 1:
             return 0
 
         if self._stack_drag_policy == self.STACK_DRAG_POLICY_CLEARCANVAS:
@@ -868,16 +980,40 @@ class QtSliceViewer(QWidget):
                 return -1
             return 0
 
-        threshold_px, max_steps, first_step_scale = self._get_active_stack_drag_profile()
-        first_step_pending = bool(self._stacked_first_step_pending)
-        effective_threshold_px = threshold_px * (first_step_scale if first_step_pending else 1.0)
-        effective_threshold_px = max(1.0, float(effective_threshold_px))
+        if _USE_V2_MODEL:
+            return self._consume_stack_drag_delta_v2(dy, n=n, speed_px_per_sec=speed_px_per_sec)
+
+        # ── V1 model (preserved exactly) ────────────────────────────────────
+        # Velocity-aware gain table
+        if n < 80:
+            v_base, v_max, gain_max = 1e9, 1e9, 1.0   # small stacks: no acceleration
+            max_per_event = 1
+        elif n < 150:
+            v_base, v_max, gain_max = 90.0, 320.0, 1.5  # medium stacks: mild gain
+            max_per_event = 1
+        elif n < 250:
+            v_base, v_max, gain_max = 65.0, 260.0, 2.0  # large stacks: moderate gain
+            max_per_event = 2
+        else:
+            v_base, v_max, gain_max = 45.0, 210.0, 2.5  # very large: strongest gain
+            max_per_event = 2
+
+        v = float(max(0.0, speed_px_per_sec))
+        t = max(0.0, min(1.0, (v - v_base) / max(1.0, v_max - v_base)))
+        gain = 1.0 + t * (gain_max - 1.0)
+
+        if self._stack_drag_session_active and self._stack_drag_session_h > 0:
+            active_h = self._stack_drag_session_h
+        else:
+            active_h = self._get_stack_active_height_px()
+        px_per_slice = max(0.5, active_h / float(n))
 
         pending_sign = self._sign(self._stacked_accum)
         incoming_sign = self._sign(dy)
         if pending_sign != 0 and incoming_sign != 0 and pending_sign != incoming_sign:
             logger.debug(
-                "[B3.4_DIAG] STACK_DRAG_REVERSAL viewer=%s pending_sign=%d incoming_sign=%d accum_before=%.2f dy=%.2f",
+                "[B3.4_DIAG] STACK_DRAG_REVERSAL viewer=%s pending_sign=%d incoming_sign=%d"
+                " accum_before=%.2f dy=%.2f",
                 self._debug_viewer_id,
                 pending_sign,
                 incoming_sign,
@@ -886,135 +1022,101 @@ class QtSliceViewer(QWidget):
             )
             self._stacked_accum = 0.0
 
-        self._stacked_accum += float(dy)
-        raw_steps = int(self._stacked_accum / effective_threshold_px)
-        if raw_steps == 0:
-            return 0
+        self._stacked_accum += float(dy) * gain
 
-        if first_step_pending:
-            # Reduce the dead-zone only for the first emitted step of a new
-            # drag gesture, then immediately fall back to the normal threshold.
-            # Keep this startup assist capped to a single slice so the gesture
-            # starts promptly without reintroducing a first-event jump.
-            emit_steps = self._clamp_int(raw_steps, -1, 1)
+        if bool(self._stacked_first_step_pending):
+            effective_first = max(0.1, px_per_slice * 0.65)
+            steps_first = int(self._stacked_accum / effective_first)
+            if steps_first == 0:
+                return 0
             self._stacked_first_step_pending = False
             self._stacked_accum = 0.0
-            return int(emit_steps)
+            return int(self._clamp_int(steps_first, -1, 1))
 
-        if self._should_use_large_stack_skip_lane(
-            dy=dy,
-            raw_steps=raw_steps,
-            threshold_px=threshold_px,
-            speed_px_per_sec=speed_px_per_sec,
-        ):
-            emit_steps = self._sign(float(raw_steps)) * self._get_large_stack_skip_delta(
-                speed_px_per_sec=speed_px_per_sec,
-                threshold_px=threshold_px,
-            )
+        steps = int(self._stacked_accum / px_per_slice)
+        if steps == 0:
+            return 0
+
+        emit_steps = self._clamp_int(steps, -max_per_event, max_per_event)
+        if abs(steps) > max_per_event:
             self._stacked_accum = 0.0
-            return int(emit_steps)
-
-        dynamic_cap = self._get_speed_boosted_step_cap(
-            base_max_steps=max_steps,
-            speed_px_per_sec=speed_px_per_sec,
-            threshold_px=threshold_px,
-        )
-        emit_steps = self._clamp_int(raw_steps, -dynamic_cap, dynamic_cap)
-        if abs(raw_steps) > dynamic_cap:
-            # Oversized drag events are bounded, not queued. Keep only the
-            # sub-threshold tail so later mouse moves do not inherit momentum.
-            self._stacked_accum -= float(raw_steps) * threshold_px
         else:
-            self._stacked_accum -= float(emit_steps) * threshold_px
+            self._stacked_accum -= float(emit_steps) * px_per_slice
         return int(emit_steps)
 
-    def _get_large_stack_skip_delta(
+    def _consume_stack_drag_delta_v2(
         self,
-        *,
-        speed_px_per_sec: float,
-        threshold_px: float,
-    ) -> int:
-        """Return skip-lane step size for very fast drag on large stacks."""
-        total_slices = int(max(0, self._total_slices_hint))
-        speed = float(max(0.0, speed_px_per_sec))
-        threshold = float(max(1.0, threshold_px))
-
-        # Keep default every-other behavior for normal "fast" movement.
-        delta = int(self.LARGE_STACK_SKIP_DELTA)
-        # On very large stacks, allow bigger jumps only at clearly higher speeds.
-        if total_slices >= 180 and speed >= (threshold * 120.0):
-            delta = int(self.LARGE_STACK_SKIP_DELTA_BOOST_1)
-        if total_slices >= 260 and speed >= (threshold * 165.0):
-            delta = int(self.LARGE_STACK_SKIP_DELTA_BOOST_2)
-        return int(max(2, min(6, delta)))
-
-    def _get_speed_boosted_step_cap(
-        self,
-        *,
-        base_max_steps: int,
-        speed_px_per_sec: float,
-        threshold_px: float,
-    ) -> int:
-        """Allow higher per-event cap only for high-speed drag on large stacks."""
-        cap = int(max(1, base_max_steps))
-        total_slices = int(max(0, self._total_slices_hint))
-        speed = float(max(0.0, speed_px_per_sec))
-        threshold = float(max(1.0, threshold_px))
-
-        # Low/medium stacks keep the original bounded cap.
-        if total_slices < 140:
-            return cap
-        # First boost: large studies and clearly fast drag.
-        if speed >= (threshold * 95.0):
-            cap = max(cap, base_max_steps + 1)
-        # Second boost: very large studies with very high drag speed.
-        if total_slices >= 220 and speed >= (threshold * 140.0):
-            cap = max(cap, base_max_steps + 2)
-        return int(max(1, min(6, cap)))
-
-    def _should_use_large_stack_skip_lane(
-        self,
-        *,
         dy: float,
-        raw_steps: int,
-        threshold_px: float,
-        speed_px_per_sec: float,
-    ) -> bool:
-        """Return True when drag should switch to the every-other-slice lane.
+        *,
+        n: int,
+        speed_px_per_sec: float = 0.0,
+    ) -> int:
+        """V2 fractional accumulation: 6-band calibrated base sensitivity + cold-start gate.
 
-        UX intent for very large stacks:
-        - wheel remains exact and one-slice precise
-        - slow drag remains exact and one-slice precise
-        - only genuinely fast drag on stacks >100 may move in even steps
-
-        Because the delta is applied relative to the current slice in the
-        bridge, entering this lane naturally preserves parity. If the user
-        wheels once to slice 1, subsequent fast drag steps become 1, 3, 5...
-        without extra state or remapping.
+        Called only when _USE_V2_MODEL is True.  All V1 behaviour is preserved
+        in the parent method's else-branch above.
         """
-        total_slices = int(max(0, self._total_slices_hint))
-        if total_slices <= self.LARGE_STACK_SKIP_MIN_SLICES:
-            self._stack_drag_skip_lane_active = False
-            return False
-        if abs(int(raw_steps)) < 1:
-            self._stack_drag_skip_lane_active = False
-            return False
-        speed_gate_px_per_sec = max(
-            1.0,
-            float(threshold_px) * float(self.LARGE_STACK_SKIP_SPEED_MULTIPLIER),
-        )
-        hold_gate_px_per_sec = speed_gate_px_per_sec * 0.6
-        active = bool(getattr(self, '_stack_drag_skip_lane_active', False))
-        if float(speed_px_per_sec) >= speed_gate_px_per_sec:
-            self._stack_drag_skip_lane_active = True
-            return True
-        if active and float(speed_px_per_sec) >= hold_gate_px_per_sec:
-            return True
-        if abs(float(dy)) >= max(1.0, float(threshold_px) * 2.25):
-            self._stack_drag_skip_lane_active = True
-            return True
-        self._stack_drag_skip_lane_active = False
-        return False
+        # --- Band selection ---
+        band = _v2_select_drag_band(n)
+
+        # --- Effective px/slice (calibrated, always >= natural 1:1 floor) ---
+        if self._stack_drag_session_active and self._stack_drag_session_h > 0:
+            active_h = self._stack_drag_session_h
+        else:
+            active_h = self._get_stack_active_height_px()
+        px_per_slice = _v2_effective_px_per_slice(n, active_h, band)
+
+        # --- Cold-start gate: first N events at gain=1.0 regardless of speed ---
+        warm = int(getattr(self, '_drag_warm_event_count', 0))
+        if warm < _DRAG_WARM_EVENT_COUNT:
+            self._drag_warm_event_count = warm + 1
+            v_eff = 0.0          # force gain=1.0 during warm-up
+        else:
+            v_eff = float(max(0.0, speed_px_per_sec))
+
+        # --- Gain curve ---
+        v_onset = float(band["v_onset"])
+        v_max_b = float(band["v_max"])
+        if v_onset >= 1e8:
+            gain = 1.0           # tiny band: no acceleration ever
+        else:
+            t = max(0.0, min(1.0, (v_eff - v_onset) / max(1.0, v_max_b - v_onset)))
+            gain = 1.0 + t * (float(band["gain_max"]) - 1.0)
+
+        max_per_event = int(band["max_per_event"])
+
+        # --- Direction reversal: flush accumulator immediately ---
+        pending_sign = self._sign(self._stacked_accum)
+        incoming_sign = self._sign(dy)
+        if pending_sign != 0 and incoming_sign != 0 and pending_sign != incoming_sign:
+            self._stacked_accum = 0.0
+
+        # --- Fractional accumulation with velocity gain ---
+        self._stacked_accum += float(dy) * gain
+
+        # --- First-step assist: 60 % dead-zone at gesture start ---
+        if bool(self._stacked_first_step_pending):
+            effective_first = max(0.1, px_per_slice * _DRAG_FIRST_STEP_SCALE_V2)
+            steps_first = int(self._stacked_accum / effective_first)
+            if steps_first == 0:
+                return 0
+            self._stacked_first_step_pending = False
+            self._stacked_accum = 0.0
+            return int(self._clamp_int(steps_first, -1, 1))
+
+        # --- Normal step computation ---
+        steps = int(self._stacked_accum / px_per_slice)
+        if steps == 0:
+            return 0
+
+        emit_steps = self._clamp_int(steps, -max_per_event, max_per_event)
+        if abs(steps) > max_per_event:
+            # Oversized coalesced event: discard momentum to prevent burst.
+            self._stacked_accum = 0.0
+        else:
+            # Carry fractional remainder for continuous smooth traversal.
+            self._stacked_accum -= float(emit_steps) * px_per_slice
+        return int(emit_steps)
 
     @staticmethod
     def _clamp_int(v: int, lo: int, hi: int) -> int:

@@ -2,6 +2,10 @@ import vtkmodules.all as vtk
 import numpy as np
 from typing import List, Tuple, Optional
 import math
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 class CurveMPRCore:
     """
@@ -214,6 +218,13 @@ class CurveMPRCore:
         """
         Generates an orthogonal cross-section at a specific arc length.
         """
+        if not bool(getattr(self, "_guard_logged_curve_mpr_orthogonal", False)):
+            logger.warning(
+                "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=curve_mpr_generate_orthogonal_slice "
+                "reason=legacy_curve_reslice_without_advanced_contract_adapter "
+                "fallback_behavior=continue_legacy_curve_mpr_path action=warn_only"
+            )
+            self._guard_logged_curve_mpr_orthogonal = True
         if not self.frames:
             return None
             

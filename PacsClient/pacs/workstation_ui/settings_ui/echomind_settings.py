@@ -3,8 +3,6 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import typing as t
-
-import requests
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
@@ -24,7 +22,11 @@ from PySide6.QtWidgets import (
 )
 
 from modules.EchoMind.api_manager import APIKeyManager, Manage
-from modules.EchoMind.llm_client import get_active_backend_display_name, is_active_backend_configured
+from modules.EchoMind.llm_client import (
+    get_active_backend_display_name,
+    is_active_backend_configured,
+    test_openai_connection,
+)
 from modules.EchoMind.settings_store import (
     get_echomind_api_key,
     get_llm_backend,
@@ -924,24 +926,18 @@ class EchoMindSettingsWidget(QWidget):
     def _on_test_openai_clicked(self):
         patch = self._openai_form_patch()
         api_key = str(patch.get("api_key") or "").strip()
-        base_url = str(patch.get("base_url") or "").strip().rstrip("/") or "https://api.openai.com/v1"
         if not api_key:
             QMessageBox.warning(self, "OpenAI", "Please enter an OpenAI API key first.")
             return
 
-        headers = {"Authorization": f"Bearer {api_key}"}
-        org_id = str(patch.get("organization") or "").strip()
-        project_id = str(patch.get("project") or "").strip()
-        if org_id:
-            headers["OpenAI-Organization"] = org_id
-        if project_id:
-            headers["OpenAI-Project"] = project_id
-
         try:
-            resp = requests.get(f"{base_url}/models", headers=headers, timeout=int(patch.get("timeout_seconds") or 60))
-            if resp.status_code in (401, 403):
-                raise RuntimeError("Authentication failed. Check the API key, organization, and project fields.")
-            resp.raise_for_status()
+            test_openai_connection(
+                api_key=api_key,
+                base_url=str(patch.get("base_url") or "https://api.openai.com/v1"),
+                organization=str(patch.get("organization") or ""),
+                project=str(patch.get("project") or ""),
+                timeout=int(patch.get("timeout_seconds") or 60),
+            )
         except Exception as exc:
             self._update_openai_status(str(exc), ok=False)
             QMessageBox.critical(self, "OpenAI Connection Test", f"OpenAI connection failed:\n\n{exc}")

@@ -7,7 +7,7 @@ Legacy path:    update_from_geometry() uses camera projection (still available a
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import numpy as np
 import vtk
@@ -55,11 +55,22 @@ class DicomOrientationMarkers:
             return False
 
         try:
-            screen_right = geometry.screen_right_lps()
-            screen_up = geometry.screen_up_lps()
-            if screen_right is None or screen_up is None:
+            screen_right_before = geometry.screen_right_lps()
+            screen_up_before = geometry.screen_up_lps()
+            if screen_right_before is None or screen_up_before is None:
                 return False
 
+            effective = np.asarray(geometry.effective_display_ijk_to_lps, dtype=float)
+            display_i_axis = self._normalize(np.asarray(effective[0:3, 0], dtype=float))
+            display_j_axis = self._normalize(np.asarray(effective[0:3, 1], dtype=float))
+            if display_i_axis is None:
+                display_i_axis = screen_right_before
+            if display_j_axis is None:
+                display_j_axis = screen_up_before
+
+            # Final display convention in the active VTK viewport is Y-up (bottom-left origin).
+            screen_right = display_i_axis
+            screen_up = display_j_axis
             screen_left = -screen_right
             screen_bottom = -screen_up
 
@@ -67,6 +78,12 @@ class DicomOrientationMarkers:
             left_label = self._vector_to_lps_label(screen_left)
             top_label = self._vector_to_lps_label(screen_up)
             bottom_label = self._vector_to_lps_label(screen_bottom)
+
+            rows = int(getattr(geometry, "n_rows", 0) or 0)
+            columns = int(getattr(geometry, "n_cols", 0) or 0)
+
+            i_moves = "right" if float(np.dot(screen_right, display_i_axis)) >= 0.0 else "left"
+            j_moves = "up" if float(np.dot(screen_up, display_j_axis)) >= 0.0 else "down"
 
             self._orientation_data = {
                 "viewport_id": str(viewport_id or "unknown"),
@@ -77,14 +94,30 @@ class DicomOrientationMarkers:
                 "body_part": str(body_part or ""),
                 "row_cosines": tuple(geometry.row_cosines.tolist()),
                 "col_cosines": tuple(geometry.col_cosines.tolist()),
+                "rows": rows,
+                "columns": columns,
+                "effective_display_ijk_to_lps": effective.tolist(),
+                "display_i_axis_lps": tuple(display_i_axis.tolist()),
+                "display_j_axis_lps": tuple(display_j_axis.tolist()),
+                "screen_right_before": tuple(screen_right_before.tolist()),
+                "screen_up_before": tuple(screen_up_before.tolist()),
                 "screen_right": tuple(screen_right.tolist()),
                 "screen_left": tuple(screen_left.tolist()),
                 "screen_top": tuple(screen_up.tolist()),
                 "screen_bottom": tuple(screen_bottom.tolist()),
+                "displayed_image_top_edge_corresponds_to": top_label,
+                "displayed_image_bottom_edge_corresponds_to": bottom_label,
+                "displayed_image_left_edge_corresponds_to": left_label,
+                "displayed_image_right_edge_corresponds_to": right_label,
+                "display_i_increasing_moves": i_moves,
+                "display_j_increasing_moves": j_moves,
                 "right_label": right_label,
                 "left_label": left_label,
                 "top_label": top_label,
                 "bottom_label": bottom_label,
+                "y_axis_screen_inversion_applied": False,
+                "qt_or_vtk_screen_origin": "bottom_left",
+                "final_label_source": "effective_display_affine + vtk_screen_convention",
             }
             self._affine_source = True
 
@@ -96,6 +129,7 @@ class DicomOrientationMarkers:
             )
             self._emit_affine_marker_log(geometry)
             self._emit_geometry_contract_marker_log(source="effective_display_affine")
+            self._emit_final_display_layer_orientation_audit()
             self._emit_knee_validation_table_if_needed()
             return True
         except Exception as exc:
@@ -107,6 +141,7 @@ class DicomOrientationMarkers:
         *,
         viewport_id: str,
         screen_vectors: Dict[str, np.ndarray],
+        display_geometry=None,
         series_uid: str = "",
         series_number: str = "",
         plane: str = "",
@@ -119,18 +154,46 @@ class DicomOrientationMarkers:
         derived from effective display affine and does not consult camera basis.
         """
         try:
-            right = np.asarray(screen_vectors.get("screen_right"), dtype=float)
-            left = np.asarray(screen_vectors.get("screen_left"), dtype=float)
-            top = np.asarray(screen_vectors.get("screen_up"), dtype=float)
-            bottom = np.asarray(screen_vectors.get("screen_down"), dtype=float)
+            right_before = np.asarray(screen_vectors.get("screen_right"), dtype=float)
+            up_before = np.asarray(screen_vectors.get("screen_up"), dtype=float)
 
-            if right.size != 3 or top.size != 3:
+            if right_before.size != 3 or up_before.size != 3:
                 return False
+
+            effective = None
+            rows = 0
+            columns = 0
+            display_i_axis = None
+            display_j_axis = None
+            if display_geometry is not None:
+                try:
+                    effective = np.asarray(display_geometry.effective_display_ijk_to_lps_4x4, dtype=float)
+                    display_i_axis = self._normalize(np.asarray(effective[0:3, 0], dtype=float))
+                    display_j_axis = self._normalize(np.asarray(effective[0:3, 1], dtype=float))
+                    rows = int(getattr(display_geometry.source, "n_rows", 0) or 0)
+                    columns = int(getattr(display_geometry.source, "n_cols", 0) or 0)
+                except Exception:
+                    effective = None
+
+            if display_i_axis is None:
+                display_i_axis = self._normalize(right_before)
+            if display_j_axis is None:
+                # GeometryAPI.screen_up is legacy-corrected; invert to recover +display-j axis.
+                display_j_axis = self._normalize(-up_before)
+
+            # Final display convention in the active VTK viewport is Y-up (bottom-left origin).
+            right = display_i_axis
+            top = display_j_axis
+            left = -right
+            bottom = -top
 
             right_label = self._vector_to_lps_label(right)
             left_label = self._vector_to_lps_label(left)
             top_label = self._vector_to_lps_label(top)
             bottom_label = self._vector_to_lps_label(bottom)
+
+            i_moves = "right" if float(np.dot(right, display_i_axis)) >= 0.0 else "left"
+            j_moves = "up" if float(np.dot(top, display_j_axis)) >= 0.0 else "down"
 
             self._orientation_data = {
                 "viewport_id": str(viewport_id or "unknown"),
@@ -139,14 +202,30 @@ class DicomOrientationMarkers:
                 "slice_index": int(slice_index),
                 "plane": str(plane or ""),
                 "body_part": str(body_part or ""),
+                "rows": rows,
+                "columns": columns,
+                "effective_display_ijk_to_lps": effective.tolist() if effective is not None else None,
+                "display_i_axis_lps": tuple(display_i_axis.tolist()),
+                "display_j_axis_lps": tuple(display_j_axis.tolist()),
+                "screen_right_before": tuple(right_before.tolist()),
+                "screen_up_before": tuple(up_before.tolist()),
                 "screen_right": tuple(right.tolist()),
                 "screen_left": tuple(left.tolist()),
                 "screen_top": tuple(top.tolist()),
                 "screen_bottom": tuple(bottom.tolist()),
+                "displayed_image_top_edge_corresponds_to": top_label,
+                "displayed_image_bottom_edge_corresponds_to": bottom_label,
+                "displayed_image_left_edge_corresponds_to": left_label,
+                "displayed_image_right_edge_corresponds_to": right_label,
+                "display_i_increasing_moves": i_moves,
+                "display_j_increasing_moves": j_moves,
                 "right_label": right_label,
                 "left_label": left_label,
                 "top_label": top_label,
                 "bottom_label": bottom_label,
+                "y_axis_screen_inversion_applied": False,
+                "qt_or_vtk_screen_origin": "bottom_left",
+                "final_label_source": "effective_display_affine + vtk_screen_convention",
             }
             self._affine_source = True
 
@@ -157,11 +236,73 @@ class DicomOrientationMarkers:
                 right=right_label,
             )
             self._emit_geometry_contract_marker_log(source="effective_display_affine")
+            self._emit_final_display_layer_orientation_audit()
             self._emit_knee_validation_table_if_needed()
             return True
         except Exception as exc:
             logger.warning("Error in update_from_geometry_contract: %s", exc)
             return False
+
+    def _emit_final_display_layer_orientation_audit(self) -> None:
+        """Emit final display-layer marker audit required for clinical triage."""
+        data = self._orientation_data
+        if not data:
+            return
+
+        def _fmt_vec(v) -> str:
+            if v is None:
+                return "None"
+            return f"({float(v[0]):.4f},{float(v[1]):.4f},{float(v[2]):.4f})"
+
+        def _fmt_mat(m) -> str:
+            if m is None:
+                return "None"
+            a = np.asarray(m, dtype=float)
+            return np.array2string(a, precision=4, separator=",", suppress_small=False)
+
+        logger.warning(
+            "[FINAL_DISPLAY_LAYER_ORIENTATION_AUDIT] "
+            "viewport_id=%s series_uid=%s series_number=%s plane=%s body_part=%s slice_index=%s "
+            "rows=%s columns=%s "
+            "displayed_image_top_edge_corresponds_to=%s displayed_image_bottom_edge_corresponds_to=%s "
+            "displayed_image_left_edge_corresponds_to=%s displayed_image_right_edge_corresponds_to=%s "
+            "effective_display_ijk_to_lps=%s "
+            "display_i_axis_lps=%s display_j_axis_lps=%s "
+            "screen_right_lps_before_screen_correction=%s screen_up_lps_before_screen_correction=%s "
+            "screen_right_lps_after_screen_correction=%s screen_up_lps_after_screen_correction=%s "
+            "top_label=%s bottom_label=%s left_label=%s right_label=%s "
+            "display_i_increasing_moves=%s display_j_increasing_moves=%s "
+            "y_axis_screen_inversion_applied=%s qt_or_vtk_screen_origin=%s final_label_source=%s",
+            data.get("viewport_id", "unknown"),
+            data.get("series_uid", ""),
+            data.get("series_number", ""),
+            data.get("plane", ""),
+            data.get("body_part", ""),
+            data.get("slice_index", -1),
+            data.get("rows", 0),
+            data.get("columns", 0),
+            data.get("displayed_image_top_edge_corresponds_to", "?"),
+            data.get("displayed_image_bottom_edge_corresponds_to", "?"),
+            data.get("displayed_image_left_edge_corresponds_to", "?"),
+            data.get("displayed_image_right_edge_corresponds_to", "?"),
+            _fmt_mat(data.get("effective_display_ijk_to_lps")),
+            _fmt_vec(data.get("display_i_axis_lps")),
+            _fmt_vec(data.get("display_j_axis_lps")),
+            _fmt_vec(data.get("screen_right_before")),
+            _fmt_vec(data.get("screen_up_before")),
+            _fmt_vec(data.get("screen_right")),
+            _fmt_vec(data.get("screen_top")),
+            data.get("top_label", "?"),
+            data.get("bottom_label", "?"),
+            data.get("left_label", "?"),
+            data.get("right_label", "?"),
+            data.get("display_i_increasing_moves", "unknown"),
+            data.get("display_j_increasing_moves", "unknown"),
+            bool(data.get("y_axis_screen_inversion_applied", False)),
+            data.get("qt_or_vtk_screen_origin", "unknown"),
+            data.get("final_label_source", ""),
+            extra={"component": "viewer"},
+        )
 
     def _emit_affine_marker_log(self, geometry: "SeriesGeometryIndex") -> None:
         """Emit [ADVANCED_MARKERS_FROM_AFFINE] log."""

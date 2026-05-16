@@ -23,6 +23,13 @@ from ._interactor_styles import VRTInteractorStyle
 
 logger = logging.getLogger(__name__)
 
+def _emit_geometry_contract_missing_guard(*, feature: str) -> None:
+    logger.warning(
+        "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=%s reason=local_mpr_view_creation_without_advanced_contract_adapter "
+        "fallback_behavior=continue_legacy_mpr_geometry_path action=warn_only",
+        feature,
+    )
+
 # WL_PRESETS — window/level presets for CT viewing (originally in standard_mpr_viewer.py)
 WL_PRESETS = {
     'Auto': None,
@@ -213,6 +220,7 @@ class _MprViewsMixin:
 
     def _create_axial_view(self, layout, row, col):
         """Create axial view (XY plane) - Original slices, NO interpolation between slices"""
+        _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_axial_view")
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
@@ -268,6 +276,7 @@ class _MprViewsMixin:
 
     def _create_sagittal_view(self, layout, row, col):
         """Create sagittal view (YZ plane) - MPR reconstructed with interpolation"""
+        _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_sagittal_view")
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
@@ -333,6 +342,7 @@ class _MprViewsMixin:
 
     def _create_coronal_view(self, layout, row, col):
         """Create coronal view (XZ plane) - MPR reconstructed with interpolation"""
+        _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_coronal_view")
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)

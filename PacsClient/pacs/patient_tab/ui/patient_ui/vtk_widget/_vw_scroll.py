@@ -546,14 +546,23 @@ class _VWScrollMixin:
                     return
 
             # Force a full render at the final position (non-fast path).
+            # target is in display_k space; compare using get_display_slice()
+            # so the comparison is in the same coordinate space.
             current_vtk = None
             try:
-                current_vtk = int(self.image_viewer.GetSlice())
+                _iv = self.image_viewer
+                current_vtk = (
+                    _iv.get_display_slice()
+                    if callable(getattr(_iv, "get_display_slice", None))
+                    else int(_iv.GetSlice())
+                )
             except Exception:
                 pass
 
             if current_vtk is None or current_vtk != target:
-                # VTK is out of sync — force SetSlice + Render
+                # VTK is out of sync — force SetSlice + Render.
+                # target is in display_k space (from slider/last_index_slice_saved),
+                # and set_slice() / _set_slice_impl now accepts display_k.
                 self._call_image_viewer_set_slice(target, fast_interaction=False)
 
             # Update annotation widget visibility for the current slice.
@@ -1151,8 +1160,16 @@ class _VWScrollMixin:
             else:
                 step = 0
             
-            # Calculate next slice index
-            current_slice = self.image_viewer.GetSlice()
+            # Calculate next slice index — work in display_k space so that
+            # K-flip geometry contracts produce canonical clinical scroll direction.
+            # get_display_slice() converts raw VTK k → display_k when a K-flip
+            # contract is active; it is identical to GetSlice() otherwise.
+            _iv = self.image_viewer
+            current_slice = (
+                _iv.get_display_slice()
+                if callable(getattr(_iv, "get_display_slice", None))
+                else _iv.GetSlice()
+            )
             if self._active_backend == BACKEND_PYDICOM and self._lazy_requested_slice is not None:
                 try:
                     current_slice = int(self._lazy_requested_slice)
@@ -1220,6 +1237,35 @@ class _VWScrollMixin:
             # otherwise starts a timer for the remaining gap.  The adaptive
             # gap (25% of last frame time) auto-tunes to hardware speed.
             direction = 1 if step > 0 else -1 if step < 0 else 0
+
+            # [SCROLL_RUNTIME_DIRECTION] sampled diagnostic (every 20th wheel event)
+            if self._wheel_event_count % 20 == 0:
+                try:
+                    _iv2 = self.image_viewer
+                    _srd_raw_before = int(_iv2.GetSlice()) if _iv2 else -1
+                    _srd_dg = getattr(_iv2, "_display_geometry_contract", None)
+                    _srd_k_flip = bool(_srd_dg is not None and _srd_dg.is_k_flip_active)
+                    _srd_plane = (
+                        (self.image_viewer.metadata or {}).get("series", {}).get("display_convention", "?")
+                        if _iv2 and getattr(_iv2, "metadata", None) else "?"
+                    )
+                    logger.warning(
+                        "[SCROLL_RUNTIME_DIRECTION] viewport_id=%s plane=%s "
+                        "display_k_before=%s display_k_after=%s raw_k_before=%s "
+                        "step=%s k_flip=%s event=%d",
+                        str(getattr(self, "id_vtk_widget", id(self))),
+                        _srd_plane,
+                        int(current_slice),
+                        int(next_slice),
+                        _srd_raw_before,
+                        int(step),
+                        _srd_k_flip,
+                        int(self._wheel_event_count),
+                        extra={"component": "viewer"},
+                    )
+                except Exception:
+                    pass
+
             self.queue_interactive_slice_target(
                 slice_index=next_slice,
                 source="wheel",

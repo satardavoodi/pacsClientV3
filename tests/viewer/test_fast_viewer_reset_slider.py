@@ -77,6 +77,9 @@ def test_reset_slider_keeps_qt_bridge_current_slice_without_second_render():
 
 
 def test_reset_slider_keeps_legacy_non_qt_callback_behavior():
+    # Stub returns current_slice=11 from GetSlice().
+    # reset_slider now reads mid_slices = GetSlice() (raw_k domain) and uses it
+    # for both slider.setValue and apply_default_window_level.
     harness = _Harness()
     slider = _SliderStub()
     viewer = _ViewerStub(qt_bridge_active=False, current_slice=11)
@@ -85,6 +88,45 @@ def test_reset_slider_keeps_legacy_non_qt_callback_behavior():
 
     assert slider.minimum() == 0
     assert slider.maximum() == 21
-    assert slider.value() == 0
-    assert harness.slider_events == [(viewer, 0)]
-    assert viewer.image_viewer.default_wl_calls == [0]
+    # slider tracks the display-slice position (= GetSlice() here because no
+    # get_display_slice() on the stub → falls back to GetSlice() = 11).
+    assert slider.value() == 11
+    assert harness.slider_events == [(viewer, 11)]
+    # apply_default_window_level must receive raw_k (= GetSlice() = 11),
+    # NOT the old mid_slices=0 that poisoned the WL-preset lookup.
+    assert viewer.image_viewer.default_wl_calls == [11]
+
+
+def test_reset_slider_wl_receives_raw_k_not_display_k():
+    """Fix 4 contract: apply_default_window_level always gets raw_k=GetSlice().
+
+    Before Fix 4, the code passed mid_slices (display_k) to
+    apply_default_window_level, which indexes metadata['instances'][raw_k].
+    Passing a display_k value (e.g. N-1 under K-flip) would index the wrong
+    instance WL preset.  After the fix, we pass GetSlice() which is always
+    raw_k after a series switch (R16 FirstRender consumption resets to raw_k=0;
+    later calls have whatever raw_k the viewer actually sits at).
+    """
+    harness = _Harness()
+    slider = _SliderStub()
+    # Simulate: 20-slice series, viewer currently at raw_k=5.
+    viewer = _ViewerStub(qt_bridge_active=False, count_slices=20, current_slice=5)
+
+    harness.reset_slider(viewer, slider)
+
+    # WL must use GetSlice() = 5 (raw_k), not any display_k variant.
+    assert viewer.image_viewer.default_wl_calls == [5]
+    # Slider value is also driven by GetSlice() = 5 (the display position
+    # the viewer already holds, since stub has no get_display_slice()).
+    assert slider.value() == 5
+
+
+def test_reset_slider_wl_not_called_for_qt_bridge():
+    """Qt bridge path exits early — apply_default_window_level must not fire."""
+    harness = _Harness()
+    slider = _SliderStub()
+    viewer = _ViewerStub(qt_bridge_active=True, current_slice=7)
+
+    harness.reset_slider(viewer, slider)
+
+    assert viewer.image_viewer.default_wl_calls == []

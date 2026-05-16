@@ -65,6 +65,11 @@ class MPRResampler:
             interpolation: Interpolation method to use
             default_value: Value for pixels outside the volume
         """
+        logger.warning(
+            "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=orthogonal_resampler_init "
+            "reason=sitk_resampler_without_advanced_contract_adapter fallback_behavior=continue_local_resampler "
+            "action=warn_only"
+        )
         self.volume = volume
         self.interpolation = interpolation
         self.default_value = default_value
@@ -154,6 +159,13 @@ class MPRResampler:
         Returns:
             2D SimpleITK Image
         """
+        if not bool(getattr(self, "_guard_logged_get_slice", False)):
+            logger.warning(
+                "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=orthogonal_resampler_get_slice "
+                "reason=geometry_sensitive_reslice_without_advanced_contract_adapter "
+                "fallback_behavior=continue_local_reslice_path action=warn_only"
+            )
+            self._guard_logged_get_slice = True
         plane = plane.lower()
         
         # Validate slice index

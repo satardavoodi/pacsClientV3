@@ -193,6 +193,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # Orientation markers for DICOM LPS display (per-viewport, transform-aware)
         self.orientation_markers = DicomOrientationMarkers(self.renderer)
         self._orientation_audit_active_logged = False
+        self._last_axial_stack_order_audit_key = ""
         # Option B: explicit affine contract (built after metadata is set, below)
         self._series_geometry_index: Optional[SeriesGeometryIndex] = None
         self._vtk_direction_ignored_logged: bool = False
@@ -949,8 +950,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         else:
 
             # update top-right actors
-            current_slice = self.GetSlice()
-            # meta = self.metadata['meta_changed'][current_slice]
+            current_slice = self.GetSlice()         # raw VTK k — used for metadata indexing
+            display_slice = self.get_display_slice() # display_k — used for slice counter text
 
             study_date = self.metadata_fixed.get('study_date', 'N/A')
             series_time = self.metadata_fixed.get('study_time', 'N/A')
@@ -959,7 +960,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             series_desc = self.metadata['series']['series_description']
 
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_slice_actor,
-                                                     f'{current_slice + self.skip_slices + 1} / {self.get_count_of_slices()}')
+                                                     f'{display_slice + self.skip_slices + 1} / {self.get_count_of_slices()}')
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_study_date_actor, study_date)
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_series_time_actor, series_time)
             self.dicom_tags_actors.change_actor_text(self.dicom_tags_actors.im_series_name_actor, series_name)
@@ -998,7 +999,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         gap = 0.02
 
         # changeable
-        current_slice = self.GetSlice()
+        current_slice = self.GetSlice()          # raw VTK k
+        display_slice = self.get_display_slice() # display_k for slice counter
         study_date = self.metadata_fixed.get('study_date', 'N/A')
         series_time = self.metadata_fixed.get('study_time', 'N/A')
 
@@ -1006,7 +1008,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         series_desc = self.metadata['series']['series_description']
 
         self.dicom_tags_actors.im_slice_actor = make_corner_actor(
-            f'{current_slice + self.skip_slices} / {self.get_count_of_slices()}', right, top, 'right', 'top')
+            f'{display_slice + self.skip_slices} / {self.get_count_of_slices()}', right, top, 'right', 'top')
         self.dicom_tags_actors.im_study_date_actor = make_corner_actor(study_date, right, top - (1 * gap), 'right',
                                                                        'top')
         self.dicom_tags_actors.im_series_time_actor = make_corner_actor(series_time, right, top - (2 * gap), 'right',
@@ -1411,6 +1413,20 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         except Exception:
             pass
 
+    def get_display_slice(self) -> int:
+        """Return the current slice as a *display* index (canonical clinical order).
+
+        When a K-flip DisplayGeometry contract is active, the raw VTK k index
+        returned by GetSlice() is converted to the display_k space so that
+        display_k=0 is the clinically canonical first slice (e.g. Superior for
+        axial HFS).  When no K-flip is active this is identical to GetSlice().
+        """
+        raw_k = int(self.GetSlice())
+        _dg = getattr(self, "_display_geometry_contract", None)
+        if _dg is not None and _dg.is_k_flip_active:
+            return _dg.raw_k_to_display_k(raw_k)
+        return raw_k
+
     def set_slice(self, slice_index, fast_interaction=False, force_annotations=False):
         """
         Change the displayed slice and keep overlays in sync.
@@ -1419,6 +1435,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
           2) Apply default WL/WC (if user hasn't customized)
           3) Update corner text
           4) Sync all overlay actors to this slice
+
+        ``slice_index`` is a **display index** (display_k).  When a K-flip
+        geometry contract is active, ``_set_slice_impl`` converts it to the
+        raw VTK k index before calling VTK's ``SetSlice()``.
         """
         try:
             self._set_slice_impl(slice_index, fast_interaction, force_annotations)
@@ -1443,14 +1463,27 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         if _fast and not bool(force_annotations):
             try:
-                if int(self.GetSlice()) == int(slice_index):
+                # Compare raw VTK index to avoid unnecessary SetSlice calls
+                _dg_early = getattr(self, "_display_geometry_contract", None)
+                _raw_k_early = (
+                    _dg_early.display_k_to_raw_k(int(slice_index))
+                    if (_dg_early is not None and _dg_early.is_k_flip_active)
+                    else int(slice_index)
+                )
+                if int(self.GetSlice()) == _raw_k_early:
                     return
             except Exception:
                 pass
 
-        # 1) Move to the requested slice
-        self.SetSlice(slice_index)
-        actual_slice_index = int(self.GetSlice())
+        # 1) Convert display_k → raw VTK k via DisplayGeometry contract
+        _dg = getattr(self, "_display_geometry_contract", None)
+        _raw_k = (
+            _dg.display_k_to_raw_k(int(slice_index))
+            if (_dg is not None and _dg.is_k_flip_active)
+            else int(slice_index)
+        )
+        self.SetSlice(_raw_k)
+        actual_slice_index = int(self.GetSlice())   # raw VTK k (used for metadata indexing)
         _t1 = time.perf_counter_ns()
 
         # 2) Apply default window/level only if the user hasn't set a custom WL
@@ -1505,6 +1538,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                         self.orientation_markers.update_from_geometry_contract(
                             viewport_id=viewport_id,
                             screen_vectors=screen_vectors,
+                            display_geometry=_dg,
                             slice_index=actual_slice_index,
                             series_uid=series_uid,
                             series_number=str(series_number),
@@ -1548,6 +1582,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self._emit_advanced_vtk_orientation_audit(actual_slice_index)
         except Exception as e:
             logger.debug(f"Error emitting orientation audit: {e}")
+
+        try:
+            self._emit_axial_stack_order_policy_audit(actual_slice_index)
+        except Exception as e:
+            logger.debug(f"Error emitting axial stack policy audit: {e}")
         
         self.Render()
         _t4 = time.perf_counter_ns()
@@ -2199,6 +2238,15 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             )
             pre_state = self._capture_render_geometry_state()
             if not sg.valid:
+                logger.warning(
+                    "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=advanced_viewer_bind "
+                    "series_uid=%s series_number=%s viewport_id=%s reason=source_geometry_invalid "
+                    "fallback_behavior=skip_contract_bind action=warn_only",
+                    series_uid,
+                    series_number,
+                    self._viewer_viewport_id(),
+                    extra={"component": "viewer"},
+                )
                 self._emit_advanced_render_geometry_regression(
                     series_uid=series_uid,
                     series_number=series_number,
@@ -2213,6 +2261,47 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             dg = DisplayGeometry(sg, viewport_id=viewport_id)
             if n_rows > 0:
                 dg.apply_y_flip(n_rows)
+
+            # Audit and apply clinical stack-order convention if needed
+            try:
+                plane = str(series_meta.get("display_convention") or series_meta.get("geometry_plane") or "UNKNOWN")
+                body_part = str(series_meta.get("body_part_examined") or "")
+                convention, matches, recommended, reason, direction = dg.audit_stack_order_convention(plane, body_part)
+                
+                effective_affine_before = dg.effective_display_ijk_to_lps_4x4.copy()
+                
+                # Emit audit log
+                logger.warning(
+                    "[STACK_ORDER_CONVENTION_AUDIT] "
+                    "series_uid=%s series_number=%s plane=%s body_part=%s n_slices=%s "
+                    "current_first_display_index=0 current_last_display_index=%s "
+                    "current_direction=%s expected_direction=%s "
+                    "convention=%s order_matches=%s recommended_transform=%s reason=%s",
+                    series_uid, series_number, plane, body_part, sg.n_slices,
+                    int(sg.n_slices - 1),
+                    direction,
+                    convention.split("_")[0] if "_" in convention else "?",
+                    convention, bool(matches), recommended, reason,
+                    extra={"component": "viewer"},
+                )
+                
+                # Apply K-flip if convention mismatch detected
+                if recommended == "K_FLIP" and not matches:
+                    dg.apply_k_flip_for_stack_order(sg.n_slices, reason=reason)
+                    effective_affine_after = dg.effective_display_ijk_to_lps_4x4.copy()
+                    
+                    # Emit policy application log
+                    logger.warning(
+                        "[DISPLAY_STACK_ORDER_POLICY] "
+                        "series_uid=%s plane=%s body_part=%s n_slices=%s "
+                        "convention=%s direction_before=%s direction_after=reversed "
+                        "applied_k_flip=True reason=%s",
+                        series_uid, plane, body_part, sg.n_slices,
+                        convention, direction, reason,
+                        extra={"component": "viewer"},
+                    )
+            except Exception as exc:
+                logger.debug("Error in stack-order audit/policy: %s", exc)
 
             self._source_geometry_contract = sg
             self._display_geometry_contract = dg
@@ -2257,6 +2346,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
             self._emit_advanced_viewport_geometry_bind()
         except Exception as exc:
+            logger.warning(
+                "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=advanced_viewer_bind "
+                "series_uid=%s series_number=%s viewport_id=%s reason=bind_exception:%s "
+                "fallback_behavior=keep_legacy_render_path action=warn_only",
+                str((self.metadata.get("series") or {}).get("series_uid") or ""),
+                str((self.metadata.get("series") or {}).get("series_number") or ""),
+                self._viewer_viewport_id(),
+                str(type(exc).__name__),
+                extra={"component": "viewer"},
+            )
             logger.warning(
                 "[ADVANCED_VIEWPORT_GEOMETRY_BIND] status=failed viewport_id=%s exc=%s",
                 self._viewer_viewport_id(),
@@ -2458,6 +2557,123 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         except Exception:
             return None
         return None
+
+    def _ipp_from_instance(self, inst):
+        if not isinstance(inst, dict):
+            return None
+        raw = inst.get("ImagePositionPatient") or inst.get("image_position_patient")
+        if raw is None:
+            return None
+        try:
+            arr = np.asarray(raw, dtype=float)
+            if arr.size != 3:
+                return None
+            return arr
+        except Exception:
+            return None
+
+    def _axis_to_lps_label(self, vec) -> str:
+        arr = self._safe_unit(vec)
+        if arr is None:
+            return "?"
+        idx = int(np.argmax(np.abs(arr)))
+        if idx == 0:
+            return "L" if arr[0] >= 0.0 else "R"
+        if idx == 1:
+            return "P" if arr[1] >= 0.0 else "A"
+        return "S" if arr[2] >= 0.0 else "I"
+
+    def _emit_axial_stack_order_policy_audit(self, slice_index: int) -> None:
+        if not isinstance(self.metadata, dict):
+            return
+
+        series_meta = self.metadata.get("series") or {}
+        instances = self.metadata.get("instances") or []
+        if not instances:
+            return
+
+        series_uid = str(
+            series_meta.get("series_instance_uid") or series_meta.get("series_uid") or ""
+        )
+        key = f"{series_uid}:{len(instances)}"
+        if key == self._last_axial_stack_order_audit_key:
+            return
+
+        plane = str(series_meta.get("display_convention") or series_meta.get("geometry_plane") or "UNKNOWN")
+        body_part = str(series_meta.get("body_part_examined") or "")
+        series_desc = str(series_meta.get("series_description") or "")
+        plane_u = plane.upper()
+        axial_like = (
+            "AXIAL" in plane_u
+            or "AX" in plane_u
+            or "TRA" in series_desc.upper()
+            or "TRANS" in series_desc.upper()
+        )
+
+        first_ipp = self._ipp_from_instance(instances[0])
+        last_ipp = self._ipp_from_instance(instances[-1])
+        if first_ipp is None or last_ipp is None:
+            return
+
+        delta = last_ipp - first_ipp
+        if float(np.linalg.norm(delta)) <= 1e-8:
+            return
+
+        current_last_label = self._axis_to_lps_label(delta)
+        current_first_label = self._axis_to_lps_label(-delta)
+        current_direction_summary = f"{current_first_label}->{current_last_label} (metadata_order)"
+
+        expected_first_label = "unknown"
+        expected_last_label = "unknown"
+        expected_direction_summary = "unknown"
+        reason = "insufficient_policy_context"
+        should_apply_k_flip = False
+
+        if axial_like:
+            # Clinical default for knee/lower-limb axial-like stacks: superior -> inferior.
+            expected_first_label = "S"
+            expected_last_label = "I"
+            expected_direction_summary = "S->I (clinical axial-like display policy)"
+            if body_part.strip().upper() not in {"KNEE", "LEG", "ANKLE", "FOOT", "LOWER EXTREMITY"}:
+                reason = "axial_like_non_lower_limb_verify_before_policy_apply"
+            else:
+                reason = "axial_like_knee_policy"
+            should_apply_k_flip = (
+                current_first_label != expected_first_label
+                or current_last_label != expected_last_label
+            )
+
+        logger.warning(
+            "[AXIAL_STACK_ORDER_POLICY_AUDIT] "
+            "series_uid=%s plane=%s axial_like=%s body_part=%s n_slices=%s "
+            "current_first_slice_lps=(%.4f,%.4f,%.4f) current_last_slice_lps=(%.4f,%.4f,%.4f) "
+            "current_first_label=%s current_last_label=%s "
+            "expected_first_label=%s expected_last_label=%s "
+            "current_direction_summary=%s expected_direction_summary=%s "
+            "should_apply_k_flip=%s reason=%s",
+            series_uid,
+            plane,
+            bool(axial_like),
+            body_part,
+            int(len(instances)),
+            float(first_ipp[0]),
+            float(first_ipp[1]),
+            float(first_ipp[2]),
+            float(last_ipp[0]),
+            float(last_ipp[1]),
+            float(last_ipp[2]),
+            current_first_label,
+            current_last_label,
+            expected_first_label,
+            expected_last_label,
+            current_direction_summary,
+            expected_direction_summary,
+            bool(should_apply_k_flip),
+            reason,
+            extra={"component": "viewer"},
+        )
+
+        self._last_axial_stack_order_audit_key = key
 
     def _classify_orientation_failure(
         self,
@@ -2966,13 +3182,26 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         except Exception:
             dims_count = 0
 
+        # VTK-derived count is authoritative — never let metadata exceed it.
+        # If metadata has more instances than the loaded VTK volume (e.g. due to
+        # a size-filter that removed mixed-dimension slices or a stale DB cache),
+        # returning the DB count produces a slider range larger than the actual
+        # loaded data.  With K-flip active this maps lower display_k positions to
+        # raw_k values beyond the real Z extent, which VTK silently clamps to the
+        # last valid slice → all those positions show a frozen image.
+        vtk_count = max(range_count, dims_count)
+        if vtk_count > 1:
+            return vtk_count
+
+        # Uninitialized viewer (vtk_count ≤ 1): fall back to metadata as a last
+        # resort so the slider is not stuck at 0 before the first Render().
         meta_count = 0
         try:
             meta_count = int(len(self.metadata.get('instances', []) or []))
         except Exception:
             meta_count = 0
 
-        return max(0, int(range_count), int(dims_count), int(meta_count))
+        return max(0, vtk_count, meta_count)
 
     def set_zoom_1to1(self):
         """ set image to pixel to pixel"""

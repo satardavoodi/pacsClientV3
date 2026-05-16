@@ -522,6 +522,8 @@ class Lightweight2DPipeline(QObject):
             except Exception:
                 pass
 
+        self._emit_fast_advanced_geometry_leak_guard(metadata=metadata, source="Lightweight2DPipeline.open_series")
+
         if metadata and metadata.get("instances"):
             self._slices = self._from_metadata_instances(metadata["instances"])
         else:
@@ -548,6 +550,39 @@ class Lightweight2DPipeline(QObject):
         logger.info(
             "lw2d-pipeline open_series slices=%d path=%s",
             len(self._slices), series_path,
+        )
+
+    def _emit_fast_advanced_geometry_leak_guard(
+        self,
+        *,
+        metadata: Optional[Dict[str, Any]],
+        source: str,
+    ) -> None:
+        """Warn-only guard: FAST pipeline must not consume Advanced geometry contracts."""
+        if not isinstance(metadata, dict):
+            return
+        leaked: list[str] = []
+        contract = str(metadata.get("instances_order_contract") or "")
+        if contract.startswith("ADVANCED_"):
+            leaked.append("instances_order_contract")
+        if metadata.get("display_geometry_contract") is not None:
+            leaked.append("DisplayGeometry")
+        if metadata.get("source_geometry_contract") is not None:
+            leaked.append("SourceGeometry")
+        if metadata.get("geometry_api") is not None:
+            leaked.append("GeometryAPI")
+        if metadata.get("viewport_geometry_registry") is not None:
+            leaked.append("ViewportGeometryRegistry")
+        if metadata.get("k_flip") is not None:
+            leaked.append("K_FLIP")
+        if not leaked:
+            return
+        logger.warning(
+            "[FAST_ADVANCED_GEOMETRY_LEAK_BLOCKED] source=%s leaked_object_type=%s backend=FAST "
+            "blocked_reason=fast_pipeline_must_not_consume_advanced_geometry_contract action=warn_only",
+            source,
+            "|".join(leaked),
+            extra={"component": "viewer"},
         )
 
     def close_series(self) -> None:

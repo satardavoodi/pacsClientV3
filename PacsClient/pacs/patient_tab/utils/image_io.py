@@ -1851,7 +1851,12 @@ def _get_cached_metadata(series_pk, instances):
     """
     Get metadata from cache or generate and cache it
     """
-    cache_key = f"series_{series_pk}"
+    # Include instance count in the key so that a partial download (fewer DB
+    # records) does not return a stale full-series cache entry from a previous
+    # complete load.  Without this, a mixed-size or partial series could get a
+    # stale N_db=20 metadata when only 8 files were actually loaded, causing
+    # get_count_of_slices() to return 20 and the slider to over-run the VTK Z.
+    cache_key = f"series_{series_pk}_n{len(instances)}"
     
     # Check if in cache
     if cache_key in _series_metadata_cache:
@@ -2101,6 +2106,7 @@ def load_vtk_from_dicom_paths(dicom_paths):
     
     try:
         _start = time.time()
+        series_number_for_audit = "unknown"
         
         # Convert to strings if they're Path objects
         dicom_files = [str(p) for p in dicom_paths]
@@ -2111,24 +2117,30 @@ def load_vtk_from_dicom_paths(dicom_paths):
         # Load DICOM with SimpleITK
         _dicom_start = time.time()
         itk_image = get_itk_image(dicom_files)
-        _emit_advanced_vtk_orientation_audit_stage(
-            series_number,
-            stage="sitk_read_filesystem",
-            dicom_files_for_itk=[str(p) for p in dicom_files],
-            sitk_image=itk_image,
-        )
+        try:
+            _emit_advanced_vtk_orientation_audit_stage(
+                series_number_for_audit,
+                stage="sitk_read_filesystem",
+                dicom_files_for_itk=[str(p) for p in dicom_files],
+                sitk_image=itk_image,
+            )
+        except Exception:
+            pass
         _dicom_time = time.time() - _dicom_start
         
         # Convert to VTK
         _convert_start = time.time()
         vtk_image_data = utils.convert_itk2vtk(itk_image)
-        _emit_advanced_vtk_orientation_audit_stage(
-            series_number,
-            stage="vtk_convert_filesystem",
-            dicom_files_for_itk=[str(p) for p in dicom_files],
-            metadata=None,
-            vtk_image_data=vtk_image_data,
-        )
+        try:
+            _emit_advanced_vtk_orientation_audit_stage(
+                series_number_for_audit,
+                stage="vtk_convert_filesystem",
+                dicom_files_for_itk=[str(p) for p in dicom_files],
+                metadata=None,
+                vtk_image_data=vtk_image_data,
+            )
+        except Exception:
+            pass
         _convert_time = time.time() - _convert_start
         
         # Cleanup - do NOT call gc.collect(), it freezes UI thread
@@ -2914,6 +2926,35 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                                     print(f"      Pre-filtered to {len(dicom_files)} files of {_dom_size}, skipped {_dom_skipped}")
                         except Exception:
                             pass
+
+                    # ── Clip metadata['instances'] to match surviving dicom_files ──
+                    # If the size pre-filter removed mixed-dimension slices,
+                    # dicom_files is now shorter than metadata['instances'].  The
+                    # yielded (vtk, meta) pair must be aligned or get_count_of_slices
+                    # on the viewer will return meta_count > vtk_z, causing the
+                    # K-flip slider to map lower display positions to out-of-range
+                    # raw_k values → frozen image for the bottom half of the stack.
+                    try:
+                        _meta_insts = metadata.get('instances') or []
+                        if len(dicom_files) != len(_meta_insts):
+                            logger.warning(
+                                "[PARTIAL_STACK_CLIP] series=%s meta_instances=%d dicom_files=%d "
+                                "— clipping metadata to match loaded files",
+                                series_number, len(_meta_insts), len(dicom_files),
+                                extra={"component": "viewer"},
+                            )
+                            _surviving = {str(p).lower() for p in dicom_files}
+                            _clipped = [
+                                inst for inst in _meta_insts
+                                if str(inst.get('instance_path', '')).lower() in _surviving
+                            ]
+                            if len(_clipped) == len(dicom_files):
+                                metadata['instances'] = _clipped
+                            else:
+                                # Path matching incomplete — truncate by index as fallback
+                                metadata['instances'] = _meta_insts[:len(dicom_files)]
+                    except Exception:
+                        pass
 
                     # ── Alignment validation ─────────────────────────────────
                     try:

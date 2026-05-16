@@ -97,6 +97,16 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
     # ------------------------------------------------------------------
 
     def _move_along_stack(self, delta_mm):
+        if not bool(getattr(self.parent, "_guard_logged_mpr_stack_move", False)):
+            logger.warning(
+                "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=zeta_mpr_crosshair_move_along_stack "
+                "reason=local_crosshair_stack_motion_without_advanced_contract_adapter "
+                "fallback_behavior=continue_legacy_mpr_geometry_path action=warn_only"
+            )
+            try:
+                setattr(self.parent, "_guard_logged_mpr_stack_move", True)
+            except Exception:
+                pass
         scroll_dir = self.parent._get_scroll_direction(self.view_name)
         self.parent.current_position[0] += scroll_dir[0] * delta_mm
         self.parent.current_position[1] += scroll_dir[1] * delta_mm

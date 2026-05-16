@@ -517,6 +517,35 @@ class _VCLayoutMixin:
             self.parent_widget.on_slider_value_changed(vtk_widget, mid_slices)
             slider.valueChanged.connect(lambda val: self.parent_widget.on_slider_value_changed(vtk_widget, val))
             logger.debug("   âœ… Slider connected")
+            # Slider thumb-drag fast path: FAST-mode only, gated by AIPACS_SLIDER_FAST_DRAG=1.
+            # When enabled, sliderMoved routes through the full protected-drag pipeline
+            # (surrogate frames, render clock, GC suppression, FAST_DRAG_KPI).
+            # sliderPressed begins the session; sliderReleased ends it and arms the settle timer.
+            import os as _os_sfp
+            if _os_sfp.getenv('AIPACS_SLIDER_FAST_DRAG', '0') == '1':
+                try:
+                    from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import (
+                        QtFastContainer,
+                    )
+                    if isinstance(vtk_widget, QtFastContainer):
+                        vtk_widget._slider_thumb_drag_active = False
+
+                        def _sb_pressed(vw=vtk_widget):
+                            vw._slider_thumb_drag_active = True
+                            vw.begin_slider_drag_session()
+
+                        def _sb_moved(val, vw=vtk_widget):
+                            vw.set_slice_during_drag(val)
+
+                        def _sb_released(vw=vtk_widget):
+                            vw._slider_thumb_drag_active = False
+                            vw.end_slider_drag_session()
+
+                        slider.sliderPressed.connect(_sb_pressed)
+                        slider.sliderMoved.connect(_sb_moved)
+                        slider.sliderReleased.connect(_sb_released)
+                except Exception:
+                    pass  # Kill-switch block failure never breaks the standard valueChanged path
         except Exception as e:
             logger.warning(f"   âڑ ï¸ڈ Warning: Could not connect slider signal: {e}")
             self.logger.warning(f"Warning connecting slider signal: {e}")

@@ -538,6 +538,7 @@ class QtViewerBridge:
         self.vtk_widget = vtk_widget
         self.metadata = metadata or {}
         self.metadata_fixed = metadata_fixed or {}
+        self._fast_adv_leak_logged_sources: set[str] = set()
         self._debug_bridge_id = f"b{id(self) & 0xFFFFF:05x}"
         self._debug_viewer_id = f"q{id(qt_viewer) & 0xFFFFF:05x}"
         self._scroll_event_seq: int = 0
@@ -677,6 +678,39 @@ class QtViewerBridge:
             )
         except Exception as diag_exc:
             logger.error("[FAST_RENDER_CLOCK_CONFIG] diagnostic failed: %s", diag_exc, exc_info=True)
+
+        self._emit_fast_advanced_geometry_leak_guard(source="QtViewerBridge.__init__")
+
+    def _emit_fast_advanced_geometry_leak_guard(self, *, source: str) -> None:
+        """Warn-only guard: FAST bridge must not consume Advanced geometry contracts."""
+        if source in self._fast_adv_leak_logged_sources:
+            return
+        leaked: list[str] = []
+        try:
+            if isinstance(self.metadata, dict):
+                contract = str(self.metadata.get("instances_order_contract") or "")
+                if contract.startswith("ADVANCED_"):
+                    leaked.append("instances_order_contract")
+            if getattr(self, "_display_geometry_contract", None) is not None:
+                leaked.append("DisplayGeometry")
+            if getattr(self, "_source_geometry_contract", None) is not None:
+                leaked.append("SourceGeometry")
+            if getattr(self, "_geometry_api", None) is not None:
+                leaked.append("GeometryAPI")
+            if getattr(self, "_viewport_geometry_registry", None) is not None:
+                leaked.append("ViewportGeometryRegistry")
+        except Exception:
+            return
+        if not leaked:
+            return
+        self._fast_adv_leak_logged_sources.add(source)
+        logger.warning(
+            "[FAST_ADVANCED_GEOMETRY_LEAK_BLOCKED] source=%s leaked_object_type=%s backend=FAST "
+            "blocked_reason=fast_bridge_must_not_consume_advanced_geometry_contract action=warn_only",
+            source,
+            "|".join(leaked),
+            extra={"component": "viewer"},
+        )
 
     def _init_tool_controller(self) -> None:
         """Create and attach a ToolController to the Qt viewer."""
@@ -875,6 +909,18 @@ class QtViewerBridge:
     def set_slice(self, slice_index: int, fast_interaction: bool = False, *, interaction_type: str = '') -> None:
         """Public slice setter. Default behavior delegates to implementation."""
         self._set_slice_impl(slice_index, fast_interaction=fast_interaction, interaction_type=interaction_type)
+
+    def begin_slider_drag(self) -> None:
+        """Public API: begin a protected drag session from an external slider press."""
+        self._on_stack_drag_state(True)
+
+    def end_slider_drag(self) -> None:
+        """Public API: end the protected drag session on slider release."""
+        self._on_stack_drag_state(False)
+
+    def handle_slider_drag_target(self, value: int) -> None:
+        """Public API: route a slider thumb-drag value through the stack drag target path."""
+        self._on_stack_drag_target(int(value))
 
     def _set_slice_impl(self, slice_index: int, fast_interaction: bool = False, *, interaction_type: str = '') -> None:
         """
@@ -2335,7 +2381,7 @@ class QtViewerBridge:
             self._fast_pending_sync_update = True
             self._fast_pending_reference_update = True
             self.last_index_slice_saved = new_val
-            logger.info(
+            logger.debug(
                 "[FAST_CLOCK_SIDE_EFFECT_DEFERRED] drag_session_id=%s target_slice=%d "
                 "interaction=%s pending_slider=%s pending_sync=%s pending_reference=%s",
                 str(getattr(self, '_drag_session_id', '') or '-'),
@@ -2344,7 +2390,6 @@ class QtViewerBridge:
                 self._fast_pending_slider_value is not None,
                 bool(getattr(self, '_fast_pending_sync_update', False)),
                 bool(getattr(self, '_fast_pending_reference_update', False)),
-                extra={"component": "viewer"},
             )
             return True
         else:
@@ -2364,31 +2409,86 @@ class QtViewerBridge:
             set_slice_ms = (time.perf_counter() - t_stage) * 1000.0
         self.last_index_slice_saved = new_val
 
-        # C4: Defer slider/sync/reference-line to settle-time final flush.
-        # Only the image_viewer reference assignment is kept immediate (benign
-        # same-pointer write required within this tick by other code paths).
-        # Clock mode has already returned above via the early-return branch;
-        # this code is therefore only reached from the non-clock path.
+        # Non-clock path side-effects.
+        # ARCHITECTURE: _vw_scroll.py::set_slice is NOT called for FAST wheel or
+        # stack drag.  User scroll from QtSliceViewer goes through _on_qt_scroll /
+        # _on_stack_drag_target → _apply_interaction_target directly, bypassing
+        # VTKWidget.set_slice entirely.  Therefore, live sync and reference-line
+        # during FAST scrolling MUST be owned here.  _vw_scroll.py only runs for
+        # slider drag and external set_slice calls.
+        #
+        # Reference-line design: do NOT call _schedule_reference_line_update directly.
+        # Let it fire from _do_lock_sync at the end of every sync cycle.
+        # A direct per-tick call restarts the 50 ms timer every ~20 ms so the
+        # trailing edge never fires and manage_reference_line(repaint=False) runs
+        # at ~50 Hz → ui_lag p50 regresses from 12 ms → 80 ms.
+        # Via _do_lock_sync, reference-line fires at ~10 Hz (100 ms sync throttle)
+        # with a proper 50 ms trailing-edge repaint.
         if self.vtk_widget is not None:
             self.vtk_widget.image_viewer = self
+
+        # Slider: visual-only live update (blockSignals prevents downstream callbacks).
+        t_slider = time.perf_counter()
+        _slider_live = getattr(self.vtk_widget, 'slider', None) if self.vtk_widget is not None else None
+        if _slider_live is not None:
+            try:
+                _slider_live.blockSignals(True)
+                _slider_live.setValue(int(new_val))
+            finally:
+                try:
+                    _slider_live.blockSignals(False)
+                except Exception:
+                    pass
+        slider_ms = (time.perf_counter() - t_slider) * 1000.0
+
+        # Sync callback: 100 ms throttle (matching _vw_scroll.py) so lock-sync and
+        # its downstream _schedule_reference_line_update fire at ~10 Hz during drag.
+        # Uses vtk_widget._last_lock_sync_ms (shared with _vw_scroll.py) to prevent
+        # double-firing when slider-drag interleaves with Qt-scroll within 100 ms.
+        _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None) if self.vtk_widget is not None else None
+        if _cb is not None:
+            try:
+                _t_sync = time.perf_counter() * 1000.0
+                _last_sync = float(getattr(self.vtk_widget, '_last_lock_sync_ms', 0.0) or 0.0)
+                if (_t_sync - _last_sync) >= 100.0:
+                    try:
+                        self.vtk_widget._last_lock_sync_ms = _t_sync
+                    except Exception:
+                        pass
+                    _cb(self.vtk_widget)
+            except Exception:
+                pass
+
+        # Reference-line: call every tick so reference lines animate live during drag
+        # whether or not Lock Sync is enabled.  Mirrors _vw_scroll.py line 652.
+        # _schedule_reference_line_update has its own 50 ms leading+trailing debounce,
+        # so calling at mouse-event rate is safe: manage_reference_line(repaint=False)
+        # runs at most 20 Hz (once per 50 ms window) and the repaint round-robin fires
+        # every 50 ms.  The Lock Sync path also calls this via _do_lock_sync, but that
+        # requires Lock Sync to be enabled — this direct call covers the Lock Sync OFF case.
+        try:
+            _pw = getattr(self.vtk_widget, 'patient_widget', None) if self.vtk_widget is not None else None
+            if _pw is not None and hasattr(_pw, '_schedule_reference_line_update'):
+                _pw._schedule_reference_line_update()
+        except Exception:
+            pass
+
+        # Pending flags retained so settle-flush writes the exact last accepted
+        # target (correct for surrogate frames) and re-fires sync+reference once
+        # more unconditionally at drag release.
         self._fast_pending_slider_value = int(new_val)
         self._fast_pending_sync_update = True
         self._fast_pending_reference_update = True
-        slider_ms = 0.0
-        sync_ms = 0.0
-        reference_ms = 0.0
 
         total_ms = (time.perf_counter() - t_total) * 1000.0
         if total_ms >= _SET_SLICE_STAGE_LOG_THRESHOLD_MS and not self._stack_drag_active:
             logger.info(
                 "[FAST_QT_SCROLL_STAGE] target=%d total_ms=%.1f set_slice_ms=%.1f "
-                "slider_ms=%.1f sync_ms=%.1f reference_ms=%.1f drag=%s interaction=%s",
+                "slider_ms=%.1f drag=%s interaction=%s",
                 new_val,
                 total_ms,
                 set_slice_ms,
                 slider_ms,
-                sync_ms,
-                reference_ms,
                 bool(self._stack_drag_active),
                 interaction_type,
             )
@@ -2666,7 +2766,7 @@ class QtViewerBridge:
             item = self._fast_present_trace_pending.get(int(request_id))
             if item is not None:
                 item['clock_generation'] = int(self._fast_request_generation)
-        logger.info(
+        logger.debug(
             "[FAST_RENDER_CLOCK] event=request drag_session_id=%s requested_slice=%d presented_slice=%s "
             "request_generation=%d last_presented_generation=%d request_to_present_ms=0.000 "
             "tick_interval_ms=%.1f missed_tick_count=%d superseded_count=%d interaction_type=%s reason=%s",
@@ -3156,6 +3256,7 @@ class QtViewerBridge:
             pass
 
     def _on_stack_drag_target(self, target_slice: int) -> None:
+        self._emit_fast_advanced_geometry_leak_guard(source="QtViewerBridge._on_stack_drag_target")
         self._mark_interaction_event()
         metrics = self._drag_metrics
         event_interval_ms = None
@@ -3227,6 +3328,7 @@ class QtViewerBridge:
         The unified settle timer fires end_fast_interaction() 200ms after the
         last event from either source.
         """
+        self._emit_fast_advanced_geometry_leak_guard(source="QtViewerBridge._on_qt_scroll")
         self._mark_interaction_event()
         apply_target = getattr(self, '_apply_interaction_target', None)
         if apply_target is None:

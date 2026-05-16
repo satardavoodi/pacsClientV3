@@ -1,0 +1,59 @@
+{
+  "viewer": "AI-PACS",
+  "mode": "overlap-log-parse",
+  "scenario": "aipacs_live_download_overlap",
+  "log_path": "user_data\\logs\\viewer_diagnostics.log",
+  "overlap_metrics": {
+    "overlap_sample_count": 0,
+    "overlap_set_slice_present_p95_ms": 0.0,
+    "overlap_set_slice_present_p50_ms": 0.0,
+    "overlap_decode_p95_ms": 0.0,
+    "overlap_decode_p50_ms": 0.0,
+    "overlap_wl_p95_ms": 0.0,
+    "overlap_cache_hit_ratio_pct": 0.0,
+    "overlap_cache_breakdown": {
+      "hit": 0,
+      "surrogate": 0,
+      "decode": 0
+    },
+    "overlap_settled_breakdown": {
+      "settled_true": 0,
+      "settled_false": 0
+    },
+    "overlap_slow_frame_count_16ms": 0,
+    "overlap_slow_frame_pct_16ms": 0.0,
+    "overlap_slow_frame_source_breakdown": {
+      "hit": 0,
+      "surrogate": 0,
+      "decode": 0
+    },
+    "overlap_hit_present_p95_ms": 0.0,
+    "overlap_surrogate_present_p95_ms": 0.0,
+    "overlap_decode_only_p95_ms": 0.0,
+    "overlap_decode_only_max_ms": 0.0,
+    "overlap_decode_sample_count": 0,
+    "overlap_decode_sample_share_pct": 0.0,
+    "overlap_settled_present_p95_ms": 0.0,
+    "overlap_settled_sample_count": 0,
+    "overlap_effective_fps": 0.0,
+    "overlap_effective_fps_source": "none",
+    "overlap_foreground_wait_p95_ms": 0.0,
+    "overlap_pixel_hash_match_pct_settled": null,
+    "overlap_pixel_hash_match_pct_surrogate": null,
+    "overlap_sentinel_breakdown": {
+      "decode": 0,
+      "drag_begin": 0,
+      "drag_end": 0,
+      "other": 0
+    },
+    "overlap_sentinel_emit_count": 0,
+    "overlap_drag_burst_count": 73,
+    "overlap_drag_event_p95_max_ms": 844.7,
+    "overlap_drag_event_p95_p95_ms": 633.4,
+    "overlap_drag_handler_p95_max_ms": 6.7,
+    "overlap_drag_ui_lag_max_max_ms": 57235.3,
+    "overlap_drag_ui_lag_max_p95_ms": 4312.04,
+    "overlap_drag_prefetch_per_s_avg": 5.34,
+    "overlap_drag_background_decode_count_total": 891
+  }
+}

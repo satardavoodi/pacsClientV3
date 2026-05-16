@@ -86,6 +86,11 @@ class VolumeLoader:
             FileNotFoundError: If directory doesn't exist
             ValueError: If no DICOM series found
         """
+        logger.warning(
+            "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=orthogonal_volume_loader_load_dicom_series "
+            "reason=sitk_vtk_path_without_advanced_contract_adapter fallback_behavior=continue_local_coordinate_system "
+            "action=warn_only"
+        )
         directory = Path(directory)
         if not directory.exists():
             raise FileNotFoundError(f"Directory not found: {directory}")
@@ -152,6 +157,11 @@ class VolumeLoader:
         Returns:
             Loaded SimpleITK Image
         """
+        logger.warning(
+            "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=orthogonal_volume_loader_load_mhd "
+            "reason=sitk_vtk_path_without_advanced_contract_adapter fallback_behavior=continue_local_coordinate_system "
+            "action=warn_only"
+        )
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"File not found: {path}")
@@ -189,6 +199,11 @@ class VolumeLoader:
         Returns:
             Loaded SimpleITK Image
         """
+        logger.warning(
+            "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=orthogonal_volume_loader_load_nifti "
+            "reason=sitk_vtk_path_without_advanced_contract_adapter fallback_behavior=continue_local_coordinate_system "
+            "action=warn_only"
+        )
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f"File not found: {path}")

@@ -13,6 +13,7 @@ All tests are pure Python — no Qt needed unless marked ``qt``.
 from __future__ import annotations
 
 import math
+import logging
 import sys
 import os
 from types import SimpleNamespace
@@ -250,6 +251,134 @@ class TestVtkWorldToPatient:
         assert abs(patient[0] - 5.0) < 1e-6
         assert abs(patient[1] - 6.0) < 1e-6
         assert abs(patient[2] - 2.0) < 1e-6
+
+
+class TestSyncOrderDomainIsolation:
+    """Regression tests for FAST/Advanced metadata order domain isolation."""
+
+    @staticmethod
+    def _instances_mixed_order():
+        # InstanceNumber/display order: 1,2,3 ; IPP z order: +30,+10,+20 (different)
+        return [
+            {
+                "instance_number": 1,
+                "sop_uid": "SOP-1",
+                "instance_path": "a/Instance_0001.dcm",
+                "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                "image_position_patient": [0.0, 0.0, 30.0],
+            },
+            {
+                "instance_number": 2,
+                "sop_uid": "SOP-2",
+                "instance_path": "a/Instance_0002.dcm",
+                "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                "image_position_patient": [0.0, 0.0, 10.0],
+            },
+            {
+                "instance_number": 3,
+                "sop_uid": "SOP-3",
+                "instance_path": "a/Instance_0003.dcm",
+                "image_orientation_patient": [1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+                "image_position_patient": [0.0, 0.0, 20.0],
+            },
+        ]
+
+    @staticmethod
+    def _viewer(instances, *, is_qt=False):
+        return SimpleNamespace(
+            IS_QT_BRIDGE=bool(is_qt),
+            vtk_image_data=(object() if not is_qt else None),
+            metadata={
+                "instances": list(instances),
+                "series": {"series_uid": "series-test"},
+            },
+            _display_geometry_contract=None,
+            _source_geometry_contract=None,
+        )
+
+    def test_fast_metadata_order_preserved(self):
+        instances = self._instances_mixed_order()
+        viewer = self._viewer(instances, is_qt=True)
+        before_sops = [inst["sop_uid"] for inst in viewer.metadata["instances"]]
+
+        out = _PWSyncMixin._geometry_instances_for_viewer(
+            viewer,
+            caller="test_fast_metadata_order_preserved",
+            current_slice_index=1,
+        )
+
+        after_sops = [inst["sop_uid"] for inst in viewer.metadata["instances"]]
+        assert [inst["sop_uid"] for inst in out] == before_sops
+        assert after_sops == before_sops
+
+    def test_fast_instances_sorted_by_instance_number(self):
+        """FAST mode must sort by InstanceNumber to match Lightweight2DPipeline._sort_slices (v2.3.8 precision fix)."""
+        # Create mixed-order instances: [#3, #1, #2] metadata order
+        instances = [
+            {"instance_number": 3, "instance_path": f"/path/inst3.dcm", "sop_uid": "sop3", "image_position_patient": [0, 0, 30], "image_orientation_patient": (1, 0, 0, 0, 1, 0), "pixel_spacing": (1, 1), "rows": 10, "columns": 10},
+            {"instance_number": 1, "instance_path": f"/path/inst1.dcm", "sop_uid": "sop1", "image_position_patient": [0, 0, 10], "image_orientation_patient": (1, 0, 0, 0, 1, 0), "pixel_spacing": (1, 1), "rows": 10, "columns": 10},
+            {"instance_number": 2, "instance_path": f"/path/inst2.dcm", "sop_uid": "sop2", "image_position_patient": [0, 0, 20], "image_orientation_patient": (1, 0, 0, 0, 1, 0), "pixel_spacing": (1, 1), "rows": 10, "columns": 10},
+        ]
+        viewer = self._viewer(instances, is_qt=True)
+
+        out = _PWSyncMixin._geometry_instances_for_viewer(
+            viewer,
+            caller="test_fast_instances_sorted_by_instance_number",
+            current_slice_index=0,
+        )
+
+        # Verify returned order matches InstanceNumber sorting
+        out_numbers = [inst["instance_number"] for inst in out]
+        assert out_numbers == [1, 2, 3], f"Expected [1, 2, 3], got {out_numbers}"
+        
+        # Verify shared metadata was NOT mutated
+        meta_numbers = [inst["instance_number"] for inst in viewer.metadata["instances"]]
+        assert meta_numbers == [3, 1, 2], f"Metadata was mutated! Got {meta_numbers}"
+
+    def test_fast_current_index_same_sop_before_after(self):
+        instances = self._instances_mixed_order()
+        viewer = self._viewer(instances, is_qt=True)
+        k = 1
+        before = viewer.metadata["instances"][k]["sop_uid"]
+
+        _ = _PWSyncMixin._geometry_instances_for_viewer(
+            viewer,
+            caller="test_fast_current_index_same_sop_before_after",
+            current_slice_index=k,
+        )
+
+        after = viewer.metadata["instances"][k]["sop_uid"]
+        assert after == before
+
+    def test_advanced_local_sort_copy_keeps_shared_metadata_unchanged(self):
+        instances = self._instances_mixed_order()
+        viewer = self._viewer(instances, is_qt=False)
+        before_sops = [inst["sop_uid"] for inst in viewer.metadata["instances"]]
+
+        out = _PWSyncMixin._geometry_instances_for_viewer(
+            viewer,
+            caller="test_advanced_local_sort_copy_keeps_shared_metadata_unchanged",
+            current_slice_index=0,
+        )
+
+        sorted_sops = [inst["sop_uid"] for inst in out]
+        after_sops = [inst["sop_uid"] for inst in viewer.metadata["instances"]]
+
+        assert after_sops == before_sops
+        assert sorted_sops != before_sops
+
+    def test_mutation_guard_emits_blocked_log(self, caplog):
+        instances = self._instances_mixed_order()
+        viewer = self._viewer(instances, is_qt=False)
+
+        with caplog.at_level(logging.WARNING):
+            _ = _PWSyncMixin._geometry_instances_for_viewer(
+                viewer,
+                caller="test_mutation_guard_emits_blocked_log",
+                current_slice_index=0,
+            )
+
+        assert any("[SYNC_METADATA_ORDER_MUTATION_BLOCKED]" in rec.message for rec in caplog.records)
 
     def test_top_maps_to_bottom(self):
         """Y=0 in VTK (top) maps to Y=extent_y_itk in patient space."""

@@ -52,6 +52,16 @@ class _MprObliqueMixin:
         5 points per target reconstruction plane (C + 4 on the
         relevant line).
         """
+        if not bool(getattr(self, "_guard_logged_mpr_oblique_update", False)):
+            logger.warning(
+                "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=zeta_mpr_oblique_update "
+                "reason=local_oblique_plane_update_without_advanced_contract_adapter "
+                "fallback_behavior=continue_legacy_mpr_oblique_path action=warn_only"
+            )
+            try:
+                setattr(self, "_guard_logged_mpr_oblique_update", True)
+            except Exception:
+                pass
         if not self.oblique_enabled:
             logger.debug("Oblique reslicing disabled - crosshair rotation is visual only")
             if self._oblique_cameras_active:

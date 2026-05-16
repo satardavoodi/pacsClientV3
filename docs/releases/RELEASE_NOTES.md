@@ -1,34 +1,32 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.0.2 (2026-05-13)
-**Previous Stable:** v2.5.4 (2026-05-12)
-**Release Date:** 2026-05-13
+**Current Stable Version:** v3.0.3 (2026-05-16)
+**Previous Stable:** v3.0.2 (2026-05-13)
+**Release Date:** 2026-05-16
 **Branch:** beta-version
 
 ---
 
-## v3.0.2 (2026-05-13) - FAST smoothness validation build for multi-PC testing
+## v3.0.3 (2026-05-16) - FAST-to-MPR route hardening and geometry boundary stabilization
 
 ### Summary
 
-This release packages the validated FAST smoothness work into a multi-PC test candidate while keeping conservative defaults and preserving diagnostics.
-Full details in [`VERSION_3.0.2_RELEASE.md`](VERSION_3.0.2_RELEASE.md).
+This release packages the FAST-to-MPR route fixes and geometry boundary hardening into the beta branch as a release snapshot.
+Full details in [`VERSION_3.0.3_RELEASE.md`](VERSION_3.0.3_RELEASE.md).
 
 ### Included
 
-- Progressive grow defer/budget behavior during active interaction
-- Retroactive metadata sync cap/throttle fix
-- FAST Render Clock experiment (default remains safe/off unless configured)
-- FAST clock side-effect deferral
-- Runtime diagnostics for FAST render clock and smoothness KPIs
-- Plugin mirror parity updates for modified FAST files
+- FAST MPR route resolution from FAST viewer state
+- VTK bridge and audit-safe full-volume loading for MPR
+- Geometry boundary guard logging and regression coverage
+- Release snapshot updates and version marker alignment
 
 ### Validation Scope
 
-- `tests/viewer/test_fast_render_clock_experiment.py`
-- `tests/viewer/test_qt_stack_drag_bridge.py`
+- `tests/viewer/test_mpr_launch_route.py`
+- `tests/viewer/test_mpr_vtk_load_bridge.py`
+- `tests/architecture/test_backend_geometry_boundary_guards.py`
 - `tests/viewer/test_fast_viewer_pipeline.py`
-- `tests/viewer/test_retroactive_metadata_sync_fix.py`
 
 ---
 

@@ -333,6 +333,37 @@ class QtFastContainer(QWidget):
         if self._qt_bridge:
             self._qt_bridge.set_slice(value)
 
+    def begin_slider_drag_session(self) -> None:
+        """Begin a protected FAST drag session from slider thumb-press."""
+        if self._qt_bridge is not None:
+            try:
+                self._qt_bridge.begin_slider_drag()
+            except Exception:
+                pass
+
+    def end_slider_drag_session(self) -> None:
+        """End the protected FAST drag session on slider thumb-release."""
+        if self._qt_bridge is not None:
+            try:
+                self._qt_bridge.end_slider_drag()
+            except Exception:
+                pass
+
+    def set_slice_during_drag(self, value: int) -> None:
+        """Fast-path slice setter for active slider thumb drag.
+        Routes through _on_stack_drag_target for surrogate/metrics/render-clock path."""
+        if self._qt_bridge is not None:
+            try:
+                self._qt_bridge.handle_slider_drag_target(int(value))
+                return
+            except Exception:
+                pass
+            # Fallback: direct set_slice if drag-target path fails
+            try:
+                self._qt_bridge.set_slice(value)
+            except Exception:
+                pass
+
     # ── Core image-display methods ────────────────────────────────────────
 
     def _start_qt_viewer(self, metadata, metadata_fixed):

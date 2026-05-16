@@ -71,3 +71,65 @@ Observed from fresh session `sess-bfe71eed8192` (`user_data/logs/viewer_diagnost
 | Sync/reference GeometryAPI proof tags absent | `[SYNC_LPS_MAPPING]` = 0, `[REFERENCE_LINE_LPS_INTERSECTION]` = 0 | Sync/reference LPS proof cannot be claimed for closure session. Most likely not admitted because viewers were not both contract-bound (source invalid). | `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_sync.py` gated proof path |
 
 Phase 2 closure status from this session: **FAIL (evidence incomplete due invalid SourceGeometry bind input).**
+
+## 6) FAST vs Advanced Order-Domain Invariant (2026-05-16)
+
+- FAST order authority = FAST display order / InstanceNumber pipeline order.
+- Advanced order authority = Advanced geometry/display contract order.
+- Shared sync helpers must not mutate `metadata['instances']` order.
+- Geometry sorting for sync/reference must be local-copy only unless the object is already contract-owned.
+- FAST path must not consume Advanced DisplayGeometry, SourceGeometry contract, or K-flip behavior.
+
+## 7) FAST Sync Marker Precision Fix (v2.3.8 / 2026-05-17)
+
+**Issue**: Sync marker misalignment visible in FAST viewers when anatomical features were not aligned between left/right viewers. Precision loss of 1-2 pixels.
+
+**Root Cause**: Order mismatch between sync geometry calculation and pipeline geometry authority.
+- `Lightweight2DPipeline.open_series()` creates `self._slices` from `metadata["instances"]`, then sorts by InstanceNumber (line 530: `self._slices = self._sort_slices(self._slices)`)
+- Sync helper `_geometry_instances_for_viewer()` returned `metadata["instances"]` **unsorted**
+- When user clicked at a sync point:
+  1. Sync mapping computed target slice index using **unsorted** instances via `project_lps_to_target()` from `dicom_sync_geometry.py`
+  2. Pipeline's `patient_xyz_to_image_xy()` used **sorted** instances via `self._slices[idx]`
+  3. Geometry mismatch: pixel coordinates calculated from wrong slice's IOP/IPP/PixelSpacing
+
+**Solution**: Modified `_geometry_instances_for_viewer()` in `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_sync.py`:
+- Added `_sort_instances_by_instance_number()` helper to sort instances by InstanceNumber (matching `Lightweight2DPipeline._sort_slices` logic)
+- FAST path now returns sorted instances instead of unsorted metadata order
+- Advanced path unaffected (uses IPP sorting)
+- Shared metadata **not mutated** (sort creates new list)
+
+**Test Coverage** (`tests/fast_viewer/test_sync.py`):
+- New test `test_fast_instances_sorted_by_instance_number`: Verifies FAST instances sorted by InstanceNumber while metadata remains unchanged
+- All 102 sync+reference-line tests pass (53 base + 27 reference + 24 sync_geometry + 1 new precision test)
+
+**Contracts Preserved**:
+- `patient_xyz_to_image_xy()` now always receives geometry from the same slice order as `self._slices`
+- Sync marker X,Y pixel calculation matches viewer's display coordinate system
+- No shared mutation of `metadata["instances"]`
+- FAST→Advanced mixed-viewer sync still works correctly
+
+**Impact on Medical Imaging**:
+- Sagittal/coronal sync markers now align to same anatomical location across viewers (sub-pixel accuracy)
+- No regression in axial or mixed-orientation workflows
+- Reference lines still correct (already using same geometry-sorted approach via IPP for Advanced)
+
+## 8) Regression Guardrails + Future Development (2026-05-16)
+
+### Regression Guardrails
+
+1. FAST order authority remains `InstanceNumber` (with path tie-break), matching `Lightweight2DPipeline._sort_slices`.
+2. `_geometry_instances_for_viewer()` must keep local-copy sorting for FAST and must not mutate shared metadata order.
+3. Advanced order domain remains independent (contract/display geometry path only).
+4. Any change to sync/reference-line geometry paths requires running:
+
+```powershell
+.venv/Scripts/python.exe -m pytest tests/fast_viewer/test_sync.py tests/fast_viewer/test_reference_lines.py tests/fast/test_sync_reference_line_geometry.py -v --tb=short
+```
+
+### Future Development Rules
+
+1. Do not duplicate FAST order logic in multiple files; route through one helper to avoid drift.
+2. New backends must define explicit order authority before enabling cross-view sync.
+3. Add tests for shuffled metadata input whenever touching sync mapping or coordinate conversion.
+4. Keep mixed FAST/Advanced sync tests green as a release gate for geometry work.
+

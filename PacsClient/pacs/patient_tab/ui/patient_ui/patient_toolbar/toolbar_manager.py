@@ -19,6 +19,7 @@ from PacsClient.pacs.patient_tab.utils import NodeViewer, MatrixSelector
 from PacsClient.utils import ICON_PATH
 from modules.network.upload_download_attchments import upload_attachments_for_study
 from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
+from PacsClient.utils.structured_logging import emit_viewer_event
 from PacsClient.utils.config import ATTACHMENT_PATH
 from PacsClient.utils import list_files_in_folder
 from PacsClient.utils import get_attachments_uploaded
@@ -4260,53 +4261,24 @@ class ToolbarManager:
                 logger.info(f"   📦 [MPR OPEN] thumb_metadata keys: {thumb_metadata.keys() if thumb_metadata else 'None'}")
                 
                 logger.info(f"   📦 [MPR OPEN] Using series_number: {series_number}, index: {active_series_index}")
-                thumb_series_meta = thumb_metadata.get('series', {}) if isinstance(thumb_metadata, dict) else {}
-                source_series_path = thumb_series_meta.get('series_path')
-                
+                vtk_image_data, route = self._resolve_mpr_volume_for_route(
+                    series_data=series_data,
+                    series_number=series_number,
+                    mpr_path="orthogonal",
+                )
                 if vtk_image_data is None:
-                    logger.error(f"   ❌ [MPR OPEN] No VTK image data for series {series_number} at index {active_series_index}")
+                    logger.error("   ❌ [MPR OPEN] MPR route blocked before launch")
                     logger.info("=" * 100)
                     QMessageBox.warning(
                         self.patient_widget,
-                        "No Image Data",
-                        f"No VTK image data available for series {series_number}."
+                        "MPR Not Available",
+                        self._mpr_route_block_message(route.get("reason")),
                     )
+                    selected_widget.setVisible(True)
                     return
-                    
+
                 logger.info(f"   ✅ Found series {series_number} at list index {active_series_index}")
                 logger.info(f"   vtk_image_data dimensions: {vtk_image_data.GetDimensions()}")
-
-                # In FAST mode (pydicom_qt) the stored vtk_image_data can be a lightweight
-                # placeholder. Even if placeholder scalars are allocated, MPR needs a full
-                # decoded volume from DICOM files.
-                thumb_backend = str(thumb_series_meta.get('viewer_backend', '') or '').strip().lower()
-                needs_full_vtk_for_mpr = (thumb_backend == str(BACKEND_PYDICOM_QT).lower())
-                if not needs_full_vtk_for_mpr:
-                    try:
-                        if vtk_image_data.GetPointData().GetScalars() is None:
-                            needs_full_vtk_for_mpr = True
-                    except Exception:
-                        needs_full_vtk_for_mpr = True
-
-                if needs_full_vtk_for_mpr:
-                    logger.info("   ℹ️ [MPR OPEN] vtk_image_data is a FAST-mode stub — loading full VTK from disk")
-                    full_vtk = self._load_full_vtk_for_mpr(
-                        series_number=series_number,
-                        preferred_series_path=source_series_path,
-                    )
-                    if full_vtk is None:
-                        logger.error("   ❌ [MPR OPEN] Failed to load full VTK data for MPR")
-                        QMessageBox.warning(
-                            self.patient_widget,
-                            "MPR Not Available",
-                            "Cannot load the full volume for MPR in FAST mode.\n\n"
-                            "Make sure the series is fully downloaded, then try again.\n\n"
-                            "Alternatively, switch to Advanced mode (VTK SimpleITK) and reload the series.",
-                        )
-                        selected_widget.setVisible(True)
-                        return
-                    vtk_image_data = full_vtk
-                    logger.info(f"   ✅ [MPR OPEN] Full VTK loaded: dims={vtk_image_data.GetDimensions()}")
 
                 # Remember which series spawned MPR so we can restore on close
                 # Store BOTH series_number (for display) and index (for data lookup)
@@ -4392,6 +4364,13 @@ class ToolbarManager:
                 # Set tool as active and update button state (turns green)
                 self.tool_selected = self.tool_access.MPR
                 self.handle_buttons_checked()
+
+                self._emit_mpr_launch_route(
+                    source_backend=route.get("source_backend"),
+                    mpr_path="orthogonal",
+                    series_number=series_number,
+                    status="launched",
+                )
                 
                 logger.info("✓ Zeta MPR viewer replaced viewport successfully")
                 logger.info("✓ MPR button is now active (green)")
@@ -4399,6 +4378,16 @@ class ToolbarManager:
                 pass
                         
         except Exception as e:
+            try:
+                self._emit_mpr_launch_route(
+                    source_backend="unknown",
+                    mpr_path="orthogonal",
+                    series_number="unknown",
+                    status="blocked",
+                    reason="exception",
+                )
+            except Exception:
+                pass
             logger.error(f"ERROR launching Zeta MPR: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
@@ -4501,37 +4490,18 @@ class ToolbarManager:
                 return
             
             try:
-                vtk_image_data = series_data.get('vtk_image_data')
+                vtk_image_data, route = self._resolve_mpr_volume_for_route(
+                    series_data=series_data,
+                    series_number=series_number,
+                    mpr_path="curved",
+                )
                 if vtk_image_data is None:
-                    QMessageBox.warning(self.patient_widget, "No Image Data", f"No VTK image data available for series {series_number}.")
-                    return
-
-                thumb_metadata = series_data.get('metadata', {})
-                thumb_series_meta = thumb_metadata.get('series', {}) if isinstance(thumb_metadata, dict) else {}
-                source_series_path = thumb_series_meta.get('series_path')
-                thumb_backend = str(thumb_series_meta.get('viewer_backend', '') or '').strip().lower()
-                needs_full_vtk_for_mpr = (thumb_backend == str(BACKEND_PYDICOM_QT).lower())
-                if not needs_full_vtk_for_mpr:
-                    try:
-                        if vtk_image_data.GetPointData().GetScalars() is None:
-                            needs_full_vtk_for_mpr = True
-                    except Exception:
-                        needs_full_vtk_for_mpr = True
-
-                if needs_full_vtk_for_mpr:
-                    full_vtk = self._load_full_vtk_for_mpr(
-                        series_number=series_number,
-                        preferred_series_path=source_series_path,
+                    QMessageBox.warning(
+                        self.patient_widget,
+                        "MPR Not Available",
+                        self._mpr_route_block_message(route.get("reason")),
                     )
-                    if full_vtk is None:
-                        QMessageBox.warning(
-                            self.patient_widget,
-                            "MPR Not Available",
-                            "Cannot load the full volume for Curved MPR in FAST mode.\n\n"
-                            "Make sure the series is fully downloaded, then try again.",
-                        )
-                        return
-                    vtk_image_data = full_vtk
+                    return
             except Exception as e:
                 QMessageBox.warning(self.patient_widget, "Data Error", f"Error accessing series data: {str(e)}")
                 return
@@ -4652,14 +4622,118 @@ class ToolbarManager:
             
             self.tool_selected = self.tool_access.CURVED_MPR
             self.handle_buttons_checked()
+
+            self._emit_mpr_launch_route(
+                source_backend=route.get("source_backend"),
+                mpr_path="curved",
+                series_number=series_number,
+                status="launched",
+            )
             
         except Exception as e:
+            try:
+                self._emit_mpr_launch_route(
+                    source_backend="unknown",
+                    mpr_path="curved",
+                    series_number="unknown",
+                    status="blocked",
+                    reason="exception",
+                )
+            except Exception:
+                pass
             logger.error(f"ERROR launching Curve MPR: {e}", exc_info=True)
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self.patient_widget, "Error", f"Error launching Curve MPR:\n{str(e)}")
             if selected_widget:
                 selected_widget.setVisible(True)
+
+    def _resolve_mpr_volume_for_route(self, *, series_data, series_number, mpr_path):
+        """Resolve a launch-ready VTK volume for MPR without mutating FAST metadata order."""
+        thumb_metadata = series_data.get('metadata', {})
+        thumb_series_meta = thumb_metadata.get('series', {}) if isinstance(thumb_metadata, dict) else {}
+        source_backend = str(thumb_series_meta.get('viewer_backend', '') or '').strip().lower() or "unknown"
+        source_series_path = thumb_series_meta.get('series_path')
+        vtk_image_data = series_data.get('vtk_image_data')
+
+        if vtk_image_data is None:
+            self._emit_mpr_launch_route(
+                source_backend=source_backend,
+                mpr_path=mpr_path,
+                series_number=series_number,
+                status="blocked",
+                reason="no_vtk_data",
+            )
+            return None, {"source_backend": source_backend, "reason": "no_vtk_data"}
+
+        needs_full_vtk_for_mpr = (source_backend == str(BACKEND_PYDICOM_QT).lower())
+        if not needs_full_vtk_for_mpr:
+            try:
+                if vtk_image_data.GetPointData().GetScalars() is None:
+                    needs_full_vtk_for_mpr = True
+            except Exception:
+                needs_full_vtk_for_mpr = True
+
+        if needs_full_vtk_for_mpr:
+            full_vtk = self._load_full_vtk_for_mpr(
+                series_number=series_number,
+                preferred_series_path=source_series_path,
+            )
+            if full_vtk is None:
+                self._emit_mpr_launch_route(
+                    source_backend=source_backend,
+                    mpr_path=mpr_path,
+                    series_number=series_number,
+                    status="blocked",
+                    reason="full_volume_load_failed",
+                )
+                return None, {
+                    "source_backend": source_backend,
+                    "reason": "full_volume_load_failed",
+                }
+            self._emit_mpr_launch_route(
+                source_backend=source_backend,
+                mpr_path=mpr_path,
+                series_number=series_number,
+                status="route_ready",
+                reason="loaded_full_volume",
+            )
+            return full_vtk, {"source_backend": source_backend, "reason": "loaded_full_volume"}
+
+        self._emit_mpr_launch_route(
+            source_backend=source_backend,
+            mpr_path=mpr_path,
+            series_number=series_number,
+            status="route_ready",
+            reason="using_existing_volume",
+        )
+        return vtk_image_data, {"source_backend": source_backend, "reason": "using_existing_volume"}
+
+    @staticmethod
+    def _mpr_route_block_message(reason):
+        if reason == "no_vtk_data":
+            return (
+                "MPR cannot be opened because the current series has no image volume data.\n\n"
+                "Please load or re-open the series and try again."
+            )
+        if reason == "full_volume_load_failed":
+            return (
+                "MPR requires a full decoded volume for this series, but it could not be loaded.\n\n"
+                "Make sure the series files are present and readable, then try again."
+            )
+        return "MPR launch was blocked due to missing or invalid volume data."
+
+    def _emit_mpr_launch_route(self, *, source_backend, mpr_path, series_number, status, reason=None):
+        emit_viewer_event(
+            logger,
+            "MPR_LAUNCH_ROUTE",
+            source_backend=source_backend or "unknown",
+            mpr_path=mpr_path,
+            series_number=series_number,
+            study_uid=getattr(self.patient_widget, 'study_uid', None) or "none",
+            status=status,
+            reason=reason,
+        )
 
     def toggle_mpr_DEPRECATED_OLD_MPRVIEWER(self, selected_widget=None):
         """
