@@ -5,6 +5,7 @@ from PySide6.QtWidgets import QPushButton, QToolBar, QToolButton, QMenu, QWidget
     QGroupBox, QApplication, QProgressDialog,QScrollArea,QFrame
 import qtawesome as qta
 from PySide6.QtGui import QFont
+from functools import partial
 import json
 import logging
 import os
@@ -32,6 +33,42 @@ from modules.zeta_sync.sync_types import SyncMode
 
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_float_triplet(values):
+    try:
+        if values is None or len(values) < 3:
+            return None
+        return [float(values[0]), float(values[1]), float(values[2])]
+    except Exception:
+        return None
+
+
+def _format_triplet(values):
+    vec = _safe_float_triplet(values)
+    if vec is None:
+        return "none"
+    return f"[{vec[0]:.6f},{vec[1]:.6f},{vec[2]:.6f}]"
+
+
+def _classify_plane_from_iop(iop_values):
+    try:
+        if iop_values is None or len(iop_values) < 6:
+            return "unknown", "none", 0.0
+        row = [float(iop_values[0]), float(iop_values[1]), float(iop_values[2])]
+        col = [float(iop_values[3]), float(iop_values[4]), float(iop_values[5])]
+        normal = [
+            row[1] * col[2] - row[2] * col[1],
+            row[2] * col[0] - row[0] * col[2],
+            row[0] * col[1] - row[1] * col[0],
+        ]
+        abs_normal = [abs(v) for v in normal]
+        dominant_axis = abs_normal.index(max(abs_normal))
+        axis_name = ["x", "y", "z"][dominant_axis]
+        plane_name = ["sagittal", "coronal", "axial"][dominant_axis]
+        return plane_name, axis_name, float(abs_normal[dominant_axis])
+    except Exception:
+        return "unknown", "none", 0.0
 
 
 def _resolve_theme(theme=None):
@@ -1331,8 +1368,8 @@ class ToolbarManager:
                 if 0 <= new_val < dims[2]:
                     slider.setValue(new_val)
             
-            prev_btn.clicked.connect(lambda: update_slice(-1))
-            next_btn.clicked.connect(lambda: update_slice(1))
+            prev_btn.clicked.connect(partial(update_slice, -1))
+            next_btn.clicked.connect(partial(update_slice, 1))
             close_btn.clicked.connect(dialog.close)
             
             btn_layout.addWidget(prev_btn)
@@ -2289,10 +2326,7 @@ class ToolbarManager:
                     border-color: #6b7280;
                 }}
             """)
-            lock_sync_btn.clicked.connect(lambda: [
-                self._toggle_lock_sync(),
-                dropdown.close()
-            ])
+            lock_sync_btn.clicked.connect(partial(self._on_lock_sync_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(lock_sync_btn)
 
             # Position dropdown below the button
@@ -2926,44 +2960,29 @@ class ToolbarManager:
 
             # Curved MPR button (Dental)
             curved_mpr_btn = create_dropdown_tool('Dental Curve MPR', 'fa5s.bezier-curve', '#8b5cf6')
-            curved_mpr_btn.clicked.connect(lambda: [
-                self._show_curved_mpr_panel(),
-                dropdown.close()
-            ])
+            curved_mpr_btn.clicked.connect(partial(self._on_curved_mpr_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(curved_mpr_btn)
             
             # Curve MPR button (New)
             new_curve_mpr_btn = create_dropdown_tool('Curve MPR', 'fa5s.bezier-curve', '#8b5cf6')
-            new_curve_mpr_btn.clicked.connect(lambda: [
-                self.toggle_new_curve_mpr(),
-                dropdown.close()
-            ])
+            new_curve_mpr_btn.clicked.connect(partial(self._on_new_curve_mpr_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(new_curve_mpr_btn)
             
             # MIP button
             mip_btn = create_dropdown_tool('MIP - Maximum Intensity', 'fa5s.layer-group', '#60a5fa')
-            mip_btn.clicked.connect(lambda: [
-                self.toggle_mip(self.patient_widget.selected_widget),
-                dropdown.close()
-            ])
+            mip_btn.clicked.connect(partial(self._on_mip_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(mip_btn)
             self.tools_button[self.tool_access.MIP] = mip_btn
 
             # MinIP button
             minip_btn = create_dropdown_tool('MinIP - Minimum Intensity', 'fa5s.layer-group', '#34d399')
-            minip_btn.clicked.connect(lambda: [
-                self.toggle_minip(self.patient_widget.selected_widget),
-                dropdown.close()
-            ])
+            minip_btn.clicked.connect(partial(self._on_minip_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(minip_btn)
             self.tools_button[self.tool_access.MINIP] = minip_btn
 
             # Thick Slab button
             thick_btn = create_dropdown_tool('Thick Slab MIP', 'fa5s.layer-group', '#f59e0b')
-            thick_btn.clicked.connect(lambda: [
-                self.toggle_thick_slab(self.patient_widget.selected_widget),
-                dropdown.close()
-            ])
+            thick_btn.clicked.connect(partial(self._on_thick_slab_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(thick_btn)
             self.tools_button[self.tool_access.THICK_SLAB] = thick_btn
 
@@ -3034,18 +3053,15 @@ class ToolbarManager:
             layout.addWidget(header)
 
             rotate_right_btn = create_dropdown_tool('Rotate Right', 'rotate-cw.png', '#60a5fa')
-            rotate_right_btn.clicked.connect(lambda: [
-                self.toggle_rotation_right(self.patient_widget.selected_widget), dropdown.close()])
+            rotate_right_btn.clicked.connect(partial(self._on_rotate_right_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(rotate_right_btn)
 
             rotate_left_btn = create_dropdown_tool('Rotate Left', 'rotate-ccw.png', '#f59e0b')
-            rotate_left_btn.clicked.connect(lambda: [
-                self.toggle_rotation_left(self.patient_widget.selected_widget), dropdown.close()])
+            rotate_left_btn.clicked.connect(partial(self._on_rotate_left_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(rotate_left_btn)
 
             flip_updown_btn = create_dropdown_tool('Flip Upside Down', 'flip_v.png', '#10b981')
-            flip_updown_btn.clicked.connect(lambda: [
-                self.toggle_flip_vertical(self.patient_widget.selected_widget), dropdown.close()])
+            flip_updown_btn.clicked.connect(partial(self._on_flip_vertical_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(flip_updown_btn)
 
             flip_lr_btn = create_dropdown_tool('Flip Left to Right', 'flip_v.png', '#10b981')
@@ -3057,8 +3073,7 @@ class ToolbarManager:
                     flip_lr_btn.setIconSize(QSize(20, 20))
             except Exception:
                 pass
-            flip_lr_btn.clicked.connect(lambda: [
-                self.toggle_flip_horizontal(self.patient_widget.selected_widget), dropdown.close()])
+            flip_lr_btn.clicked.connect(partial(self._on_flip_horizontal_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(flip_lr_btn)
 
             button_pos = button.mapToGlobal(QPoint(0, button.height()))
@@ -4656,6 +4671,30 @@ class ToolbarManager:
         source_series_path = thumb_series_meta.get('series_path')
         vtk_image_data = series_data.get('vtk_image_data')
 
+        instances = []
+        if isinstance(thumb_metadata, dict):
+            instances = list(thumb_metadata.get('instances', []) or [])
+        first_instance = instances[0] if instances else {}
+        iop = first_instance.get('image_orientation_patient') if isinstance(first_instance, dict) else None
+        ipp = first_instance.get('image_position_patient') if isinstance(first_instance, dict) else None
+        inferred_plane, dominant_axis, dominant_value = _classify_plane_from_iop(iop)
+        emit_viewer_event(
+            logger,
+            "ZETA_NPR_SOURCE_CLASSIFICATION",
+            phase="toolbar_route_resolve",
+            series_number=series_number,
+            source_backend=source_backend,
+            mpr_path=mpr_path,
+            instance_count=len(instances),
+            first_iop=str(iop or "none"),
+            first_ipp=_format_triplet(ipp),
+            inferred_plane=inferred_plane,
+            dominant_axis=dominant_axis,
+            dominant_value=dominant_value,
+            used_default_axial=True,
+            fallback_reason="zeta_mpr_fixed_layout_axial_receives_input_volume",
+        )
+
         if vtk_image_data is None:
             self._emit_mpr_launch_route(
                 source_backend=source_backend,
@@ -5483,6 +5522,26 @@ class ToolbarManager:
                         if not pref_dcm_files:
                             pref_dcm_files = natsorted([str(f) for f in pref_path.iterdir() if f.is_file()])
                         if pref_dcm_files:
+                            try:
+                                import pydicom
+                                first_ds = pydicom.dcmread(pref_dcm_files[0], stop_before_pixels=True)
+                                last_ds = pydicom.dcmread(pref_dcm_files[-1], stop_before_pixels=True)
+                                emit_viewer_event(
+                                    logger,
+                                    "ZETA_NPR_STACK_ORDER_AUDIT",
+                                    stage="toolbar_full_vtk_preferred_path",
+                                    series_number=series_number,
+                                    ordering_method="natsorted_path",
+                                    file_count=len(pref_dcm_files),
+                                    first_file=os.path.basename(pref_dcm_files[0]),
+                                    last_file=os.path.basename(pref_dcm_files[-1]),
+                                    first_instance_number=str(first_ds.get("InstanceNumber", "none")),
+                                    last_instance_number=str(last_ds.get("InstanceNumber", "none")),
+                                    first_ipp=_format_triplet(first_ds.get("ImagePositionPatient", None)),
+                                    last_ipp=_format_triplet(last_ds.get("ImagePositionPatient", None)),
+                                )
+                            except Exception:
+                                pass
                             logger.info(
                                 f"[MPR VTK LOAD] Using preferred series path from metadata: {pref_path} "
                                 f"({len(pref_dcm_files)} files)"
@@ -5525,6 +5584,27 @@ class ToolbarManager:
             if not dcm_files:
                 logger.error(f"[MPR VTK LOAD] No DICOM files in {series_folder}")
                 return None
+
+            try:
+                import pydicom
+                first_ds = pydicom.dcmread(dcm_files[0], stop_before_pixels=True)
+                last_ds = pydicom.dcmread(dcm_files[-1], stop_before_pixels=True)
+                emit_viewer_event(
+                    logger,
+                    "ZETA_NPR_STACK_ORDER_AUDIT",
+                    stage="toolbar_full_vtk_series_folder",
+                    series_number=series_number,
+                    ordering_method="natsorted_path",
+                    file_count=len(dcm_files),
+                    first_file=os.path.basename(dcm_files[0]),
+                    last_file=os.path.basename(dcm_files[-1]),
+                    first_instance_number=str(first_ds.get("InstanceNumber", "none")),
+                    last_instance_number=str(last_ds.get("InstanceNumber", "none")),
+                    first_ipp=_format_triplet(first_ds.get("ImagePositionPatient", None)),
+                    last_ipp=_format_triplet(last_ds.get("ImagePositionPatient", None)),
+                )
+            except Exception:
+                pass
 
             # ── Step 4: delegate to the shared image-I/O pipeline ──
             logger.info(f"[MPR VTK LOAD] Loading {len(dcm_files)} files via image_io pipeline")
@@ -6108,12 +6188,12 @@ class ToolbarManager:
         measurements_menu_btn.setCursor(Qt.PointingHandCursor)
         measurements_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(measurements_menu_btn, self._theme)
-        measurements_menu_btn.clicked.connect(lambda: self._show_measurements_dropdown(measurements_menu_btn))
+        measurements_menu_btn.clicked.connect(partial(self._on_measurements_menu_clicked, button=measurements_menu_btn))
         self._measurement_menu_btn = measurements_menu_btn
 
         # Ruler button
         ruler_btn = create_tool_btn(self.patient_widget, 'Ruler', 'ruler.png')
-        ruler_btn.clicked.connect(lambda: self.toggle_ruler(self.patient_widget.selected_widget))
+        ruler_btn.clicked.connect(self._on_ruler_clicked)
         ruler_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -6164,7 +6244,7 @@ class ToolbarManager:
         # ============================================================
         # Eraser button
         eraser_btn = create_tool_btn(self.patient_widget, 'Eraser', 'eraser.png')
-        eraser_btn.clicked.connect(lambda: self.toggle_eraser(self.patient_widget.selected_widget))
+        eraser_btn.clicked.connect(self._on_eraser_clicked)
         toolbar_layout.addWidget(eraser_btn)
         self.tools_button[self.tool_access.ERASER] = eraser_btn
         toolbar_layout.addWidget(self._create_separator())
@@ -6174,7 +6254,7 @@ class ToolbarManager:
         # ============================================================
         # Zoom button
         zoom_btn = create_tool_btn(self.patient_widget, 'Zoom', 'zoom-in.png')
-        zoom_btn.clicked.connect(lambda: self.toggle_zoom(self.patient_widget.selected_widget))
+        zoom_btn.clicked.connect(self._on_zoom_clicked)
         toolbar_layout.addWidget(zoom_btn)
         self.tools_button[self.tool_access.ZOOM] = zoom_btn
 
@@ -6191,9 +6271,9 @@ class ToolbarManager:
         wl_menu_btn.setCursor(Qt.PointingHandCursor)
         wl_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(wl_menu_btn, self._theme)
-        wl_menu_btn.clicked.connect(lambda: self._show_wl_presets_dropdown(wl_menu_btn))
+        wl_menu_btn.clicked.connect(partial(self._on_wl_menu_clicked, button=wl_menu_btn))
         window_level_btn = create_tool_btn(self.patient_widget, 'Window Level', 'contrast.png')
-        window_level_btn.clicked.connect(lambda: self.toggle_window_level(self.patient_widget.selected_widget))
+        window_level_btn.clicked.connect(self._on_window_level_clicked)
         window_level_btn.setProperty('_theme_style_type', 'split_right')
         _apply_split_right_style(window_level_btn, self._theme)
         wl_layout.addWidget(wl_menu_btn)
@@ -6203,13 +6283,13 @@ class ToolbarManager:
 
         # Pan button
         pan_btn = create_tool_btn(self.patient_widget, 'Pan', 'pan.png')
-        pan_btn.clicked.connect(lambda: self.toggle_pan(self.patient_widget.selected_widget))
+        pan_btn.clicked.connect(self._on_pan_clicked)
         toolbar_layout.addWidget(pan_btn)
         self.tools_button[self.tool_access.PAN] = pan_btn
 
         # Stacked button
         stacked_btn = create_tool_btn(self.patient_widget, 'Stacked', 'layers.png')
-        stacked_btn.clicked.connect(lambda: self.toggle_stacked(self.patient_widget.selected_widget))
+        stacked_btn.clicked.connect(self._on_stacked_clicked)
         toolbar_layout.addWidget(stacked_btn)
         self.tools_button[self.tool_access.STACKED] = stacked_btn
         toolbar_layout.addWidget(self._create_separator())
@@ -6259,10 +6339,10 @@ class ToolbarManager:
         rotate_menu_btn.setCursor(Qt.PointingHandCursor)
         rotate_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(rotate_menu_btn, self._theme)
-        rotate_menu_btn.clicked.connect(lambda: self._show_rotation_dropdown(rotate_menu_btn))
+        rotate_menu_btn.clicked.connect(partial(self._on_rotate_menu_clicked, button=rotate_menu_btn))
 
         rotation_right_btn = create_tool_btn(self.patient_widget, 'Rotate Right', 'rotate-cw.png')
-        rotation_right_btn.clicked.connect(lambda: self.toggle_rotation_right(self.patient_widget.selected_widget))
+        rotation_right_btn.clicked.connect(self._on_rotation_right_clicked)
         rotation_right_btn.setStyleSheet("""
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -6350,7 +6430,7 @@ class ToolbarManager:
         sync_menu_btn.setCursor(Qt.PointingHandCursor)
         sync_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(sync_menu_btn, self._theme)
-        sync_menu_btn.clicked.connect(lambda: self._show_sync_dropdown(sync_menu_btn))
+        sync_menu_btn.clicked.connect(partial(self._on_sync_menu_clicked, button=sync_menu_btn))
         self._sync_menu_btn = sync_menu_btn  # store for Lock Sync icon updates
 
         sync_btn = QPushButton(self.patient_widget)
@@ -6396,7 +6476,7 @@ class ToolbarManager:
         """)
         sync_btn.setProperty('_theme_style_type', 'split_right_danger')
         _apply_split_right_style(sync_btn, self._theme, use_danger=True)
-        sync_btn.clicked.connect(lambda checked=False: self.toggle_sync_point(checked))
+        sync_btn.clicked.connect(self.toggle_sync_point)
         self.sync_point_button = sync_btn
         self.tools_button[self.tool_access.TARGET] = sync_btn
 
@@ -6453,7 +6533,7 @@ class ToolbarManager:
         capture_menu_btn.setCursor(Qt.PointingHandCursor)
         capture_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(capture_menu_btn, self._theme)
-        capture_menu_btn.clicked.connect(lambda: self._show_capture_dropdown(capture_menu_btn))
+        capture_menu_btn.clicked.connect(partial(self._on_capture_menu_clicked, button=capture_menu_btn))
         self._capture_menu_btn = capture_menu_btn
 
         capture_btn = BadgeButton(self.patient_widget)
@@ -6500,7 +6580,7 @@ class ToolbarManager:
         """)
         capture_btn.setProperty('_theme_style_type', 'split_right')
         _apply_split_right_style(capture_btn, self._theme)
-        capture_btn.clicked.connect(lambda: self._show_capture_mode_dropdown(capture_btn))
+        capture_btn.clicked.connect(partial(self._on_capture_button_clicked, button=capture_btn))
 
         capture_layout.addWidget(capture_menu_btn)
         capture_layout.addWidget(capture_btn)
@@ -6554,7 +6634,7 @@ class ToolbarManager:
         mic_menu_btn.setCursor(Qt.PointingHandCursor)
         mic_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(mic_menu_btn, self._theme)
-        mic_menu_btn.clicked.connect(lambda: self._show_audio_dropdown(mic_menu_btn))
+        mic_menu_btn.clicked.connect(partial(self._on_mic_menu_clicked, button=mic_menu_btn))
         self._mic_menu_btn = mic_menu_btn
 
         mic_btn = BadgeButton(self.patient_widget)
@@ -6603,7 +6683,7 @@ class ToolbarManager:
         mic_btn.setProperty('_theme_style_type', 'split_right_danger')
         _apply_split_right_style(mic_btn, self._theme, use_danger=True)
 
-        mic_btn.clicked.connect(lambda: self._on_mic_clicked(mic_btn))
+        mic_btn.clicked.connect(partial(self._on_mic_button_clicked, button=mic_btn))
 
         mic_layout.addWidget(mic_menu_btn)
         mic_layout.addWidget(mic_btn)
@@ -6674,7 +6754,7 @@ class ToolbarManager:
 
         # AI Chat button
         ai_chat_btn = create_tool_btn(self.patient_widget, 'AI Analyze', 'eagle.png')
-        ai_chat_btn.clicked.connect(lambda: self.toggle_ai_chat(self.patient_widget.selected_widget))
+        ai_chat_btn.clicked.connect(self._on_ai_chat_clicked)
         toolbar_layout.addWidget(ai_chat_btn)
         self.tools_button[self.tool_access.AI_CHAT] = ai_chat_btn
 
@@ -6747,7 +6827,7 @@ class ToolbarManager:
         mpr_menu_btn.setCursor(Qt.PointingHandCursor)
         mpr_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(mpr_menu_btn, self._theme)
-        mpr_menu_btn.clicked.connect(lambda: self._show_mpr_dropdown(mpr_menu_btn))
+        mpr_menu_btn.clicked.connect(partial(self._on_mpr_menu_clicked, button=mpr_menu_btn))
         self._mpr_menu_btn = mpr_menu_btn
 
         mpr_btn = create_tool_btn(self.patient_widget, 'Zeta MPR Viewer', icon_name=None, text_icon='MPR')
@@ -6789,7 +6869,7 @@ class ToolbarManager:
         mpr_btn.setProperty('_theme_style_type', 'split_right')
         _apply_split_right_style(mpr_btn, self._theme)
         
-        mpr_btn.clicked.connect(lambda: self.toggle_zeta_mpr())
+        mpr_btn.clicked.connect(self.toggle_zeta_mpr)
         
         mpr_layout.addWidget(mpr_menu_btn)
         mpr_layout.addWidget(mpr_btn)
@@ -6844,7 +6924,7 @@ class ToolbarManager:
         upload_menu_btn.setCursor(Qt.PointingHandCursor)
         upload_menu_btn.setProperty('_theme_style_type', 'split_left')
         _apply_split_left_style(upload_menu_btn, self._theme)
-        upload_menu_btn.clicked.connect(lambda: self._show_status_upload_dropdown(upload_menu_btn))
+        upload_menu_btn.clicked.connect(partial(self._on_upload_menu_clicked, button=upload_menu_btn))
         self._upload_menu_btn = upload_menu_btn
 
         upload_layout.addWidget(upload_menu_btn)
@@ -6900,7 +6980,7 @@ class ToolbarManager:
         sync_btn.setProperty('_theme_style_type', 'split_right')
         _apply_split_right_style(sync_btn, self._theme)
         
-        sync_btn.clicked.connect(lambda: self._start_patient_sync(close_after_sync=True, show_completion_message=True))
+        sync_btn.clicked.connect(self._on_patient_sync_clicked)
         self.sync_button = sync_btn
         upload_layout.addWidget(sync_btn)
         toolbar_layout.addWidget(upload_container)
@@ -6917,6 +6997,123 @@ class ToolbarManager:
         
         # افزودن scroll area به نوار ابزار
         toolbar.addWidget(scroll_area)
+
+    def _on_measurements_menu_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_measurements_dropdown(button)
+
+    def _on_ruler_clicked(self):
+        self.toggle_ruler(self.patient_widget.selected_widget)
+
+    def _on_eraser_clicked(self):
+        self.toggle_eraser(self.patient_widget.selected_widget)
+
+    def _on_zoom_clicked(self):
+        self.toggle_zoom(self.patient_widget.selected_widget)
+
+    def _on_wl_menu_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_wl_presets_dropdown(button)
+
+    def _on_window_level_clicked(self):
+        self.toggle_window_level(self.patient_widget.selected_widget)
+
+    def _on_pan_clicked(self):
+        self.toggle_pan(self.patient_widget.selected_widget)
+
+    def _on_stacked_clicked(self):
+        self.toggle_stacked(self.patient_widget.selected_widget)
+
+    def _on_rotate_menu_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_rotation_dropdown(button)
+
+    def _on_rotation_right_clicked(self):
+        self.toggle_rotation_right(self.patient_widget.selected_widget)
+
+    def _on_sync_menu_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_sync_dropdown(button)
+
+    def _on_capture_menu_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_capture_dropdown(button)
+
+    def _on_capture_button_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_capture_mode_dropdown(button)
+
+    def _on_mic_menu_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_audio_dropdown(button)
+
+    def _on_mic_button_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._on_mic_clicked(button)
+
+    def _on_ai_chat_clicked(self):
+        self.toggle_ai_chat(self.patient_widget.selected_widget)
+
+    def _on_upload_menu_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_status_upload_dropdown(button)
+
+    def _on_mpr_menu_clicked(self, _checked=False, *, button=None):
+        if button is not None:
+            self._show_mpr_dropdown(button)
+
+    def _on_lock_sync_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self._toggle_lock_sync()
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_curved_mpr_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self._show_curved_mpr_panel()
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_new_curve_mpr_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self.toggle_new_curve_mpr()
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_mip_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self.toggle_mip(self.patient_widget.selected_widget)
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_minip_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self.toggle_minip(self.patient_widget.selected_widget)
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_thick_slab_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self.toggle_thick_slab(self.patient_widget.selected_widget)
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_rotate_right_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self.toggle_rotation_right(self.patient_widget.selected_widget)
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_rotate_left_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self.toggle_rotation_left(self.patient_widget.selected_widget)
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_flip_vertical_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self.toggle_flip_vertical(self.patient_widget.selected_widget)
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_flip_horizontal_dropdown_clicked(self, _checked=False, *, dropdown=None):
+        self.toggle_flip_horizontal(self.patient_widget.selected_widget)
+        if dropdown is not None:
+            dropdown.close()
+
+    def _on_patient_sync_clicked(self):
+        self._start_patient_sync(close_after_sync=True, show_completion_message=True)
 
     def _check_status_change(self):
         """Periodic check for status changes"""

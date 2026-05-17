@@ -87,6 +87,64 @@ class HomeSearchService:
 
         return patients
 
+    @staticmethod
+    def _normalize_sort_date(value: object) -> str:
+        """Return YYYYMMDD-like sortable string; unknown dates go to the end."""
+        if value is None:
+            return "99999999"
+        s = str(value).strip()
+        if not s:
+            return "99999999"
+        digits = "".join(ch for ch in s if ch.isdigit())
+        if len(digits) >= 8:
+            return digits[:8]
+        return "99999999"
+
+    @staticmethod
+    def _normalize_sort_time(value: object) -> str:
+        """Return HHMMSS-like sortable string; unknown times default to start-of-day."""
+        if value is None:
+            return "000000"
+        s = str(value).strip()
+        if not s:
+            return "000000"
+        digits = "".join(ch for ch in s if ch.isdigit())
+        if len(digits) >= 6:
+            return digits[:6]
+        if len(digits) == 4:
+            return digits + "00"
+        if len(digits) == 2:
+            return digits + "0000"
+        return "000000"
+
+    @classmethod
+    def _sort_studies_by_date_time_ascending(cls, studies: list[dict] | None) -> list[dict]:
+        """Default order for patient list: earliest study date/time first."""
+        if not studies:
+            return studies or []
+
+        def _date_value(item: dict) -> object:
+            return (
+                item.get('study_date')
+                or item.get('latest_study_date')
+                or item.get('date')
+            )
+
+        def _time_value(item: dict) -> object:
+            return (
+                item.get('study_time')
+                or item.get('latest_study_time')
+                or item.get('time')
+            )
+
+        return sorted(
+            studies,
+            key=lambda item: (
+                cls._normalize_sort_date(_date_value(item)),
+                cls._normalize_sort_time(_time_value(item)),
+            ),
+        )
+
     # ------------------------------------------------------------------
     # Local DB search
     # ------------------------------------------------------------------
@@ -119,6 +177,11 @@ class HomeSearchService:
                 patients = await loop.run_in_executor(
                     self._thread_pool(),
                     self._backfill_missing_patient_fields,
+                    patients,
+                )
+                patients = await loop.run_in_executor(
+                    self._thread_pool(),
+                    self._sort_studies_by_date_time_ascending,
                     patients,
                 )
 
@@ -261,6 +324,11 @@ class HomeSearchService:
                     self._thread_pool(),
                     lambda: list_offline_cloud_studies(server, search_data),
                 )
+                studies = await loop.run_in_executor(
+                    self._thread_pool(),
+                    self._sort_studies_by_date_time_ascending,
+                    studies,
+                )
                 if self._cancelled:
                     raise asyncio.CancelledError()
 
@@ -344,6 +412,11 @@ class HomeSearchService:
             patients = await loop.run_in_executor(
                 self._thread_pool(),
                 lambda: socket_service.search_patients_sync(socket_params),
+            )
+            patients = await loop.run_in_executor(
+                self._thread_pool(),
+                self._sort_studies_by_date_time_ascending,
+                patients,
             )
             if self._cancelled:
                 raise asyncio.CancelledError()

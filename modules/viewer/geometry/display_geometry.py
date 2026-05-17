@@ -143,14 +143,19 @@ def _transpose_4x4() -> np.ndarray:
 
 
 def _k_flip_4x4(n_slices: int) -> np.ndarray:
-    """K-axis flip (stack reordering) for display.
+    """Display-index policy transform for stack indexing.
 
-    k_display = (n_slices - 1) - k_raw  →  raw_k = (n_slices - 1) - disp_k.
-    This reorders the stack without changing source geometry or physical affine.
+    The corrected display policy is 1-based in display space and maps to raw VTK
+    indexing as:
+
+      raw_k = display_k - 1
+
+    This updates interaction numbering only and does not mutate source geometry
+    or physical affine semantics.
     """
     M = _mat4_identity()
-    M[2, 2] = -1.0
-    M[2, 3] = float(n_slices - 1)
+    M[2, 2] = 1.0
+    M[2, 3] = -1.0
     return M
 
 
@@ -188,7 +193,12 @@ class DisplayGeometry:
     ) -> None:
         self.source = source
         self.viewport_id = viewport_id
+        # CRITICAL FIX (2026-05-17): Initialize _display_to_raw_ijk with 1-based to 0-based offset
+        # The display policy uses 1-based indices [1..N], raw VTK uses 0-based [0..N-1]
+        # So we need: raw_k = display_k - 1, which means M[2,3] = -1.0
         self._display_to_raw_ijk: np.ndarray = _mat4_identity()
+        self._display_to_raw_ijk[2, 3] = -1.0  # ← -1 offset for 1-based to 0-based conversion
+        logger.warning(f"[R30_FIX_INIT] DisplayGeometry.__init__ matrix[2,3]={self._display_to_raw_ijk[2, 3]} viewport_id={viewport_id}", extra={"component": "viewer"})
         self._raw_ijk_to_display: Optional[np.ndarray] = _mat4_identity()
         self._operations: List[str] = []
         self._k_flip_applied: bool = False
@@ -201,6 +211,8 @@ class DisplayGeometry:
     def reset(self) -> "DisplayGeometry":
         """Remove all display transforms; display indices == raw source IJK."""
         self._display_to_raw_ijk = _mat4_identity()
+        self._display_to_raw_ijk[2, 3] = -1.0  # ← Maintain 1-based to 0-based offset
+        logger.warning(f"[R30_FIX_RESET] DisplayGeometry.reset() matrix[2,3]={self._display_to_raw_ijk[2, 3]} viewport_id={self.viewport_id}", extra={"component": "viewer"})
         self._raw_ijk_to_display = _mat4_identity()
         self._operations = []
         self._k_flip_applied = False
@@ -288,14 +300,14 @@ class DisplayGeometry:
         self._operations.append(ops_label)
         self._recompute()
         # Emit runtime bind summary for diagnostic logs
-        display_0_raw = self.display_k_to_raw_k(0)
-        display_last_raw = self.display_k_to_raw_k(n_slices - 1)
+        display_1_raw = self.display_k_to_raw_k(1)
+        display_n_raw = self.display_k_to_raw_k(n_slices)
         logger.warning(
             "[DISPLAY_K_RUNTIME_BIND] "
-            "viewport_id=%s n_slices=%s k_flip_active=True "
-            "display_0_raw_k=%s display_last_raw_k=%s reason=%s",
+            "viewport_id=%s n_slices=%s k_flip_active=False "
+            "display_1_raw_k=%s display_n_raw_k=%s reason=%s",
             self.viewport_id, n_slices,
-            display_0_raw, display_last_raw,
+            display_1_raw, display_n_raw,
             reason,
             extra={"component": "viewer"},
         )
@@ -311,8 +323,9 @@ class DisplayGeometry:
 
     @property
     def is_k_flip_active(self) -> bool:
-        """True when a K-flip has been applied (k-diagonal of display_to_raw is -1)."""
-        return bool(self._display_to_raw_ijk[2, 2] < 0)
+        """True only when the display policy is an actual k-axis reversal."""
+        k22 = float(self._display_to_raw_ijk[2, 2])
+        return bool(k22 < 0.0)
 
     @property
     def k_flip_n_slices(self) -> Optional[int]:
@@ -324,8 +337,7 @@ class DisplayGeometry:
     def display_k_to_raw_k(self, display_k: int) -> int:
         """Convert a display-space slice index to the raw VTK k index.
 
-        When K-flip is active: raw_k = (N-1) - display_k.
-        When inactive: raw_k = display_k (identity).
+        Conversion is matrix-driven via ``display_to_raw_ijk_4x4``.
         """
         k22 = self._display_to_raw_ijk[2, 2]
         k23 = self._display_to_raw_ijk[2, 3]
@@ -334,14 +346,17 @@ class DisplayGeometry:
     def raw_k_to_display_k(self, raw_k: int) -> int:
         """Convert a raw VTK k index to display-space slice index.
 
-        When K-flip is active: display_k = (N-1) - raw_k.
-        When inactive: display_k = raw_k (identity).
+        Conversion is matrix-driven via the inverse display transform.
         """
         if self._raw_ijk_to_display is None:
             return raw_k
         k22 = self._raw_ijk_to_display[2, 2]
         k23 = self._raw_ijk_to_display[2, 3]
-        return int(round(k22 * float(raw_k) + k23))
+        result = int(round(k22 * float(raw_k) + k23))
+        # DIAGNOSTIC: Log the transformation for the first few slices
+        if raw_k <= 2:
+            logger.warning(f"[R30_TRANSFORM] raw_k={raw_k} → display_k={result} (k22={k22}, k23={k23}, m[2,3]={self._display_to_raw_ijk[2,3]})", extra={"component": "viewer"})
+        return result
 
     # ─────────────────────────────────────────────────────────────────────────
     # Read-only matrix properties
@@ -417,8 +432,11 @@ class DisplayGeometry:
         return origin, self.screen_right_lps(), self.screen_up_lps()
 
     def audit_stack_order_convention(
-        self, plane: str = "", body_part: str = ""
-    ) -> tuple:
+        self,
+        plane: str = "",
+        body_part: str = "",
+        applied_reverse: bool = False,
+    ) -> tuple[str, bool, str, str, str]:
         """Audit and recommend stack-order transforms for clinical convention.
 
         Returns (convention_name, order_matches, recommended_transform, reason, direction_label).
@@ -496,7 +514,35 @@ class DisplayGeometry:
             order_matches = (direction == "S")
             reason = ("axial_policy" if order_matches else "axial_reversed")
 
-        recommended_transform = "NONE" if order_matches else "K_FLIP"
+        # ──────────────────────────────────────────────────────────────────────
+        # R29 fix (2026-05-17): UNKNOWN planes must NOT get K_FLIP
+        # ──────────────────────────────────────────────────────────────────────
+        # Prior bug: UNKNOWN plane → order_matches=False → K_FLIP applied
+        # This inverted slice numbering for unrecognized planes.
+        # Fix: Only recommend K_FLIP when convention IS known AND doesn't match.
+        # For UNKNOWN planes, recommend NONE (preserve original order).
+        # ──────────────────────────────────────────────────────────────────────
+        # R31 fix (2026-05-17): Geometry index applies reversal, so we MUST K_FLIP
+        # ──────────────────────────────────────────────────────────────────────
+        # When geometry_index.applied_reverse=True, the DICOM instances have been
+        # reordered by IPP and then REVERSED for display. This means the VTK volume
+        # is inverted compared to anatomy. We MUST apply K_FLIP to invert back to
+        # the correct order. This applies regardless of plane/convention detection.
+        if applied_reverse:
+            recommended_transform = "K_FLIP"
+            reason = "geometry_index_applied_reverse_requires_kflip"
+        else:
+            recommended_transform = "NONE" if (convention_name == "UNKNOWN" or order_matches) else "K_FLIP"
+
+        # ──────────────────────────────────────────────────────────────────────
+        # R31 diagnostic logging (2026-05-17)
+        # ──────────────────────────────────────────────────────────────────────
+        if applied_reverse:
+            logger.warning(
+                "[R31_GEOMETRY_REVERSE_DETECTION] applied_reverse=True FORCING_KFLIP plane=%s body_part=%s convention=%s direction=%s reason=%s",
+                plane, body_part, convention_name, direction, reason,
+                extra={"component": "viewer"},
+            )
 
         return convention_name, order_matches, recommended_transform, reason, direction
 
@@ -507,6 +553,7 @@ class DisplayGeometry:
     def _recompute(self) -> None:
         """Recompute effective affine and its inverse from current display_to_raw_ijk."""
         src_M = self.source.raw_ijk_to_lps_4x4
+        self._raw_ijk_to_display = _safe_inv(self._display_to_raw_ijk)
         # effective = source_raw_to_LPS @ display_to_raw
         self._effective_to_lps = src_M @ self._display_to_raw_ijk
         inv = _safe_inv(self._effective_to_lps)

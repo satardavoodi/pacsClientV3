@@ -15,8 +15,16 @@ import sys
 
 import numpy as np
 from PySide6.QtCore import QTimer
+from PacsClient.utils.structured_logging import emit_viewer_event
 
 logger = logging.getLogger(__name__)
+
+
+def _fmt_vec3(values):
+    try:
+        return f"[{float(values[0]):.6f},{float(values[1]):.6f},{float(values[2]):.6f}]"
+    except Exception:
+        return "none"
 
 
 class _MprOrientationMixin:
@@ -60,6 +68,37 @@ class _MprOrientationMixin:
                 'distance':       dist,
                 'parallel_scale': camera.GetParallelScale(),
             }
+
+            row_dir = [
+                self.direction_matrix.GetElement(0, 0),
+                self.direction_matrix.GetElement(0, 1),
+                self.direction_matrix.GetElement(0, 2),
+            ]
+            col_dir = [
+                self.direction_matrix.GetElement(1, 0),
+                self.direction_matrix.GetElement(1, 1),
+                self.direction_matrix.GetElement(1, 2),
+            ]
+            slice_dir = [
+                self.direction_matrix.GetElement(2, 0),
+                self.direction_matrix.GetElement(2, 1),
+                self.direction_matrix.GetElement(2, 2),
+            ]
+            emit_viewer_event(
+                logger,
+                "ZETA_NPR_RESLICE_AXES_AUDIT",
+                stage="capture_baseline_camera_state",
+                view_name=view_name,
+                row_dir=_fmt_vec3(row_dir),
+                col_dir=_fmt_vec3(col_dir),
+                slice_dir=_fmt_vec3(slice_dir),
+                camera_position=_fmt_vec3(pos),
+                camera_focal_point=_fmt_vec3(focal),
+                camera_view_up=_fmt_vec3(up),
+                camera_direction=_fmt_vec3(direction),
+                camera_distance=dist,
+                parallel_scale=float(camera.GetParallelScale()),
+            )
 
         logger.info("Baseline camera state captured for %s",
                     list(self._baseline_camera_state.keys()))

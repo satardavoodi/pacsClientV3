@@ -2,6 +2,7 @@
 # Auto-generated from home_ui.py — Phase 3 split
 
 import asyncio
+from functools import partial
 import logging as _logging
 import os
 import traceback
@@ -484,7 +485,7 @@ class _HPDownloadMixin:
         self.output_dir_input.setText(os.path.join(os.getcwd(), "downloads", patient_data['study_uid']))
         dir_layout.addWidget(self.output_dir_input)
         browse_btn = QPushButton("Browse")
-        browse_btn.clicked.connect(lambda: self.browse_output_directory())
+        browse_btn.clicked.connect(self.browse_output_directory)
         dir_layout.addWidget(browse_btn)
         layout.addLayout(dir_layout)
 
@@ -518,11 +519,11 @@ class _HPDownloadMixin:
         start_btn = QPushButton("Start Download")
         start_btn.setStyleSheet(
             "QPushButton { background-color: #4CAF50; color: white; font-weight: bold; padding: 8px; }")
-        start_btn.clicked.connect(lambda: self.start_resumable_download(patient_data, service, dialog))
+        start_btn.clicked.connect(partial(self._on_start_resumable_clicked, patient_data=patient_data, service=service, dialog=dialog))
 
         resume_btn = QPushButton("Resume Only")
         resume_btn.setStyleSheet("QPushButton { background-color: #2196F3; color: white; padding: 8px; }")
-        resume_btn.clicked.connect(lambda: self.resume_download_only(patient_data, service, dialog))
+        resume_btn.clicked.connect(partial(self._on_resume_only_clicked, patient_data=patient_data, service=service, dialog=dialog))
 
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(dialog.reject)
@@ -539,6 +540,12 @@ class _HPDownloadMixin:
         directory = QFileDialog.getExistingDirectory(self, "Select Output Directory")
         if directory:
             self.output_dir_input.setText(directory)
+
+    def _on_start_resumable_clicked(self, _checked=False, *, patient_data, service, dialog):
+        self.start_resumable_download(patient_data, service, dialog)
+
+    def _on_resume_only_clicked(self, _checked=False, *, patient_data, service, dialog):
+        self.resume_download_only(patient_data, service, dialog)
 
     def start_resumable_download(self, patient_data, service, dialog):
         """Start resumable download"""
@@ -613,8 +620,8 @@ class _HPDownloadMixin:
 
         # Connect signals
         progress_widget.downloadCompleted.connect(
-            lambda success, message: self.on_download_completed(success, message, dialog))
-        progress_widget.downloadError.connect(lambda error: self.on_download_error(error, dialog))
+            partial(self._on_download_completed_signal, dialog=dialog))
+        progress_widget.downloadError.connect(partial(self._on_download_error_signal, dialog=dialog))
 
         dialog.show()
 
@@ -630,3 +637,9 @@ class _HPDownloadMixin:
         """Handle download error"""
         QMessageBox.critical(self, "Download Error", f"[ERROR] {error}")
         dialog.close()
+
+    def _on_download_completed_signal(self, success, message, *, dialog):
+        self.on_download_completed(success, message, dialog)
+
+    def _on_download_error_signal(self, error, *, dialog):
+        self.on_download_error(error, dialog)

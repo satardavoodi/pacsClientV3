@@ -3,7 +3,6 @@ from __future__ import annotations
 import logging
 import shutil
 import ctypes
-import sqlite3
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -274,9 +273,6 @@ class LocalStorageCleanupManager:
 
         for folder_key in ("root", "patients_root", "dicom", "attachments", "thumbnails"):
             paths[folder_key].mkdir(parents=True, exist_ok=True)
-
-        with sqlite3.connect(paths["database"]):
-            pass
 
         rebuild_offline_cloud_manifest(
             paths["root"],

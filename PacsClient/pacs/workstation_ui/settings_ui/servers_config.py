@@ -1,4 +1,5 @@
 import json
+from functools import partial
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -136,7 +137,7 @@ class ServersConfigWidget(QWidget):
             btn = QPushButton("Approve")   # قبلاً "Test"
             btn.setFixedSize(BTN_W, BTN_H)
             btn.setProperty("role", "secondary")
-            btn.clicked.connect(lambda _=False, n=name: self._on_test(n))
+            btn.clicked.connect(partial(self._on_test_clicked, name=name))
 
 
             row.addWidget(lbl)
@@ -234,6 +235,9 @@ class ServersConfigWidget(QWidget):
                 background-color: #15803d;
             }
         """)
+
+    def _on_test_clicked(self, _checked=False, *, name: str):
+        self._on_test(name)
 
     def _validate_by_digits_only(self, raw: str) -> bool:
         """

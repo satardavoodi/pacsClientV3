@@ -725,8 +725,65 @@ class QtViewerBridge:
             ctrl._pixel_data_fn = self.pipeline.get_pixel_array
             ctrl._pixel_spacing_fn = lambda idx: self.pipeline.get_slice_meta(idx).pixel_spacing
             self.qt_viewer.tool_controller = ctrl
+            self._bind_tool_store_for_series(self.metadata)
         except Exception as exc:
             logger.debug("ToolController init skipped: %s", exc)
+
+    def _series_annotation_key(self, metadata: Optional[Dict[str, Any]] = None) -> str:
+        meta = metadata if isinstance(metadata, dict) else self.metadata
+        if not isinstance(meta, dict):
+            return ""
+        series_info = meta.get("series", {}) if isinstance(meta.get("series", {}), dict) else {}
+        series_number = series_info.get("series_number")
+        if series_number is None:
+            return ""
+
+        study_uid = ""
+        try:
+            if isinstance(self.metadata_fixed, dict):
+                study_uid = str(self.metadata_fixed.get("study_uid") or "")
+        except Exception:
+            study_uid = ""
+        if not study_uid:
+            study_info = meta.get("study", {}) if isinstance(meta.get("study", {}), dict) else {}
+            study_uid = str(
+                study_info.get("study_instance_uid")
+                or meta.get("study_uid")
+                or ""
+            )
+        return f"{study_uid}:{series_number}"
+
+    def _resolve_fast_store_map(self) -> Dict[str, Any]:
+        if self.vtk_widget is None:
+            return {}
+        store_map = getattr(self.vtk_widget, "_fast_tool_store_by_series", None)
+        if not isinstance(store_map, dict):
+            store_map = {}
+            setattr(self.vtk_widget, "_fast_tool_store_by_series", store_map)
+        return store_map
+
+    def _bind_tool_store_for_series(self, metadata: Optional[Dict[str, Any]] = None) -> None:
+        ctrl = getattr(self.qt_viewer, "tool_controller", None)
+        if ctrl is None:
+            return
+        key = self._series_annotation_key(metadata)
+        if not key:
+            return
+        store_map = self._resolve_fast_store_map()
+        if not isinstance(store_map, dict):
+            return
+        store = store_map.get(key)
+        if store is None:
+            from modules.viewer.tools.store import ToolStore
+            store = ToolStore()
+            store_map[key] = store
+        try:
+            ctrl.set_store(store)
+        except Exception:
+            try:
+                ctrl._store = store
+            except Exception:
+                return
 
     def _build_mock_vtk_data(self) -> None:
         """Build a mock vtkImageData from pipeline state."""
@@ -1407,6 +1464,7 @@ class QtViewerBridge:
         may be a mock or real VTK data — we only use metadata.
         """
         self.metadata = metadata or {}
+        self._bind_tool_store_for_series(self.metadata)
         try:
             _mod = str((metadata or {}).get('series', {}).get('modality', '') or '')
             if _mod:

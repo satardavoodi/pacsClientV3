@@ -8,6 +8,7 @@ This is a mixin class — do NOT instantiate directly.
 import json
 import logging as _logging
 import traceback
+from functools import partial
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QLabel, QProgressDialog, QSlider, QWidget
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
@@ -180,7 +181,7 @@ class _PWViewersMixin:
         try:
             print("   🔗 Connecting slider signal...")
             self.on_slider_value_changed(vtk_widget, mid_slices)
-            slider.valueChanged.connect(lambda val: self.on_slider_value_changed(vtk_widget, val))
+            slider.valueChanged.connect(partial(self.on_slider_value_changed, vtk_widget))
             print("   ✅ Slider connected")
             # Slider thumb-drag fast path: FAST-mode only, gated by AIPACS_SLIDER_FAST_DRAG=1.
             # When enabled, sliderMoved routes through the full protected-drag pipeline

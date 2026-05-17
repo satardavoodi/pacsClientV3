@@ -83,7 +83,7 @@ class ActionButtons(QWidget):
             color='#3b82f6',
             tooltip='Pause download'
         )
-        self.pause_btn.clicked.connect(lambda: self._on_pause_clicked())
+        self.pause_btn.clicked.connect(self._on_pause_clicked)
         layout.addWidget(self.pause_btn)
         
         # Resume button
@@ -92,7 +92,7 @@ class ActionButtons(QWidget):
             color='#10b981',
             tooltip='Resume download'
         )
-        self.resume_btn.clicked.connect(lambda: self._on_resume_clicked())
+        self.resume_btn.clicked.connect(self._on_resume_clicked)
         layout.addWidget(self.resume_btn)
         
         # Cancel button
@@ -101,7 +101,7 @@ class ActionButtons(QWidget):
             color='#ef4444',
             tooltip='Cancel download'
         )
-        self.cancel_btn.clicked.connect(lambda: self._on_cancel_clicked())
+        self.cancel_btn.clicked.connect(self._on_cancel_clicked)
         layout.addWidget(self.cancel_btn)
         
         # Retry button
@@ -110,7 +110,7 @@ class ActionButtons(QWidget):
             color='#f59e0b',
             tooltip='Retry download'
         )
-        self.retry_btn.clicked.connect(lambda: self._on_retry_clicked())
+        self.retry_btn.clicked.connect(self._on_retry_clicked)
         layout.addWidget(self.retry_btn)
     
     def _create_button(self, icon: str, color: str, tooltip: str) -> QPushButton:

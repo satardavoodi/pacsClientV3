@@ -1,0 +1,58 @@
+{
+  "tag": "2026-05-17_phaseC2_step9",
+  "paths": {
+    "startup_warmup_audit": "generated-files/benchmarks/startup_warmup_audit_bundle_2026-05-17_phaseC2_step9.json",
+    "startup_qtimer_classification": "generated-files/benchmarks/startup_qtimer_classification_bundle_2026-05-17_phaseC2_step9.json"
+  },
+  "startup_warmup_summary": {
+    "print_calls_startup": 0,
+    "blocking_candidates_startup": 1,
+    "qtimer_singleshot_startup": 11,
+    "lazy_import_helpers": 2,
+    "startup_import_delay": {
+      "env_var_present": true,
+      "default_delay_ms": 900,
+      "uses_delay_variable": true
+    }
+  },
+  "qtimer_summary": {
+    "total": 11,
+    "startup_import_delay_timer": {
+      "found": true,
+      "mode": "variable",
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 141,
+      "call": "QTimer.singleShot(delay_ms, _run_startup_import)"
+    }
+  },
+  "validation": {
+    "structured_logging_lint": {
+      "enabled": true,
+      "returncode": 0,
+      "passed": true
+    },
+    "dm_test_suite": {
+      "enabled": true,
+      "returncode": 0,
+      "passed": true
+    },
+    "startup_syntax_check": {
+      "enabled": true,
+      "returncode": 0,
+      "passed": true
+    },
+    "startup_kpi_regression": {
+      "enabled": true,
+      "expected": {
+        "print_calls_startup": 0,
+        "qtimer_singleshot_startup": 11
+      },
+      "actual": {
+        "print_calls_startup": 0,
+        "qtimer_singleshot_startup": 11
+      },
+      "passed": true,
+      "failed_checks": []
+    }
+  }
+}

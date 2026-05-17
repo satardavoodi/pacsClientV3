@@ -38,11 +38,12 @@ Usage
 from __future__ import annotations
 
 import json
-import sqlite3
 import threading
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from database._pool import get_db_connection
 
 MAX_CYCLES_PER_FILE: int = 10
 
@@ -53,24 +54,14 @@ _file_lock = threading.Lock()
 try:
     from PacsClient.utils.data_paths import ECHOMIND_MEMORY_DIR, DATABASE_FILE
     _MEMORY_DIR: Path = ECHOMIND_MEMORY_DIR
-    _DB_PATH = str(DATABASE_FILE)
 except Exception:
     _MEMORY_DIR = Path(__file__).resolve().parents[4] / "attachment" / "EchoMindMemory"
-    _DB_PATH = "dicom.db"
 
 
 # ── Low-level DB helpers ───────────────────────────────────────────────────────
 
-def _db_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(
-        _DB_PATH,
-        timeout=30.0,
-        check_same_thread=False,
-        isolation_level="DEFERRED",
-    )
-    conn.execute("PRAGMA journal_mode = WAL;")
-    conn.execute("PRAGMA synchronous = NORMAL;")
-    return conn
+def _db_conn():
+    return get_db_connection()
 
 
 def _create_table() -> None:

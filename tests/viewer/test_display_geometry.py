@@ -409,3 +409,33 @@ class TestCompose:
         dg.apply_x_flip(512)
         assert "y_flip" in ",".join(dg._operations)
         assert "x_flip" in ",".join(dg._operations)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# TestDisplayKPolicy
+# ─────────────────────────────────────────────────────────────────────────────
+
+class TestDisplayKPolicy:
+    def test_apply_stack_policy_maps_display_1_to_raw_0(self):
+        sg = _axial_source(n_slices=20)
+        dg = DisplayGeometry(sg, "vp0")
+        dg.apply_k_flip_for_stack_order(20, reason="policy_test")
+
+        assert dg.display_k_to_raw_k(1) == 0
+        assert dg.display_k_to_raw_k(20) == 19
+
+    def test_apply_stack_policy_inverse_maps_raw_0_to_display_1(self):
+        sg = _axial_source(n_slices=20)
+        dg = DisplayGeometry(sg, "vp0")
+        dg.apply_k_flip_for_stack_order(20, reason="policy_test")
+
+        assert dg.raw_k_to_display_k(0) == 1
+        assert dg.raw_k_to_display_k(19) == 20
+
+    def test_apply_stack_policy_is_not_reported_as_reversal(self):
+        sg = _axial_source(n_slices=20)
+        dg = DisplayGeometry(sg, "vp0")
+        dg.apply_k_flip_for_stack_order(20, reason="policy_test")
+
+        assert dg.is_k_flip_active is False
+        assert dg.k_flip_n_slices is None

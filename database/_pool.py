@@ -131,7 +131,7 @@ def get_db_connection():
         conn = _get_pooled_connection()
         yield conn
     except Exception as e:
-        print(f"⚠️ Database error in transaction: {e}")
+        logger.warning("Database error in transaction: %s", e)
         if conn:
             try:
                 conn.rollback()
@@ -143,7 +143,7 @@ def get_db_connection():
             try:
                 _return_to_pool(conn)
             except Exception as e:
-                print(f"⚠️ Error returning connection to pool: {e}")
+                logger.warning("Error returning connection to pool: %s", e)
         log_stage_timing(
             logger,
             component="db",
@@ -192,21 +192,22 @@ def _get_pooled_connection() -> sqlite3.Connection:
                     return conn
                 except sqlite3.OperationalError:
                     pass  # dead connection — fall through to create new one
-
-        t_create = now_ms()
-        conn = _create_sqlite_connection()
-        log_stage_timing(
-            logger,
-            component="db",
-            function="database._get_pooled_connection",
-            stage="create_connection",
-            start_ms=t_create,
-            query_type="mixed",
-            min_ms=5.0,
-        )
-        return conn
     finally:
         _pool_lock.release()
+
+    # Create outside the pool lock so retry backoff/sleeps do not serialize all threads.
+    t_create = now_ms()
+    conn = _create_sqlite_connection()
+    log_stage_timing(
+        logger,
+        component="db",
+        function="database._get_pooled_connection",
+        stage="create_connection",
+        start_ms=t_create,
+        query_type="mixed",
+        min_ms=5.0,
+    )
+    return conn
 
 
 def _return_to_pool(conn: sqlite3.Connection) -> None:
@@ -266,12 +267,20 @@ def _create_sqlite_connection() -> sqlite3.Connection:
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
                 wait_time = (2 ** attempt) + random.uniform(0, 3)
-                print(f"⚠️ Database locked, retrying in {wait_time:.1f}s... "
-                      f"(attempt {attempt + 1}/{max_retries})")
+                logger.warning(
+                    "Database locked, retrying in %.1fs (attempt %d/%d)",
+                    wait_time,
+                    attempt + 1,
+                    max_retries,
+                )
                 time.sleep(wait_time)
                 continue
             else:
-                print(f"❌ Database connection failed after {max_retries} attempts: {e}")
+                logger.error(
+                    "Database connection failed after %d attempts: %s",
+                    max_retries,
+                    e,
+                )
                 raise
 
     raise sqlite3.OperationalError("Failed to connect to database after all retries")

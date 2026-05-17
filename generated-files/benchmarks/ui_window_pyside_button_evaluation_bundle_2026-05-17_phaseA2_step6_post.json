@@ -1,0 +1,57 @@
+{
+  "tag": "2026-05-17_phaseA2_step6_post",
+  "paths": {
+    "ui_window_pyside_button_audit": "generated-files/benchmarks/ui_window_pyside_button_audit_bundle_2026-05-17_phaseA2_step6_post.json"
+  },
+  "ui_summary": {
+    "scanned_files": 135,
+    "print_calls": 936,
+    "blocking_candidates": 5,
+    "pyside_connect_calls": 477,
+    "pyside_connect_lambda_calls": 42,
+    "pyside_signal_declarations": 72,
+    "pyside_slot_decorators": 10,
+    "qtimer_singleshot_calls": 157,
+    "button_instantiations": 190,
+    "button_clicked_connects": 249,
+    "button_other_connects": 8,
+    "window_ops": 89
+  },
+  "validation": {
+    "structured_logging_lint": {
+      "enabled": true,
+      "returncode": 0,
+      "passed": true
+    },
+    "dm_test_suite": {
+      "enabled": true,
+      "returncode": 0,
+      "passed": true
+    },
+    "ui_kpi_regression": {
+      "enabled": true,
+      "expected": {
+        "pyside_connect_lambda_calls": 42,
+        "blocking_candidates": 5
+      },
+      "actual": {
+        "pyside_connect_lambda_calls": 42,
+        "blocking_candidates": 5
+      },
+      "passed": true,
+      "failed_checks": []
+    }
+  },
+  "baseline_comparison": {
+    "enabled": true,
+    "baseline_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\generated-files\\benchmarks\\ui_window_pyside_button_evaluation_bundle_2026-05-17_phaseA2_step5_post.json",
+    "loaded": true,
+    "delta": {
+      "baseline_tag": "2026-05-17_phaseA2_step5_post",
+      "print_calls_delta": 0,
+      "blocking_candidates_delta": 0,
+      "pyside_connect_lambda_calls_delta": -4,
+      "qtimer_singleshot_calls_delta": 0
+    }
+  }
+}

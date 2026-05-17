@@ -12,6 +12,7 @@ import logging
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QWidget
 from PySide6.QtCore import QTimer
+from PacsClient.utils.structured_logging import emit_viewer_event
 
 from ..preset_manager import get_preset_manager
 from ..mpr_measurement_tools import MPRMeasurementTools
@@ -31,6 +32,29 @@ from ._mpr_series import _MprSeriesMixin
 from ._mpr_layout import _MprLayoutMixin
 
 logger = logging.getLogger(__name__)
+
+
+def _format_vec3(values) -> str:
+    try:
+        if values is None or len(values) < 3:
+            return "none"
+        return f"[{float(values[0]):.6f},{float(values[1]):.6f},{float(values[2]):.6f}]"
+    except Exception:
+        return "none"
+
+
+def _classify_plane_from_slice_dir(slice_dir):
+    try:
+        if slice_dir is None or len(slice_dir) < 3:
+            return "unknown", "none", 0.0
+        vec = [float(slice_dir[0]), float(slice_dir[1]), float(slice_dir[2])]
+        abs_vec = [abs(v) for v in vec]
+        axis_index = abs_vec.index(max(abs_vec))
+        axis_name = ["x", "y", "z"][axis_index]
+        plane_name = ["sagittal", "coronal", "axial"][axis_index]
+        return plane_name, axis_name, float(abs_vec[axis_index])
+    except Exception:
+        return "unknown", "none", 0.0
 
 
 def _emit_geometry_contract_missing_guard(*, feature: str, reason: str, fallback_behavior: str) -> None:
@@ -151,6 +175,26 @@ class StandardMPRViewer(
             self.origin[1] + (self.dims[1] - 1) * self.spacing[1] * 0.5,
             self.origin[2] + (self.dims[2] - 1) * self.spacing[2] * 0.5
         ]
+
+        row_dir = [self.direction_matrix.GetElement(0, 0), self.direction_matrix.GetElement(0, 1), self.direction_matrix.GetElement(0, 2)]
+        col_dir = [self.direction_matrix.GetElement(1, 0), self.direction_matrix.GetElement(1, 1), self.direction_matrix.GetElement(1, 2)]
+        slice_dir = [self.direction_matrix.GetElement(2, 0), self.direction_matrix.GetElement(2, 1), self.direction_matrix.GetElement(2, 2)]
+        inferred_plane, dominant_axis, dominant_value = _classify_plane_from_slice_dir(slice_dir)
+        emit_viewer_event(
+            logger,
+            "ZETA_NPR_SOURCE_CLASSIFICATION",
+            phase="standard_mpr_viewer_init",
+            direction_matrix_loaded=direction_loaded,
+            input_flip_applied=True,
+            inferred_plane=inferred_plane,
+            dominant_axis=dominant_axis,
+            dominant_value=dominant_value,
+            row_dir=_format_vec3(row_dir),
+            col_dir=_format_vec3(col_dir),
+            slice_dir=_format_vec3(slice_dir),
+            used_default_axial=True,
+            fallback_reason="standard_mpr_fixed_layout_binds_input_volume_to_axial",
+        )
 
         # Log orientation info for debugging (after center is calculated)
         self._log_orientation_info()

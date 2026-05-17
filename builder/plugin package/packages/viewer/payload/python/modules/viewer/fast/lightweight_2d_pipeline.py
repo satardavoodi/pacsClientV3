@@ -334,7 +334,12 @@ def _numpy_to_qimage_gray(arr: np.ndarray, width: int, height: int) -> QImage:
 
 
 def _numpy_to_qimage_rgb(arr: np.ndarray, width: int, height: int) -> QImage:
-    """Convert a uint8 RGB numpy array to QImage."""
+    """Convert a uint8 RGB numpy array to QImage.
+
+    R17 parity: derive actual_h, actual_w from arr.shape so a caller passing
+    stale sm.cols/sm.rows after a dimension-changing filter cannot corrupt the
+    QImage stride (mirrors the fix already applied to _numpy_to_qimage_gray).
+    """
     if arr.ndim == 2:
         arr = np.repeat(arr[..., None], 3, axis=2)
     if arr.shape[2] > 3:
@@ -342,8 +347,14 @@ def _numpy_to_qimage_rgb(arr: np.ndarray, width: int, height: int) -> QImage:
     if arr.dtype != np.uint8:
         arr = np.clip(arr, 0, 255).astype(np.uint8)
     arr = np.ascontiguousarray(arr)
+    actual_h, actual_w = arr.shape[:2]
+    if actual_w != int(width) or actual_h != int(height):
+        logger.error(
+            "[R17] QImage RGB dim mismatch: caller passed (w=%d, h=%d) but arr shape is (h=%d, w=%d) -- using arr shape",
+            int(width), int(height), actual_h, actual_w,
+        )
     bpl = int(arr.strides[0])
-    qimg = QImage(arr.data, width, height, bpl, QImage.Format.Format_RGB888)
+    qimg = QImage(arr.data, actual_w, actual_h, bpl, QImage.Format.Format_RGB888)
     qimg._np_buffer = arr  # prevent GC of backing memory
     return qimg
 
@@ -1657,9 +1668,12 @@ class Lightweight2DPipeline(QObject):
     def set_interaction_slice_count_hint(self, slice_count: int) -> None:
         """Set the slice count that current interaction policy should follow."""
         try:
-            self._interaction_slice_count_hint = max(0, int(slice_count or 0))
+            new_hint = max(0, int(slice_count or 0))
         except Exception:
-            self._interaction_slice_count_hint = 0
+            new_hint = 0
+        if new_hint == self._interaction_slice_count_hint:
+            return  # no change -- skip cache pruning (called on every scroll frame)
+        self._interaction_slice_count_hint = new_hint
         self._prune_caches_to_effective_limits()
 
     def get_pixel_value_at(self, slice_index: int, x: int, y: int) -> Optional[float]:

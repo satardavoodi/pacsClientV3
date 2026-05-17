@@ -1771,6 +1771,19 @@ The DICOM approach is preferred because:
 
 ---
 
+#### 2026-05-17 Advanced VTK numbering regression (R31 completion)
+
+**Finding:** Fixing only the display layer was not enough. The production Advanced path also required the load path to build the SimpleITK volume from the same geometry-ordered file list that later drives the counter and sync metadata.
+
+**Load-bearing rule:** In `image_io.py`, every Advanced load branch must keep the volume pixels and yielded metadata on the same `SeriesGeometryIndex` contract:
+- pass `geometry_index.dicom_files_for_itk` into the SimpleITK reader
+- stamp the yielded metadata with that same geometry index
+- propagate `_geometry_index_applied_reverse` on the root metadata dict, because `viewer_2d.py` consumes the root object
+
+**Why this matters:** If the viewer receives a geometry-aware metadata object but the ITK volume was built from the pre-geometry file order, the stack numbering bug appears unchanged even though `DisplayGeometry` and the counter math are already fixed.
+
+---
+
 #### Files changed
 
 | File | Change | Lines |

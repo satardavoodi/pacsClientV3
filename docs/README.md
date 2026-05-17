@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v3.0.3 (2026-05-16)
+> **Current Stable Version:** v3.0.6 (2026-05-18)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -123,6 +123,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - `archive/ui-backups/` â€” UI snapshot documentation
 - `archive/module-framework/` â€” Original module system delivery docs
 - `archive/root-guides/` â€” Legacy implementation guides
+- `archive/root-investigations/` â€” Root-level forensic/investigation bundles moved out of repository root
 
 ### Assets
 - `assets/` â€” Images and diagrams used by documentation
@@ -155,6 +156,7 @@ docs/
 |   `-- ...
 |-- releases/                    <- Version history
 |-- archive/                     <- Historical documents (not current truth)
+|   |-- root-investigations/     <- Former root forensic bundles (organized by date/topic)
 `-- assets/                      <- Images and diagrams
 
 Build & release infrastructure (separate from docs/):

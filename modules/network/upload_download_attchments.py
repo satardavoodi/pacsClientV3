@@ -1,6 +1,7 @@
 import os
 import json
 import base64
+import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 from .socket_config import get_socket_config
@@ -10,6 +11,11 @@ import socket
 from PacsClient.utils.config import ATTACHMENT_PATH
 from typing import List, Union, Iterable, Optional
 from PacsClient.utils import list_files_in_folder, append_attachments_uploaded
+from .attachment_pending_sync import mark_pending, mark_synced, record_attempt
+
+logger = logging.getLogger(__name__)
+
+_UPLOAD_REQUEST_MAX_ATTEMPTS = 2
 
 
 class SocketClient:
@@ -182,22 +188,31 @@ def upload_attachments_for_study(
     
     # 📊 لاگ برای دیباگ (فقط اگر verbose=True)
     if verbose:
-        print(f"\n{'='*60}")
-        print(f"📤 UPLOAD ATTACHMENTS FOR STUDY: {study_uid}")
-        print(f"{'='*60}")
-        print(f"📁 Attachment folder: {path_study_attachments}")
-        print(f"📋 Total files found: {len(files) + len(uploaded_paths_normalized)}")
-        print(f"✅ Already uploaded: {len(uploaded_paths_normalized)}")
-        print(f"🆕 New files to upload: {len(files)}")
+        logger.info("%s", "=" * 60)
+        logger.info("UPLOAD ATTACHMENTS FOR STUDY: %s", study_uid)
+        logger.info("%s", "=" * 60)
+        logger.info("Attachment folder: %s", path_study_attachments)
+        logger.info("Total files found: %d", len(files) + len(uploaded_paths_normalized))
+        logger.info("Already uploaded: %d", len(uploaded_paths_normalized))
+        logger.info("New files to upload: %d", len(files))
         if files:
-            print(f"\n📦 Files to upload:")
+            logger.info("Files to upload:")
             for idx, f in enumerate(files, 1):
-                print(f"   {idx}. {Path(f).name}")
-        print(f"{'='*60}\n")
+                logger.info("%d. %s", idx, Path(f).name)
+        logger.info("%s", "=" * 60)
 
     paths = [files] if isinstance(files, str) else list(files)
     results: List[Dict[str, Any]] = []
     created_client = False
+
+    if not paths:
+        return {
+            "study_uid": study_uid,
+            "total": 0,
+            "success": 0,
+            "failed": 0,
+            "results": [],
+        }
 
     # اتصال
     if client is None:
@@ -236,7 +251,21 @@ def upload_attachments_for_study(
                 if uploaded_by:
                     params["uploaded_by"] = uploaded_by
 
-                resp = client.send_request("UploadAttachment", params)
+                file_name = Path(p).name
+                mark_pending(study_uid, file_name)
+                last_exc: Optional[Exception] = None
+                resp: Optional[Dict[str, Any]] = None
+                for _attempt in range(_UPLOAD_REQUEST_MAX_ATTEMPTS):
+                    record_attempt(study_uid, file_name)
+                    try:
+                        resp = client.send_request("UploadAttachment", params)
+                        break
+                    except Exception as req_exc:
+                        last_exc = req_exc
+
+                if resp is None:
+                    raise RuntimeError(str(last_exc) if last_exc else "UploadAttachment request failed")
+
                 entry["response"] = resp
 
                 # Check if response is a broadcast message (should not happen, but handle it)
@@ -245,13 +274,18 @@ def upload_attachments_for_study(
                     entry["status"] = "error"
                     entry["error"] = "Received broadcast message instead of response"
                     if verbose:
-                        print(f"⚠️  Warning: Received broadcast for {Path(p).name}, treating as error")
+                        logger.warning(
+                            "Warning: Received broadcast for %s, treating as error",
+                            Path(p).name,
+                        )
                 elif resp.get("status") == "success":
                     entry["status"] = "success"
                     append_attachments_uploaded(study_uid=study_uid, value=p)  # add path file to db
+                    mark_synced(study_uid, file_name)
                 else:
                     entry["status"] = "error"
                     entry["error"] = resp.get("error", "unknown server error")
+                    mark_pending(study_uid, file_name)
                     if stop_on_error:
                         results.append(entry)
                         break
@@ -259,6 +293,10 @@ def upload_attachments_for_study(
             except Exception as e:
                 entry["status"] = "error"
                 entry["error"] = str(e)
+                try:
+                    mark_pending(study_uid, Path(p).name)
+                except Exception:
+                    pass
                 if stop_on_error:
                     results.append(entry)
                     break

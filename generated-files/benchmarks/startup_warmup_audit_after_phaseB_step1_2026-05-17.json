@@ -1,0 +1,110 @@
+{
+  "scanned_files": 43,
+  "startup_critical_files_found": 4,
+  "print_calls_startup": [],
+  "heavy_imports_startup": [],
+  "blocking_candidates_startup": [
+    {
+      "path": "main.py",
+      "line": 169,
+      "kind": "subprocess_call",
+      "detail": "rc = subprocess.call(cmd)"
+    }
+  ],
+  "qtimer_singleshot_startup": [
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 489,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, self._ensure_welcome_page_height)"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 856,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(1500, lambda: self._complete_login(username, password))"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/widget.py",
+      "line": 210,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, self.apply_anti_aliasing)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 123,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(900, _run_startup_import)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 186,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, self._maybe_snap_maximize)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 237,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(10, _snap)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 318,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, _go)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 896,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(delay, _cleanup)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1033,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(10, _snap)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1038,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, lambda: self.setGeometry(self._normal_geometry))"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1090,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, app.quit)"
+    }
+  ],
+  "lazy_import_helpers": [
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/widget.py",
+      "line": 71,
+      "kind": "lazy_import_helper",
+      "detail": "_ensure_patient_widget has inner import"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/widget.py",
+      "line": 78,
+      "kind": "lazy_import_helper",
+      "detail": "_ensure_ai_main_window has inner import"
+    }
+  ],
+  "todo_markers": [
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 973,
+      "kind": "todo_marker",
+      "detail": "# TODO: Replace this with actual authentication system"
+    }
+  ],
+  "warmup_isolation": {
+    "canonical_exists": true,
+    "plugin_exists": true,
+    "canonical_has_process_marker": true,
+    "canonical_has_entrypoint_marker": true
+  }
+}

@@ -57,45 +57,82 @@ def _fast_present_trace_enabled() -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# V2 Stack-Drag Model (AIPACS_STACK_DRAG_V2=1 required to activate)
-# Default=0: current V1 model runs unchanged.
+# Window/Level modality sensitivity
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Modalities that use 10× W/L sensitivity (large dynamic range).
+# Defined once at module level to avoid object allocation on every drag event.
+_HIGH_SENS_MODALITIES: frozenset = frozenset({"MG", "DX", "CR", "XR"})
+
+# ═══════════════════════════════════════════════════════════════════════════
+# V2 Stack-Drag Model (default ON as of v3.0.4)
+# Escape hatch: set AIPACS_STACK_DRAG_V2=0 to revert to V1 behavior.
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Kill switch — read once at module import.
-# Default "0" means V1 behavior is active; set "1" to activate V2.
+# Default "1" means V2 behavior is active; set "0" to revert to V1.
 _USE_V2_MODEL: bool = (
-    os.environ.get("AIPACS_STACK_DRAG_V2", "0").strip() == "1"
+    os.environ.get("AIPACS_STACK_DRAG_V2", "1").strip() == "1"
 )
 
 # Per-band parameters for the V2 fractional drag model.
 # Keys map to band names; values define all calibration constants.
 #
-#   base_divisor  : effective_px_per_slice = active_h * base_divisor / n
-#                   At gain=1.0, a full viewport drag traverses n/base_divisor slices.
-#                   Coverage = 100/base_divisor % of the stack at gain=1.0.
+#   px_per_slice_fixed : when not None, this fixed value is used directly as
+#                        px_per_slice regardless of viewport height or n.
+#                        Used for tiny/small bands: natural h/n is too large
+#                        for these stacks, producing choppy slide-show motion.
+#                        Intentionally breaks the "full viewport = all slices"
+#                        invariant so ≥20 targets/sec is achievable at the
+#                        clinical drag speed of 120–150 px/sec.
+#   base_divisor  : calibrated multiplier on the natural 1:1 floor.
+#                   Standard bands use 1.1; micro uses 0.99 (10 % faster).
 #   v_onset       : px/sec below which gain stays at 1.0  (clinical exam pace)
 #   v_max         : px/sec above which gain = gain_max
 #   gain_max      : maximum acceleration multiplier at high velocity
 #   max_per_event : hard burst cap per Qt mouse event
+#
+# Proportionality invariant (v3.0.5 / v3.0.6 / v3.0.7):
+#   px/slice = h/n × base_divisor.
+#   With base_divisor=1.1  (medium … huge):        traversal = h × 1.1  / v
+#   With base_divisor=0.99 (small, n=25–49):       traversal = h × 0.99 / v  → 10 % faster than medium.
+#   With base_divisor=0.86 (micro/tiny, n<25):     traversal = h × 0.86 / v  → 15 % faster than small.
+#   All bands are still proportional (traversal independent of n within the band).
+#   Escape hatch: AIPACS_STACK_DRAG_V2=0.
 _DRAG_BAND_PARAMS: dict = {
-    # n < 25: strict precision — no acceleration ever.
-    # Coverage at gain=1.0: 50 % per viewport drag.
-    "tiny":   dict(base_divisor=2.0, v_onset=1e9, v_max=1e9, gain_max=1.0, max_per_event=1),
-    # 25 ≤ n < 50: precision-first — gain only at clearly fast drag.
-    # Coverage at gain=1.0: 40 %.
-    "small":  dict(base_divisor=2.5, v_onset=220.0, v_max=580.0, gain_max=1.4, max_per_event=1),
-    # 50 ≤ n < 100: controlled smooth — minimal adaptive acceleration.
-    # Coverage at gain=1.0: 33 %.
-    "medium": dict(base_divisor=3.0, v_onset=180.0, v_max=460.0, gain_max=1.6, max_per_event=1),
-    # 100 ≤ n < 200: mild adaptive acceleration.
-    # Coverage at gain=1.0: 29 %.
-    "large":  dict(base_divisor=3.5, v_onset=140.0, v_max=380.0, gain_max=1.9, max_per_event=2),
-    # 200 ≤ n < 300: balanced adaptive acceleration.
-    # Coverage at gain=1.0: 25 %.
-    "xlarge": dict(base_divisor=4.0, v_onset=100.0, v_max=340.0, gain_max=2.2, max_per_event=2),
-    # n ≥ 300: progressive acceleration — high-speed traversal needed.
-    # Coverage at gain=1.0: 22 %.
-    "huge":   dict(base_divisor=4.5, v_onset=80.0,  v_max=300.0, gain_max=2.5, max_per_event=3),
+    # ── micro: n < 10 ─────────────────────────────────────────────────────
+    # px = h/n × 0.86  →  15 % faster than small (0.86 vs 0.99), 22 % faster than medium+ (0.86 vs 1.1).
+    # NO velocity gain: very small stacks need deliberate, slice-by-slice nav.
+    "micro":  dict(px_per_slice_fixed=None, base_divisor=0.86,
+                   v_onset=1e9,   v_max=1e9,   gain_max=1.0, max_per_event=1),
+    # ── tiny: 10 ≤ n < 25 ─────────────────────────────────────────────────
+    # px = h/n × 0.86  →  15 % faster than small; e.g. n=11, h=500 → 39 px/slice.
+    # NO velocity gain: each slice in a small stack is anatomically distinct.
+    "tiny":   dict(px_per_slice_fixed=None, base_divisor=0.86,
+                   v_onset=1e9,   v_max=1e9,   gain_max=1.0, max_per_event=1),
+    # ── small: 25 ≤ n < 50 ────────────────────────────────────────────────
+    # px = h/n × 0.99  →  10 % faster than medium; e.g. n=35, h=500 → 14.1 px/slice.
+    # NO velocity gain — precise one-by-one navigation preferred.
+    "small":  dict(px_per_slice_fixed=None, base_divisor=0.99,
+                   v_onset=1e9,   v_max=1e9,   gain_max=1.0, max_per_event=1),
+    # ── medium: 50 ≤ n < 100 ── REFERENCE BAND ────────────────────────────
+    # px = h/n × 1.1  →  e.g. n=80, h=500 → 6.9 px/slice.
+    # Mild gain (×1.4 max) above 350 px/s for fast scanning.  UNCHANGED.
+    "medium": dict(px_per_slice_fixed=None, base_divisor=1.1,
+                   v_onset=350.0, v_max=700.0, gain_max=1.4, max_per_event=1),
+    # ── large: 100 ≤ n < 200 ──────────────────────────────────────────────
+    # px = h/n × 1.1  →  e.g. n=150, h=500 → 3.7 px/slice.
+    # Slightly more gain than medium to allow quick skimming of large stacks.
+    "large":  dict(px_per_slice_fixed=None, base_divisor=1.1,
+                   v_onset=300.0, v_max=600.0, gain_max=1.7, max_per_event=2),
+    # ── xlarge: 200 ≤ n < 300 ─────────────────────────────────────────────
+    # px = h/n × 1.1  →  e.g. n=250, h=500 → 2.2 px/slice.
+    "xlarge": dict(px_per_slice_fixed=None, base_divisor=1.1,
+                   v_onset=250.0, v_max=500.0, gain_max=2.0, max_per_event=2),
+    # ── huge: n ≥ 300 ─────────────────────────────────────────────────────
+    # px = h/n × 1.1  →  e.g. n=350, h=500 → 1.6 px/slice.
+    "huge":   dict(px_per_slice_fixed=None, base_divisor=1.1,
+                   v_onset=200.0, v_max=420.0, gain_max=2.3, max_per_event=3),
 }
 
 # Cold-start gate: first N events run at gain=1.0 regardless of velocity.
@@ -112,6 +149,8 @@ _DRAG_FIRST_STEP_SCALE_V2: float = 0.60
 
 def _v2_select_drag_band(n: int) -> dict:
     """Return the V2 band parameter dict for *n* total slices."""
+    if n < 10:
+        return _DRAG_BAND_PARAMS["micro"]
     if n < 25:
         return _DRAG_BAND_PARAMS["tiny"]
     if n < 50:
@@ -126,18 +165,39 @@ def _v2_select_drag_band(n: int) -> dict:
 
 
 def _v2_effective_px_per_slice(n: int, active_h: float, band: dict) -> float:
-    """Compute calibrated base px/slice for the V2 model.
+    """Compute base px/slice for the V2 model.
 
-    Returns ``max(natural_1to1, calibrated_band_base, 0.5)``.
-    - natural_1to1 = active_h / n            (design invariant floor)
-    - calibrated   = active_h * base_divisor / n  (always >= natural since divisor >= 1)
-    The result is always >= the natural 1:1 mapping and >= 0.5.
+    **Standard path** (``px_per_slice_fixed`` is None — all production bands):
+        Return ``max(base_divisor × natural, 0.5)`` where
+        ``natural = active_h / n``.
+
+        - base_divisor ≥ 1.0 (medium…huge, divisor=1.1): px > natural — slight
+          cushion so the user must drag a bit more than one pixel per slice.
+        - base_divisor=0.86 (micro/tiny, n < 25): px < natural — 15 % faster traversal
+          than small stacks; 22 % faster than the medium+ standard bands.
+        - base_divisor=0.99 (small, n=25–49): px < natural — 10 % faster than
+          the medium+ standard bands.
+
+        Proportionality invariant: traversal_time = n × px / v
+            = n × (h/n × divisor) / v = h × divisor / v  (independent of n).
+
+    **Legacy fixed path** (``px_per_slice_fixed`` is not None):
+        Return the fixed constant directly; viewport height and n are ignored.
+        Preserved for backward compatibility — no production band uses this
+        path as of v3.0.6.
+
+    Result is always ≥ 0.5.
     """
+    fixed = band.get("px_per_slice_fixed")
+    if fixed is not None:
+        # Legacy: fixed dead-zone, independent of viewport height.
+        return max(float(fixed), 0.5)
     n_f = float(max(1, n))
     h_f = float(max(1.0, active_h))
     natural = h_f / n_f
-    calibrated = h_f * float(band["base_divisor"]) / n_f
-    return max(natural, calibrated, 0.5)
+    base_div = float(band.get("base_divisor", 1.0))
+    calibrated = natural * base_div
+    return max(calibrated, 0.5)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -1059,7 +1119,9 @@ class QtSliceViewer(QWidget):
         # --- Band selection ---
         band = _v2_select_drag_band(n)
 
-        # --- Effective px/slice (calibrated, always >= natural 1:1 floor) ---
+        # --- Effective px/slice ---
+        # tiny/small: fixed constant (independent of h, n).
+        # medium+: max(natural_1to1, base_divisor × natural, 0.5).
         if self._stack_drag_session_active and self._stack_drag_session_h > 0:
             active_h = self._stack_drag_session_h
         else:
@@ -1504,8 +1566,7 @@ class QtSliceViewer(QWidget):
             dy = pos.y() - self._wl_start_pos.y()
             # Radiography modalities (MG, DX, CR, XR) use 10x W/L sensitivity
             # for their large dynamic range (matches Advanced mode MG boost)
-            _HIGH_SENS_MOD = frozenset({"MG", "DX", "CR", "XR"})
-            modality_mult = 10.0 if self._modality_hint in _HIGH_SENS_MOD else 1.0
+            modality_mult = 10.0 if self._modality_hint in _HIGH_SENS_MODALITIES else 1.0
             sensitivity = max(1.0, self._current_window / 500.0) * modality_mult
             new_window = max(1.0, self._wl_start_window + dx * sensitivity)
             new_level = self._wl_start_level - dy * sensitivity
@@ -1535,6 +1596,43 @@ class QtSliceViewer(QWidget):
             self.update()
             event.accept()
             return
+
+        # Stack-drag re-entry: when the pointer left the viewport during an
+        # active drag (which clears _stacked_dragging via the out-of-bounds
+        # guard below), but the left button is STILL physically held, resume
+        # stacking automatically the moment the pointer re-enters the widget.
+        #
+        # Without this the user has to release and re-press the mouse button --
+        # an unnecessary and frustrating interruption.
+        #
+        # Safety invariants satisfied at this point:
+        #   • _wl_dragging / _pan_dragging / _zoom_dragging are all False:
+        #     each of those code paths returned early above.
+        #   • _lr_pan_active guards against accidentally resuming stacking
+        #     during a simultaneous L+R pan gesture.
+        #   • _begin_stack_drag_session() resets _drag_warm_event_count to 0
+        #     (cold-start gate), so no velocity spike can occur on re-entry.
+        #   • _stacked_first_step_pending=False skips the 60 % dead-zone:
+        #     the user is mid-gesture, not starting fresh, so immediate
+        #     response is the right UX.
+        if (
+            not self._stacked_dragging
+            and not self._lr_pan_active
+            and self._tool_mode in (self.TOOL_NONE, self.TOOL_STACKED)
+            and (event.buttons() & Qt.MouseButton.LeftButton)
+            and not (event.buttons() & Qt.MouseButton.RightButton)
+            and self._is_stack_position_valid(pos)
+            and int(self._total_slices_hint) > 1
+        ):
+            self._stacked_dragging = True
+            self._stacked_last_y = pos.y()
+            self._stacked_last_emitted_target = int(self._current_slice_index)
+            self._stacked_accum = 0.0
+            self._stacked_first_step_pending = False  # no dead-zone on re-entry
+            self._begin_stack_drag_session()
+            self._begin_scroll_interaction()
+            self.stack_drag_state_changed.emit(True)
+            # Fall through to the _stacked_dragging handler below.
 
         # Stacked scroll drag (vertical movement → slice scroll)
         if self._stacked_dragging:

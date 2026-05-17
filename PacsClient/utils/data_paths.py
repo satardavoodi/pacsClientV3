@@ -190,11 +190,12 @@ def _migrate_study_paths_in_db() -> None:
     """
     try:
         import sqlite3
+        from database._pool import get_db_connection
         db_file = DATABASE_FILE
         if not db_file.exists():
             return
 
-        with sqlite3.connect(str(db_file)) as conn:
+        with get_db_connection() as conn:
             conn.row_factory = sqlite3.Row
             cur = conn.cursor()
 

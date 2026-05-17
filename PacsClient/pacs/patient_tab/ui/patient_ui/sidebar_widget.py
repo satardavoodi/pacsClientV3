@@ -119,9 +119,18 @@ class SidebarWidget(QWidget):
     
     def _connect_signals(self):
         """Connect button signals to handlers."""
-        self.btn_series.clicked.connect(lambda: self._switch_panel("series"))
-        self.btn_reception.clicked.connect(lambda: self._switch_panel("reception"))
-        self.btn_ai_chat.clicked.connect(lambda: self._switch_panel("ai_chat"))
+        self.btn_series.clicked.connect(self._on_series_clicked)
+        self.btn_reception.clicked.connect(self._on_reception_clicked)
+        self.btn_ai_chat.clicked.connect(self._on_ai_chat_clicked)
+
+    def _on_series_clicked(self):
+        self._switch_panel("series")
+
+    def _on_reception_clicked(self):
+        self._switch_panel("reception")
+
+    def _on_ai_chat_clicked(self):
+        self._switch_panel("ai_chat")
     
     def _get_button_style(self, checked: bool) -> str:
         """

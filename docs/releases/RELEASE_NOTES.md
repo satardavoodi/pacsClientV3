@@ -1,9 +1,28 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.0.3 (2026-05-16)
-**Previous Stable:** v3.0.2 (2026-05-13)
-**Release Date:** 2026-05-16
+**Current Stable Version:** v3.0.6 (2026-05-18)
+**Previous Stable:** v3.0.5 (2026-05-17)
+**Release Date:** 2026-05-18
 **Branch:** beta-version
+
+---
+
+## v3.0.6 (2026-05-18) - DB/UI/data-flow optimization rollup and repository organization
+
+### Summary
+
+This release consolidates the current optimization workstream across database operations,
+UI/UI responsiveness paths, and data-flow stability improvements, together with
+documentation and test re-organization updates.
+
+Full details in [`VERSION_3.0.6_RELEASE.md`](VERSION_3.0.6_RELEASE.md).
+
+### Included
+
+- Database optimization updates and related persistence-path refinements
+- UI/UI responsiveness and workflow updates across workstation/patient-tab paths
+- Data-flow and coordination hardening in download/viewer/network pathways
+- Documentation and test organization cleanup (archival/re-indexing)
 
 ---
 

@@ -41,6 +41,7 @@ from PacsClient.pacs.patient_tab.utils.image_io import (
     _compute_path_list_hash,
     _anatomical_label_from_ipp_delta,
     _plane_from_normal,
+    _apply_geometry_index_metadata,
 )
 from PacsClient.pacs.patient_tab.utils.advanced_geometry_contract import (
     assert_advanced_order_contract,
@@ -850,6 +851,33 @@ class TestSeriesGeometryIndexContract:
         stamp_metadata_with_geometry_index(metadata, index)
         assert [inst["instance_path"] for inst in metadata["instances"]] == [inst.instance_path for inst in index.display_instances_order]
         assert metadata["instances"][0]["sop_uid"] == index.sop_uid_by_display_index[0]
+
+    def test_apply_geometry_index_metadata_populates_series_contract(self, tmp_path):
+        files, study_uid, series_uid = self._build_axial_series(tmp_path)
+        index, _ = build_series_geometry_index(
+            files,
+            study_uid_hint=study_uid,
+            series_uid_hint=series_uid,
+            source="fresh_files",
+        )
+        metadata = {
+            "series": {
+                "series_number": "4",
+                "body_part_examined": "LEGACY",
+            },
+            "instances": [],
+        }
+
+        _apply_geometry_index_metadata(metadata, index)
+
+        assert metadata["series"]["series_instance_uid"] == index.series_uid
+        assert metadata["series"]["study_instance_uid"] == index.study_uid
+        assert metadata["series"]["geometry_plane"] == index.plane
+        assert metadata["series"]["display_convention"] == index.display_convention
+        assert metadata["series"]["body_part_examined"] == index.body_part
+        assert metadata["instances_order_contract"] == "ADVANCED_SERIES_GEOMETRY_INDEX"
+        assert metadata["display_order_hash"] == index.display_order_hash
+        assert metadata["_geometry_index_applied_reverse"] is index.applied_reverse
 
     def test_mixed_series_uid_raises(self, tmp_path):
         files, study_uid, series_uid = self._build_axial_series(tmp_path)

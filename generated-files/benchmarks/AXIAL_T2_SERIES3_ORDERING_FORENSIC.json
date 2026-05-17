@@ -1,0 +1,53 @@
+{
+  "timestamp": "2026-05-17T00:13:14.584737",
+  "patient_code": "40261",
+  "series_number": 3,
+  "dicom_geometry": {
+    "row_cosines": [
+      0.99027072414939,
+      0.02835624721813,
+      -0.1362344161229
+    ],
+    "col_cosines": [
+      -0.0017283420053,
+      0.98144842066553,
+      0.19171857084551
+    ],
+    "slice_normal": [
+      0.13914347173531297,
+      -0.189617828320117,
+      0.9719486475409114
+    ],
+    "normal_axis": 2,
+    "first_ipp": [
+      -171.57390516561,
+      -88.494527588038,
+      31.512627876694
+    ],
+    "last_ipp": [
+      -184.06551283163,
+      -71.47158635631,
+      -55.74406310231
+    ],
+    "first_projection": 23.53540736074288,
+    "last_projection": -66.23959423138201,
+    "n_slices": 20
+  },
+  "sort_trace_summary": "20 slices ordered by IPP projection",
+  "k_flip_analysis": {
+    "hypothesis_1_active": false,
+    "hypothesis_2_active": true,
+    "current_formula": "raw_k = 20 - display_k",
+    "current_display_k_1_maps_to": 19,
+    "current_display_k_1_physical": "Superior",
+    "current_display_k_n_maps_to": 0,
+    "current_display_k_n_physical": "Inferior"
+  },
+  "clinical_observation": {
+    "display_20_is": "Superior",
+    "display_1_is": "Inferior",
+    "expected_display_1_is": "Inferior",
+    "expected_display_20_is": "Superior",
+    "numbering_inverted": true
+  }
+}

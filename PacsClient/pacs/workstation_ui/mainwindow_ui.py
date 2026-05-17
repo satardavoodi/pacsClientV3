@@ -15,6 +15,7 @@ from .shortcut_manager import ShortcutManager
 import qtawesome as qta
 import sys
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,8 @@ class _PinnedHomeTabBar(QTabBar):
         super().moveTab(from_index, to_index)
 
 class MainWindowWidget(QWidget):
+    _DEFAULT_STARTUP_IMPORT_DELAY_MS = 900
+
     def __init__(self, auth_user=None, auth_token=None, startup_import_folder: str | None = None):
         super().__init__()
         
@@ -107,20 +110,35 @@ class MainWindowWidget(QWidget):
         if not folder:
             return
 
+        delay_ms = self._DEFAULT_STARTUP_IMPORT_DELAY_MS
+        raw_delay = os.getenv("AIPACS_STARTUP_IMPORT_DELAY_MS", "").strip()
+        if raw_delay:
+            try:
+                parsed = int(raw_delay)
+                if parsed < 0:
+                    raise ValueError("negative delay is invalid")
+                delay_ms = parsed
+            except Exception:
+                logger.warning(
+                    "[STARTUP] Invalid AIPACS_STARTUP_IMPORT_DELAY_MS=%r; using default %d ms",
+                    raw_delay,
+                    self._DEFAULT_STARTUP_IMPORT_DELAY_MS,
+                )
+
         def _run_startup_import():
             try:
                 home_widget = getattr(getattr(self, "control_panel", None), "home_widget", None)
                 if not home_widget or not hasattr(home_widget, "auto_import_folder_from_startup"):
-                    print("[STARTUP] Home widget import hook not available; skipping startup import")
+                    logger.warning("[STARTUP] Home widget import hook not available; skipping startup import")
                     return
 
-                print(f"[STARTUP] Auto-importing folder: {folder}")
+                logger.info("[STARTUP] Auto-importing folder: %s", folder)
                 home_widget.auto_import_folder_from_startup(folder)
             except Exception as exc:
-                print(f"[STARTUP] Startup auto-import failed: {exc}")
+                logger.warning("[STARTUP] Startup auto-import failed: %s", exc)
 
         # Give Qt time to render the main UI and initialize home panel state.
-        QTimer.singleShot(900, _run_startup_import)
+        QTimer.singleShot(delay_ms, _run_startup_import)
 
     def _arm_titlebar_move(self, global_pos, local_pos):
         """Arm a possible titlebar drag; we only start system move after real drag."""
@@ -1078,7 +1096,7 @@ class MainWindowWidget(QWidget):
         results = lifecycle_manager.shutdown_all()
         for name, err in results.items():
             if err is not None:
-                print(f"Warning: shutdown({name}): {err}")
+                logger.warning("shutdown(%s) warning: %s", name, err)
         # Break reference cycles that the GC can't collect (VTK C++ pointers etc.)
         # A single explicit gc.collect() before the process ends silences the
         # "gc: N uncollectable objects at shutdown" ResourceWarning.
@@ -1150,7 +1168,7 @@ class MainWindowWidget(QWidget):
                     try:
                         w.exit_patient_widget()
                     except Exception as exc:
-                        print(f"Warning: exit_patient_widget tab {i}: {exc}")
+                        logger.warning("exit_patient_widget warning tab %s: %s", i, exc)
 
         lifecycle_manager.register("patient_tabs.exit_all", _shutdown_patient_tabs, timeout=10.0)
 
@@ -1164,7 +1182,7 @@ class MainWindowWidget(QWidget):
                     try:
                         hw.download_service.cleanup()
                     except Exception as exc:
-                        print(f"Warning: download_service.cleanup(): {exc}")
+                        logger.warning("download_service.cleanup warning: %s", exc)
 
             if not hasattr(self, 'tab_widget'):
                 return
@@ -1174,7 +1192,7 @@ class MainWindowWidget(QWidget):
                     try:
                         widget.cleanup()
                     except Exception as exc:
-                        print(f"Warning: DownloadManagerWidget.cleanup() tab {i}: {exc}")
+                        logger.warning("DownloadManagerWidget.cleanup warning tab %s: %s", i, exc)
 
         lifecycle_manager.register("download_manager.cleanup", _shutdown_download_manager, timeout=10.0)
 

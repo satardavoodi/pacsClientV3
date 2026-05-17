@@ -536,6 +536,97 @@ class _VWInteractorMixin:
         
         return new_interactorstyle
 
+    def _series_annotation_key_from_metadata(self, metadata):
+        if not isinstance(metadata, dict):
+            return ""
+        series_info = metadata.get('series', {}) if isinstance(metadata.get('series', {}), dict) else {}
+        series_number = series_info.get('series_number')
+        if series_number is None:
+            return ""
+
+        study_uid = ""
+        try:
+            iv = getattr(self, 'image_viewer', None)
+            meta_fixed = getattr(iv, 'metadata_fixed', None)
+            if isinstance(meta_fixed, dict):
+                study_uid = str(meta_fixed.get('study_uid') or "")
+        except Exception:
+            study_uid = ""
+        if not study_uid:
+            study_info = metadata.get('study', {}) if isinstance(metadata.get('study', {}), dict) else {}
+            study_uid = str(
+                study_info.get('study_instance_uid')
+                or metadata.get('study_uid')
+                or ""
+            )
+        return f"{study_uid}:{series_number}"
+
+    def _resolve_current_series_annotation_key(self):
+        candidates = (
+            getattr(self, '_bound_backend_metadata', None),
+            getattr(getattr(self, 'image_viewer', None), 'metadata', None),
+        )
+        for metadata in candidates:
+            key = self._series_annotation_key_from_metadata(metadata)
+            if key:
+                return key
+        return ""
+
+    def _capture_advanced_annotations_before_series_switch(self):
+        if bool(getattr(self, '_qt_bridge_active', False)):
+            return
+        style = getattr(self, 'current_style', None)
+        if style is None or not hasattr(style, 'widgets_by_slice'):
+            return
+        key = self._resolve_current_series_annotation_key()
+        if key:
+            series_map = getattr(self, '_advanced_annotations_by_series', None)
+            if not isinstance(series_map, dict):
+                series_map = {}
+                self._advanced_annotations_by_series = series_map
+            series_map[key] = style.widgets_by_slice
+
+        # Hide current series widgets before input reset to prevent cross-series bleed.
+        try:
+            for widgets in style.widgets_by_slice.values():
+                for widget_obj in list(widgets):
+                    try:
+                        widget_obj.Off()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def _restore_advanced_annotations_for_series(self, metadata):
+        if bool(getattr(self, '_qt_bridge_active', False)):
+            return
+        style = getattr(self, 'current_style', None)
+        if style is None or not hasattr(style, 'widgets_by_slice'):
+            return
+        key = self._series_annotation_key_from_metadata(metadata)
+        if not key:
+            return
+        series_map = getattr(self, '_advanced_annotations_by_series', None)
+        if not isinstance(series_map, dict):
+            series_map = {}
+            self._advanced_annotations_by_series = series_map
+        widgets_by_slice = series_map.get(key)
+        if widgets_by_slice is None:
+            widgets_by_slice = {}
+            series_map[key] = widgets_by_slice
+
+        style.widgets_by_slice = widgets_by_slice
+        try:
+            image_viewer = getattr(self, 'image_viewer', None)
+            if image_viewer is not None and hasattr(image_viewer, 'widgets_by_slice'):
+                image_viewer.widgets_by_slice = widgets_by_slice
+        except Exception:
+            pass
+        try:
+            style.update_slice()
+        except Exception:
+            pass
+
     def get_sync_viewer_id(self):
         if self._sync_viewer_id:
             return self._sync_viewer_id

@@ -300,7 +300,7 @@ def init_database():
             if 'import_manifest_path' not in columns:
                 cur.execute("ALTER TABLE courses ADD COLUMN import_manifest_path TEXT DEFAULT ''")
         except Exception as e:
-            print(f"Migration warning: {e}")
+            logger.warning("Migration warning: %s", e)
 
         try:
             cur.execute("PRAGMA table_info(instances)")
@@ -318,7 +318,7 @@ def init_database():
             if 'pixel_representation' not in instance_columns:
                 cur.execute("ALTER TABLE instances ADD COLUMN pixel_representation INTEGER DEFAULT 1")
         except Exception as e:
-            print(f"Instance migration warning: {e}")
+            logger.warning("Instance migration warning: %s", e)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS slides (
@@ -824,7 +824,7 @@ def search_patients_local(search_data: dict) -> list:
     Returns:
         List of patient dictionaries matching the criteria
     """
-    print(f"\n[DB_SEARCH] search_patients_local called")
+    logger.debug("[DB_SEARCH] search_patients_local called")
 
     with get_db_connection() as conn:
         conn.row_factory = sqlite3.Row
@@ -898,7 +898,7 @@ def search_patients_local(search_data: dict) -> list:
         cur.execute(query, params)
         rows = cur.fetchall()
         result = [dict(r) for r in rows]
-        print(f"[DB_SEARCH] Returned {len(result)} results")
+        logger.debug("[DB_SEARCH] Returned %d results", len(result))
         return result
 
 
@@ -1036,7 +1036,7 @@ def bulk_insert_instances(instances_data: list):
             cur.executemany(insert_sql, values)
             conn.commit()
     except Exception as e:
-        print(f"⚠️ Warning during bulk_insert_instances: {e}")
+        logger.warning("Warning during bulk_insert_instances: %s", e)
         return
 
 
@@ -1143,9 +1143,7 @@ def get_patients_ordered_by_date(limit: int = None, oldest_first: bool = True) -
             ]
 
     except Exception as e:
-        print(f"[WARNING] Database error in get_patients_ordered_by_date: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Database error in get_patients_ordered_by_date: %s", e)
         return []
 
 
@@ -1222,9 +1220,7 @@ def get_patient_storage_info(patient_pk: int) -> dict:
             }
 
     except Exception as e:
-        print(f"[WARNING] Database error in get_patient_storage_info: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Database error in get_patient_storage_info: %s", e)
         return empty
 
 
@@ -1246,16 +1242,14 @@ def delete_patient_cascade(patient_pk: int) -> bool:
             conn.commit()
 
             if deleted > 0:
-                print(f"[OK] Deleted patient {patient_pk} from database (CASCADE)")
+                logger.info("Deleted patient %s from database (CASCADE)", patient_pk)
                 return True
             else:
-                print(f"[WARNING] Patient {patient_pk} not found in database")
+                logger.warning("Patient %s not found in database", patient_pk)
                 return False
 
     except Exception as e:
-        print(f"[WARNING] Database error in delete_patient_cascade: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Database error in delete_patient_cascade: %s", e)
         return False
 
 
@@ -1312,7 +1306,5 @@ def get_patients_by_date_range(start_date: str = None, end_date: str = None) -> 
             ]
 
     except Exception as e:
-        print(f"[WARNING] Database error in get_patients_by_date_range: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Database error in get_patients_by_date_range: %s", e)
         return []

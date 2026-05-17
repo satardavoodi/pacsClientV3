@@ -1,4 +1,5 @@
 from PySide6.QtCore import Signal, Qt
+from functools import partial
 from PySide6.QtWidgets import (
     QWidget, QGridLayout, QPushButton
 )
@@ -40,7 +41,7 @@ class MatrixSelector(QWidget):
                 btn = MatrixButton(i, j)
                 btn.set_method_highlight_buttons(self.highlight_up_to)
                 # btn.clicked.connect(lambda _, r=i, c=j: self.apply_multi_viewer((r + 1, c + 1)))
-                btn.clicked.connect(lambda _, r=i, c=j: self.close_menu_and_apply_multi_viewer((r + 1, c + 1)))
+                btn.clicked.connect(partial(self._on_matrix_button_clicked, numbers=(i + 1, j + 1)))
                 self.layout.addWidget(btn, i, j)
                 row_buttons.append(btn)
             self.buttons.append(row_buttons)
@@ -66,6 +67,9 @@ class MatrixSelector(QWidget):
 
     def set_method_change_viewers(self, method_apply_multi_viewer):
         self.apply_multi_viewer = method_apply_multi_viewer
+
+    def _on_matrix_button_clicked(self, _checked=False, *, numbers):
+        self.close_menu_and_apply_multi_viewer(numbers)
 
     def close_menu_and_apply_multi_viewer(self, numbers):
         self.apply_multi_viewer(numbers, modify_by_user=True)

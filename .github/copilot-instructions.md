@@ -1,6 +1,8 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.0.5 (2026-05-17) — Version bump to align the app metadata, release note, and stable reference. See `docs/releases/VERSION_3.0.5_RELEASE.md`.
+**Current Stable Version:** v3.0.6 (2026-05-18) — Release rollup for DB, UI, data-flow optimization, and documentation/test organization updates. See `docs/releases/VERSION_3.0.6_RELEASE.md`.
+
+**Previous Stable:** v3.0.5 (2026-05-17) — Version bump to align the app metadata, release note, and stable reference. See `docs/releases/VERSION_3.0.5_RELEASE.md`.
 
 **Previous Stable:** v3.0.3 (2026-05-16) — FAST-to-MPR route hardening and geometry boundary stabilization build, including MPR launch routing, VTK bridge fixes, and release snapshot packaging. See `docs/releases/VERSION_3.0.3_RELEASE.md`.
 

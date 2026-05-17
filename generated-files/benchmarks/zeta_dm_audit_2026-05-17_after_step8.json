@@ -1,0 +1,2564 @@
+{
+  "scanned_files": 119,
+  "duplicate_defs": [],
+  "print_calls": [
+    {
+      "path": "modules/network/dicom_downloader_client_help.py",
+      "line": 236,
+      "kind": "print_call",
+      "detail": "print(\"Usage: python dicom_downloader_client.py <StudyInstanceUID> [output_dir] [instance_limit] [--streaming]\")"
+    },
+    {
+      "path": "modules/network/dicom_downloader_client_help.py",
+      "line": 237,
+      "kind": "print_call",
+      "detail": "print(\"  --streaming: Use streaming mode for large files (recommended)\")"
+    },
+    {
+      "path": "modules/network/dicom_downloader_client_help.py",
+      "line": 259,
+      "kind": "print_call",
+      "detail": "print(\" Tip: Use --streaming flag for very large files\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 487,
+      "kind": "print_call",
+      "detail": "print(\"Usage: python dicom_downloader_client.py <StudyInstanceUID(s)> [output_dir] [instance_limit] [options]\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 488,
+      "kind": "print_call",
+      "detail": "print(\"Options:\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 489,
+      "kind": "print_call",
+      "detail": "print(\" --streaming: Use streaming mode for large files (recommended)\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 490,
+      "kind": "print_call",
+      "detail": "print(\" --concurrent: Download multiple studies concurrently (use with multiple UIDs)\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 491,
+      "kind": "print_call",
+      "detail": "print(\" --max-concurrent N: Maximum concurrent downloads (default: 3)\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 492,
+      "kind": "print_call",
+      "detail": "print(\"Examples:\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 493,
+      "kind": "print_call",
+      "detail": "print(\" python dicom_downloader_client.py STUDY_UID_1 --streaming\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 494,
+      "kind": "print_call",
+      "detail": "print(\" python dicom_downloader_client.py STUDY_UID_1,STUDY_UID_2,STUDY_UID_3 --concurrent --max-concurrent 2\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 520,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udd04 Multiple studies detected, enabling concurrent mode\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 524,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udd17 Connected to gRPC server at {host}:{port}\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 536,
+      "kind": "print_call",
+      "detail": "print(\"\ud83d\udca1 Tip: Use --streaming flag for better performance on large files\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 539,
+      "kind": "print_call",
+      "detail": "print(\"\u274c No valid study UIDs provided\")"
+    },
+    {
+      "path": "modules/network/multi.py",
+      "line": 541,
+      "kind": "print_call",
+      "detail": "print(\"\u274c Failed to connect to server\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 291,
+      "kind": "print_call",
+      "detail": "print(\"\ud83d\ude80 Series Utilities Example\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 292,
+      "kind": "print_call",
+      "detail": "print(\"=\" * 30)"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 329,
+      "kind": "print_call",
+      "detail": "print(f\"\\n\ud83d\udd0d Filter Examples:\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 332,
+      "kind": "print_call",
+      "detail": "print(f\"   MR Series: {len(mr_series)}\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 335,
+      "kind": "print_call",
+      "detail": "print(f\"   CT Series: {len(ct_series)}\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 338,
+      "kind": "print_call",
+      "detail": "print(f\"   Axial Series: {len(axial_series)}\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 342,
+      "kind": "print_call",
+      "detail": "print(f\"\\n\ud83d\udcca Statistics:\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 343,
+      "kind": "print_call",
+      "detail": "print(f\"   Total Series: {stats['total_series']}\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 344,
+      "kind": "print_call",
+      "detail": "print(f\"   Total Images: {stats['total_images']}\")"
+    },
+    {
+      "path": "modules/network/series_utils.py",
+      "line": 345,
+      "kind": "print_call",
+      "detail": "print(f\"   Average Images: {stats['average_images_per_series']}\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 376,
+      "kind": "print_call",
+      "detail": "#     print(\"=== Socket Configuration ===\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 377,
+      "kind": "print_call",
+      "detail": "#     print(f\"Host: {config.get_socket_host()}\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 378,
+      "kind": "print_call",
+      "detail": "#     print(f\"Port: {config.get_socket_port()}\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 379,
+      "kind": "print_call",
+      "detail": "#     print(f\"Timeout: {config.get_connection_timeout()}\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 380,
+      "kind": "print_call",
+      "detail": "#     print(f\"Max Retries: {config.get_max_retries()}\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 381,
+      "kind": "print_call",
+      "detail": "#     print(f\"Buffer Size: {config.get_buffer_size()}\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 382,
+      "kind": "print_call",
+      "detail": "#     print(f\"Compression: {config.is_compression_enabled()}\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 383,
+      "kind": "print_call",
+      "detail": "#     print(f\"Auto Reconnect: {config.is_auto_reconnect_enabled()}\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 387,
+      "kind": "print_call",
+      "detail": "#         print(\"\u2705 Configuration is valid\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 389,
+      "kind": "print_call",
+      "detail": "#         print(\"\u274c Configuration has errors\")"
+    },
+    {
+      "path": "modules/network/socket_config.py",
+      "line": 393,
+      "kind": "print_call",
+      "detail": "#     print(f\"Updated server: {config.get_socket_host()}:{config.get_socket_port()}\")"
+    },
+    {
+      "path": "modules/network/socket_patient_service.py",
+      "line": 525,
+      "kind": "print_call",
+      "detail": "#     service.patientsReceived.connect(lambda patients: print(f\"Received {len(patients)} patients\"))"
+    },
+    {
+      "path": "modules/network/socket_patient_service.py",
+      "line": 526,
+      "kind": "print_call",
+      "detail": "#     service.searchError.connect(lambda error: print(f\"Search error: {error}\"))"
+    },
+    {
+      "path": "modules/network/socket_patient_service.py",
+      "line": 527,
+      "kind": "print_call",
+      "detail": "#     service.connectionStatusChanged.connect(lambda status: print(f\"Connection status: {status}\"))"
+    },
+    {
+      "path": "modules/network/socket_patient_service.py",
+      "line": 531,
+      "kind": "print_call",
+      "detail": "#         print(\"\u2705 Connection test successful\")"
+    },
+    {
+      "path": "modules/network/socket_patient_service.py",
+      "line": 539,
+      "kind": "print_call",
+      "detail": "#         print(\"\u274c Connection test failed\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/data_access_panel.py",
+      "line": 477,
+      "kind": "print_call",
+      "detail": "#         print(folder_path)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/data_access_panel.py",
+      "line": 484,
+      "kind": "print_call",
+      "detail": "#         print(self.file_path)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_db_service.py",
+      "line": 154,
+      "kind": "print_call",
+      "detail": "print(f\"Error getting series info from database: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_db_service.py",
+      "line": 215,
+      "kind": "print_call",
+      "detail": "print(f\"Error in save_series_info_to_database: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_db_service.py",
+      "line": 291,
+      "kind": "print_call",
+      "detail": "print(f\"Error saving study details: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_db_service.py",
+      "line": 336,
+      "kind": "print_call",
+      "detail": "print(f\"Error saving Socket patient to database: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_download_service.py",
+      "line": 169,
+      "kind": "print_call",
+      "detail": "print(f\"[DM] Error creating download manager tab: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_download_service.py",
+      "line": 523,
+      "kind": "print_call",
+      "detail": "print(f\"[DM] Error connecting signals: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 9,
+      "kind": "print_call",
+      "detail": "# Redirect print() to logger to avoid synchronous console I/O on Windows."
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 11,
+      "kind": "print_call",
+      "detail": "def print(*args, **_kw):  # noqa: A001"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 28,
+      "kind": "print_call",
+      "detail": "print('[Zeta Download] Download button clicked!')"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 44,
+      "kind": "print_call",
+      "detail": "print(f\"[Zeta Download] Server selected - {server}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 67,
+      "kind": "print_call",
+      "detail": "print(f\"[Old Download] Fetching series info for {study.get('patient_name')}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 74,
+      "kind": "print_call",
+      "detail": "print(f\"[Old Download] \u2705 Fetched {len(study.get('series', []))} series\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 76,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [Old Download] Could not fetch series info: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 78,
+      "kind": "print_call",
+      "detail": "print(f\"[Old Download] Adding {len(selected_studies)} studies to manager\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 86,
+      "kind": "print_call",
+      "detail": "print(\"[GlobalDL] set_global_download_active=True\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 91,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Error in _on_download_requested: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 138,
+      "kind": "print_call",
+      "detail": "print(f\"\\n{'='*70}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 139,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udce5 [DOWNLOAD_COMPLETE] Study download completed: {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 140,
+      "kind": "print_call",
+      "detail": "print(f\"{'='*70}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 144,
+      "kind": "print_call",
+      "detail": "print(f\"[CHECK_STATUS] check_study_complete returned: {result}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 149,
+      "kind": "print_call",
+      "detail": "print(f\"[STATUS] \u2713 Study completely downloaded: \""
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 153,
+      "kind": "print_call",
+      "detail": "print(f\"[STATUS] \u26a0\ufe0f Partial: \""
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 157,
+      "kind": "print_call",
+      "detail": "print(f\"[STATUS] \u2717 No downloaded series\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 160,
+      "kind": "print_call",
+      "detail": "print(f\"[STATUS] Result is bool: {status}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 163,
+      "kind": "print_call",
+      "detail": "print(f\"[STATUS] Unknown result type: {type(result)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 172,
+      "kind": "print_call",
+      "detail": "print(f\"[PIPELINE] \u2705 Signaled viewer controller: study download complete\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 174,
+      "kind": "print_call",
+      "detail": "print(f\"[PIPELINE] \u26a0\ufe0f Failed to signal viewer controller: {pipe_err}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 179,
+      "kind": "print_call",
+      "detail": "print(f\"[UI_UPDATE] Updated patient table for {study_uid}: {status}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 183,
+      "kind": "print_call",
+      "detail": "print(f\"[AUTO_OPEN] Opening study {study_uid}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 186,
+      "kind": "print_call",
+      "detail": "print(f\"{'='*70}\\n\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 197,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_TO_DB] \u26a0\ufe0f Could not schedule async DB save: {sched_err}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 200,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c [FATAL] Error: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 225,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_TO_DB] Retrieving study info for {study_uid}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 228,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_TO_DB] Got study info: \""
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 233,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_TO_DB] {'\u2705 Saved' if saved else '\u274c Failed to save'} study to database\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 235,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_TO_DB] \u274c Could not retrieve study info\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 238,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_TO_DB] \u274c Error: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 249,
+      "kind": "print_call",
+      "detail": "print(f\"[LOCAL_SYNC] Updated study_path: {study_path}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 251,
+      "kind": "print_call",
+      "detail": "print(f\"[LOCAL_SYNC] \u274c Study not found in database after download\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 253,
+      "kind": "print_call",
+      "detail": "print(f\"[LOCAL_SYNC] \u274c Failed to update study_path: {update_error}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 264,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_TO_DB_ASYNC] \u274c Error: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 275,
+      "kind": "print_call",
+      "detail": "print(f\"\\n[GET_INFO] Retrieving study info for {study_uid}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 278,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] Querying database...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 281,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u2713 Found study in database\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 282,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] Study info keys: {study_info.keys()}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 292,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u2713 Found patient: {patient_info.get('patient_name')} ({patient_info.get('patient_id')})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 297,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u274c Patient not found for pk={patient_pk}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 299,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u274c No patient_fk in study_info\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 305,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u2713 Found {len(series_list)} series in database\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 311,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u2705 Complete study info ready: {study_info.get('patient_name')} ({len(series_list)} series)\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 314,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u26a0\ufe0f Missing patient info, trying local files...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 316,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u26a0\ufe0f No series in database, trying local files...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 318,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u26a0\ufe0f Not in database, trying local files...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 322,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] Checking local path: {study_path}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 324,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \ud83d\udcc2 Found study path, analyzing files...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 330,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u2713 Found {series_count} series in local files\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 343,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u2705 Built study info from files: {study_info['patient_name']} ({series_count} series)\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 346,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u274c No series data in local files\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 348,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u274c Study path does not exist: {study_path}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 352,
+      "kind": "print_call",
+      "detail": "print(f\"[GET_INFO] \u274c Error: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 362,
+      "kind": "print_call",
+      "detail": "print(f\"[REFRESH_LOCAL] Current tab: {current_tab}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 364,
+      "kind": "print_call",
+      "detail": "print(f\"[REFRESH_LOCAL] \ud83d\udd04 Refreshing local patient list...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 368,
+      "kind": "print_call",
+      "detail": "print(f\"[REFRESH_LOCAL] Not on Local tab, skipping refresh\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 370,
+      "kind": "print_call",
+      "detail": "print(f\"[REFRESH_LOCAL] \u274c Error: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 375,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Study download failed: {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 376,
+      "kind": "print_call",
+      "detail": "print(f\"   Error: {error_message}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 381,
+      "kind": "print_call",
+      "detail": "print(f\"\u2713 Updated patient table for {study_uid}: error\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 387,
+      "kind": "print_call",
+      "detail": "print(f\"Error handling download failure: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 402,
+      "kind": "print_call",
+      "detail": "print(\"[Zeta Download] Switched to existing Resumable Downloads tab\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 406,
+      "kind": "print_call",
+      "detail": "print(\"[Zeta Download] Creating new Resumable Downloads tab\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 413,
+      "kind": "print_call",
+      "detail": "print(\"[OK] Resumable Download Manager opened\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 416,
+      "kind": "print_call",
+      "detail": "print(f\"[ERROR] Error opening resumable download manager: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_download.py",
+      "line": 455,
+      "kind": "print_call",
+      "detail": "print(f\"Error in download_study: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_import.py",
+      "line": 137,
+      "kind": "print_call",
+      "detail": "print("
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_import.py",
+      "line": 163,
+      "kind": "print_call",
+      "detail": "print("
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_import.py",
+      "line": 392,
+      "kind": "print_call",
+      "detail": "print(f\"[STARTUP_IMPORT] Fast viewer preparation warning: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_layout.py",
+      "line": 446,
+      "kind": "print_call",
+      "detail": "print(\"\ud83d\udd0c Connecting thumbnailClicked signal...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_layout.py",
+      "line": 448,
+      "kind": "print_call",
+      "detail": "print(\"\u2705 thumbnailClicked signal connected!\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_layout.py",
+      "line": 671,
+      "kind": "print_call",
+      "detail": "print(f\"Error updating connection indicator: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_layout.py",
+      "line": 693,
+      "kind": "print_call",
+      "detail": "print(f\"Error applying anti-aliasing: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_layout.py",
+      "line": 702,
+      "kind": "print_call",
+      "detail": "print(f\"Error refreshing table anti-aliasing: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_layout.py",
+      "line": 828,
+      "kind": "print_call",
+      "detail": "print(f\"Error checking Socket connection: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 30,
+      "kind": "print_call",
+      "detail": "print(\"[HomePanelWidget] open_download_manager called (Zeta Download Manager with v1.0.6 UI)\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 34,
+      "kind": "print_call",
+      "detail": "print(\"[HomePanelWidget] Error: Download Manager widget not available\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 37,
+      "kind": "print_call",
+      "detail": "print(\"[HomePanelWidget] Download Manager opened successfully (Zeta with v1.0.6 UI)\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 39,
+      "kind": "print_call",
+      "detail": "print(f\"[HomePanelWidget] Error opening download manager: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 59,
+      "kind": "print_call",
+      "detail": "print(f\"[HomePanelWidget] Error opening web browser: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 79,
+      "kind": "print_call",
+      "detail": "print(f\"[HomePanelWidget] Error opening education module: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 123,
+      "kind": "print_call",
+      "detail": "print(f\"[HomePanelWidget] Error opening printing module: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 142,
+      "kind": "print_call",
+      "detail": "print(f\"[HomePanelWidget] Error opening Reception Data tab: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 156,
+      "kind": "print_call",
+      "detail": "print(f\"Error opening AI client: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 190,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Cached widget for study {study_uid} was deleted, creating new one\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 193,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error with custom tab manager: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 200,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Cached widget for study {study_uid} has been deleted, removing from cache\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 211,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Widget for study {study_uid} not found in tabs, removing from cache\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 227,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error switching to existing tab: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 252,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udfaf [HomeUI] Priority download requested: series={series_number}, study={study_uid_param}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 256,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Connected priority download signal for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 301,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udfe0 [HOME-UI] Calling on_patient_tab_opened for {patient_name}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 308,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udfe0 [HOME-UI] on_patient_tab_opened completed\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 310,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udfe0 [HOME-UI] ERROR in on_patient_tab_opened: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 345,
+      "kind": "print_call",
+      "detail": "print(f\"Error in show_patient_info: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 422,
+      "kind": "print_call",
+      "detail": "print(f\"Error in on_plus_button_clicked: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 438,
+      "kind": "print_call",
+      "detail": "print(f\"Error in _safe_on_plus_button_clicked: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 455,
+      "kind": "print_call",
+      "detail": "print('\ud83d\ude80 [Zeta NPR] Button clicked - opening in Download Manager tab')"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 471,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\ude80 [Zeta NPR] Server selected - {server}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 500,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\ude80 [Zeta NPR] Fetched {len(study.get('series', []))} series\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 502,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [Zeta NPR] Could not fetch series info: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 505,
+      "kind": "print_call",
+      "detail": "print(f\"[Zeta NPR] Adding {len(selected_studies)} studies to manager\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 507,
+      "kind": "print_call",
+      "detail": "print(f\"[Zeta NPR] Studies added and downloads started automatically\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 512,
+      "kind": "print_call",
+      "detail": "print(\"[GlobalDL] set_global_download_active=True\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 517,
+      "kind": "print_call",
+      "detail": "print(f\"[Zeta NPR] \u2705 Added {len(selected_studies)} studies to queue\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 520,
+      "kind": "print_call",
+      "detail": "print(f\"[Zeta NPR] \u26a0\ufe0f No new studies added (may already be in queue)\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 523,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Error in Zeta Download: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 530,
+      "kind": "print_call",
+      "detail": "print('\ud83d\udcbf CD burn requested')"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 552,
+      "kind": "print_call",
+      "detail": "print(f\"Error importing CD burn dialog: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_modules.py",
+      "line": 557,
+      "kind": "print_call",
+      "detail": "print(f\"Error in _on_cd_burn_requested: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_offline.py",
+      "line": 441,
+      "kind": "print_call",
+      "detail": "print(f\"Offline Cloud sync error: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_offline.py",
+      "line": 459,
+      "kind": "print_call",
+      "detail": "print(f\"Offline Cloud export error: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 13,
+      "kind": "print_call",
+      "detail": "# Redirect print() to logger to avoid synchronous console I/O on Windows."
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 15,
+      "kind": "print_call",
+      "detail": "def print(*args, **_kw):  # noqa: A001"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 160,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [THREAD] Error downloading attachments: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 288,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Duplicate open prevented for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 296,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Existing widget for study {study_uid} has been deleted, creating new one\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 320,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error switching to existing tab: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 409,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 [TAB] Activated tab at index {tab_index}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 411,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [TAB] Error activating tab: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 415,
+      "kind": "print_call",
+      "detail": "print(\"\u2705 [TAB] Activated tab via setCurrentWidget\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 417,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [TAB] Error setting current widget: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 430,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 [TAB] Forced on_tab_activated for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 432,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [TAB] Failed forced on_tab_activated: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 487,
+      "kind": "print_call",
+      "detail": "print(f\"Warning: Could not fetch series info: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 557,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error adding to Download Manager: {e}\")  # Log for debugging"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 585,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [UI] Error scheduling UI tasks: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 608,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [THREAD] Error downloading attachments: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 634,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f [BACKGROUND] Error in background setup: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 647,
+      "kind": "print_call",
+      "detail": "print(f\"Error in patient double-click handler: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 694,
+      "kind": "print_call",
+      "detail": "print(f\"Removed study {study_uid} from opening studies set\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 696,
+      "kind": "print_call",
+      "detail": "print(f\"Error removing study from opening studies: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 756,
+      "kind": "print_call",
+      "detail": "print(\"Failed to create Zeta Download Manager\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 758,
+      "kind": "print_call",
+      "detail": "print(\"No server selected\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 761,
+      "kind": "print_call",
+      "detail": "print(f\"Error in patient double-click handler: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 803,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error closing tab: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 839,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Widget deleted, cannot emit signal for series {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_patient_open.py",
+      "line": 841,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error emitting series_downloaded signal: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 10,
+      "kind": "print_call",
+      "detail": "# Redirect print() to logger to avoid synchronous console I/O on Windows."
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 12,
+      "kind": "print_call",
+      "detail": "def print(*args, **_kw):  # noqa: A001"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 47,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udd25 [PRIORITY] Thumbnail clicked: series={series_number}, study={study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 57,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Series {series_number} already downloaded - loading immediately\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 74,
+      "kind": "print_call",
+      "detail": "print(f\"\u23ed\ufe0f Series {series_number} already switched by direct click \u2013 skipping reload\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 91,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udce5 Study {study_uid[:50]} is already in Download Manager (status: {state.status.value})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 97,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udce5 Study {study_uid} is already in Download Manager (status: {study_download.status})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 100,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f DownloadManagerWidget doesn't have 'state_store' or 'study_downloads', proceeding with new download\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 105,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udfaf Updating priority: series {series_number} to CRITICAL\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 113,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Download Manager notified: series {series_number} is now CRITICAL\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 115,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Download Manager does not have set_viewed_series method\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 117,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error notifying download manager of viewed series: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 139,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Letting Download Manager handle the prioritized download\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 143,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udccb Study not in Download Manager - starting new prioritized download\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 149,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Widget not found for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 170,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 New tab created for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 172,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Failed to create new tab: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 176,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c No widget available for priority download\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 188,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Failed to fetch series list\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 194,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c No server selected\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 204,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a1 IMMEDIATE START: Adding study with CRITICAL priority\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 270,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Database lookup failed: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 274,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Cannot start download: Missing patient info (id={dm_patient_id}, name={dm_patient_name})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 317,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Immediate priority download started for series {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 320,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Download Manager not available, using direct download\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 332,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Error in priority download: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 339,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Error in priority download handler: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 349,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Using cached series list for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 354,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udccb Found {len(widget.server_series_info)} series from widget.server_series_info\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 362,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udd0d Series list not found in widget, checking database...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 366,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udccb Found {len(series_from_db)} series from database\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 373,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error fetching series from database: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 376,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udf10 Series list not found in database, connecting to server...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 380,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c No server selected for fetching series\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 411,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udccb Retrieved {len(series_list)} series from server directly\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 420,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Error connecting to server to fetch series: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 425,
+      "kind": "print_call",
+      "detail": "print(f\"\\n{'='*80}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 426,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83e\uddea MANUAL TEST: Priority download\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 427,
+      "kind": "print_call",
+      "detail": "print(f\"{'='*80}\\n\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 432,
+      "kind": "print_call",
+      "detail": "print(\"\u274c No patient widget found\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 436,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udcc1 Current study: {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 450,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Cleaned up priority task for series {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 452,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error cleaning up priority task: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 457,
+      "kind": "print_call",
+      "detail": "print(f\"\\n{'='*80}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 458,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a1 IMMEDIATE DOWNLOAD INITIATED\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 459,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udfaf Series: {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 460,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udcc1 Study: {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 461,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udf10 Server: {server['host']}:50052\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 462,
+      "kind": "print_call",
+      "detail": "print(f\"{'='*80}\\n\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 472,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Series {series_number} not found in series list\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 487,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Series {series_number} already downloaded\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 498,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Connected to server, downloading series {series_number}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 512,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udcca Progress: Series {series_num} - {progress}% ({current}/{total})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 520,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Progress callback error: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 532,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Series {series_number} downloaded successfully!\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 539,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Failed to download series {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 541,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Failed to connect to downloader\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 544,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Error in immediate download: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 551,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udd04 Loading series {series_number} immediately...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 562,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Found series at index {series_index}, loading...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 572,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f No load method found on widget\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 574,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Series {series_number} loaded successfully!\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 576,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Series {series_number} not found in thumbnails list\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 579,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Error loading series immediately: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 586,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\uded1 Cancelling background downloads for series {series_number}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 598,
+      "kind": "print_call",
+      "detail": "print(f\"   Cancelled {cancelled} background download tasks\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 604,
+      "kind": "print_call",
+      "detail": "print(f\"   Cancelled Zeta download\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 609,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error cancelling background downloads: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 642,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f DEPRECATED: _download_single_series_with_priority called for series {clicked_series}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 643,
+      "kind": "print_call",
+      "detail": "print(\"\ud83d\udca1 Use Zeta Download Manager for priority-based downloads\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 652,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Series {clicked_series} already downloaded\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 658,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Error checking series status: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 665,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udd04 [IMMEDIATE DISPLAY] Loading series {series_number} from {series_dir}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 673,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c No DICOM files found in {series_dir}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 681,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f Widget doesn't have load_series_immediately method\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_priority.py",
+      "line": 684,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Error in immediate display: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 40,
+      "kind": "print_call",
+      "detail": "print(f\"Error in default search: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 77,
+      "kind": "print_call",
+      "detail": "print(f\"\\n[CANCEL_SEARCH] \ud83d\uded1 Cancel search requested by user\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 83,
+      "kind": "print_call",
+      "detail": "print(f\"[CANCEL_SEARCH] \u2705 Search task cancelled\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 100,
+      "kind": "print_call",
+      "detail": "print(f\"[CANCEL_SEARCH] \u2705 UI state reset\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 204,
+      "kind": "print_call",
+      "detail": "print(f\"Error adding Socket patient to table: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 238,
+      "kind": "print_call",
+      "detail": "print(f\"[WARN] Error in download status check: {ex}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 242,
+      "kind": "print_call",
+      "detail": "print(f\"Error checking download status: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 523,
+      "kind": "print_call",
+      "detail": "print(f\"gRPC Error: {str(grpc_error)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_search.py",
+      "line": 536,
+      "kind": "print_call",
+      "detail": "print(f\"Error in show_patient_studies: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 10,
+      "kind": "print_call",
+      "detail": "# Redirect print() to logger to avoid synchronous console I/O on Windows."
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 12,
+      "kind": "print_call",
+      "detail": "def print(*args, **_kw):  # noqa: A001"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 43,
+      "kind": "print_call",
+      "detail": "print(f\"[PROFILE] single-click: scheduled series info load for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 46,
+      "kind": "print_call",
+      "detail": "print(f\"Error in _on_patient_single_clicked: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 68,
+      "kind": "print_call",
+      "detail": "print(\"[WARNING] Series info load timed out (possible asyncio reentrancy)\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 76,
+      "kind": "print_call",
+      "detail": "print(f\"Error in _load_and_display_series_info_async: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 122,
+      "kind": "print_call",
+      "detail": "print(f\"[PROFILE] single-click: DB series info loaded for {study_uid} in {(time.perf_counter() - _t_db)*1000:.1f}ms\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 126,
+      "kind": "print_call",
+      "detail": "print(f\"[PROFILE] single-click: thumbnails loaded for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 134,
+      "kind": "print_call",
+      "detail": "print('study_info:', study_info)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 144,
+      "kind": "print_call",
+      "detail": "print(f\"[PROFILE] single-click: server series info loaded for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 150,
+      "kind": "print_call",
+      "detail": "print(f\"Error in _load_and_display_series_info: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 168,
+      "kind": "print_call",
+      "detail": "print(f\"[WARNING] No thumbnail cache found for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 176,
+      "kind": "print_call",
+      "detail": "print(f\"[WARNING] No thumbnail images found in {thumbnail_dir}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 215,
+      "kind": "print_call",
+      "detail": "print(f\"[OK] Displayed {len(thumbnails)} cached thumbnails for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 216,
+      "kind": "print_call",
+      "detail": "print(f\"[PROFILE] thumbnails cache display: {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 219,
+      "kind": "print_call",
+      "detail": "print(f\"[ERROR] Error loading thumbnails for downloaded study: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 268,
+      "kind": "print_call",
+      "detail": "print(f\"Error in get_series_statistics_from_list: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 280,
+      "kind": "print_call",
+      "detail": "print(f\"Error in _display_series_info_in_right_panel: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 295,
+      "kind": "print_call",
+      "detail": "print('finished downloading:', output_dir)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 298,
+      "kind": "print_call",
+      "detail": "print('error in downloading..:', e)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 330,
+      "kind": "print_call",
+      "detail": "print(f\"Error displaying thumbnails: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 338,
+      "kind": "print_call",
+      "detail": "# print('thuuuuuuuu:', series_thumbnails)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 385,
+      "kind": "print_call",
+      "detail": "print(f\"Error in thumbnail task cleanup: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 393,
+      "kind": "print_call",
+      "detail": "print(f\"Error in thumbnail task cleanup: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 404,
+      "kind": "print_call",
+      "detail": "print(f\"\\n{'='*80}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 405,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udfaf [HIGH PRIORITY] User clicked series {series_number} - IMMEDIATE DOWNLOAD REQUEST\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 406,
+      "kind": "print_call",
+      "detail": "print(f\"{'='*80}\\n\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 409,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udce2 DEBUG: _on_right_panel_thumbnail_clicked CALLED with series: {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 413,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udcca Checking right panel state...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 415,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Right panel widget not available\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 421,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c No study info available or no series list\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 426,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Found study: {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 427,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Available series: {[s.get('series_number', '?') for s in series_list]}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 433,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Widget not found for study {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 436,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Widget found: {type(widget).__name__}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 443,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c No server selected\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_series.py",
+      "line": 448,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83c\udfaf Starting IMMEDIATE download for series {series_number}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 7,
+      "kind": "print_call",
+      "detail": "# Redirect print() to logger to avoid synchronous console I/O on Windows."
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 10,
+      "kind": "print_call",
+      "detail": "def print(*args, **_kw):  # noqa: A001"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 100,
+      "kind": "print_call",
+      "detail": "print(f\"Error getting series info: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 117,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Starting to save study {study_uid}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 118,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] study_info provided: {study_info is not None}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 122,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Fetching from server...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 124,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Server returned: {study_info}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 126,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Using cached study_info\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 129,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] \u274c No study_info available\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 137,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] \u274c Missing patient_id in study_info\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 138,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Available keys: {study_info.keys()}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 143,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] \u26a0\ufe0f Missing patient_name, using default\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 145,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Patient: {patient_name_val} ({patient_id_val})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 148,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Looking for existing patient...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 151,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Creating new patient record...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 161,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] \u2713 Created patient (pk={patient_pk})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 163,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] \u2713 Found existing patient (pk={patient_pk})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 166,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Looking for existing study...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 173,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] Creating new study record...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 188,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] \u2713 Created study record (pk={study_pk}) at {study_path}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 190,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] \u2713 Found existing study (pk={study_pk})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 203,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Updated study record with study_path: {study_path}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 207,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_SERIES] Saving {len(study_info.get('series', []))} series...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 213,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_SERIES] \u26a0\ufe0f Skipping series with no UID\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 217,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_SERIES] Processing series {series_number}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 221,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_SERIES] \u2713 Series {series_number} already in database (pk={existing_series_pk})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 248,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_SERIES] \u2705 Saved series {series_number} (pk={series_pk})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 251,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] Processing instances for series {series_number}...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 259,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] Series {series_number} has {instance_count} images in metadata\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 267,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] Found {len(dicom_files)} DICOM files on disk for series {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 306,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] \u26a0\ufe0f Error reading DICOM {dcm_file.name}: {dcm_err}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 312,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] \u2705 Saved {inserted} instances for series {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 314,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] \u26a0\ufe0f No instances to save for series {series_number}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 316,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] \u26a0\ufe0f No DICOM files found in {series_path}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 319,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] \u274c Error saving instances for series {series_number}: {inst_err}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 324,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_SERIES] \u274c Error saving series {series_number}: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 329,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_SERIES] \u2705 Complete: {saved_series}/{len(study_info.get('series', []))} series saved\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 330,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_INSTANCES] \u2705 All instances saved to database\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_study_save.py",
+      "line": 333,
+      "kind": "print_call",
+      "detail": "print(f\"[SAVE_COMPLETE] \u274c Error: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 52,
+      "kind": "print_call",
+      "detail": "print(f\"Drawing pixmap for section {logicalIndex} at ({x}, {y})\")  # Debug"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 798,
+      "kind": "print_call",
+      "detail": "print(f\"Error setting up select all header: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 878,
+      "kind": "print_call",
+      "detail": "print(f\"Error in header clicked: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 905,
+      "kind": "print_call",
+      "detail": "print(f\"Error setting up status headers: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1310,
+      "kind": "print_call",
+      "detail": "print(f\"Error applying theme to patient table: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1357,
+      "kind": "print_call",
+      "detail": "print(f\"Error updating button stylesheet: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1402,
+      "kind": "print_call",
+      "detail": "print(f\"Error updating utility button stylesheet: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1409,
+      "kind": "print_call",
+      "detail": "print(\"Anti-aliasing applied to patient table\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1411,
+      "kind": "print_call",
+      "detail": "print(f\"Error applying anti-aliasing to table: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1419,
+      "kind": "print_call",
+      "detail": "print(f\"Error refreshing table anti-aliasing: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1446,
+      "kind": "print_call",
+      "detail": "print(f\"Error in patient click: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1464,
+      "kind": "print_call",
+      "detail": "print(f\"Error highlighting row: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1493,
+      "kind": "print_call",
+      "detail": "print(f\"Error toggling row selection: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1506,
+      "kind": "print_call",
+      "detail": "print(f\"Error removing row highlight: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1525,
+      "kind": "print_call",
+      "detail": "print(f\"Warning: Missing table items for row {selected_row}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1529,
+      "kind": "print_call",
+      "detail": "print(f\"Error in single-click timeout: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1535,
+      "kind": "print_call",
+      "detail": "print(\"Double-click event detected in event filter\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1601,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\ude80 Zeta Download requested for {len(selected_data)} studies\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1604,
+      "kind": "print_call",
+      "detail": "print(f\"Error in Zeta Download: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1629,
+      "kind": "print_call",
+      "detail": "print(f\"Error in Offline Cloud sync: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1647,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udcbf CD burn requested for {len(selected_data)} studies\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1650,
+      "kind": "print_call",
+      "detail": "print(f\"Error in CD burn: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1659,
+      "kind": "print_call",
+      "detail": "print(f\"Error in print request: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1699,
+      "kind": "print_call",
+      "detail": "print(f\"Error in delete studies: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1774,
+      "kind": "print_call",
+      "detail": "print(f\"Error checking if study {study_uid} is downloaded: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1811,
+      "kind": "print_call",
+      "detail": "print(f\"\u2713 Deleted DICOM files for {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1818,
+      "kind": "print_call",
+      "detail": "print(f\"\u2713 Deleted attachments for {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1826,
+      "kind": "print_call",
+      "detail": "print(f\"\u26a0\ufe0f No local files found for {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1831,
+      "kind": "print_call",
+      "detail": "print(f\"\u2717 Error deleting {study_uid}: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1890,
+      "kind": "print_call",
+      "detail": "print(f\"\u2713 Updated database for {study_uid} - marked as not downloaded\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1893,
+      "kind": "print_call",
+      "detail": "print(f\"Error updating database for {study_uid}: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 1994,
+      "kind": "print_call",
+      "detail": "print(f\"Error updating study download status: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2031,
+      "kind": "print_call",
+      "detail": "print(f\"Error checking download status for {study_uid}: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2072,
+      "kind": "print_call",
+      "detail": "print(f\"\u2713 Refreshed download statuses for {self.results_table.rowCount()} studies\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2075,
+      "kind": "print_call",
+      "detail": "print(f\"Error refreshing download statuses: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2133,
+      "kind": "print_call",
+      "detail": "print(f\"Error centering checkbox in cell: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2406,
+      "kind": "print_call",
+      "detail": "print(f\"\\n\ud83d\uddb1\ufe0f [UI] Report status icon clicked\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2407,
+      "kind": "print_call",
+      "detail": "print(f\"   Study UID: {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2408,
+      "kind": "print_call",
+      "detail": "print(f\"   Current Status: {current_status}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2409,
+      "kind": "print_call",
+      "detail": "print(f\"   Patient: {patient_name} ({patient_id})\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2420,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c [UI] Row not found for study_uid: {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2431,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udccb [UI] Opening status change dialog...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2443,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udce2 [UI] Signal received: statusChanged\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2444,
+      "kind": "print_call",
+      "detail": "print(f\"   UID: {uid}, Old: {old_st}, New: {new_st}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2446,
+      "kind": "print_call",
+      "detail": "print(f\"   Comment: {comment}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2451,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udcac [UI] Dialog exec() called...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2453,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 [UI] Dialog accepted\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2457,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c [UI] Dialog rejected\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2461,
+      "kind": "print_call",
+      "detail": "print(f\"\\n{'='*60}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2462,
+      "kind": "print_call",
+      "detail": "print(f\"\ud83d\udd04 [PatientTable] Starting status change: {study_uid}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2463,
+      "kind": "print_call",
+      "detail": "print(f\"   Old status: {old_status}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2464,
+      "kind": "print_call",
+      "detail": "print(f\"   New status: {new_status}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2465,
+      "kind": "print_call",
+      "detail": "print(f\"   Comment: {comment}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2832,
+      "kind": "print_call",
+      "detail": "print(\"Testing double-click functionality...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2841,
+      "kind": "print_call",
+      "detail": "print(\"Double-click debug mode enabled\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2856,
+      "kind": "print_call",
+      "detail": "print(f\"Error setting row cursor: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2865,
+      "kind": "print_call",
+      "detail": "print(\"Testing click handlers...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2870,
+      "kind": "print_call",
+      "detail": "print(\"Testing single-click...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2872,
+      "kind": "print_call",
+      "detail": "print(\"Testing double-click...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 2877,
+      "kind": "print_call",
+      "detail": "print(\"Forcing double-click...\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/patient_table_widget.py",
+      "line": 3184,
+      "kind": "print_call",
+      "detail": "print(f\"Error loading font settings: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 271,
+      "kind": "print_call",
+      "detail": "print(f\"Error applying theme to right panel: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 346,
+      "kind": "print_call",
+      "detail": "print(f\"Error in display_series_info: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 364,
+      "kind": "print_call",
+      "detail": "print(f\"Error in display_thumbnails: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 419,
+      "kind": "print_call",
+      "detail": "print(f\"Error in display_thumbnails_progressively: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 460,
+      "kind": "print_call",
+      "detail": "print(f\"Error displaying thumbnail {idx}: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 466,
+      "kind": "print_call",
+      "detail": "print(f\"Error in display_thumbnails_immediately: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 487,
+      "kind": "print_call",
+      "detail": "# print('thumb_path:', thumb_path)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 520,
+      "kind": "print_call",
+      "detail": "print(f\"Error displaying thumbnail {self.current_thumbnail_index}: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 587,
+      "kind": "print_call",
+      "detail": "print(f\"Error extracting series info: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 695,
+      "kind": "print_call",
+      "detail": "print(f\"Error creating combined thumbnail info widget: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 864,
+      "kind": "print_call",
+      "detail": "print(f\"Error creating series info widget: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 963,
+      "kind": "print_call",
+      "detail": "print(f\"Error creating detailed series info widget: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 1041,
+      "kind": "print_call",
+      "detail": "print(f\"Error creating thumbnail widget: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 1124,
+      "kind": "print_call",
+      "detail": "print(f\"Error creating stats widget: {str(e)}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/right_panel_widget.py",
+      "line": 1160,
+      "kind": "print_call",
+      "detail": "print(f\"Error in get_series_statistics: {str(e)}\")"
+    }
+  ],
+  "todo_markers": [],
+  "silent_drop_candidates": []
+}

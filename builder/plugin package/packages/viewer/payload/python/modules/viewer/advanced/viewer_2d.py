@@ -1008,7 +1008,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         series_desc = self.metadata['series']['series_description']
 
         self.dicom_tags_actors.im_slice_actor = make_corner_actor(
-            f'{display_slice + self.skip_slices} / {self.get_count_of_slices()}', right, top, 'right', 'top')
+            f'{display_slice + self.skip_slices + 1} / {self.get_count_of_slices()}', right, top, 'right', 'top')
         self.dicom_tags_actors.im_study_date_actor = make_corner_actor(study_date, right, top - (1 * gap), 'right',
                                                                        'top')
         self.dicom_tags_actors.im_series_time_actor = make_corner_actor(series_time, right, top - (2 * gap), 'right',
@@ -1414,17 +1414,16 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             pass
 
     def get_display_slice(self) -> int:
-        """Return the current slice as a *display* index (canonical clinical order).
+        """Return the current slice in the legacy zero-based display domain.
 
-        When a K-flip DisplayGeometry contract is active, the raw VTK k index
-        returned by GetSlice() is converted to the display_k space so that
-        display_k=0 is the clinically canonical first slice (e.g. Superior for
-        axial HFS).  When no K-flip is active this is identical to GetSlice().
+        DisplayGeometry uses a 1-based display policy (display_k in [1..N])
+        for matrix-driven conversion. For compatibility with existing scroll and
+        slider plumbing, this method normalizes back to zero-based values.
         """
         raw_k = int(self.GetSlice())
         _dg = getattr(self, "_display_geometry_contract", None)
-        if _dg is not None and _dg.is_k_flip_active:
-            return _dg.raw_k_to_display_k(raw_k)
+        if _dg is not None:
+            return max(0, int(_dg.raw_k_to_display_k(raw_k)) - 1)
         return raw_k
 
     def set_slice(self, slice_index, fast_interaction=False, force_annotations=False):
@@ -1466,8 +1465,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 # Compare raw VTK index to avoid unnecessary SetSlice calls
                 _dg_early = getattr(self, "_display_geometry_contract", None)
                 _raw_k_early = (
-                    _dg_early.display_k_to_raw_k(int(slice_index))
-                    if (_dg_early is not None and _dg_early.is_k_flip_active)
+                    _dg_early.display_k_to_raw_k(int(slice_index) + 1)
+                    if (_dg_early is not None)
                     else int(slice_index)
                 )
                 if int(self.GetSlice()) == _raw_k_early:
@@ -1478,8 +1477,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # 1) Convert display_k → raw VTK k via DisplayGeometry contract
         _dg = getattr(self, "_display_geometry_contract", None)
         _raw_k = (
-            _dg.display_k_to_raw_k(int(slice_index))
-            if (_dg is not None and _dg.is_k_flip_active)
+            _dg.display_k_to_raw_k(int(slice_index) + 1)
+            if (_dg is not None)
             else int(slice_index)
         )
         self.SetSlice(_raw_k)
@@ -2264,9 +2263,20 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
             # Audit and apply clinical stack-order convention if needed
             try:
+                root_meta = self.metadata if isinstance(self.metadata, dict) else {}
                 plane = str(series_meta.get("display_convention") or series_meta.get("geometry_plane") or "UNKNOWN")
                 body_part = str(series_meta.get("body_part_examined") or "")
-                convention, matches, recommended, reason, direction = dg.audit_stack_order_convention(plane, body_part)
+                applied_reverse = bool(
+                    root_meta.get("_geometry_index_applied_reverse",
+                    series_meta.get("_geometry_index_applied_reverse", False))
+                )
+                if applied_reverse:
+                    logger.warning(
+                        "[R31_METADATA_APPLIED_REVERSE] series_uid=%s series_number=%s applied_reverse=True will_force_kflip=True",
+                        series_uid, series_number,
+                        extra={"component": "viewer"},
+                    )
+                convention, matches, recommended, reason, direction = dg.audit_stack_order_convention(plane, body_part, applied_reverse=applied_reverse)
                 
                 effective_affine_before = dg.effective_display_ijk_to_lps_4x4.copy()
                 
@@ -2286,6 +2296,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 )
                 
                 # Apply K-flip if convention mismatch detected
+                logger.warning(
+                    "[AUDIT_RECOMMENDATION] recommended=%s matches=%s convention=%s direction=%s plane=%s (will_apply_kflip=%s)",
+                    recommended, matches, convention, direction, plane, (recommended == "K_FLIP" and not matches),
+                    extra={"component": "viewer"},
+                )
                 if recommended == "K_FLIP" and not matches:
                     dg.apply_k_flip_for_stack_order(sg.n_slices, reason=reason)
                     effective_affine_after = dg.effective_display_ijk_to_lps_4x4.copy()

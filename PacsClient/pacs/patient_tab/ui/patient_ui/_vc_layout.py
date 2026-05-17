@@ -4,6 +4,7 @@ Multi-viewer grid creation, vtk-widget factory, layout application.
 """
 from __future__ import annotations
 import copy
+from functools import partial
 import os
 import threading
 import time
@@ -515,7 +516,7 @@ class _VCLayoutMixin:
         try:
             logger.debug("   ًں”— Connecting slider signal...")
             self.parent_widget.on_slider_value_changed(vtk_widget, mid_slices)
-            slider.valueChanged.connect(lambda val: self.parent_widget.on_slider_value_changed(vtk_widget, val))
+            slider.valueChanged.connect(partial(self.parent_widget.on_slider_value_changed, vtk_widget))
             logger.debug("   âœ… Slider connected")
             # Slider thumb-drag fast path: FAST-mode only, gated by AIPACS_SLIDER_FAST_DRAG=1.
             # When enabled, sliderMoved routes through the full protected-drag pipeline

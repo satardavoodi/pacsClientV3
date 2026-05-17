@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+from functools import partial
 from typing import Dict
 
 from PySide6.QtCore import Signal, Qt, QThread, QObject, Slot
@@ -144,7 +145,7 @@ class StorageCleanupPanelWidget(QWidget):
             "QPushButton:hover { background-color: #2563eb; }"
         )
         refresh_btn.setCursor(Qt.PointingHandCursor)
-        refresh_btn.clicked.connect(lambda: self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True))
+        refresh_btn.clicked.connect(self._on_refresh_storage_info_clicked)
         refresh_row.addWidget(refresh_btn)
         refresh_row.addStretch(1)
         folders_card_layout.addLayout(refresh_row)
@@ -253,9 +254,9 @@ class StorageCleanupPanelWidget(QWidget):
                 "QPushButton:hover { background-color: #1e40af; }"
             )
             if key == "patients":
-                clear_btn.clicked.connect(lambda _, k=key: self._show_patient_cleanup_dialog())
+                clear_btn.clicked.connect(self._on_clear_patients_clicked)
             else:
-                clear_btn.clicked.connect(lambda _, k=key: self._handle_cleanup_action(k))
+                clear_btn.clicked.connect(partial(self._on_clear_category_clicked, category=key))
             top_row.addWidget(clear_btn)
             
             row_layout.addLayout(top_row)
@@ -269,6 +270,15 @@ class StorageCleanupPanelWidget(QWidget):
             row_layout.addWidget(path_label)
             
             parent_layout.addWidget(row_card)
+
+    def _on_clear_patients_clicked(self, _checked=False):
+        self._show_patient_cleanup_dialog()
+
+    def _on_clear_category_clicked(self, _checked=False, *, category: str):
+        self._handle_cleanup_action(category)
+
+    def _on_refresh_storage_info_clicked(self, _checked=False):
+        self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True)
 
     def _handle_cleanup_action(self, category: str):
         title_map = {

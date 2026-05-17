@@ -52,11 +52,16 @@ from PacsClient.utils.runtime_correlation import (
 )
 
 
+def _emit_console(message: str) -> None:
+    """Emit startup/CLI console text without direct print calls."""
+    sys.stdout.write(f"{message}\n")
+
+
 def _maybe_nuitka_smoke_test_exit() -> None:
     """Fast startup check for staged Nuitka smoke tests."""
     if os.environ.get("AIPACS_NUITKA_SMOKE_TEST") != "1":
         return
-    print("[SMOKE] AIPacs startup smoke check reached main bootstrap.")
+    _emit_console("[SMOKE] AIPacs startup smoke check reached main bootstrap.")
     raise SystemExit(0)
 
 
@@ -93,7 +98,7 @@ def _extract_startup_import_folder() -> str | None:
                 # Remove custom args so Qt/app internals don't see unknown switches.
                 del sys.argv[idx:idx + 2]
             else:
-                print("[STARTUP] '--import-folder' provided without a path; ignoring.")
+                _emit_console("[STARTUP] '--import-folder' provided without a path; ignoring.")
         except Exception:
             pass
 
@@ -135,7 +140,7 @@ def _extract_startup_import_folder() -> str | None:
             pass
 
     if folder_path:
-        print(f"[STARTUP] Requested import folder: {folder_path}")
+        _emit_console(f"[STARTUP] Requested import folder: {folder_path}")
 
     return folder_path
 
@@ -154,13 +159,13 @@ def _maybe_run_tests_and_exit() -> None:
     pytest_args = sys.argv[arg_index + 1:] or ["tests/test_pydicom_backend_geometry.py"]
 
     if importlib.util.find_spec("pytest") is None:
-        print("[TEST] pytest is not installed.")
-        print("[TEST] Install dev dependencies:")
-        print("       python -m pip install -r requirements-dev.txt")
+        _emit_console("[TEST] pytest is not installed.")
+        _emit_console("[TEST] Install dev dependencies:")
+        _emit_console("       python -m pip install -r requirements-dev.txt")
         sys.exit(2)
 
     cmd = [sys.executable, "-m", "pytest", *pytest_args]
-    print(f"[TEST] Running: {' '.join(cmd)}")
+    _emit_console(f"[TEST] Running: {' '.join(cmd)}")
     rc = subprocess.call(cmd)
     sys.exit(int(rc))
 
@@ -569,31 +574,31 @@ def configure_graphics_fallback():
     # Logging (minimal, before logging subsystem fully initialized)
     # ========================================================================
     
-    print(f"[GRAPHICS] Build: {'FROZEN' if frozen else 'DEVELOPMENT'}")
+    _emit_console(f"[GRAPHICS] Build: {'FROZEN' if frozen else 'DEVELOPMENT'}")
     try:
         save_runtime_profile(build_graphics_runtime_patch(profile))
     except Exception:
         pass
 
-    print(f"[GRAPHICS] Mode: {'GPU' if use_gpu else 'SOFTWARE_OPENGL'}")
-    print(f"[GRAPHICS] Execution mode: {profile.get('execution_mode', '')}")
-    print(f"[GRAPHICS] QT_OPENGL: {os.environ.get('QT_OPENGL', '')}")
-    print(f"[GRAPHICS] ANGLE_DEFAULT_PLATFORM: {os.environ.get('ANGLE_DEFAULT_PLATFORM', '')}")
-    print(f"[GRAPHICS] GPU requested: {profile.get('requested_gpu', False)}")
-    print(f"[GRAPHICS] GPU detected: {profile.get('detected_gpu', False)}")
+    _emit_console(f"[GRAPHICS] Mode: {'GPU' if use_gpu else 'SOFTWARE_OPENGL'}")
+    _emit_console(f"[GRAPHICS] Execution mode: {profile.get('execution_mode', '')}")
+    _emit_console(f"[GRAPHICS] QT_OPENGL: {os.environ.get('QT_OPENGL', '')}")
+    _emit_console(f"[GRAPHICS] ANGLE_DEFAULT_PLATFORM: {os.environ.get('ANGLE_DEFAULT_PLATFORM', '')}")
+    _emit_console(f"[GRAPHICS] GPU requested: {profile.get('requested_gpu', False)}")
+    _emit_console(f"[GRAPHICS] GPU detected: {profile.get('detected_gpu', False)}")
     if profile.get("device_name"):
-        print(f"[GRAPHICS] GPU device: {profile['device_name']}")
+        _emit_console(f"[GRAPHICS] GPU device: {profile['device_name']}")
     software = profile.get("software_rendering") or {}
     if not use_gpu:
-        print(f"[GRAPHICS] Software renderer status: {software.get('status', '')}")
+        _emit_console(f"[GRAPHICS] Software renderer status: {software.get('status', '')}")
         if software.get("qt_opengl_dll"):
-            print(f"[GRAPHICS] Qt software OpenGL DLL: {software['qt_opengl_dll']}")
+            _emit_console(f"[GRAPHICS] Qt software OpenGL DLL: {software['qt_opengl_dll']}")
         if software.get("vtk_osmesa_dll"):
-            print(f"[GRAPHICS] VTK OSMesa DLL: {software['vtk_osmesa_dll']}")
+            _emit_console(f"[GRAPHICS] VTK OSMesa DLL: {software['vtk_osmesa_dll']}")
         if graphics_env.get("warning"):
-            print(f"[GRAPHICS] Warning: {graphics_env['warning']}")
+            _emit_console(f"[GRAPHICS] Warning: {graphics_env['warning']}")
         if graphics_env.get("viewer_backend_override"):
-            print(f"[GRAPHICS] Safe viewer backend override: {graphics_env['viewer_backend_override']}")
+            _emit_console(f"[GRAPHICS] Safe viewer backend override: {graphics_env['viewer_backend_override']}")
     return profile
 
 # Configure graphics BEFORE any Qt/VTK imports
@@ -653,14 +658,14 @@ if __name__ == "__main__":
         env_file = install_dir / '.env'
         if env_file.exists():
             load_dotenv(dotenv_path=env_file, override=True)
-            print(f"[CONFIG] Loaded environment from: {env_file}")
+            _emit_console(f"[CONFIG] Loaded environment from: {env_file}")
         # Also try config/production_logging.env
         config_env = install_dir / 'config' / 'production_logging.env'
         if config_env.exists():
             load_dotenv(dotenv_path=config_env, override=False)  # Don't override .env if it exists
-            print(f"[CONFIG] Loaded production logging config: {config_env}")
+            _emit_console(f"[CONFIG] Loaded production logging config: {config_env}")
     except Exception as e:
-        print(f"[CONFIG] Could not load .env file: {e}")
+        _emit_console(f"[CONFIG] Could not load .env file: {e}")
 
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
@@ -1112,7 +1117,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.0.5")
+    app.setApplicationVersion("3.0.6")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1136,7 +1141,7 @@ if __name__ == "__main__":
         # This ensures icons work properly in PyInstaller builds
         _ = qta.icon('fa5s.home')  # This triggers font loading
     except Exception as e:
-        print(f"Warning: Could not initialize qtawesome fonts: {e}")
+        _emit_console(f"Warning: Could not initialize qtawesome fonts: {e}")
 
     # Check license
     license_manager = LicenseManager()

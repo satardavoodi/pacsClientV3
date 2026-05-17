@@ -1,0 +1,351 @@
+{
+  "scanned_files": 43,
+  "startup_critical_files_found": 4,
+  "print_calls_startup": [
+    {
+      "path": "main.py",
+      "line": 59,
+      "kind": "print_call",
+      "detail": "print(\"[SMOKE] AIPacs startup smoke check reached main bootstrap.\")"
+    },
+    {
+      "path": "main.py",
+      "line": 96,
+      "kind": "print_call",
+      "detail": "print(\"[STARTUP] '--import-folder' provided without a path; ignoring.\")"
+    },
+    {
+      "path": "main.py",
+      "line": 138,
+      "kind": "print_call",
+      "detail": "print(f\"[STARTUP] Requested import folder: {folder_path}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 157,
+      "kind": "print_call",
+      "detail": "print(\"[TEST] pytest is not installed.\")"
+    },
+    {
+      "path": "main.py",
+      "line": 158,
+      "kind": "print_call",
+      "detail": "print(\"[TEST] Install dev dependencies:\")"
+    },
+    {
+      "path": "main.py",
+      "line": 159,
+      "kind": "print_call",
+      "detail": "print(\"       python -m pip install -r requirements-dev.txt\")"
+    },
+    {
+      "path": "main.py",
+      "line": 163,
+      "kind": "print_call",
+      "detail": "print(f\"[TEST] Running: {' '.join(cmd)}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 572,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] Build: {'FROZEN' if frozen else 'DEVELOPMENT'}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 578,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] Mode: {'GPU' if use_gpu else 'SOFTWARE_OPENGL'}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 579,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] Execution mode: {profile.get('execution_mode', '')}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 580,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] QT_OPENGL: {os.environ.get('QT_OPENGL', '')}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 581,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] ANGLE_DEFAULT_PLATFORM: {os.environ.get('ANGLE_DEFAULT_PLATFORM', '')}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 582,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] GPU requested: {profile.get('requested_gpu', False)}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 583,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] GPU detected: {profile.get('detected_gpu', False)}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 585,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] GPU device: {profile['device_name']}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 588,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] Software renderer status: {software.get('status', '')}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 590,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] Qt software OpenGL DLL: {software['qt_opengl_dll']}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 592,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] VTK OSMesa DLL: {software['vtk_osmesa_dll']}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 594,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] Warning: {graphics_env['warning']}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 596,
+      "kind": "print_call",
+      "detail": "print(f\"[GRAPHICS] Safe viewer backend override: {graphics_env['viewer_backend_override']}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 656,
+      "kind": "print_call",
+      "detail": "print(f\"[CONFIG] Loaded environment from: {env_file}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 661,
+      "kind": "print_call",
+      "detail": "print(f\"[CONFIG] Loaded production logging config: {config_env}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 663,
+      "kind": "print_call",
+      "detail": "print(f\"[CONFIG] Could not load .env file: {e}\")"
+    },
+    {
+      "path": "main.py",
+      "line": 1139,
+      "kind": "print_call",
+      "detail": "print(f\"Warning: Could not initialize qtawesome fonts: {e}\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 252,
+      "kind": "print_call",
+      "detail": "print(f\"Could not load logo: {e}\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 740,
+      "kind": "print_call",
+      "detail": "print(f\"Error loading saved credentials: {e}\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 759,
+      "kind": "print_call",
+      "detail": "print(f\"Error saving credentials: {e}\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 807,
+      "kind": "print_call",
+      "detail": "print(f\"Error updating license info: {e}\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 868,
+      "kind": "print_call",
+      "detail": "print(\"\u2705 Local login \u2014 bypassing server authentication\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 934,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Authenticated as: {user.get('full_name')} ({user.get('role')})\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 935,
+      "kind": "print_call",
+      "detail": "print(f\"\u2705 Token stored in TokenManager for socket requests\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 941,
+      "kind": "print_call",
+      "detail": "print(f\"\u274c Socket authentication error: {e}\")"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 993,
+      "kind": "print_call",
+      "detail": "print(f\"Error opening main window: {e}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 114,
+      "kind": "print_call",
+      "detail": "print(\"[STARTUP] Home widget import hook not available; skipping startup import\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 117,
+      "kind": "print_call",
+      "detail": "print(f\"[STARTUP] Auto-importing folder: {folder}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 120,
+      "kind": "print_call",
+      "detail": "print(f\"[STARTUP] Startup auto-import failed: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1081,
+      "kind": "print_call",
+      "detail": "print(f\"Warning: shutdown({name}): {err}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1153,
+      "kind": "print_call",
+      "detail": "print(f\"Warning: exit_patient_widget tab {i}: {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1167,
+      "kind": "print_call",
+      "detail": "print(f\"Warning: download_service.cleanup(): {exc}\")"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1177,
+      "kind": "print_call",
+      "detail": "print(f\"Warning: DownloadManagerWidget.cleanup() tab {i}: {exc}\")"
+    }
+  ],
+  "heavy_imports_startup": [],
+  "blocking_candidates_startup": [
+    {
+      "path": "main.py",
+      "line": 164,
+      "kind": "subprocess_call",
+      "detail": "rc = subprocess.call(cmd)"
+    }
+  ],
+  "qtimer_singleshot_startup": [
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 486,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, self._ensure_welcome_page_height)"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 853,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(1500, lambda: self._complete_login(username, password))"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/widget.py",
+      "line": 210,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, self.apply_anti_aliasing)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 123,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(900, _run_startup_import)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 186,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, self._maybe_snap_maximize)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 237,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(10, _snap)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 318,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, _go)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 896,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(delay, _cleanup)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1033,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(10, _snap)"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1038,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, lambda: self.setGeometry(self._normal_geometry))"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1090,
+      "kind": "qtimer_singleshot",
+      "detail": "QTimer.singleShot(0, app.quit)"
+    }
+  ],
+  "lazy_import_helpers": [
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/widget.py",
+      "line": 71,
+      "kind": "lazy_import_helper",
+      "detail": "_ensure_patient_widget has inner import"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/widget.py",
+      "line": 78,
+      "kind": "lazy_import_helper",
+      "detail": "_ensure_ai_main_window has inner import"
+    }
+  ],
+  "todo_markers": [
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 970,
+      "kind": "todo_marker",
+      "detail": "# TODO: Replace this with actual authentication system"
+    }
+  ],
+  "warmup_isolation": {
+    "canonical_exists": true,
+    "plugin_exists": true,
+    "canonical_has_process_marker": true,
+    "canonical_has_entrypoint_marker": true
+  }
+}

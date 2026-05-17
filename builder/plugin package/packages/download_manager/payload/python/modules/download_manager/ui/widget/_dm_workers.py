@@ -198,23 +198,23 @@ class _DMWorkersMixin:
             # separate Python process (own GIL) so the viewer is never starved.
             logger.info(f"🚀 [WORKER-START] Creating DownloadProcessWorker instance...")
             worker = DownloadWorker(task, self.executor)
-            logger.info(f"🚀 [WORKER-START] Worker created: {type(worker).__name__}")
+            logger.debug(f"🚀 [WORKER-START] Worker created: {type(worker).__name__}")
 
             # Connect signals
-            logger.info(f"🚀 [WORKER-START] Connecting worker signals...")
+            logger.debug(f"🚀 [WORKER-START] Connecting worker signals...")
             worker.progress.connect(self._on_worker_progress)
             worker.completed.connect(self._on_worker_completed)
             worker.error.connect(self._on_worker_error)
-            logger.info(f"🚀 [WORKER-START] Signals connected successfully")
+            logger.debug(f"🚀 [WORKER-START] Signals connected successfully")
 
             # Add to pool
-            logger.info(f"🚀 [WORKER-START] Adding worker to pool...")
-            logger.info(f"🚀 [WORKER-START] Worker type: {type(worker)}, Worker isRunning: {worker.isRunning()}")
-            logger.info(f"🚀 [WORKER-START] Pool type: {type(self.worker_pool)}, Pool capacity: {self.worker_pool.can_add_worker()}")
+            logger.debug(f"🚀 [WORKER-START] Adding worker to pool...")
+            logger.debug(f"🚀 [WORKER-START] Worker type: {type(worker)}, Worker isRunning: {worker.isRunning()}")
+            logger.debug(f"🚀 [WORKER-START] Pool type: {type(self.worker_pool)}, Pool capacity: {self.worker_pool.can_add_worker()}")
 
             try:
                 add_result = self.worker_pool.add_worker(worker, study_uid)
-                logger.info(f"🚀 [WORKER-START] add_worker returned: {add_result}")
+                logger.debug(f"🚀 [WORKER-START] add_worker returned: {add_result}")
             except Exception as e:
                 logger.error(f"🚀 [WORKER-START] ❌ EXCEPTION in add_worker:")
                 logger.error(f"🚀 [WORKER-START] Exception type: {type(e).__name__}")
@@ -224,12 +224,12 @@ class _DMWorkersMixin:
                 raise
 
             if add_result:
-                logger.info(f"🚀 [WORKER-START] Worker added to pool successfully")
+                logger.debug(f"🚀 [WORKER-START] Worker added to pool successfully")
 
                 # Start worker
-                logger.info(f"🚀 [WORKER-START] Starting worker thread...")
+                logger.debug(f"🚀 [WORKER-START] Starting worker thread...")
                 worker.start()
-                logger.info(f"🚀 [WORKER-START] Worker thread started")
+                logger.debug(f"🚀 [WORKER-START] Worker thread started")
                 logger.warning(
                     "download-impact-window marker=download_start_after_worker_start delta_ms=%.2f",
                     now_ms() - t_download_start_marker,

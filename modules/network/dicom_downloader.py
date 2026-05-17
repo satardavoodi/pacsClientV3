@@ -9,10 +9,13 @@ import os
 import sys
 import argparse
 import gzip
+import logging
 from datetime import datetime
 from pathlib import Path
 import re
 from PacsClient.pacs.patient_tab.utils import check_series_study_exist
+
+logger = logging.getLogger(__name__)
 
 # Add grpc_generated to path
 grpc_generated_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'grpc_generated')
@@ -48,7 +51,7 @@ class DicomDownloader:
             return True
 
         except Exception as e:
-            print(f" Failed to connect to gRPC server: {e}")
+            logger.warning("Failed to connect to gRPC server: %s", e)
             return False
 
     def download_study_dicom_files(self, study_uid, output_dir="./dicom_files", instance_limit=0):
@@ -68,7 +71,7 @@ class DicomDownloader:
             response = self.stub.GetStudyDicomFiles(request)
 
             if not response.instances:
-                print(" No DICOM files found for this study")
+                logger.info("No DICOM files found for this study")
                 return False
 
             # Create output directory
@@ -114,7 +117,7 @@ class DicomDownloader:
             return True
 
         except Exception as e:
-            print(f" Error downloading DICOM files: {e}")
+            logger.warning("Error downloading DICOM files: %s", e)
             return False
 
     def download_study_dicom_files_streaming(self, study_uid, output_dir="./dicom_files", instance_limit=0, progress_callback=None):
@@ -162,7 +165,11 @@ class DicomDownloader:
                     if current_series is not None and current_series != series_number:
                         # Previous series is complete - flush any pending batch files first
                         if batch_files:
-                            print(f"🔄 Flushing {len(batch_files)} pending files before completing series {current_series}")
+                            logger.debug(
+                                "Flushing %d pending files before completing series %s",
+                                len(batch_files),
+                                current_series,
+                            )
                             downloaded_count, total_size = self._process_batch_files(
                                 batch_files, downloaded_count, total_size
                             )
@@ -252,7 +259,7 @@ class DicomDownloader:
                     # with open(metadata_file, 'w') as f:
                     #     json.dump(metadata, f, indent=2)
                 else:
-                    print(f"    No data for instance {instance_response.instance_number}")
+                    logger.debug("No data for instance %s", instance_response.instance_number)
 
             # Process remaining files in the last batch
             if batch_files:
@@ -264,7 +271,11 @@ class DicomDownloader:
             if current_series is not None and current_series in series_progress:
                 # Flush remaining batch files for the last series
                 if batch_files:
-                    print(f"🔄 Flushing {len(batch_files)} remaining files for final series {current_series}")
+                    logger.debug(
+                        "Flushing %d remaining files for final series %s",
+                        len(batch_files),
+                        current_series,
+                    )
                     downloaded_count, total_size = self._process_batch_files(
                         batch_files, downloaded_count, total_size
                     )
@@ -284,7 +295,7 @@ class DicomDownloader:
             return True
 
         except Exception as e:
-            print(f" Error downloading DICOM files (streaming): {e}")
+            logger.warning("Error downloading DICOM files (streaming): %s", e)
             return False
 
     def _process_batch_files(self, batch_files, downloaded_count, total_size):
@@ -302,6 +313,6 @@ class DicomDownloader:
                 downloaded_count += 1
 
         except Exception as e:
-            print(f" Error processing batch files: {e}")
+            logger.warning("Error processing batch files: %s", e)
 
         return downloaded_count, total_size

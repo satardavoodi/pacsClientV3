@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, Signal, QSize
 from PySide6.QtGui import QFont, QIcon, QImage, QPainter, QColor, QPixmap
 from .patient_tab_widget import PatientTabWidget
 from .service_tab_widget import ServiceTabWidget
+from functools import partial
 import os
 import logging
 
@@ -522,7 +523,7 @@ class CustomTabManager:
         tab_index = self.tab_widget.addTab(widget, "")
         
         # Connect close button signal after tab_index is available
-        custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
+        custom_tab.close_requested.connect(partial(self.close_patient_tab, tab_index))
 
         if self.title_bar_tab_area:
             # Add to title bar
@@ -899,7 +900,7 @@ class CustomTabManager:
                         custom_tab.clicked.disconnect()
                     except Exception:
                         pass
-                    custom_tab.clicked.connect(lambda checked=False, i=idx: self.set_tab_active_simple(i))
+                    custom_tab.clicked.connect(partial(self.set_tab_active_simple, idx))
                 else:
                     custom_tab.mousePressEvent = lambda event, i=idx: self.on_title_bar_tab_clicked(i)
 
@@ -908,7 +909,7 @@ class CustomTabManager:
                         custom_tab.close_requested.disconnect()
                     except Exception:
                         pass
-                    custom_tab.close_requested.connect(lambda i=idx: self.close_patient_tab(i))
+                    custom_tab.close_requested.connect(partial(self.close_patient_tab, idx))
 
             self.title_bar_tabs = new_title_bar_tabs
     
@@ -988,7 +989,7 @@ class CustomTabManager:
         if self.title_bar_tab_area:
             # Add to title bar
             self._add_title_bar_tab_widget(tab_button)
-            tab_button.clicked.connect(lambda: self.set_tab_active_simple(tab_index))
+            tab_button.clicked.connect(partial(self.set_tab_active_simple, tab_index))
             self.title_bar_tabs[tab_index] = tab_button
         else:
             # Set custom tab widget as tab button
@@ -1062,7 +1063,7 @@ class CustomTabManager:
         print(f"[CustomTabManager] Download Manager tab added at index: {tab_index}")
         
         # Connect close button signal
-        custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
+        custom_tab.close_requested.connect(partial(self.close_patient_tab, tab_index))
         
         if self.title_bar_tab_area:
             # Add to right-side area (near admin/user info)
@@ -1121,7 +1122,7 @@ class CustomTabManager:
         print(f"[CustomTabManager] Web Browser tab added at index: {tab_index}")
         
         # Connect close button signal
-        custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
+        custom_tab.close_requested.connect(partial(self.close_patient_tab, tab_index))
         
         if self.title_bar_tab_area:
             # Add to right-side area (near admin/user info)
@@ -1177,7 +1178,7 @@ class CustomTabManager:
         print(f"[CustomTabManager] Education Module tab added at index: {tab_index}")
         
         # Connect close button signal
-        custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
+        custom_tab.close_requested.connect(partial(self.close_patient_tab, tab_index))
         
         if self.title_bar_tab_area:
             # Add to right-side area (near admin/user info)
@@ -1233,7 +1234,7 @@ class CustomTabManager:
         print(f"[CustomTabManager] Printing tab added at index: {tab_index}")
 
         # Connect close button signal
-        custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
+        custom_tab.close_requested.connect(partial(self.close_patient_tab, tab_index))
 
         if self.title_bar_tab_area:
             # Add to right side of title bar (next to user info, like other service modules)
@@ -1294,7 +1295,7 @@ class CustomTabManager:
         tab_index = self.tab_widget.addTab(widget, "")
         print(f"[CustomTabManager] Educational Course tab added at index: {tab_index}")
 
-        custom_tab.close_requested.connect(lambda: self.close_patient_tab(tab_index))
+        custom_tab.close_requested.connect(partial(self.close_patient_tab, tab_index))
 
         if self.title_bar_tab_area:
             custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)

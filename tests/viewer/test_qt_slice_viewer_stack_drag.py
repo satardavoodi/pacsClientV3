@@ -156,9 +156,10 @@ class TestQtSliceViewerStackDrag:
         # n=240 >= 150 -> max_per_event=2 (hard burst cap keeps drag feeling controlled)
         assert max_steps == 2
 
-    def test_large_stack_fast_drag_velocity_gain_applies(self):
-        """At high velocity on a large stack, the gain amplifies the move and
-        the hard burst cap (max_per_event=2 for n>=150) keeps it from exceeding 2."""
+    def test_large_stack_fast_drag_velocity_gain_applies(self, monkeypatch):
+        """V1-specific: natural h/n threshold + velocity gain for large stacks."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -170,9 +171,10 @@ class TestQtSliceViewerStackDrag:
         assert viewer._consume_stack_drag_delta(threshold * 4.0, speed_px_per_sec=threshold * 90.0) == 2
         assert viewer._stacked_accum == 0.0
 
-    def test_very_fast_drag_hits_max_per_event_cap(self):
-        """Even at maximum velocity the hard burst cap (max_per_event=2 for n<250)
-        prevents more than 2 slices per event, keeping drag smooth and controlled."""
+    def test_very_fast_drag_hits_max_per_event_cap(self, monkeypatch):
+        """V1-specific: natural h/n threshold + max_per_event cap for very fast drag."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -184,7 +186,10 @@ class TestQtSliceViewerStackDrag:
         assert viewer._stacked_accum == 0.0
 
 
-    def test_large_stack_slow_drag_keeps_single_slice_precision(self):
+    def test_large_stack_slow_drag_keeps_single_slice_precision(self, monkeypatch):
+        """V1-specific: first-step fires at 65% of natural h/n threshold."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -283,7 +288,10 @@ class TestQtSliceViewerStackDrag:
         assert viewer._stacked_dragging is True
         assert emitted
 
-    def test_consume_stack_drag_delta_uses_threshold(self):
+    def test_consume_stack_drag_delta_uses_threshold(self, monkeypatch):
+        """V1-specific: threshold accumulation mechanic."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -296,7 +304,10 @@ class TestQtSliceViewerStackDrag:
         # remainder should be preserved, not discarded
         assert viewer._stacked_accum > 0.0
 
-    def test_consume_stack_drag_delta_caps_large_event(self):
+    def test_consume_stack_drag_delta_caps_large_event(self, monkeypatch):
+        """V1-specific: large coalesced events are capped to max_per_event."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -309,7 +320,10 @@ class TestQtSliceViewerStackDrag:
         assert 0.0 <= abs(viewer._stacked_accum) < threshold
 
 
-    def test_first_drag_step_uses_smaller_start_threshold_without_burst(self):
+    def test_first_drag_step_uses_smaller_start_threshold_without_burst(self, monkeypatch):
+        """V1-specific: first-step assist fires at 65% of natural h/n threshold."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -324,7 +338,10 @@ class TestQtSliceViewerStackDrag:
         assert viewer._stacked_first_step_pending is False
         assert viewer._stacked_accum == 0.0
 
-    def test_after_first_drag_step_regular_threshold_is_restored(self):
+    def test_after_first_drag_step_regular_threshold_is_restored(self, monkeypatch):
+        """V1-specific: after first step, regular h/n threshold applies."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -337,7 +354,10 @@ class TestQtSliceViewerStackDrag:
         assert viewer._consume_stack_drag_delta(threshold * 0.7, speed_px_per_sec=threshold * 5.0) == 0
         assert viewer._stacked_accum > 0.0
 
-    def test_reversal_clears_pending_drag_backlog_immediately(self):
+    def test_reversal_clears_pending_drag_backlog_immediately(self, monkeypatch):
+        """V1-specific: direction reversal flushes accumulator using natural h/n threshold."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")
@@ -507,18 +527,248 @@ class TestQtSliceViewerStackDrag:
         )
         viewer.mouseMoveEvent(first_move)
 
-        same_target_move = QMouseEvent(
-            QMouseEvent.Type.MouseMove,
-            QPointF(256, 256 + int(round(threshold * 2.35))),
-            Qt.MouseButton.NoButton,
-            Qt.MouseButton.LeftButton,
-            Qt.KeyboardModifier.NoModifier,
+
+# ─── V2 band-parameter unit tests ────────────────────────────────────────────
+#
+# These tests exercise the module-level V2 helpers directly (no full viewer
+# instance required) to pin down the small-stack smoothness contract
+# introduced in the revised V2 model (px_per_slice_fixed for tiny/small).
+
+class TestV2BandParams:
+    """Unit tests for _v2_select_drag_band and _v2_effective_px_per_slice."""
+
+    # ── Band selection ────────────────────────────────────────────────────
+
+    def test_band_selection_boundaries(self):
+        from modules.viewer.fast.qt_slice_viewer import _v2_select_drag_band, _DRAG_BAND_PARAMS
+        assert _v2_select_drag_band(1)   is _DRAG_BAND_PARAMS["micro"]
+        assert _v2_select_drag_band(9)   is _DRAG_BAND_PARAMS["micro"]
+        assert _v2_select_drag_band(10)  is _DRAG_BAND_PARAMS["tiny"]
+        assert _v2_select_drag_band(24)  is _DRAG_BAND_PARAMS["tiny"]
+        assert _v2_select_drag_band(25)  is _DRAG_BAND_PARAMS["small"]
+        assert _v2_select_drag_band(49)  is _DRAG_BAND_PARAMS["small"]
+        assert _v2_select_drag_band(50)  is _DRAG_BAND_PARAMS["medium"]
+        assert _v2_select_drag_band(99)  is _DRAG_BAND_PARAMS["medium"]
+        assert _v2_select_drag_band(100) is _DRAG_BAND_PARAMS["large"]
+        assert _v2_select_drag_band(199) is _DRAG_BAND_PARAMS["large"]
+        assert _v2_select_drag_band(200) is _DRAG_BAND_PARAMS["xlarge"]
+        assert _v2_select_drag_band(299) is _DRAG_BAND_PARAMS["xlarge"]
+        assert _v2_select_drag_band(300) is _DRAG_BAND_PARAMS["huge"]
+        assert _v2_select_drag_band(999) is _DRAG_BAND_PARAMS["huge"]
+
+    # ── Proportional px_per_slice for ALL bands (v3.0.5 unification) ─────────
+
+    def test_v2_tiny_proportional_px_per_slice(self):
+        """tiny band (10 ≤ n < 25) uses proportional dead-zone h/n × 0.86 (15% faster than small)."""
+        from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
+        band = _DRAG_BAND_PARAMS["tiny"]
+        assert band.get("px_per_slice_fixed") is None, "tiny must use divisor, not fixed"
+        assert band.get("base_divisor") == 0.86
+        # n=11, h=550  →  550/11 × 0.86 = 43.0
+        assert abs(_v2_effective_px_per_slice(11, 550.0, band) - 43.0) < 0.01
+        # n=20, h=400  →  400/20 × 0.86 = 17.2
+        assert abs(_v2_effective_px_per_slice(20, 400.0, band) - 17.2) < 0.01
+        # Varies with h and n (not fixed)
+        r1 = _v2_effective_px_per_slice(11, 500.0, band)
+        r2 = _v2_effective_px_per_slice(20, 500.0, band)
+        assert r1 != r2, "px must scale with n, not be a constant"
+
+    def test_v2_sub50_bands_10pct_faster(self):
+        """micro/tiny (n<25) use base_divisor=0.86 (15% faster than small);
+        small (25-49) uses 0.99 (10% faster than medium+)."""
+        from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS, _v2_select_drag_band
+        h, v = 500.0, 150.0
+        std_traversal   = h * 1.1  / v   # medium+    ≈ 3.67 s
+        small_traversal = h * 0.99 / v   # small      ≈ 3.30 s  (10% faster than medium)
+        fast_traversal  = h * 0.86 / v   # micro/tiny ≈ 2.87 s  (15% faster than small)
+        # micro and tiny must use base_divisor=0.86
+        for band_name, n_example in [("micro", 5), ("tiny", 15)]:
+            band = _DRAG_BAND_PARAMS[band_name]
+            assert band.get("base_divisor") == 0.86, f"{band_name} must use base_divisor=0.86"
+            px = _v2_effective_px_per_slice(n_example, h, band)
+            traversal = n_example * px / v
+            assert traversal < std_traversal, f"{band_name} must be faster than medium"
+            assert abs(traversal - fast_traversal) / fast_traversal < 0.01, (
+                f"{band_name}: traversal={traversal:.3f}s, expected≈{fast_traversal:.3f}s"
+            )
+        # small must use base_divisor=0.99 (10% faster than medium, unchanged)
+        band_s = _DRAG_BAND_PARAMS["small"]
+        assert band_s.get("base_divisor") == 0.99, "small must use base_divisor=0.99"
+        px_s = _v2_effective_px_per_slice(35, h, band_s)
+        traversal_s = 35 * px_s / v
+        assert traversal_s < std_traversal, "small must be faster than medium"
+        assert abs(traversal_s - small_traversal) / small_traversal < 0.01, (
+            f"small: traversal={traversal_s:.3f}s, expected≈{small_traversal:.3f}s"
         )
-        viewer.mouseMoveEvent(same_target_move)
+        # Band selector routing
+        assert _v2_select_drag_band(9)  is _DRAG_BAND_PARAMS["micro"]
+        assert _v2_select_drag_band(10) is _DRAG_BAND_PARAMS["tiny"]
+        assert _v2_select_drag_band(25) is _DRAG_BAND_PARAMS["small"]
+        assert _v2_select_drag_band(50) is _DRAG_BAND_PARAMS["medium"]
 
-        assert emitted == [51]
+    def test_v2_small_proportional_px_per_slice(self):
+        """small band uses proportional dead-zone h/n × 0.99 — 10% faster, no fixed constant."""
+        from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
+        band = _DRAG_BAND_PARAMS["small"]
+        assert band.get("px_per_slice_fixed") is None, "small must use divisor, not fixed"
+        assert band.get("base_divisor") == 0.99
+        # n=40, h=440  →  440/40 × 0.99 = 10.89
+        assert abs(_v2_effective_px_per_slice(40, 440.0, band) - 10.89) < 0.01
+        # n=30, h=300  →  300/30 × 0.99 = 9.9
+        assert abs(_v2_effective_px_per_slice(30, 300.0, band) - 9.9) < 0.01
 
-    def test_adaptive_stack_drag_caps_large_followup_move_to_profile_limit(self):
+    def test_v2_tiny_no_gain(self):
+        """tiny band disables velocity gain — v_onset and gain_max enforce no acceleration."""
+        from modules.viewer.fast.qt_slice_viewer import _DRAG_BAND_PARAMS
+        band = _DRAG_BAND_PARAMS["tiny"]
+        assert band["v_onset"] > 1e8, "tiny v_onset must be effectively infinite"
+        assert band["gain_max"] == 1.0, "tiny must have gain_max=1.0"
+        assert band["max_per_event"] == 1
+
+    def test_v2_small_no_gain(self):
+        """small band disables velocity gain in the revised model."""
+        from modules.viewer.fast.qt_slice_viewer import _DRAG_BAND_PARAMS
+        band = _DRAG_BAND_PARAMS["small"]
+        assert band["v_onset"] > 1e8, "small v_onset must be effectively infinite"
+        assert band["gain_max"] == 1.0, "small must have gain_max=1.0"
+        assert band["max_per_event"] == 1
+
+    # ── Safety floor ──────────────────────────────────────────────────────
+
+    def test_v2_fixed_minimum_clamp(self):
+        """Fixed px_per_slice values are clamped to at least 0.5."""
+        from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice
+        band = {"px_per_slice_fixed": 0.0, "v_onset": 1e9, "v_max": 1e9,
+                "gain_max": 1.0, "max_per_event": 1}
+        assert _v2_effective_px_per_slice(10, 300.0, band) == 0.5
+
+    # ── Medium: natural 1:1 floor ─────────────────────────────────────────
+
+    def test_v2_medium_natural_floor(self):
+        """medium band (base_divisor=1.1) returns natural × 1.1 (slight cushion)."""
+        from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
+        band = _DRAG_BAND_PARAMS["medium"]
+        h, n = 500.0, 75
+        result = _v2_effective_px_per_slice(n, h, band)
+        expected = (h / n) * 1.1  # ≈ 7.33
+        assert abs(result - expected) < 0.01, (
+            f"medium band should return natural×1.1 ({expected:.3f}), got {result:.3f}"
+        )
+
+    def test_v2_medium_base_divisor(self):
+        """medium band has base_divisor=1.1 (−10% sensitivity vs pure 1:1)."""
+        from modules.viewer.fast.qt_slice_viewer import _DRAG_BAND_PARAMS
+        assert _DRAG_BAND_PARAMS["medium"]["base_divisor"] == 1.1
+        assert _DRAG_BAND_PARAMS["medium"]["px_per_slice_fixed"] is None
+
+    # ── Large/xlarge/huge: now uniform base_divisor=1.1 ───────────────────────
+
+    def test_v2_large_calibrated_multiplier(self):
+        """large band uses base_divisor=1.1 — same as medium for proportional feel."""
+        from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
+        band = _DRAG_BAND_PARAMS["large"]
+        assert band.get("base_divisor") == 1.1
+        h, n = 600.0, 150
+        result = _v2_effective_px_per_slice(n, h, band)
+        expected = (h / n) * 1.1  # = 4.4
+        assert abs(result - expected) < 0.01
+
+    def test_v2_huge_calibrated_multiplier(self):
+        """huge band uses base_divisor=1.1 — proportional with all other bands."""
+        from modules.viewer.fast.qt_slice_viewer import _DRAG_BAND_PARAMS
+        band = _DRAG_BAND_PARAMS["huge"]
+        assert band.get("base_divisor") == 1.1
+        assert band["px_per_slice_fixed"] is None
+
+    # ── Traversal-time consistency (v3.0.5 / v3.0.6 proportionality invariant) ─
+
+    def test_v2_uniform_traversal_time_consistency(self):
+        """micro/tiny deliver h×0.86/v (15% faster than small); small delivers h×0.99/v; medium…huge deliver h×1.1/v."""
+        from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
+        h, v = 500.0, 150.0
+        tiny_traversal = h * 0.86 / v   # ≈ 2.87 s — micro/tiny
+        fast_traversal = h * 0.99 / v   # ≈ 3.30 s — small
+        std_traversal  = h * 1.1  / v   # ≈ 3.67 s — medium…huge
+        tiny_cases = [
+            ("micro",  5), ("micro",  8),
+            ("tiny",  11), ("tiny",  20),
+        ]
+        fast_cases = [
+            ("small", 30), ("small", 49),
+        ]
+        std_cases = [
+            ("medium", 70), ("medium", 90),
+            ("large",  130), ("large", 190),
+            ("xlarge", 250),
+            ("huge",   350),
+        ]
+        for band_name, n in tiny_cases:
+            band = _DRAG_BAND_PARAMS[band_name]
+            px = _v2_effective_px_per_slice(n, h, band)
+            actual = n * px / v
+            assert abs(actual - tiny_traversal) / tiny_traversal < 0.02, (
+                f"{band_name}(n={n}): traversal {actual:.3f}s ≠ {tiny_traversal:.3f}s"
+            )
+        for band_name, n in fast_cases:
+            band = _DRAG_BAND_PARAMS[band_name]
+            px = _v2_effective_px_per_slice(n, h, band)
+            actual = n * px / v
+            assert abs(actual - fast_traversal) / fast_traversal < 0.02, (
+                f"{band_name}(n={n}): traversal {actual:.3f}s ≠ {fast_traversal:.3f}s"
+            )
+        for band_name, n in std_cases:
+            band = _DRAG_BAND_PARAMS[band_name]
+            px = _v2_effective_px_per_slice(n, h, band)
+            actual = n * px / v
+            assert abs(actual - std_traversal) / std_traversal < 0.02, (
+                f"{band_name}(n={n}): traversal {actual:.3f}s ≠ {std_traversal:.3f}s"
+            )
+
+    def test_v2_uniform_base_divisor_all_bands(self):
+        """Every band has no fixed constant; micro/tiny=0.86, small=0.99, medium…huge=1.1."""
+        from modules.viewer.fast.qt_slice_viewer import _DRAG_BAND_PARAMS
+        for name, params in _DRAG_BAND_PARAMS.items():
+            assert params.get("px_per_slice_fixed") is None, (
+                f"{name}: production bands must use divisor model (px_per_slice_fixed must be None)"
+            )
+            if name in ("micro", "tiny"):
+                expected_div = 0.86
+            elif name == "small":
+                expected_div = 0.99
+            else:
+                expected_div = 1.1
+            assert params.get("base_divisor") == expected_div, (
+                f"{name}: base_divisor must be {expected_div}, got {params.get('base_divisor')}"
+            )
+
+    def test_v2_traversal_invariant_different_heights(self):
+        """Traversal-time invariant holds across different viewport heights.
+
+        micro/tiny → h × 0.86 / v (faster); small → h × 0.99 / v; large/huge → h × 1.1 / v (standard).
+        """
+        from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
+        v = 150.0
+        for h in [300.0, 500.0, 800.0]:
+            tiny_expected = h * 0.86 / v
+            fast_expected = h * 0.99 / v
+            std_expected  = h * 1.1  / v
+            for band_name, n, expected in [
+                ("tiny",  15, tiny_expected),
+                ("small", 40, fast_expected),
+                ("large", 150, std_expected),
+                ("huge",  300, std_expected),
+            ]:
+                band = _DRAG_BAND_PARAMS[band_name]
+                px = _v2_effective_px_per_slice(n, h, band)
+                actual = n * px / v
+                assert abs(actual - expected) / expected < 0.01, (
+                    f"h={h} {band_name}(n={n}): traversal={actual:.3f}s, expected={expected:.3f}s"
+                )
+
+    def test_adaptive_stack_drag_caps_large_followup_move_to_profile_limit(self, monkeypatch):
+        """V1-specific: large coalesced real mouse event is capped to max_per_event."""
+        import modules.viewer.fast.qt_slice_viewer as _qsv_mod
+        monkeypatch.setattr(_qsv_mod, "_USE_V2_MODEL", False)
         viewer = QtSliceViewer()
         viewer.resize(512, 512)
         viewer.set_stack_drag_policy("adaptive")

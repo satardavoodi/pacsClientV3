@@ -1,7 +1,8 @@
 {
-  "active_sort_col": 9,
+  "active_sort_col": 7,
   "sort_states": {
-    "9": 2,
-    "8": 0
+    "9": 0,
+    "8": 0,
+    "7": 1
   }
 }

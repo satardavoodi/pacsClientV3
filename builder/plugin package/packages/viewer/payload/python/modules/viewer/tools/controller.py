@@ -101,6 +101,20 @@ class ToolController:
         self._drag_start_img = None
         self._drag_start_points = None
 
+    def set_store(self, store: ToolStore) -> None:
+        """Rebind controller to a different per-series store."""
+        if store is self._store:
+            return
+        self._cancel_placing()
+        self._store = store
+        self._state = ToolState.IDLE
+        self._hovered_model = None
+        self._hovered_handle_idx = -2
+        self._drag_model = None
+        self._drag_handle_idx = -2
+        self._drag_start_img = None
+        self._drag_start_points = None
+
     # ── Mouse events ─────────────────────────────────────────────────
 
     def on_mouse_press(

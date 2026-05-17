@@ -15,6 +15,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
+import logging
 
 from PacsClient.utils import (
     find_patient_pk,
@@ -28,6 +29,9 @@ from PacsClient.utils import (
 )
 from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.db_manager import get_study_by_study_uid
+
+
+logger = logging.getLogger(__name__)
 
 
 class HomeDbService:
@@ -151,7 +155,7 @@ class HomeDbService:
                     "body_part_examined": info.get("body_part_examined", ""),
                 }
         except Exception as exc:
-            print(f"Error getting series info from database: {exc}")
+            logger.exception("Error getting series info from database: %s", exc)
         return {}
 
     @staticmethod
@@ -212,7 +216,7 @@ class HomeDbService:
                 saved += 1
             return saved > 0
         except Exception as exc:
-            print(f"Error in save_series_info_to_database: {exc}")
+            logger.exception("Error in save_series_info_to_database: %s", exc)
             return False
 
     # ------------------------------------------------------------------
@@ -288,7 +292,7 @@ class HomeDbService:
                 )
                 conn.commit()
         except Exception as exc:
-            print(f"Error saving study details: {exc}")
+            logger.exception("Error saving study details: %s", exc)
 
     @staticmethod
     def save_socket_patient_to_db(patient: dict) -> None:
@@ -333,7 +337,7 @@ class HomeDbService:
                         study_path=study_path,
                     )
         except Exception as exc:
-            print(f"Error saving Socket patient to database: {exc}")
+            logger.exception("Error saving Socket patient to database: %s", exc)
 
     @staticmethod
     def save_patient_and_study_on_db(dataset) -> None:

@@ -396,6 +396,7 @@ class _VWSeriesMixin:
                 self.current_style = self.style
                 self.interactor.SetInteractorStyle(self.style)
                 self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
+                self._restore_advanced_annotations_for_series(metadata)
 
                 self.last_series_show = series_index
                 self.id_vtk_widget = id_vtk_widget
@@ -876,6 +877,7 @@ class _VWSeriesMixin:
         if self._active_backend == BACKEND_PYDICOM_QT and not is_combined:
             self.viewport_spinner.show_loading("Switching series...")
             try:
+                self._capture_advanced_annotations_before_series_switch()
                 _same_series_refresh = False
                 try:
                     _current_meta = getattr(getattr(self, 'image_viewer', None), 'metadata', {}) or {}
@@ -956,7 +958,7 @@ class _VWSeriesMixin:
                     
                     # Clear widgets if current_style exists
                     if hasattr(self, 'current_style') and self.current_style is not None:
-                        self.current_style.delete_all_widgets()
+                        self._capture_advanced_annotations_before_series_switch()
 
                     # If viewer type doesn't match, we need to recreate
                     if is_combined_new != is_combined_current:
@@ -985,6 +987,7 @@ class _VWSeriesMixin:
                             except Exception:
                                 pass
                             self.image_viewer.reset_image_viewer(vtk_image_data, metadata)
+                            self._restore_advanced_annotations_for_series(metadata)
                             self.image_viewer.apply_default_window_level(self.image_viewer.GetSlice())
                             log_stage_timing(
                                 logger,
@@ -1126,6 +1129,7 @@ class _VWSeriesMixin:
             self.style.signal_emitter.interactionOccurred.connect(self.change_container_border)
             self.current_style = self.style
             self._ensure_interactor_style_enabled()
+            self._restore_advanced_annotations_for_series(metadata)
 
             # ├ت┌ّ╪î SINGLE BATCHED RENDER at the end (not multiple renders)
             logger.debug(f"[SERIES SWITCH]   UpdateDisplayExtent + Render")

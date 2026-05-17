@@ -1,5 +1,9 @@
 from . import core as database
 import ast
+import logging
+
+
+logger = logging.getLogger(__name__)
 
 def init_database():
     return database.init_database()
@@ -197,9 +201,7 @@ def get_study_info_with_series(study_uid: str) -> dict:
             }
         
     except Exception as e:
-        print(f"❌ Error getting study info with series: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.exception("Error getting study info with series: %s", e)
         return None
 
 
@@ -218,7 +220,7 @@ def get_series_by_study_and_number(study_uid: str, series_number: int) -> dict:
                 return dict(zip(columns, row))
             return {}
     except Exception as e:
-        print(f"Error getting series by study and number: {str(e)}")
+        logger.warning("Error getting series by study and number: %s", e)
         return {}
 
 
@@ -766,7 +768,7 @@ def ensure_filming_columns() -> None:
 
             conn.commit()
         except Exception as e:
-            print(f"⚠️ [DB] Error ensuring filming columns: {e}")
+            logger.warning("[DB] Error ensuring filming columns: %s", e)
 
 
 def set_filming_folder_for_study(study_uid: str, folder_path: str) -> bool:
@@ -792,7 +794,7 @@ def set_filming_folder_for_study(study_uid: str, folder_path: str) -> bool:
             conn.commit()
             return cur.rowcount > 0
         except Exception as e:
-            print(f"⚠️ [DB] Error setting filming folder: {e}")
+            logger.warning("[DB] Error setting filming folder: %s", e)
             return False
 
 
@@ -840,7 +842,7 @@ def ensure_visit_status_column():
                 cur.execute("ALTER TABLE studies ADD COLUMN visit_status TEXT DEFAULT NULL")
                 conn.commit()
         except Exception as e:
-            print(f"⚠️ [DB] Error ensuring visit_status column: {e}")
+            logger.warning("[DB] Error ensuring visit_status column: %s", e)
 
 
 def get_visit_status(study_uid: str) -> str | None:
@@ -894,7 +896,7 @@ def set_visit_status(study_uid: str, status: str) -> bool:
             conn.commit()
             return cur.rowcount > 0
         except Exception as e:
-            print(f"⚠️ [DB] Error setting visit_status: {e}")
+            logger.warning("[DB] Error setting visit_status: %s", e)
             return False
 
 def get_series_by_study_uid(study_uid: str) -> list[dict]:
@@ -921,7 +923,7 @@ def get_series_by_study_uid(study_uid: str) -> list[dict]:
             return [dict(zip(columns, row)) for row in rows]
         
     except Exception as e:
-        print(f"Error getting series by study UID: {str(e)}")
+        logger.warning("Error getting series by study UID: %s", e)
         return []
 
 

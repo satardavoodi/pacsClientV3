@@ -1,0 +1,40 @@
+{
+  "tag": "2026-05-17_phaseH1",
+  "generated_at_utc": "2026-05-17T20:09:28+00:00",
+  "inputs": {
+    "startup_bundle": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\generated-files\\benchmarks\\startup_evaluation_bundle_2026-05-17_phaseC2_step10.json",
+    "ui_bundle": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\generated-files\\benchmarks\\ui_window_pyside_button_evaluation_bundle_2026-05-17_phaseA2_step12_post.json",
+    "startup_tag": "2026-05-17_phaseC2_step10",
+    "ui_tag": "2026-05-17_phaseA2_step12_post"
+  },
+  "metrics": {
+    "startup": {
+      "print_calls_startup": 0,
+      "blocking_candidates_startup": 1,
+      "qtimer_singleshot_startup": 11
+    },
+    "ui": {
+      "pyside_connect_lambda_calls": 0,
+      "blocking_candidates": 5,
+      "qtimer_singleshot_calls": 157
+    }
+  },
+  "checks": {
+    "startup_logging_lint_passed": true,
+    "startup_dm_tests_passed": true,
+    "startup_syntax_passed": true,
+    "startup_kpi_regression_passed": true,
+    "ui_logging_lint_passed": true,
+    "ui_dm_tests_passed": true,
+    "ui_kpi_regression_passed": true,
+    "startup_print_calls_zero": true,
+    "ui_lambda_connect_zero": true,
+    "blocking_candidate_alignment": true,
+    "startup_qtimer_stable_expected_11": true
+  },
+  "summary": {
+    "total_checks": 11,
+    "failed_checks": [],
+    "harmony_passed": true
+  }
+}

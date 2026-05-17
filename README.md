@@ -1,6 +1,6 @@
 # AIPacs
 
-Stable release: `v3.0.3` (`2026-05-16`)
+Stable release: `v3.0.6` (`2026-05-18`)
 
 Modular DICOM workstation for viewing, download orchestration, printing, education, and AI-assisted workflows.
 
@@ -30,6 +30,7 @@ See [Development Setup](docs/development/setup-and-tooling.md) for more details.
 - [Module Catalog](docs/modules/README.md)
 - [Development Setup](docs/development/setup-and-tooling.md)
 - [Current Release Notes](docs/releases/RELEASE_NOTES.md)
+- [Version 3.0.6 Release Notes](docs/releases/VERSION_3.0.6_RELEASE.md)
 - [Version 3.0.3 Release Notes](docs/releases/VERSION_3.0.3_RELEASE.md)
 - [Version 2.5.4 Release Notes](docs/releases/VERSION_2.5.4_RELEASE.md)
 - [Version 2.4.7c Release Notes](docs/releases/VERSION_2.4.7c_RELEASE.md)

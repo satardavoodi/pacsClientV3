@@ -19,6 +19,7 @@ from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QPainter, QLinearGra
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QSize
 import json
 import os
+import logging
 import qtawesome as qta
 from .pacs.workstation_ui.mainwindow_ui import MainWindowWidget
 from PacsClient.utils import IMAGES_LOGIN_PATH
@@ -27,6 +28,8 @@ from modules.network.socket_config import get_socket_config
 from modules.network.socket_token_manager import get_socket_token_manager
 from modules.LicenseGenerator.license_manager import LicenseManager
 from PacsClient.utils.theme_manager import get_theme_manager
+
+logger = logging.getLogger(__name__)
 
 
 class AppHandler(QDialog):
@@ -249,7 +252,7 @@ class AppHandler(QDialog):
                 logo_label.setAlignment(Qt.AlignCenter)
                 logo_label.setStyleSheet("font-size: 48px; margin: 20px;")
         except Exception as e:
-            print(f"Could not load logo: {e}")
+            logger.warning("Could not load logo: %s", e)
             logo_label.setText("🤖")
             logo_label.setAlignment(Qt.AlignCenter)
             logo_label.setStyleSheet("font-size: 48px; margin: 20px;")
@@ -737,7 +740,7 @@ class AppHandler(QDialog):
                 if password:
                     self.line_edit_password.setText(password)
         except Exception as e:
-            print(f"Error loading saved credentials: {e}")
+            logger.warning("Error loading saved credentials: %s", e)
             self.checkbox_button.setChecked(False)
             self._update_checkbox_icon()
 
@@ -756,7 +759,7 @@ class AppHandler(QDialog):
                 if os.path.exists(config_file):
                     os.remove(config_file)
         except Exception as e:
-            print(f"Error saving credentials: {e}")
+            logger.warning("Error saving credentials: %s", e)
     
     def _update_license_info(self):
         """Update license information display"""
@@ -804,7 +807,7 @@ class AppHandler(QDialog):
             else:
                 self.license_info_label.setVisible(False)
         except Exception as e:
-            print(f"Error updating license info: {e}")
+            logger.warning("Error updating license info: %s", e)
             self.license_info_label.setVisible(False)
     
     def _toggle_password(self):
@@ -865,7 +868,7 @@ class AppHandler(QDialog):
                 "full_name": username or "Local User",
                 "role": "local",
             }
-            print("✅ Local login — bypassing server authentication")
+            logger.info("Local login enabled; bypassing server authentication")
             fade_out = QPropertyAnimation(self, b"windowOpacity")
             fade_out.setDuration(300)
             fade_out.setStartValue(1.0)
@@ -931,14 +934,14 @@ class AppHandler(QDialog):
                 token_manager = get_socket_token_manager()
                 token_manager.set_token(token, user)
                 
-                print(f"✅ Authenticated as: {user.get('full_name')} ({user.get('role')})")
-                print(f"✅ Token stored in TokenManager for socket requests")
+                logger.info("Authenticated as: %s (%s)", user.get('full_name'), user.get('role'))
+                logger.info("Token stored in TokenManager for socket requests")
                 return True, message
             else:
                 return False, message
                 
         except Exception as e:
-            print(f"❌ Socket authentication error: {e}")
+            logger.warning("Socket authentication error: %s", e)
             return False, f"Authentication error: {str(e)}"
     
     def _authenticate_user(self, username, password):
@@ -990,7 +993,7 @@ class AppHandler(QDialog):
             self.hide()
             self.deleteLater()
         except Exception as e:
-            print(f"Error opening main window: {e}")
+            logger.exception("Error opening main window: %s", e)
             import traceback
             traceback.print_exc()
             # Keep login window open if there's an error

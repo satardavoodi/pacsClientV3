@@ -12,10 +12,12 @@ import argparse
 import gzip
 import time
 import threading
+import logging
 from datetime import datetime
 from pathlib import Path
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+logger = logging.getLogger(__name__)
 # Add grpc_generated to path
 grpc_generated_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'grpc_generated')
 if grpc_generated_dir not in sys.path:
@@ -58,7 +60,7 @@ try:
         with _suppress_pydicom_unknown_encoding():
             return pydicom.dcmread(path, force=True, **kwargs)
 except ImportError:
-    print("⚠️ pydicom not available")
+    logger.warning("pydicom not available")
 
 class PerformanceTracker:
     """کلاس برای اندازه‌گیری عملکرد دانلود"""
@@ -148,7 +150,7 @@ class DicomDownloader:
                 os.unlink(temp_path)
             return True
         except Exception as e:
-            print(f"⚠ خطا در رفع encoding، ذخیره خام: {e}")
+            logger.warning("خطا در رفع encoding، ذخیره خام: %s", e)
             # اگر رفع نشد، فایل خام را ذخیره کن
             with open(filepath, 'wb') as f:
                 f.write(dicom_data)
@@ -172,18 +174,18 @@ class DicomDownloader:
             # Test connection
             request = dicom_service_pb2.SeriesQueryRequest(limit=1)
             response = self.stub.QuerySeriesThumbnails(request)
-            print(f" Connected to gRPC server at {self.host}:{self.port}")
+            logger.info("Connected to gRPC server at %s:%s", self.host, self.port)
             return True
         except Exception as e:
-            print(f" Failed to connect to gRPC server: {e}")
+            logger.warning("Failed to connect to gRPC server: %s", e)
             return False
     def download_study_dicom_files(self, study_uid, output_dir="./dicom_files", instance_limit=5):
         """Download DICOM files for a study with performance tracking"""
         if not self.stub:
-            print("❌ Not connected to server")
+            logger.warning("Not connected to server")
             return False
-        print(f"📥 Requesting DICOM files for study: {study_uid}")
-        print(f" Instance limit: {instance_limit}")
+        logger.info("Requesting DICOM files for study: %s", study_uid)
+        logger.info("Instance limit: %s", instance_limit)
         # شروع performance tracking
         tracker = PerformanceTracker()
         tracker.start()
@@ -197,15 +199,15 @@ class DicomDownloader:
             # Get files
             response = self.stub.GetStudyDicomFiles(request)
             if not response.instances:
-                print("⚠ No DICOM files found for this study")
+                logger.info("No DICOM files found for this study")
                 tracker.end()
                 return False
-            print(f"📊 Study Information:")
-            print(f" 👤 Patient: {response.patient_name} (ID: {response.patient_id})")
-            print(f" 📅 Study Date: {response.study_date}")
-            print(f" 📝 Description: {response.study_description}")
-            print(f" 🔢 Total Instances: {response.total_instances}")
-            print(f" ✅ Files Found: {response.files_found}")
+            logger.info("Study Information:")
+            logger.info("Patient: %s (ID: %s)", response.patient_name, response.patient_id)
+            logger.info("Study Date: %s", response.study_date)
+            logger.info("Description: %s", response.study_description)
+            logger.info("Total Instances: %s", response.total_instances)
+            logger.info("Files Found: %s", response.files_found)
             # Create output directory
             Path(output_dir).mkdir(parents=True, exist_ok=True)
             downloaded_count = 0
@@ -214,7 +216,7 @@ class DicomDownloader:
             for instance in response.instances:
                 # بررسی نوع محتوا برای تشخیص خطاها
                 if instance.content_type.startswith("error/"):
-                    print(f" ⚠ خطا در instance {instance.instance_number}: {instance.content_type}")
+                    logger.warning("خطا در instance %s: %s", instance.instance_number, instance.content_type)
                     tracker.add_error()
                     continue
                 if instance.dicom_data and instance.content_type == "application/dicom":
@@ -227,7 +229,7 @@ class DicomDownloader:
                         dicom_data = gzip.decompress(dicom_data)
                     # بررسی صحت داده‌های decompress شده
                     if not dicom_data:
-                        print(f" ⚠ خطا در decompress فایل instance {instance.instance_number}")
+                        logger.warning("خطا در decompress فایل instance %s", instance.instance_number)
                         tracker.add_error()
                         continue
                     # بهبود نام‌گذاری فایل برای SimpleITK
@@ -256,7 +258,13 @@ class DicomDownloader:
                     tracker.add_file(file_size, compressed_size)
                     status_icon = "✅" if encoding_fixed else "⚠"
                     compression_ratio = compressed_size / file_size if file_size > 0 else 1
-                    print(f" {status_icon} Saved: {filename} ({file_size} bytes, {compression_ratio:.2f} ratio)")
+                    logger.debug(
+                        "%s Saved: %s (%d bytes, %.2f ratio)",
+                        status_icon,
+                        filename,
+                        file_size,
+                        compression_ratio,
+                    )
                     # Save metadata with validation
                     metadata = {
                         "sop_instance_uid": instance.sop_instance_uid or "unknown",
@@ -273,32 +281,32 @@ class DicomDownloader:
                         json.dump(metadata, f, indent=2)
                 else:
                     # فایل بدون داده یا نامعتبر
-                    print(f" ❌ فایل نامعتبر یا خالی: instance {instance.instance_number}")
+                    logger.warning("فایل نامعتبر یا خالی: instance %s", instance.instance_number)
                     tracker.add_error()
             # پایان tracking و نمایش آمار
             tracker.end()
             stats = tracker.get_stats()
-            print(f"\n🎯 Download Summary:")
-            print(f" 📁 Downloaded: {downloaded_count} DICOM files")
-            print(f" 💾 Total Size: {stats['total_mb']:.2f} MB")
-            print(f" ⚡ Speed: {stats['download_rate_mbps']:.2f} MB/s")
-            print(f" 📈 Files/sec: {stats['files_per_second']:.1f}")
-            print(f" 🗜 Compression Saved: {stats['compression_saved_mb']:.2f} MB")
-            print(f" ⏱ Duration: {stats['duration']:.2f} seconds")
+            logger.info("Download Summary:")
+            logger.info("Downloaded: %d DICOM files", downloaded_count)
+            logger.info("Total Size: %.2f MB", stats['total_mb'])
+            logger.info("Speed: %.2f MB/s", stats['download_rate_mbps'])
+            logger.info("Files/sec: %.1f", stats['files_per_second'])
+            logger.info("Compression Saved: %.2f MB", stats['compression_saved_mb'])
+            logger.info("Duration: %.2f seconds", stats['duration'])
             if stats['errors_count'] > 0:
-                print(f" ❌ Errors: {stats['errors_count']}")
-            print(f" 📂 Location: {output_dir}")
+                logger.warning("Errors: %s", stats['errors_count'])
+            logger.info("Location: %s", output_dir)
             return True
         except Exception as e:
-            print(f" Error downloading DICOM files: {e}")
+            logger.warning("Error downloading DICOM files: %s", e)
             return False
     def download_study_dicom_files_streaming(self, study_uid, output_dir="./dicom_files", instance_limit=5):
         """Download DICOM files using streaming for better memory efficiency with performance tracking"""
         if not self.stub:
-            print("❌ Not connected to server")
+            logger.warning("Not connected to server")
             return False
-        print(f"🌊 Requesting DICOM files for study: {study_uid} (Streaming mode)")
-        print(f" Instance limit: {instance_limit}")
+        logger.info("Requesting DICOM files for study: %s (Streaming mode)", study_uid)
+        logger.info("Instance limit: %s", instance_limit)
         # شروع performance tracking
         tracker = PerformanceTracker()
         tracker.start()
@@ -314,12 +322,16 @@ class DicomDownloader:
             downloaded_count = 0
             total_size = 0
             compressed_total = 0
-            print("🔄 Starting streaming download...")
+            logger.debug("Starting streaming download...")
             # Stream files one by one
             for instance_response in self.stub.StreamStudyDicomFiles(request):
                 # بررسی نوع محتوا برای تشخیص خطاها
                 if instance_response.content_type.startswith("error/"):
-                    print(f" ⚠ Stream خطا در instance {instance_response.instance_number}: {instance_response.content_type}")
+                    logger.warning(
+                        "Stream خطا در instance %s: %s",
+                        instance_response.instance_number,
+                        instance_response.content_type,
+                    )
                     tracker.add_error()
                     continue
                 if instance_response.dicom_data and instance_response.content_type == "application/dicom":
@@ -332,7 +344,7 @@ class DicomDownloader:
                         dicom_data = gzip.decompress(dicom_data)
                     # بررسی صحت داده‌های decompress شده
                     if not dicom_data:
-                        print(f" ⚠ خطا در decompress فایل instance {instance_response.instance_number}")
+                        logger.warning("خطا در decompress فایل instance %s", instance_response.instance_number)
                         tracker.add_error()
                         continue
                     # بهبود نام‌گذاری فایل برای SimpleITK
@@ -361,7 +373,13 @@ class DicomDownloader:
                     tracker.add_file(file_size, compressed_size)
                     status_icon = "✅" if encoding_fixed else "⚠"
                     compression_ratio = compressed_size / file_size if file_size > 0 else 1
-                    print(f" {status_icon} Stream Saved: {filename} ({file_size} bytes, {compression_ratio:.2f} ratio)")
+                    logger.debug(
+                        "%s Stream Saved: %s (%d bytes, %.2f ratio)",
+                        status_icon,
+                        filename,
+                        file_size,
+                        compression_ratio,
+                    )
                     # Save metadata with validation
                     metadata = {
                         "sop_instance_uid": instance_response.sop_instance_uid or "unknown",
@@ -379,33 +397,33 @@ class DicomDownloader:
                     with open(metadata_file, 'w') as f:
                         json.dump(metadata, f, indent=2)
                 else:
-                    print(f" ❌ Stream فایل نامعتبر یا خالی: instance {instance_response.instance_number}")
+                    logger.warning("Stream فایل نامعتبر یا خالی: instance %s", instance_response.instance_number)
                     tracker.add_error()
             # پایان tracking و نمایش آمار
             tracker.end()
             stats = tracker.get_stats()
-            print(f"\n🎯 Streaming Download Summary:")
-            print(f" 📁 Downloaded: {downloaded_count} DICOM files")
-            print(f" 💾 Total Size: {stats['total_mb']:.2f} MB")
-            print(f" ⚡ Speed: {stats['download_rate_mbps']:.2f} MB/s")
-            print(f" 📈 Files/sec: {stats['files_per_second']:.1f}")
-            print(f" 🗜 Compression Saved: {stats['compression_saved_mb']:.2f} MB")
-            print(f" ⏱ Duration: {stats['duration']:.2f} seconds")
+            logger.info("Streaming Download Summary:")
+            logger.info("Downloaded: %d DICOM files", downloaded_count)
+            logger.info("Total Size: %.2f MB", stats['total_mb'])
+            logger.info("Speed: %.2f MB/s", stats['download_rate_mbps'])
+            logger.info("Files/sec: %.1f", stats['files_per_second'])
+            logger.info("Compression Saved: %.2f MB", stats['compression_saved_mb'])
+            logger.info("Duration: %.2f seconds", stats['duration'])
             if stats['errors_count'] > 0:
-                print(f" ❌ Errors: {stats['errors_count']}")
-            print(f" 📂 Location: {output_dir}")
+                logger.warning("Errors: %s", stats['errors_count'])
+            logger.info("Location: %s", output_dir)
             return True
         except Exception as e:
-            print(f" Error downloading DICOM files (streaming): {e}")
+            logger.warning("Error downloading DICOM files (streaming): %s", e)
             return False
     def download_multiple_studies_concurrent(self, study_uids, output_base_dir="./dicom_files", instance_limit=5, max_concurrent=3):
         """Download multiple studies concurrently for better performance"""
         if not self.stub:
-            print("❌ Not connected to server")
+            logger.warning("Not connected to server")
             return False
-        print(f"🚀 Starting concurrent download of {len(study_uids)} studies")
-        print(f" Max concurrent downloads: {max_concurrent}")
-        print(f" Instance limit per study: {instance_limit}")
+        logger.info("Starting concurrent download of %d studies", len(study_uids))
+        logger.info("Max concurrent downloads: %s", max_concurrent)
+        logger.info("Instance limit per study: %s", instance_limit)
         overall_tracker = PerformanceTracker()
         overall_tracker.start()
         def download_single_study(study_uid):
@@ -435,22 +453,22 @@ class DicomDownloader:
                 try:
                     study_uid_result, success, error = future.result()
                     if success:
-                        print(f"✅ Study {study_uid} completed successfully")
+                        logger.info("Study %s completed successfully", study_uid)
                         successful_downloads += 1
                     else:
-                        print(f"❌ Study {study_uid} failed: {error or 'Unknown error'}")
+                        logger.warning("Study %s failed: %s", study_uid, error or 'Unknown error')
                         failed_downloads += 1
                 except Exception as e:
-                    print(f"❌ Study {study_uid} failed with exception: {e}")
+                    logger.warning("Study %s failed with exception: %s", study_uid, e)
                     failed_downloads += 1
         overall_tracker.end()
         overall_stats = overall_tracker.get_stats()
-        print(f"\n🎯 Concurrent Download Summary:")
-        print(f" 📊 Total Studies: {len(study_uids)}")
-        print(f" ✅ Successful: {successful_downloads}")
-        print(f" ❌ Failed: {failed_downloads}")
-        print(f" ⏱ Total Duration: {overall_stats['duration']:.2f} seconds")
-        print(f" 📂 Base Location: {output_base_dir}")
+        logger.info("Concurrent Download Summary:")
+        logger.info("Total Studies: %d", len(study_uids))
+        logger.info("Successful: %d", successful_downloads)
+        logger.warning("Failed: %d", failed_downloads)
+        logger.info("Total Duration: %.2f seconds", overall_stats['duration'])
+        logger.info("Base Location: %s", output_base_dir)
         return successful_downloads > 0
 def load_config():
     """Load gRPC configuration"""
@@ -462,18 +480,25 @@ def load_config():
         grpc_host = config.get('grpc_host', 'localhost')
         return grpc_host, grpc_port
     except Exception as e:
-        print(f" Could not load config: {e}")
+        logger.warning("Could not load config: %s", e)
         return '192.168.1.10', 50051
+
+
+def _emit_cli(message: str):
+    """Emit user-facing CLI text without direct print calls."""
+    sys.stdout.write(f"{message}\n")
+
+
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python dicom_downloader_client.py <StudyInstanceUID(s)> [output_dir] [instance_limit] [options]")
-        print("Options:")
-        print(" --streaming: Use streaming mode for large files (recommended)")
-        print(" --concurrent: Download multiple studies concurrently (use with multiple UIDs)")
-        print(" --max-concurrent N: Maximum concurrent downloads (default: 3)")
-        print("Examples:")
-        print(" python dicom_downloader_client.py STUDY_UID_1 --streaming")
-        print(" python dicom_downloader_client.py STUDY_UID_1,STUDY_UID_2,STUDY_UID_3 --concurrent --max-concurrent 2")
+        _emit_cli("Usage: python dicom_downloader_client.py <StudyInstanceUID(s)> [output_dir] [instance_limit] [options]")
+        _emit_cli("Options:")
+        _emit_cli(" --streaming: Use streaming mode for large files (recommended)")
+        _emit_cli(" --concurrent: Download multiple studies concurrently (use with multiple UIDs)")
+        _emit_cli(" --max-concurrent N: Maximum concurrent downloads (default: 3)")
+        _emit_cli("Examples:")
+        _emit_cli(" python dicom_downloader_client.py STUDY_UID_1 --streaming")
+        _emit_cli(" python dicom_downloader_client.py STUDY_UID_1,STUDY_UID_2,STUDY_UID_3 --concurrent --max-concurrent 2")
         return
     study_uids_str = sys.argv[1]
     study_uids = [uid.strip() for uid in study_uids_str.split(',') if uid.strip()]
@@ -499,11 +524,11 @@ def main():
     # Auto-enable concurrent for multiple studies
     if len(study_uids) > 1:
         use_concurrent = True
-        print(f"🔄 Multiple studies detected, enabling concurrent mode")
+        _emit_cli(f"🔄 Multiple studies detected, enabling concurrent mode")
     host, port = load_config()
     downloader = DicomDownloader(host, port)
     if downloader.connect():
-        print(f"🔗 Connected to gRPC server at {host}:{port}")
+        _emit_cli(f"🔗 Connected to gRPC server at {host}:{port}")
         if use_concurrent and len(study_uids) > 1:
             # Concurrent download for multiple studies
             downloader.download_multiple_studies_concurrent(
@@ -515,11 +540,11 @@ def main():
             if use_streaming:
                 downloader.download_study_dicom_files_streaming(study_uid, output_dir, instance_limit)
             else:
-                print("💡 Tip: Use --streaming flag for better performance on large files")
+                _emit_cli("💡 Tip: Use --streaming flag for better performance on large files")
                 downloader.download_study_dicom_files(study_uid, output_dir, instance_limit)
         else:
-            print("❌ No valid study UIDs provided")
+            _emit_cli("❌ No valid study UIDs provided")
     else:
-        print("❌ Failed to connect to server")
+        _emit_cli("❌ Failed to connect to server")
 if __name__ == "__main__":
     main()

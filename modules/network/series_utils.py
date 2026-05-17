@@ -6,10 +6,19 @@ including database operations, filtering, and statistics.
 """
 
 from typing import List, Dict, Optional, Any
+import sys
+import logging
 from PacsClient.utils.db_manager import (
     insert_series, find_series_pk, get_series_by_study_pk, 
     find_study_pk_with_study_uid, find_patient_pk, insert_patient, insert_study
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _emit_cli(message: str):
+    """Emit user-facing console text without direct print calls."""
+    sys.stdout.write(f"{message}\n")
 
 
 def extract_series_info_from_grpc_response(grpc_response) -> Dict[str, Any]:
@@ -54,7 +63,7 @@ def extract_series_info_from_grpc_response(grpc_response) -> Dict[str, Any]:
         return study_info
         
     except Exception as e:
-        print(f"Error extracting series info: {str(e)}")
+        logger.warning("Error extracting series info: %s", e)
         return None
 
 
@@ -73,7 +82,7 @@ def save_series_to_database(study_uid: str, series_list: List[Dict]) -> bool:
         # Get study_pk from database
         study_pk = find_study_pk_with_study_uid(study_uid)
         if not study_pk:
-            print(f"Study not found in database: {study_uid}")
+            logger.warning("Study not found in database: %s", study_uid)
             return False
         
         saved_count = 0
@@ -90,7 +99,7 @@ def save_series_to_database(study_uid: str, series_list: List[Dict]) -> bool:
                 # Check if series already exists
                 existing_series_pk = find_series_pk(series_uid)
                 if existing_series_pk:
-                    print(f"Series already exists: {series_uid}")
+                    logger.debug("Series already exists: %s", series_uid)
                     continue
                 
                 # Save series to database
@@ -105,18 +114,22 @@ def save_series_to_database(study_uid: str, series_list: List[Dict]) -> bool:
                     series_path=None  # Will be set when DICOM files are downloaded
                 )
                 
-                print(f"Saved series {series_number}: {series_description} ({modality})")
+                logger.debug("Saved series %s: %s (%s)", series_number, series_description, modality)
                 saved_count += 1
                 
             except Exception as e:
-                print(f"Error saving series {series_data.get('series_number', 'Unknown')}: {str(e)}")
+                logger.warning(
+                    "Error saving series %s: %s",
+                    series_data.get('series_number', 'Unknown'),
+                    e,
+                )
                 continue
         
-        print(f"Successfully saved {saved_count} series to database")
+        logger.info("Successfully saved %d series to database", saved_count)
         return saved_count > 0
         
     except Exception as e:
-        print(f"Error in save_series_to_database: {str(e)}")
+        logger.warning("Error in save_series_to_database: %s", e)
         return False
 
 
@@ -206,7 +219,7 @@ def get_series_from_database(study_uid: str) -> Optional[List[Dict]]:
         return series_list
         
     except Exception as e:
-        print(f"Error getting series from database: {str(e)}")
+        logger.warning("Error getting series from database: %s", e)
         return None
 
 
@@ -239,38 +252,41 @@ def compare_series_lists(server_series: List[Dict], db_series: List[Dict]) -> Di
     }
 
 
-def print_series_summary(series_list: List[Dict], title: str = "Series Summary"):
+def print_series_summary(series_list: List[Dict], title: str = "Series Summary", *, use_logger: bool = False):
     """
     Print a formatted summary of series information
     
     Args:
         series_list: List of series dictionaries
         title: Title for the summary
+        use_logger: If True, emit summary via logger.info instead of console print
     """
-    print(f"\n{title}")
-    print("=" * len(title))
+    emit = logger.info if use_logger else _emit_cli
+
+    emit(f"\n{title}")
+    emit("=" * len(title))
     
     if not series_list:
-        print("No series found")
+        emit("No series found")
         return
     
     stats = get_series_statistics(series_list)
     
-    print(f"📊 Total Series: {stats['total_series']}")
-    print(f"🖼️ Total Images: {stats['total_images']}")
-    print(f"📈 Average Images per Series: {stats['average_images_per_series']}")
+    emit(f"📊 Total Series: {stats['total_series']}")
+    emit(f"🖼️ Total Images: {stats['total_images']}")
+    emit(f"📈 Average Images per Series: {stats['average_images_per_series']}")
     
-    print(f"\n🔬 Modalities:")
+    emit(f"\n🔬 Modalities:")
     for modality, count in stats['modalities'].items():
-        print(f"   {modality}: {count} series")
+        emit(f"   {modality}: {count} series")
     
-    print(f"\n📋 Series Details:")
+    emit(f"\n📋 Series Details:")
     for i, series in enumerate(series_list, 1):
-        print(f"   {i}. Series {series.get('series_number', 'N/A')}:")
-        print(f"      📝 Description: {series.get('series_description', 'N/A')}")
-        print(f"      🔬 Modality: {series.get('modality', 'N/A')}")
-        print(f"      🖼️ Images: {series.get('image_count', 0)}")
-        print(f"      🆔 UID: {series.get('series_uid', 'N/A')[:20]}...")
+        emit(f"   {i}. Series {series.get('series_number', 'N/A')}:")
+        emit(f"      📝 Description: {series.get('series_description', 'N/A')}")
+        emit(f"      🔬 Modality: {series.get('modality', 'N/A')}")
+        emit(f"      🖼️ Images: {series.get('image_count', 0)}")
+        emit(f"      🆔 UID: {series.get('series_uid', 'N/A')[:20]}...")
 
 
 # Example usage functions
@@ -278,8 +294,8 @@ def example_usage():
     """
     Example usage of series utilities
     """
-    print("🚀 Series Utilities Example")
-    print("=" * 30)
+    _emit_cli("🚀 Series Utilities Example")
+    _emit_cli("=" * 30)
     
     # Example series data (simulated gRPC response)
     example_series = [
@@ -316,23 +332,23 @@ def example_usage():
     print_series_summary(example_series, "Example Series Data")
     
     # Filter examples
-    print(f"\n🔍 Filter Examples:")
+    _emit_cli(f"\n🔍 Filter Examples:")
     
     mr_series = filter_series_by_modality(example_series, 'MR')
-    print(f"   MR Series: {len(mr_series)}")
+    _emit_cli(f"   MR Series: {len(mr_series)}")
     
     ct_series = filter_series_by_modality(example_series, 'CT')
-    print(f"   CT Series: {len(ct_series)}")
+    _emit_cli(f"   CT Series: {len(ct_series)}")
     
     axial_series = filter_series_by_keyword(example_series, 'axial')
-    print(f"   Axial Series: {len(axial_series)}")
+    _emit_cli(f"   Axial Series: {len(axial_series)}")
     
     # Statistics
     stats = get_series_statistics(example_series)
-    print(f"\n📊 Statistics:")
-    print(f"   Total Series: {stats['total_series']}")
-    print(f"   Total Images: {stats['total_images']}")
-    print(f"   Average Images: {stats['average_images_per_series']}")
+    _emit_cli(f"\n📊 Statistics:")
+    _emit_cli(f"   Total Series: {stats['total_series']}")
+    _emit_cli(f"   Total Images: {stats['total_images']}")
+    _emit_cli(f"   Average Images: {stats['average_images_per_series']}")
 
 
 if __name__ == "__main__":

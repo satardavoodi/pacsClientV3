@@ -67,16 +67,19 @@ def insert_download_progress(
         except Exception as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
                 wait_time = (2 ** attempt) + random.uniform(0, 1)
-                print(
-                    f"⚠️ Database locked in insert_download_progress, retrying in "
-                    f"{wait_time:.1f}s... (attempt {attempt + 1}/{max_retries})"
+                logger.warning(
+                    "Database locked in insert_download_progress, retrying in %.1fs (attempt %d/%d)",
+                    wait_time,
+                    attempt + 1,
+                    max_retries,
                 )
                 time.sleep(wait_time)
                 continue
             else:
-                print(
-                    f"⚠️ Database error in insert_download_progress after "
-                    f"{max_retries} attempts: {e}"
+                logger.error(
+                    "Database error in insert_download_progress after %d attempts: %s",
+                    max_retries,
+                    e,
                 )
                 raise
 
@@ -110,7 +113,7 @@ def get_download_progress(study_uid: str) -> dict:
             return None
 
     except Exception as e:
-        print(f"⚠️ Database error in get_download_progress: {e}")
+        logger.warning("Database error in get_download_progress: %s", e)
         return None
 
 
@@ -137,15 +140,18 @@ def complete_download_progress(study_uid: str):
             )
             result = cur.fetchone()
             if result:
-                print(f"✅ Download marked as '{result[0]}' in database for {study_uid[:40]}...")
-                print(f"   This download will be remembered after app restart")
+                logger.info(
+                    "Download marked as '%s' in database for %s... This download will be remembered after app restart",
+                    result[0],
+                    study_uid[:40],
+                )
             else:
-                print(f"⚠️ No download progress record found for {study_uid}")
+                logger.warning("No download progress record found for %s", study_uid)
 
     except Exception as e:
-        print(f"⚠️ Database error in complete_download_progress: {e}")
+        logger.exception("Database error in complete_download_progress: %s", e)
         import traceback
-        print(traceback.format_exc())
+        logger.debug(traceback.format_exc())
         raise
 
 
@@ -158,7 +164,7 @@ def delete_download_progress(study_uid: str):
             conn.commit()
 
     except Exception as e:
-        print(f"⚠️ Database error in delete_download_progress: {e}")
+        logger.warning("Database error in delete_download_progress: %s", e)
         raise
 
 
@@ -175,12 +181,12 @@ def clear_all_download_progress() -> int:
             conn.commit()
 
             if deleted_count > 0:
-                print(f"🧹 Cleared {deleted_count} download progress records from database")
+                logger.info("Cleared %d download progress records from database", deleted_count)
 
             return deleted_count
 
     except Exception as e:
-        print(f"⚠️ Database error in clear_all_download_progress: {e}")
+        logger.warning("Database error in clear_all_download_progress: %s", e)
         return 0
 
 
@@ -218,7 +224,7 @@ def get_all_download_progress() -> list:
             ]
 
     except Exception as e:
-        print(f"⚠️ Database error in get_all_download_progress: {e}")
+        logger.warning("Database error in get_all_download_progress: %s", e)
         return []
 
 
@@ -238,7 +244,7 @@ def get_incomplete_downloads() -> list:
                     FROM download_progress dp
                     LEFT JOIN studies s ON dp.study_uid = s.study_uid
                     LEFT JOIN patients p ON s.patient_fk = p.patient_pk
-                    WHERE dp.status != 'completed' AND dp.total_instances > 0
+                    WHERE LOWER(dp.status) != 'completed' AND dp.total_instances > 0
                     ORDER BY dp.last_update DESC
                 """)
 
@@ -265,14 +271,16 @@ def get_incomplete_downloads() -> list:
         except Exception as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
                 wait_time = (2 ** attempt) + random.uniform(0, 1)
-                print(
-                    f"⚠️ Database locked in get_incomplete_downloads, retrying in "
-                    f"{wait_time:.1f}s... (attempt {attempt + 1}/{max_retries})"
+                logger.warning(
+                    "Database locked in get_incomplete_downloads, retrying in %.1fs (attempt %d/%d)",
+                    wait_time,
+                    attempt + 1,
+                    max_retries,
                 )
                 time.sleep(wait_time)
                 continue
             else:
-                print(f"⚠️ Database error in get_incomplete_downloads: {e}")
+                logger.warning("Database error in get_incomplete_downloads: %s", e)
                 return []
 
     return []

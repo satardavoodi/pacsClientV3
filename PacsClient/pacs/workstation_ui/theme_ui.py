@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import partial
+
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QColorDialog,
@@ -117,7 +119,7 @@ class ThemeCustomizationDialog(QDialog):
         for row, role in enumerate(("accent", "window_bg", "menu_bg", "panel_bg")):
             label = QLabel(self.ROLE_LABELS[role])
             button = QPushButton(self.colors[role].upper())
-            button.clicked.connect(lambda _checked=False, key=role: self._pick_color(key))
+            button.clicked.connect(partial(self._on_swatch_clicked, key=role))
             button.setMinimumHeight(34)
             self._swatch_buttons[role] = button
             grid.addWidget(label, row, 0)
@@ -163,6 +165,9 @@ class ThemeCustomizationDialog(QDialog):
             return
         self.colors[key] = color.name(QColor.HexRgb)
         self._refresh_preview()
+
+    def _on_swatch_clicked(self, _checked=False, *, key: str) -> None:
+        self._pick_color(key)
 
     def _reset_to_active_theme(self) -> None:
         current = self.theme_manager.current_theme()

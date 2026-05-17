@@ -877,12 +877,12 @@ class DicomImportPreviewDialog(QDialog):
 
         self.select_all_series_button = QPushButton("Select All")
         self.select_all_series_button.setObjectName("secondaryButton")
-        self.select_all_series_button.clicked.connect(lambda: self._set_all_series_for_focused_study(True))
+        self.select_all_series_button.clicked.connect(self._on_select_all_series_clicked)
         series_header.addWidget(self.select_all_series_button, 0)
 
         self.clear_series_button = QPushButton("Clear")
         self.clear_series_button.setObjectName("secondaryButton")
-        self.clear_series_button.clicked.connect(lambda: self._set_all_series_for_focused_study(False))
+        self.clear_series_button.clicked.connect(self._on_clear_series_clicked)
         series_header.addWidget(self.clear_series_button, 0)
         series_layout.addLayout(series_header)
 
@@ -1205,6 +1205,12 @@ class DicomImportPreviewDialog(QDialog):
         self._refresh_study_row(self._focused_study_uid)
         self._populate_series_table()
         self._sync_selection_summary()
+
+    def _on_select_all_series_clicked(self) -> None:
+        self._set_all_series_for_focused_study(True)
+
+    def _on_clear_series_clicked(self) -> None:
+        self._set_all_series_for_focused_study(False)
 
     def _set_all_series_for_focused_study(self, select_all: bool) -> None:
         study = self._studies_by_uid.get(self._focused_study_uid)

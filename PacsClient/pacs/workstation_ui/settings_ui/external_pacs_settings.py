@@ -166,7 +166,7 @@ class ExternalPacsSettingsWidget(QWidget):
         self._echo_btn.setObjectName("success")
         self._echo_btn.setFixedWidth(110)
         self._echo_btn.setEnabled(False)
-        self._echo_btn.clicked.connect(lambda: asyncio.create_task(self._on_echo()))
+        self._echo_btn.clicked.connect(self._on_echo_clicked)
         btn_col.addWidget(self._echo_btn)
 
         btn_col.addStretch()
@@ -214,6 +214,9 @@ class ExternalPacsSettingsWidget(QWidget):
                 cfg["servers"].append(data)
                 _save_config(cfg)
                 self._load_and_display()
+
+    def _on_echo_clicked(self):
+        asyncio.create_task(self._on_echo())
 
     def _on_edit(self):
         row = self._selected_row()

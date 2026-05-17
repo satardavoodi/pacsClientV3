@@ -593,6 +593,8 @@ class PatientTableWidget(QWidget):
         
         # Font size settings (default: 12px)
         self._table_font_size = self._load_font_size()
+        self._last_checked_checkbox = None  # widget reference anchor for Shift-range selection
+        self._checkbox_change_guard = False
         
         self.setup_ui()
         # Load saved column settings after UI is set up
@@ -821,7 +823,7 @@ class PatientTableWidget(QWidget):
                     checkbox_widget = self.results_table.cellWidget(row, COL['select'])
                     if checkbox_widget:
                         # Find CustomCheckbox widget
-                        custom_checkbox = checkbox_widget.findChild(CustomCheckbox, f"checkbox_{row}")
+                        custom_checkbox = checkbox_widget.findChild(CustomCheckbox)
                         if custom_checkbox:
                             custom_checkbox.setChecked(self.select_all_state)
 
@@ -1170,14 +1172,14 @@ class PatientTableWidget(QWidget):
         # Font size buttons (A+ and A-)
         self.font_increase_btn = QPushButton("A+")
         self.font_increase_btn.setToolTip("Increase Font Size")
-        self.font_increase_btn.clicked.connect(lambda: self._change_font_size(1))
+        self.font_increase_btn.clicked.connect(self._on_font_increase_clicked)
         self.font_increase_btn.setFixedSize(36, 36)
         self.font_increase_btn.setStyleSheet(utility_button_style)
         self.font_increase_btn.setCursor(Qt.PointingHandCursor)
         
         self.font_decrease_btn = QPushButton("A-")
         self.font_decrease_btn.setToolTip("Decrease Font Size")
-        self.font_decrease_btn.clicked.connect(lambda: self._change_font_size(-1))
+        self.font_decrease_btn.clicked.connect(self._on_font_decrease_clicked)
         self.font_decrease_btn.setFixedSize(36, 36)
         self.font_decrease_btn.setStyleSheet(utility_button_style)
         self.font_decrease_btn.setCursor(Qt.PointingHandCursor)
@@ -1204,6 +1206,12 @@ class PatientTableWidget(QWidget):
         
         # Apply anti-aliasing
         self.apply_anti_aliasing()
+
+    def _on_font_increase_clicked(self):
+        self._change_font_size(1)
+
+    def _on_font_decrease_clicked(self):
+        self._change_font_size(-1)
     
     def _on_theme_changed(self, theme):
         """Handle theme changes by reapplying stylesheets"""
@@ -2123,7 +2131,7 @@ class PatientTableWidget(QWidget):
             if checkbox_container:
                 # The checkbox is already centered via the QHBoxLayout with AlignCenter
                 # But we can ensure the alignment is correct by re-setting it
-                checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
+                checkbox_widget = checkbox_container.findChild(CustomCheckbox)
                 if checkbox_widget:
                     # Make sure the CustomCheckbox is centered within its container
                     pass  # Alignment is handled by the layout
@@ -2163,7 +2171,6 @@ class PatientTableWidget(QWidget):
 
         # Use CustomCheckbox instead of emoji - initially unchecked
         checkbox_widget = CustomCheckbox("")  # Empty text for just the checkbox
-        checkbox_widget.setObjectName(f"checkbox_{row}")  # Set object name for identification
         checkbox_widget.setStyleSheet("""
             QPushButton {
                 background: transparent;
@@ -2172,8 +2179,10 @@ class PatientTableWidget(QWidget):
             }
         """)
 
-        # Connect the checkbox state change to the toggle method
-        checkbox_widget.toggled.connect(lambda checked, r=row: self._on_checkbox_changed(r, checked))
+        # Resolve row dynamically on toggle so sorting/reordering never breaks selection behavior.
+        checkbox_widget.toggled.connect(
+            lambda checked, w=checkbox_widget: self._on_checkbox_toggled_widget(w, checked)
+        )
 
         checkbox_layout.addWidget(checkbox_widget)
         self.results_table.setCellWidget(row, COL['select'], checkbox_container)
@@ -2393,6 +2402,9 @@ class PatientTableWidget(QWidget):
         self._update_results_count()
         self.refresh_table_anti_aliasing()
         self.auto_resize_columns()
+        # Apply default date-descending sort when no user-selected sort is active
+        if getattr(self, '_active_sort_col', None) is None:
+            self._programmatic_sort(COL['date'], Qt.DescendingOrder)
         self.results_table.viewport().update()
     
     def _on_report_status_clicked(self, study_uid: str, current_status: str, patient_name: str, patient_id: str):
@@ -2659,6 +2671,11 @@ class PatientTableWidget(QWidget):
     def clear_table(self):
         """Clear all data from the table"""
         self.results_table.setRowCount(0)
+        self._last_checked_checkbox = None  # anchor widget no longer exists after clear
+        self.select_all_state = False
+        select_header = self.results_table.horizontalHeaderItem(COL['select'])
+        if select_header:
+            select_header.setText("⬜")
         self._update_results_count()
 
     def _extract_row_data(self, row: int):
@@ -2871,6 +2888,60 @@ class PatientTableWidget(QWidget):
                 self._on_patient_double_clicked(item)
 
     # Checkbox-related methods
+    def _get_checkbox_for_row(self, row: int):
+        if not (0 <= row < self.results_table.rowCount()):
+            return None
+        checkbox_container = self.results_table.cellWidget(row, COL['select'])
+        if not checkbox_container:
+            return None
+        return checkbox_container.findChild(CustomCheckbox)
+
+    def _find_row_for_checkbox(self, checkbox_widget):
+        if checkbox_widget is None:
+            return -1
+        for row in range(self.results_table.rowCount()):
+            if self._get_checkbox_for_row(row) is checkbox_widget:
+                return row
+        return -1
+
+    def _on_checkbox_toggled_widget(self, checkbox_widget, checked):
+        """Handle checkbox state changes with Shift-range support in visible row order.
+
+        The anchor is stored as a widget reference (not a row index) so that after any
+        sort/reorder the anchor resolves to its *current* physical position rather than
+        the stale index it occupied at click time.
+        """
+        if self._checkbox_change_guard:
+            return
+
+        row = self._find_row_for_checkbox(checkbox_widget)
+        if row < 0:
+            return
+
+        modifiers = QApplication.keyboardModifiers()
+        shift_pressed = bool(modifiers & Qt.ShiftModifier)
+
+        if (shift_pressed
+                and self._last_checked_checkbox is not None
+                and self._last_checked_checkbox is not checkbox_widget):
+            # Resolve the anchor's current row dynamically — correct even after a sort
+            anchor_row = self._find_row_for_checkbox(self._last_checked_checkbox)
+            if anchor_row >= 0 and anchor_row != row:
+                start = min(anchor_row, row)
+                end = max(anchor_row, row)
+                self._checkbox_change_guard = True
+                try:
+                    for r in range(start, end + 1):
+                        cb = self._get_checkbox_for_row(r)
+                        if cb and cb.isChecked() != bool(checked):
+                            cb.setChecked(bool(checked))
+                finally:
+                    self._checkbox_change_guard = False
+
+        self._last_checked_checkbox = checkbox_widget  # always update anchor to this widget
+        self.checkboxStateChanged.emit(row, bool(checked))
+        self._update_download_button_state()
+
     def get_selected_rows(self):
         """
         Get list of row indices that have checkboxes checked
@@ -2880,12 +2951,9 @@ class PatientTableWidget(QWidget):
         """
         selected_rows = []
         for row in range(self.results_table.rowCount()):
-            checkbox_container = self.results_table.cellWidget(row, 0)
-            if checkbox_container:
-                # Find the CustomCheckbox inside the container
-                checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
-                if checkbox_widget and checkbox_widget.isChecked():
-                    selected_rows.append(row)
+            checkbox_widget = self._get_checkbox_for_row(row)
+            if checkbox_widget and checkbox_widget.isChecked():
+                selected_rows.append(row)
         return selected_rows
     
     def get_selected_patient_data_list(self):
@@ -2911,12 +2979,9 @@ class PatientTableWidget(QWidget):
             checked (bool): Whether to check or uncheck the checkbox
         """
         if 0 <= row < self.results_table.rowCount():
-            checkbox_container = self.results_table.cellWidget(row, 0)
-            if checkbox_container:
-                # Find the CustomCheckbox inside the container
-                checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
-                if checkbox_widget:
-                    checkbox_widget.setChecked(checked)
+            checkbox_widget = self._get_checkbox_for_row(row)
+            if checkbox_widget:
+                checkbox_widget.setChecked(checked)
     
     def set_all_rows_checked(self, checked=True):
         """
@@ -2939,12 +3004,9 @@ class PatientTableWidget(QWidget):
             bool: True if row is checked, False otherwise
         """
         if 0 <= row < self.results_table.rowCount():
-            checkbox_container = self.results_table.cellWidget(row, 0)
-            if checkbox_container:
-                # Find the CustomCheckbox inside the container
-                checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
-                if checkbox_widget:
-                    return checkbox_widget.isChecked()
+            checkbox_widget = self._get_checkbox_for_row(row)
+            if checkbox_widget:
+                return checkbox_widget.isChecked()
         return False
     
     def get_checked_count(self):
@@ -2977,13 +3039,11 @@ class PatientTableWidget(QWidget):
         Args:
             row (int): Row index
         """
-        checkbox_container = self.results_table.cellWidget(row, 0)
-        if checkbox_container:
-            checkbox_widget = checkbox_container.findChild(CustomCheckbox, f"checkbox_{row}")
-            if checkbox_widget:
-                # Toggle the checkbox state
-                current_state = checkbox_widget.isChecked()
-                checkbox_widget.setChecked(not current_state)
+        checkbox_widget = self._get_checkbox_for_row(row)
+        if checkbox_widget:
+            # Toggle the checkbox state
+            current_state = checkbox_widget.isChecked()
+            checkbox_widget.setChecked(not current_state)
 
                 # The signal will be emitted by the checkbox's toggled signal
 
@@ -3432,11 +3492,9 @@ class PatientTableWidget(QWidget):
         self.results_table.setSortingEnabled(was_enabled)
 
     def _sort_by_default(self):
-        """Return to default insertion order"""
-        # Hide sort indicator
+        """Return to default order: date descending, most-recent first."""
         self.results_table.horizontalHeader().setSortIndicatorShown(False)
-        # Sort by order column (insertion order)
-        self._programmatic_sort(COL['order'], Qt.AscendingOrder)
+        self._programmatic_sort(COL['date'], Qt.DescendingOrder)
         self._active_sort_col = None
 
     def _update_sort_header_flags(self, active_col=None, state=0):

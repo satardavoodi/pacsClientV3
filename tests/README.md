@@ -46,6 +46,7 @@ There is no single universal test runner for all suites; run suites separately.
 | `system/` | stress/system-level scenarios | `test_system_stress.py` | `pytest tests/system/ -v` |
 | `diagnostics/` | scenario harness + KPI/failure detectors | `run_diagnostic.py`, `scenarios/s*.py` | `run_diagnostic.py` |
 | `cd_burner/` | cd burner portability checks | `test_cd_burner_portability.py` | `pytest tests/cd_burner/ -v` |
+| `manual_archive/` | relocated one-off scripts kept for historical context, not canonical regression coverage | `root_ad_hoc/*.py` | manual run only |
 
 ---
 
@@ -78,6 +79,7 @@ There is no single universal test runner for all suites; run suites separately.
 - Keep scenario runners as `run_<suite>_test.py` when a custom runner exists.
 - Place helper fixtures in suite-local `conftest.py` when practical.
 - Put long-running scenario scripts under the closest subsystem suite (`load/`, `diagnostics/`, `system/`) instead of `viewer/`.
+- Keep ad-hoc one-off validation scripts under `tests/manual_archive/`, not in repository root.
 
 ---
 

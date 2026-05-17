@@ -9,6 +9,7 @@ This is a mixin class — do NOT instantiate directly.
 import threading
 import time
 import traceback
+from functools import partial
 from pathlib import Path
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QPixmap
@@ -130,13 +131,28 @@ class _PWPanelsMixin:
         layout.addStretch(0)
 
         # اتصال‌ها
-        self.btn_series.clicked.connect(lambda: self.switch_right_panel("series", force=True))
-        self.btn_reception.clicked.connect(lambda: self.switch_right_panel("reception", force=True))
-        self.btn_ai_chat.clicked.connect(lambda: self.switch_right_panel("ai_chat", force=True))
-        self.btn_ai_module.clicked.connect(lambda: self.switch_right_panel("ai_module", force=True))
-        self.btn_advanced_tools.clicked.connect(lambda: self.switch_right_panel("advanced_tools", force=True))
+        self.btn_series.clicked.connect(self._on_sidebar_series_clicked)
+        self.btn_reception.clicked.connect(self._on_sidebar_reception_clicked)
+        self.btn_ai_chat.clicked.connect(self._on_sidebar_ai_chat_clicked)
+        self.btn_ai_module.clicked.connect(self._on_sidebar_ai_module_clicked)
+        self.btn_advanced_tools.clicked.connect(self._on_sidebar_advanced_tools_clicked)
 
         return sidebar
+
+    def _on_sidebar_series_clicked(self):
+        self.switch_right_panel("series", force=True)
+
+    def _on_sidebar_reception_clicked(self):
+        self.switch_right_panel("reception", force=True)
+
+    def _on_sidebar_ai_chat_clicked(self):
+        self.switch_right_panel("ai_chat", force=True)
+
+    def _on_sidebar_ai_module_clicked(self):
+        self.switch_right_panel("ai_module", force=True)
+
+    def _on_sidebar_advanced_tools_clicked(self):
+        self.switch_right_panel("advanced_tools", force=True)
 
     def sidebar_btn_style(self, checked):
         if checked:
@@ -597,7 +613,7 @@ class _PWPanelsMixin:
         self.label_p_id.setText(f'  Patient Id:  {p_id}')
         self.label_h_name.setText(f'  Hospital Name:  {h_name}')
 
-        self.btn_open_folder_attachments.clicked.connect(lambda: open_folder(study_uid))
+        self.btn_open_folder_attachments.clicked.connect(partial(open_folder, study_uid))
 
     def _get_report_status_service(self):
         """Get report status service (lazy initialization to avoid circular import)"""
@@ -746,10 +762,13 @@ class _PWPanelsMixin:
         self.ai_chat_window.setAttribute(Qt.WA_DeleteOnClose, True)  # با بستن، پاک شود
 
         # وقتی بسته شد، رفرنس را None کن تا بعداً دوباره بسازیم
-        self.ai_chat_window.destroyed.connect(lambda: setattr(self, "ai_chat_window", None))
+        self.ai_chat_window.destroyed.connect(self._on_ai_chat_window_destroyed)
 
         self.ai_chat_window.show()
         return self.ai_chat_window
+
+    def _on_ai_chat_window_destroyed(self, *_args):
+        self.ai_chat_window = None
 
     def center_layout_ui(self):
         center_widget = QWidget()

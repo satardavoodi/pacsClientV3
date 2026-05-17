@@ -39,6 +39,7 @@ from modules.viewer.fast.lazy_volume_registry import get_loader
 import gc
 from .utils import find_series_folder_by_series_number
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
+from PacsClient.utils.structured_logging import emit_viewer_event
 
 # Suppress noisy ResourceWarning from external libraries during GC
 warnings.filterwarnings("ignore", category=ResourceWarning)
@@ -818,6 +819,7 @@ def _read_dicom_header_audit(path: str) -> dict:
         return {
             "series_uid": str(ds.get("SeriesInstanceUID", "") or ""),
             "sop_uid": str(ds.get("SOPInstanceUID", "") or ""),
+            "instance_number": int(ds.get("InstanceNumber", 0) or 0),
             "iop": tuple(float(v) for v in iop[:6]) if iop is not None and len(iop) >= 6 else None,
             "ipp": tuple(float(v) for v in ipp[:3]) if ipp is not None and len(ipp) >= 3 else None,
             "pixel_spacing": tuple(float(v) for v in ps[:2]) if ps is not None and len(ps) >= 2 else None,
@@ -1392,6 +1394,28 @@ def _mark_advanced_display_order_contract(metadata: dict, canonical_instances: l
         metadata["display_convention_applied"] = True
     except Exception:
         pass
+
+
+def _apply_geometry_index_metadata(metadata: dict, geometry_index):
+    """Stamp the shared Advanced geometry contract on yielded metadata."""
+    if not isinstance(metadata, dict) or geometry_index is None:
+        return metadata
+
+    stamp_metadata_with_geometry_index(metadata, geometry_index)
+
+    series_meta = metadata.get("series")
+    if isinstance(series_meta, dict):
+        series_meta["series_instance_uid"] = geometry_index.series_uid
+        series_meta["study_instance_uid"] = geometry_index.study_uid
+        series_meta["body_part_examined"] = geometry_index.body_part or series_meta.get("body_part_examined", "")
+        series_meta["patient_position"] = geometry_index.patient_position
+        series_meta["laterality"] = geometry_index.laterality
+        series_meta["geometry_plane"] = geometry_index.plane
+        series_meta["display_convention"] = geometry_index.display_convention
+        if geometry_index.modality:
+            series_meta["modality"] = geometry_index.modality
+
+    return metadata
 
 
 def _emit_advanced_metadata_mutation(
@@ -2111,6 +2135,29 @@ def load_vtk_from_dicom_paths(dicom_paths):
         # Convert to strings if they're Path objects
         dicom_files = [str(p) for p in dicom_paths]
         dicom_files = natsorted(dicom_files)
+
+        first_hdr = _read_dicom_header_audit(dicom_files[0]) if dicom_files else {}
+        last_hdr = _read_dicom_header_audit(dicom_files[-1]) if dicom_files else {}
+        normal = _slice_normal_from_iop(first_hdr.get("iop")) if first_hdr else None
+        plane_name, dominant_axis, dominant_sign = _plane_from_normal(normal)
+        emit_viewer_event(
+            logger,
+            "ZETA_NPR_STACK_ORDER_AUDIT",
+            stage="image_io_load_vtk_from_paths",
+            series_number=series_number_for_audit,
+            ordering_method="natsorted_path",
+            file_count=len(dicom_files),
+            first_file=os.path.basename(dicom_files[0]) if dicom_files else "none",
+            last_file=os.path.basename(dicom_files[-1]) if dicom_files else "none",
+            first_instance_number=str(first_hdr.get("instance_number", "none")),
+            last_instance_number=str(last_hdr.get("instance_number", "none")),
+            first_ipp=str(first_hdr.get("ipp", None)),
+            last_ipp=str(last_hdr.get("ipp", None)),
+            first_iop=str(first_hdr.get("iop", None)),
+            inferred_plane=plane_name,
+            dominant_axis=str(dominant_axis if dominant_axis is not None else "none"),
+            dominant_sign=dominant_sign,
+        )
         
         print(f"[LOAD_VTK] Loading {len(dicom_files)} DICOM file(s)")
         
@@ -2336,20 +2383,15 @@ def _load_series_from_filesystem(study_path, series_number, patient_pk=None, stu
                 'series_name': str(series_number),
                 'series_description': first_dcm.get('SeriesDescription', f'Series {series_number}'),
                 'series_thk': str(first_dcm.get('SliceThickness', '1.0')),
-                'modality': geometry_index.modality or first_dcm.get('Modality', 'CT'),
+                'modality': first_dcm.get('Modality', 'CT'),
                 'protocol_name': first_dcm.get('ProtocolName', ''),
-                'body_part_examined': geometry_index.body_part or first_dcm.get('BodyPartExamined', ''),
+                'body_part_examined': first_dcm.get('BodyPartExamined', ''),
                 'orientation': first_dcm.get('ImageOrientationPatient', [1, 0, 0, 0, 1, 0]),
-                'series_instance_uid': geometry_index.series_uid,
-                'study_instance_uid': geometry_index.study_uid,
-                'patient_position': geometry_index.patient_position,
-                'laterality': geometry_index.laterality,
-                'geometry_plane': geometry_index.plane,
                 'main_thumbnail': True,
             },
             'instances': instances,
         }
-        stamp_metadata_with_geometry_index(metadata, geometry_index)
+        _apply_geometry_index_metadata(metadata, geometry_index)
 
         _meta_time = time.time() - _meta_start
 
@@ -2890,17 +2932,7 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                         series_number=str(series_number),
                         source="db",
                     )
-                    stamp_metadata_with_geometry_index(metadata, geometry_index)
-                    _series_meta = metadata.get("series") if isinstance(metadata, dict) else {}
-                    if isinstance(_series_meta, dict):
-                        _series_meta["series_instance_uid"] = geometry_index.series_uid
-                        _series_meta["study_instance_uid"] = geometry_index.study_uid
-                        _series_meta["body_part_examined"] = geometry_index.body_part or _series_meta.get("body_part_examined", "")
-                        _series_meta["patient_position"] = geometry_index.patient_position
-                        _series_meta["laterality"] = geometry_index.laterality
-                        _series_meta["geometry_plane"] = geometry_index.plane
-                        if geometry_index.modality:
-                            _series_meta["modality"] = geometry_index.modality
+                    _apply_geometry_index_metadata(metadata, geometry_index)
 
                     # Final shared ordered list used by SimpleITK + metadata + sync index mapping.
                     dicom_files = list(geometry_index.dicom_files_for_itk)
@@ -3302,6 +3334,13 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
         try:
             _series_start = time.time()
             main_thumbnail = (i == 0)
+            geometry_index, _geometry_cache_hit = _get_or_build_series_geometry_index(
+                [str(path) for path in files],
+                patient_code=str(patient_pk_local or ""),
+                series_number=str(base_path.name or ""),
+                source="process_groups",
+            )
+            files = list(geometry_index.dicom_files_for_itk)
             
             print(f"         Processing group {i+1}/{len(size_groups)} with {len(files)} files...")
 
@@ -3340,6 +3379,7 @@ def process_series_groups(base_path: Path, size_groups: dict, patient_pk, study_
             
             # Use cached metadata for better performance
             metadata = _get_cached_metadata(series_pk, instances)
+            _apply_geometry_index_metadata(metadata, geometry_index)
             _metadata_time = time.time() - _metadata_start
             print(f"               - Metadata fetch: {_metadata_time:.3f}s")
             

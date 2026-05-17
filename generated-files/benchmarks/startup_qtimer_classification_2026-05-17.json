@@ -1,0 +1,82 @@
+{
+  "total": 11,
+  "findings": [
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 489,
+      "call": "QTimer.singleShot(0, self._ensure_welcome_page_height)",
+      "classification": "ui_deferred_polish",
+      "rationale": "Deferred login layout sizing after first event-loop tick"
+    },
+    {
+      "path": "PacsClient/app_handler.py",
+      "line": 856,
+      "call": "QTimer.singleShot(1500, lambda: self._complete_login(username, password))",
+      "classification": "login_flow",
+      "rationale": "Login completion workflow delay"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 123,
+      "call": "QTimer.singleShot(900, _run_startup_import)",
+      "classification": "startup_deferred",
+      "rationale": "Explicit startup deferred action"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 186,
+      "call": "QTimer.singleShot(0, self._maybe_snap_maximize)",
+      "classification": "window_geometry",
+      "rationale": "Window/frame geometry adjustment"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 237,
+      "call": "QTimer.singleShot(10, _snap)",
+      "classification": "window_geometry",
+      "rationale": "Window/frame geometry adjustment"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 318,
+      "call": "QTimer.singleShot(0, _go)",
+      "classification": "window_geometry",
+      "rationale": "Deferred native move handoff after restore"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 896,
+      "call": "QTimer.singleShot(delay, _cleanup)",
+      "classification": "shutdown_path",
+      "rationale": "Looks tied to shutdown/cleanup path"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1033,
+      "call": "QTimer.singleShot(10, _snap)",
+      "classification": "window_geometry",
+      "rationale": "Window/frame geometry adjustment"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1038,
+      "call": "QTimer.singleShot(0, lambda: self.setGeometry(self._normal_geometry))",
+      "classification": "window_geometry",
+      "rationale": "Window/frame geometry adjustment"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/mainwindow_ui.py",
+      "line": 1090,
+      "call": "QTimer.singleShot(0, app.quit)",
+      "classification": "shutdown_path",
+      "rationale": "Looks tied to shutdown/cleanup path"
+    },
+    {
+      "path": "PacsClient/pacs/workstation_ui/home_ui/home_panel/widget.py",
+      "line": 210,
+      "call": "QTimer.singleShot(0, self.apply_anti_aliasing)",
+      "classification": "ui_deferred_polish",
+      "rationale": "UI polish deferred to avoid first paint delay"
+    }
+  ]
+}

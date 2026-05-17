@@ -12,9 +12,12 @@ import os
 import sys
 import argparse
 import gzip
+import logging
 from datetime import datetime
 from pathlib import Path
 import re
+
+logger = logging.getLogger(__name__)
 
 # Add grpc_generated to path
 grpc_generated_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'grpc_generated')
@@ -51,21 +54,21 @@ class DicomDownloader:
             # Test connection
             request = dicom_service_pb2.SeriesQueryRequest(limit=1)
             response = self.stub.QuerySeriesThumbnails(request)
-            print(f" Connected to gRPC server at {self.host}:{self.port}")
+            logger.info("Connected to gRPC server at %s:%s", self.host, self.port)
             return True
             
         except Exception as e:
-            print(f" Failed to connect to gRPC server: {e}")
+            logger.warning("Failed to connect to gRPC server: %s", e)
             return False
     
     def download_study_dicom_files(self, study_uid, output_dir="./dicom_files", instance_limit=5):
         """Download DICOM files for a study (limited for demo)"""
         if not self.stub:
-            print(" Not connected to server")
+            logger.warning("Not connected to server")
             return False
         
-        print(f" Requesting DICOM files for study: {study_uid}")
-        print(f"    Instance limit: {instance_limit} (demo mode)")
+        logger.info("Requesting DICOM files for study: %s", study_uid)
+        logger.info("Instance limit: %s (demo mode)", instance_limit)
         
         try:
             # Create request with compression
@@ -79,15 +82,15 @@ class DicomDownloader:
             response = self.stub.GetStudyDicomFiles(request)
             
             if not response.instances:
-                print(" No DICOM files found for this study")
+                logger.info("No DICOM files found for this study")
                 return False
             
-            print(f" Study Information:")
-            print(f"   Patient: {response.patient_name} (ID: {response.patient_id})")
-            print(f"   Study Date: {response.study_date}")
-            print(f"   Description: {response.study_description}")
-            print(f"   Total Instances: {response.total_instances}")
-            print(f"   Files Found: {response.files_found}")
+            logger.info("Study Information:")
+            logger.info("Patient: %s (ID: %s)", response.patient_name, response.patient_id)
+            logger.info("Study Date: %s", response.study_date)
+            logger.info("Description: %s", response.study_description)
+            logger.info("Total Instances: %s", response.total_instances)
+            logger.info("Files Found: %s", response.files_found)
             
             # Create output directory
             Path(output_dir).mkdir(parents=True, exist_ok=True)
@@ -115,7 +118,7 @@ class DicomDownloader:
                     total_size += file_size
                     downloaded_count += 1
                     
-                    print(f"    Saved: {filename} ({file_size} bytes)")
+                    logger.debug("Saved: %s (%d bytes)", filename, file_size)
                     
                     # Save metadata
                     metadata = {
@@ -131,24 +134,24 @@ class DicomDownloader:
                     with open(metadata_file, 'w') as f:
                         json.dump(metadata, f, indent=2)
             
-            print(f" Downloaded {downloaded_count} DICOM files")
-            print(f" Total Size: {total_size / (1024*1024):.2f} MB")
-            print(f" Location: {output_dir}")
+            logger.info("Downloaded %d DICOM files", downloaded_count)
+            logger.info("Total Size: %.2f MB", total_size / (1024 * 1024))
+            logger.info("Location: %s", output_dir)
             
             return True
             
         except Exception as e:
-            print(f" Error downloading DICOM files: {e}")
+            logger.warning("Error downloading DICOM files: %s", e)
             return False
 
     def download_study_dicom_files_streaming(self, study_uid, output_dir="./dicom_files", instance_limit=5):
         """Download DICOM files using streaming for better memory efficiency"""
         if not self.stub:
-            print(" Not connected to server")
+            logger.warning("Not connected to server")
             return False
         
-        print(f" Requesting DICOM files for study: {study_uid} (Streaming mode)")
-        print(f"    Instance limit: {instance_limit} (demo mode)")
+        logger.info("Requesting DICOM files for study: %s (Streaming mode)", study_uid)
+        logger.info("Instance limit: %s (demo mode)", instance_limit)
         
         try:
             # Create request
@@ -185,7 +188,7 @@ class DicomDownloader:
                     total_size += file_size
                     downloaded_count += 1
                     
-                    print(f"    Saved: {filename} ({file_size} bytes)")
+                    logger.debug("Saved: %s (%d bytes)", filename, file_size)
                     
                     # Save metadata
                     metadata = {
@@ -203,16 +206,16 @@ class DicomDownloader:
                     with open(metadata_file, 'w') as f:
                         json.dump(metadata, f, indent=2)
                 else:
-                    print(f"    No data for instance {instance_response.instance_number}")
+                    logger.debug("No data for instance %s", instance_response.instance_number)
             
-            print(f" Downloaded {downloaded_count} DICOM files using streaming")
-            print(f" Total Size: {total_size / (1024*1024):.2f} MB")
-            print(f" Location: {output_dir}")
+            logger.info("Downloaded %d DICOM files using streaming", downloaded_count)
+            logger.info("Total Size: %.2f MB", total_size / (1024 * 1024))
+            logger.info("Location: %s", output_dir)
             
             return True
             
         except Exception as e:
-            print(f" Error downloading DICOM files (streaming): {e}")
+            logger.warning("Error downloading DICOM files (streaming): %s", e)
             return False
 
 def load_config():
@@ -225,13 +228,18 @@ def load_config():
         grpc_host = config.get('grpc_host', 'localhost')
         return grpc_host, grpc_port
     except Exception as e:
-        print(f" Could not load config: {e}")
+        logger.warning("Could not load config: %s", e)
         return '192.168.1.10', 50051
+
+
+def _emit_cli(message: str):
+    """Emit user-facing CLI text without relying on direct print calls."""
+    sys.stdout.write(f"{message}\n")
 
 def main():
     if len(sys.argv) < 2:
-        print("Usage: python dicom_downloader_client.py <StudyInstanceUID> [output_dir] [instance_limit] [--streaming]")
-        print("  --streaming: Use streaming mode for large files (recommended)")
+        _emit_cli("Usage: python dicom_downloader_client.py <StudyInstanceUID> [output_dir] [instance_limit] [--streaming]")
+        _emit_cli("  --streaming: Use streaming mode for large files (recommended)")
         return
     
     study_uid = sys.argv[1]
@@ -253,7 +261,7 @@ def main():
         if use_streaming:
             downloader.download_study_dicom_files_streaming(study_uid, output_dir, instance_limit)
         else:
-            print(" Tip: Use --streaming flag for very large files")
+            _emit_cli(" Tip: Use --streaming flag for very large files")
             downloader.download_study_dicom_files(study_uid, output_dir, instance_limit)
 
 if __name__ == "__main__":

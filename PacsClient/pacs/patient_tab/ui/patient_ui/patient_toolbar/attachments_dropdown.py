@@ -231,7 +231,7 @@ class ImageAttachmentsPanel(QWidget):
                 }
             """)
             view_btn.setCursor(Qt.PointingHandCursor)
-            view_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self._file_path)))
+            view_btn.clicked.connect(self._open_file)
             actions.addWidget(view_btn)
 
             del_btn = QPushButton()
@@ -260,6 +260,9 @@ class ImageAttachmentsPanel(QWidget):
             
             top_row.addLayout(info_actions, 1)
             root.addLayout(top_row)
+
+        def _open_file(self):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(self._file_path))
 
         def _delete(self):
             reply = QMessageBox.question(

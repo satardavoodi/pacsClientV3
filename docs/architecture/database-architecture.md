@@ -1,6 +1,6 @@
 # Database Architecture
 
-> **Version:** v2.2.8.1 | **Updated:** 2026-04-02  
+> **Version:** v3.0.5 | **Updated:** 2026-05-17  
 > **Previous:** v2.2.3.4.0 (2026-03-10)
 
 ## Overview
@@ -70,6 +70,17 @@ Thread C ──▶ Pool ──▶ Connection 3 (new if pool empty)
 - 30-second timeout on connection acquisition
 - DEFERRED isolation level (non-blocking transactions)
 - Connection reuse validation: `SELECT 1` before handing out pooled connections
+
+### Pool Lock-Scope Hardening (2026-05-17)
+
+`_get_pooled_connection()` now holds `_pool_lock` only for pool map access and
+reuse validation, then releases it before `_create_sqlite_connection()`.
+
+Why this matters:
+- `_create_sqlite_connection()` contains retry/backoff for lock contention.
+- Keeping `_pool_lock` during retry sleep serialized all callers behind one
+   slow create path.
+- Releasing lock before create prevents global DB admission stalls under load.
 
 ### Connection Lifecycle (v2.2.8.0 — ENFORCED)
 
@@ -149,6 +160,40 @@ To see all pool timing (including sub-5ms), set `min_ms=0` in the
 
 Enable diagnostic logging via `DIAGNOSTIC_LOGGING_ENABLED` environment
 variable.
+
+## Repeatable DB Backbone Evaluation (2026-05-17)
+
+Use the bundle runner below for cross-PC and regression-safe DB backbone checks:
+
+```bash
+python tools/diagnostics/run_database_backbone_evaluation_bundle.py \
+   --tag 2026-05-17_phaseD1 \
+   --run-db-tests \
+   --run-dm-tests \
+   --run-logging-lint \
+   --summary-only \
+   --fail-on-db-kpi-regression
+```
+
+Output artifact:
+- `generated-files/benchmarks/database_backbone_evaluation_bundle_<tag>.json`
+
+Current KPI baseline (phaseD6_pass):
+- `db_print_calls = 0`
+- `direct_sqlite_connect_count = 4`
+
+### Logging Safety Hardening (2026-05-17)
+
+Pool-path diagnostics in `database/_pool.py` now use `logger.warning/error`
+instead of `print()`. This avoids synchronous stdout writes on hot paths and
+prevents frozen/no-console stdout edge cases from affecting DB error handling.
+
+Additional hot-path cleanup was applied in:
+- `database/download_progress_db.py` (retry/status/error prints -> logger)
+- `database/dicom_db.py::search_patients_local` (search tracing prints -> logger.debug)
+
+These changes reduce console I/O churn during active download/update/search
+flows without changing DB transaction semantics.
 
 ## Database Initialization Ownership
 

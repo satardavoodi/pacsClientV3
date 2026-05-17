@@ -362,6 +362,7 @@ class SeriesGeometryIndex:
     display_convention: str
     display_to_geometry_index: tuple[int, ...] = field(default_factory=tuple)
     geometry_to_display_index: tuple[int, ...] = field(default_factory=tuple)
+    applied_reverse: bool = False
 
     def display_instances_metadata(self) -> list[dict[str, Any]]:
         return [inst.to_metadata_dict() for inst in self.display_instances_order]
@@ -394,6 +395,7 @@ class SeriesGeometryIndex:
             "display_convention": self.display_convention,
             "display_to_geometry_index": list(self.display_to_geometry_index),
             "geometry_to_display_index": list(self.geometry_to_display_index),
+                    "applied_reverse": self.applied_reverse,
         }
 
     @classmethod
@@ -430,6 +432,7 @@ class SeriesGeometryIndex:
             display_convention=str(payload.get("display_convention") or ""),
             display_to_geometry_index=tuple(int(v) for v in (payload.get("display_to_geometry_index") or [])),
             geometry_to_display_index=tuple(int(v) for v in (payload.get("geometry_to_display_index") or [])),
+                    applied_reverse=bool(payload.get("applied_reverse", False)),
         )
 
 
@@ -484,6 +487,7 @@ def stamp_metadata_with_geometry_index(
     metadata["canonical_order_hash"] = geometry_index.geometry_order_hash
     metadata["display_convention_applied"] = True
     metadata["_instances_geometry_sorted"] = True
+    metadata["_geometry_index_applied_reverse"] = geometry_index.applied_reverse
     return metadata
 
 
@@ -755,6 +759,7 @@ def build_series_geometry_index(
         display_convention=display_convention,
         display_to_geometry_index=display_to_geometry_index,
         geometry_to_display_index=geometry_to_display_index,
+        applied_reverse=applied_reverse,
     )
 
     if unresolved:

@@ -1,3 +1,5 @@
+from functools import partial
+
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
                             QSize, Qt)
 from PySide6.QtGui import (QFont, QIcon, QPixmap, QCursor)
@@ -82,12 +84,21 @@ class ControlPanelWindow(object):
         self.menuBtn.clicked.connect(self._toggle_menu)
 
         # Bottom section: open center menu with the correct page
-        self.settingsBtn.clicked.connect(lambda: self._toggle_center_menu(page="theme"))
-        self.infoBtn.clicked.connect(lambda: self._toggle_center_menu(page="info"))
-        self.helpBtn.clicked.connect(lambda: self._toggle_center_menu(page="help"))
+        self.settingsBtn.clicked.connect(self._open_theme_center_menu)
+        self.infoBtn.clicked.connect(self._open_info_center_menu)
+        self.helpBtn.clicked.connect(self._open_help_center_menu)
 
-        self.closeCenterMenuBtn.clicked.connect(lambda: self.centerMenuContainer.hide())
-        self.closeRightMenuBtn.clicked.connect(lambda: self.rightMenuContainer.hide())
+        self.closeCenterMenuBtn.clicked.connect(self.centerMenuContainer.hide)
+        self.closeRightMenuBtn.clicked.connect(self.rightMenuContainer.hide)
+
+    def _open_theme_center_menu(self):
+        self._toggle_center_menu(page="theme")
+
+    def _open_info_center_menu(self):
+        self._toggle_center_menu(page="info")
+
+    def _open_help_center_menu(self):
+        self._toggle_center_menu(page="help")
 
     def _left_menu_button_style(self) -> str:
         theme = self._active_theme
@@ -155,6 +166,9 @@ class ControlPanelWindow(object):
 
     def _apply_selected_theme(self, theme_name: str) -> None:
         self.theme_manager.set_active_theme(theme_name)
+
+    def _on_theme_preview_clicked(self, _checked=False, *, name: str) -> None:
+        self._apply_selected_theme(name)
 
     def _open_theme_customizer(self) -> None:
         active_name = self.theme_manager.current_theme_name()
@@ -409,7 +423,7 @@ class ControlPanelWindow(object):
             button = QPushButton(theme_name, self.page_3)
             button.setCheckable(True)
             button.setMinimumHeight(68)
-            button.clicked.connect(lambda _checked=False, name=theme_name: self._apply_selected_theme(name))
+            button.clicked.connect(partial(self._on_theme_preview_clicked, name=theme_name))
             self._theme_preview_buttons[theme_name] = button
             self.themePreviewGrid.addWidget(button, index // 2, index % 2)
         self.verticalLayout_7.addLayout(self.themePreviewGrid)
@@ -746,14 +760,20 @@ class ControlPanelWindow(object):
 
     def connect_left_navigation(self):
         """Connect left-side navigation buttons to stacked pages."""
-        self.home_btn.clicked.connect(lambda: self.mainPages.setCurrentIndex(0))
-        self.settings_server_btn.clicked.connect(lambda: self.mainPages.setCurrentIndex(1))
+        self.home_btn.clicked.connect(self._show_home_page)
+        self.settings_server_btn.clicked.connect(self._show_settings_server_page)
         self.dataBtn.clicked.connect(self.open_data_analysis)
         self.reportBtn.clicked.connect(self.open_printing_module)
         self.education_btn.clicked.connect(self.open_education_module)
         
         self.download_manager_btn.clicked.connect(self.open_download_manager)
         self.web_browser_btn.clicked.connect(self.open_web_browser)
+
+    def _show_home_page(self):
+        self.mainPages.setCurrentIndex(0)
+
+    def _show_settings_server_page(self):
+        self.mainPages.setCurrentIndex(1)
 
     def open_data_analysis(self):
         """Open data analysis dashboard and refresh metrics."""

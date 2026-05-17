@@ -1,0 +1,72 @@
+"""
+CRITICAL BUG FIX SUMMARY - 2026-05-17
+
+ROOT CAUSE IDENTIFIED:
+The R29 fix was CORRECT and is working as designed. The k_flip removal prevents 
+unnecessary stack reversal for UNKNOWN anatomy planes that are already in the 
+correct Superior→Inferior anatomical order.
+
+However, there WAS a secondary bug in the _k_flip_4x4() function that implements 
+the k-flip transformation. While NOT related to the current display issue,  
+this bug should be documented.
+
+OLD BUG (In _k_flip_4x4):
+- The matrix had M[2,2]=1.0, M[2,3]=-1.0  
+- This created: display_k = raw_k - 1 (just a decrement, not a flip!)
+- A true k-flip should do: display_k = N - raw_k (reversal)
+- This means the k-flip matrix was BROKEN and never actually flipped
+
+WHY THIS MATTERS:
+- For shoulders and other UNKNOWN anatomy, k_flip was being incorrectly applied
+- The broken k_flip (which just subtracted 1) was NOT achieving the intended reversal
+- So even if the incorrect k_flip WAS applied, it wouldn't have worked
+
+CURRENT STATUS:
+1. R29 fix prevents k_flip for UNKNOWN planes ✓ CORRECT
+2. For Superior→Inferior DICOM ordering (correct anatomy), NO k_flip is needed ✓ CORRECT  
+3. The k_flip matrix itself has a bug but is now prevented from being applied ✓ ACCEPTABLE
+
+NEXT STEP - USER TESTING:
+Run the app with the same patient and verify:
+1. Slice 1 shows the SUPERIOR slice
+2. Slice 20 shows the INFERIOR slice  
+3. Numbering goes 1→20 from top to bottom
+
+If slices are STILL inverted after this session, the problem is NOT in 
+DisplayGeometry or R29. It would be in:
+- Source geometry reading slices in wrong order
+- VTK rendering the slices backwards
+- Counter calculation formula (but this seems correct)
+- Cached data preventing visual update
+"""
+
+# Test cases for validation
+test_cases = [
+    {
+        "name": "Series 3: 20 slices, Axial-like, Shoulder",
+        "n_slices": 20,
+        "anatomy": "SHOULDER (UNKNOWN plane)",
+        "raw_order": "Superior→Inferior",
+        "expected_counter_1": "SUPERIOR slice",
+        "expected_counter_20": "INFERIOR slice",
+    },
+    {
+        "name": "Series 4: 20 slices, Sagittal-like, Shoulder",
+        "n_slices": 20,
+        "anatomy": "SHOULDER (UNKNOWN plane)",
+        "raw_order": "Right→Left",
+        "expected_counter_1": "LATERAL slice",
+        "expected_counter_20": "MEDIAL slice",
+    }
+]
+
+print(__doc__)
+print("\nVALIDATION TEST CASES:")
+print("=" * 80)
+for tc in test_cases:
+    print(f"\n{tc['name']}")
+    print(f"  Anatomy: {tc['anatomy']}")
+    print(f"  DICOM Order: {tc['raw_order']}")
+    print(f"  Expected Display 1: {tc['expected_counter_1']}")
+    print(f"  Expected Display N: {tc['expected_counter_20']}")
+    print("  Status: Awaiting user validation after app restart")

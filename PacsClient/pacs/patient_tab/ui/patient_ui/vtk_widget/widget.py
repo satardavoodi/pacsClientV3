@@ -129,6 +129,8 @@ class VTKWidget(
             _initial_resolution.get("backend", self._selected_backend) or self._selected_backend
         )
         self._bound_backend_metadata = None
+        self._advanced_annotations_by_series = {}
+        self._fast_tool_store_by_series = {}
         self._series_generation_id = 0
         self._lazy_requested_slice = None
         self._lazy_requested_generation = 0

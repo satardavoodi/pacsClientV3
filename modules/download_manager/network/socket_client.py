@@ -1297,9 +1297,10 @@ class SocketDicomClient:
         
         elapsed = time.time() - start_time
         
-        logger.info(
+        logger.warning(
             f"✅ Series {series_number} complete: "
-            f"{downloaded_count} downloaded, {skipped_count} skipped ({elapsed:.1f}s)"
+            f"{downloaded_count} downloaded, {skipped_count} skipped ({elapsed:.1f}s)",
+            extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
         )
         logger.warning(
             "download-pipeline-summary series=%s elapsed_s=%.2f disk_write_ms=%.2f decode_ms=%.2f decompress_ms=%.2f",
@@ -1434,11 +1435,11 @@ class SocketDicomClient:
                     
                     logger.warning(f"⏳ Retrying in {delay:.1f}s...", extra={"component": "download"})
                     if not await self._async_sleep_with_cancel(delay):
-                        logger.info("⏸️ Batch retry cancelled during backoff")
+                        logger.debug("⏸️ Batch retry cancelled during backoff")
                         return None
 
                     if self.is_cancelled():
-                        logger.info("⏸️ Batch retry cancelled before reconnect")
+                        logger.debug("⏸️ Batch retry cancelled before reconnect")
                         return None
                     
                     # Reconnect with backoff
@@ -1446,7 +1447,7 @@ class SocketDicomClient:
                     self.disconnect()
                     if not self.connect_with_retry(max_retries=3):
                         if self.is_cancelled():
-                            logger.info("⏸️ Batch retry reconnect cancelled")
+                            logger.debug("⏸️ Batch retry reconnect cancelled")
                             return None
                         logger.error(f"❌ Reconnection failed")
                         continue

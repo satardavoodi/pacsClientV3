@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 from PySide6.QtCore import Qt, QTimer
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
+from PacsClient.utils.structured_logging import emit_viewer_event
 
 from ..mpr_diagnostic_validator import MPRDiagnosticValidator, DIAG_ENABLED
 from ._interactor_styles import VRTInteractorStyle
@@ -220,6 +221,18 @@ class _MprViewsMixin:
 
     def _create_axial_view(self, layout, row, col):
         """Create axial view (XY plane) - Original slices, NO interpolation between slices"""
+        emit_viewer_event(
+            logger,
+            "ZETA_NPR_VIEWPORT_ASSIGNMENT",
+            stage="create_view",
+            view_name="axial",
+            grid_row=row,
+            grid_col=col,
+            source_role="input_volume_primary",
+            interpolation="nearest",
+            used_default_axial=True,
+            fallback_reason="fixed_layout_primary_source_view",
+        )
         _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_axial_view")
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
@@ -276,6 +289,18 @@ class _MprViewsMixin:
 
     def _create_sagittal_view(self, layout, row, col):
         """Create sagittal view (YZ plane) - MPR reconstructed with interpolation"""
+        emit_viewer_event(
+            logger,
+            "ZETA_NPR_VIEWPORT_ASSIGNMENT",
+            stage="create_view",
+            view_name="sagittal",
+            grid_row=row,
+            grid_col=col,
+            source_role="mpr_reconstructed",
+            interpolation="linear",
+            used_default_axial=False,
+            fallback_reason="none",
+        )
         _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_sagittal_view")
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
@@ -342,6 +367,18 @@ class _MprViewsMixin:
 
     def _create_coronal_view(self, layout, row, col):
         """Create coronal view (XZ plane) - MPR reconstructed with interpolation"""
+        emit_viewer_event(
+            logger,
+            "ZETA_NPR_VIEWPORT_ASSIGNMENT",
+            stage="create_view",
+            view_name="coronal",
+            grid_row=row,
+            grid_col=col,
+            source_role="mpr_reconstructed",
+            interpolation="linear",
+            used_default_axial=False,
+            fallback_reason="none",
+        )
         _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_coronal_view")
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")

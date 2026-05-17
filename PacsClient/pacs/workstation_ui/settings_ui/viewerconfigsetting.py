@@ -1,4 +1,5 @@
 import json
+from functools import partial
 from pathlib import Path
 from typing import Dict
 
@@ -73,7 +74,7 @@ class GridPickerPopup(QFrame):
                 btn.setFixedSize(29, 29)  # Larger cells for easier targeting
                 btn.setCursor(Qt.PointingHandCursor)
                 btn.enterEvent = lambda e, rr=r, cc=c: self._hover(rr, cc)
-                btn.clicked.connect(lambda _, rr=r, cc=c: self._select(rr + 1, cc + 1))
+                btn.clicked.connect(partial(self._on_cell_clicked, rows=r + 1, cols=c + 1))
                 layout.addWidget(btn, r, c)
                 self.buttons[(r, c)] = btn
 
@@ -86,6 +87,9 @@ class GridPickerPopup(QFrame):
     def _select(self, rows, cols):
         self.gridSelected.emit(rows, cols)
         self.close()
+
+    def _on_cell_clicked(self, _checked=False, *, rows: int, cols: int):
+        self._select(rows, cols)
 
 
 # ============================================================
@@ -566,7 +570,7 @@ class ModalityGridConfigWidget(QWidget):
                 "background-color: #1d4ed8; border: 1px solid #1e40af; border-radius: 6px; } "
                 "QToolButton:hover { background-color: #1e40af; }"
             )
-            rm.clicked.connect(lambda _, m=name: self.remove_modality(m))
+            rm.clicked.connect(partial(self._on_remove_modality_clicked, name=name))
 
             self.grid.addWidget(lbl, row, base_col + 0)
             self.grid.addWidget(picker, row, base_col + 1)
@@ -580,6 +584,9 @@ class ModalityGridConfigWidget(QWidget):
                 col_block = 0
             else:
                 col_block = 1
+
+    def _on_remove_modality_clicked(self, _checked=False, *, name: str):
+        self.remove_modality(name)
 
     def add_modality(self):
         name = self.new_name.currentText().strip().upper()
