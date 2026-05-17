@@ -569,7 +569,7 @@ def configure_graphics_fallback():
     # Logging (minimal, before logging subsystem fully initialized)
     # ========================================================================
     
-    print(f"[GRAPHICS] Mode: {'FROZEN' if frozen else 'DEVELOPMENT'}")
+    print(f"[GRAPHICS] Build: {'FROZEN' if frozen else 'DEVELOPMENT'}")
     try:
         save_runtime_profile(build_graphics_runtime_patch(profile))
     except Exception:
@@ -1112,7 +1112,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.0.3")
+    app.setApplicationVersion("3.0.5")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
