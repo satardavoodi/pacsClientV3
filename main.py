@@ -54,7 +54,20 @@ from PacsClient.utils.runtime_correlation import (
 
 def _emit_console(message: str) -> None:
     """Emit startup/CLI console text without direct print calls."""
-    sys.stdout.write(f"{message}\n")
+    text = f"{message}\n"
+    # In frozen/windowed builds, stdout can be None.
+    for stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None)):
+        if stream is None:
+            continue
+        try:
+            stream.write(text)
+            try:
+                stream.flush()
+            except Exception:
+                pass
+            return
+        except Exception:
+            continue
 
 
 def _maybe_nuitka_smoke_test_exit() -> None:
