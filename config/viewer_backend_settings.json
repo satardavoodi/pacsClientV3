@@ -1,3 +1,3 @@
 {
-  "viewer_2d_backend": "pydicom_2d"
+  "viewer_2d_backend": "vtk_simpleitk"
 }

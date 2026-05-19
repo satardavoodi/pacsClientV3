@@ -441,7 +441,7 @@ class ReceptionDataTab(QWidget):
         
         # Create group box
         group = QGroupBox(f"Services ({len(services)})")
-        group.setStyleSheet(get_group_box_style("success"))
+        group.setStyleSheet(get_group_box_style("primary"))
         
         layout = QVBoxLayout(group)
         layout.setContentsMargins(10, 15, 10, 10)
@@ -467,7 +467,7 @@ class ReceptionDataTab(QWidget):
             
             # Service number and group
             header = QLabel(f"#{idx} - {service_group}")
-            header.setStyleSheet(get_label_style("success", "md", bold=True))
+            header.setStyleSheet(get_label_style("info", "md", bold=True))
             service_layout.addWidget(header)
             
             # Service name
@@ -562,7 +562,7 @@ class ReceptionDataTab(QWidget):
         phy_label = QLabel("Physician:")
         phy_label.setStyleSheet("color: #aaa; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px;")
         phy_status = QLabel("✓ Approved" if physician_approved else "✗ Pending")
-        phy_status.setStyleSheet(f"color: {'#4caf50' if physician_approved else '#f44336'}; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px;")
+        phy_status.setStyleSheet(f"color: {COLORS['success'] if physician_approved else COLORS['error']}; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px;")
         
         approval_layout.addWidget(phy_label, 0, 0)
         approval_layout.addWidget(phy_status, 0, 1)
@@ -571,7 +571,7 @@ class ReceptionDataTab(QWidget):
         sec_label = QLabel("Secretary:")
         sec_label.setStyleSheet("color: #aaa; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px;")
         sec_status = QLabel("✓ Approved" if secretary_approved else "✗ Pending")
-        sec_status.setStyleSheet(f"color: {'#4caf50' if secretary_approved else '#f44336'}; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px;")
+        sec_status.setStyleSheet(f"color: {COLORS['success'] if secretary_approved else COLORS['error']}; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px;")
         
         approval_layout.addWidget(sec_label, 1, 0)
         approval_layout.addWidget(sec_status, 1, 1)
@@ -590,7 +590,7 @@ class ReceptionDataTab(QWidget):
         if radiologist:
             radiologist_name = radiologist.get("FullName", "N/A")
             radiologist_label = QLabel(f"Radiologist: {radiologist_name}")
-            radiologist_label.setStyleSheet("color: #2196f3; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px; font-weight: bold;")
+            radiologist_label.setStyleSheet(f"color: {COLORS['primary']}; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px; font-weight: bold;")
             layout.addWidget(radiologist_label)
         
         # Check if report content exists
@@ -599,9 +599,9 @@ class ReceptionDataTab(QWidget):
             # Add View/Edit Report button
             view_btn = QPushButton(" View / Edit Report")
             view_btn.setIcon(qta.icon('fa5s.file-medical', color='white'))
-            view_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #9c27b0;
+            view_btn.setStyleSheet(f"""
+                QPushButton {{
+                    background-color: {COLORS['primary']};
                     color: white;
                     border: none;
                     border-radius: 4px;
@@ -610,13 +610,13 @@ class ReceptionDataTab(QWidget):
                     font-size: 12px;
                     font-weight: bold;
                     margin-top: 8px;
-                }
-                QPushButton:hover {
-                    background-color: #7b1fa2;
-                }
-                QPushButton:pressed {
-                    background-color: #6a1b9a;
-                }
+                }}
+                QPushButton:hover {{
+                    background-color: {COLORS['primary_dark']};
+                }}
+                QPushButton:pressed {{
+                    background-color: {COLORS['primary_dark']}cc;
+                }}
             """)
             view_btn.clicked.connect(lambda: self._show_report_editor(report))
             layout.addWidget(view_btn)

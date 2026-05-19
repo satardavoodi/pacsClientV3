@@ -71,6 +71,20 @@ def _is_expected_preemption(exc_or_message: Any) -> bool:
         or "download cancelled" in text
     )
 
+
+def _is_transient_connection_drop(exc_or_message: Any) -> bool:
+    """Return True when error text indicates a dropped/broken socket that should reconnect."""
+    text = str(exc_or_message or "").lower()
+    if not text:
+        return False
+    return (
+        "connection closed by server" in text
+        or "connection lost while receiving data" in text
+        or "forcibly closed" in text
+        or "broken pipe" in text
+        or "connection reset" in text
+    )
+
 # Singleton health monitor instance (shared across all socket clients)
 _health_monitor: Optional[ConnectionHealthMonitor] = None
 
@@ -685,7 +699,7 @@ class SocketDicomClient:
                     response_length = int.from_bytes(response_length_bytes, byteorder='big')
                     
                     # Validate response length to prevent extremely large allocations
-                    if response_length > 50 * 1024 * 1024:  # 50MB limit
+                    if response_length > 500 * 1024 * 1024:  # 500MB limit
                         raise NetworkError(f"Response too large: {response_length} bytes")
 
                     logger.debug(
@@ -823,7 +837,10 @@ class SocketDicomClient:
                 import traceback
                 logger.error(f"❌ Traceback: {traceback.format_exc()}")
                 # Handle other socket errors that indicate connection problems
-                if isinstance(e, (socket.error, OSError)) or "forcibly closed" in str(e):
+                if (
+                    isinstance(e, (socket.error, OSError, NetworkError))
+                    and _is_transient_connection_drop(e)
+                ):
                     self.connected = False
                     if self.socket:
                         try:

@@ -74,6 +74,10 @@ class PooyanFilterParams:
     small_threshold: int = 280  # pixels; triggers dilate + 2× resize path
     preserve_dimensions: bool = False  # if True, skip small-image resize
     invert: bool = False       # per-pixel colour inversion (255 - pixel)
+    lowres_anti_alias_enabled: bool = True
+    lowres_threshold: int = 384
+    lowres_sigma_x: float = 0.45
+    lowres_blend: float = 0.18
 
     def __post_init__(self):
         # C# clamps sigmaX: Math.Max(0.05, sigmaX)
@@ -154,7 +158,18 @@ def pooyan_filter_center(
     # we convert GRAY→BGR (matching C# Sidecar ``ApplyPooyanFilterCenter``).
     mat = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
 
-    # ── Step 2: GaussianBlur + AddWeighted (unsharp mask) ──
+    # ── Step 2a: low-resolution anti-alias pre-smoothing (conservative) ──
+    # Targets jagged/coarse appearance on small matrices (e.g., low-res MR/DWI).
+    if (
+        params.lowres_anti_alias_enabled
+        and (w <= int(params.lowres_threshold) or h <= int(params.lowres_threshold))
+        and float(params.lowres_blend) > 0.0
+    ):
+        aa_blur = cv2.GaussianBlur(mat, (0, 0), max(0.05, float(params.lowres_sigma_x)))
+        aa_blend = min(max(float(params.lowres_blend), 0.0), 0.45)
+        mat = cv2.addWeighted(mat, 1.0 - aa_blend, aa_blur, aa_blend, 0.0)
+
+    # ── Step 2b: GaussianBlur + AddWeighted (unsharp mask) ──
     # C#: Cv2.GaussianBlur(mat, dst, new Size(0,0), sigmaX);
     # OpenCV auto-calculates kernel size from sigma when ksize=(0,0).
     dst = cv2.GaussianBlur(mat, (0, 0), params.sigma_x)
@@ -567,6 +582,10 @@ def load_pooyan_filter_params_from_json(json_path: Optional[str] = None) -> Pooy
             small_threshold=int(d.get("small_threshold", 280)),
             preserve_dimensions=bool(d.get("preserve_dimensions", False)),
             invert=bool(d.get("invert", False)),
+            lowres_anti_alias_enabled=bool(d.get("lowres_anti_alias_enabled", True)),
+            lowres_threshold=int(d.get("lowres_threshold", 384)),
+            lowres_sigma_x=float(d.get("lowres_sigma_x", 0.45)),
+            lowres_blend=float(d.get("lowres_blend", 0.18)),
         )
     except Exception as e:
         logger.warning("Failed to load PooyanPacs filter config from %s: %s", json_path, e)

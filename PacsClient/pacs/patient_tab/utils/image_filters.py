@@ -689,6 +689,14 @@ def apply_filters(
                 "sigma": 0.275,
                 "mild_sigma": 0.33,
             },
+            "lowres_anti_alias": {
+                "enabled": True,
+                "matrix_threshold": 384,
+                "sigma": 0.30,
+                "blend": 0.15,
+                "mild_sigma": 0.35,
+                "mild_blend": 0.18,
+            },
             "multiscale_sharpening": {
                 "enabled": True,
                 "sigmas": [0.5, 1.0, 2.0],
@@ -718,6 +726,14 @@ def apply_filters(
                 "enabled": True,
                 "sigma": 0.275,
                 "mild_sigma": 0.33,
+            },
+            "lowres_anti_alias": {
+                "enabled": True,
+                "matrix_threshold": 384,
+                "sigma": 0.26,
+                "blend": 0.12,
+                "mild_sigma": 0.30,
+                "mild_blend": 0.14,
             },
         },
     }
@@ -847,6 +863,32 @@ def apply_filters(
             itk_image = _smooth_xy_recursive(itk_image, sigma_xy=float(sigma), sigma_z=0.0)
         else:
             itk_image = sitk.SmoothingRecursiveGaussian(itk_image, sigma=float(sigma))
+
+    # ------------------------------------------------------------------
+    # Low-resolution anti-alias (conservative, matrix-gated)
+    # ------------------------------------------------------------------
+    lowres_cfg = modality_settings.get("lowres_anti_alias", {})
+    lowres_enabled = bool(lowres_cfg.get("enabled", True))
+    lowres_threshold = int(lowres_cfg.get("matrix_threshold", 384))
+    lowres_gate = int(min(nx, ny)) <= lowres_threshold
+    if lowres_enabled and lowres_gate:
+        aa_sigma = (
+            float(lowres_cfg.get("mild_sigma", lowres_cfg.get("sigma", 0.30)))
+            if mild_mode
+            else float(lowres_cfg.get("sigma", 0.30))
+        )
+        aa_blend = (
+            float(lowres_cfg.get("mild_blend", lowres_cfg.get("blend", 0.15)))
+            if mild_mode
+            else float(lowres_cfg.get("blend", 0.15))
+        )
+        aa_blend = max(0.0, min(aa_blend, 0.45))
+        if aa_sigma > 0.0 and aa_blend > 0.0:
+            aa_smoothed = _smooth_xy_recursive(itk_image, sigma_xy=aa_sigma, sigma_z=0.0)
+            itk_image = sitk.Add(
+                sitk.Multiply(itk_image, 1.0 - aa_blend),
+                sitk.Multiply(aa_smoothed, aa_blend),
+            )
 
     # ── GIL yield: brief pause between stages ──
     # v2.2.3.2.3: 2ms is enough for the main thread to process one VTK render

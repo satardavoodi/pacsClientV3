@@ -190,10 +190,33 @@ class _VCSwitchMixin:
                 )
                 target_widget_for_spinner = vtk_widget
 
-            if vtk_widget is None or slider is None:
+            if vtk_widget is None:
                 self.logger.warning("change-series: invalid target viewport for series %s", series_number)
                 self._hide_spinner_for_widget(target_widget_for_spinner)
                 return
+
+            # FAST drag/drop can arrive before the per-viewer slider reference is
+            # wired on some layout transitions. Series switching itself does not
+            # depend on slider presence, so resolve it best-effort and continue.
+            if slider is None:
+                try:
+                    for _node in (self.lst_nodes_viewer or []):
+                        if getattr(_node, 'vtk_widget', None) is vtk_widget:
+                            slider = getattr(_node, 'slider', None)
+                            break
+                except Exception:
+                    pass
+                if slider is None:
+                    try:
+                        slider = getattr(self.parent_widget, 'slider', None)
+                    except Exception:
+                        slider = None
+                if slider is None:
+                    self.logger.warning(
+                        "change-series: slider missing for viewer=%s series=%s; proceeding without slider reset",
+                        getattr(vtk_widget, 'id_vtk_widget', None),
+                        series_number,
+                    )
 
             # Clear any previous awaiting marker from a prior drag-drop that
             # targeted this viewer.  A new series switch supersedes the old one.
@@ -859,6 +882,47 @@ class _VCSwitchMixin:
                 if not dims or int(dims[0]) <= 0 or int(dims[1]) <= 0 or int(dims[2]) <= 0:
                     logger.error("â‌Œ [SWITCH ABORT] Recovery failed: invalid dimensions remain")
                     return
+
+            # Advanced-mode hardening: a cached FAST stub can expose valid
+            # dimensions but no scalar payload, which renders blank in VTK.
+            if str(requested_backend or BACKEND_VTK) == BACKEND_VTK:
+                has_scalars = False
+                try:
+                    point_data = vtk_image_data.GetPointData() if vtk_image_data is not None else None
+                    scalars = point_data.GetScalars() if point_data is not None else None
+                    has_scalars = scalars is not None
+                except Exception:
+                    has_scalars = False
+
+                if not has_scalars:
+                    series_no = str(metadata.get('series', {}).get('series_number', '')) if isinstance(metadata, dict) else ''
+                    logger.warning(
+                        "[ADVANCED_STUB_RELOAD] series=%s requested_backend=%s reason=no_scalars_in_vtk_payload",
+                        series_no,
+                        requested_backend,
+                    )
+                    if series_no.isdigit():
+                        recovered = self._load_single_series_on_demand(
+                            int(series_no),
+                            self._get_correct_study_path(),
+                            target_vtk_widget=vtk_widget,
+                            allow_paired=allow_paired,
+                            expected_token=expected_token,
+                            viewer_backend=requested_backend,
+                            force_reload=True,
+                        )
+                        if recovered:
+                            vtk_image_data, metadata, series_idx = self._get_series_by_number_fast(series_no)
+
+                    try:
+                        point_data = vtk_image_data.GetPointData() if vtk_image_data is not None else None
+                        scalars = point_data.GetScalars() if point_data is not None else None
+                        has_scalars = scalars is not None
+                    except Exception:
+                        has_scalars = False
+                    if not has_scalars:
+                        logger.error("â‌Œ [SWITCH ABORT] Recovery failed: vtk payload still has no scalars")
+                        return
 
             metadata = self._clone_metadata_for_switch(metadata)
             series_number = str(metadata.get('series', {}).get('series_number', ''))

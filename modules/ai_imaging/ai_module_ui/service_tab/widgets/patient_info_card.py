@@ -248,8 +248,8 @@ class PatientInfoCard(QWidget):
         
         # National ID row (copyable)
         national_id = patient.get("NationalID", "N/A")
-        layout.addWidget(InfoRow('fa5s.id-card', "National ID", national_id, 
-                                  COLORS['success'], copyable=True))
+        layout.addWidget(InfoRow('fa5s.id-card', "National ID", national_id,
+                                  COLORS['primary'], copyable=True))
         
         # Add separator
         layout.addWidget(self._create_separator())
@@ -261,7 +261,7 @@ class PatientInfoCard(QWidget):
         age_gender = f"{age} years, {gender_display}" if age != "N/A" else gender_display
         
         gender_icon = 'fa5s.mars' if gender == 'M' else 'fa5s.venus' if gender == 'F' else 'fa5s.genderless'
-        gender_color = '#3498db' if gender == 'M' else '#e91e63' if gender == 'F' else COLORS['text_secondary']
+        gender_color = COLORS['primary']
         
         layout.addWidget(InfoRow(gender_icon, "Age/Gender", age_gender, gender_color))
         
@@ -270,14 +270,14 @@ class PatientInfoCard(QWidget):
         
         # Birth date row
         birth = patient.get("BD", "N/A")
-        layout.addWidget(InfoRow('fa5s.birthday-cake', "Birth Date", birth, COLORS['warning']))
+        layout.addWidget(InfoRow('fa5s.birthday-cake', "Birth Date", birth, COLORS['primary']))
         
         # Add separator
         layout.addWidget(self._create_separator())
         
         # Phone row (copyable)
         phone = patient.get("Tel", "N/A")
-        layout.addWidget(InfoRow('fa5s.phone', "Phone", phone, COLORS['success'], copyable=True))
+        layout.addWidget(InfoRow('fa5s.phone', "Phone", phone, COLORS['primary'], copyable=True))
         
         return content
     
@@ -390,7 +390,7 @@ class ReceptionInfoCard(QWidget):
         content_layout.addWidget(sep2)
         
         insurance = self.reception_data.get("insuranceType", "N/A")
-        content_layout.addWidget(InfoRow('fa5s.shield-alt', "Insurance", insurance, COLORS['success']))
+        content_layout.addWidget(InfoRow('fa5s.shield-alt', "Insurance", insurance, COLORS['primary']))
         
         # Status
         sep3 = QFrame()

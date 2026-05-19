@@ -30,13 +30,11 @@ For each (filter_enabled × photometric) case:
    that slice (the F1.1 contract re-asserted on the user-visible final frame
    after the drag is released).
 
-The drag-reference is the same for both ``filter_on_*`` and ``filter_off_*``
-cases of a given photometric — drag-mode rendering forces ``filter_enabled``
-to ``False`` regardless of pipeline configuration (see the
-``filter_enabled = ... and (not self._fast_interaction or _keep_filter_during_fast)``
-logic in ``Lightweight2DPipeline.get_rendered_frame``). So drag frames always
-use the ``overlap_pixel_filter_off_<photometric>.json`` hashes as ground
-truth, regardless of the case's configured filter flag.
+The drag-reference follows the configured filter policy for the case.
+With current FAST policy (R26), stack interaction keeps OpenCV filtering ON
+when ``opencv_filter_enabled=True``, so ``filter_on_*`` drag runs validate
+against ``overlap_pixel_filter_on_*`` references and ``filter_off_*`` runs
+validate against ``overlap_pixel_filter_off_*`` references.
 """
 from __future__ import annotations
 
@@ -72,14 +70,12 @@ from tests.viewer.test_overlap_pixel_quality import (  # type: ignore
 _SURROGATE_MAX_DISTANCE = 10
 
 
-def _load_drag_reference(photometric: str) -> List[str]:
-    """Return the per-slice drag-reference hashes for the given photometric.
+def _load_drag_reference(case: Case) -> List[str]:
+    """Return the per-slice drag-reference hashes for the case.
 
-    Drag rendering forces ``filter_enabled=False``, so the reference is always
-    the ``filter_off_<photometric>`` golden regardless of the case's filter
-    configuration.
+    Drag rendering uses the case's configured filter policy.
     """
-    case_id = f"filter_off_mono{'1' if photometric == 'MONOCHROME1' else '2'}"
+    case_id = str(case.case_id)
     path = GOLDEN_DIR / f"overlap_pixel_{case_id}.json"
     if not path.exists():
         pytest.skip(
@@ -124,7 +120,7 @@ def _open_pipeline(series_dir: Path, case: Case):
 )
 def test_overlap_pixel_quality_drag(case: Case, tmp_path: Path):
     """Drag-mode rendering must serve only valid neighbor frames; settle exact."""
-    drag_ref = _load_drag_reference(case.photometric)
+    drag_ref = _load_drag_reference(case)
     drag_ref_set = set(drag_ref)
     drag_ref_index: Dict[str, List[int]] = {}
     for j, h in enumerate(drag_ref):

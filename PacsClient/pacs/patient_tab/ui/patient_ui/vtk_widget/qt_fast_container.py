@@ -258,6 +258,16 @@ class QtFastContainer(QWidget):
     def set_method_change_container_border(self, fn) -> None:
         self.method_change_container_border = fn
 
+    def change_container_border(self) -> None:
+        """Mirror VTKWidget selection callback contract.
+
+        QtSliceViewer notifies its parent widget on mouse press by calling
+        parent.change_container_border(). FAST containers must expose this
+        method so layout activation/border updates work for every viewport.
+        """
+        if self.method_change_container_border is not None:
+            self.method_change_container_border(self.id_vtk_widget)
+
     # ── Series processing entry points (no-ops in FAST mode) ──────────────
     # The FAST pipeline loads series via _load_single_series_on_demand + the
     # Qt bridge, not through start_process_series.
@@ -268,15 +278,29 @@ class QtFastContainer(QWidget):
     def start_process_combine_series(self, *args, **kwargs) -> None:
         logger.debug("[QtFastContainer] start_process_combine_series called (no-op in FAST mode)")
 
-    # ── Interactor-style stubs (called by Eagle Eye / toolbar) ────────────
+    # ── Interactor-style bridge (toolbar tool activation in FAST mode) ───────
 
     def set_new_interactorstyle(self, style) -> None:
-        """No-op — FAST mode has no VTK interactor to switch."""
-        pass
+        """Route toolbar tool activation to the Qt viewer via _QtBridgeStyle."""
+        if not self._qt_bridge_active:
+            return
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_interactor import _QtBridgeStyle
+            self.current_style = _QtBridgeStyle(vtk_widget=self, requested_style_cls=style)
+            self.current_style.activate()
+        except Exception as exc:
+            logger.debug("[QtFastContainer] set_new_interactorstyle: %s", exc)
 
     def restore_default_interactorstyle(self) -> None:
-        """No-op — FAST mode has no VTK interactor to restore."""
-        pass
+        """Reset the Qt viewer tool mode to the default (no active tool)."""
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_interactor import _QtBridgeStyle
+            self.current_style = _QtBridgeStyle(vtk_widget=self)
+        except Exception as exc:
+            logger.debug("[QtFastContainer] restore_default_interactorstyle: %s", exc)
+        qv = getattr(self, '_qt_viewer_widget', None)
+        if qv is not None:
+            qv.set_tool_mode(qv.TOOL_NONE)
 
     # ── Slice / view delegation to Qt bridge ──────────────────────────────
 

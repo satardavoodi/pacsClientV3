@@ -150,6 +150,28 @@ class ToolController:
                 threshold_px=max(4.0, hit_threshold * 0.7),
             )
 
+        # When not mid-placement, prefer editing an existing annotation over
+        # creating a new one — even when a measurement tool is selected.
+        # (ERASER must bypass this block: its job is to delete, not to drag.)
+        if self._state in (ToolState.IDLE, ToolState.HOVERING) and self._active_tool != ToolType.ERASER:
+            if self._hovered_model is None or self._hovered_handle_idx < -1:
+                self._resolve_hover_target(
+                    img_x,
+                    img_y,
+                    slice_index,
+                    handle_threshold=hit_threshold,
+                    body_threshold=max(4.0, hit_threshold * 0.7),
+                )
+            if self._hovered_model is not None and self._hovered_handle_idx >= -1:
+                self._drag_model = self._hovered_model
+                self._drag_handle_idx = self._hovered_handle_idx
+                self._drag_start_img = (img_x, img_y)
+                self._drag_start_points = list(self._hovered_model.points_image)
+                self._store.deselect_all()
+                self._hovered_model.is_selected = True
+                self._state = ToolState.DRAGGING
+                return True
+
         if self._active_tool == ToolType.RULER:
             return self._ruler_press(img_x, img_y, slice_index, coord_resolver)
         if self._active_tool == ToolType.ANGLE:

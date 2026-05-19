@@ -895,3 +895,46 @@ class TestV2BandParams:
         viewer.set_total_slices_hint(264)
         t264, _ = viewer._get_stack_drag_profile()
         assert t264 < t100
+
+    def test_radiography_window_level_drag_is_more_controlled_than_generic(self):
+        def _drag_delta_for_modality(modality: str) -> float:
+            viewer = QtSliceViewer()
+            viewer.resize(512, 512)
+            viewer.set_modality_hint(modality)
+            viewer.set_window_level_values(4000.0, 2000.0)
+            viewer._wl_dragging = True
+            viewer._wl_start_pos = QPointF(10.0, 10.0)
+            viewer._wl_start_window = 4000.0
+            viewer._wl_start_level = 2000.0
+
+            move = QMouseEvent(
+                QMouseEvent.Type.MouseMove,
+                QPointF(30.0, 10.0),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.RightButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+            viewer.mouseMoveEvent(move)
+            return float(viewer._current_window - 4000.0)
+
+        mg_delta = _drag_delta_for_modality("MG")
+        ct_delta = _drag_delta_for_modality("CT")
+
+        assert mg_delta > 0.0
+        assert ct_delta > 0.0
+        assert mg_delta < ct_delta
+
+    def test_radiography_downscale_smoothing_activation(self):
+        viewer = QtSliceViewer()
+        viewer.resize(512, 512)
+
+        viewer.set_modality_hint("MG")
+        viewer.set_zoom(0.8)
+        assert viewer._use_radiography_downscale_smoothing() is True
+
+        viewer.set_modality_hint("CT")
+        assert viewer._use_radiography_downscale_smoothing() is False
+
+        viewer.set_modality_hint("DX")
+        viewer.set_zoom(1.2)
+        assert viewer._use_radiography_downscale_smoothing() is False

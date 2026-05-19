@@ -491,7 +491,7 @@ def stamp_metadata_with_geometry_index(
     return metadata
 
 
-def _read_minimal_header(path: str) -> dict[str, Any]:
+def _read_minimal_header(path: str, *, allow_single_slice_mg_fallback: bool = False) -> dict[str, Any]:
     ds = utils._safe_dcmread(
         str(path),
         stop_before_pixels=True,
@@ -507,7 +507,22 @@ def _read_minimal_header(path: str) -> dict[str, Any]:
     pixel_spacing = tuple(float(v) for v in raw_ps[:2]) if raw_ps is not None and len(raw_ps) >= 2 else None
     normal = _slice_normal_from_iop(iop)
     if normal is None or ipp is None:
-        raise ValueError(f"Missing IPP/IOP for Advanced geometry contract: {path}")
+        modality = str(ds.get("Modality", "") or "").upper()
+        if allow_single_slice_mg_fallback and modality == "MG":
+            if iop is None:
+                iop = (1.0, 0.0, 0.0, 0.0, 1.0, 0.0)
+            if ipp is None:
+                ipp = (0.0, 0.0, 0.0)
+            normal = _slice_normal_from_iop(iop)
+            if normal is None:
+                normal = np.asarray((0.0, 0.0, 1.0), dtype=float)
+            logger.warning(
+                "[ADVANCED_GEOMETRY_SINGLE_SLICE_MG_FALLBACK] path=%s reason=missing_ipp_or_iop",
+                path,
+                extra={"component": "viewer"},
+            )
+        else:
+            raise ValueError(f"Missing IPP/IOP for Advanced geometry contract: {path}")
 
     row = tuple(float(v) for v in iop[0:3])
     col = tuple(float(v) for v in iop[3:6])
@@ -594,7 +609,11 @@ def build_series_geometry_index(
         )
         return cached_index, True
 
-    headers = [_read_minimal_header(path) for path in normalized_input]
+    allow_single_slice_mg_fallback = len(normalized_input) == 1
+    headers = [
+        _read_minimal_header(path, allow_single_slice_mg_fallback=allow_single_slice_mg_fallback)
+        for path in normalized_input
+    ]
     series_uid_set = {header["series_uid"] for header in headers if header.get("series_uid")}
     if series_uid_hint:
         series_uid_set.add(str(series_uid_hint))

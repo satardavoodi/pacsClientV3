@@ -1,6 +1,8 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.0.6 (2026-05-18) — Release rollup for DB, UI, data-flow optimization, and documentation/test organization updates. See `docs/releases/VERSION_3.0.6_RELEASE.md`.
+**Current Stable Version:** v3.0.7 (2026-05-19) — Stable backup release checkpoint for the current validated beta branch state. See `docs/releases/VERSION_3.0.7_RELEASE.md`.
+
+**Previous Stable:** v3.0.6 (2026-05-18) — Release rollup for DB, UI, data-flow optimization, and documentation/test organization updates. See `docs/releases/VERSION_3.0.6_RELEASE.md`.
 
 **Previous Stable:** v3.0.5 (2026-05-17) — Version bump to align the app metadata, release note, and stable reference. See `docs/releases/VERSION_3.0.5_RELEASE.md`.
 

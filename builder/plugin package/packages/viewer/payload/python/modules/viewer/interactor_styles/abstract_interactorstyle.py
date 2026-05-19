@@ -578,11 +578,23 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
                 d1 = self.world_to_display(p1)
                 d2 = self.world_to_display(p2)
                 if d1 and d2:
-                    dist, t = self.point_to_line_distance_and_t(mouse_pos, d1, d2)
-                    if dist <= best_dist and self.is_middle_segment_hit(t, self._drag_edge_ratio):
-                        best_dist, best_obj = dist, obj
-                        best_type = self.tool_access.RULER
+                    ep_thresh = self._drag_hit_distance_px * 1.5
+                    dist_p1 = ((mouse_pos[0] - d1[0]) ** 2 + (mouse_pos[1] - d1[1]) ** 2) ** 0.5
+                    dist_p2 = ((mouse_pos[0] - d2[0]) ** 2 + (mouse_pos[1] - d2[1]) ** 2) ** 0.5
+                    if dist_p1 <= ep_thresh and dist_p1 < best_dist:
+                        best_dist, best_obj = dist_p1, obj
+                        best_type = 'ruler_p1'
                         best_data = (list(p1), list(p2))
+                    elif dist_p2 <= ep_thresh and dist_p2 < best_dist:
+                        best_dist, best_obj = dist_p2, obj
+                        best_type = 'ruler_p2'
+                        best_data = (list(p1), list(p2))
+                    else:
+                        dist, t = self.point_to_line_distance_and_t(mouse_pos, d1, d2)
+                        if dist <= best_dist and self.is_middle_segment_hit(t, self._drag_edge_ratio):
+                            best_dist, best_obj = dist, obj
+                            best_type = self.tool_access.RULER
+                            best_data = (list(p1), list(p2))
 
             # ── ARROW ──
             elif hasattr(obj, self.tool_access.ARROW):
@@ -590,11 +602,23 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
                 d1 = self.world_to_display(p1)
                 d2 = self.world_to_display(p2)
                 if d1 and d2:
-                    dist, t = self.point_to_line_distance_and_t(mouse_pos, d1, d2)
-                    if dist <= best_dist and self.is_middle_segment_hit(t, self._drag_edge_ratio):
-                        best_dist, best_obj = dist, obj
-                        best_type = self.tool_access.ARROW
+                    ep_thresh = self._drag_hit_distance_px * 1.5
+                    dist_p1 = ((mouse_pos[0] - d1[0]) ** 2 + (mouse_pos[1] - d1[1]) ** 2) ** 0.5
+                    dist_p2 = ((mouse_pos[0] - d2[0]) ** 2 + (mouse_pos[1] - d2[1]) ** 2) ** 0.5
+                    if dist_p1 <= ep_thresh and dist_p1 < best_dist:
+                        best_dist, best_obj = dist_p1, obj
+                        best_type = 'arrow_p1'
                         best_data = (list(p1), list(p2))
+                    elif dist_p2 <= ep_thresh and dist_p2 < best_dist:
+                        best_dist, best_obj = dist_p2, obj
+                        best_type = 'arrow_p2'
+                        best_data = (list(p1), list(p2))
+                    else:
+                        dist, t = self.point_to_line_distance_and_t(mouse_pos, d1, d2)
+                        if dist <= best_dist and self.is_middle_segment_hit(t, self._drag_edge_ratio):
+                            best_dist, best_obj = dist, obj
+                            best_type = self.tool_access.ARROW
+                            best_data = (list(p1), list(p2))
 
             # ── ANGLE (3-point) ──
             elif hasattr(obj, self.tool_access.ANGLE):
@@ -603,16 +627,33 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
                 dB = self.world_to_display(pB)
                 dC = self.world_to_display(pC)
                 if dA and dB and dC:
-                    dist_ab, t_ab = self.point_to_line_distance_and_t(mouse_pos, dA, dB)
-                    dist_bc, t_bc = self.point_to_line_distance_and_t(mouse_pos, dB, dC)
-                    if dist_ab <= best_dist and self.is_middle_segment_hit(t_ab, self._drag_edge_ratio):
-                        best_dist, best_obj = dist_ab, obj
-                        best_type = self.tool_access.ANGLE
+                    ep_thresh = self._drag_hit_distance_px * 1.5
+                    dist_pA = ((mouse_pos[0] - dA[0]) ** 2 + (mouse_pos[1] - dA[1]) ** 2) ** 0.5
+                    dist_pB = ((mouse_pos[0] - dB[0]) ** 2 + (mouse_pos[1] - dB[1]) ** 2) ** 0.5
+                    dist_pC = ((mouse_pos[0] - dC[0]) ** 2 + (mouse_pos[1] - dC[1]) ** 2) ** 0.5
+                    if dist_pA <= ep_thresh and dist_pA < best_dist:
+                        best_dist, best_obj = dist_pA, obj
+                        best_type = 'angle_pA'
                         best_data = (list(pA), list(pB), list(pC))
-                    elif dist_bc <= best_dist and self.is_middle_segment_hit(t_bc, self._drag_edge_ratio):
-                        best_dist, best_obj = dist_bc, obj
-                        best_type = self.tool_access.ANGLE
+                    elif dist_pB <= ep_thresh and dist_pB < best_dist:
+                        best_dist, best_obj = dist_pB, obj
+                        best_type = 'angle_pB'
                         best_data = (list(pA), list(pB), list(pC))
+                    elif dist_pC <= ep_thresh and dist_pC < best_dist:
+                        best_dist, best_obj = dist_pC, obj
+                        best_type = 'angle_pC'
+                        best_data = (list(pA), list(pB), list(pC))
+                    else:
+                        dist_ab, t_ab = self.point_to_line_distance_and_t(mouse_pos, dA, dB)
+                        dist_bc, t_bc = self.point_to_line_distance_and_t(mouse_pos, dB, dC)
+                        if dist_ab <= best_dist and self.is_middle_segment_hit(t_ab, self._drag_edge_ratio):
+                            best_dist, best_obj = dist_ab, obj
+                            best_type = self.tool_access.ANGLE
+                            best_data = (list(pA), list(pB), list(pC))
+                        elif dist_bc <= best_dist and self.is_middle_segment_hit(t_bc, self._drag_edge_ratio):
+                            best_dist, best_obj = dist_bc, obj
+                            best_type = self.tool_access.ANGLE
+                            best_data = (list(pA), list(pB), list(pC))
 
             # ── TWO-LINE ANGLE ──
             elif hasattr(obj, self.tool_access.TWO_LINE_ANGLE):
@@ -685,21 +726,24 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         dtype = self._drag_type
         data = self._drag_start_data
 
-        if dtype == self.tool_access.RULER:
+        if dtype in (self.tool_access.RULER, 'ruler_p1', 'ruler_p2'):
             p1, p2 = data
-            new_p1 = [p1[0] + dx, p1[1] + dy, p1[2] + dz]
-            new_p2 = [p2[0] + dx, p2[1] + dy, p2[2] + dz]
             widget = obj.get_widget()
             rep = widget.GetRepresentation()
-            rep.SetPoint1WorldPosition(new_p1)
-            rep.SetPoint2WorldPosition(new_p2)
+            if dtype == 'ruler_p1':
+                rep.SetPoint1WorldPosition([p1[0] + dx, p1[1] + dy, p1[2] + dz])
+            elif dtype == 'ruler_p2':
+                rep.SetPoint2WorldPosition([p2[0] + dx, p2[1] + dy, p2[2] + dz])
+            else:
+                rep.SetPoint1WorldPosition([p1[0] + dx, p1[1] + dy, p1[2] + dz])
+                rep.SetPoint2WorldPosition([p2[0] + dx, p2[1] + dy, p2[2] + dz])
 
-        elif dtype == self.tool_access.ARROW:
+        elif dtype in (self.tool_access.ARROW, 'arrow_p1', 'arrow_p2'):
             p1, p2 = data
-            new_p1 = [p1[0] + dx, p1[1] + dy, p1[2] + dz]
-            new_p2 = [p2[0] + dx, p2[1] + dy, p2[2] + dz]
             arrow_widget, triangle_object = obj.get_widget()
             rep = arrow_widget.GetRepresentation()
+            new_p1 = [p1[0] + dx, p1[1] + dy, p1[2] + dz] if dtype != 'arrow_p2' else list(p1)
+            new_p2 = [p2[0] + dx, p2[1] + dy, p2[2] + dz] if dtype != 'arrow_p1' else list(p2)
             rep.SetPoint1WorldPosition(new_p1)
             rep.SetPoint2WorldPosition(new_p2)
             triangle_object.triangle_tip = new_p1
@@ -707,13 +751,13 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
                 triangle_object.triangle_points, new_p1, new_p2
             )
 
-        elif dtype == self.tool_access.ANGLE:
+        elif dtype in (self.tool_access.ANGLE, 'angle_pA', 'angle_pB', 'angle_pC'):
             pA, pB, pC = data
-            new_pA = [pA[0] + dx, pA[1] + dy, pA[2] + dz]
-            new_pB = [pB[0] + dx, pB[1] + dy, pB[2] + dz]
-            new_pC = [pC[0] + dx, pC[1] + dy, pC[2] + dz]
             widget = obj.get_widget()
             rep = widget.GetRepresentation()
+            new_pA = [pA[0] + dx, pA[1] + dy, pA[2] + dz] if dtype in (self.tool_access.ANGLE, 'angle_pA') else list(pA)
+            new_pB = [pB[0] + dx, pB[1] + dy, pB[2] + dz] if dtype in (self.tool_access.ANGLE, 'angle_pB') else list(pB)
+            new_pC = [pC[0] + dx, pC[1] + dy, pC[2] + dz] if dtype in (self.tool_access.ANGLE, 'angle_pC') else list(pC)
             rep.SetPoint1WorldPosition(new_pA)
             rep.SetCenterWorldPosition(new_pB)
             rep.SetPoint2WorldPosition(new_pC)

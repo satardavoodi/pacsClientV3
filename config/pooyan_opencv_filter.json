@@ -5,7 +5,11 @@
     "alpha": 1.4,
     "beta": -0.45,
     "enabled": true,
-    "invert": false,
+    "invert": true,
+    "lowres_anti_alias_enabled": true,
+    "lowres_threshold": 416,
+    "lowres_sigma_x": 0.5,
+    "lowres_blend": 0.2,
     "preserve_dimensions": true,
     "small_threshold": 280
 }

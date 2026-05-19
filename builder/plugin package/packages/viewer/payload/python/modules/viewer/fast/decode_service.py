@@ -25,6 +25,7 @@ Enable/disable:
 
 from __future__ import annotations
 
+import ast
 import logging
 import math
 import os
@@ -36,8 +37,46 @@ from concurrent.futures.process import BrokenProcessPool
 from typing import Optional
 
 import numpy as np
+from pydicom.charset import python_encoding
 
 logger = logging.getLogger(__name__)
+
+
+def _register_pydicom_charset_aliases() -> None:
+    """Register optional charset aliases used by some MG studies."""
+    try:
+        "".encode("iso2022_jp_3")
+        python_encoding.setdefault("ISO 2022 IR 159", "iso2022_jp_3")
+    except LookupError:
+        python_encoding.setdefault("ISO 2022 IR 159", "iso2022_jp_ext")
+    except Exception:
+        pass
+
+
+def _sanitize_specific_character_set(ds) -> bool:
+    """Normalize malformed SpecificCharacterSet values in-place."""
+    try:
+        scs = getattr(ds, "SpecificCharacterSet", None)
+        if isinstance(scs, str):
+            text = scs.strip()
+            if text.startswith("[") and text.endswith("]"):
+                try:
+                    parsed = ast.literal_eval(text)
+                except Exception:
+                    parsed = None
+                if isinstance(parsed, (list, tuple)):
+                    values = [str(x).strip() for x in parsed if str(x).strip()]
+                    if values:
+                        ds.SpecificCharacterSet = values
+                        return True
+                ds.SpecificCharacterSet = ["ISO_IR 100"]
+                return True
+        return False
+    except Exception:
+        return False
+
+
+_register_pydicom_charset_aliases()
 
 
 def _is_content_decode_error(exc: Exception) -> bool:
@@ -142,7 +181,14 @@ def _decode_worker(
             )
         else:
             file_meta.TransferSyntaxUID = ExplicitVRBigEndian
-    arr = _np.asarray(ds.pixel_array)
+    try:
+        arr = _np.asarray(ds.pixel_array)
+    except Exception as exc:
+        if "Unknown encoding" in str(exc):
+            _sanitize_specific_character_set(ds)
+            arr = _np.asarray(ds.pixel_array)
+        else:
+            raise
 
     if arr.ndim == 3 and samples_per_pixel < 3:
         arr = arr[0]  # multi-frame fallback
@@ -164,10 +210,10 @@ def _decode_worker(
 
     slope_is_unity = _math.isclose(_slope, 1.0)
     intercept_is_int = _math.isclose(_intercept, round(_intercept))
-    is_monochrome2 = _photo != "MONOCHROME1"
+    invert_for_display = (_photo == "MONOCHROME1")
 
     # ── Fast int16 path ──
-    if slope_is_unity and intercept_is_int and is_monochrome2:
+    if slope_is_unity and intercept_is_int and (not invert_for_display):
         if not _math.isclose(_intercept, 0.0):
             int_offset = int(round(_intercept))
             if arr.dtype in (_np.uint16, _np.int16):
@@ -184,7 +230,7 @@ def _decode_worker(
     arr = arr.astype(_np.float32, copy=False)
     if not slope_is_unity or not _math.isclose(_intercept, 0.0):
         arr = arr * float(_slope) + float(_intercept)
-    if not is_monochrome2:
+    if invert_for_display:
         arr = float(arr.max()) + float(arr.min()) - arr
 
     return _np.ascontiguousarray(arr)

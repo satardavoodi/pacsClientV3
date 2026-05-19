@@ -264,11 +264,14 @@ class _PWViewersMixin:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
 
             # ── FAST mode: allocate VTK-free container ───────────────────────
-            requested_backend = (
-                self._get_requested_viewer_backend()
-                if hasattr(self, '_get_requested_viewer_backend')
-                else None
-            )
+            requested_backend = None
+            try:
+                if hasattr(self, '_get_requested_viewer_backend'):
+                    requested_backend = self._get_requested_viewer_backend()
+                elif hasattr(self, 'viewer_controller') and hasattr(self.viewer_controller, '_get_requested_viewer_backend'):
+                    requested_backend = self.viewer_controller._get_requested_viewer_backend()
+            except Exception:
+                requested_backend = None
             if requested_backend == BACKEND_PYDICOM_QT:
                 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import QtFastContainer
                 container = QtFastContainer(height_viewer=height, patient_widget=self)
@@ -313,11 +316,14 @@ class _PWViewersMixin:
             height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
 
             # ── FAST mode: VTK-free container ────────────────────────────────
-            requested_backend = (
-                self._get_requested_viewer_backend()
-                if hasattr(self, '_get_requested_viewer_backend')
-                else None
-            )
+            requested_backend = None
+            try:
+                if hasattr(self, '_get_requested_viewer_backend'):
+                    requested_backend = self._get_requested_viewer_backend()
+                elif hasattr(self, 'viewer_controller') and hasattr(self.viewer_controller, '_get_requested_viewer_backend'):
+                    requested_backend = self.viewer_controller._get_requested_viewer_backend()
+            except Exception:
+                requested_backend = None
             if requested_backend == BACKEND_PYDICOM_QT:
                 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import QtFastContainer
                 return QtFastContainer(height_viewer=height, patient_widget=self)

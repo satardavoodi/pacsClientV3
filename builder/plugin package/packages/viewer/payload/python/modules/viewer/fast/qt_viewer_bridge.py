@@ -134,6 +134,17 @@ def _sample_min(samples: List[Dict[str, Any]], key: str) -> float:
     return min(values) if values else 0.0
 
 
+def _wl_unchanged(current: Tuple[float, float], requested: Tuple[float, float], eps: float = 1e-6) -> bool:
+    """Return True when requested window/level is effectively unchanged."""
+    try:
+        return (
+            abs(float(current[0]) - float(requested[0])) <= float(eps)
+            and abs(float(current[1]) - float(requested[1])) <= float(eps)
+        )
+    except Exception:
+        return False
+
+
 def _classify_queue_wait_source(
     *,
     input_event_gap_p95_ms: float,
@@ -1395,13 +1406,20 @@ class QtViewerBridge:
             self._wl_scroll_cache_ww = None
             self._wl_scroll_cache_wc = None
 
+        requested_ww = float(window_width)
+        requested_wc = float(window_center)
+        if _wl_unchanged(self._current_window_level(), (requested_ww, requested_wc)):
+            if flag_default:
+                self._update_annotations(self._current_slice, requested_ww, requested_wc)
+            return
+
         self.pipeline.set_window_level(
-            float(window_width),
-            float(window_center),
+            requested_ww,
+            requested_wc,
             trigger_prefetch=not flag_default,
         )
         ww, wc = self._sync_window_level_from_pipeline(
-            default=(float(window_width), float(window_center))
+            default=(requested_ww, requested_wc)
         )
 
         # Re-render current slice
@@ -1431,7 +1449,10 @@ class QtViewerBridge:
         """Update corner annotation texts."""
         zoom_pct = self.qt_viewer.get_zoom() * 100.0
         if update_just_zoom:
-            self.qt_viewer.annotations.zoom_info = f"Zoom: {zoom_pct:.0f}%"
+            new_zoom_info = f"Zoom: {zoom_pct:.0f}%"
+            if self.qt_viewer.annotations.zoom_info == new_zoom_info:
+                return
+            self.qt_viewer.annotations.zoom_info = new_zoom_info
             self.qt_viewer.update()
             return
         ww, wc = self._current_window_level()
@@ -1480,6 +1501,16 @@ class QtViewerBridge:
         self.qt_viewer._current_slice_index = target_slice
         self._wl_scroll_cache_ww = None
         self._wl_scroll_cache_wc = None
+        try:
+            self.apply_default_window_level(target_slice)
+            frame = self.pipeline.get_rendered_frame(target_slice)
+            self.qt_viewer.set_image(frame.qimage)
+            self.qt_viewer.set_window_level_values(frame.window_width, frame.window_center)
+            self._window = float(frame.window_width)
+            self._level = float(frame.window_center)
+            self._update_annotations(target_slice, frame.window_width, frame.window_center)
+        except Exception:
+            logger.debug("[QT_BRIDGE] initial frame present during reset failed", exc_info=True)
         if reset_presentation:
             try:
                 self.qt_viewer.reset_view()
@@ -1829,8 +1860,11 @@ class QtViewerBridge:
 
     def _on_qt_wl_changed(self, window: float, level: float) -> None:
         """Handle W/L changes from Qt viewer mouse interaction."""
+        requested = (float(window), float(level))
+        if _wl_unchanged(self._current_window_level(), requested):
+            return
         self.pipeline.set_window_level(window, level)
-        ww, wc = self._sync_window_level_from_pipeline(default=(float(window), float(level)))
+        ww, wc = self._sync_window_level_from_pipeline(default=requested)
         self.flag_set_custom_window_level = True
 
         # Re-render with new W/L
@@ -2329,9 +2363,19 @@ class QtViewerBridge:
                 superseded=False,
             )
             return False
+        if self._stack_drag_active and int(getattr(self, '_last_stack_target_slice', -1) or -1) == int(new_val):
+            self._present_trace_mark_terminal(
+                request_id,
+                reason='duplicate_pending_target',
+                coalesced=True,
+                cancelled=True,
+                superseded=False,
+            )
+            return False
 
         now_ms = time.perf_counter() * 1000.0
-        if self._stack_drag_active:
+        use_stack_drag_scheduler = bool(self._stack_drag_active and nav_limit >= 50)
+        if use_stack_drag_scheduler:
             scheduler = getattr(self, '_stack_scheduler', None)
             if scheduler is None:
                 scheduler = StackInteractionScheduler()
@@ -2416,7 +2460,7 @@ class QtViewerBridge:
                                 )
             except Exception:
                 pass
-        else:
+        elif not self._stack_drag_active:
             self._settle_arm_seq = int(getattr(self, '_settle_arm_seq', 0) or 0) + 1
             self._last_settle_reason = 'wheel_scroll'
             self._interaction_settle_timer.stop()
@@ -2483,18 +2527,28 @@ class QtViewerBridge:
         # Via _do_lock_sync, reference-line fires at ~10 Hz (100 ms sync throttle)
         # with a proper 50 ms trailing-edge repaint.
         if self.vtk_widget is not None:
-            self.vtk_widget.image_viewer = self
+            if getattr(self.vtk_widget, 'image_viewer', None) is not self:
+                self.vtk_widget.image_viewer = self
 
         # Slider: visual-only live update (blockSignals prevents downstream callbacks).
         t_slider = time.perf_counter()
         _slider_live = getattr(self.vtk_widget, 'slider', None) if self.vtk_widget is not None else None
         if _slider_live is not None:
+            _slider_signals_blocked = False
             try:
-                _slider_live.blockSignals(True)
-                _slider_live.setValue(int(new_val))
+                _current_slider_value = getattr(_slider_live, 'value', None)
+                if callable(_current_slider_value):
+                    _current_slider_value = _current_slider_value()
+                if _current_slider_value is None:
+                    _current_slider_value = getattr(_slider_live, 'value', None)
+                if int(_current_slider_value) != int(new_val):
+                    _slider_live.blockSignals(True)
+                    _slider_signals_blocked = True
+                    _slider_live.setValue(int(new_val))
             finally:
                 try:
-                    _slider_live.blockSignals(False)
+                    if _slider_signals_blocked:
+                        _slider_live.blockSignals(False)
                 except Exception:
                     pass
         slider_ms = (time.perf_counter() - t_slider) * 1000.0
@@ -2576,15 +2630,25 @@ class QtViewerBridge:
         if self.vtk_widget is not None:
             slider = getattr(self.vtk_widget, 'slider', None)
             if slider is not None:
+                _slider_signals_blocked = False
                 try:
-                    slider.blockSignals(True)
-                    slider.setValue(final_slice)
+                    current_value = getattr(slider, 'value', None)
+                    if callable(current_value):
+                        current_value = current_value()
+                    if current_value is None:
+                        current_value = getattr(slider, 'value', None)
+                    if int(current_value) != int(final_slice):
+                        slider.blockSignals(True)
+                        _slider_signals_blocked = True
+                        slider.setValue(final_slice)
                 finally:
                     try:
-                        slider.blockSignals(False)
+                        if _slider_signals_blocked:
+                            slider.blockSignals(False)
                     except Exception:
                         pass
-            self.vtk_widget.image_viewer = self
+            if getattr(self.vtk_widget, 'image_viewer', None) is not self:
+                self.vtk_widget.image_viewer = self
 
         # Sync callback: unconditional at settle (no rate-limit).
         try:
@@ -2814,6 +2878,23 @@ class QtViewerBridge:
                 str(interaction_type or '-'),
                 str(reason or '-'),
             )
+        if (
+            self._fast_latest_requested_slice is not None
+            and int(self._fast_latest_requested_slice) == int(new_val)
+            and str(getattr(self, '_fast_pending_interaction_type', '') or '') == str(interaction_type or '')
+        ):
+            now_ms = time.perf_counter() * 1000.0
+            self._fast_latest_interaction_ts_ms = now_ms
+            self._fast_clock_last_request_mono_ms = now_ms
+            self._present_trace_mark_terminal(
+                request_id,
+                reason='clock_duplicate_target',
+                coalesced=True,
+                cancelled=True,
+                superseded=False,
+            )
+            self._ensure_render_clock_running()
+            return True
         self._fast_latest_requested_slice = int(new_val)
         self._fast_pending_interaction_type = str(interaction_type or '')
         self._fast_latest_interaction_ts_ms = time.perf_counter() * 1000.0
@@ -2866,21 +2947,31 @@ class QtViewerBridge:
             slider = getattr(self.vtk_widget, 'slider', None)
             if slider is not None and (force or pending_slider is not None):
                 target_value = presented if pending_slider is None else int(pending_slider)
+                _slider_signals_blocked = False
                 try:
-                    slider.blockSignals(True)
-                    slider.setValue(int(target_value))
-                    slider_applied = True
-                    logger.debug(
-                        "[FAST_CLOCK_SLIDER_SET] target=%d force=%s",
-                        int(target_value),
-                        bool(force),
-                    )
+                    current_value = getattr(slider, 'value', None)
+                    if callable(current_value):
+                        current_value = current_value()
+                    if current_value is None:
+                        current_value = getattr(slider, 'value', None)
+                    if int(current_value) != int(target_value):
+                        slider.blockSignals(True)
+                        _slider_signals_blocked = True
+                        slider.setValue(int(target_value))
+                        slider_applied = True
+                        logger.debug(
+                            "[FAST_CLOCK_SLIDER_SET] target=%d force=%s",
+                            int(target_value),
+                            bool(force),
+                        )
                 finally:
                     try:
-                        slider.blockSignals(False)
+                        if _slider_signals_blocked:
+                            slider.blockSignals(False)
                     except Exception:
                         pass
-            self.vtk_widget.image_viewer = self
+            if getattr(self.vtk_widget, 'image_viewer', None) is not self:
+                self.vtk_widget.image_viewer = self
 
         try:
             _cb = getattr(self.vtk_widget, '_on_slice_changed_cb', None)

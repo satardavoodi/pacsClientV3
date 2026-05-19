@@ -1622,6 +1622,13 @@ class _VCLoadMixin:
                 return False
 
             def _has_series_viewer_interest() -> bool:
+                # Interactive load-in-progress is an explicit user request,
+                # even if viewer metadata has not been rebound yet.
+                try:
+                    if series_number_str in getattr(self, '_loading_series_numbers', set()):
+                        return True
+                except Exception:
+                    pass
                 for node in self.lst_nodes_viewer or []:
                     vtk_w = getattr(node, 'vtk_widget', None)
                     if vtk_w is None:

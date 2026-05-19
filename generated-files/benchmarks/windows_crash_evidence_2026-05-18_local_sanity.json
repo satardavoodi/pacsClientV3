@@ -1,0 +1,27 @@
+{
+  "tag": "2026-05-18_local_sanity",
+  "window_hours": 12,
+  "generated_at_utc": "2026-05-18T10:19:55Z",
+  "host": {
+    "platform": "win32",
+    "computer_name": "DRALIZADEH",
+    "username": "Dr.Alizadeh"
+  },
+  "event_viewer": {
+    "ok": true,
+    "events": []
+  },
+  "wer": {
+    "ok": true,
+    "reports": []
+  },
+  "app_logs": {
+    "ok": true,
+    "logs": []
+  },
+  "summary": {
+    "event_count": 0,
+    "wer_report_count": 0,
+    "log_file_count": 0
+  }
+}

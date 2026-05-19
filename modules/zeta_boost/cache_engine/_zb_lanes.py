@@ -1,6 +1,7 @@
 """Lane management: normalize, enqueue, clear pending, lane-locked helpers"""
 # Auto-generated from engine.py — Phase 4 split
 import logging as _logging
+from collections import deque
 from typing import Optional
 
 _zb_lanes_logger = _logging.getLogger(__name__)
@@ -34,11 +35,13 @@ class _ZBLanesMixin:
         # ── Change #7: Block warmup/background if ANY download is active globally ──
         # Using class-level counter ensures that Patient A's engine is blocked
         # when Patient B's study is downloading (cross-study ITK saturation fix).
-        if (ZetaBoostEngine._global_active_download_count > 0
+        engine_cls = self.__class__
+        global_download_count = int(getattr(engine_cls, "_global_active_download_count", 0) or 0)
+        if (global_download_count > 0
                 and lane in ("warmup", "background")):
             _zb_lanes_logger.debug(
                 "FAST:zetaboost_gate lane=%s reason=global_download_active count=%d",
-                lane, ZetaBoostEngine._global_active_download_count,
+                lane, global_download_count,
             )
             return False
 
@@ -83,10 +86,12 @@ class _ZBLanesMixin:
         """Diagnostic: why is this lane blocked right now?"""
         reasons = []
         # Change #7: global download gate
-        if (ZetaBoostEngine._global_active_download_count > 0
+        engine_cls = self.__class__
+        global_download_count = int(getattr(engine_cls, "_global_active_download_count", 0) or 0)
+        if (global_download_count > 0
                 and lane in ("warmup", "background")):
             reasons.append(
-                f"global_download_active({ZetaBoostEngine._global_active_download_count})"
+                f"global_download_active({global_download_count})"
             )
         if not self._active:
             reasons.append("engine_inactive")

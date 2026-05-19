@@ -13,50 +13,52 @@ from PacsClient.utils.scroll_style import get_scroll_area_style as get_shared_sc
 # ═══════════════════════════════════════════════════════════════════════════════
 
 COLORS = {
-    # Primary colors
-    "primary": "#667eea",
-    "primary_dark": "#5a6fd6",
-    "secondary": "#764ba2",
-    "secondary_dark": "#6a4292",
-    
-    # Status colors
-    "success": "#4caf50",
-    "success_dark": "#388e3c",
-    "success_bg": "#1e3a1e",
-    "warning": "#ff9800",
-    "warning_dark": "#f57c00",
-    "warning_bg": "#3a2e1e",
-    "error": "#f44336",
-    "error_dark": "#d32f2f",
-    "error_bg": "#3a1e1e",
-    "info": "#2196f3",
-    "info_dark": "#1976d2",
-    "info_bg": "#1e2a3a",
-    
+    # Primary accent — single unified steel-blue used for all icons, titles, active states
+    "primary": "#4a9fd4",
+    "primary_dark": "#3a8cbf",
+    # secondary now equals primary (was purple; unified to avoid multi-hue clutter)
+    "secondary": "#4a9fd4",
+    "secondary_dark": "#3a8cbf",
+
+    # Semantic status colors — used ONLY for state indicators (not decorative icons)
+    "success": "#3fb950",
+    "success_dark": "#2ea043",
+    "success_bg": "#0d2318",
+    "warning": "#d29922",
+    "warning_dark": "#b37c00",
+    "warning_bg": "#2d2100",
+    "error": "#f85149",
+    "error_dark": "#da3633",
+    "error_bg": "#2d0f0f",
+    # info = primary (was separate vivid blue; unified)
+    "info": "#4a9fd4",
+    "info_dark": "#3a8cbf",
+    "info_bg": "#0d1f2d",
+
     # Background colors
     "bg_darkest": "#1a1a2e",
     "bg_dark": "#1e1e1e",
-    "bg_medium": "#16213e",
+    "bg_medium": "#252a30",
     "bg_light": "#2b2b2b",
     "bg_lighter": "#2d2d2d",
     "bg_card": "#3a3a3a",
-    
-    # Border colors
-    "border_dark": "#0f3460",
-    "border_medium": "#444444",
-    "border_light": "#555555",
-    
+
+    # Border colors — unified neutral-dark tones (no more vivid blue borders)
+    "border_dark": "#1f2937",
+    "border_medium": "#374151",
+    "border_light": "#4b5563",
+
     # Text colors
     "text_primary": "#ffffff",
     "text_secondary": "#aaaaaa",
     "text_muted": "#888888",
     "text_disabled": "#666666",
-    
+
     # Gradient colors
-    "gradient_start": "#667eea",
-    "gradient_end": "#764ba2",
-    "gradient_success_start": "#11998e",
-    "gradient_success_end": "#38ef7d",
+    "gradient_start": "#4a9fd4",
+    "gradient_end": "#3a8cbf",
+    "gradient_success_start": "#3fb950",
+    "gradient_success_end": "#2ea043",
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════

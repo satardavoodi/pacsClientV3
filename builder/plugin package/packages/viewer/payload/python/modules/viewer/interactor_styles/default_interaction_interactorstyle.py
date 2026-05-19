@@ -17,20 +17,56 @@ class DefaultInteractionInteractorStyle(AbstractInteractorStyle):
         self.image_viewer.zoom_to_fit()
 
     def on_left_button_press(self, obj, event):
+        mouse_pos = self.GetInteractor().GetEventPosition()
+        # Check for annotation drag first (body or endpoint hit)
+        drag_result = self._find_any_drag_target(mouse_pos)
+        if drag_result is not None:
+            drag_obj, drag_type, start_data = drag_result
+            self._dragging_obj = drag_obj
+            self._drag_type = drag_type
+            self._drag_start_data = start_data
+            self._drag_start_world = self.display_to_world(mouse_pos[0], mouse_pos[1])
+            self._set_cursor(vtk.VTK_CURSOR_HAND)
+            return
         self.left_button_down = True
-        self.last_pos = self.GetInteractor().GetEventPosition()
+        self.last_pos = mouse_pos
         # self.emit_interaction()  # send signal for interaction
 
     def on_left_button_release(self, obj, event):
+        if self._dragging_obj is not None:
+            # Delegate to abstract base which handles TWO_LINE_ANGLE persistence + cleanup
+            super().on_left_button_release(obj, event)
+            return
         self.left_button_down = False
         self.last_pos = None
 
     def on_mouse_move(self, obj, event):
+        # ── Active annotation drag ──
+        if self._dragging_obj is not None and self._drag_start_data is not None:
+            current_pos = self.GetInteractor().GetEventPosition()
+            current_world = self.display_to_world(current_pos[0], current_pos[1])
+            if current_world is not None and self._drag_start_world is not None:
+                dx = current_world[0] - self._drag_start_world[0]
+                dy = current_world[1] - self._drag_start_world[1]
+                dz = current_world[2] - self._drag_start_world[2]
+                self._apply_drag_delta(dx, dy, dz)
+            return
+        # ── Hover cursor for annotations ──
+        mouse_pos = self.GetInteractor().GetEventPosition()
+        hover_result = self._find_any_drag_target(mouse_pos)
+        if hover_result is not None:
+            if self._hover_obj != hover_result[0]:
+                self._hover_obj = hover_result[0]
+                self._set_cursor(vtk.VTK_CURSOR_HAND)
+        else:
+            if self._hover_obj is not None:
+                self._hover_obj = None
+                self._set_cursor(vtk.VTK_CURSOR_ARROW)
+        # ── Normal tool interaction ──
         if self.left_button_down and self.interaction_tool is not None:
             try:
                 self.interaction_tool()
-            except TypeError as e:
-                # اگر interaction_tool قابل فراخوانی نیست، صرف نظر کن
+            except TypeError:
                 pass
 
     def activate(self, tool):

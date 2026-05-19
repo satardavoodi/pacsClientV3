@@ -9,9 +9,13 @@ from vtkmodules.util import numpy_support as vtknp
 import enum
 from PacsClient.pacs.patient_tab.utils import make_corner_actor, DicomTagsActors, read_segment_nifti, BoxManager
 from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
+    auto_window_level_from_dicom_voi,
+    auto_window_level_for_mg_array,
     auto_window_level_from_array,
     auto_window_level_from_range,
     normalize_window_level,
+    resolve_cornerstone_like_window_level_from_dicom,
+    should_invert_for_display,
 )
 import numpy as np
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSlider
@@ -31,6 +35,8 @@ import logging
 import threading
 
 logger = logging.getLogger(__name__)
+
+_ADV_MG_MONO1_INVERT_ENV = "AIPACS_ADV_MG_MONO1_INVERT"
 
 # =====================================================
 # ANTI-FLICKERING CONSTANTS
@@ -216,6 +222,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
 
         self.metadata = metadata
         self.metadata_fixed = metadata_fixed
+        self._mg_parity_trace_enabled = str(
+            os.getenv("AIPACS_MG_PARITY_TRACE", "0") or "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        self._last_default_wl_source = "none"
+        self._maybe_apply_mg_monochrome1_inversion(self.vtk_image_data, self.metadata)
         self._local_preprocess_cache = {}
         self._skip_upsample_slice_threshold = 160
         self._skip_preprocess_cache_slice_threshold = 160
@@ -574,13 +585,37 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         Keep every overlay actor aligned with the base image actor on the current slice.
         We simply copy the base actor's DisplayExtent to all overlay actors.
         """
+        overlays = getattr(self, "_overlays", [])
+        if not overlays:
+            return
+
         try:
-            base_extent = self.GetImageActor().GetDisplayExtent()
+            _base_actor = self.GetImageActor()
+            if _base_actor is None:
+                return
+            base_extent = _base_actor.GetDisplayExtent()
+        except Exception:
+            return
+        if base_extent is None:
+            return
+        try:
+            if len(base_extent) != 6:
+                return
         except Exception:
             return
 
-        for (_vtk_image, _map_colors, _actor) in getattr(self, "_overlays", []):
+        for _overlay_entry in overlays:
             try:
+                _actor = _overlay_entry[2]
+            except Exception:
+                continue
+            try:
+                if _actor is None:
+                    continue
+                if (not hasattr(_actor, "GetDisplayExtent")) or (not hasattr(_actor, "SetDisplayExtent")):
+                    continue
+                if _actor.GetDisplayExtent() == base_extent:
+                    continue
                 _actor.SetDisplayExtent(*base_extent)
             except Exception:
                 pass
@@ -592,7 +627,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         try:
             # multi-overlay list
             if hasattr(self, "_overlays") and self._overlays:
-                for (_img, _map, actor) in self._overlays:
+                for _overlay_entry in self._overlays:
+                    try:
+                        actor = _overlay_entry[2]
+                    except Exception:
+                        continue
                     try:
                         self.GetRenderer().RemoveActor(actor)
                     except Exception:
@@ -628,18 +667,46 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         if not hasattr(self, "_overlay") or not self._overlay:
             return
         actor = self._overlay.get("actor")
-        ov_img = self._overlay.get("reslice").GetOutput()
+        reslice = self._overlay.get("reslice")
+        if reslice is None or not hasattr(reslice, "GetOutput"):
+            return
+        ov_img = reslice.GetOutput()
         base_img = self.vtk_image_data
         if not actor or not ov_img or not base_img:
             return
+        if not hasattr(base_img, "GetDimensions"):
+            return
+        if (not hasattr(actor, "GetDisplayExtent")) or (not hasattr(actor, "SetDisplayExtent")):
+            return
 
         # ط§ط² ظˆغŒظˆظگط± ط§طµظ„غŒ ط§ط¨ط¹ط§ط¯ ظˆ ط§ط³ظ„ط§غŒط³ ظپط¹ظ„غŒ ط±ط§ ط¨ع¯غŒط±
-        slice_idx = self.GetSlice()
+        try:
+            slice_idx = int(self.GetSlice())
+        except Exception:
+            return
         dims = base_img.GetDimensions()
+        try:
+            if len(dims) < 3:
+                return
+        except Exception:
+            return
+        try:
+            dim_x = int(dims[0])
+            dim_y = int(dims[1])
+        except Exception:
+            return
+        if dim_x <= 0 or dim_y <= 0:
+            return
         # slice_idx = dims[2] - (slice_idx + 2)
 
-        extent = (0, dims[0] - 1, 0, dims[1] - 1, slice_idx, slice_idx)
+        extent = (0, dim_x - 1, 0, dim_y - 1, slice_idx, slice_idx)
         # extent = (0, dims[0], 0, dims[1], slice_idx, slice_idx)
+
+        try:
+            if actor.GetDisplayExtent() == extent:
+                return
+        except Exception:
+            pass
 
         actor.SetDisplayExtent(*extent)
 
@@ -661,7 +728,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.UpdateDisplayExtent()
             self.Render()
             self.update_corners_actors()
-            self.slider.setMaximum(self.get_count_of_slices())
+            try:
+                _max_slices = int(self.get_count_of_slices())
+            except Exception:
+                _max_slices = self.get_count_of_slices()
+            if int(self.slider.maximum()) != int(_max_slices):
+                self.slider.setMaximum(_max_slices)
         finally:
             self._render_pending = False
 
@@ -882,6 +954,103 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.color_mapper = vtk.vtkImageMapToWindowLevelColors()
         self.color_mapper.SetInputConnection(self.image_reslice.GetOutputPort())
         self.GetImageActor().GetMapper().SetInputConnection(self.color_mapper.GetOutputPort())
+
+    def _is_adv_mg_mono1_invert_enabled(self) -> bool:
+        raw = str(os.getenv(_ADV_MG_MONO1_INVERT_ENV, "1") or "1").strip().lower()
+        return raw not in {"0", "false", "off", "no"}
+
+    def _should_apply_mg_monochrome1_inversion(self, metadata: Optional[dict]) -> bool:
+        if not self._is_adv_mg_mono1_invert_enabled():
+            return False
+        if not isinstance(metadata, dict):
+            return False
+        series = metadata.get('series') or {}
+        if bool(series.get('_mono1_inverted_for_display')):
+            return False
+
+        modality = str(series.get('modality') or '').upper()
+        intent = str(series.get('presentation_intent_type') or '').upper()
+        if modality != 'MG':
+            return False
+        if intent and 'FOR PRESENTATION' not in intent:
+            return False
+
+        instances = metadata.get('instances') or []
+        first = instances[0] if instances and isinstance(instances[0], dict) else {}
+        photometric = str(
+            first.get('photometric')
+            or first.get('PhotometricInterpretation')
+            or series.get('photometric')
+            or series.get('photometric_interpretation')
+            or ''
+        ).upper()
+        return photometric == 'MONOCHROME1'
+
+    def _maybe_apply_mg_monochrome1_inversion(self, vtk_image_data, metadata: Optional[dict]) -> bool:
+        """Apply one-time source-volume inversion for MG MONOCHROME1 in Advanced path.
+
+        Advanced mode renders directly from the VTK scalar volume. For MG FOR
+        PRESENTATION datasets encoded as MONOCHROME1, explicit scalar inversion
+        is needed to avoid washed-out white presentation when placeholder WW/WL
+        values are present.
+        """
+        try:
+            if not self._should_apply_mg_monochrome1_inversion(metadata):
+                return False
+            if vtk_image_data is None:
+                return False
+            point_data = vtk_image_data.GetPointData()
+            if point_data is None:
+                return False
+            scalars = point_data.GetScalars()
+            if scalars is None:
+                return False
+            if scalars.GetNumberOfComponents() != 1:
+                return False
+
+            flat = vtknp.vtk_to_numpy(scalars)
+            if flat is None or flat.size == 0:
+                return False
+
+            arr = np.asarray(flat)
+            arr_f = arr.astype(np.float32, copy=False)
+            max_v = float(np.max(arr_f))
+            min_v = float(np.min(arr_f))
+            inv = (max_v + min_v) - arr_f
+
+            if np.issubdtype(arr.dtype, np.integer):
+                info = np.iinfo(arr.dtype)
+                inv = np.clip(np.rint(inv), info.min, info.max).astype(arr.dtype, copy=False)
+            else:
+                inv = inv.astype(arr.dtype, copy=False)
+
+            new_scalars = vtknp.numpy_to_vtk(
+                num_array=np.ascontiguousarray(inv),
+                deep=True,
+                array_type=scalars.GetDataType(),
+            )
+            if scalars.GetName():
+                new_scalars.SetName(scalars.GetName())
+            new_scalars.SetNumberOfComponents(scalars.GetNumberOfComponents())
+
+            point_data.SetScalars(new_scalars)
+            point_data.Modified()
+            vtk_image_data.Modified()
+
+            if isinstance(metadata, dict):
+                _series = metadata.get('series')
+                if isinstance(_series, dict):
+                    _series['_mono1_inverted_for_display'] = True
+
+            logger.info(
+                "[MG_POLARITY] Applied Advanced MONOCHROME1 source inversion "
+                "(env=%s)",
+                _ADV_MG_MONO1_INVERT_ENV,
+            )
+            return True
+        except Exception:
+            logger.debug("[MG_POLARITY] Advanced MONOCHROME1 inversion failed", exc_info=True)
+            return False
 
     def update_corners_actors_pos(self, window_height):
         # all_actor_corners = self.dicom_tags_actors.all_actors()
@@ -1242,6 +1411,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                     self._local_preprocess_cache[preprocess_cache_key] = vtk_image_data
                     self._cache_put_preprocessed(preprocess_cache_key, vtk_image_data)
 
+            self._maybe_apply_mg_monochrome1_inversion(vtk_image_data, metadata)
+
             # Reuse existing ImageReslice instance when possible to reduce object churn
             _reslice_data_updated = False  # v2.2.5.3: track in-place rebuild
             if hasattr(self, 'image_reslice') and self.image_reslice is not None:
@@ -1343,6 +1514,19 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         print(f"         â€¢ set_color_mapper: {_color_mapper_time:.3f}s")
         
         self.flag_set_custom_window_level = False
+        self._wl_scroll_cache_ww = None
+        self._wl_scroll_cache_wc = None
+        try:
+            _prime_min = int(self.GetSliceMin())
+            _prime_max = int(self.GetSliceMax())
+            _prime_slice = int(self.GetSlice())
+            if _prime_slice < _prime_min:
+                _prime_slice = _prime_min
+            if _prime_slice > _prime_max:
+                _prime_slice = _prime_max
+            self.apply_default_window_level(_prime_slice)
+        except Exception:
+            logger.debug("[reset_image_viewer] default WL prime failed", exc_info=True)
         
         _setup_time = time.time() - _setup_start
         print(f"      â€¢ Setup pipeline: {_setup_time:.3f}s")
@@ -1488,6 +1672,7 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # 2) Apply default window/level only if the user hasn't set a custom WL
         if not self.flag_set_custom_window_level:
             self.apply_default_window_level(actual_slice_index)
+        self._emit_mg_parity_trace(actual_slice_index)
         _t2 = time.perf_counter_ns()
         self.last_wl_convert_ms = (_t2 - _t1) / 1_000_000
 
@@ -1505,8 +1690,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         _t3 = time.perf_counter_ns()
 
         # 4) Make overlays follow the current slice and render
-        _sync_overlays = True
-        if _fast and not bool(force_annotations) and bool(getattr(self, "_overlays", [])):
+        _sync_overlays = bool(getattr(self, "_overlays", []))
+        if _fast and not bool(force_annotations) and _sync_overlays:
             if (_now_ms - float(self._last_fast_overlay_sync_ms or 0.0)) < float(
                 self._fast_corner_overlay_interval_ms
             ):
@@ -2916,6 +3101,14 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             instance_metadata = None
 
         series_num = (self.metadata.get('series') or {}).get('series_number')
+        series_modality = str((self.metadata.get('series') or {}).get('modality') or '')
+        series_presentation_intent = str((self.metadata.get('series') or {}).get('presentation_intent_type') or '')
+        inst_photometric = None
+        if isinstance(instance_metadata, dict):
+            inst_photometric = (
+                instance_metadata.get('photometric_interpretation')
+                or instance_metadata.get('PhotometricInterpretation')
+            )
         source = 'none'
         window_width = window_center = None
         db_ww = db_wc = None
@@ -2924,37 +3117,48 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             db_wc = instance_metadata.get('window_center')
             window_width, window_center = normalize_window_level(
                 db_ww, db_wc, treat_legacy_placeholder_as_missing=True,
+                treat_mg_full_range_placeholder_as_missing=True,
+                modality=series_modality,
+                photometric=inst_photometric,
+                presentation_intent_type=series_presentation_intent,
             )
             if window_width is not None and window_center is not None:
                 source = 'db'
 
-        # v2.3.7 per-series W/L fix: when the DB does not have the DICOM
-        # WindowWidth/WindowCenter tag for this instance (older downloads, NULL
-        # columns, legacy placeholders), read it straight from the DICOM file
-        # header — that is the same source FAST mode uses. Chest CT typically
-        # ships different tag values per series (mediastinum WW=400/WC=40,
-        # lung WW=1500/WC=-600); the percentile fallback on chest pixels always
-        # returns a lung-like window because lung air dominates. Reading the
-        # header restores per-series behavior.
+        # Cornerstone-parity priority: if per-image DICOM WW/WL exists, use it
+        # even when an in-memory DB/cached value is present.
+        ww_cs_inst, wc_cs_inst, src_cs_inst = self._read_window_level_from_dicom_cornerstone(
+            instance_metadata,
+        )
+        if ww_cs_inst is not None and wc_cs_inst is not None:
+            if src_cs_inst == 'dicom_tag' or window_width is None or window_center is None:
+                window_width, window_center = ww_cs_inst, wc_cs_inst
+                source = src_cs_inst or 'dicom_tag'
+                if isinstance(instance_metadata, dict):
+                    try:
+                        instance_metadata['window_width'] = ww_cs_inst
+                        instance_metadata['window_center'] = wc_cs_inst
+                    except Exception:
+                        pass
+
+        # Cornerstone-like per-image default resolution:
+        # DICOM tag -> VOI LUT -> (later) percentile fallback.
         if window_width is None or window_center is None:
-            ww_hdr, wc_hdr = self._read_window_level_from_dicom_header(
+            ww_cs, wc_cs, src_cs = self._read_window_level_from_dicom_cornerstone(
                 instance_metadata,
             )
-            # If per-instance metadata is missing/stale, scan the series
-            # folder for any DICOM file and read its header — W/L is a
-            # series-level clinical setting, so any instance is sufficient
-            # to establish the per-series default.
-            if (ww_hdr is None or wc_hdr is None):
-                ww_hdr, wc_hdr = self._read_window_level_from_series_folder()
-            if ww_hdr is not None and wc_hdr is not None:
-                window_width, window_center = ww_hdr, wc_hdr
-                source = 'dicom_header'
+            # If per-instance path is unavailable, scan series folder.
+            if ww_cs is None or wc_cs is None:
+                ww_cs, wc_cs, src_cs = self._read_window_level_from_series_folder_cornerstone()
+            if ww_cs is not None and wc_cs is not None:
+                window_width, window_center = ww_cs, wc_cs
+                source = src_cs or 'dicom_tag'
                 # Cache back into metadata so subsequent slice scrolls hit the
                 # fast path without re-reading the header.
                 if isinstance(instance_metadata, dict):
                     try:
-                        instance_metadata['window_width'] = ww_hdr
-                        instance_metadata['window_center'] = wc_hdr
+                        instance_metadata['window_width'] = ww_cs
+                        instance_metadata['window_center'] = wc_cs
                     except Exception:
                         pass
 
@@ -2988,6 +3192,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         except Exception:
             pass
 
+        self._last_default_wl_source = str(source or "none")
+
         # VTK vtkSetMacro unconditionally calls Modified() even when the value
         # is identical to the current value. On WARP/software-OpenGL this
         # dirtied the color_mapper pipeline on every slice scroll, forcing a
@@ -2999,6 +3205,123 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self._wl_scroll_cache_wc = window_center
 
         self.set_window_level(window_width, window_center, flag_default=True)
+
+    def _emit_mg_parity_trace(self, raw_slice_index: int) -> None:
+        if not getattr(self, "_mg_parity_trace_enabled", False):
+            return
+        try:
+            series = self.metadata.get('series', {}) if isinstance(self.metadata, dict) else {}
+            modality = str(series.get('modality', '') or '').upper().strip()
+            if modality != 'MG':
+                return
+
+            instances = self.metadata.get('instances') or [] if isinstance(self.metadata, dict) else []
+            inst = instances[raw_slice_index] if 0 <= int(raw_slice_index) < len(instances) else {}
+            photo = str(
+                (inst.get('photometric_interpretation') if isinstance(inst, dict) else None)
+                or (inst.get('PhotometricInterpretation') if isinstance(inst, dict) else None)
+                or ''
+            ).upper()
+
+            ww_cur, wc_cur = self.get_window_level()
+            ww_tag = inst.get('window_width') if isinstance(inst, dict) else None
+            wc_tag = inst.get('window_center') if isinstance(inst, dict) else None
+
+            plut = ''
+            voi_fn = ''
+            has_voi_seq = False
+            slope = None
+            intercept = None
+            path = inst.get('instance_path') if isinstance(inst, dict) else None
+            if path:
+                try:
+                    import pydicom  # noqa: WPS433
+                    ds = pydicom.dcmread(path, stop_before_pixels=True, force=True)
+                    plut = str(getattr(ds, 'PresentationLUTShape', '') or '').strip().upper()
+                    voi_fn = str(getattr(ds, 'VOILUTFunction', '') or '').strip().upper()
+                    has_voi_seq = bool(getattr(ds, 'VOILUTSequence', None))
+                    slope = getattr(ds, 'RescaleSlope', None)
+                    intercept = getattr(ds, 'RescaleIntercept', None)
+                except Exception:
+                    pass
+
+            invert = should_invert_for_display(photo, plut)
+            logger.warning(
+                "[MG_PARITY_ADV] series=%s idx=%d wl_src=%s ww=%.2f wc=%.2f "
+                "ww_tag=%s wc_tag=%s photo=%s plut=%s invert=%s voi_fn=%s voi_seq=%s slope=%s intercept=%s",
+                str(series.get('series_number', '') or ''),
+                int(raw_slice_index),
+                str(getattr(self, '_last_default_wl_source', 'none') or 'none'),
+                float(ww_cur if ww_cur is not None else 0.0),
+                float(wc_cur if wc_cur is not None else 0.0),
+                ww_tag,
+                wc_tag,
+                photo,
+                plut,
+                bool(invert),
+                voi_fn,
+                bool(has_voi_seq),
+                slope,
+                intercept,
+                extra={"component": "viewer"},
+            )
+        except Exception:
+            pass
+
+    def _read_window_level_from_dicom_cornerstone(self, instance_metadata):
+        try:
+            if not isinstance(instance_metadata, dict):
+                return None, None, 'none'
+            path = instance_metadata.get('instance_path')
+            if not path:
+                return None, None, 'none'
+
+            series = self.metadata.get('series') or {}
+            modality = series.get('modality')
+            intent = series.get('presentation_intent_type')
+            photometric = (
+                instance_metadata.get('photometric_interpretation')
+                or instance_metadata.get('PhotometricInterpretation')
+            )
+            return resolve_cornerstone_like_window_level_from_dicom(
+                path,
+                modality=modality,
+                presentation_intent_type=intent,
+                photometric=photometric,
+                enable_pixel_fallback=False,
+            )
+        except Exception:
+            return None, None, 'none'
+
+    def _read_window_level_from_series_folder_cornerstone(self):
+        try:
+            series = self.metadata.get('series', {})
+            series_num = series.get('series_number')
+            modality = series.get('modality')
+            intent = series.get('presentation_intent_type')
+            if not series_num:
+                return None, None, 'none'
+            if not hasattr(self, 'vtk_widget') or not self.vtk_widget:
+                return None, None, 'none'
+            import_folder = getattr(self.vtk_widget.parent_widget, 'import_folder_path', None)
+            if not import_folder or not os.path.exists(import_folder):
+                return None, None, 'none'
+            for root, _, files in os.walk(import_folder):
+                for file in files:
+                    if not file.lower().endswith('.dcm'):
+                        continue
+                    if f"SR{series_num}" in root or f"Instance_{series_num}" in file:
+                        path = os.path.join(root, file)
+                        return resolve_cornerstone_like_window_level_from_dicom(
+                            path,
+                            modality=modality,
+                            presentation_intent_type=intent,
+                            photometric=None,
+                            enable_pixel_fallback=False,
+                        )
+            return None, None, 'none'
+        except Exception:
+            return None, None, 'none'
 
     def _read_window_level_from_dicom_header(self, instance_metadata):
         """Read WindowWidth/WindowCenter straight from the DICOM file header.
@@ -3029,6 +3352,10 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 return None, None
             ww, wc = normalize_window_level(
                 ww_raw, wc_raw, treat_legacy_placeholder_as_missing=True,
+                treat_mg_full_range_placeholder_as_missing=True,
+                modality=getattr(dcm, 'Modality', None),
+                photometric=getattr(dcm, 'PhotometricInterpretation', None),
+                presentation_intent_type=getattr(dcm, 'PresentationIntentType', None),
             )
             return ww, wc
         except Exception:
@@ -3071,12 +3398,57 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                     continue
                 ww, wc = normalize_window_level(
                     ww_raw, wc_raw, treat_legacy_placeholder_as_missing=True,
+                    treat_mg_full_range_placeholder_as_missing=True,
+                    modality=getattr(dcm, 'Modality', None) or series.get('modality'),
+                    photometric=getattr(dcm, 'PhotometricInterpretation', None),
+                    presentation_intent_type=getattr(dcm, 'PresentationIntentType', None) or series.get('presentation_intent_type'),
                 )
                 if ww is not None and wc is not None:
                     return ww, wc
             return None, None
         except Exception:
             logger.debug("W/L series-folder fallback failed", exc_info=True)
+            return None, None
+
+    def _read_window_level_from_dicom_voi(self, instance_metadata):
+        try:
+            if not isinstance(instance_metadata, dict):
+                return None, None
+            path = instance_metadata.get('instance_path')
+            if not path:
+                return None, None
+            series = self.metadata.get('series') or {}
+            return auto_window_level_from_dicom_voi(
+                str(path),
+                modality=series.get('modality'),
+                presentation_intent_type=series.get('presentation_intent_type'),
+            )
+        except Exception:
+            logger.debug("W/L VOI fallback failed (instance)", exc_info=True)
+            return None, None
+
+    def _read_window_level_from_series_folder_voi(self):
+        try:
+            series = self.metadata.get('series') or {}
+            folder = series.get('series_path') or series.get('import_folder_path')
+            if not folder or not os.path.isdir(folder):
+                return None, None
+            for name in sorted(os.listdir(folder)):
+                if not name.lower().endswith('.dcm'):
+                    continue
+                path = os.path.join(folder, name)
+                if not os.path.isfile(path):
+                    continue
+                ww, wc = auto_window_level_from_dicom_voi(
+                    str(path),
+                    modality=series.get('modality'),
+                    presentation_intent_type=series.get('presentation_intent_type'),
+                )
+                if ww is not None and wc is not None:
+                    return ww, wc
+            return None, None
+        except Exception:
+            logger.debug("W/L VOI fallback failed (series folder)", exc_info=True)
             return None, None
 
     def _auto_window_level_from_current_slice(self, slice_index):
@@ -3130,6 +3502,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 return None, None
             if slice_arr.size == 0:
                 return None, None
+            series = self.metadata.get('series') or {}
+            _intent = str(series.get('presentation_intent_type') or '').upper()
+            if (
+                str(series.get('modality') or '').upper() == 'MG'
+                and (not _intent or 'FOR PRESENTATION' in _intent)
+            ):
+                return auto_window_level_for_mg_array(slice_arr)
             return auto_window_level_from_array(slice_arr, 1.0, 99.0)
         except Exception:
             logger.debug(
@@ -4298,8 +4677,11 @@ class CustomCombineImageViewers(ImageViewer2D):
     def set_slice(self, slice_index):
         # print('slice index:', slice_index, 'skip slics helper:', self.skip_slices)
 
-        if 0 <= slice_index < self.get_count_of_slice_image_1():
-            self.skip_slices = 0
+        _count_image_1 = self.get_count_of_slice_image_1()
+
+        if 0 <= slice_index < _count_image_1:
+            if self.skip_slices != 0:
+                self.skip_slices = 0
             if self.series_showed == 'series_1':
                 pass
             else:
@@ -4308,7 +4690,8 @@ class CustomCombineImageViewers(ImageViewer2D):
 
         else:
 
-            self.skip_slices = self.get_count_of_slice_image_1()
+            if self.skip_slices != _count_image_1:
+                self.skip_slices = _count_image_1
             if self.series_showed == 'series_2':
                 pass
             else:
@@ -4324,18 +4707,28 @@ class CustomCombineImageViewers(ImageViewer2D):
 
     def change_local_series(self, series_number):
 
+        if series_number == 'series_1' and self.image_reslice is self.image_reslice_1:
+            return
+        if series_number == 'series_2' and self.image_reslice is self.image_reslice_2:
+            return
+
         if series_number == 'series_1':
             self.image_reslice = self.image_reslice_1
 
         elif series_number == 'series_2':
             self.image_reslice = self.image_reslice_2
 
-        self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
-        self.vtk_image_data = self.image_reslice.GetOutput()
-        self.metadata = self.image_reslice.metadata
+        _reslice_output = self.image_reslice.GetOutput()
+        self.SetInputData(_reslice_output)  # without color map (window level)
+        if self.vtk_image_data is not _reslice_output:
+            self.vtk_image_data = _reslice_output
+        _next_metadata = self.image_reslice.metadata
+        if self.metadata is not _next_metadata:
+            self.metadata = _next_metadata
         self.set_color_mapper()
 
-        self.flag_set_custom_window_level = False
+        if self.flag_set_custom_window_level:
+            self.flag_set_custom_window_level = False
         # â‌Œ FLICKER FIX: Skip render here, caller will render
         self.zoom_to_fit(skip_render=True)
         # Single render after all changes

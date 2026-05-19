@@ -5,10 +5,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from modules.download_manager.core.enums import DownloadPriority, DownloadStatus
+from modules.download_manager.core.exceptions import NetworkError
 from modules.download_manager.core.models import DownloadTask, SeriesInfo
 from modules.download_manager.download.series_downloader import SeriesDownloader
 from modules.download_manager.download.progress_tracker import ProgressTracker
-from modules.download_manager.network.socket_client import SocketDicomClient
+from modules.download_manager.network.socket_client import SocketDicomClient, _is_transient_connection_drop
 from modules.download_manager.state.state_store import DownloadStateStore
 
 
@@ -190,3 +191,46 @@ def test_series_downloader_reconnect_cancel_returns_preempted_result(monkeypatch
     assert state is not None
     assert state.status == DownloadStatus.PAUSED
     assert state.is_auto_paused is True
+
+
+def test_is_transient_connection_drop_matches_expected_patterns():
+    assert _is_transient_connection_drop("Connection closed by server") is True
+    assert _is_transient_connection_drop("Connection lost while receiving data") is True
+    assert _is_transient_connection_drop("[WinError 10054] An existing connection was forcibly closed") is True
+    assert _is_transient_connection_drop("Broken pipe while sending") is True
+    assert _is_transient_connection_drop("Connection reset by peer") is True
+    assert _is_transient_connection_drop("Authentication token missing") is False
+
+
+def test_send_request_once_marks_connection_broken_on_transient_network_error(monkeypatch):
+    client = SocketDicomClient(cancel_check=lambda: False)
+    client.connected = True
+    client.health_monitor = MagicMock()
+    client.health_monitor.record_failure = MagicMock()
+
+    class _Socket:
+        def __init__(self):
+            self.closed = False
+
+        def sendall(self, _data):
+            return None
+
+        def close(self):
+            self.closed = True
+
+    sock = _Socket()
+    client.socket = sock
+
+    monkeypatch.setattr(
+        client,
+        "_safe_recv",
+        lambda _size: (_ for _ in ()).throw(NetworkError("Connection closed by server")),
+    )
+
+    response = client._send_request_once("GetSeriesImages", {"series_uid": "s1"})
+
+    assert response is None
+    assert client.connected is False
+    assert client.socket is None
+    assert sock.closed is True
+    client.health_monitor.record_failure.assert_called_once()

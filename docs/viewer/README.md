@@ -12,6 +12,7 @@ If you only read one file first, read:
 | Goal | Read this first | Then read |
 |---|---|---|
 | Understand backend split and render ownership | [FAST vs ADVANCED](FAST_vs_ADVANCED_ARCHITECTURE.md) | [FAST Detailed](FAST_PIPELINE_DETAILED.md), [ADVANCED Detailed](ADVANCED_PIPELINE_DETAILED.md) |
+| Recover FAST mammography regressions quickly | [FAST Mammography Regression Playbook](FAST_MAMMOGRAPHY_REGRESSION_PLAYBOOK_2026-05-19.md) | [FAST Detailed](FAST_PIPELINE_DETAILED.md), [Investigation Playbook](INVESTIGATION_PLAYBOOK.md) |
 | Debug FAST lazy slice race / callback flow | [FAST Detailed](FAST_PIPELINE_DETAILED.md) | `T6_PREPARATION.md`, `docs/pipelines/PYDICOM_2D_BACKEND.md` |
 | Debug ADVANCED VTK path | [ADVANCED Detailed](ADVANCED_PIPELINE_DETAILED.md) | `docs/pipelines/viewer-pipeline.md` |
 | Find shared orchestration and where paths diverge | [Shared Components](SHARED_COMPONENTS.md) | `docs/modules/README.md` (Viewer module section) |
@@ -28,6 +29,9 @@ If you only read one file first, read:
 - `docs/viewer/ADVANCED_PIPELINE_DETAILED.md`
 - `docs/viewer/SHARED_COMPONENTS.md`
 - `docs/viewer/INVESTIGATION_PLAYBOOK.md`
+
+### Canonical recovery playbooks
+- `docs/viewer/FAST_MAMMOGRAPHY_REGRESSION_PLAYBOOK_2026-05-19.md`
 
 ### Supporting operational references
 - `docs/pipelines/viewer-pipeline.md`

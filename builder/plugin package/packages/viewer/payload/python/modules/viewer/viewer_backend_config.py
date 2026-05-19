@@ -121,11 +121,14 @@ def resolve_viewer_backend(metadata=None, settings=None) -> dict:
     metadata_backend = _normalize_backend(metadata_backend_raw, default=requested_backend) if metadata_backend_raw else ""
     lazy_loader_key = str(series_meta.get("lazy_loader_key", "") or "").strip()
     force_vtk_fallback = bool(series_meta.get("force_vtk_fallback", False))
+    requested_is_advanced = requested_backend == BACKEND_VTK
 
     backend = requested_backend
     metadata_complete = True
 
-    if force_vtk_fallback:
+    # Keep FAST and Advanced pipelines independent: metadata-level VTK fallback
+    # is honored only when Advanced is explicitly requested.
+    if force_vtk_fallback and requested_is_advanced:
         backend = BACKEND_VTK
 
     # When metadata says PyDicom but no loader key survived start/switch/reset,

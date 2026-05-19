@@ -18,11 +18,13 @@ Version: v1.0.0 (2026-03-02)
 
 from __future__ import annotations
 
+import ast
 import logging
 import math
 import os
 import threading
 import time
+import warnings
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
@@ -30,14 +32,22 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pydicom
+from pydicom.charset import python_encoding
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QImage
 from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
+    auto_window_level_from_dicom_voi,
+    auto_window_level_for_mg_array,
     auto_window_level_from_array,
     normalize_window_level,
+    resolve_cornerstone_like_window_level_from_dicom,
+    should_invert_for_display,
     window_to_uint8,
 )
-from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import PooyanFilterParams, pooyan_filter_center
+from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import (
+    PooyanFilterParams,
+    pooyan_filter_center,
+)
 from modules.viewer.fast.perf_metrics import PerfMetrics
 from modules.viewer.fast.disk_pixel_cache import get_disk_pixel_cache
 from modules.viewer.fast.decode_service import get_decode_service
@@ -60,6 +70,71 @@ from PacsClient.utils.runtime_correlation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _ignore_unknown_encoding_warning() -> None:
+    """Prevent charset warnings from becoming hard failures under warnings-as-errors."""
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Unknown encoding .*using default encoding instead",
+        category=UserWarning,
+    )
+
+
+def _register_pydicom_charset_aliases() -> None:
+    """Register optional charset aliases used by some MG studies."""
+    try:
+        "".encode("iso2022_jp_3")
+        python_encoding.setdefault("ISO 2022 IR 159", "iso2022_jp_3")
+    except LookupError:
+        python_encoding.setdefault("ISO 2022 IR 159", "iso2022_jp_ext")
+    except Exception:
+        pass
+
+
+def _sanitize_specific_character_set(ds: Any) -> bool:
+    """Normalize malformed SpecificCharacterSet values in-place.
+
+    Some files store this tag as a stringified list (e.g.
+    "['ISO_IR 100', 'ISO 2022 IR 159']") which breaks pydicom charset
+    lookup during pixel decode.
+    """
+    try:
+        scs = getattr(ds, "SpecificCharacterSet", None)
+
+        def _parse_stringified_list(text: str) -> Optional[list[str]]:
+            text = text.strip()
+            if not (text.startswith("[") and text.endswith("]")):
+                return None
+            try:
+                parsed = ast.literal_eval(text)
+            except Exception:
+                return None
+            if not isinstance(parsed, (list, tuple)):
+                return None
+            values = [str(x).strip() for x in parsed if str(x).strip()]
+            return values or None
+
+        if isinstance(scs, str):
+            values = _parse_stringified_list(scs)
+            if values:
+                ds.SpecificCharacterSet = values
+                return True
+        elif isinstance(scs, (list, tuple)) and len(scs) == 1 and isinstance(scs[0], str):
+            values = _parse_stringified_list(scs[0])
+            if values:
+                ds.SpecificCharacterSet = values
+                return True
+            text = scs[0].strip()
+            if text.startswith("[") and text.endswith("]"):
+                ds.SpecificCharacterSet = ["ISO_IR 100"]
+                return True
+        return False
+    except Exception:
+        return False
+
+
+_register_pydicom_charset_aliases()
 
 
 def _env_positive_int(name: str, default: int) -> int:
@@ -155,6 +230,15 @@ _DRAG_START_BOOST_MS_OVERLAP = _env_positive_int(
 # rate is 1-in-5; override with AIPACS_OVERLAP_LOG_SAMPLE.
 _OVERLAP_LOG_SAMPLE_N = _env_positive_int("AIPACS_OVERLAP_LOG_SAMPLE", 5)
 
+# Decode policy versioning for disk pixel cache keys.
+#
+# FAST decode semantics (WW/WL parity + MG polarity handling) changed across
+# recent releases. Disk cache entries are persistent and keyed by per-slice
+# identity, so old entries can survive upgrades and produce mixed old/new
+# appearance until they are naturally evicted. Appending a small policy tag to
+# the key creates an explicit cache boundary without changing on-disk format.
+_FAST_DISK_CACHE_POLICY_TAG = "decode-v4"
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Data classes
@@ -193,6 +277,7 @@ class SliceMeta:
     intercept: float
     instance_number: Optional[int]
     is_rgb: bool = False
+    voi_lut_function: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -237,6 +322,16 @@ class PipelineConfig:
     opencv_invert: bool = False
     opencv_small_threshold: int = 280
     opencv_preserve_dimensions: bool = True
+    opencv_lowres_anti_alias_enabled: bool = True
+    opencv_lowres_threshold: int = 384
+    opencv_lowres_sigma_x: float = 0.45
+    opencv_lowres_blend: float = 0.18
+    # MG-specific OpenCV filter overrides (softer sharpening for mammography)
+    # Based on Hermes reference: sigma=1.2 (softer blur), alpha=1.3 (less enhancement),
+    # beta=-0.3 (less background darkening).  Applied whenever _series_modality == "MG".
+    opencv_mg_sigma_x: float = 1.2
+    opencv_mg_alpha: float = 1.3
+    opencv_mg_beta: float = -0.3
     # Performance
     decode_timeout_ms: float = 500.0  # max decode time before marking slow
 
@@ -270,6 +365,44 @@ def _as_float_tuple(value: Any, n: int, default: Sequence[float]) -> Tuple[float
         return tuple(float(x) for x in default[:n])
 
 
+def _invert_monochrome1_from_storage_bounds(
+    arr: np.ndarray,
+    *,
+    bits_stored: int,
+    pixel_representation: int,
+    slope: float,
+    intercept: float,
+) -> np.ndarray:
+    """Invert MONOCHROME1 using storage-domain bounds.
+
+    Using per-image extrema (max+min-arr) makes brightness depend on scene
+    occupancy; MG views with high raw minima become unnaturally bright/white.
+    """
+    try:
+        bits = int(bits_stored or 0)
+    except Exception:
+        bits = 0
+    if bits <= 0:
+        bits = 16
+    bits = max(1, min(bits, 31))
+
+    try:
+        pixel_repr = int(pixel_representation or 0)
+    except Exception:
+        pixel_repr = 0
+
+    if pixel_repr == 0:
+        raw_lo = 0.0
+        raw_hi = float((1 << bits) - 1)
+    else:
+        raw_lo = float(-(1 << (bits - 1)))
+        raw_hi = float((1 << (bits - 1)) - 1)
+
+    lo_t = raw_lo * float(slope) + float(intercept)
+    hi_t = raw_hi * float(slope) + float(intercept)
+    return (hi_t + lo_t) - arr
+
+
 def _normalize_vec(v: np.ndarray) -> np.ndarray:
     n = float(np.linalg.norm(v))
     return v / n if n > 1e-12 else v
@@ -281,9 +414,58 @@ def _normal_from_iop(iop: Sequence[float]) -> np.ndarray:
     return _normalize_vec(np.cross(row, col))
 
 
+def _disk_cache_decode_key(dicom_path: str) -> str:
+    """Return a policy-versioned disk-cache key for decoded pixel arrays."""
+    return f"{dicom_path}|{_FAST_DISK_CACHE_POLICY_TAG}"
+
+
 def _window_level_to_uint8(arr: np.ndarray, window: float, level: float) -> np.ndarray:
     """Apply DICOM window/level and convert to uint8."""
     return window_to_uint8(arr, window, level)
+
+
+def _window_level_to_uint8_with_voi_function(
+    arr: np.ndarray,
+    window: float,
+    level: float,
+    voi_lut_function: Optional[str],
+) -> np.ndarray:
+    """Apply WW/WL using DICOM VOI LUT Function semantics.
+
+    Supported functions:
+    - LINEAR (default): classic DICOM linear windowing
+    - LINEAR_EXACT: exact linear form (no 0.5 offset)
+    - SIGMOID: logistic mapping around the window center
+    """
+    fn = str(voi_lut_function or "LINEAR").strip().upper()
+    if fn in {"", "LINEAR"}:
+        return _window_level_to_uint8(arr, window, level)
+
+    ww = float(window)
+    wc = float(level)
+    if ww <= 0.0:
+        return np.zeros_like(arr, dtype=np.uint8)
+
+    arrf = arr.astype(np.float32, copy=False)
+
+    if fn == "LINEAR_EXACT":
+        lower = wc - (ww / 2.0)
+        upper = wc + (ww / 2.0)
+        span = upper - lower
+        if span <= 0.0:
+            return np.zeros_like(arr, dtype=np.uint8)
+        clipped = np.clip(arrf, lower, upper)
+        return ((clipped - lower) * (255.0 / span)).astype(np.uint8, copy=False)
+
+    if fn == "SIGMOID":
+        # DICOM-style sigmoid VOI around window center/width.
+        z = -4.0 * (arrf - wc) / max(ww, 1e-6)
+        z = np.clip(z, -60.0, 60.0)
+        y = 1.0 / (1.0 + np.exp(z))
+        return (y * 255.0).astype(np.uint8, copy=False)
+
+    # Unknown term: fail safe to default linear behavior.
+    return _window_level_to_uint8(arr, window, level)
 
 
 def _apply_opencv_filter_uint8(
@@ -294,6 +476,10 @@ def _apply_opencv_filter_uint8(
     invert: bool = False,
     small_threshold: int = 280,
     preserve_dimensions: bool = True,
+    lowres_anti_alias_enabled: bool = True,
+    lowres_threshold: int = 384,
+    lowres_sigma_x: float = 0.45,
+    lowres_blend: float = 0.18,
 ) -> np.ndarray:
     params = PooyanFilterParams(
         sigma_x=float(sigma_x),
@@ -303,6 +489,10 @@ def _apply_opencv_filter_uint8(
         invert=bool(invert),
         small_threshold=int(small_threshold),
         preserve_dimensions=bool(preserve_dimensions),
+        lowres_anti_alias_enabled=bool(lowres_anti_alias_enabled),
+        lowres_threshold=int(lowres_threshold),
+        lowres_sigma_x=float(lowres_sigma_x),
+        lowres_blend=float(lowres_blend),
     )
     return pooyan_filter_center(gray, params)
 
@@ -474,6 +664,14 @@ class Lightweight2DPipeline(QObject):
         # Series state
         self._series_path: Optional[str] = None
         self._series_uid: Optional[str] = None
+        self._series_modality: Optional[str] = None
+        self._series_presentation_intent_type: Optional[str] = None
+        self._voi_lut_function_cache: Dict[str, Optional[str]] = {}
+        self._wl_source_by_index: Dict[int, str] = {}
+        self._slice_trace_header_cache: Dict[str, Tuple[str, str, bool, float, float]] = {}
+        self._mg_parity_trace_enabled: bool = str(
+            os.getenv("AIPACS_MG_PARITY_TRACE", "0") or "0"
+        ).strip().lower() in {"1", "true", "yes", "on"}
         self._is_open: bool = False
         self._interaction_slice_count_hint: int = 0
         self._drag_start_boost_until: float = 0.0
@@ -523,6 +721,8 @@ class Lightweight2DPipeline(QObject):
         self.close_series()
         self._series_path = str(series_path)
         self._series_uid = None
+        self._series_modality = None
+        self._series_presentation_intent_type = None
         # v2.3.5: cache series_number for series-level readiness queries
         self._series_number: Optional[str] = None
         if metadata:
@@ -530,6 +730,10 @@ class Lightweight2DPipeline(QObject):
                 series_meta = metadata.get("series", {}) or {}
                 self._series_number = str(series_meta.get("series_number", "") or "")
                 self._series_uid = str(series_meta.get("series_uid", "") or "") or None
+                self._series_modality = str(series_meta.get("modality", "") or "") or None
+                self._series_presentation_intent_type = str(
+                    series_meta.get("presentation_intent_type", "") or ""
+                ) or None
             except Exception:
                 pass
 
@@ -539,6 +743,8 @@ class Lightweight2DPipeline(QObject):
             self._slices = self._from_metadata_instances(metadata["instances"])
         else:
             self._slices = self._scan_series_headers(series_path)
+
+        self._hydrate_series_display_metadata(metadata)
 
         self._slices = self._sort_slices(self._slices)
         self._attach_spacing_between_slices()
@@ -552,6 +758,10 @@ class Lightweight2DPipeline(QObject):
                 self._slices[0].window_width,
                 self._slices[0].window_center,
                 treat_legacy_placeholder_as_missing=True,
+                treat_mg_full_range_placeholder_as_missing=self._is_mg_for_presentation(self._slices[0]),
+                modality=self._series_modality,
+                photometric=self._slices[0].photometric,
+                presentation_intent_type=self._series_presentation_intent_type,
             )
             # NOTE: Do NOT prefetch around slice 0 here.  The caller will
             # immediately call set_slice_index(mid) which triggers
@@ -562,6 +772,86 @@ class Lightweight2DPipeline(QObject):
             "lw2d-pipeline open_series slices=%d path=%s",
             len(self._slices), series_path,
         )
+
+    def _hydrate_series_display_metadata(
+        self,
+        metadata: Optional[Dict[str, Any]],
+    ) -> None:
+        """Fill missing display-critical metadata from instance/header fallback.
+
+        FAST metadata scans may omit photometric/intent fields on some MG studies.
+        Hydrate once from metadata instance fields (if present) and then from the
+        first DICOM header so MG policy decisions match Advanced/Cornerstone.
+        """
+        if not self._slices:
+            return
+
+        need_modality = not str(self._series_modality or "").strip()
+        need_intent = not str(self._series_presentation_intent_type or "").strip()
+        need_photo = any(not str(sm.photometric or "").strip() for sm in self._slices)
+        if not (need_modality or need_intent or need_photo):
+            return
+
+        first_inst: Dict[str, Any] = {}
+        if isinstance(metadata, dict):
+            instances = metadata.get("instances")
+            if isinstance(instances, list) and instances:
+                maybe_inst = instances[0]
+                if isinstance(maybe_inst, dict):
+                    first_inst = maybe_inst
+
+        if need_modality:
+            inst_modality = str(first_inst.get("modality") or "").strip()
+            if inst_modality:
+                self._series_modality = inst_modality
+                need_modality = False
+
+        if need_intent:
+            inst_intent = str(
+                first_inst.get("presentation_intent_type")
+                or first_inst.get("PresentationIntentType")
+                or ""
+            ).strip()
+            if inst_intent:
+                self._series_presentation_intent_type = inst_intent
+                need_intent = False
+
+        if need_photo:
+            inst_photo = str(
+                first_inst.get("photometric_interpretation")
+                or first_inst.get("PhotometricInterpretation")
+                or ""
+            ).strip().upper()
+            if inst_photo:
+                for sm in self._slices:
+                    if not str(sm.photometric or "").strip():
+                        sm.photometric = inst_photo
+                need_photo = any(not str(sm.photometric or "").strip() for sm in self._slices)
+
+        if not (need_modality or need_intent or need_photo):
+            return
+
+        try:
+            ds = pydicom.dcmread(self._slices[0].path, stop_before_pixels=True, force=True)
+        except Exception:
+            return
+
+        if need_modality:
+            ds_modality = str(getattr(ds, "Modality", "") or "").strip()
+            if ds_modality:
+                self._series_modality = ds_modality
+
+        if need_intent:
+            ds_intent = str(getattr(ds, "PresentationIntentType", "") or "").strip()
+            if ds_intent:
+                self._series_presentation_intent_type = ds_intent
+
+        if need_photo:
+            ds_photo = str(getattr(ds, "PhotometricInterpretation", "") or "").strip().upper()
+            if ds_photo:
+                for sm in self._slices:
+                    if not str(sm.photometric or "").strip():
+                        sm.photometric = ds_photo
 
     def _emit_fast_advanced_geometry_leak_guard(
         self,
@@ -622,6 +912,11 @@ class Lightweight2DPipeline(QObject):
         self._level = None
         self._series_path = None
         self._series_uid = None
+        self._series_modality = None
+        self._series_presentation_intent_type = None
+        self._voi_lut_function_cache.clear()
+        self._wl_source_by_index.clear()
+        self._slice_trace_header_cache.clear()
         self._is_open = False
         self._interaction_slice_count_hint = 0
         self._drag_start_boost_until = 0.0
@@ -863,16 +1158,108 @@ class Lightweight2DPipeline(QObject):
         idx = self._clamp(slice_index)
         sm = self._slices[idx]
 
+        ww_cs, wc_cs, src_cs = resolve_cornerstone_like_window_level_from_dicom(
+            sm.path,
+            modality=self._series_modality,
+            presentation_intent_type=self._series_presentation_intent_type,
+            photometric=sm.photometric,
+            enable_pixel_fallback=False,
+        )
+        if ww_cs is not None and wc_cs is not None and src_cs == "dicom_tag":
+            # Keep DICOM-tag defaults as-is for parity with Advanced path.
+            sm.window_width = float(ww_cs)
+            sm.window_center = float(wc_cs)
+            return float(ww_cs), float(wc_cs)
+
+        if ww_cs is not None and wc_cs is not None:
+            ww_norm, wc_norm = normalize_window_level(
+                ww_cs,
+                wc_cs,
+                treat_legacy_placeholder_as_missing=True,
+                treat_mg_full_range_placeholder_as_missing=self._is_mg_for_presentation(sm),
+                modality=self._series_modality,
+                photometric=sm.photometric,
+                presentation_intent_type=self._series_presentation_intent_type,
+            )
+            if ww_norm is not None and wc_norm is not None:
+                sm.window_width = float(ww_norm)
+                sm.window_center = float(wc_norm)
+                return float(ww_norm), float(wc_norm)
+
         ww, wc = normalize_window_level(
             sm.window_width,
             sm.window_center,
             treat_legacy_placeholder_as_missing=True,
+            treat_mg_full_range_placeholder_as_missing=self._is_mg_for_presentation(sm),
+            modality=self._series_modality,
+            photometric=sm.photometric,
+            presentation_intent_type=self._series_presentation_intent_type,
         )
+
+        if ww is None or wc is None:
+            ww_cs, wc_cs, src_cs = resolve_cornerstone_like_window_level_from_dicom(
+                sm.path,
+                modality=self._series_modality,
+                presentation_intent_type=self._series_presentation_intent_type,
+                photometric=sm.photometric,
+                enable_pixel_fallback=False,
+            )
+            if ww_cs is not None and wc_cs is not None:
+                if src_cs == "dicom_tag":
+                    sm.window_width = float(ww_cs)
+                    sm.window_center = float(wc_cs)
+                    ww, wc = float(ww_cs), float(wc_cs)
+                else:
+                    ww_norm, wc_norm = normalize_window_level(
+                        ww_cs,
+                        wc_cs,
+                        treat_legacy_placeholder_as_missing=True,
+                        treat_mg_full_range_placeholder_as_missing=self._is_mg_for_presentation(sm),
+                        modality=self._series_modality,
+                        photometric=sm.photometric,
+                        presentation_intent_type=self._series_presentation_intent_type,
+                    )
+                    if ww_norm is not None and wc_norm is not None:
+                        sm.window_width = float(ww_norm)
+                        sm.window_center = float(wc_norm)
+                        ww, wc = float(ww_norm), float(wc_norm)
+
+        if ww is None or wc is None:
+            ww_cs, wc_cs, src_cs = resolve_cornerstone_like_window_level_from_dicom(
+                sm.path,
+                modality=self._series_modality,
+                presentation_intent_type=self._series_presentation_intent_type,
+                photometric=sm.photometric,
+                enable_pixel_fallback=False,
+            )
+            if ww_cs is not None and wc_cs is not None:
+                if src_cs == "dicom_tag":
+                    sm.window_width = float(ww_cs)
+                    sm.window_center = float(wc_cs)
+                    ww, wc = float(ww_cs), float(wc_cs)
+                else:
+                    ww_norm, wc_norm = normalize_window_level(
+                        ww_cs,
+                        wc_cs,
+                        treat_legacy_placeholder_as_missing=True,
+                        treat_mg_full_range_placeholder_as_missing=self._is_mg_for_presentation(sm),
+                        modality=self._series_modality,
+                        photometric=sm.photometric,
+                        presentation_intent_type=self._series_presentation_intent_type,
+                    )
+                    if ww_norm is not None and wc_norm is not None:
+                        sm.window_width = float(ww_norm)
+                        sm.window_center = float(wc_norm)
+                        ww, wc = float(ww_norm), float(wc_norm)
 
         if ww is None or wc is None:
             arr = self._get_pixel_array(idx)
             if arr is not None:
-                ww, wc = auto_window_level_from_array(arr, 1.0, 99.0)
+                _is_mg_fp = self._is_mg_for_presentation(sm)
+                if _is_mg_fp:
+                    ww, wc = auto_window_level_for_mg_array(arr)
+                else:
+                    ww, wc = auto_window_level_from_array(arr, 1.0, 99.0)
             else:
                 ww = ww or 256.0
                 wc = wc or 128.0
@@ -1306,11 +1693,23 @@ class Lightweight2DPipeline(QObject):
         if not self._config.opencv_filter_enabled or not self._slices:
             return None
         idx = self._current_index
+        sm = self._slices[idx]
+        if self._is_mg_for_presentation(sm):
+            return None
         ww, wc = self._resolve_window_level(idx)
         cache_key = self._frame_cache_key(idx, ww, wc, True)
         if cache_key in self._frame_cache:
             return None  # Already have filtered version
         return self._render_frame_uncached(idx, ww, wc, True, record_metrics=False)
+
+    def _is_mg_for_presentation(self, sm: SliceMeta) -> bool:
+        modality = str(getattr(self, "_series_modality", "") or "").upper()
+        if modality != "MG":
+            return False
+        intent = str(getattr(self, "_series_presentation_intent_type", "") or "").upper()
+        if "FOR PRESENTATION" not in intent:
+            return False
+        return True
 
     def _frame_cache_key(self, idx: int, ww: float, wc: float, filter_enabled: bool) -> Tuple[int, float, float, bool]:
         return int(idx), float(ww), float(wc), bool(filter_enabled)
@@ -1330,6 +1729,36 @@ class Lightweight2DPipeline(QObject):
         source_slice_index: Optional[int] = None,
         cache_source: str = "hit",
     ) -> RenderedFrame:
+        if bool(getattr(self, "_mg_parity_trace_enabled", False)) and str(getattr(self, "_series_modality", "") or "").upper() == "MG":
+            try:
+                idx = int(slice_index)
+                sm = self._slices[idx] if 0 <= idx < len(self._slices) else None
+                if sm is not None:
+                    plut, voi_fn, has_voi_seq, slope, intercept = self._get_slice_trace_header(sm)
+                    wl_source = str(self._wl_source_by_index.get(idx, "unknown") or "unknown")
+                    invert = should_invert_for_display(sm.photometric, plut)
+                    logger.warning(
+                        "[MG_PARITY_FAST] series=%s idx=%d src_idx=%d cache=%s wl_src=%s ww=%.2f wc=%.2f "
+                        "photo=%s plut=%s invert=%s voi_fn=%s voi_seq=%s slope=%.6f intercept=%.6f",
+                        str(getattr(self, "_series_number", "") or ""),
+                        idx,
+                        int(source_slice_index if source_slice_index is not None else idx),
+                        str(cache_source or "hit"),
+                        wl_source,
+                        float(window_width),
+                        float(window_center),
+                        str(sm.photometric or ""),
+                        str(plut or ""),
+                        bool(invert),
+                        str(voi_fn or ""),
+                        bool(has_voi_seq),
+                        float(slope),
+                        float(intercept),
+                        extra={"component": "viewer"},
+                    )
+            except Exception:
+                pass
+
         return RenderedFrame(
             qimage=qimg,
             width=qimg.width(),
@@ -1420,7 +1849,9 @@ class Lightweight2DPipeline(QObject):
         perf_metrics: Any,
     ) -> Optional[RenderedFrame]:
         # B4.1: Surrogate is ONLY used for stack-drag navigation.
-        if interaction_type != 'drag' or not self._fast_interaction:
+        # Small stacks render exactly during drag so their motion matches
+        # wheel precision browsing more closely.
+        if interaction_type != 'drag' or not self._fast_interaction or len(self._slices) < 50:
             return None
 
         surrogate_distance = self._get_drag_surrogate_max_distance()
@@ -1594,9 +2025,27 @@ class Lightweight2DPipeline(QObject):
         t_wl = time.perf_counter()
         # Pass raw array directly — window_to_uint8 now has a fast LUT path
         # for int16/uint16 that avoids the float32 cast entirely.
-        disp = _window_level_to_uint8(arr, ww, wc)
+        voi_lut_function = self._get_voi_lut_function(sm)
+        disp = _window_level_to_uint8_with_voi_function(arr, ww, wc, voi_lut_function)
         wl_ms = (time.perf_counter() - t_wl) * 1000.0
 
+        # [MG_DIAG] Temporary brightness diagnostic — logs first MG frame pixel stats
+        _is_mg_diag = (
+            str(getattr(self, "_series_modality", "") or "").upper() == "MG"
+            and not getattr(self, "_mg_diag_logged", False)
+        )
+        if _is_mg_diag:
+            self._mg_diag_logged = True
+            import numpy as _np_diag
+            _arr_mean = float(_np_diag.mean(arr)) if arr is not None else -1.0
+            _disp_mean = float(_np_diag.mean(disp))
+            _disp_pct_white = float((_np_diag.sum(disp >= 250) / max(disp.size, 1)) * 100.0)
+            logger.warning(
+                "[MG_DIAG] slice=%d photometric=%s ww=%.1f wc=%.1f "
+                "arr_mean=%.1f disp_mean=%.1f pct_white=%.1f%% filter_enabled=%s",
+                idx, sm.photometric, ww, wc, _arr_mean, _disp_mean, _disp_pct_white,
+                filter_enabled,
+            )
         t_filter = time.perf_counter()
         filter_is_first = False
         if filter_enabled:
@@ -1608,18 +2057,37 @@ class Lightweight2DPipeline(QObject):
             # filter produces stride-corrupted (wrapped/ghosted) output. Qt's
             # QGraphicsView handles display-side upscaling natively, so the
             # enlargement is redundant here anyway.
+            # MG modality gets softer sharpening (Hermes reference: sigma=1.2 alpha=1.3 beta=-0.3)
+            _use_mg_params = str(getattr(self, "_series_modality", "") or "").upper() == "MG"
             disp = _apply_opencv_filter_uint8(
                 disp,
-                sigma_x=self._config.opencv_sigma_x,
-                alpha=self._config.opencv_alpha,
-                beta=self._config.opencv_beta,
+                sigma_x=self._config.opencv_mg_sigma_x if _use_mg_params else self._config.opencv_sigma_x,
+                alpha=self._config.opencv_mg_alpha if _use_mg_params else self._config.opencv_alpha,
+                beta=self._config.opencv_mg_beta if _use_mg_params else self._config.opencv_beta,
                 invert=self._config.opencv_invert,
                 small_threshold=self._config.opencv_small_threshold,
                 preserve_dimensions=True,
+                lowres_anti_alias_enabled=self._config.opencv_lowres_anti_alias_enabled,
+                lowres_threshold=self._config.opencv_lowres_threshold,
+                lowres_sigma_x=self._config.opencv_lowres_sigma_x,
+                lowres_blend=self._config.opencv_lowres_blend,
             )
             if filter_is_first:
                 self._filter_first_slices.add(idx)
+
         filter_ms = (time.perf_counter() - t_filter) * 1000.0
+        # [MG_DIAG] Post-filter stat (only for first MG frame)
+        if _is_mg_diag:
+            import numpy as _np_diag2
+            _disp2_mean = float(_np_diag2.mean(disp))
+            _use_mg_params2 = str(getattr(self, "_series_modality", "") or "").upper() == "MG"
+            logger.warning(
+                "[MG_DIAG_FILTER] slice=%d after_filter_mean=%.1f use_mg_params=%s "
+                "mg_sigma=%.2f mg_alpha=%.2f mg_beta=%.2f invert=%s",
+                idx, _disp2_mean, _use_mg_params2,
+                self._config.opencv_mg_sigma_x, self._config.opencv_mg_alpha,
+                self._config.opencv_mg_beta, self._config.opencv_invert,
+            )
 
         if filter_enabled and record_metrics and logger.isEnabledFor(logging.DEBUG):
             _filter_sig = (
@@ -1767,7 +2235,7 @@ class Lightweight2DPipeline(QObject):
         study_uid = self._series_path or ""
         t_lookup = time.perf_counter()
         cached = disk_cache.get(
-            sop_instance_uid=sm.path,
+            sop_instance_uid=_disk_cache_decode_key(sm.path),
             study_uid=study_uid,
             expected_shape=(sm.rows, sm.cols),
         )
@@ -1778,7 +2246,9 @@ class Lightweight2DPipeline(QObject):
             return cached
 
         t_read = time.perf_counter()
-        ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
+        with warnings.catch_warnings():
+            _ignore_unknown_encoding_warning()
+            ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
         read_ms = (time.perf_counter() - t_read) * 1000.0
         file_size = 0
         try:
@@ -1793,7 +2263,25 @@ class Lightweight2DPipeline(QObject):
             foreground_disk_reads=1,
             foreground_bytes_read=file_size,
         )
-        arr = np.asarray(ds.pixel_array)
+        _sanitize_specific_character_set(ds)
+        try:
+            with warnings.catch_warnings():
+                _ignore_unknown_encoding_warning()
+                arr = np.asarray(ds.pixel_array)
+        except Exception as exc:
+            msg = str(exc)
+            if "Unknown encoding" in msg:
+                _sanitize_specific_character_set(ds)
+                with warnings.catch_warnings():
+                    _ignore_unknown_encoding_warning()
+                    arr = np.asarray(ds.pixel_array)
+                logger.warning(
+                    "lw2d-pipeline charset-normalized idx=%d scs=%s",
+                    idx,
+                    getattr(ds, "SpecificCharacterSet", None),
+                )
+            else:
+                raise
 
         if arr.ndim == 3 and sm.samples_per_pixel < 3:
             arr = arr[0]  # multi-frame fallback
@@ -1805,7 +2293,7 @@ class Lightweight2DPipeline(QObject):
                 arr = np.clip(arr, 0, 255).astype(np.uint8)
             result = np.ascontiguousarray(arr)
             disk_cache.put(
-                sm.path,
+                _disk_cache_decode_key(sm.path),
                 study_uid,
                 result,
                 defer=bool(getattr(self, '_protected_drag_active', False)),
@@ -1818,47 +2306,93 @@ class Lightweight2DPipeline(QObject):
 
         # Handle MONOCHROME1 (invert)
         photometric = str(getattr(ds, "PhotometricInterpretation", sm.photometric or "MONOCHROME2")).upper()
+        presentation_lut_shape = str(getattr(ds, "PresentationLUTShape", "") or "").upper()
+        invert_for_display = should_invert_for_display(photometric, presentation_lut_shape)
 
-        # Fast path: slope == 1.0 and integer intercept — keep int16
+        # Fast path: slope == 1.0, native polarity, and zero intercept.
         # This enables the LUT-based W/L path downstream (3-5× faster)
         _slope_is_unity = math.isclose(slope, 1.0)
         _intercept_is_int = math.isclose(intercept, round(intercept))
-        _is_monochrome2 = (photometric != "MONOCHROME1")
+        _is_native_polarity = not invert_for_display
 
-        if _slope_is_unity and _intercept_is_int and _is_monochrome2:
-            if not math.isclose(intercept, 0.0):
-                # Integer offset only — keep as int16 for LUT path
-                int_offset = int(round(intercept))
-                if arr.dtype in (np.uint16, np.int16):
-                    # Safe range check: int16 can hold -32768 to 32767
-                    # Typical CT intercept is -1024, well within range
+        if _slope_is_unity and _intercept_is_int and _is_native_polarity:
+            if math.isclose(intercept, 0.0):
+                if arr.dtype not in (np.int16, np.uint16, np.float32):
                     arr = arr.astype(np.int16, copy=False)
-                    arr = (arr + np.int16(int_offset))
-                else:
-                    arr = arr.astype(np.float32, copy=False)
-                    arr = arr + float(intercept)
-            elif arr.dtype not in (np.int16, np.uint16, np.float32):
-                arr = arr.astype(np.int16, copy=False)
+                result = np.ascontiguousarray(arr)
+                disk_cache.put(
+                    _disk_cache_decode_key(sm.path),
+                    study_uid,
+                    result,
+                    defer=bool(getattr(self, '_protected_drag_active', False)),
+                )
+                return result
+
+            # Non-zero intercept with integer source can overflow if forced into
+            # int16 (especially uint16 mammography datasets). Use float path.
+            arr = arr.astype(np.float32, copy=False)
+            arr = arr + float(intercept)
             result = np.ascontiguousarray(arr)
             disk_cache.put(
-                sm.path,
+                _disk_cache_decode_key(sm.path),
                 study_uid,
                 result,
                 defer=bool(getattr(self, '_protected_drag_active', False)),
             )
             return result
 
+        if arr.dtype not in (np.int16, np.uint16, np.float32):
+                arr = arr.astype(np.int16, copy=False)
+
         # Slow path: fractional slope or MONOCHROME1 — use float32
         arr = arr.astype(np.float32, copy=False)
         if not _slope_is_unity or not math.isclose(intercept, 0.0):
             arr = arr * float(slope) + float(intercept)
 
-        if not _is_monochrome2:
-            arr = float(arr.max()) + float(arr.min()) - arr
+        if invert_for_display:
+            bits_stored = int(getattr(ds, "BitsStored", sm.bits_allocated) or sm.bits_allocated or 16)
+            pixel_representation = int(
+                getattr(ds, "PixelRepresentation", sm.pixel_representation)
+                if getattr(ds, "PixelRepresentation", None) is not None
+                else sm.pixel_representation
+            )
+            arr = _invert_monochrome1_from_storage_bounds(
+                arr,
+                bits_stored=bits_stored,
+                pixel_representation=pixel_representation,
+                slope=float(slope),
+                intercept=float(intercept),
+            )
+
+        # Prefer explicit VOI LUT Sequence when WW/WL are not valid.
+        # This mirrors workstation behavior where VOI LUT Sequence is an
+        # alternative transform path (instead of missing/placeholder WW/WL).
+        try:
+            has_voi_lut_sequence = bool(getattr(ds, "VOILUTSequence", None))
+            if has_voi_lut_sequence:
+                ww_tag = ds.get("WindowWidth", None)
+                wc_tag = ds.get("WindowCenter", None)
+                ww_ok, wc_ok = normalize_window_level(
+                    ww_tag,
+                    wc_tag,
+                    treat_legacy_placeholder_as_missing=True,
+                    treat_mg_full_range_placeholder_as_missing=self._is_mg_for_presentation(sm),
+                    modality=self._series_modality,
+                    photometric=photometric,
+                    presentation_intent_type=self._series_presentation_intent_type,
+                )
+                if ww_ok is None or wc_ok is None:
+                    try:
+                        from pydicom.pixels import apply_voi_lut
+                    except Exception:
+                        from pydicom.pixel_data_handlers.util import apply_voi_lut
+                    arr = np.asarray(apply_voi_lut(arr, ds), dtype=np.float32)
+        except Exception:
+            pass
 
         result = np.ascontiguousarray(arr)
         disk_cache.put(
-            sm.path,
+            _disk_cache_decode_key(sm.path),
             study_uid,
             result,
             defer=bool(getattr(self, '_protected_drag_active', False)),
@@ -2674,11 +3208,25 @@ class Lightweight2DPipeline(QObject):
                     use_subprocess_prefetch = False
 
             sm = self._slices[idx] if idx < len(self._slices) else None
+            if (
+                use_subprocess_prefetch
+                and sm is not None
+                and int(getattr(sm, 'samples_per_pixel', 1) or 1) < 3
+                and not str(getattr(sm, 'photometric', '') or '').strip()
+            ):
+                # Metadata scan may intentionally leave grayscale photometric empty
+                # (e.g., MG placeholder handling). The subprocess path receives only
+                # a fallback photometric string; if we pass MONOCHROME2 here we can
+                # skip MONOCHROME1 inversion and render a white/inverted frame.
+                # Use in-process decode so PhotometricInterpretation is read from
+                # the DICOM dataset directly.
+                use_subprocess_prefetch = False
+
             if sm is not None:
                 disk_cache = get_disk_pixel_cache()
                 study_uid = self._series_path or ""
                 arr = disk_cache.get(
-                    sop_instance_uid=sm.path,
+                    sop_instance_uid=_disk_cache_decode_key(sm.path),
                     study_uid=study_uid,
                     expected_shape=(sm.rows, sm.cols),
                 )
@@ -2697,7 +3245,7 @@ class Lightweight2DPipeline(QObject):
                 if arr is not None:
                     # Save to disk cache (B3.12)
                     disk_cache.put(
-                        sm.path,
+                        _disk_cache_decode_key(sm.path),
                         study_uid,
                         arr,
                         defer=bool(getattr(self, '_protected_drag_active', False)),
@@ -2747,7 +3295,8 @@ class Lightweight2DPipeline(QObject):
     def _render_into_cache(self, idx: int, tracked: bool = False) -> None:
         try:
             ww, wc = self._resolve_window_level(idx)
-            filter_enabled = self._config.opencv_filter_enabled
+            sm = self._slices[idx]
+            filter_enabled = bool(self._config.opencv_filter_enabled)
             cache_key = self._frame_cache_key(idx, ww, wc, filter_enabled)
             if cache_key in self._frame_cache:
                 return
@@ -2766,20 +3315,93 @@ class Lightweight2DPipeline(QObject):
         """Get effective W/L for a slice."""
         ww, wc = normalize_window_level(self._window, self._level)
         sm = self._slices[idx]
+        wl_source = "viewer_override"
+
+        def _normalize_resolved_candidate(
+            cand_ww: Any,
+            cand_wc: Any,
+            source: str,
+        ) -> Tuple[Optional[float], Optional[float]]:
+            # ClearCanvas-like policy split:
+            # - DICOM tag path: protect against known MG placeholder defaults.
+            # - VOI LUT path: accept computed VOI windows as-is (no MG placeholder gate).
+            return normalize_window_level(
+                cand_ww,
+                cand_wc,
+                treat_legacy_placeholder_as_missing=True,
+                treat_mg_full_range_placeholder_as_missing=(
+                    self._is_mg_for_presentation(sm)
+                    and str(source or "") == "dicom_tag"
+                ),
+                modality=self._series_modality,
+                photometric=sm.photometric,
+                presentation_intent_type=self._series_presentation_intent_type,
+            )
+
+        if ww is None or wc is None:
+            wl_source = "none"
+            ww_cs, wc_cs, src_cs = resolve_cornerstone_like_window_level_from_dicom(
+                sm.path,
+                modality=self._series_modality,
+                presentation_intent_type=self._series_presentation_intent_type,
+                photometric=sm.photometric,
+                enable_pixel_fallback=False,
+            )
+            if ww_cs is not None and wc_cs is not None:
+                ww_norm, wc_norm = _normalize_resolved_candidate(ww_cs, wc_cs, src_cs)
+                if ww_norm is not None and wc_norm is not None:
+                    sm.window_width = float(ww_norm)
+                    sm.window_center = float(wc_norm)
+                    ww, wc = float(ww_norm), float(wc_norm)
+                    wl_source = str(src_cs or "dicom_tag")
 
         if ww is None or wc is None:
             ww, wc = normalize_window_level(
                 sm.window_width,
                 sm.window_center,
                 treat_legacy_placeholder_as_missing=True,
+                treat_mg_full_range_placeholder_as_missing=self._is_mg_for_presentation(sm),
+                modality=self._series_modality,
+                photometric=sm.photometric,
+                presentation_intent_type=self._series_presentation_intent_type,
             )
+            if ww is not None and wc is not None:
+                wl_source = "metadata"
 
         if ww is None or wc is None:
             arr = self._get_pixel_array(idx)
             if arr is not None:
-                ww, wc = auto_window_level_from_array(arr, 1.0, 99.0)
+                _is_mg_fp = self._is_mg_for_presentation(sm)
+                if _is_mg_fp:
+                    ww, wc = auto_window_level_for_mg_array(arr)
+                    wl_source = "pixel_percentile_mg"
+                else:
+                    ww, wc = auto_window_level_from_array(arr, 1.0, 99.0)
+                    wl_source = "pixel_percentile"
             else:
                 ww, wc = 256.0, 128.0
+                wl_source = "hard_default"
+
+        wl_map = getattr(self, "_wl_source_by_index", None)
+        if not isinstance(wl_map, dict):
+            wl_map = {}
+            setattr(self, "_wl_source_by_index", wl_map)
+        wl_map[int(idx)] = str(wl_source or "unknown")
+
+        _series_modality = str(getattr(self, "_series_modality", "") or "")
+        _series_intent = str(getattr(self, "_series_presentation_intent_type", "") or "")
+        if _series_modality.upper() == "MG" and logger.isEnabledFor(logging.INFO):
+            logger.info(
+                "[MG_WL_RESOLVE] idx=%d src=%s ww=%.2f wc=%.2f modality=%s intent=%s photometric=%s",
+                int(idx),
+                str(wl_source or "unknown"),
+                float(ww),
+                float(wc),
+                _series_modality,
+                _series_intent,
+                str(sm.photometric or ""),
+                extra={"component": "viewer"},
+            )
 
         return float(ww), float(wc)
 
@@ -2811,6 +3433,15 @@ class Lightweight2DPipeline(QObject):
             ipp = _as_float_tuple(inst.get("image_position_patient"), 3, (0, 0, 0))
             ps = _as_float_tuple(inst.get("pixel_spacing"), 2, (1, 1))
             is_rgb = bool(inst.get("is_rgb", False))
+            photometric = str(
+                inst.get("photometric_interpretation")
+                or inst.get("PhotometricInterpretation")
+                # Keep unknown grayscale photometric empty. For MG datasets
+                # this allows normalize_window_level(..., treat_mg_full_range_placeholder_as_missing=True)
+                # to classify 32768/32768 placeholders instead of treating
+                # missing metadata as explicit MONOCHROME2.
+                or ("RGB" if is_rgb else "")
+            ).upper()
             out.append(SliceMeta(
                 path=path, rows=rows, cols=cols,
                 pixel_spacing=(float(ps[0]), float(ps[1])),
@@ -2818,12 +3449,19 @@ class Lightweight2DPipeline(QObject):
                 ipp=(float(ipp[0]), float(ipp[1]), float(ipp[2])),
                 slice_thickness=_safe_float(inst.get("slice_thickness")),
                 spacing_between_slices=_safe_float(inst.get("spacing_between_slices")),
-                photometric="RGB" if is_rgb else "MONOCHROME2",
+                photometric=photometric,
                 bits_allocated=int(inst.get("bits_allocated", 16) or 16),
                 pixel_representation=int(inst.get("pixel_representation", 1) or 1),
                 samples_per_pixel=3 if is_rgb else 1,
                 window_width=_safe_float(inst.get("window_width")),
                 window_center=_safe_float(inst.get("window_center")),
+                voi_lut_function=(
+                    str(
+                        inst.get("voi_lut_function")
+                        or inst.get("VOILUTFunction")
+                        or ""
+                    ).strip().upper() or None
+                ),
                 slope=_safe_float(inst.get("rescale_slope"), 1.0) or 1.0,
                 intercept=_safe_float(inst.get("rescale_intercept"), 0.0) or 0.0,
                 instance_number=int(inst["instance_number"]) if inst.get("instance_number") is not None else None,
@@ -2863,11 +3501,68 @@ class Lightweight2DPipeline(QObject):
             samples_per_pixel=entry.samples_per_pixel,
             window_width=entry.window_width,
             window_center=entry.window_center,
+            voi_lut_function=None,
             slope=entry.slope,
             intercept=entry.intercept,
             instance_number=entry.instance_number,
             is_rgb=entry.is_rgb,
         )
+
+    def _get_voi_lut_function(self, sm: SliceMeta) -> Optional[str]:
+        raw = str(sm.voi_lut_function or "").strip().upper()
+        if raw in {"LINEAR", "LINEAR_EXACT", "SIGMOID"}:
+            return raw
+
+        key = str(sm.path or "")
+        if not key:
+            return None
+        cache = getattr(self, "_voi_lut_function_cache", None)
+        if not isinstance(cache, dict):
+            cache = {}
+            setattr(self, "_voi_lut_function_cache", cache)
+        if key in cache:
+            return cache[key]
+
+        resolved: Optional[str] = None
+        try:
+            ds = pydicom.dcmread(key, stop_before_pixels=True, force=True)
+            cand = str(getattr(ds, "VOILUTFunction", "") or "").strip().upper()
+            if cand in {"LINEAR", "LINEAR_EXACT", "SIGMOID"}:
+                resolved = cand
+        except Exception:
+            resolved = None
+
+        cache[key] = resolved
+        return resolved
+
+    def _get_slice_trace_header(self, sm: SliceMeta) -> Tuple[str, str, bool, float, float]:
+        key = str(sm.path or "")
+        if key:
+            cached = self._slice_trace_header_cache.get(key)
+            if cached is not None:
+                return cached
+
+        plut = ""
+        voi_fn = str(sm.voi_lut_function or "")
+        has_voi_seq = False
+        slope = float(sm.slope or 1.0)
+        intercept = float(sm.intercept or 0.0)
+
+        try:
+            ds = pydicom.dcmread(sm.path, stop_before_pixels=True, force=True)
+            plut = str(getattr(ds, "PresentationLUTShape", "") or "").strip().upper()
+            if not voi_fn:
+                voi_fn = str(getattr(ds, "VOILUTFunction", "") or "").strip().upper()
+            has_voi_seq = bool(getattr(ds, "VOILUTSequence", None))
+            slope = float(_safe_float(getattr(ds, "RescaleSlope", sm.slope), 1.0) or 1.0)
+            intercept = float(_safe_float(getattr(ds, "RescaleIntercept", sm.intercept), 0.0) or 0.0)
+        except Exception:
+            pass
+
+        result = (str(plut), str(voi_fn), bool(has_voi_seq), float(slope), float(intercept))
+        if key:
+            self._slice_trace_header_cache[key] = result
+        return result
 
     def _sort_slices(self, slices: List[SliceMeta]) -> List[SliceMeta]:
         """Sort slices by DICOM InstanceNumber (acquisition order).

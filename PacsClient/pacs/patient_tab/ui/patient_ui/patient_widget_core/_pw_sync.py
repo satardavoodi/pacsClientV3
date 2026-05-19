@@ -1526,18 +1526,26 @@ class _PWSyncMixin:
         Limits event-loop blocking to ~20ms per tick (one VTK Render)
         instead of ~20ms × N for all targets simultaneously.
 
-        During protected drag, VTK renders on ADVANCED target viewers are skipped
-        (20-50ms stalls) so the scroll event loop stays responsive.  FAST target
+        During protected drag from FAST source viewers, VTK renders are skipped
+        (20-50ms stalls) so the scroll event loop stays responsive. FAST target
         viewers already get their visual update via set_overlay_lines() inside
         manage_reference_line, so skipping update() here is a no-op for them.
-        At drag end, manage_reference_line(repaint=True) fires a full repaint.
+        For ADVANCED source viewers we keep round-robin repaint active so
+        reference lines stay visually live while stacking/scrolling.
         """
         try:
             from modules.viewer.fast.ui_throttle import is_protected_drag_active
             if is_protected_drag_active():
-                if hasattr(self, '_rl_drag_session'):
-                    self._rl_drag_session['deferred_vtk'] += 1
-                return  # defer VTK renders to drag-end repaint
+                src_widget = getattr(self, 'selected_widget', None)
+                src_iv = getattr(src_widget, 'image_viewer', None)
+                src_is_fast = bool(
+                    getattr(src_widget, '_qt_bridge_active', False)
+                    or getattr(src_iv, 'IS_QT_BRIDGE', False)
+                )
+                if src_is_fast:
+                    if hasattr(self, '_rl_drag_session'):
+                        self._rl_drag_session['deferred_vtk'] += 1
+                    return  # defer VTK renders to drag-end repaint for FAST source
         except Exception:
             pass
         targets = self._rl_get_target_widgets()

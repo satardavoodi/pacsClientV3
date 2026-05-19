@@ -158,28 +158,26 @@ class _PWPanelsMixin:
         if checked:
             return """
                 QPushButton {
-                    background-color: #2196f3;
-                    color: white;
+                    background-color: #1a2d40;
+                    color: #79bde8;
                     font-weight: bold;
                     font-size: 14px;
-                    line-height: 1.4;
                     letter-spacing: 0.5px;
                     border: none;
-                    border-radius: 8px;
+                    border-radius: 6px;
                     padding: 14px 0;
                 }
             """
         else:
             return """
                 QPushButton {
-                    background-color: #222;
-                    color: #aaa;
+                    background-color: transparent;
+                    color: #8b949e;
                     font-weight: bold;
                     font-size: 14px;
-                    line-height: 1.4;
                     letter-spacing: 0.5px;
                     border: none;
-                    border-radius: 8px;
+                    border-radius: 6px;
                     padding: 14px 0;
                 }
             """

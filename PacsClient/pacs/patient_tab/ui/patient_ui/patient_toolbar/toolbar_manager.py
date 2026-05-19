@@ -611,7 +611,10 @@ class BadgeButton(QPushButton):
 
     def setCount(self, n: int):
         """تنظیم عدد badge؛ اگر <=0 باشد مخفی می‌شود."""
-        self._count = max(0, int(n))
+        new_count = max(0, int(n))
+        if self._count == new_count:
+            return
+        self._count = new_count
         if self._count <= 0:
             self._badge.hide()
         else:
@@ -714,6 +717,11 @@ class ToolbarManager:
         self._mic_record_timer.setSingleShot(False)
         self._mic_record_timer.timeout.connect(self._update_mic_record_ui)
         self._mic_default_min_width = 45
+        self._mic_last_elapsed_label = ""
+        self._mic_last_paused_state = None
+        self._audio_counter_cache_study_uid = ""
+        self._audio_counter_cache_dir_mtime_ns = -1
+        self._audio_counter_cache_count = 0
 
         # Target debug (first-run tracing)
         self._target_debug_count = 0
@@ -1980,6 +1988,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate(self.tool_selected)
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -2001,6 +2010,7 @@ class ToolbarManager:
                         self.check_and_deactivate_tools()
                     mpr_widget.activate_toolbar_tool(self.tool_access.WINDOW_LEVEL)
                     self.tool_selected = self.tool_access.WINDOW_LEVEL
+                    self.handle_buttons_checked()
                 self.handle_buttons_checked()
             return
 
@@ -2008,7 +2018,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate(self.tool_selected)
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
-
+            self.handle_buttons_checked()
         else:
             self.check_and_deactivate_tools()
             selected_widget.set_new_interactorstyle(DefaultInteractionInteractorStyle)
@@ -2036,6 +2046,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate(self.tool_selected)
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -2064,6 +2075,7 @@ class ToolbarManager:
             selected_widget.current_style.deactivate(self.tool_selected)
             self.tool_selected = None
             selected_widget.restore_default_interactorstyle()
+            self.handle_buttons_checked()
 
         else:
             self.check_and_deactivate_tools()
@@ -2505,8 +2517,25 @@ class ToolbarManager:
         if not study_uid:
             return
         attach_path = ATTACHMENT_PATH / study_uid
-        lst_images = list_files_in_folder(folder_path=attach_path, patterns=["*.mp3", "*.wav", "*.m4a", "*.ogg", "*.webm"])
-        count = len(lst_images)
+        dir_mtime_ns = -1
+        try:
+            if attach_path.exists():
+                dir_mtime_ns = int(attach_path.stat().st_mtime_ns)
+        except Exception:
+            dir_mtime_ns = -1
+
+        cache_hit = (
+            self._audio_counter_cache_study_uid == str(study_uid)
+            and self._audio_counter_cache_dir_mtime_ns == dir_mtime_ns
+        )
+        if cache_hit:
+            count = int(self._audio_counter_cache_count)
+        else:
+            lst_images = list_files_in_folder(folder_path=attach_path, patterns=["*.mp3", "*.wav", "*.m4a", "*.ogg", "*.webm"])
+            count = len(lst_images)
+            self._audio_counter_cache_study_uid = str(study_uid)
+            self._audio_counter_cache_dir_mtime_ns = dir_mtime_ns
+            self._audio_counter_cache_count = int(count)
 
         mic_btn: BadgeButton = self.tools_button[self.tool_access.MICROPHONE]
         mic_btn.setCount(count)
@@ -2601,6 +2630,8 @@ class ToolbarManager:
             self._mic_controls_widget.setVisible(False)
 
         self.tool_selected = None
+        self._mic_last_elapsed_label = ""
+        self._mic_last_paused_state = None
         self.handle_buttons_checked()
 
     def _update_mic_record_ui(self):
@@ -2611,15 +2642,21 @@ class ToolbarManager:
             return
 
         mic_btn: BadgeButton = self.tools_button[self.tool_access.MICROPHONE]
-        mic_btn.setText(soundbox.get_elapsed_label())
+        elapsed_label = soundbox.get_elapsed_label()
+        if elapsed_label != self._mic_last_elapsed_label:
+            mic_btn.setText(elapsed_label)
+            self._mic_last_elapsed_label = elapsed_label
 
         if self._mic_pause_btn is not None:
-            if soundbox.is_paused():
-                self._mic_pause_btn.setIcon(qta.icon('fa5s.play', color='#fbbf24'))
-                self._mic_pause_btn.setToolTip('Resume Recording')
-            else:
-                self._mic_pause_btn.setIcon(qta.icon('fa5s.pause', color='#fbbf24'))
-                self._mic_pause_btn.setToolTip('Pause Recording')
+            is_paused = bool(soundbox.is_paused())
+            if self._mic_last_paused_state != is_paused:
+                if is_paused:
+                    self._mic_pause_btn.setIcon(qta.icon('fa5s.play', color='#fbbf24'))
+                    self._mic_pause_btn.setToolTip('Resume Recording')
+                else:
+                    self._mic_pause_btn.setIcon(qta.icon('fa5s.pause', color='#fbbf24'))
+                    self._mic_pause_btn.setToolTip('Pause Recording')
+                self._mic_last_paused_state = is_paused
 
     def _on_mic_cancel(self):
         soundbox = self.get_soundbox()
@@ -2898,6 +2935,25 @@ class ToolbarManager:
                     if image_viewer and hasattr(image_viewer, 'set_window_level'):
                         _mark_manual_window_level(image_viewer)
                         image_viewer.set_window_level(ww, wl)
+                        # Force immediate visual update — set_window_level may hit the
+                        # _wl_unchanged early-return guard when the preset matches the
+                        # current pipeline WL, leaving the display stale even though
+                        # the pipeline WL was updated.  Mirrors _apply_default_preset.
+                        try:
+                            if (hasattr(image_viewer, 'pipeline') and
+                                    hasattr(image_viewer, 'qt_viewer')):
+                                current_slice = getattr(image_viewer, '_current_slice', 0)
+                                _frame = image_viewer.pipeline.get_rendered_frame(current_slice)
+                                image_viewer.qt_viewer.set_image(_frame.qimage)
+                                image_viewer._window = float(_frame.window_width)
+                                image_viewer._level = float(_frame.window_center)
+                                image_viewer._update_annotations(
+                                    current_slice, _frame.window_width, _frame.window_center,
+                                )
+                            else:
+                                image_viewer.Render()
+                        except Exception:
+                            pass
                     elif hasattr(selected_widget, 'set_window_level'):
                         _mark_manual_window_level(selected_widget)
                         selected_widget.set_window_level(ww, wl)
@@ -2908,6 +2964,80 @@ class ToolbarManager:
                 btn = create_dropdown_tool(f'{label}  (WW:{ww} / WL:{wl})', None, color)
                 btn.clicked.connect((lambda _ww, _wl: lambda: [_apply_preset(_ww, _wl), dropdown.close()])(ww, wl))
                 layout.addWidget(btn)
+
+            def _apply_default_preset():
+                try:
+                    selected_widget = self.patient_widget.selected_widget
+                    if selected_widget is None:
+                        return
+                    if self.is_mpr_viewer(selected_widget):
+                        mpr_widget = self.get_mpr_widget(selected_widget)
+                        if mpr_widget and hasattr(mpr_widget, 'apply_default_window_level'):
+                            mpr_widget.apply_default_window_level(0)
+                        return
+                    image_viewer = getattr(selected_widget, 'image_viewer', None)
+                    if image_viewer and hasattr(image_viewer, 'apply_default_window_level'):
+                        try:
+                            image_viewer.flag_set_custom_window_level = False
+                        except Exception:
+                            pass
+                        current_slice = 0
+                        try:
+                            if hasattr(image_viewer, '_current_slice'):
+                                current_slice = image_viewer._current_slice
+                            elif hasattr(image_viewer, 'GetSlice'):
+                                current_slice = image_viewer.GetSlice()
+                        except Exception:
+                            pass
+                        image_viewer.apply_default_window_level(current_slice)
+                        # Force immediate visual update: apply_default_window_level
+                        # uses flag_default=True which skips qt_viewer.set_image().
+                        # Outside the scroll context the display must be updated
+                        # explicitly so the user sees the change without scrolling.
+                        try:
+                            if (hasattr(image_viewer, 'pipeline') and
+                                    hasattr(image_viewer, 'qt_viewer')):
+                                # FAST mode: re-decode and present the current frame
+                                # with the updated (default) W/L settings.
+                                _frame = image_viewer.pipeline.get_rendered_frame(
+                                    current_slice
+                                )
+                                image_viewer.qt_viewer.set_image(_frame.qimage)
+                                image_viewer._window = float(_frame.window_width)
+                                image_viewer._level = float(_frame.window_center)
+                                image_viewer._update_annotations(
+                                    current_slice,
+                                    _frame.window_width,
+                                    _frame.window_center,
+                                )
+                            else:
+                                # Advanced VTK mode: color_mapper is already dirty
+                                # after set_window_level; Render() flushes it.
+                                image_viewer.Render()
+                        except Exception:
+                            pass
+                    elif hasattr(selected_widget, 'apply_default_window_level'):
+                        try:
+                            selected_widget.flag_set_custom_window_level = False
+                        except Exception:
+                            pass
+                        selected_widget.apply_default_window_level(0)
+                        try:
+                            selected_widget.Render()
+                        except Exception:
+                            pass
+                except Exception as e:
+                    logger.warning(f"[WL_PRESET] Failed to apply default preset: {e}")
+
+            from PySide6.QtWidgets import QFrame
+            sep = QFrame()
+            sep.setFrameShape(QFrame.HLine)
+            sep.setStyleSheet("QFrame { background: #374151; border: none; min-height: 1px; max-height: 1px; }")
+            layout.addWidget(sep)
+
+            btn_default = create_dropdown_tool('Default Preset  (DICOM Defaults)', None, '#94a3b8')
+            btn_default.clicked.connect(lambda: [_apply_default_preset(), dropdown.close()])
+            layout.addWidget(btn_default)
 
             button_pos = button.mapToGlobal(QPoint(0, button.height()))
             dropdown.move(button_pos)
@@ -8013,13 +8143,7 @@ class ToolbarManager:
                     except Exception:
                         pass
 
-                    if show_completion_message:
-                        QMessageBox.information(
-                            self.patient_widget,
-                            "Sync Completed",
-                            "Sync completed successfully."
-                        )
-
+                    # Success — close silently without asking the user to click OK.
                     if close_after_sync and hasattr(self.patient_widget, 'close_and_remove_patient_tab'):
                         try:
                             self.patient_widget.close_and_remove_patient_tab()
@@ -8034,12 +8158,37 @@ class ToolbarManager:
                     # Re-enable sync button
                     if hasattr(self, 'sync_button'):
                         self.sync_button.setEnabled(True)
-                    
-                    # QMessageBox.warning(
-                    #     self.patient_widget,
-                    #     "Sync Failed",
-                    #     f"Failed to synchronize patient data:\n{error_msg}"
-                    # )
+
+                    # Ask user whether to retry or cancel.
+                    msg_box = QMessageBox(self.patient_widget)
+                    msg_box.setWindowTitle("Sync Failed")
+                    msg_box.setText("Sync was not successful.")
+                    msg_box.setInformativeText(
+                        f"{error_msg}\n\nWould you like to retry, or cancel and keep the data locally?"
+                    )
+                    msg_box.setIcon(QMessageBox.Icon.Warning)
+                    retry_btn = msg_box.addButton("Retry", QMessageBox.ButtonRole.AcceptRole)
+                    msg_box.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+                    msg_box.exec()
+                    if msg_box.clickedButton() is retry_btn:
+                        # Re-start sync: reconnect signals and try again.
+                        sync_service.sync_started.connect(on_sync_started)
+                        sync_service.sync_progress.connect(on_sync_progress)
+                        sync_service.sync_completed.connect(on_sync_completed)
+                        sync_service.sync_failed.connect(on_sync_failed)
+                        self._patient_sync_signal_handlers = {
+                            'sync_started': on_sync_started,
+                            'sync_progress': on_sync_progress,
+                            'sync_completed': on_sync_completed,
+                            'sync_failed': on_sync_failed,
+                        }
+                        if hasattr(self, 'sync_button'):
+                            self.sync_button.setEnabled(False)
+                        progress_dialog.setValue(0)
+                        progress_dialog.setLabelText("Synchronizing patient data...")
+                        progress_dialog.show()
+                        sync_service.sync_patient_data(study_uid, verbose=True)
+                    # Cancel: do nothing — data stays local, user continues.
             
             # Connect all signals
             sync_service.sync_started.connect(on_sync_started)

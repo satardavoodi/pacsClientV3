@@ -37,6 +37,7 @@ import cv2
 from PacsClient.pacs.patient_tab.utils.opencv_filter_pipeline import (
     PooyanFilterParams,
     DEFAULT_PARAMS,
+    load_pooyan_filter_params_from_json,
     pooyan_filter_center,
     pooyan_invert,
     pooyan_fusion,
@@ -54,12 +55,12 @@ def _print_result(name: str, passed: bool, detail: str = ""):
 
 
 def test_default_params_match_csharp():
-    """C# defaults: sigmaX=1.0, alpha=1.4, beta=-0.5, enabled=true"""
+    """Runtime defaults: sigmaX=1.0, alpha=1.4, beta=-0.45, enabled=true"""
     p = DEFAULT_PARAMS
     ok = True
     ok &= _print_result("sigma_x == 1.0", p.sigma_x == 1.0, f"got {p.sigma_x}")
     ok &= _print_result("alpha == 1.4", p.alpha == 1.4, f"got {p.alpha}")
-    ok &= _print_result("beta == -0.5", p.beta == -0.5, f"got {p.beta}")
+    ok &= _print_result("beta == -0.45", p.beta == -0.45, f"got {p.beta}")
     ok &= _print_result("enabled == True", p.enabled is True)
     ok &= _print_result("small_threshold == 280", p.small_threshold == 280)
     ok &= _print_result("preserve_dimensions == False", p.preserve_dimensions is False)
@@ -67,6 +68,12 @@ def test_default_params_match_csharp():
     clamped = PooyanFilterParams(sigma_x=0.01)
     ok &= _print_result("sigma_x clamped to 0.05", clamped.sigma_x == 0.05, f"got {clamped.sigma_x}")
     return ok
+
+
+def test_config_loader_enables_negative_mode():
+    """The shipped FAST config should keep the Pooyan filter inverted."""
+    params = load_pooyan_filter_params_from_json()
+    return _print_result("Config invert == True", params.invert is True, f"got {params.invert}")
 
 
 def test_filter_pipeline_algorithm():
@@ -81,7 +88,7 @@ def test_filter_pipeline_algorithm():
     # Manual C# equivalent in Python
     bgr = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     blurred = cv2.GaussianBlur(bgr, (0, 0), 1.0)
-    expected_bgr = cv2.addWeighted(bgr, 1.4, blurred, -0.5, 0.0)
+    expected_bgr = cv2.addWeighted(bgr, 1.4, blurred, -0.45, 0.0)
     expected_gray = cv2.cvtColor(expected_bgr, cv2.COLOR_BGR2GRAY)
     
     # Our pipeline
@@ -306,16 +313,17 @@ def main():
     
     tests = [
         ("1. Default Parameter Parity (C# match)", test_default_params_match_csharp),
-        ("2. Filter Algorithm Parity", test_filter_pipeline_algorithm),
-        ("3. Small-Image Path Parity", test_small_image_path),
-        ("4. Determinism", test_determinism),
-        ("5. int16 Roundtrip Integrity", test_int16_roundtrip),
-        ("6. Performance", test_performance),
-        ("7. Histogram Similarity", test_histogram_similarity),
-        ("8. Inversion Parity", test_inversion),
-        ("9. Fusion Colormaps", test_fusion_colormaps),
-        ("10. Disabled Passthrough", test_disabled_passthrough),
-        ("11. Volume/Slice Consistency", test_volume_slice_consistency),
+        ("2. Config Loader Negative Mode", test_config_loader_enables_negative_mode),
+        ("3. Filter Algorithm Parity", test_filter_pipeline_algorithm),
+        ("4. Small-Image Path Parity", test_small_image_path),
+        ("5. Determinism", test_determinism),
+        ("6. int16 Roundtrip Integrity", test_int16_roundtrip),
+        ("7. Performance", test_performance),
+        ("8. Histogram Similarity", test_histogram_similarity),
+        ("9. Inversion Parity", test_inversion),
+        ("10. Fusion Colormaps", test_fusion_colormaps),
+        ("11. Disabled Passthrough", test_disabled_passthrough),
+        ("12. Volume/Slice Consistency", test_volume_slice_consistency),
     ]
     
     passed = 0

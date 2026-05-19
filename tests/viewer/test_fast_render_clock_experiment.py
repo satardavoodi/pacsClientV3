@@ -81,6 +81,10 @@ def _build_bridge_stub():
     bridge._fast_clock_tick_interval_ms = 33.0
     bridge._fast_clock_missed_tick_count = 0
     bridge._fast_clock_superseded_count = 0
+    bridge._fast_present_trace_seq = 0
+    bridge._fast_present_trace_pending = {}
+    bridge._fast_present_trace_latest_clock_request_id = None
+    bridge._fast_present_trace_active_request_id = None
 
     bridge._set_slice_calls = []
     bridge._sync_calls = 0
@@ -110,6 +114,9 @@ def _build_bridge_stub():
     bridge._set_slice_impl = _set_slice_impl
 
     bridge._apply_interaction_target = types.MethodType(QtViewerBridge._apply_interaction_target, bridge)
+    bridge._present_trace_pending_snapshot = types.MethodType(QtViewerBridge._present_trace_pending_snapshot, bridge)
+    bridge._present_trace_register_request = types.MethodType(QtViewerBridge._present_trace_register_request, bridge)
+    bridge._present_trace_mark_terminal = types.MethodType(QtViewerBridge._present_trace_mark_terminal, bridge)
     bridge._fast_clock_enabled = types.MethodType(QtViewerBridge._fast_clock_enabled, bridge)
     bridge._request_clocked_slice = types.MethodType(QtViewerBridge._request_clocked_slice, bridge)
     bridge._ensure_render_clock_running = types.MethodType(QtViewerBridge._ensure_render_clock_running, bridge)

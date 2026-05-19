@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v3.0.6 (2026-05-18)
+> **Current Stable Version:** v3.0.7 (2026-05-19)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -38,6 +38,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Download Pipeline](pipelines/download-pipeline.md) â€” Socketâ†’gRPCâ†’Executorâ†’DBâ†’Disk flow
 - [Viewer Pipeline](pipelines/viewer-pipeline.md) â€” DBâ†’ImageIOâ†’ITK filtersâ†’VTKâ†’Display flow
 - [Viewer Docs Hub](viewer/README.md) â€” Canonical FAST vs ADVANCED architecture/debug map
+- [FAST Mammography Regression Playbook](viewer/FAST_MAMMOGRAPHY_REGRESSION_PLAYBOOK_2026-05-19.md) â€” Recovery checklist and non-regression rules for FAST MG display issues
 - [FAST vs ADVANCED Architecture](viewer/FAST_vs_ADVANCED_ARCHITECTURE.md) â€” Render-owner truth and code-backed split
 - [ZetaBoost Pipeline Analysis](pipelines/ZETABOOST_PIPELINE_ANALYSIS.md) â€” Multi-lane preload engine design
 - [Multi-Pipeline Concurrent Architecture](pipelines/MULTI_PIPELINE_CONCURRENT_ARCHITECTURE.md) â€” Concurrent pipeline design (proposed)
