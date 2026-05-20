@@ -1489,10 +1489,10 @@ def ImageQualityAnalyzer(
 
         encoded_str = encoded_bytes.decode("utf-8")  # <-- REAL BASE64
 
-        # GapGPT requires raw base64 only, NOT data:image/jpeg;base64,
+        data_url = f"data:image/jpeg;base64,{encoded_str}"
         user_content.append({
-            "type": "image",
-            "image": encoded_str
+            "type": "image_url",
+            "image_url": {"url": data_url}
         })
 
     # -------------------------

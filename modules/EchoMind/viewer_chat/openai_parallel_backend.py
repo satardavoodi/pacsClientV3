@@ -116,7 +116,8 @@ def ImageQualityAnalyzer(
     if image_path:
         with open(image_path, "rb") as fh:
             encoded = base64.b64encode(fh.read()).decode("utf-8")
-        user_content.append({"type": "image", "image": encoded})
+        data_url = f"data:image/jpeg;base64,{encoded}"
+        user_content.append({"type": "image_url", "image_url": {"url": data_url}})
     prompt = (
         "You are EchoMind Image Quality Analyzer. Inspect the radiology image, identify artifacts, "
         "estimate likely causes, state certainty, and propose practical corrective actions."

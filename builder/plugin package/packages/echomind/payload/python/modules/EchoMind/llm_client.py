@@ -198,6 +198,8 @@ def _coerce_openai_content(content: Any) -> Any:
             else:
                 data_url = f"data:image/jpeg;base64,{raw}"
             out.append({"type": "image_url", "image_url": {"url": data_url}})
+            continue
+        out.append(part)
     return out or content
 
 
@@ -332,8 +334,9 @@ def chat_completion(
         "Content-Type": "application/json",
     }
 
+    payload["messages"] = _coerce_messages_for_openai(messages)
+
     if session.provider == "openai":
-        payload["messages"] = _coerce_messages_for_openai(messages)
         headers = _openai_headers(session)
         if reasoning_effort:
             payload["reasoning_effort"] = str(reasoning_effort).strip()

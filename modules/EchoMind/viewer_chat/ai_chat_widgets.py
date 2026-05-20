@@ -3998,6 +3998,8 @@ class UnifiedComposer(QWidget):
 
     def _on_mic_clicked(self):
         if self._mic_mode == "record":
+            if not self._check_microphone_available():
+                return
             self._start_record()
             return
         if self._mic_mode == "confirm":
@@ -4005,6 +4007,62 @@ class UnifiedComposer(QWidget):
             self._finish_record_and_transcribe()
             self._restore_mic_after_record()
             return
+
+    def _check_microphone_available(self) -> bool:
+        from PySide6.QtWidgets import QMessageBox
+
+        try:
+            devices = sd.query_devices()
+            if not devices:
+                QMessageBox.warning(
+                    self,
+                    "Microphone Not Found",
+                    "No audio input devices detected. Please connect a microphone and try again.",
+                )
+                print("[MIC-CHECK] No audio input devices found")
+                return False
+
+            try:
+                default_input = sd.query_devices(kind='input')
+                if default_input is None:
+                    QMessageBox.warning(
+                        self,
+                        "Microphone Not Available",
+                        "No default input device is configured. Please check your audio settings.",
+                    )
+                    print("[MIC-CHECK] No default input device configured")
+                    return False
+
+                max_input_channels = default_input.get('max_input_channels', 0)
+                if max_input_channels <= 0:
+                    QMessageBox.warning(
+                        self,
+                        "Microphone Inactive",
+                        "The default input device has no active input channels. Please enable your microphone.",
+                    )
+                    print("[MIC-CHECK] Default input device has no active channels")
+                    return False
+
+                print(f"[MIC-CHECK] Microphone OK: {default_input.get('name', 'Unknown device')}")
+                return True
+
+            except Exception as exc:
+                QMessageBox.warning(
+                    self,
+                    "Microphone Error",
+                    f"Unable to access the microphone. Please check your audio settings.\n\nError: {str(exc)}",
+                )
+                print(f"[MIC-CHECK] Failed to query input device: {exc}")
+                return False
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Audio System Error",
+                f"Failed to check audio devices. Please verify your audio drivers are installed.\n\nError: {str(exc)}",
+            )
+            print(f"[MIC-CHECK] Failed to check audio devices: {exc}")
+            return False
 
     def _on_cancel_clicked(self):
         if self._rec_running:
