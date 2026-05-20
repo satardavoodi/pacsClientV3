@@ -73,10 +73,7 @@ class _DMRetryMixin:
             logger.info(f"🟢 [OPERATION SUCCESS] Per-patient pause completed for {study_uid[:40]}...")
 
         except Exception as e:
-            logger.error(f"❌ Error in per-patient pause: {e}")
-            logger.error(f"🔴 [OPERATION FAILURE] Per-patient pause failed for {study_uid[:40]}...: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"❌ [PAUSE] Failed for study=%s: %s", study_uid[:40] if study_uid else 'None', e)
 
     def _on_per_patient_resume(self, study_uid: str) -> None:
         """
@@ -141,10 +138,7 @@ class _DMRetryMixin:
             logger.info(f"🟢 [OPERATION SUCCESS] Per-patient resume completed for {study_uid[:40] if study_uid else 'None'}...")
 
         except Exception as e:
-            logger.error(f"❌ Error in per-patient resume: {e}")
-            logger.error(f"🔴 [OPERATION FAILURE] Per-patient resume failed for {study_uid[:40] if study_uid else 'None'}...: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"❌ [RESUME] Failed for study=%s: %s", study_uid[:40] if study_uid else 'None', e)
 
     def _on_per_patient_cancel(self, study_uid: str) -> None:
         """
@@ -202,10 +196,7 @@ class _DMRetryMixin:
             logger.info(f"🟢 [OPERATION SUCCESS] Per-patient cancel completed for {study_uid[:40] if study_uid else 'None'}...")
 
         except Exception as e:
-            logger.error(f"❌ Error in per-patient cancel: {e}")
-            logger.error(f"🔴 [OPERATION FAILURE] Per-patient cancel failed for {study_uid[:40] if study_uid else 'None'}...: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"❌ [CANCEL] Failed for study=%s: %s", study_uid[:40] if study_uid else 'None', e)
 
     def _on_series_retry(self, study_uid: str, series_number: str = None, series_uid: str = None) -> None:
         """
@@ -436,9 +427,7 @@ class _DMRetryMixin:
                         logger.info(f"ℹ️ [SERIES RETRY-BG] No files at {series_path}")
 
                 except Exception as e:
-                    logger.error(f"❌ [SERIES RETRY-BG] Error: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.exception(f"❌ [SERIES_RETRY_BG] Error: %s", e, extra={"component": "download"})
 
                 # --- Marshal back to the main Qt thread ---
                 def _main_thread_continue():
@@ -464,9 +453,7 @@ class _DMRetryMixin:
             logger.info(f"🔄 [SERIES RETRY] Background I/O thread started for series {_series_key}")
 
         except Exception as e:
-            logger.error(f"❌ [SERIES RETRY] Error in series retry: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"❌ [SERIES_RETRY] Error for series=%s: %s", _series_key if '_series_key' in locals() else 'unknown', e, extra={"component": "download"})
 
     def _on_per_patient_retry(self, study_uid: str) -> None:
         """
@@ -564,9 +551,7 @@ class _DMRetryMixin:
                         shutil.rmtree(study_path)
 
                 except Exception as e:
-                    logger.error(f"❌ [RETRY-BG] Error during file cleanup: {e}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.exception(f"❌ [PATIENT_RETRY_BG] File cleanup error: %s", e, extra={"component": "download"})
 
                 # Marshal back to main Qt thread
                 def _main_thread_continue():
@@ -590,7 +575,4 @@ class _DMRetryMixin:
             logger.info(f"🔄 [RETRY] Background I/O thread started for {study_uid[:40] if study_uid else 'None'}...")
 
         except Exception as e:
-            logger.error(f"❌ Error in per-patient retry: {e}")
-            logger.error(f"🔴 [OPERATION FAILURE] Per-patient retry failed for {study_uid[:40] if study_uid else 'None'}...: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.exception(f"❌ [PATIENT_RETRY] Failed for study=%s: %s", study_uid[:40] if study_uid else 'None', e, extra={"component": "download"})

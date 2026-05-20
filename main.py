@@ -724,6 +724,53 @@ if __name__ == "__main__":
     sys.excepthook = _aipacs_excepthook
     # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
+    # ── S2: Session sentinel — startup banner (additive, observation-only) ───
+    # Emits a single [SESSION_START] line with session_id/version/build/python/pid
+    # plus a matching [SESSION_END] line in the finally: block (see end of file).
+    # All work is guarded so a sentinel failure cannot prevent app startup.
+    _session_start_mono = time.monotonic()
+    _session_id_str = "unknown"
+    _session_version = "unknown"
+    _session_build_mode = "frozen" if getattr(sys, "frozen", False) else "dev"
+    try:
+        import platform as _platform
+        try:
+            _session_id_str = str(_corr_session_id())
+        except Exception:
+            pass
+        try:
+            _pyproj_path = Path(__file__).resolve().parent / "pyproject.toml"
+            if _pyproj_path.exists():
+                if sys.version_info >= (3, 11):
+                    import tomllib as _tomllib  # type: ignore
+                else:
+                    import tomli as _tomllib  # type: ignore
+                _pyproj_data = _tomllib.loads(_pyproj_path.read_text(encoding="utf-8"))
+                _session_version = str(
+                    (_pyproj_data.get("project") or {}).get("version") or "unknown"
+                )
+        except Exception:
+            pass
+        logging.getLogger(__name__).info(
+            "[SESSION_START] session_id=%s version=%s build_mode=%s frozen=%s python=%s os=%s pid=%s crash_hook=installed",
+            _session_id_str,
+            _session_version,
+            _session_build_mode,
+            bool(getattr(sys, "frozen", False)),
+            _platform.python_version(),
+            _platform.platform(),
+            os.getpid(),
+            extra={"component": "ui"},
+        )
+    except Exception as _sentinel_exc:
+        try:
+            logging.getLogger(__name__).warning(
+                "[SESSION_START] sentinel failed to initialize: %s", _sentinel_exc
+            )
+        except Exception:
+            pass
+    # ─────────────────────────────────────────────────────────────────────────
+
     # Migrate data from old flat layout to user_data/ (safe to call multiple times)
     try:
         from PacsClient.utils.data_paths import migrate_legacy_data
@@ -1130,7 +1177,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.0.7")
+    app.setApplicationVersion("3.0.8")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1189,8 +1236,95 @@ if __name__ == "__main__":
     except Exception:
         pass
 
+    # ── S7: Signal handlers (SIGINT/SIGTERM) ─────────────────────────
+    # Best-effort safety net so a Ctrl+C or OS-initiated terminate
+    # still leaves a log marker before the queue listener dies. The
+    # handler also requests Qt to quit gracefully so the normal
+    # [SESSION_END] finally block can still run when possible.
+    try:
+        import signal as _signal_mod
+
+        def _aipacs_signal_handler(_signum, _frame):
+            try:
+                _sig_name = _signal_mod.Signals(_signum).name
+            except Exception:
+                _sig_name = str(_signum)
+            try:
+                _uptime_s = time.monotonic() - _session_start_mono
+                logging.getLogger(__name__).warning(
+                    "[SESSION_SIGNAL] session_id=%s signal=%s uptime_s=%.1f",
+                    _session_id_str, _sig_name, _uptime_s,
+                    extra={"component": "ui"},
+                )
+            except Exception:
+                pass
+            try:
+                QApplication.quit()
+            except Exception:
+                pass
+
+        for _sig in (
+            getattr(_signal_mod, "SIGINT", None),
+            getattr(_signal_mod, "SIGTERM", None),
+        ):
+            if _sig is None:
+                continue
+            try:
+                _signal_mod.signal(_sig, _aipacs_signal_handler)
+            except (ValueError, OSError):
+                # Some signals cannot be registered (e.g. non-main
+                # thread, or unsupported on this OS). Skip silently.
+                pass
+    except Exception as _sig_exc:
+        try:
+            logging.getLogger(__name__).warning(
+                "[SESSION_SIGNAL] handler registration failed: %s",
+                _sig_exc,
+            )
+        except Exception:
+            pass
+    # ─────────────────────────────────────────────────────────────────
+
     window = AppHandler(startup_import_folder=startup_import_folder)
     window.show()
+
+    # ── S6: Global Ctrl+Shift+L session-mark shortcut ────────────────
+    # Lets the user bookmark a moment during a session by pressing
+    # Ctrl+Shift+L. Emits [SESSION_MARK] with an auto-incrementing tag
+    # and current uptime to the diagnostic log. Useful for triaging
+    # "the bug happened right here" without needing dev tools. All
+    # failures swallowed — the shortcut is purely diagnostic.
+    try:
+        from PySide6.QtGui import QShortcut, QKeySequence
+        from PySide6.QtCore import Qt as _Qt_sm
+        _session_mark_counter = [0]  # list-wrapped for closure mutation
+
+        def _emit_session_mark():
+            try:
+                _session_mark_counter[0] += 1
+                _mark_uptime_s = time.monotonic() - _session_start_mono
+                logging.getLogger(__name__).warning(
+                    "[SESSION_MARK] tag=%d uptime_s=%.1f session_id=%s",
+                    _session_mark_counter[0], _mark_uptime_s, _session_id_str,
+                    extra={"component": "ui"},
+                )
+            except Exception:
+                pass
+
+        _session_mark_shortcut = QShortcut(QKeySequence("Ctrl+Shift+L"), window)
+        _session_mark_shortcut.setContext(_Qt_sm.ApplicationShortcut)
+        _session_mark_shortcut.activated.connect(_emit_session_mark)
+        # Hold a strong reference on the app so GC cannot reap it
+        app._aipacs_session_mark_shortcut = _session_mark_shortcut
+    except Exception as _sm_exc:
+        try:
+            logging.getLogger(__name__).warning(
+                "[SESSION_MARK] shortcut registration failed: %s", _sm_exc,
+                extra={"component": "ui"},
+            )
+        except Exception:
+            pass
+    # ─────────────────────────────────────────────────────────────────
 
     # â”€â”€ Diagnostic mode (AIPACS_DIAG_MODE=1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if os.environ.get("AIPACS_DIAG_MODE") == "1":
@@ -1229,6 +1363,54 @@ if __name__ == "__main__":
             shutdown_decode_service()
         except Exception:
             pass
+        # ── S5: DB WAL checkpoint guard on shutdown ──────────────────────
+        # SQLite in WAL mode (see database/core.py) accumulates pages in
+        # the -wal sidecar file until a checkpoint runs. A crash / signal
+        # mid-session can leave a multi-megabyte -wal file that grows
+        # across restarts. A best-effort TRUNCATE checkpoint here keeps
+        # the on-disk footprint stable. Errors are swallowed so a locked
+        # DB or missing file cannot block shutdown.
+        try:
+            from PacsClient.utils.data_paths import DATABASE_FILE as _db_file
+            if _db_file.exists():
+                import sqlite3 as _sqlite_shutdown
+                _conn = _sqlite_shutdown.connect(str(_db_file), timeout=2.0)
+                try:
+                    _conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+                    _conn.commit()
+                finally:
+                    _conn.close()
+                logging.getLogger(__name__).info(
+                    "[SESSION_END] wal_checkpoint=ok db=%s",
+                    _db_file.name,
+                    extra={"component": "ui"},
+                )
+        except Exception as _wal_exc:
+            try:
+                logging.getLogger(__name__).warning(
+                    "[SESSION_END] wal_checkpoint failed: %s", _wal_exc,
+                    extra={"component": "ui"},
+                )
+            except Exception:
+                pass
+        # ─────────────────────────────────────────────────────────────────
+        # ── S2: Session sentinel — end-of-session summary ────────────────
+        # Emitted BEFORE shutdown_diagnostic_logging() so the queued log
+        # listener is still alive to flush it. Guarded so a sentinel
+        # failure cannot prevent normal shutdown.
+        try:
+            _session_uptime_s = time.monotonic() - _session_start_mono
+            logging.getLogger(__name__).info(
+                "[SESSION_END] session_id=%s uptime_s=%.1f version=%s build_mode=%s",
+                _session_id_str,
+                _session_uptime_s,
+                _session_version,
+                _session_build_mode,
+                extra={"component": "ui"},
+            )
+        except Exception:
+            pass
+        # ─────────────────────────────────────────────────────────────────
         # Game-changer #1: flush async log listener before process exit so
         # no records are lost to the queue on shutdown.
         try:

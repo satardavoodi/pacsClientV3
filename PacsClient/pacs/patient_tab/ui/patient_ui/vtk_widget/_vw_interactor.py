@@ -170,6 +170,11 @@ class _QtBridgeStyle:
             pw = getattr(vw, 'patient_widget', None)
             toolbar = getattr(pw, 'toolbar_manager', None) if pw is not None else None
             if toolbar is not None:
+                # Sync tool (TARGET) must NOT auto-return to Stack —
+                # it stays active until the user explicitly disables it.
+                ta = getattr(toolbar, 'tool_access', None)
+                if ta is not None and toolbar.tool_selected == getattr(ta, 'TARGET', None):
+                    return
                 toolbar.tool_selected = None
                 toolbar.handle_buttons_checked()
                 from PySide6.QtCore import QTimer

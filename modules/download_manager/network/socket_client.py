@@ -85,6 +85,41 @@ def _is_transient_connection_drop(exc_or_message: Any) -> bool:
         or "connection reset" in text
     )
 
+
+_SERIES_FORCE_BATCH_ONE_MODALITIES = {
+    "CR",  # Computed radiography
+    "DX",  # Digital radiography
+    "MG",  # Mammography
+    "PX",  # Panoramic X-Ray
+    "RADIOLOGY",
+    "XR",
+    "X-RAY",
+    "XRAY",
+}
+
+_SERIES_FORCE_BATCH_ONE_DESC_KEYWORDS = (
+    "PANORAM",
+    "MAMMO",
+    "MAMMOGRAPH",
+    "RADIOGRAPH",
+    "X-RAY",
+    "XRAY",
+)
+
+
+def _should_force_single_instance_batches(series_info: SeriesInfo) -> bool:
+    """Return True when a series should download one image per batch."""
+    modality_raw = (getattr(series_info, "modality", "") or "").strip().upper()
+    if modality_raw in {"CT", "MR", "MRI"}:
+        return False
+    if modality_raw in _SERIES_FORCE_BATCH_ONE_MODALITIES:
+        return True
+
+    desc_raw = (getattr(series_info, "series_description", "") or "").strip().upper()
+    if not desc_raw:
+        return False
+    return any(token in desc_raw for token in _SERIES_FORCE_BATCH_ONE_DESC_KEYWORDS)
+
 # Singleton health monitor instance (shared across all socket clients)
 _health_monitor: Optional[ConnectionHealthMonitor] = None
 
@@ -998,6 +1033,12 @@ class SocketDicomClient:
         
         # Calculate batches (adaptive + configurable cap)
         batch_size = min(self._adaptive_batch_size, self._batch_size_cap)
+        if _should_force_single_instance_batches(series_info):
+            batch_size = 1
+            logger.info(
+                "📦 Using single-image batches for large-frame modality/series type "
+                f"(series={series_number}, modality={series_info.modality or 'N/A'})"
+            )
         min_batch_size = 1
         total_batches = (expected_count + batch_size - 1) // batch_size
         downloaded_count = 0

@@ -994,8 +994,6 @@ class AppHandler(QDialog):
             self.deleteLater()
         except Exception as e:
             logger.exception("Error opening main window: %s", e)
-            import traceback
-            traceback.print_exc()
             # Keep login window open if there's an error
             QMessageBox.critical(self, "Error", f"Failed to open main window: {str(e)}")
 

@@ -75,9 +75,9 @@ class VoiceWidget(QWidget):
         self._audio_q: queue.Queue[np.ndarray] = queue.Queue()
         self._audio_frames: list[np.ndarray] = []
 
-        self._sample_rate = 44100
+        self._sample_rate = 16000
         self._channels = 1
-        self._dtype = "float32"
+        self._dtype = "int16"
 
         self._file_path: Path | None = None
 

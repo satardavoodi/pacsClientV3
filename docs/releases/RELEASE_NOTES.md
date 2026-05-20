@@ -1,9 +1,26 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.0.7 (2026-05-19)
-**Previous Stable:** v3.0.6 (2026-05-18)
-**Release Date:** 2026-05-19
+**Current Stable Version:** v3.0.8 (2026-05-20)
+**Previous Stable:** v3.0.7 (2026-05-19)
+**Release Date:** 2026-05-20
 **Branch:** beta-version
+
+---
+
+## v3.0.8 (2026-05-20) - Hardening rollup: DM retry, socket client, worker pool, UI fixes
+
+### Summary
+
+Hardening release on top of v3.0.7 incorporating all accumulated changes since the last stable checkpoint.
+
+### Included
+
+- DM retry / queue / worker-pool hardening
+- Socket client improvements
+- Viewer fast-container and interactor fixes
+- Home panel / search service updates
+- Plugin package mirrors synced
+- Config and DB updates
 
 ---
 

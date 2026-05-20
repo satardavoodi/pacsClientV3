@@ -165,9 +165,12 @@ class HomeSearchService:
             QApplication.processEvents()
             await asyncio.sleep(0)
 
-            # Build search criteria (drop date filters for local)
+            # Build search criteria
             search_data = home.patient_search_widget.get_search_data()
             search_data_local = search_data.copy()
+            
+            # When searching by Patient ID, always ignore date filters (Patient ID is unique)
+            # Otherwise, drop date filters for local search (local DB should return all local studies)
             search_data_local['date_from'] = None
             search_data_local['date_to'] = None
 
@@ -477,23 +480,38 @@ class HomeSearchService:
 
     @staticmethod
     def _convert_search_data_to_socket_params(search_data: dict) -> dict:
-        """Map UI search data dict to Socket API parameter dict."""
+        """Map UI search data dict to Socket API parameter dict.
+        
+        When searching by Patient ID:
+        - Use exact match (no wildcards)
+        - Ignore date filters (Patient ID is unique)
+        - Set limit=1 to get the exact match
+        """
         socket_params = {
             "limit": 100,
             "offset": 0,
             "include_study_count": True,
             "include_latest_study": True,
         }
+        
+        # When searching by Patient ID, use exact match and ignore dates
         if search_data.get('patient_id'):
             socket_params['patient_id'] = search_data['patient_id']
+            # For Patient ID search, limit to 1 result (exact match expected)
+            socket_params['limit'] = 1
+            # Patient ID is unique, so ignore date filters entirely
+        else:
+            # For other searches, include date filters
+            if search_data.get('date_from'):
+                socket_params['date_from'] = search_data['date_from']
+            if search_data.get('date_to'):
+                socket_params['date_to'] = search_data['date_to']
+        
         if search_data.get('patient_name'):
             socket_params['patient_name'] = search_data['patient_name']
         if search_data.get('modality'):
             socket_params['modality'] = search_data['modality']
-        if search_data.get('date_from'):
-            socket_params['date_from'] = search_data['date_from']
-        if search_data.get('date_to'):
-            socket_params['date_to'] = search_data['date_to']
+        
         return socket_params
 
     @staticmethod

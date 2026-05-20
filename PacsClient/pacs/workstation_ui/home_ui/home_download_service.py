@@ -166,8 +166,7 @@ class HomeDownloadService:
             return dm
 
         except Exception as exc:
-            print(f"[DM] Error creating download manager tab: {exc}")
-            import traceback; traceback.print_exc()
+            _logger.exception("[DM] Error creating download manager tab: %s", exc)
             return None
 
     # ------------------------------------------------------------------
@@ -520,7 +519,11 @@ class HomeDownloadService:
                 study_uid, _has_workers, connection_key,
             )
         except Exception as exc:
-            print(f"[DM] Error connecting signals: {exc}")
+            _logger.exception(
+                "[DM] Error connecting signals for study=%s: %s",
+                study_uid,
+                exc,
+            )
 
     # ------------------------------------------------------------------
     # Lifecycle: disconnect / cleanup

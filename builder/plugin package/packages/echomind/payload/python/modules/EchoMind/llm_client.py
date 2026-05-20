@@ -45,7 +45,7 @@ def _ensure_socks_proxy_support(proxies: "dict[str, str] | None") -> None:
     try:
         import socks  # type: ignore  # noqa: F401
     except Exception as exc:
-        raise LLMError(
+        raise LLMAPIError(
             "SOCKS5 proxy is selected, but SOCKS support is unavailable in this Python environment. "
             "Install requests[socks] / PySocks for proxy-based OpenAI connections."
         ) from exc

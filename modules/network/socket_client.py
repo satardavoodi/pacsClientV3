@@ -25,7 +25,7 @@ class PatientListSocketClient:
         self.timeout = timeout if timeout is not None else config.get_connection_timeout()
         self.socket = None
         self.connected = False
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         
     def connect(self) -> bool:
         """Connect to the Socket server"""

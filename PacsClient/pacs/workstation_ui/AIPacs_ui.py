@@ -1,4 +1,5 @@
 from functools import partial
+import logging
 
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
                             QSize, Qt)
@@ -18,6 +19,9 @@ from .theme_ui import ThemeCustomizationDialog
 from .user_manual_widget import UserManualWidget
 
 
+logger = logging.getLogger(__name__)
+
+
 def relayout_all(widget: QWidget):
     widget.adjustSize()
     widget.updateGeometry()
@@ -30,7 +34,7 @@ def relayout_all(widget: QWidget):
                 layout.invalidate()
                 layout.activate()
         except Exception as e:
-            print(f"[layout skip]: {child=} {e=}")
+            logger.debug("[layout skip] child=%r error=%s", child, e)
 
 
 class ControlPanelInterface(QMainWindow):
@@ -213,7 +217,7 @@ class ControlPanelWindow(object):
                 self.centerMenuContainer.show()
                 self.centerMenuPages.setCurrentWidget(target)
         except Exception as e:
-            print(f"Error toggling center menu: {e}")
+            logger.exception("Error toggling center menu: %s", e)
 
     def _toggle_menu(self):
         """Toggle left menu between collapsed and expanded."""
@@ -246,7 +250,7 @@ class ControlPanelWindow(object):
                     btn.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
                 btn.setStyleSheet(self._left_menu_button_style())
             except Exception as e:
-                print(f"Error applying menu state: {e}")
+                logger.exception("Error applying menu state: %s", e)
 
     def _create_menu_button(self, parent, name, icon_file, text="", tooltip="", *, register_left_menu: bool = False):
         """Create a styled menu button with icon."""
@@ -796,7 +800,7 @@ class ControlPanelWindow(object):
             if hasattr(self.data_analysis_widget, "refresh_data"):
                 self.data_analysis_widget.refresh_data(force_storage_refresh=True)
         except Exception as e:
-            print(f"Error opening data analysis dashboard: {e}")
+            logger.exception("Error opening data analysis dashboard: %s", e)
         
     def open_download_manager(self):
         """Open download manager tab"""
@@ -804,7 +808,7 @@ class ControlPanelWindow(object):
             if hasattr(self, 'home_widget') and hasattr(self.home_widget, 'open_download_manager'):
                 self.home_widget.open_download_manager()
         except Exception as e:
-            print(f"Error opening download manager: {str(e)}")
+            logger.exception("Error opening download manager: %s", e)
             
     def open_web_browser(self):
         """Open web browser tab"""
@@ -812,7 +816,7 @@ class ControlPanelWindow(object):
             if hasattr(self, 'home_widget') and hasattr(self.home_widget, 'open_web_browser'):
                 self.home_widget.open_web_browser()
         except Exception as e:
-            print(f"Error opening web browser: {str(e)}")
+            logger.exception("Error opening web browser: %s", e)
     
     def open_education_module(self):
         """Open education module in a new tab"""
@@ -820,9 +824,7 @@ class ControlPanelWindow(object):
             if hasattr(self, 'home_widget') and hasattr(self.home_widget, 'open_education_module'):
                 self.home_widget.open_education_module()
         except Exception as e:
-            print(f"Error opening education module: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error opening education module: %s", e)
 
     def open_printing_module(self):
         """Open printing module in a new tab"""
@@ -830,9 +832,7 @@ class ControlPanelWindow(object):
             if hasattr(self, 'home_widget') and hasattr(self.home_widget, 'open_printing_module'):
                 self.home_widget.open_printing_module()
         except Exception as e:
-            print(f"Error opening printing module: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error opening printing module: %s", e)
     
     def open_education_page(self):
         """Open education page with lazy loading"""
@@ -854,6 +854,4 @@ class ControlPanelWindow(object):
             # Switch to education page
             self.mainPages.setCurrentIndex(5)
         except Exception as e:
-            print(f"Error opening education page: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            logger.exception("Error opening education page: %s", e)

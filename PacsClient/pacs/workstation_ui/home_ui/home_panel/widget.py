@@ -112,8 +112,6 @@ from ..home_search_service import HomeSearchService
 from ..home_widget_utils import is_widget_alive
 from ..home_module_tabs import activate_or_create_module_tab
 
-warnings.simplefilter("error")
-
 
 class SourceOfPatientLoad:
     DB = 'db'  # local

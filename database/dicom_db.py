@@ -854,9 +854,13 @@ def search_patients_local(search_data: dict) -> list:
 
         params = []
 
+        # When searching by Patient ID, use exact match and ignore date filters
+        has_patient_id_search = bool(search_data.get('patient_id'))
+
         if search_data.get('patient_id'):
-            query += " AND LOWER(p.patient_id) LIKE LOWER(?)"
-            params.append(f"%{search_data['patient_id']}%")
+            # Exact match for Patient ID (no LIKE, no wildcards)
+            query += " AND LOWER(p.patient_id) = LOWER(?)"
+            params.append(search_data['patient_id'])
 
         if search_data.get('patient_name'):
             query += " AND LOWER(p.patient_name) LIKE LOWER(?)"
@@ -870,13 +874,15 @@ def search_patients_local(search_data: dict) -> list:
             query += " AND LOWER(s.study_id) LIKE LOWER(?)"
             params.append(f"%{search_data['study_id']}%")
 
-        if search_data.get('date_from') and search_data['date_from'] is not None:
-            query += " AND s.study_date >= ?"
-            params.append(search_data['date_from'])
+        # Skip date filters when searching by Patient ID (Patient ID is unique, dates are irrelevant)
+        if not has_patient_id_search:
+            if search_data.get('date_from') and search_data['date_from'] is not None:
+                query += " AND s.study_date >= ?"
+                params.append(search_data['date_from'])
 
-        if search_data.get('date_to') and search_data['date_to'] is not None:
-            query += " AND s.study_date <= ?"
-            params.append(search_data['date_to'])
+            if search_data.get('date_to') and search_data['date_to'] is not None:
+                query += " AND s.study_date <= ?"
+                params.append(search_data['date_to'])
 
         if search_data.get('study_description'):
             query += " AND LOWER(s.study_description) LIKE LOWER(?)"

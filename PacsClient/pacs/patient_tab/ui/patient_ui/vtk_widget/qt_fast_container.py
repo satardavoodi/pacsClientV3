@@ -19,12 +19,16 @@ Design constraints (see docs/plans/performance/FAST_2D_CELL_SEPARATION_PLAN.md):
 from __future__ import annotations
 
 import logging
+import time as _time
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
 from PySide6.QtCore import Qt, QTimer
 
 from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
 from modules.viewer.widgets import ViewportSpinner
-from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import _SERIES_DROP_MIME
+from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
+    _SERIES_DROP_MIME,
+    _SYNC_MOVE_THROTTLE_MS,
+)
 from PacsClient.utils.runtime_correlation import (
     now_mono_ms as _corr_now_mono_ms,
     record_event as _corr_record_event,
@@ -193,6 +197,20 @@ class QtFastContainer(QWidget):
         self._qt_bridge_active: bool = False   # True once QtViewerBridge is wired
         self._is_fast_mode: bool = True
         self._is_placeholder: bool = False      # set by _create_lightweight_vtk_placeholder
+
+        # ── Sync-point protocol (mirrors VTKWidget / _vw_interactor.py) ──────
+        # Required by _pw_sync._register_sync_viewers, toggle_sync_point,
+        # _register_sync_viewers_pipeline_only, and _wire_lock_sync_callbacks.
+        self._sync_viewer_id = None
+        self._sync_enabled = False
+        self._sync_dragging = False
+        self._sync_manager = None
+        self._sync_observer_ids = []       # unused in Qt-bridge path; here for parity
+        self._sync_prev_style = None       # unused in Qt-bridge path; here for parity
+        self._sync_style = None            # unused in Qt-bridge path; here for parity
+        self._sync_last_move_time = 0.0    # throttle for mouseMoveEvent sync drag
+        self._target_cursor = None         # lazy-created in _set_target_cursor
+        self._on_slice_changed_cb = None   # set by _wire_lock_sync_callbacks
 
         # ── Lazy-loader placeholders (FAST mode never uses these) ────────────
         self._lazy_loader = None
@@ -804,6 +822,185 @@ class QtFastContainer(QWidget):
             self._layout_empty_drop_hint_label()
         if self._drop_overlay is not None:
             self._drop_overlay.setGeometry(self.rect())
+
+    # ── Sync-point protocol (mirrors _vw_interactor.py Qt-bridge path) ───────
+
+    def get_sync_viewer_id(self) -> str:
+        """Return a stable viewer ID for the sync pipeline."""
+        if self._sync_viewer_id:
+            return self._sync_viewer_id
+        if self.id_vtk_widget is not None:
+            return f"viewer_{self.id_vtk_widget}"
+        return f"viewer_{id(self)}"
+
+    def enable_sync_point(self, sync_manager, viewer_id=None) -> None:
+        """Enable sync interactor on this FAST viewer cell.
+
+        Mirrors _vw_interactor.py::enable_sync_point for the Qt-bridge path.
+        Stores the sync manager reference, shows the target cursor, and
+        activates sync mode on the embedded QtSliceViewer when loaded.
+        """
+        self._sync_manager = sync_manager
+        self._sync_viewer_id = viewer_id or self.get_sync_viewer_id()
+        self._sync_enabled = True
+        logger.info(
+            "[SYNC-ENABLE] viewer=%s  backend=QtFastContainer  active=%s",
+            self._sync_viewer_id, self._qt_bridge_active,
+        )
+        if not self._qt_bridge_active:
+            return
+        self._set_target_cursor(True)
+        qv = getattr(self, '_qt_viewer_widget', None)
+        if qv is not None:
+            try:
+                qv.set_sync_mode(True)
+            except Exception:
+                pass
+
+    def disable_sync_point(self) -> None:
+        """Disable sync interactor on this FAST viewer cell."""
+        self._sync_enabled = False
+        self._sync_dragging = False
+        try:
+            iv = self.image_viewer
+            if iv is not None and hasattr(iv, 'hide_sync_point'):
+                iv.hide_sync_point()
+        except Exception:
+            pass
+        self._set_target_cursor(False)
+        self._sync_manager = None
+        qv = getattr(self, '_qt_viewer_widget', None)
+        if qv is not None:
+            try:
+                qv.set_sync_mode(False)
+            except Exception:
+                pass
+
+    def _set_target_cursor(self, enabled: bool) -> None:
+        """Show or hide the red target cursor on this container and its child viewer."""
+        try:
+            from PySide6.QtGui import QPixmap, QPainter, QColor, QCursor
+            if not enabled:
+                self.unsetCursor()
+                qv = getattr(self, '_qt_viewer_widget', None)
+                if qv is not None:
+                    try:
+                        qv.unsetCursor()
+                    except Exception:
+                        pass
+                return
+            if self._target_cursor is None:
+                size = 16
+                pixmap = QPixmap(size, size)
+                pixmap.fill(Qt.transparent)
+                painter = QPainter(pixmap)
+                painter.setRenderHint(QPainter.Antialiasing, True)
+                painter.setBrush(QColor(220, 38, 38))
+                painter.setPen(QColor(220, 38, 38))
+                radius = 4
+                center = size // 2
+                painter.drawEllipse(center - radius, center - radius, radius * 2, radius * 2)
+                painter.end()
+                self._target_cursor = QCursor(pixmap, center, center)
+            self.setCursor(self._target_cursor)
+            qv = getattr(self, '_qt_viewer_widget', None)
+            if qv is not None:
+                try:
+                    qv.setCursor(self._target_cursor)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def apply_sync_point_from_manager(self, world_pos, adjust_slice: bool = True) -> None:
+        """Apply an incoming sync point from the sync manager to this viewer.
+
+        Delegates to image_viewer (QtViewerBridge) which handles both
+        the visual overlay and optional slice navigation.
+        """
+        try:
+            iv = self.image_viewer
+            if iv is not None and hasattr(iv, 'set_sync_point'):
+                iv.set_sync_point(world_pos, adjust_slice=adjust_slice)
+        except Exception:
+            pass
+
+    def _apply_sync_point(self, world_pos) -> None:
+        """Apply a sync click from this viewer and broadcast to sync manager.
+
+        Mirrors _vw_interactor._apply_sync_point for the FAST path.
+        Shows the red dot on this viewer and notifies all other viewers.
+        """
+        iv = self.image_viewer
+        if iv is None:
+            return
+        logger.info(
+            "[SYNC-SOURCE] viewer=%s  world_pos=(%.4f, %.4f, %.4f)",
+            self._sync_viewer_id,
+            world_pos[0], world_pos[1], world_pos[2],
+        )
+        try:
+            iv.set_sync_point(world_pos, adjust_slice=False)
+        except Exception:
+            pass
+        if self._sync_manager is not None:
+            try:
+                self._sync_manager.set_active_point(world_pos)
+                self._sync_manager.notify_cursor_moved(self._sync_viewer_id, world_pos)
+            except Exception:
+                pass
+
+    # ── Mouse event handlers (sync-click path) ────────────────────────────
+    # QtSliceViewer.mousePressEvent / mouseMoveEvent / mouseReleaseEvent
+    # forward their events to self.parent() when _sync_mode_active is True.
+    # In FAST mode self.parent() is this QtFastContainer, so we must handle
+    # the events here — mirrors the Qt-bridge branch in _vw_interactor.py.
+
+    def mousePressEvent(self, event) -> None:
+        """Handle left-click forwarded from QtSliceViewer when sync mode is active."""
+        if (self._sync_enabled
+                and self.image_viewer is not None
+                and event.button() == Qt.MouseButton.LeftButton):
+            pos = event.position()
+            world_pos = None
+            try:
+                world_pos = self.image_viewer.pick_world_point(pos.x(), pos.y())
+            except Exception:
+                pass
+            if world_pos is not None:
+                self._sync_dragging = True
+                self._apply_sync_point(world_pos)
+                event.accept()
+                return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        """Handle left-drag forwarded from QtSliceViewer when sync mode is active."""
+        if (self._sync_enabled
+                and self._sync_dragging
+                and self.image_viewer is not None):
+            now = _time.time() * 1000.0
+            if (now - self._sync_last_move_time) >= _SYNC_MOVE_THROTTLE_MS:
+                self._sync_last_move_time = now
+                pos = event.position()
+                world_pos = None
+                try:
+                    world_pos = self.image_viewer.pick_world_point(pos.x(), pos.y())
+                except Exception:
+                    pass
+                if world_pos is not None:
+                    self._apply_sync_point(world_pos)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        """Handle left-release forwarded from QtSliceViewer when sync mode is active."""
+        if self._sync_enabled and event.button() == Qt.MouseButton.LeftButton:
+            self._sync_dragging = False
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
     def cleanup(self) -> None:

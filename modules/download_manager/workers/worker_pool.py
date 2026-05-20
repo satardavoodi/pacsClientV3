@@ -356,9 +356,7 @@ class WorkerPool:
                 return True
             
             except Exception as e:
-                logger.error(f"❌ Error stopping worker: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.exception(f"❌ [WORKER_STOP] Error for study=%s: %s", study_uid[:40] if study_uid else 'None', e, extra={"component": "download"})
                 
                 # Clean up even on error to prevent leaks
                 self.active_workers.pop(worker_id_to_stop, None)

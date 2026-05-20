@@ -87,10 +87,8 @@ class _DMQueueMixin:
                 logger.info(f"   📊 Total Images: {task.total_image_count}")
 
             except Exception as e:
-                logger.error(f"   ❌ Error adding download: {e}")
+                logger.exception(f"   ❌ [QUEUE_ADD] Error for study=%s: %s", study_uid[:40] if study_uid else 'None', e, extra={"component": "download"})
                 skipped_studies.append((study_uid, patient_name, str(e)))
-                import traceback
-                traceback.print_exc()
 
         logger.info("-" * 100)
         logger.info(f"✅ BATCH SUMMARY: Added {len(added_studies)} studies to download queue")
