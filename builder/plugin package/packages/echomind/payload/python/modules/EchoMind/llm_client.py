@@ -215,6 +215,19 @@ def _coerce_messages_for_openai(messages: list[dict[str, Any]]) -> list[dict[str
     return coerced
 
 
+def _messages_need_content_coercion(messages: list[dict[str, Any]]) -> bool:
+    for message in messages:
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part in content:
+            if not isinstance(part, dict):
+                continue
+            if str(part.get("type") or "").strip().lower() == "image":
+                return True
+    return False
+
+
 def _extract_content_from_body(body: dict[str, Any]) -> str:
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -334,7 +347,8 @@ def chat_completion(
         "Content-Type": "application/json",
     }
 
-    payload["messages"] = _coerce_messages_for_openai(messages)
+    if session.provider == "openai" or _messages_need_content_coercion(messages):
+        payload["messages"] = _coerce_messages_for_openai(messages)
 
     if session.provider == "openai":
         headers = _openai_headers(session)
