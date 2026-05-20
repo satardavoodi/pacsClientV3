@@ -237,6 +237,7 @@ class CornerAnnotations:
         self.slice_info: str = ""          # e.g. "Slice: 45/120"
         self.slice_thickness: str = ""     # e.g. "Thk: 3.0mm"
         self.image_size: str = ""          # e.g. "512 x 512"
+        self.scale_info: str = ""          # e.g. "Scale:1.59"
 
         # Bottom-right: Display info
         self.window_level: str = ""        # e.g. "W:400 L:40"
@@ -250,6 +251,7 @@ class CornerAnnotations:
         window_width: float = 0,
         window_center: float = 0,
         zoom_pct: float = 100.0,
+        scale_value: Optional[float] = None,
     ):
         """Update annotation text from metadata dict."""
         if metadata is None:
@@ -266,7 +268,7 @@ class CornerAnnotations:
         study = metadata.get("study", {}) or {}
         series = metadata.get("series", {}) or {}
         self.study_date = str(study.get("study_date", "") or "")
-        self.series_time = str(series.get("series_time", "") or "")
+        self.series_time = str(series.get("series_time", "") or study.get("study_time", "") or "")
         self.series_name = str(series.get("series_number", "") or "")
         self.series_desc = str(series.get("series_description", "") or "")
         self.hospital_name = str(study.get("institution_name", "") or "")
@@ -278,14 +280,17 @@ class CornerAnnotations:
             thk = inst.get("slice_thickness", "")
             rows = inst.get("rows", "")
             cols = inst.get("columns", "")
-            self.slice_thickness = f"Thk: {thk}mm" if thk else ""
-            self.image_size = f"{cols} x {rows}" if rows and cols else ""
+            self.slice_thickness = f"Thk:{thk} mm" if thk else ""
+            self.image_size = f"Size:{rows} * {cols}" if rows and cols else ""
         else:
             self.slice_thickness = ""
             self.image_size = ""
 
-        self.slice_info = f"Slice: {slice_index + 1}/{total_slices}" if total_slices > 0 else ""
-        self.window_level = f"W:{int(window_width)} L:{int(window_center)}"
+        self.slice_info = f"{slice_index + 1} / {total_slices}" if total_slices > 0 else ""
+        self.window_level = f"WW:{int(window_width)} WL:{int(window_center)}"
+        if scale_value is None:
+            scale_value = float(zoom_pct) / 100.0 if zoom_pct else 0.0
+        self.scale_info = f"Scale:{float(scale_value):.2f}" if scale_value else ""
         self.zoom_info = f"Zoom: {zoom_pct:.0f}%"
 
 
@@ -1999,14 +2004,14 @@ class QtSliceViewer(QWidget):
 
         # Top-right: Study/Series info
         top_right_lines = [
-            s for s in [ann.hospital_name, ann.study_date, ann.series_time, ann.series_name, ann.series_desc]
+            s for s in [ann.slice_info, ann.study_date, ann.series_time, ann.series_name, ann.series_desc]
             if s
         ]
         self._draw_text_block_right(painter, fm, top_right_lines, margin, margin, line_height, padding)
 
         # Bottom-left: Image info
         bottom_left_lines = [
-            s for s in [ann.slice_info, ann.slice_thickness, ann.image_size]
+            s for s in [ann.slice_thickness, ann.image_size, ann.scale_info, ann.window_level]
             if s
         ]
         y_bottom = self.height() - margin - len(bottom_left_lines) * line_height
@@ -2014,7 +2019,7 @@ class QtSliceViewer(QWidget):
 
         # Bottom-right: Display info
         bottom_right_lines = [
-            s for s in [ann.window_level, ann.zoom_info]
+            s for s in [ann.hospital_name]
             if s
         ]
         y_bottom_r = self.height() - margin - len(bottom_right_lines) * line_height

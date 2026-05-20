@@ -1839,9 +1839,43 @@ class QtViewerBridge:
 
     # ── Private ────────────────────────────────────────────────────────
 
+    def _build_annotation_metadata(self) -> Dict[str, Any]:
+        metadata = self.metadata if isinstance(self.metadata, dict) else {}
+        fixed = self.metadata_fixed if isinstance(self.metadata_fixed, dict) else {}
+
+        annotation_metadata: Dict[str, Any] = dict(metadata)
+
+        patient = dict(annotation_metadata.get("patient", {}) or {})
+        study = dict(annotation_metadata.get("study", {}) or {})
+        series = dict(annotation_metadata.get("series", {}) or {})
+
+        if fixed:
+            if not patient.get("patient_name"):
+                patient["patient_name"] = fixed.get("patient_name", "")
+            if not patient.get("patient_id"):
+                patient["patient_id"] = fixed.get("patient_id", "")
+            if not patient.get("patient_age"):
+                patient["patient_age"] = fixed.get("patient_age", "")
+            if not patient.get("patient_sex"):
+                patient["patient_sex"] = fixed.get("patient_sex", "")
+
+            if not study.get("study_date"):
+                study["study_date"] = fixed.get("study_date", "")
+            if not study.get("institution_name"):
+                study["institution_name"] = fixed.get("institution_name", fixed.get("hospital_name", ""))
+
+            if not series.get("series_time"):
+                series["series_time"] = fixed.get("study_time", fixed.get("series_time", ""))
+
+        annotation_metadata["patient"] = patient
+        annotation_metadata["study"] = study
+        annotation_metadata["series"] = series
+        return annotation_metadata
+
     def _update_annotations(self, slice_index: int, ww: float, wc: float) -> None:
         """Update corner annotations from metadata."""
         zoom_pct = self.qt_viewer.get_zoom() * 100.0
+        scale_value = float(self.qt_viewer.get_zoom()) * float(getattr(self.qt_viewer, "_display_scale_y", 1.0) or 1.0)
         # Use the widget-level count which respects progressive expected total
         total = self._slice_count
         if self.vtk_widget is not None:
@@ -1850,12 +1884,13 @@ class QtViewerBridge:
             except Exception:
                 pass
         self.qt_viewer.annotations.update_from_metadata(
-            metadata=self.metadata,
+            metadata=self._build_annotation_metadata(),
             slice_index=slice_index,
             total_slices=total,
             window_width=ww,
             window_center=wc,
             zoom_pct=zoom_pct,
+            scale_value=scale_value,
         )
 
     def _on_qt_wl_changed(self, window: float, level: float) -> None:
