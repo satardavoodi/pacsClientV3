@@ -77,6 +77,15 @@ class AIVTKWidget(VTKWidget):
         self.manager_ai_requested.connect(self._on_manager_ai_requested)
         self.apply_boxes_requested.connect(self._on_apply_boxes_requested)
 
+        # --- Eagle Eye on-viewer "Show/Hide Boxes" toggle ---
+        self._ai_boxes_visible = True
+        self._boxes_toggle_btn = None
+        try:
+            if self.type_viewer != TYPES_VIEWER.fixed_viewer:
+                self._create_boxes_toggle_button()
+        except Exception:
+            pass
+
     def _on_processing_status_changed(self, text: str, active: bool):
         imaging_tab = getattr(self.patient_widget, "imaging_tab_ui", None)
         if imaging_tab is None:
@@ -327,7 +336,15 @@ class AIVTKWidget(VTKWidget):
         if not matches:
             return None
         if check_all:
-            return df[df["dicom_full_path"].isin(matches)]
+            # NOTE: df is the AI module's custom CsvTable, whose columns are
+            # CsvColumn objects — they do NOT implement pandas' .isin().
+            # Use an explicit boolean mask (CsvTable.__getitem__ accepts a
+            # list of bools). The previous .isin() call raised AttributeError,
+            # which the caller swallowed — silently dropping every per-box
+            # classification label.
+            match_set = set(matches)
+            mask = [str(v) in match_set for v in df["dicom_full_path"]]
+            return df[mask]
         return df[df["dicom_full_path"] == matches[0]]
 
     def _safe_eval_list(self, value):
@@ -1382,6 +1399,132 @@ class AIVTKWidget(VTKWidget):
                     print('wwww:', type(labels[k]))
                     print('wwww:', eval(labels[k]))
                     return eval(labels[k])
+
+    def _bind_backend_from_metadata(self, metadata, force_vtk=False, source="bind"):
+        """Eagle Eye always renders through the VTK / Advanced pipeline.
+
+        AI detection boxes, overlays and segmentation require the VTK render
+        window, so force the VTK backend for every series bind regardless of
+        the global FAST/Advanced viewer setting.
+        """
+        return super()._bind_backend_from_metadata(metadata, force_vtk=True, source=source)
+
+    def _update_backend_badge(self):
+        """Eagle Eye is always Advanced/VTK — the badge must never show FAST."""
+        try:
+            badge = getattr(self, "_backend_badge", None)
+            if badge is not None:
+                badge.setText("advance")
+                badge.adjustSize()
+                x = max(0, (self.width() - badge.width()) // 2)
+                badge.move(x, 8)
+                badge.raise_()
+        except Exception:
+            pass
+        # Keep the Show/Hide Boxes toggle aligned next to the badge.
+        try:
+            self._position_boxes_toggle_button()
+        except Exception:
+            pass
+
+    def _create_boxes_toggle_button(self):
+        """Create the on-viewer Show/Hide Boxes toggle (Eagle Eye only)."""
+        from PySide6.QtCore import Qt
+        from PySide6.QtWidgets import QPushButton
+        btn = QPushButton("Hide Boxes", self)
+        btn.setObjectName("AIBoxesToggle")
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setFocusPolicy(Qt.NoFocus)
+        btn.setToolTip("Show or hide the AI detection boxes")
+        btn.setStyleSheet(
+            "QPushButton#AIBoxesToggle {"
+            " background: rgba(20, 28, 40, 210); color: #d6e2f0;"
+            " border: 1px solid #3a4a5e; border-radius: 6px;"
+            " padding: 2px 10px; font-size: 11px; }"
+            " QPushButton#AIBoxesToggle:hover {"
+            " background: rgba(42, 58, 80, 235); }"
+        )
+        btn.clicked.connect(self._toggle_ai_boxes)
+        btn.adjustSize()
+        btn.show()
+        btn.raise_()
+        self._boxes_toggle_btn = btn
+        self._position_boxes_toggle_button()
+
+    def _position_boxes_toggle_button(self):
+        """Place the toggle button just to the right of the backend badge."""
+        btn = getattr(self, "_boxes_toggle_btn", None)
+        if btn is None:
+            return
+        btn.adjustSize()
+        badge = getattr(self, "_backend_badge", None)
+        if badge is not None:
+            x = badge.x() + badge.width() + 8
+            y = badge.y()
+        else:
+            x = max(0, self.width() - btn.width() - 8)
+            y = 8
+        x = min(x, max(0, self.width() - btn.width() - 4))
+        btn.move(x, y)
+        btn.raise_()
+
+    def _toggle_ai_boxes(self):
+        """Flip AI detection-box visibility (on-viewer toggle handler)."""
+        self._ai_boxes_visible = not getattr(self, "_ai_boxes_visible", True)
+        self._apply_ai_boxes_visibility()
+        btn = getattr(self, "_boxes_toggle_btn", None)
+        if btn is not None:
+            btn.setText("Hide Boxes" if self._ai_boxes_visible else "Show Boxes")
+            self._position_boxes_toggle_button()
+
+    def _apply_ai_boxes_visibility(self):
+        """Apply the _ai_boxes_visible flag to every AI annotation on the viewer.
+
+        Hides/shows the detection-box rectangles and their score/label text,
+        AND the segmentation overlay (the yellow highlighted area) and any
+        legacy overlay actor — so that hiding leaves only the raw underlying
+        image visible.
+        """
+        try:
+            viewer = getattr(self, "image_viewer", None)
+            if viewer is None:
+                return
+            vis = 1 if getattr(self, "_ai_boxes_visible", True) else 0
+
+            # Detection boxes: green rectangles + red score/label text.
+            for attr in ("_box_actors", "_box_text_actors"):
+                for actor in (getattr(viewer, attr, None) or []):
+                    try:
+                        actor.SetVisibility(vis)
+                    except Exception:
+                        pass
+
+            # Segmentation overlays — the yellow highlighted areas.
+            # Each _overlays entry is a (vtk_image, map_colors, actor) tuple.
+            for entry in (getattr(viewer, "_overlays", None) or []):
+                try:
+                    ov_actor = entry[2]
+                    if ov_actor is not None:
+                        ov_actor.SetVisibility(vis)
+                except Exception:
+                    pass
+
+            # Legacy single-overlay dict, if present.
+            try:
+                legacy = getattr(viewer, "_overlay", None)
+                if isinstance(legacy, dict):
+                    ov_actor = legacy.get("actor")
+                    if ov_actor is not None:
+                        ov_actor.SetVisibility(vis)
+            except Exception:
+                pass
+
+            rw = getattr(viewer, "render_window", None) or getattr(self, "render_window", None)
+            if rw is not None:
+                rw.Render()
+        except Exception as e:
+            _AI_MG_LOGGER.warning("[MG] toggle AI annotations visibility failed: %s", e)
+
 
     def check_equal_lists(self, lst1, lst2):
         round_n = 1

@@ -37,10 +37,15 @@ class CircularProgressborder(QFrame):
     def __init__(self, parent=None, theme=None):
         super().__init__(parent)
         self._progress = 0  # 0-100
-        self._border_width = 4  # border thickness
+        self._border_width = 2  # border thickness
         self._downloading = False
         self._is_ready = False
         self._is_selected = False
+        # Session "viewed" mark: True once this series has been loaded into a
+        # viewport. A viewed series shows a green border when it is not the
+        # active series (purple while active). In-memory only; the
+        # authoritative set lives on ThumbnailManager.viewed_series.
+        self._viewed = False
         self._theme = theme if theme else get_theme_manager().current_theme()
         self.theme_manager = get_theme_manager()
         
@@ -88,7 +93,7 @@ class CircularProgressborder(QFrame):
         self._downloading = False
         self._progress = 100
         self._border_color = QColor(16, 185, 129)  # Green
-        self._border_width = 4
+        self._border_width = 2
         
         # Force immediate repaint
         self.update()
@@ -97,7 +102,7 @@ class CircularProgressborder(QFrame):
         # Also update via style sheet as backup
         self.setStyleSheet("""
             CircularProgressborder {
-                border: 4px solid #10b981;
+                border: 2px solid #10b981;
                 border-radius: 8px;
                 background: transparent;
             }
@@ -324,17 +329,31 @@ class CircularProgressborder(QFrame):
         
         radius = 8  # border radius
         
-        # Determine border color and style based on state
-        # Use theme colors for all states
+        # Determine border color and style based on state.
+        # Thumbnail border meaning (fixed colors, theme-independent so the
+        # blue / purple / green semantics hold under every app theme):
+        #   Purple - the series is currently active / being viewed.
+        #   Green  - the series has been viewed at least once and is no
+        #            longer the active series.
+        #   Blue   - the series is downloaded but not viewed yet.
+        # A download in progress keeps its blue progress arc; a series that
+        # is neither downloaded nor viewed stays gray (pending).
         if self._is_selected:
-            # Selected - Use theme accent color
-            border_color = QColor(self._theme.get('accent', '#22d3ee'))
-            bg_color = QColor(self._theme.get('accent', '#22d3ee'))
+            # Purple - currently active / currently being viewed.
+            border_color = QColor('#8b5cf6')
+            bg_color = QColor('#8b5cf6')
             bg_color.setAlpha(30)
+        elif self._viewed and not self._downloading:
+            # Green - viewed at least once, no longer the active series.
+            # Gated on `not self._downloading` so an in-progress download
+            # keeps its blue progress indicator.
+            border_color = QColor('#10b981')
+            bg_color = QColor('#10b981')
+            bg_color.setAlpha(22)
         elif self._is_ready:
-            # Ready - Use theme success color (green)
-            border_color = QColor(self._theme.get('success', '#10b981'))
-            bg_color = QColor(self._theme.get('success', '#10b981'))
+            # Blue - downloaded but not viewed yet.
+            border_color = QColor('#3b82f6')
+            bg_color = QColor('#3b82f6')
             bg_color.setAlpha(20)
         elif self._downloading and self._progress > 0:
             # Downloading - Use theme info color (blue)
@@ -382,8 +401,8 @@ class CircularProgressborder(QFrame):
             painter.drawArc(border_rect.toRect(), start_angle, span_angle)
             
         elif not self._downloading or self._is_ready:
-            # Solid border for pending/ready/selected
-            if self._is_ready or self._is_selected:
+            # Solid border for pending/ready/selected/viewed
+            if self._is_ready or self._is_selected or self._viewed:
                 # Solid border
                 pen = QPen(border_color, self._border_width, Qt.SolidLine)
             else:
@@ -656,6 +675,11 @@ class ThumbnailManager(QObject):
         self.selected_series = None
         self.series_widgets = {}
         self.ready_series = set()
+        # Series loaded into a viewport this session ("viewed"). Session-scoped,
+        # in-memory; reset only by reset_all_states() (new patient). This set is
+        # the source of truth — apply_border_states_new() re-applies it to every
+        # widget, so a sidebar re-render keeps the mark.
+        self.viewed_series = set()
         self.current_study_uid = None  # برای ذخیره study_uid فعلی
         self._placeholder_cache = None
         self.theme_manager = get_theme_manager()
@@ -1028,6 +1052,8 @@ class ThumbnailManager(QObject):
 
         # Clear all ready series
         self.ready_series.clear()
+        # Clear the session "viewed" marks for the new patient
+        self.viewed_series.clear()
         self._series_uid_to_number.clear()
         self._series_projection_state.clear()
         self._series_total_images.clear()
@@ -1048,6 +1074,7 @@ class ThumbnailManager(QObject):
                             widget.progress_border._is_ready = False
                             widget.progress_border._is_selected = False
                             widget.progress_border._downloading = False
+                            widget.progress_border._viewed = False
                             widget.progress_border._progress = 0
                             widget.progress_border.update()
                     except (RuntimeError, AttributeError):
@@ -1208,10 +1235,12 @@ class ThumbnailManager(QObject):
                         # Get states
                         is_ready = key in self.ready_series
                         is_selected = (self.selected_series == key)
-                        
+                        is_viewed = key in self.viewed_series
+
                         # Update progress border properties WITHOUT painting yet
                         progress_border._is_ready = is_ready
                         progress_border._is_selected = is_selected
+                        progress_border._viewed = is_viewed
                         
                         if is_ready:
                             progress_border._downloading = False
@@ -1797,6 +1826,39 @@ class ThumbnailManager(QObject):
         finally:
             self._set_ready_reentrant_guard = False
 
+    def mark_series_viewed(self, series_number):
+        """Mark a series as 'viewed' — it has been loaded into a viewport.
+
+        Session-scoped and in-memory: the series is added to ``viewed_series``
+        (the source of truth); its thumbnail then shows the green "viewed"
+        border once it is no longer the active series.
+        The mark persists for the life of the patient tab and survives sidebar
+        re-renders because apply_border_states_new() re-applies it. It is
+        cleared only by reset_all_states() (a new patient).
+
+        Cheap and idempotent: a series already marked is a no-op with no
+        repaint, so repeated loads of the same series cost nothing.
+        """
+        try:
+            series_key = self._resolve_series_key(series_number)
+            if series_key in self.viewed_series:
+                return  # already viewed — no state change, no repaint
+            self.viewed_series.add(series_key)
+
+            if series_key in self.series_widgets:
+                widget = self.series_widgets[series_key]
+                try:
+                    if widget and hasattr(widget, 'progress_border') and widget.progress_border:
+                        widget.progress_border._viewed = True
+                except (RuntimeError, AttributeError):
+                    # Widget or progress_border deleted — drop from tracking.
+                    if series_key in self.series_widgets:
+                        del self.series_widgets[series_key]
+
+            # Coalesced repaint (shared with ready/selected updates).
+            self.apply_border_states_new()
+        except Exception as e:
+            _tm_logger.debug("mark_series_viewed error: %s", e)
 
     def update_widget_borders(self, selected_widget=None):
         # اگر selected_widget داریم از parentش سری را حدس بزنیم

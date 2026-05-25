@@ -238,6 +238,9 @@ class PatientSearchWidget(QWidget):
         self.patient_id_edit.setPlaceholderText("Patient ID (e.g., 12345)")
         self.patient_id_edit.setToolTip("💡 Patient's unique identifier\nExample: 12345, P001, etc.")
         self.patient_id_edit.setMaxLength(50)
+        # Pressing Enter in the Patient ID field triggers the search,
+        # exactly like clicking the Search Patients button.
+        self.patient_id_edit.returnPressed.connect(self._on_search_clicked)
 
         self.patient_name_edit = QLineEdit()
         self.patient_name_edit.setPlaceholderText("Patient Name (e.g., John Doe)")

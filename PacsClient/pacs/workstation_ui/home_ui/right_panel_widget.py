@@ -141,15 +141,17 @@ class RightPanelWidget(QWidget):
         self.title_label = QLabel("Study Information")
         self.title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.title_label.setStyleSheet(self._get_header_title_stylesheet())
+        # Blue 'Study Information' section takes all remaining header width.
+        self.title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         
         # Count indicator
         self.count_label = QLabel("0 series")
         self.count_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self.count_label.setStyleSheet(self._get_header_count_stylesheet())
-        self.count_label.setMinimumWidth(92)
+        # Series-count section: hug its text (e.g. "24 series"); never expand.
+        self.count_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         
         header_layout.addWidget(self.title_label)
-        header_layout.addStretch()
         header_layout.addWidget(self.count_label)
         main_layout.addWidget(header_widget)
         
@@ -317,12 +319,31 @@ class RightPanelWidget(QWidget):
         self.content_widget.setMaximumHeight(self.DEFAULT_MAX_WIDGET_HEIGHT)
         self.content_widget.updateGeometry()
     
+    def _anchor_scroll_top(self):
+        """Force the thumbnail scroll area back to the top."""
+        try:
+            bar = self.scroll_area.verticalScrollBar()
+            if bar is not None:
+                bar.setValue(0)
+        except (RuntimeError, AttributeError):
+            pass
+
+    def showEvent(self, event):
+        # The right panel must always start at the top when it becomes
+        # visible (e.g. on entering the main page); a child widget gaining
+        # focus can otherwise leave it scrolled mid-way.
+        super().showEvent(event)
+        self._anchor_scroll_top()
+        QTimer.singleShot(0, self._anchor_scroll_top)
+
     def clear_content(self):
         """Clear all content from the panel"""
         self._cancel_thumbnail_timer()
         self.current_thumbnail_index = 0
         self.thumbnails_to_display = []
         self._reset_reserved_content_height()
+        # New content is about to be built - show it from the top.
+        self._anchor_scroll_top()
 
         while self.content_grid.count():
             item = self.content_grid.takeAt(0)

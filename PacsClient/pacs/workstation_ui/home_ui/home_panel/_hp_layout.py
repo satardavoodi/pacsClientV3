@@ -21,6 +21,33 @@ from aipacs_runtime import is_module_enabled
 from modules.network.socket_patient_service import get_socket_patient_service
 from pathlib import Path
 
+class _TopAnchoredScrollArea(QScrollArea):
+    """QScrollArea that re-anchors to the top every time it becomes visible.
+
+    The main-page left sidebar must always present its top options first
+    (Server Selection, Patient Search, Adaptive to Screen Size). A child
+    widget gaining focus during construction/show can otherwise leave the
+    QScrollArea auto-scrolled (ensureWidgetVisible) to the middle, hiding
+    the top options. Forcing the vertical scrollbar to 0 on every showEvent
+    keeps the sidebar anchored at the top.
+    """
+
+    def _anchor_top(self):
+        try:
+            bar = self.verticalScrollBar()
+            if bar is not None:
+                bar.setValue(0)
+        except RuntimeError:
+            pass  # C++ object already deleted
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Reset now, then again after this show cycle's layout/focus settles
+        # (a focus-driven ensureWidgetVisible can fire just after showEvent).
+        self._anchor_top()
+        QTimer.singleShot(0, self._anchor_top)
+
+
 class _HPLayoutMixin:
     """UI layout: left/center/right panels, theme, loading overlays, connection status"""
 
@@ -243,6 +270,9 @@ class _HPLayoutMixin:
                 self.data_access_panel_widget.get_result()
             )
         )
+        # Keep the left sidebar pinned to the top when a search runs (the
+        # Search button hiding itself can make the scroll area auto-scroll).
+        self.patient_search_widget.searchRequested.connect(self._keep_left_sidebar_at_top)
         # Connect cancel search signal
         self.patient_search_widget.cancelSearchRequested.connect(self.cancel_search)
         left_layout.addWidget(self.patient_search_widget)
@@ -372,7 +402,7 @@ class _HPLayoutMixin:
         self.socket_test_btn.clicked.connect(self.check_socket_connection_status)
         # status_layout.addWidget(self.socket_test_btn)
 
-        self.left_panel_scroll = QScrollArea()
+        self.left_panel_scroll = _TopAnchoredScrollArea()
         self.left_panel_scroll.setWidgetResizable(True)
         self.left_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -382,6 +412,25 @@ class _HPLayoutMixin:
         self.left_panel_scroll.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.left_panel_scroll.setWidget(left_panel)
         self.main_layout.addWidget(self.left_panel_scroll)
+
+    def _keep_left_sidebar_at_top(self):
+        """Re-anchor the left sidebar scroll to the top after a search.
+
+        Pressing 'Search Patient' hides the focused Search button, which
+        can make the sidebar QScrollArea auto-scroll to follow the new
+        focus widget - pushing the top options (Server Selection, Patient
+        Search, Adaptive to Screen Size) out of view. This forces the
+        scroll back to the top. It is triggered only by a search, so
+        manual scrolling at any other time is unaffected.
+        """
+        scroll = getattr(self, 'left_panel_scroll', None)
+        anchor = getattr(scroll, '_anchor_top', None) if scroll is not None else None
+        if anchor is None:
+            return
+        anchor()
+        # Re-anchor again after the button toggle / focus change settles.
+        QTimer.singleShot(0, anchor)
+        QTimer.singleShot(200, anchor)
 
     def setup_center_panel(self):
         """Setup the center panel with Patient Table Component"""

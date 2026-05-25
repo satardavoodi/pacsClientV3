@@ -10,6 +10,7 @@ from modules.ai_imaging.ai_module_ui.toolbar import ToolBarManager
 from .vtk_widget import AIVTKWidget
 from PacsClient.utils import CallerTypes
 from PacsClient.utils.config import SOURCE_PATH
+from modules.viewer.viewer_backend_config import BACKEND_VTK
 
 import logging
 
@@ -50,8 +51,14 @@ class AIPatientWidget(PatientWidget):
         logger.debug(f'[MG][INIT] ║ Initializing with 1×2 layout (for mammography)')
         logger.debug(f'[MG][INIT] ╚═══════════════════════════════════════')
         
-        # Initialize parent class with 1×2 layout
-        super().__init__(parent, str(import_folder_path), size_init_viewers=(1, 2), caller=CallerTypes.IMPORT)
+        # Initialize parent class with 1×2 layout.
+        # Eagle Eye REQUIRES the VTK / Advanced render pipeline (AI boxes,
+        # overlays, segmentation). Force the VTK backend for this widget via
+        # viewer_backend_override so it loads in Advanced mode even when the
+        # global 2D viewer is set to FAST. The ViewerController honours this
+        # per-widget override (see _vc_backend._get_requested_viewer_backend).
+        super().__init__(parent, str(import_folder_path), size_init_viewers=(1, 2),
+                         caller=CallerTypes.IMPORT, viewer_backend_override=BACKEND_VTK)
         self.ordering_by_instances_number = False
 
     def header_layout_ui(self):
@@ -116,11 +123,6 @@ class AIPatientWidget(PatientWidget):
         # Always return 1×2 - we'll hide the second viewer if not needed
         logger.debug(f"[MG][LAYOUT] _get_default_layout_from_config: modality={modality}, returning (1, 2)")
         return (1, 2)
-
-    def _get_requested_viewer_backend(self) -> str:
-        """Always use Advanced (VTK) backend — Eagle Eye requires the VTK render pipeline."""
-        from modules.viewer.viewer_backend_config import BACKEND_VTK
-        return BACKEND_VTK
 
     def creator_vtk_widget(self):
         """Override to create AI-specific VTK widget"""
@@ -223,52 +225,49 @@ class AIPatientWidget(PatientWidget):
         pass  # turn off reference lines for AI
 
     def change_series_on_viewer(self, series_index, flag_change_selected_widget=True,
-                                 target_viewer_id=None, **kwargs):
+                                vtk_widget=None, slider=None, allow_paired=True, **kwargs):
         """
-        Override to sync both viewers when a series is dropped on one viewer.
-        For MG: Both viewers show the same series - one with boxes, one without.
+        Override to mirror a series onto both viewers for mammography.
+
+        For MG the left viewer shows AI boxes and the right viewer the
+        original image, so a series loaded on one viewer is synced to the
+        other.
+
+        The signature mirrors the base change_series_on_viewer exactly. An
+        earlier version declared a non-existent target_viewer_id parameter
+        and forwarded it positionally into the base vtk_widget slot; on a
+        drag-and-drop (which passes vtk_widget= as a keyword) that raised
+        TypeError, the drop silently failed and the viewer stayed stuck on
+        its loading spinner.
         """
-        logger.debug(f"[MG][SERIES_CHANGE] ╔═══════════════════════════════════════")
-        logger.debug(f"[MG][SERIES_CHANGE] ║ change_series_on_viewer called")
-        logger.debug(f"[MG][SERIES_CHANGE] ║ series_index: {series_index}")
-        logger.debug(f"[MG][SERIES_CHANGE] ║ target_viewer_id: {target_viewer_id}")
-        
-        # First, call parent to change the series on the target viewer
-        result = super().change_series_on_viewer(series_index, flag_change_selected_widget, 
-                                                   target_viewer_id, **kwargs)
-        
-        # For MG modality: sync the other viewer to show the same series
+        # Tolerate a legacy target_viewer_id keyword but never forward it.
+        kwargs.pop('target_viewer_id', None)
+
+        result = super().change_series_on_viewer(
+            series_index, flag_change_selected_widget, vtk_widget, slider, allow_paired,
+        )
+
+        # For MG, mirror the same series onto the other viewer.
         try:
             if hasattr(self, 'lst_node_viewers') and len(self.lst_node_viewers) >= 2:
-                # Check if the series is MG
-                if series_index < len(self.lst_thumbnails_data):
-                    series_metadata = self.lst_thumbnails_data[series_index]
-                    modality = series_metadata.get('modality', '').upper()
-                    
-                    logger.debug(f"[MG][SERIES_CHANGE] ║ Series modality: {modality}")
-                    
+                if 0 <= series_index < len(self.lst_thumbnails_data):
+                    modality = str(
+                        self.lst_thumbnails_data[series_index].get('modality', '')
+                    ).upper()
                     if modality == 'MG':
-                        logger.debug(f"[MG][SERIES_CHANGE] ║ ✓ MG modality detected - syncing both viewers")
-                        
-                        # Load the same series on both viewers
-                        for i, node in enumerate(self.lst_node_viewers[:2]):
-                            if node and node.vtk_widget:
-                                viewer_type = getattr(node.vtk_widget, 'type_viewer', 'Unknown')
-                                logger.debug(f"[MG][SERIES_CHANGE] ║   Loading series {series_index} on viewer {i+1} ({viewer_type})")
-                                
-                                # Call the parent's method to load series on this specific viewer
-                                super(AIPatientWidget, self).change_series_on_viewer(
-                                    series_index, 
-                                    flag_change_selected_widget=False,  # Don't change selection
-                                    target_viewer_id=node.id_vtk_widget,
-                                    **kwargs
-                                )
-                        
-                        logger.debug(f"[MG][SERIES_CHANGE] ║ ✓ Both viewers synced to series {series_index}")
+                        for node in self.lst_node_viewers[:2]:
+                            node_widget = getattr(node, 'vtk_widget', None)
+                            if node_widget is None or node_widget is vtk_widget:
+                                continue
+                            super().change_series_on_viewer(
+                                series_index,
+                                flag_change_selected_widget=False,
+                                vtk_widget=node_widget,
+                                slider=getattr(node, 'slider', None),
+                                allow_paired=allow_paired,
+                            )
         except Exception as e:
-            logger.debug(f"[MG][SERIES_CHANGE] ║ ❌ Error syncing viewers: {e}")
-            import traceback
-            traceback.print_exc()
-        
-        logger.debug(f"[MG][SERIES_CHANGE] ╚═══════════════════════════════════════")
+            logger.warning(f"[MG] viewer sync after series change failed: {e}")
+
         return result
+

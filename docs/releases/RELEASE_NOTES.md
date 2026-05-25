@@ -1,9 +1,43 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.0.9 (2026-05-25)
-**Previous Stable:** v3.0.8 (2026-05-20)
+**Current Stable Version:** v3.1.0 (2026-05-25)
+**Previous Stable:** v3.0.9 (2026-05-25)
 **Release Date:** 2026-05-25
 **Branch:** beta-version
+
+---
+
+## v3.1.0 (2026-05-25) - Release package rollup: installers, crash hardening, EULA
+
+### Summary
+
+Minor version bump consolidating the stable v3.0.9 codebase with final installers,
+comprehensive crash-hardening tooling, and the AI-PACS proprietary EULA license.
+All v3.0.9 multi-study viewer, thumbnail pipeline, DB isolation, and Zeta DM fixes
+are carried forward and packaged for distribution.
+
+### Included
+
+**All v3.0.9 workspace fixes and audits** (carried forward):
+- Multi-study single-tab viewer (offset-keyed series, grouped sidebar)
+- Thumbnail pipeline canonicalization
+- Database test-isolation hardening + cleanup tooling
+- Zeta Download Manager review + fix plan
+
+**Crash hardening (2026-05-25 patch)**:
+- `faulthandler` native-fault logging to `user_data/logs/native_fault.log`
+- Viewer / home-panel / lifecycle stability patches
+- Crash-diagnostics tooling and analysis
+
+**Distributions**:
+- **Executable installer:** `builder/output/installer/ai-pacs installer v3.1.0.exe`
+  (687 MB, Inno Setup, production-ready)
+- **Installation notes and checksums** ready for deployment
+- **Plugin packages, updates, and release manifests** staged and ready
+
+**License and Legal**:
+- AI-PACS EULA v3.0.9 (2026-05-25): proprietary software, clinical-use
+  disclaimers, AI-module limitations, patient-data responsibility
 
 ---
 

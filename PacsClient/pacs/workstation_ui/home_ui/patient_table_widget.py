@@ -128,9 +128,11 @@ class CombinedDelegate(QStyledItemDelegate):
         super().__init__(parent)
         self.is_patient_name_column = is_patient_name_column
         self.theme_manager = theme_manager or get_theme_manager()
+        # Status -> underline colour. A value may be a theme key (resolved
+        # against the active theme) or a literal hex colour.
         self._status_to_theme_color = {
-            'synced': 'success',      # Green for synced/downloaded
-            'opened': 'warning',      # Orange for opened
+            'synced': 'success',      # Green  - viewed + report completed (unchanged)
+            'opened': '#60a5fa',      # Blue (faint, light) - opened but not finished (was warning/yellow)
         }
 
     def paint(self, painter, option, index):
@@ -149,15 +151,23 @@ class CombinedDelegate(QStyledItemDelegate):
             color_key = self._status_to_theme_color.get(status)
             underline_color = None
             
-            if color_key and color_key in theme:
-                underline_color = QColor(theme[color_key])
+            if color_key:
+                # color_key is either a theme key (green) or a literal hex
+                # colour (the fixed blue 'opened' indicator) - try theme first.
+                if color_key in theme:
+                    underline_color = QColor(theme[color_key])
+                else:
+                    underline_color = QColor(color_key)
+                    # The blue 'opened' underline is intentionally
+                    # faint/soft (reduced alpha). Green is unaffected.
+                    underline_color.setAlpha(150)
 
             if underline_color:
                 # Draw underline
                 painter.save()
 
                 pen = QPen(underline_color)
-                pen.setWidth(3)
+                pen.setWidth(2)
                 painter.setPen(pen)
 
                 # Draw line at bottom of cell
@@ -1018,47 +1028,6 @@ class PatientTableWidget(QWidget):
         self.download_btn.setCursor(Qt.PointingHandCursor)
         self.download_btn.setEnabled(False)
 
-        # Download overflow menu button (split action UX)
-        self.download_menu_btn = QToolButton(self)
-        self.download_menu_btn.setToolTip("More download options")
-        self.download_menu_btn.setIcon(qta.icon('fa5s.bars', color='white'))
-        self.download_menu_btn.setFixedSize(28, 36)
-        self.download_menu_btn.setPopupMode(QToolButton.InstantPopup)
-        self.download_menu_btn.setStyleSheet("""
-        QToolButton {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #3b82f6, stop:1 #2563eb);
-            color: white;
-            border: 1px solid #3b82f6;
-            border-radius: 8px;
-            padding: 6px;
-            margin: 4px 0px;
-            qproperty-iconSize: 14px;
-        }
-        QToolButton:hover {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #2563eb, stop:1 #1d4ed8);
-            border-color: #2563eb;
-        }
-        QToolButton:pressed {
-            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                stop:0 #1d4ed8, stop:1 #1e40af);
-        }
-        QToolButton:disabled {
-            background: #374151;
-            border-color: #4b5563;
-            color: #6b7280;
-        }
-        """)
-        self.download_menu_btn.setCursor(Qt.PointingHandCursor)
-        self.download_menu_btn.setEnabled(False)
-
-        download_menu = QMenu(self.download_menu_btn)
-        self.download_reception_action = QAction("Download Reception Data", self.download_menu_btn)
-        self.download_reception_action.triggered.connect(self._on_download_reception_data_clicked)
-        download_menu.addAction(self.download_reception_action)
-        self.download_menu_btn.setMenu(download_menu)
-
         # Delete button for selected downloaded patients - ONLY ICON
         self.delete_btn = QPushButton(qta.icon('fa5s.trash-alt', color='white'), "")
         self.delete_btn.setToolTip("Delete selected downloaded studies")
@@ -1260,7 +1229,6 @@ class PatientTableWidget(QWidget):
         header_layout.addWidget(self.print_btn)
         header_layout.addWidget(self.cd_burn_btn)
         header_layout.addWidget(self.download_btn)
-        header_layout.addWidget(self.download_menu_btn)
         layout.addWidget(header_widget)
         
         # Add table to layout
@@ -2090,16 +2058,16 @@ class PatientTableWidget(QWidget):
         # and Voice (microphone); literal text "AI" for AI results. A chip is
         # added ONLY when that data exists for the row, so nothing is shown by
         # default -- only the indicators that apply.
-        def _chip(tip: str, icon: str = '', text: str = '') -> QLabel:
+        def _chip(tip: str, icon: str = '', text: str = '', color: str = '#10b981') -> QLabel:
             chip = QLabel()
             chip.setAlignment(Qt.AlignCenter)
             chip.setToolTip(tip)
             if icon:
-                chip.setPixmap(self._icon_pixmap(icon, '#10b981', 16, 16))
+                chip.setPixmap(self._icon_pixmap(icon, color, 16, 16))
                 chip.setStyleSheet('background: transparent; border: none;')
             else:
                 chip.setText(text)
-                chip.setStyleSheet('color: #10b981; background: transparent; '
+                chip.setStyleSheet(f'color: {color}; background: transparent; '
                                    'border: none; font-size: 11px; font-weight: bold;')
             return chip
 
@@ -2108,7 +2076,7 @@ class PatientTableWidget(QWidget):
         if flags.get('documents', False):
             layout.addWidget(_chip('Local documents / attachments', icon='fa5s.folder'))
         if flags.get('voice', False):
-            layout.addWidget(_chip('Local voice files', icon='fa5s.microphone'))
+            layout.addWidget(_chip('Local voice files', icon='fa5s.microphone', color='#ef4444'))
         if flags.get('ai', False):
             layout.addWidget(_chip('Local AI results', text='AI'))
 
@@ -2240,14 +2208,12 @@ class PatientTableWidget(QWidget):
         if selected_count > 0:
             self.download_btn.setEnabled(True)
             self.download_btn.setEnabled(True)  # Enable Zeta Download button
-            self.download_menu_btn.setEnabled(True)
             self.cd_burn_btn.setEnabled(True)  # CD burn فعال برای همه انتخاب شده‌ها
             self.print_btn.setEnabled(True)
             # متن فقط هنگام hover نشان داده می‌شود
         else:
             self.download_btn.setEnabled(False)
             self.download_btn.setEnabled(False)  # Disable Zeta Download button
-            self.download_menu_btn.setEnabled(False)
             self.cd_burn_btn.setEnabled(False)
             self.print_btn.setEnabled(False)
             # متن پاک می‌شود
@@ -3560,39 +3526,67 @@ class PatientTableWidget(QWidget):
         QMessageBox.warning(self, "Status Change Error", f"Error: {error_msg}")
 
     def auto_resize_columns(self):
-        """Auto resize columns for screen-adaptive layouts."""
-        header = self.results_table.horizontalHeader()
-        self.results_table.resizeColumnsToContents()
+        """Resize the visible columns to fill the patient-list area.
 
-        min_widths = {
+        Backs the 'Adaptive to Screen Size' action. Every visible column is
+        given a controlled width; one flexible column is left as Stretch so
+        it absorbs the remaining width. When a column is hidden, the freed
+        space flows into the Stretch column and the visible columns keep
+        filling the available area with no empty gap.
+
+        The old implementation called resizeColumnsToContents(), which let
+        the widget columns balloon past the viewport; that pass is removed.
+        """
+        table = self.results_table
+        header = table.horizontalHeader()
+
+        # Controlled per-column widths (px).
+        base_widths = {
             COL['select']: 50,
-            COL['patient_name']: 140,
-            COL['patient_id']: 90,
-            COL['body_part']: 90,
+            COL['patient_name']: 160,
+            COL['patient_id']: 100,
+            COL['body_part']: 100,
             COL['status']: 150,
-            COL['report']: 140,
+            COL['report']: 170,
             COL['assign']: 60,
-            COL['time']: 75,
-            COL['date']: 90,
+            COL['time']: 80,
+            COL['date']: 100,
             COL['images']: 70,
-            COL['modality']: 70,
-            COL['age']: 55
+            COL['modality']: 80,
+            COL['age']: 60,
         }
-
+        # Widget-hosting columns keep a fixed width; the rest are resizable.
         fixed_cols = {COL['select'], COL['status'], COL['report'], COL['assign']}
-        for col in range(self.results_table.columnCount()):
-            if self.results_table.isColumnHidden(col):
-                continue
-            if col in fixed_cols:
-                header.setSectionResizeMode(col, QHeaderView.Fixed)
-            elif col == COL['description']:
-                header.setSectionResizeMode(col, QHeaderView.Stretch)
-            else:
-                header.setSectionResizeMode(col, QHeaderView.Interactive)
 
-            min_width = min_widths.get(col)
-            if min_width is not None and self.results_table.columnWidth(col) < min_width:
-                self.results_table.setColumnWidth(col, min_width)
+        try:
+            visible = [c for c in range(table.columnCount())
+                       if not table.isColumnHidden(c)]
+            if not visible:
+                return
+
+            # The column that absorbs the remaining width: the Study
+            # Description if visible, else the last visible resizable column.
+            # Guarantees the table fills the area whichever column is hidden.
+            stretch_col = COL['description'] if COL['description'] in visible else None
+            if stretch_col is None:
+                for c in reversed(visible):
+                    if c not in fixed_cols:
+                        stretch_col = c
+                        break
+
+            for col in visible:
+                if col == stretch_col:
+                    header.setSectionResizeMode(col, QHeaderView.Stretch)
+                    continue
+                if col in fixed_cols:
+                    header.setSectionResizeMode(col, QHeaderView.Fixed)
+                else:
+                    header.setSectionResizeMode(col, QHeaderView.Interactive)
+                width = base_widths.get(col)
+                if width is not None:
+                    table.setColumnWidth(col, width)
+        except Exception as e:
+            print(f"auto_resize_columns error: {e}")
 
     def clear_table(self):
         """Clear all data from the table"""

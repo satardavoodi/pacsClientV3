@@ -455,6 +455,12 @@ class ViewerController(
         In Fast mode, series-level warmup (Plan A/B) is skipped.
         The local ±20 ImageSliceBooster still runs normally."""
         try:
+            # A per-widget viewer_backend_override (e.g. Eagle Eye, which
+            # forces VTK/Advanced) takes precedence over the global setting,
+            # keeping this Fast gate consistent with _get_requested_viewer_backend().
+            override = str(getattr(self.parent_widget, "viewer_backend_override", "") or "").strip()
+            if override:
+                return override in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT)
             return load_viewer_backend() in (BACKEND_PYDICOM, BACKEND_PYDICOM_QT)
         except Exception:
             return False

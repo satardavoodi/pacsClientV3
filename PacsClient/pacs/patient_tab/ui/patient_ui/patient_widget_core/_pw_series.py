@@ -35,6 +35,17 @@ class _PWSeriesMixin:
 
         ✅ Always ensures viewers exist before attempting to display series
         """
+        # Mark this series as "viewed" — it is being loaded into a viewport
+        # (drag-drop or click both route through here). Session-scoped, in-memory;
+        # see ThumbnailManager.mark_series_viewed. Isolated so a failure here can
+        # never block the series switch itself.
+        try:
+            _tm = getattr(self, 'thumbnail_manager', None)
+            if _tm is not None and hasattr(_tm, 'mark_series_viewed'):
+                _tm.mark_series_viewed(series_index)
+        except Exception:
+            pass
+
         # ✅ OPTIMIZATION: موقع drag & drop، اولویت interactive را افزایش دهید
         try:
             if hasattr(self, 'viewer_controller') and hasattr(self.viewer_controller, 'zeta_boost'):
