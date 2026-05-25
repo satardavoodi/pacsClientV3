@@ -8,6 +8,7 @@ It handles HTTP requests to retrieve patient information based on reception ID.
 import requests
 from typing import Dict, Optional, Any
 from PySide6.QtCore import QObject, Signal, QThread
+from modules.network.reception_api_config import get_reception_api_base_url
 
 
 class ReceptionDataFetchWorker(QThread):
@@ -21,7 +22,7 @@ class ReceptionDataFetchWorker(QThread):
     finished = Signal(dict)
     error = Signal(str)
     
-    def __init__(self, patient_id: str, base_url: str = "http://81.16.117.196:8080"):
+    def __init__(self, patient_id: str, base_url: str = None):
         """
         Initialize the worker.
         
@@ -31,7 +32,8 @@ class ReceptionDataFetchWorker(QThread):
         """
         super().__init__()
         self.patient_id = patient_id
-        self.base_url = base_url
+        # Resolve from configurable Reception/API endpoint when not supplied.
+        self.base_url = (base_url or get_reception_api_base_url())
         self.canceled = False
     
     def run(self):
@@ -88,13 +90,15 @@ class ReceptionDataService(QObject):
     data_received = Signal(dict)
     error_occurred = Signal(str)
     
-    def __init__(self, base_url: str = "http://81.16.117.196:8080"):
+    def __init__(self, base_url: str = None):
         """
         Initialize the service.
         
         Args:
             base_url: Base URL of the API server
         """
+        # Resolve from configurable Reception/API endpoint when not supplied.
+        base_url = (base_url or get_reception_api_base_url())
         print(f"[ReceptionDataService] __init__ called with base_url: {base_url}")
         super().__init__()
         self.base_url = base_url

@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v3.0.8 (2026-05-20)
+> **Current Stable Version:** v3.0.9 (2026-05-25)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -68,6 +68,7 @@ This is the canonical entrypoint for all project documentation. The docs are org
 - [Module Catalog](modules/README.md) â€” Active workstation modules, DM internal structure, signal flows
 
 ### Development
+- [Download Trigger Flow — Fix & Reference](development/DOWNLOAD_TRIGGER_FLOW.md) — Patient-list "Download" button → Zeta Download Manager: how the flow works, worker-thread hand-off rules, regression-prevention notes (2026-05-24)
 - [Setup & Tooling](development/setup-and-tooling.md) â€” Dependencies, commands, day-to-day workflow
 - [Tools Governance & Roadmap](development/tools-governance-and-roadmap.md) â€” Rules, lifecycle, and 90-day plan for `tools/`
 - [GapGPT API Usage](development/GAPGPT_API_USAGE.md) â€” External AI API reference

@@ -25,20 +25,115 @@ from .widget import SourceOfPatientLoad
 class _HPSeriesMixin:
     """Series info, thumbnails, right panel display"""
 
+    def _resolve_row_for_patient_study(self, patient_id, study_uid):
+        """Find table row for a patient/study pair; returns -1 when not found."""
+        try:
+            table = self.patient_table_widget.results_table
+            pid_target = str(patient_id or '').strip()
+            uid_target = str(study_uid or '').strip()
+            for row in range(table.rowCount()):
+                pid_item = table.item(row, COL['patient_id'])
+                uid_item = table.item(row, COL['study_uid'])
+                row_pid = str(pid_item.text() if pid_item else '').strip()
+                row_uid = str(uid_item.text() if uid_item else '').strip()
+                if row_pid == pid_target and row_uid == uid_target:
+                    return row
+
+            # Fallback 1: current selected row for this patient id.
+            try:
+                current_row = int(table.currentRow())
+            except Exception:
+                current_row = -1
+            if current_row >= 0:
+                pid_item = table.item(current_row, COL['patient_id'])
+                row_pid = str(pid_item.text() if pid_item else '').strip()
+                if row_pid == pid_target:
+                    return current_row
+
+            # Fallback 2: first row for patient id when study uid differs.
+            for row in range(table.rowCount()):
+                pid_item = table.item(row, COL['patient_id'])
+                row_pid = str(pid_item.text() if pid_item else '').strip()
+                if row_pid == pid_target:
+                    return row
+            return -1
+        except Exception:
+            return -1
+
+    def _schedule_ui_coro(self, coro, *, done_callback=None):
+        """Schedule a coroutine from Qt callbacks even when no running-loop context is exposed."""
+        task = None
+        try:
+            loop = asyncio.get_running_loop()
+            task = loop.create_task(coro)
+        except RuntimeError:
+            try:
+                loop = asyncio.get_event_loop()
+                task = loop.create_task(coro)
+            except Exception:
+                task = None
+        except Exception:
+            task = None
+
+        if task is not None and callable(done_callback):
+            try:
+                task.add_done_callback(done_callback)
+            except Exception:
+                pass
+        return task
+
+    def _mark_active_patient_selection(self, patient_id, study_uid):
+        """Track the latest patient/study selection for stale-response guards."""
+        try:
+            self._active_thumb_patient_id = str(patient_id or '').strip()
+            self._active_thumb_study_uid = str(study_uid or '').strip()
+            self._active_thumb_selection_ts = time.monotonic()
+            self._active_thumb_request_id = int(getattr(self, '_active_thumb_request_id', 0) or 0) + 1
+        except Exception:
+            pass
+
+    def _is_active_patient_selection(self, patient_id, study_uid) -> bool:
+        """Return True when response still belongs to the latest selected patient."""
+        try:
+            active_pid = str(getattr(self, '_active_thumb_patient_id', '') or '').strip()
+            active_uid = str(getattr(self, '_active_thumb_study_uid', '') or '').strip()
+            expected_pid = str(patient_id or '').strip()
+            expected_uid = str(study_uid or '').strip()
+            if not active_pid and not active_uid:
+                return True
+            return active_pid == expected_pid and active_uid == expected_uid
+        except Exception:
+            return True
+
     def _on_patient_single_clicked(self, patient_id, patient_name, study_uid):
         """Handle patient single-click event - Show detailed series information"""
         try:
+            self._mark_active_patient_selection(patient_id, study_uid)
             _t0 = time.perf_counter()
-            # Show loading dialog immediately
-            self.show_loading("Loading Series Info", f"Retrieving information for {patient_name}...")
-            
-            # v2.2.9.2 — deferred task creation (50 ms) to mitigate asyncio
-            # reentrancy with Python 3.13 strict enforcement.  Also adds a
-            # 5 s safety timeout to hide the loading dialog if the task fails
-            # to run (qasync reentrancy can silently kill pending tasks).
+            if hasattr(self, '_log_open_trace'):
+                try:
+                    self._log_open_trace(
+                        study_uid,
+                        'click_single_entry',
+                        patient_id=str(patient_id or ''),
+                        source=str(getattr(self, 'source_of_patient_load', '')),
+                    )
+                except Exception:
+                    pass
+            # Do NOT call show_loading() here — the full-screen dark overlay causes
+            # visible flicker on every click.  The right panel shows its own inline
+            # "Loading…" state via clear_content() inside show_patient_studies().
+
+            # Thumbnail loading is driven solely by the thumbnailRequested signal
+            # (via _on_thumbnail_requested → _start_thumbnail_task).  Calling
+            # _start_thumbnail_task here directly created a second concurrent task
+            # that was then cancelled by the debounce timer, causing the visible
+            # loading-overlay flicker on every patient click.
+
+            # Schedule immediately to avoid dropped click behavior under UI load.
+            # Keep the timeout safety net for loop-scheduling edge cases.
             self._series_info_loading_active = True
-            QTimer.singleShot(50, lambda: self._schedule_series_info_load(
-                patient_id, patient_name, study_uid))
+            self._schedule_series_info_load(patient_id, patient_name, study_uid)
             QTimer.singleShot(5000, self._series_info_loading_timeout)
             print(f"[PROFILE] single-click: scheduled series info load for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
             
@@ -48,11 +143,25 @@ class _HPSeriesMixin:
             QMessageBox.critical(self, "Error", f"Error displaying series information: {str(e)}")
 
     def _schedule_series_info_load(self, patient_id, patient_name, study_uid):
-        """v2.2.9.2 — create async task with reentrancy fallback."""
+        """Create async task; fallback to direct thumbnail path if scheduling fails."""
         try:
-            task = asyncio.create_task(
+            task = self._schedule_ui_coro(
                 self._load_and_display_series_info_async(
-                    patient_id, patient_name, study_uid))
+                    patient_id, patient_name, study_uid
+                )
+            )
+            if task is None:
+                # Final fallback: still trigger thumbnail path for current row.
+                try:
+                    current_row = self.patient_table_widget.results_table.currentRow()
+                    if current_row is not None and int(current_row) >= 0:
+                        self._start_thumbnail_task(int(current_row))
+                except Exception:
+                    pass
+                self._series_info_loading_active = False
+                self.hide_loading()
+                return
+
             def _on_done(t):
                 self._series_info_loading_active = False
             task.add_done_callback(_on_done)
@@ -76,10 +185,199 @@ class _HPSeriesMixin:
             print(f"Error in _load_and_display_series_info_async: {str(e)}")
             self.hide_loading()
 
+    async def _reconcile_patient_studies_on_click(self, patient_id, patient_name, fallback_study_uid):
+        """Reconcile patient studies (server vs local) with throttling and no loops."""
+        pid = str(patient_id or '').strip()
+        fallback_uid = str(fallback_study_uid or '').strip()
+        if not pid:
+            return [fallback_uid] if fallback_uid else []
+
+        try:
+            local_uids = []
+            if hasattr(self, '_resolve_patient_study_uids'):
+                local_uids = self._resolve_patient_study_uids(pid, fallback_uid)
+            if not local_uids and fallback_uid:
+                local_uids = [fallback_uid]
+
+            # Anti-loop + throttle guard.
+            inflight = getattr(self, '_patient_study_sync_inflight', None)
+            if inflight is None:
+                inflight = set()
+                self._patient_study_sync_inflight = inflight
+            if pid in inflight:
+                return local_uids
+
+            last_ts = getattr(self, '_patient_study_sync_last_ts', None)
+            if last_ts is None:
+                last_ts = {}
+                self._patient_study_sync_last_ts = last_ts
+
+            min_interval_s = 5.0
+            now = time.monotonic()
+
+            patient_study_map = getattr(self, '_patient_study_uid_map', None)
+            if patient_study_map is None:
+                patient_study_map = {}
+                self._patient_study_uid_map = patient_study_map
+
+            if (now - float(last_ts.get(pid, 0.0) or 0.0)) < min_interval_s:
+                cached = [str(u or '').strip() for u in (patient_study_map.get(pid) or []) if str(u or '').strip()]
+                if cached:
+                    merged = []
+                    for uid in [fallback_uid, *local_uids, *cached]:
+                        uid_str = str(uid or '').strip()
+                        if uid_str and uid_str not in merged:
+                            merged.append(uid_str)
+                    return merged
+                return local_uids
+
+            inflight.add(pid)
+            last_ts[pid] = now
+            try:
+                from modules.network.socket_patient_service import get_socket_patient_service
+
+                socket_service = get_socket_patient_service()
+
+                def _fetch_patient_rows():
+                    params = {
+                        'patient_id': pid,
+                        'limit': 100,
+                        'offset': 0,
+                        'include_study_count': True,
+                        'include_latest_study': True,
+                    }
+                    return socket_service.search_patients_sync(params) or []
+
+                rows = await asyncio.to_thread(_fetch_patient_rows)
+
+                server_row = None
+                for row in rows:
+                    if str((row or {}).get('patient_id') or '').strip() == pid:
+                        server_row = row
+                        break
+                if server_row is None and rows:
+                    server_row = rows[0]
+
+                server_uids = []
+                if server_row:
+                    if hasattr(self, '_add_socket_patient_to_table'):
+                        try:
+                            self._add_socket_patient_to_table(server_row)
+                        except Exception:
+                            pass
+
+                    raw_uids = server_row.get('study_uids') or []
+                    if isinstance(raw_uids, str):
+                        raw_uids = [raw_uids]
+                    elif not isinstance(raw_uids, list):
+                        raw_uids = []
+
+                    studies = server_row.get('studies') or server_row.get('study_list') or []
+                    for study in studies if isinstance(studies, list) else []:
+                        if not isinstance(study, dict):
+                            continue
+                        suid = str(
+                            study.get('study_uid')
+                            or study.get('StudyInstanceUID')
+                            or study.get('studyInstanceUid')
+                            or ''
+                        ).strip()
+                        if suid and suid not in server_uids:
+                            server_uids.append(suid)
+
+                    for uid in raw_uids:
+                        uid_str = str(uid or '').strip()
+                        if uid_str and uid_str not in server_uids:
+                            server_uids.append(uid_str)
+
+                    latest_uid = str(server_row.get('latest_study_uid') or '').strip()
+                    if latest_uid and latest_uid not in server_uids:
+                        server_uids.append(latest_uid)
+
+                if server_uids:
+                    patient_study_map[pid] = list(server_uids)
+
+                merged = []
+                for uid in [fallback_uid, *local_uids, *server_uids]:
+                    uid_str = str(uid or '').strip()
+                    if uid_str and uid_str not in merged:
+                        merged.append(uid_str)
+
+                missing = [uid for uid in merged if uid not in local_uids]
+                if missing:
+                    dm = self._get_or_create_download_manager_tab(activate_tab=False)
+                    server = self.data_access_panel_widget.get_server_selected() or {}
+                    for missing_uid in missing:
+                        try:
+                            study_info = await asyncio.wait_for(
+                                asyncio.to_thread(
+                                    self._get_or_fetch_series_info,
+                                    missing_uid,
+                                    pid,
+                                    True,
+                                ),
+                                timeout=45.0,
+                            )
+                            if not study_info:
+                                continue
+
+                            self.save_complete_study_info(missing_uid, pid, study_info=study_info)
+
+                            if check_study_complete(missing_uid):
+                                continue
+
+                            if dm:
+                                dm_study_data = {
+                                    'patient_id': pid,
+                                    'patient_name': patient_name,
+                                    'study_uid': missing_uid,
+                                    'study_date': study_info.get('study_date', ''),
+                                    'modality': study_info.get('modality', ''),
+                                    'description': study_info.get('study_description', ''),
+                                    'series_count': study_info.get('count_of_series', len(study_info.get('series', []))),
+                                    'images_count': sum(s.get('image_count', 0) for s in study_info.get('series', [])),
+                                    'series': study_info.get('series', []),
+                                }
+                                dm.add_downloads([dm_study_data], start_immediately=True)
+                        except Exception:
+                            continue
+
+                return merged or local_uids
+            finally:
+                inflight.discard(pid)
+        except Exception:
+            return [fallback_uid] if fallback_uid else []
+
     async def _load_and_display_series_info(self, patient_id, patient_name, study_uid):
         """Load and display detailed series information in right panel - Optimized for speed"""
         try:
             _t0 = time.perf_counter()
+            if hasattr(self, '_log_open_trace'):
+                try:
+                    self._log_open_trace(
+                        study_uid,
+                        'series_info_entry',
+                        patient_id=str(patient_id or ''),
+                        source=str(getattr(self, 'source_of_patient_load', '')),
+                    )
+                except Exception:
+                    pass
+
+            if not self._is_active_patient_selection(patient_id, study_uid):
+                if hasattr(self, '_log_open_trace'):
+                    try:
+                        self._log_open_trace(study_uid, 'series_info_inactive_skip', patient_id=str(patient_id or ''))
+                    except Exception:
+                        pass
+                return
+
+            study_uids = await self._reconcile_patient_studies_on_click(patient_id, patient_name, study_uid)
+            if not self._is_active_patient_selection(patient_id, study_uid):
+                return
+            if len(study_uids) > 1 and hasattr(self, '_show_grouped_patient_studies'):
+                await self._show_grouped_patient_studies(patient_id, patient_name, study_uids)
+                print(f"[PROFILE] single-click: grouped studies displayed ({len(study_uids)}) for {patient_id} in {(time.perf_counter() - _t0)*1000:.1f}ms")
+                return
 
             # First check if we have complete series info in database
             if check_study_complete(study_uid) or self.source_of_patient_load == SourceOfPatientLoad.DB:
@@ -118,23 +416,59 @@ class _HPSeriesMixin:
                             }
                             study_info['series'].append(series_info)
 
+                        if not self._is_active_patient_selection(patient_id, study_uid):
+                            return
                         self._display_series_info_in_right_panel(study_info)
                         print(f"[PROFILE] single-click: DB series info loaded for {study_uid} in {(time.perf_counter() - _t_db)*1000:.1f}ms")
 
                         # Load thumbnails from cache for downloaded studies (local, no regeneration)
-                        await self._load_thumbnails_for_downloaded_study(study_uid, series_list)
+                        cache_loaded = await self._load_thumbnails_for_downloaded_study(study_uid, series_list, expected_patient_id=patient_id)
+                        # If cache is missing/corrupt for a server-backed study, fallback to socket fetch.
+                        if (not cache_loaded) and self.source_of_patient_load != SourceOfPatientLoad.DB:
+                            if not self._is_active_patient_selection(patient_id, study_uid):
+                                return
+                            await self.show_patient_studies(
+                                {
+                                    'PatientID': patient_id,
+                                    'PatientName': patient_name,
+                                    'StudyInstanceUID': study_uid,
+                                }
+                            )
                         print(f"[PROFILE] single-click: thumbnails loaded for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
                         return
 
             # Server request only if not cached
 
             # Get detailed series information from server
-            study_info = self._get_or_fetch_series_info(study_uid, patient_id)
+            study_info = await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._get_or_fetch_series_info,
+                    study_uid,
+                    patient_id,
+                    True,
+                ),
+                timeout=45.0,
+            )
 
             print('study_info:', study_info)
             if study_info:
                 # Display series information in right panel
+                if not self._is_active_patient_selection(patient_id, study_uid):
+                    return
                 self._display_series_info_in_right_panel(study_info)
+
+                # Ensure thumbnails are fetched/displayed for non-downloaded studies.
+                # The downloaded-study branch above already renders from local cache.
+                if not check_study_complete(study_uid):
+                    if not self._is_active_patient_selection(patient_id, study_uid):
+                        return
+                    await self.show_patient_studies(
+                        {
+                            'PatientID': patient_id,
+                            'PatientName': patient_name,
+                            'StudyInstanceUID': study_uid,
+                        }
+                    )
 
                 # Also save to database for future use (pass study_info to avoid double fetch)
                 success = self.save_complete_study_info(study_uid, patient_id, study_info=study_info)
@@ -143,16 +477,24 @@ class _HPSeriesMixin:
                     clear_study_cache(study_uid)
                 print(f"[PROFILE] single-click: server series info loaded for {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
             else:
-                QMessageBox.information(self, "No Information",
-                                        f"No detailed series information available for study: {study_uid}")
+                # Series info unavailable from server — still show thumbnails via socket/cache.
+                print(f"[INFO] no series info for {study_uid}; falling through to thumbnail fetch")
+                if not self._is_active_patient_selection(patient_id, study_uid):
+                    return
+                await self.show_patient_studies(
+                    {
+                        'PatientID': patient_id,
+                        'PatientName': patient_name,
+                        'StudyInstanceUID': study_uid,
+                    }
+                )
 
         except Exception as e:
             print(f"Error in _load_and_display_series_info: {str(e)}")
-            QMessageBox.critical(self, "Error", f"Error retrieving series information: {str(e)}")
         finally:
             self.hide_loading()
 
-    async def _load_thumbnails_for_downloaded_study(self, study_uid, series_list):
+    async def _load_thumbnails_for_downloaded_study(self, study_uid, series_list, expected_patient_id=None):
         """
         Load and display thumbnails for a downloaded study from database/cache
         OPTIMIZED: Fast loading with minimal blocking
@@ -166,7 +508,7 @@ class _HPSeriesMixin:
             
             if not thumbnail_dir.exists():
                 print(f"[WARNING] No thumbnail cache found for study {study_uid}")
-                return
+                return False
             
             # Get all thumbnail files once (faster than repeated lookups)
             thumbnail_files = {f.stem: str(f) for f in thumbnail_dir.glob('*.jpg')}
@@ -174,7 +516,7 @@ class _HPSeriesMixin:
             
             if not thumbnail_files:
                 print(f"[WARNING] No thumbnail images found in {thumbnail_dir}")
-                return
+                return False
             
             # Build thumbnails list from series info and cached files
             thumbnails = []
@@ -208,19 +550,25 @@ class _HPSeriesMixin:
             
             # Display thumbnails if found
             if thumbnails and hasattr(self, 'right_panel_widget'):
+                if not self._is_active_patient_selection(expected_patient_id, study_uid):
+                    return
                 # Use await to yield control and prevent blocking
                 await asyncio.sleep(0)
                 # Stream cached thumbnails too to avoid a full synchronous rebuild.
                 self.right_panel_widget.display_thumbnails(thumbnails, progressive=True)
                 print(f"[OK] Displayed {len(thumbnails)} cached thumbnails for study {study_uid}")
                 print(f"[PROFILE] thumbnails cache display: {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
+                return True
+
+            return False
             
         except Exception as e:
             print(f"[ERROR] Error loading thumbnails for downloaded study: {str(e)}")
             import traceback
             traceback.print_exc()
+            return False
 
-    def _get_or_fetch_series_info(self, study_uid, patient_id):
+    def _get_or_fetch_series_info(self, study_uid, patient_id, force_refresh: bool = False):
         """
         Get series info from cache or fetch from server.
 
@@ -230,12 +578,22 @@ class _HPSeriesMixin:
         if not study_uid:
             return None
 
+        if force_refresh:
+            self._series_info_cache.pop(study_uid, None)
+
         cached = self._series_info_cache.get(study_uid)
         if cached:
-            return cached
+            cached_series = cached.get('series') if isinstance(cached, dict) else None
+            if isinstance(cached_series, list) and cached_series:
+                return cached
+            # Drop stale/empty cache entries and force a network refresh.
+            self._series_info_cache.pop(study_uid, None)
 
         study_info = self.get_series_info_from_server(study_uid, patient_id)
         if study_info:
+            series_items = study_info.get('series') if isinstance(study_info, dict) else None
+            if not (isinstance(series_items, list) and series_items):
+                return study_info
             self._series_info_cache[study_uid] = study_info
         return study_info
 
@@ -321,11 +679,11 @@ class _HPSeriesMixin:
             "Please use Zeta Download Manager via _get_or_create_download_manager_tab().add_downloads() instead."
         )
 
-    def display_thumbnails(self, thumbnails):
+    def display_thumbnails(self, thumbnails, progressive: bool = True):
         """Display received thumbnail images using the new right panel component"""
         try:
             # Use the new right panel widget
-            self.right_panel_widget.display_thumbnails(thumbnails)
+            self.right_panel_widget.display_thumbnails(thumbnails, progressive=bool(progressive))
         except Exception as e:
             print(f"Error displaying thumbnails: {str(e)}")
             raise
@@ -335,22 +693,75 @@ class _HPSeriesMixin:
             QTimer.singleShot(0, self._signal_thumbnails_ready)
 
     def save_thumbnail(self, series_thumbnails: dict):
-        # print('thuuuuuuuu:', series_thumbnails)
-        study_uid = series_thumbnails.get('study_uid')
+        import base64 as _b64
+        study_uid = (
+            series_thumbnails.get('study_uid')
+            or series_thumbnails.get('study_instance_uid')
+            or ''
+        )
+        study_uid = str(study_uid or '').strip()
+        if not study_uid:
+            return series_thumbnails
 
-        all_series_data: dict = series_thumbnails.get('thumbnails')
+        all_series_data = series_thumbnails.get('thumbnails') or []
+        if isinstance(all_series_data, dict):
+            all_series_data = list(all_series_data.values())
+            series_thumbnails['thumbnails'] = all_series_data
+        if not isinstance(all_series_data, list):
+            series_thumbnails['thumbnails'] = []
+            return series_thumbnails
+
         for i in range(len(all_series_data)):
             series = all_series_data[i]
+            if not isinstance(series, dict):
+                continue
 
             series_uid = series.get('series_uid')
 
-            series_number = series.get('series_number')
+            series_number = (
+                series.get('series_number')
+                or series.get('SeriesNumber')
+                or ''
+            )
             series_description = series.get('series_description')
             modality = series.get('modality')
             image_count = series.get('image_count')
 
-            file_path = save_thumbnail_with_bytes(study_uid, series_number, series.get('thumbnail_data'))
-            all_series_data[i]['file_path'] = file_path
+            thumb_raw = (
+                series.get('thumbnail_data')
+                or series.get('thumbnail_base64')
+                or series.get('thumbnailBase64')
+                or series.get('thumbnailData')
+                or series.get('image_data')
+                or series.get('imageBase64')
+                or ''
+            )
+            if isinstance(thumb_raw, str) and thumb_raw:
+                try:
+                    payload = thumb_raw.strip()
+                    if payload.startswith('data:') and ',' in payload:
+                        payload = payload.split(',', 1)[1]
+                    payload = payload.replace('\n', '').replace('\r', '')
+                    thumb_bytes = _b64.b64decode(payload)
+                except Exception:
+                    try:
+                        padded = payload + ('=' * (-len(payload) % 4))
+                        thumb_bytes = _b64.urlsafe_b64decode(padded)
+                    except Exception:
+                        thumb_bytes = None
+            elif isinstance(thumb_raw, (bytes, bytearray)):
+                thumb_bytes = bytes(thumb_raw)
+            else:
+                thumb_bytes = None
+
+            file_path = None
+            if thumb_bytes:
+                safe_file_name = str(series_number or series_uid or f'series_{i + 1}').strip()
+                safe_file_name = safe_file_name.replace('\\', '_').replace('/', '_').replace(':', '_')
+                file_path = save_thumbnail_with_bytes(study_uid, safe_file_name, thumb_bytes)
+            elif series.get('thumbnail_path'):
+                file_path = str(series.get('thumbnail_path') or '')
+            all_series_data[i]['file_path'] = str(file_path) if file_path else ''
 
             # save series data on json file
             # save_series_json(study_uid, series_uid=series_uid, series_number=series_number,
@@ -363,24 +774,66 @@ class _HPSeriesMixin:
 
     def _on_thumbnail_requested(self, row):
         """Handle thumbnail request from PatientTableWidget"""
-        # Use QTimer to defer the async call to avoid RuntimeWarning
-        QTimer.singleShot(0, lambda: self._start_thumbnail_task(row))
+        # Debounce rapid row changes to keep only the latest thumbnail request.
+        try:
+            self._pending_thumbnail_row = row
+            timer = getattr(self, '_thumbnail_request_timer', None)
+            if timer is None:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(lambda: self._start_thumbnail_task(getattr(self, '_pending_thumbnail_row', None)))
+                self._thumbnail_request_timer = timer
+            timer.start(120)
+        except Exception:
+            QTimer.singleShot(0, lambda: self._start_thumbnail_task(row))
 
     def _start_thumbnail_task(self, row):
         """Start thumbnail task safely"""
         try:
-            # Cancel any existing task
+            if row is None:
+                return
+            try:
+                _pd_trace = self.patient_table_widget.get_patient_data_by_row(row)
+                _tr_study = (_pd_trace or {}).get('study_uid', '') if isinstance(_pd_trace, dict) else ''
+                _tr_pid = (_pd_trace or {}).get('patient_id', '') if isinstance(_pd_trace, dict) else ''
+                if _tr_study and hasattr(self, '_log_open_trace'):
+                    self._log_open_trace(
+                        _tr_study,
+                        'thumbnail_task_start',
+                        patient_id=str(_tr_pid or ''),
+                        row=int(row) if row is not None else -1,
+                    )
+            except Exception:
+                pass
+
+            # Keep active-selection markers aligned with thumbnail requests.
+            try:
+                patient_data = self.patient_table_widget.get_patient_data_by_row(row)
+                if patient_data:
+                    self._mark_active_patient_selection(
+                        patient_data.get('patient_id', ''),
+                        patient_data.get('study_uid', ''),
+                    )
+            except Exception:
+                pass
+
+            # Cancel any existing task and clear the inflight flag it may have set,
+            # so the new task is not blocked by the stale flag in show_patient_studies.
             if hasattr(self, '_current_thumbnail_task') and self._current_thumbnail_task:
                 try:
                     if not self._current_thumbnail_task.done():
+                        self._right_panel_fetch_inflight_uid = ''
                         self._current_thumbnail_task.cancel()
                 except:
                     pass
 
             # Create and store the task to prevent RuntimeWarning
-            self._current_thumbnail_task = asyncio.create_task(self._safe_on_plus_button_clicked(row))
-            # Add done callback to handle cleanup
-            self._current_thumbnail_task.add_done_callback(self._thumbnail_task_cleanup)
+            self._current_thumbnail_task = self._schedule_ui_coro(
+                self._safe_on_plus_button_clicked(row),
+                done_callback=self._thumbnail_task_cleanup,
+            )
+            if self._current_thumbnail_task is None:
+                self.hide_loading()
         except Exception as e:
             print(f"Error in thumbnail task cleanup: {str(e)}")
 

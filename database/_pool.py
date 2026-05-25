@@ -190,8 +190,8 @@ def _get_pooled_connection() -> sqlite3.Connection:
                         min_ms=5.0,
                     )
                     return conn
-                except sqlite3.OperationalError:
-                    pass  # dead connection — fall through to create new one
+                except (sqlite3.OperationalError, sqlite3.ProgrammingError):
+                    pass  # dead/closed connection — fall through to create new one
     finally:
         _pool_lock.release()
 

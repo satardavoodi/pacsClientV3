@@ -43,7 +43,7 @@ User Action (double-click study)
 أ¢â€‌إ’أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌â‚¬أ¢â€‌ع¯
 أ¢â€‌â€ڑ 4. DOWNLOAD (subprocess)                أ¢â€‌â€ڑ
 أ¢â€‌â€ڑ    DownloadProcessWorker (own GIL)       أ¢â€‌â€ڑ
-أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Series downloaded via gRPC stream  أ¢â€‌â€ڑ
+أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Series DICOM bytes downloaded via socket  أ¢â€‌â€ڑ
 أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ DICOM files saved to disk          أ¢â€‌â€ڑ
 أ¢â€‌â€ڑ    أ¢â€‌إ“أ¢â€‌â‚¬ Progress signals أ¢â€ â€™ UI              أ¢â€‌â€ڑ
 أ¢â€‌â€ڑ    أ¢â€‌â€‌أ¢â€‌â‚¬ Instance records أ¢â€ â€™ DB              أ¢â€‌â€ڑ
@@ -409,3 +409,22 @@ and the complete file map, see `docs/architecture/network-architecture.md`.
 | H8 | 10 studies ط£â€” 10 series ط£â€” 100 files I/O stress | All files created/verified |
 | H9 | 1000 get_next_download under full store | Rule engine throughput >1000/s |
 | H10 | Combined pipeline (priority + observer + coordinator + I/O) | End-to-end <10ms/op |
+
+## 2026-05-24 Review & Fixes
+
+A full review of the Zeta Download Manager was done on 2026-05-24. The as-built
+review, fix plan, and implementation-progress record is
+`docs/plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md`
+(its §13 tracks applied vs outstanding work).
+
+Applied this session: atomic `.part` + `os.replace()` DICOM/thumbnail writes;
+resume-scan integrity check; final progress flush; DB lock-retry wrappers on
+`initialize_study` / `batch_insert_instances`; dead-code quarantine; and a
+`GetStudyInfo`-probe fix that cut patient-open → download-start from ~9 s to ~3 s.
+
+**Transport note:** gRPC is **retired** — the active transport is socket
+end-to-end. `GrpcMetadataClient` is socket-backed despite its name. See review
+doc §15 for the full active-vs-retired path map.
+
+Deferred / outstanding: review-doc steps S2.3, S2.5, S3.2–S3.5, Phase 4, and the
+subprocess-spawn pre-warm.

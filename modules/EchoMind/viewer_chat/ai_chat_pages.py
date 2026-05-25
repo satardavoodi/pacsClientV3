@@ -9,7 +9,8 @@ from PySide6.QtCore import Qt, QSize, QTimer, QEvent, Signal
 from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QFont, QTextCursor, QColor, QPen, QTextDocument,QFontMetrics, QGuiApplication, QTextOption, QCursor, QTextBlockFormat
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QListWidget, QListWidgetItem,
-    QInputDialog, QLineEdit, QMessageBox, QMenu, QToolButton, QLabel, QSlider, QSizePolicy, QStyle
+    QInputDialog, QLineEdit, QMessageBox, QMenu, QToolButton, QLabel, QSlider, QSizePolicy, QStyle,
+    QDialog
 )
 from PacsClient import utils as U
 from PacsClient.utils.database import (
@@ -119,6 +120,68 @@ def _transcribe_with_active_backend(paths: list[str], quality_mode: str = "clear
                 fh.close()
             except Exception:
                 pass
+
+
+class _ReceptionIdDialog(QDialog):
+    """Prompt the user for the reception ID a report should be sent to.
+
+    Offers the current study's patient as a one-click choice and also
+    accepts a manually entered reception ID for a different patient.
+    After ``exec()`` returns ``QDialog.Accepted``, ``selected_patient_id``
+    holds the chosen ID and ``mode`` is either ``"current"`` or ``"other"``.
+    """
+
+    def __init__(self, parent=None, current_patient_id: str | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Reception ID")
+        self.setMinimumWidth(420)
+        self.selected_patient_id: str | None = None
+        self.mode: str | None = None
+
+        layout = QVBoxLayout(self)
+
+        title = QLabel("Select the reception ID this report should be sent to:")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+
+        if current_patient_id:
+            btn_current = QPushButton(f"Send to current patient  ({current_patient_id})")
+            btn_current.setObjectName("ReceptionIdPrimaryButton")
+            btn_current.setDefault(True)
+            btn_current.clicked.connect(
+                lambda: self._choose(current_patient_id, "current")
+            )
+            layout.addWidget(btn_current)
+
+        layout.addWidget(QLabel("Or send to another reception ID:"))
+
+        row = QHBoxLayout()
+        self._other_input = QLineEdit()
+        self._other_input.setPlaceholderText("Enter reception ID...")
+        self._other_input.returnPressed.connect(self._choose_other)
+        row.addWidget(self._other_input)
+        btn_other = QPushButton("Send")
+        btn_other.clicked.connect(self._choose_other)
+        row.addWidget(btn_other)
+        layout.addLayout(row)
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        layout.addWidget(btn_cancel)
+
+    def _choose(self, patient_id: str, mode: str) -> None:
+        self.selected_patient_id = str(patient_id or "").strip()
+        self.mode = mode
+        self.accept()
+
+    def _choose_other(self) -> None:
+        other_id = (self._other_input.text() or "").strip()
+        if not other_id:
+            QMessageBox.warning(
+                self, "Invalid Input", "Please enter a valid reception ID."
+            )
+            return
+        self._choose(other_id, "other")
 
 
 class ModePickerPage(QWidget):
@@ -3160,35 +3223,30 @@ class OneChatPage(QWidget):
                 print(f"❌ Error fetching patient: {e}")
                 logger.error(f"❌ Error fetching patient: {e}")
 
-        if not patient_id:
-            default_value = (self.study_uid or "").strip()
-            patient_id, ok = QInputDialog.getText(
-                self,
-                "Patient ID Required",
-                "Automatic access to the patient ID is not available.\n"
-                "Please enter the patient ID directly to send.",
-                QLineEdit.Normal,
-                default_value,
-            )
-            if not ok:
-                logger.info("Patient ID entry canceled by user.")
-                return
-            patient_id = (patient_id or "").strip()
+        # Let the user confirm the current patient or enter a different
+        # reception ID before the report is sent.
+        current_patient_id = (patient_id or "").strip() or None
+        dialog = _ReceptionIdDialog(self, current_patient_id)
+        if dialog.exec() != QDialog.Accepted:
+            logger.info("Reception send: patient selection canceled by user.")
+            return
 
+        patient_id = (dialog.selected_patient_id or "").strip()
         if not patient_id:
-            print("❌ Patient ID is invalid!")
-            logger.error("❌ Patient ID is invalid!")
+            logger.error("Reception send: no reception ID selected.")
             QMessageBox.warning(
                 self,
-                "Patient ID Required",
-                "Patient ID cannot be empty. Please enter a valid patient ID.",
+                "Reception ID Required",
+                "A reception ID is required to send the report.",
             )
             return
 
         def _send_with_patient_id(target_patient_id: str) -> bool:
             patient_validated = False
             try:
-                base_url = "http://81.16.117.196:8080"
+                # Reception/Workflow API base URL - configurable, not hard-coded.
+                from modules.network.reception_api_config import get_reception_api_base_url
+                base_url = get_reception_api_base_url()
                 validate_url = f"{base_url}/api/pacs/patients/{target_patient_id}"
                 masked_url = "http://<host>/api/pacs/patients/<patient_id>"
                 masked_id = "<patient_id>"
@@ -3271,7 +3329,9 @@ class OneChatPage(QWidget):
                             server_message = "Missing auth token"
                             logger.warning("[RECEPTION_SERVER] ❌ Missing auth token; skipping server send")
                         else:
-                            base_url = "http://81.16.117.196:8080"
+                            # Reception/Workflow API base URL - configurable, not hard-coded.
+                            from modules.network.reception_api_config import get_reception_api_base_url
+                            base_url = get_reception_api_base_url()
                             url = f"{base_url}/api/pacs/update-report"
 
                             reception_id = target_patient_id
@@ -4259,15 +4319,20 @@ class OneChatPage(QWidget):
         btn = self.composer.btn_send
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
 
-    def _transcribe_now(self, payload: dict):
+    def _transcribe_now(self, payload: dict, *, quality_mode: str = "clear", _is_retry: bool = False):
         """
         Immediate transcription with full numerical quality-report support.
         Handles:
         • accepted audio
         • rejected audio + detailed criteria
         • silence
+        • automatic one-shot fallback: a "clear"-mode failure (rejection,
+          silence, or network error) is auto-resent once in "noisy" mode
         • displays metrics bubble
         • removes voice chip only when success
+
+        quality_mode : "clear" (default, first attempt) or "noisy" (retry).
+        _is_retry    : internal — True only for the auto-fallback resend.
         """
         # --- helper: normalize path from payload (file_path OR paths[0]) ---
         def _extract_file_path(pl: dict) -> t.Optional[str]:
@@ -4332,6 +4397,32 @@ class OneChatPage(QWidget):
                     pass
 
         # -----------------------------
+        # One-shot automatic quality fallback
+        # -----------------------------
+        def _retry_with_noisy() -> bool:
+            """Auto-resend this exact voice once in "noisy" mode.
+
+            Returns True if a retry was scheduled (the caller must then stop
+            and return); False if this attempt was already the noisy retry
+            or the user cancelled — in which case the caller surfaces the
+            normal failure message.
+            """
+            if _is_retry or quality_mode != "clear":
+                return False
+            if getattr(self, "_tr_cancelled", False):
+                return False
+            cleanup_ui()
+            self.controller.bubble(
+                "AI ChatBot",
+                "Voice quality seems low — automatically retrying in noisy-voice mode...",
+            )
+            QTimer.singleShot(
+                400,
+                lambda: self._transcribe_now(payload, quality_mode="noisy", _is_retry=True),
+            )
+            return True
+
+        # -----------------------------
         # Worker: network request
         # -----------------------------
         def work():
@@ -4346,7 +4437,7 @@ class OneChatPage(QWidget):
             info = m.ensure_detected()
             gapgpt_key = (info.gapgpt_key or "").strip()
             headers = {"Authorization": f"Bearer {gapgpt_key}"} if gapgpt_key else {}
-            data = {"quality_mode": getattr(self.composer, "_transcribe_quality_mode", "clear")}
+            data = {"quality_mode": quality_mode}
             try:
                 r = requests.post(
                     URL_GEN_TRANSCRIPT,
@@ -4387,6 +4478,12 @@ class OneChatPage(QWidget):
             # 1. Handle REJECTED audio
             # ===========================================
             if file_report and file_report.get("accepted") is False:
+                # The server rejects noisy/low-quality audio with a 200 OK
+                # response (accepted=False) — NOT an HTTP error. On the first
+                # ("clear") attempt, auto-resend once in noisy mode before
+                # surfacing the rejection.
+                if _retry_with_noisy():
+                    return
                 crit = file_report.get("criteria", {})
                 msg = (
                     "⚠ **Voice Rejected**\n"
@@ -4435,6 +4532,10 @@ class OneChatPage(QWidget):
             # 3. Handle SILENCE ONLY
             # ===========================================
             else:
+                # No transcript in clear mode — auto-retry once in noisy mode
+                # before telling the user no speech was detected.
+                if _retry_with_noisy():
+                    return
                 self.controller.bubble(
                     "AI ChatBot",
                     """
@@ -4442,18 +4543,20 @@ class OneChatPage(QWidget):
                     ⚠️ <b>No clear speech detected.</b> 🎧🗣️<br><br>
 
                     <b>Common causes:</b> 🔇 muted/wrong mic 🎙️, 🔉 low volume/quality, 🌪️ heavy noise, 🔐 missing mic permission.<br>
-                    <b>Try:</b> 🧪 test mic, 🔧 select correct input, 📈 raise input/record louder, 🤫 reduce noise, ✅ allow mic access.<br><br>
-
-                    If needed, use <b>Noisy Voice</b> 🟡 from the lower menu 👇
+                    <b>Try:</b> 🧪 test mic, 🔧 select correct input, 📈 raise input/record louder, 🤫 reduce noise, ✅ allow mic access.
                     </div>
                     """
 
                 )
 
         # -----------------------------
-        # Worker Error callback
+        # Worker Error callback (with one-shot quality fallback)
         # -----------------------------
         def err(e):
+            # A clear-mode network/HTTP failure also gets one automatic
+            # retry in noisy mode before the error is surfaced.
+            if _retry_with_noisy():
+                return
             cleanup_ui()
             self.controller.bubble("AI ChatBot", f"❌ Error: {e}")
 

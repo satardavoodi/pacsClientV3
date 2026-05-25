@@ -18,19 +18,21 @@ class ReportStatusDialog(QDialog):
     statusChanged = Signal(str, str, str)  # study_uid, old_status, new_status
     
     def __init__(self, parent=None, study_uid: str = "", current_status: str = "pending", 
-                 patient_name: str = "", patient_id: str = ""):
+                 patient_name: str = "", patient_id: str = "", reporting_physician: str = ""):
         super().__init__(parent)
         self.study_uid = study_uid
         self.current_status = current_status
         self.patient_name = patient_name
         self.patient_id = patient_id
+        self.reporting_physician = reporting_physician
         self._comment = ""  # Initialize comment
+        self._initial_comment = ""
         self.setup_ui()
     
     def setup_ui(self):
         """Setup the dialog UI"""
         self.setWindowTitle("Change Report Status")
-        self.setMinimumWidth(550)
+        self.setMinimumWidth(640)
         self.setMinimumHeight(300)
         
         # Dialog styling - dark theme
@@ -51,6 +53,12 @@ class ReportStatusDialog(QDialog):
         info_label = QLabel(f"Patient: {self.patient_name} ({self.patient_id})")
         info_label.setStyleSheet("font-size: 14px; font-weight: bold; color: #e2e8f0;")
         layout.addWidget(info_label)
+
+        physician_text = str(self.reporting_physician or "").strip() or "N/A"
+        self.physician_label = QLabel(f"Reporting Physician: {physician_text}")
+        self.physician_label.setWordWrap(True)
+        self.physician_label.setStyleSheet("font-size: 13px; color: #cbd5e1; line-height: 1.4;")
+        layout.addWidget(self.physician_label)
         
         study_label = QLabel(f"Study UID: {self.study_uid[:50]}...")
         study_label.setStyleSheet("font-size: 12px; color: #94a3b8;")
@@ -172,19 +180,38 @@ class ReportStatusDialog(QDialog):
         """Apply the status change"""
         new_status = self.status_combo.currentData()
         comment = self.comment_text.toPlainText().strip()
-        
-        if new_status == self.current_status:
-            QMessageBox.information(self, "Information", "Status has not changed.")
+
+        status_changed = new_status != self.current_status
+        comment_changed = comment != (self._initial_comment or "")
+
+        if not status_changed and not comment_changed:
+            QMessageBox.information(self, "Information", "No changes to apply.")
             return
-        
+
         # Store comment for retrieval
         self._comment = comment
-        
+        if not status_changed:
+            # Reuse the same status so caller can still submit comment-only changes.
+            new_status = self.current_status
+
         # Accept dialog first, then emit signal
         self.accept()
-        
+
         # Emit signal after dialog is closed to avoid blocking
         QTimer.singleShot(0, lambda: self.statusChanged.emit(self.study_uid, self.current_status, new_status))
+
+    def set_comment(self, comment: str) -> None:
+        """Prefill comment editor with existing server-side comment."""
+        value = str(comment or "")
+        self._initial_comment = value
+        self.comment_text.setPlainText(value)
+
+    def set_reporting_physician(self, reporting_physician: str) -> None:
+        """Update reporting physician label when fetched asynchronously."""
+        self.reporting_physician = str(reporting_physician or "")
+        physician_text = self.reporting_physician.strip() or "N/A"
+        if hasattr(self, 'physician_label'):
+            self.physician_label.setText(f"Reporting Physician: {physician_text}")
     
     def get_new_status(self) -> str:
         """Get the selected new status"""

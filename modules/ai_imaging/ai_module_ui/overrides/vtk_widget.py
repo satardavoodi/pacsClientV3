@@ -6,13 +6,25 @@ from PacsClient.utils.utils import load_mg_ai_manifest
 from modules.ai_imaging.ai_module_ui.csv_table import concat_tables, read_csv_table
 import asyncio
 import os
+import math
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from PySide6.QtCore import Signal
 
 
+_AI_MG_LOGGER = logging.getLogger(__name__)
+
+
 class AIVTKWidget(VTKWidget):
+    # Current canonical CSV coordinate space expected by Advanced VTK draw path.
+    CSV_COORD_SPACE_CURRENT = "vtk_raw_ijk_v2"
+    # Compatibility spaces for older server CSV generations.
+    CSV_COORD_SPACE_LEGACY_BOTTOM_LEFT = "legacy_bottom_left_ijk"
+    CSV_COORD_SPACE_NORMALIZED = "normalized_xyxy"
+    CSV_COORD_SPACE_WORLD_MM = "world_mm_xyxy"
+
     processing_status_changed = Signal(str, bool)
     segmentation_ready = Signal(object, object, object, object)
     manager_ai_requested = Signal(int, object)
@@ -174,9 +186,11 @@ class AIVTKWidget(VTKWidget):
     def _schedule_manager_ai(self, delay_ms=200, reason=None):
         try:
             series_uid = self.image_viewer.metadata.get('series', {}).get('series_uid')
+            series_num = self.image_viewer.metadata.get('series', {}).get('series_number')
         except Exception:
             series_uid = None
-        if not series_uid:
+            series_num = None
+        if series_uid is None and series_num is None:
             return
 
         self._ai_pending_token += 1
@@ -189,14 +203,23 @@ class AIVTKWidget(VTKWidget):
                 return
             try:
                 current_uid = self.image_viewer.metadata.get('series', {}).get('series_uid')
+                current_num = self.image_viewer.metadata.get('series', {}).get('series_number')
             except Exception:
                 current_uid = None
-            if current_uid != series_uid:
+                current_num = None
+            if series_uid is not None and current_uid != series_uid:
+                return
+            if series_uid is None and series_num is not None and current_num != series_num:
                 return
             if not self._is_series_ready_for_boxes(series_uid):
                 attempts["count"] += 1
-                if attempts["count"] <= 25:
+                if attempts["count"] <= 100:
                     QTimer.singleShot(80, _run_if_current)
+                else:
+                    print(
+                        f"[MG][MANAGER_AI] Dropped after readiness retries "
+                        f"series_uid={series_uid} reason={reason}"
+                    )
                 return
             if self._ai_busy:
                 QTimer.singleShot(120, _run_if_current)
@@ -254,7 +277,23 @@ class AIVTKWidget(VTKWidget):
                     if cache_key in self._ai_boxes_cache or cache_key in self._ai_inflight:
                         continue
                     self._ai_inflight.add(cache_key)
-                executor.submit(self._compute_boxes_scores_for_metadata, df_det, df_cls, metadata, cache_key)
+                future = executor.submit(self._compute_boxes_scores_for_metadata, df_det, df_cls, metadata, cache_key)
+
+                def _on_prefetch_done(f, _key=cache_key, _uid=series_uid):
+                    exc = f.exception()
+                    if exc is not None:
+                        import traceback as _tb
+                        _AI_MG_LOGGER.warning(
+                            "[MG][PREFETCH_WORKER_ERROR] series_uid=%s err=%r tb=%s",
+                            _uid,
+                            exc,
+                            _tb.format_exception(type(exc), exc, exc.__traceback__),
+                            extra={"component": "viewer"},
+                        )
+                        with self._ai_cache_lock:
+                            self._ai_inflight.discard(_key)
+
+                future.add_done_callback(_on_prefetch_done)
 
         threading.Thread(target=_prefetch_worker, daemon=True, name="AIBoxPrefetch").start()
 
@@ -353,10 +392,133 @@ class AIVTKWidget(VTKWidget):
                     return labels.get(k)
         return None
 
+    def _resolve_coord_space_for_series(self, df, series_uid, instance_names, instance_tokens, instance_numbers):
+        """Resolve declared coordinate space for matched CSV rows.
+
+        The conversion contract is CSV-driven. If no coordinate-space metadata exists,
+        we keep the current behavior (assume current VTK IJK pixel space) to avoid
+        regressing already-correct studies.
+        """
+        try:
+            matched = self._match_rows_for_series(
+                df,
+                series_uid,
+                instance_names,
+                instance_tokens,
+                instance_numbers,
+                check_all=True,
+            )
+            if matched is None:
+                return self.CSV_COORD_SPACE_CURRENT
+
+            for key in ("coord_space", "geometry_version", "coord_system"):
+                if key not in matched.columns:
+                    continue
+                values = [str(v).strip().lower() for v in matched[key].iloc if str(v).strip()]
+                if values:
+                    # Prefer the first non-empty declaration for the matched slice rows.
+                    return values[0]
+        except Exception:
+            pass
+        return self.CSV_COORD_SPACE_CURRENT
+
+    def _get_series_pixel_geometry(self, metadata):
+        cols = None
+        rows = None
+        sx = None
+        sy = None
+        try:
+            instances = metadata.get("instances", []) if isinstance(metadata, dict) else []
+            if instances:
+                first = instances[0] or {}
+                col_val = first.get("columns")
+                row_val = first.get("rows")
+                try:
+                    cols = int(col_val) if col_val is not None and str(col_val) != "" else None
+                except Exception:
+                    cols = None
+                try:
+                    rows = int(row_val) if row_val is not None and str(row_val) != "" else None
+                except Exception:
+                    rows = None
+                spacing = first.get("pixel_spacing")
+                if isinstance(spacing, (list, tuple)) and len(spacing) >= 2:
+                    sy = float(spacing[0]) if spacing[0] not in (None, "") else None
+                    sx = float(spacing[1]) if spacing[1] not in (None, "") else None
+        except Exception:
+            pass
+
+        if (not cols or not rows) and getattr(self, "image_viewer", None) is not None:
+            try:
+                dims = self.image_viewer.vtk_image_data.GetDimensions()
+                cols = cols or int(dims[0])
+                rows = rows or int(dims[1])
+            except Exception:
+                pass
+
+        return cols, rows, sx, sy
+
+    def _normalize_and_clamp_box(self, box, cols, rows):
+        try:
+            x0, y0, x1, y1 = [float(v) for v in box]
+        except Exception:
+            return None
+
+        if not all(math.isfinite(v) for v in (x0, y0, x1, y1)):
+            return None
+
+        left = min(x0, x1)
+        right = max(x0, x1)
+        top = min(y0, y1)
+        bottom = max(y0, y1)
+
+        if cols is not None and cols > 0:
+            left = max(0.0, min(left, cols - 1))
+            right = max(0.0, min(right, cols - 1))
+        if rows is not None and rows > 0:
+            top = max(0.0, min(top, rows - 1))
+            bottom = max(0.0, min(bottom, rows - 1))
+
+        return [left, top, right, bottom]
+
+    def _convert_boxes_to_current_geometry(self, boxes, *, coord_space, cols, rows, sx, sy):
+        """Convert CSV boxes to the current VTK raw-IJK box convention.
+
+        Supported coordinate spaces:
+        - vtk_raw_ijk_v2 (pass-through)
+        - legacy_bottom_left_ijk (Y-origin inversion)
+        - normalized_xyxy (0..1 to pixel)
+        - world_mm_xyxy (physical mm to pixel via spacing)
+        """
+        converted = []
+        src = (coord_space or "").strip().lower()
+
+        for box in boxes or []:
+            try:
+                x0, y0, x1, y1 = [float(v) for v in box]
+            except Exception:
+                continue
+
+            if src in (self.CSV_COORD_SPACE_NORMALIZED, "normalized", "norm_xyxy"):
+                if cols and rows:
+                    x0, x1 = x0 * (cols - 1), x1 * (cols - 1)
+                    y0, y1 = y0 * (rows - 1), y1 * (rows - 1)
+            elif src in (self.CSV_COORD_SPACE_WORLD_MM, "world_mm", "physical_mm_xyxy"):
+                if sx and sy and sx > 0 and sy > 0:
+                    x0, x1 = x0 / sx, x1 / sx
+                    y0, y1 = y0 / sy, y1 / sy
+            elif src in (self.CSV_COORD_SPACE_LEGACY_BOTTOM_LEFT, "legacy_display_ijk", "bottom_left"):
+                if rows and rows > 0:
+                    y0, y1 = (rows - 1) - y0, (rows - 1) - y1
+
+            normalized = self._normalize_and_clamp_box([x0, y0, x1, y1], cols, rows)
+            if normalized is not None:
+                converted.append(normalized)
+
+        return converted
+
     def _compute_boxes_scores_for_metadata(self, df_det, df_cls, metadata, cache_key=None):
         series_uid = metadata.get('series', {}).get('series_uid') if isinstance(metadata, dict) else None
-        if not series_uid:
-            return
 
         instances = metadata.get('instances', []) if isinstance(metadata, dict) else []
         instance_names = set()
@@ -377,6 +539,15 @@ class AIVTKWidget(VTKWidget):
                 except Exception:
                     pass
 
+        cols, rows, sx, sy = self._get_series_pixel_geometry(metadata)
+        coord_space = self._resolve_coord_space_for_series(
+            df_det,
+            series_uid,
+            instance_names,
+            instance_tokens,
+            instance_numbers,
+        )
+
         boxes_scores = []
         boxes = self._extract_value_field_for_metadata(
             df_det, 'box', series_uid, instance_names, instance_tokens, instance_numbers
@@ -391,28 +562,110 @@ class AIVTKWidget(VTKWidget):
             df_det, 'removed', series_uid, instance_names, instance_tokens, instance_numbers
         )
 
+        # Defensive normalization: extraction may return None for sparse CSV fields.
+        boxes = list(boxes or [])
+        scores = list(scores or [])
+        new_boxes = list(new_boxes or [])
+        removed_boxes = list(removed_boxes or [])
+
+        boxes = self._convert_boxes_to_current_geometry(
+            boxes,
+            coord_space=coord_space,
+            cols=cols,
+            rows=rows,
+            sx=sx,
+            sy=sy,
+        )
+        new_boxes = self._convert_boxes_to_current_geometry(
+            new_boxes,
+            coord_space=coord_space,
+            cols=cols,
+            rows=rows,
+            sx=sx,
+            sy=sy,
+        )
+        removed_boxes = self._convert_boxes_to_current_geometry(
+            removed_boxes,
+            coord_space=coord_space,
+            cols=cols,
+            rows=rows,
+            sx=sx,
+            sy=sy,
+        )
+
+        _AI_MG_LOGGER.warning(
+            "[MG][GEOM_CONVERT] series_uid=%s coord_space=%s dims=(%s,%s) spacing=(%s,%s) boxes=%d new=%d removed=%d",
+            series_uid,
+            coord_space,
+            str(cols),
+            str(rows),
+            str(sx),
+            str(sy),
+            len(boxes),
+            len(new_boxes),
+            len(removed_boxes),
+            extra={"component": "viewer"},
+        )
+
         if new_boxes:
             boxes += new_boxes
             scores += [None] * len(new_boxes)
 
+        if len(scores) < len(boxes):
+            _AI_MG_LOGGER.warning(
+                "[MG][SCORE_LENGTH_MISMATCH] series_uid=%s boxes=%d scores=%d",
+                series_uid,
+                len(boxes),
+                len(scores),
+                extra={"component": "viewer"},
+            )
+
+        _AI_MG_LOGGER.warning(
+            "[MG][COMPUTE_STEP] step=before_for_loop series_uid=%s boxes=%d scores=%d removed=%d",
+            series_uid, len(boxes), len(scores), len(removed_boxes),
+            extra={"component": "viewer"},
+        )
+
         for i in range(len(boxes)):
             if boxes[i] in removed_boxes:
                 continue
-            score = float(f'{scores[i]:.2f}') if scores[i] is not None else 'Custom'
+            score_value = scores[i] if i < len(scores) else None
+            try:
+                score = float(f'{score_value:.2f}') if score_value is not None else 'Custom'
+            except (TypeError, ValueError):
+                try:
+                    score = round(float(score_value), 2)
+                except Exception:
+                    score = 'Custom'
             classification_label = None
             if df_cls is not None:
-                classification_label = self._extract_classification_label_for_metadata(
-                    df_cls,
-                    boxes[i],
-                    series_uid,
-                    instance_names,
-                    instance_tokens,
-                    instance_numbers,
-                )
+                try:
+                    classification_label = self._extract_classification_label_for_metadata(
+                        df_cls,
+                        boxes[i],
+                        series_uid,
+                        instance_names,
+                        instance_tokens,
+                        instance_numbers,
+                    )
+                except Exception as exc:
+                    _AI_MG_LOGGER.warning(
+                        "[MG][CLASSIFY_EXTRACT_ERROR] series_uid=%s idx=%d err=%s",
+                        series_uid,
+                        i,
+                        str(exc),
+                        extra={"component": "viewer"},
+                    )
             if classification_label is not None:
                 boxes_scores.append({'box': boxes[i], 'score': score, 'classification': classification_label})
             else:
                 boxes_scores.append({'box': boxes[i], 'score': score})
+
+        _AI_MG_LOGGER.warning(
+            "[MG][COMPUTE_STEP] step=after_for_loop series_uid=%s boxes_scores=%d",
+            series_uid, len(boxes_scores),
+            extra={"component": "viewer"},
+        )
 
         stats = {
             "total": len(boxes),
@@ -433,6 +686,20 @@ class AIVTKWidget(VTKWidget):
             }
             self._ai_inflight.discard(cache_key)
 
+        _AI_MG_LOGGER.warning(
+            "[MG][COMPUTE_STEP] step=cache_stored series_uid=%s boxes_scores=%d",
+            series_uid, len(boxes_scores),
+            extra={"component": "viewer"},
+        )
+
+        _AI_MG_LOGGER.warning(
+            "[MG][AUTO_APPLY_FROM_PREFETCH] series_uid=%s boxes=%d",
+            series_uid,
+            len(boxes_scores),
+            extra={"component": "viewer"},
+        )
+        self._schedule_apply_boxes_safe(series_uid, boxes_scores)
+
         return boxes_scores, stats
 
     def _schedule_apply_boxes(self, series_uid, boxes_scores, delay_ms=None):
@@ -452,8 +719,13 @@ class AIVTKWidget(VTKWidget):
                 return
             if not self._is_series_ready_for_boxes(series_uid):
                 attempts["count"] += 1
-                if attempts["count"] <= 20:
+                if attempts["count"] <= 100:
                     QTimer.singleShot(80, _apply)
+                else:
+                    print(
+                        f"[MG][BOXES] Dropped apply after readiness retries "
+                        f"series_uid={series_uid} boxes={len(boxes_scores) if boxes_scores else 0}"
+                    )
                 return
             if not boxes_scores:
                 try:
@@ -479,13 +751,6 @@ class AIVTKWidget(VTKWidget):
             return False
         if self.image_viewer is None:
             return False
-        spinner = getattr(self, 'viewport_spinner', None)
-        if spinner and getattr(spinner, 'spinner', None) is not None:
-            try:
-                if spinner.spinner.isVisible():
-                    return False
-            except Exception:
-                return False
         return True
 
     def _get_csv_stamp(self, csv_path):
@@ -822,6 +1087,8 @@ class AIVTKWidget(VTKWidget):
             print(f'[MG][ADD_BOXES] Called with {len(boxes_scores) if boxes_scores else 0} boxes')
             print(f'[MG][ADD_BOXES] boxes_scores: {boxes_scores}\n')
             if boxes_scores:
+                # Keep sidebar populated from CSV even when actor drawing fails or is off-view.
+                self._seed_sidebar_from_boxes_scores(boxes_scores)
                 print(f'in if')
                 self.patient_widget.toolbar_manager.check_and_deactivate_tools()
                 print(f'after check and deactive tools')
@@ -829,6 +1096,9 @@ class AIVTKWidget(VTKWidget):
                 self._notify_processing_status("Processing: Drawing boxes...", True)
                 lst_boxes_object = self.image_viewer.draw_boxes_ijk(boxes_scores, color=(0.0, 1.0, 0.0), line_width=3.0)
                 print(f'after draw boxes object')
+                if lst_boxes_object:
+                    self.update_boxes_details_ui(lst_boxes_object)
+                    self._log_csv_vs_draw_probe(boxes_scores, lst_boxes_object)
 
                 series_uid = self.image_viewer.metadata.get('series', {}).get('series_uid')
                 self._seg_pending = 0
@@ -894,6 +1164,105 @@ class AIVTKWidget(VTKWidget):
             if self._seg_pending == 0:
                 self._notify_processing_status("Processing: Ready", False)
 
+    def _seed_sidebar_from_boxes_scores(self, boxes_scores):
+        imaging_tab = getattr(self.patient_widget, 'imaging_tab_ui', None)
+        if imaging_tab is None:
+            return
+
+        try:
+            series_num = self.image_viewer.metadata.get('series', {}).get('series_number', 'N/A')
+            series_uid = self.image_viewer.metadata.get('series', {}).get('series_uid', 'N/A')
+        except Exception:
+            series_num = 'N/A'
+            series_uid = 'N/A'
+
+        seeded = 0
+
+        for i, item in enumerate(boxes_scores or []):
+            if not isinstance(item, dict):
+                continue
+            box = item.get('box')
+            if not isinstance(box, (list, tuple)) or len(box) != 4:
+                continue
+            classification = item.get('classification', [])
+            imaging_tab.sidebar_upsert_item(
+                key=f"Box {i + 1}",
+                status=1,
+                box_object=None,
+                csv_box=[float(v) for v in box],
+                classification=classification if classification is not None else [],
+                select=False,
+            )
+            seeded += 1
+
+        _AI_MG_LOGGER.warning(
+            "[MG][SIDEBAR_SEED] series=%s uid=%s seeded=%d total_input=%d",
+            series_num,
+            series_uid,
+            seeded,
+            len(boxes_scores or []),
+            extra={"component": "viewer"},
+        )
+
+    def _box_from_actor_ijk(self, box_object):
+        try:
+            pts = self.image_viewer.get_actor_points_world(box_object.box_actor)
+            if not pts:
+                return None
+            ijk_pts = [
+                self.image_viewer.world_to_ijk(xw=p[0], yw=p[1], zw=p[2], y_flip=True)
+                for p in pts
+            ]
+            xs = [float(p[0]) for p in ijk_pts]
+            ys = [float(p[1]) for p in ijk_pts]
+            return [min(xs), min(ys), max(xs), max(ys)]
+        except Exception:
+            return None
+
+    def _log_csv_vs_draw_probe(self, boxes_scores, lst_boxes_object):
+        try:
+            series_num = self.image_viewer.metadata.get('series', {}).get('series_number', 'N/A')
+            series_uid = self.image_viewer.metadata.get('series', {}).get('series_uid', 'N/A')
+        except Exception:
+            series_num = 'N/A'
+            series_uid = 'N/A'
+
+        csv_boxes = []
+        for item in boxes_scores or []:
+            if isinstance(item, dict):
+                box = item.get('box')
+                if isinstance(box, (list, tuple)) and len(box) == 4:
+                    csv_boxes.append([float(v) for v in box])
+
+        actor_boxes = []
+        for box_object in lst_boxes_object or []:
+            b = self._box_from_actor_ijk(box_object)
+            if b is not None:
+                actor_boxes.append(b)
+
+        _AI_MG_LOGGER.warning(
+            "[MG][BOX_DIAG] series=%s uid=%s csv_count=%d actor_count=%d",
+            series_num,
+            series_uid,
+            len(csv_boxes),
+            len(actor_boxes),
+            extra={"component": "viewer"},
+        )
+
+        n = min(len(csv_boxes), len(actor_boxes), 3)
+        for i in range(n):
+            c = csv_boxes[i]
+            a = actor_boxes[i]
+            d = [round(a[j] - c[j], 3) for j in range(4)]
+            _AI_MG_LOGGER.warning(
+                "[MG][BOX_DIAG] idx=%d csv=%s actor=%s delta_actor_minus_csv=%s",
+                i + 1,
+                c,
+                a,
+                d,
+                extra={"component": "viewer"},
+            )
+
     def update_boxes_details_ui(self, lst_boxes_object):  # correct input : [BoxManager, BoxManager, ...]
         if not isinstance(lst_boxes_object, list):  # check list if BoxesManager.
             lst_boxes_object = [lst_boxes_object]
@@ -948,6 +1317,13 @@ class AIVTKWidget(VTKWidget):
                                     if result:
                                         boxes_scores, _stats = result
                                         self._schedule_apply_boxes_safe(series_uid, boxes_scores)
+                                except Exception as exc:
+                                    _AI_MG_LOGGER.warning(
+                                        "[MG][COMPUTE_WORKER_ERROR] series_uid=%s err=%s",
+                                        series_uid,
+                                        str(exc),
+                                        extra={"component": "viewer"},
+                                    )
                                 finally:
                                     pass
 
@@ -1009,8 +1385,16 @@ class AIVTKWidget(VTKWidget):
 
     def check_equal_lists(self, lst1, lst2):
         round_n = 1
-        equal = [round(x, round_n) for x in lst1] == [round(x, round_n) for x in lst2]
-        return equal
+        try:
+            # Coerce every element to float so string/int box coordinates
+            # compare correctly.
+            l1 = [round(float(x), round_n) for x in lst1]
+            l2 = [round(float(x), round_n) for x in lst2]
+            return l1 == l2
+        except (ValueError, TypeError):
+            # Non-numeric values (e.g. a label like "Custom"): fall back to
+            # direct equality rather than raising.
+            return lst1 == lst2
 
     def set_new_interactorstyle(self, style):
         if self.type_viewer == TYPES_VIEWER.fixed_viewer:

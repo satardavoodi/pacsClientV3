@@ -2029,9 +2029,12 @@ class Lightweight2DPipeline(QObject):
         disp = _window_level_to_uint8_with_voi_function(arr, ww, wc, voi_lut_function)
         wl_ms = (time.perf_counter() - t_wl) * 1000.0
 
-        # [MG_DIAG] Temporary brightness diagnostic — logs first MG frame pixel stats
+        # [MG_DIAG] Optional brightness diagnostic — logs first MG frame pixel
+        # stats. Gated behind AIPACS_MG_DIAG=1 so it adds no cost (numpy mean /
+        # white-pixel scan, extra log writes) on the normal render path.
         _is_mg_diag = (
-            str(getattr(self, "_series_modality", "") or "").upper() == "MG"
+            os.environ.get("AIPACS_MG_DIAG", "") == "1"
+            and str(getattr(self, "_series_modality", "") or "").upper() == "MG"
             and not getattr(self, "_mg_diag_logged", False)
         )
         if _is_mg_diag:
@@ -3281,8 +3284,14 @@ class Lightweight2DPipeline(QObject):
                 and drag_session_token == int(getattr(self, '_drag_session_token', 0) or 0)
             ):
                 self._drag_background_decode_count = int(getattr(self, '_drag_background_decode_count', 0) or 0) + 1
-        except Exception:
-            pass
+        except Exception as exc:
+            # Prefetch decode failures must not crash the background task, but
+            # they should be observable rather than silently swallowed.
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "decode_into_cache failed idx=%d err=%s: %s",
+                    idx, type(exc).__name__, exc,
+                )
         finally:
             with self._prefetch_lock:
                 self._prefetch_pending.discard(idx)

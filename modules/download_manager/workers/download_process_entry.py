@@ -71,8 +71,11 @@ def _run_download_in_process(
         download_job_id=config_dict.get("download_job_id", "-"),
     )
 
-    logger.info(
-        "▶ Process started | study=%s | patient=%s | series=%d | cwd=%s",
+    # [SPAWN-TIMING] at WARNING so it lands in download_diagnostics.log — its
+    # wall-clock timestamp vs the parent's _start_download_worker reveals the
+    # process-spawn + entry-import cost (not covered by t0, which starts here).
+    logger.warning(
+        "▶ [SPAWN-TIMING] Process started | study=%s | patient=%s | series=%d | cwd=%s",
         study_uid[:40], patient_name, series_count, working_dir,
         extra={"component": "ipc", "study_uid": study_uid, "download_job_id": config_dict.get("download_job_id", "-")},
     )
@@ -223,7 +226,7 @@ def _run_download_in_process(
         from modules.download_manager.download.executor import DownloadExecutor
         from modules.download_manager.rules.rule_engine import DownloadRuleEngine
         from modules.download_manager.state.state_store import DownloadStateStore
-        logger.info("  Imports OK (%.3fs)", time.monotonic() - t0)
+        logger.warning("  [SPAWN-TIMING] Imports OK (%.3fs)", time.monotonic() - t0)
 
         # ── 4. Construct independent clients ─────────────────────────────────
         logger.info(
@@ -238,7 +241,7 @@ def _run_download_in_process(
 
         logger.info("  Building DatabaseManager...")
         database_manager = DatabaseManager()
-        logger.info("  DatabaseManager ready")
+        logger.warning("  [SPAWN-TIMING] DatabaseManager ready (%.3fs)", time.monotonic() - t0)
 
         state_store = DownloadStateStore()
         rule_engine = DownloadRuleEngine(state_store, {})
@@ -304,8 +307,8 @@ def _run_download_in_process(
                 pass  # Queue full — drop this progress heartbeat
 
         # ── 6. Run ────────────────────────────────────────────────────────────
-        logger.info(
-            "  Starting asyncio event loop (%.3fs since process start)",
+        logger.warning(
+            "  [SPAWN-TIMING] Starting asyncio event loop (%.3fs since process start)",
             time.monotonic() - t0,
         )
         loop = asyncio.new_event_loop()

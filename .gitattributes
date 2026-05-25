@@ -1,0 +1,48 @@
+# ──────────────────────────────────────────────────────────────
+# AI-PACS — line-ending & binary policy
+# Standard: LF in the repository, native line endings on checkout.
+# Added 2026-05-23 to stop CRLF/LF churn (the repo previously had
+# no .gitattributes and core.autocrlf was unset, which produced a
+# ~2,000-file line-ending diff).
+# ──────────────────────────────────────────────────────────────
+
+# Default: Git detects text vs binary; text is normalized to LF in history.
+* text=auto
+
+# Windows-only scripts must keep CRLF endings.
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
+*.ps1    text eol=crlf
+*.psm1   text eol=crlf
+*.vbs    text eol=crlf
+
+# Binary assets — never apply line-ending conversion.
+*.dcm    binary
+*.DCM    binary
+*.ipdcom binary
+*.IPdcom binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.bmp    binary
+*.ico    binary
+*.dll    binary
+*.pyd    binary
+*.so     binary
+*.exe    binary
+*.bin    binary
+*.pdb    binary
+*.qm     binary
+*.ttf    binary
+*.otf    binary
+*.woff   binary
+*.woff2  binary
+*.pdf    binary
+*.rar    binary
+*.zip    binary
+*.7z     binary
+*.stl    binary
+*.npy    binary
+*.h5     binary
+*.db     binary

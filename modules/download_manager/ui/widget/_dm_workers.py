@@ -230,6 +230,16 @@ class _DMWorkersMixin:
                 logger.debug(f"🚀 [WORKER-START] Starting worker thread...")
                 worker.start()
                 logger.debug(f"🚀 [WORKER-START] Worker thread started")
+
+                # Issue B fix: reflect the active download in the MAIN-process
+                # state store. The PENDING->DOWNLOADING transition otherwise only
+                # happens inside the download subprocess's own (silent) state
+                # store and never reaches the UI, leaving the queue row stuck on
+                # "PENDING" until it jumps straight to "COMPLETED".
+                try:
+                    self.state_store.update(study_uid, status=DownloadStatus.DOWNLOADING)
+                except Exception as _status_exc:
+                    logger.warning(f"⚠️ [WORKER-START] Could not set DOWNLOADING status: {_status_exc}")
                 logger.warning(
                     "download-impact-window marker=download_start_after_worker_start delta_ms=%.2f",
                     now_ms() - t_download_start_marker,

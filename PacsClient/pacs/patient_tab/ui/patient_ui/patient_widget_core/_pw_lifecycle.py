@@ -346,6 +346,15 @@ class _PWLifecycleMixin:
     def closeEvent(self, event):
         """Handle widget close event"""
         try:
+            if getattr(self, '_pw_close_handled', False):
+                # closeEvent already ran once. It can be re-entered via the
+                # tab manager's close path (close_patient_tab calls
+                # widget.close()); make it idempotent so the teardown below
+                # is not repeated.
+                event.accept()
+                return
+            self._pw_close_handled = True
+
             try:
                 self.on_tab_deactivated()
             except Exception:
@@ -399,14 +408,18 @@ class _PWLifecycleMixin:
                     except Exception as fallback_e:
                         print(f"Fallback removal also failed: {fallback_e}")
 
-            # Explicitly clean up event loop references to prevent abandoned handles
+            # Release this widget's reference to the event loop.
+            # IMPORTANT: self._event_loop holds the *single* qasync QEventLoop
+            # that drives the ENTIRE application (created once in main.py as
+            # `loop = QEventLoop(app)` and run via `loop.run_forever()`).
+            # Calling .stop() on it terminates the whole application — that is
+            # what previously made AI-PACS exit completely when a single
+            # patient tab was closed, or when "Sync and Close" finished.
+            # Closing one patient tab must only drop this widget's reference;
+            # the shared loop must keep running for the rest of the app.
+            # Background tasks for this widget were already cancelled above.
             if hasattr(self, '_event_loop') and self._event_loop:
-                try:
-                    # Run any remaining callbacks to clear pending tasks
-                    if not self._event_loop.is_closed():
-                        self._event_loop.stop()
-                except:
-                    pass
+                self._event_loop = None
 
             # Accept the close event
             event.accept()

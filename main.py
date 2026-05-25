@@ -1177,7 +1177,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.0.8")
+    app.setApplicationVersion("3.0.9")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

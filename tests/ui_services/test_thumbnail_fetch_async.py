@@ -24,7 +24,7 @@ class _FakeHome(_HPSearchMixin):
     def _defer_patient_studies_refresh(self, patient_info):
         self._deferred = True
 
-    def display_thumbnails(self, thumbnails):
+    def display_thumbnails(self, thumbnails, **kwargs):
         self._displayed = thumbnails
 
     def save_thumbnail(self, thumbnails):
@@ -34,15 +34,15 @@ class _FakeHome(_HPSearchMixin):
         self._saved = (study_uid, thumbnails)
 
 
-class _FakeGrpcClient:
-    def __init__(self, host="localhost", port=50051):
+class _FakeSocketClient:
+    def __init__(self, host="localhost", port=50052, timeout=None):
         self.host = host
         self.port = port
 
-    def get_thumbnails(self, patient_id, study_uid, timeout=None):
+    def get_study_thumbnails(self, study_uid, include_base64=True, include_image_data=True):
         return {
-            "study_uid": study_uid,
-            "thumbnails": [
+            "study_instance_uid": study_uid,
+            "series_thumbnails": [
                 {
                     "series_uid": "suid-1",
                     "series_number": "1",
@@ -55,7 +55,7 @@ class _FakeGrpcClient:
             ],
         }
 
-    def close(self):
+    def disconnect(self):
         return None
 
 
@@ -76,7 +76,7 @@ def test_show_patient_studies_uses_background_to_thread(monkeypatch):
     async def _fake_wait_for(awaitable, timeout=None):
         return await awaitable
 
-    monkeypatch.setattr(_hp_search_mod, "DicomGrpcClient", _FakeGrpcClient)
+    monkeypatch.setattr(_hp_search_mod, "PatientListSocketClient", _FakeSocketClient)
     monkeypatch.setattr(_hp_search_mod, "check_study_complete", lambda study_uid: False)
     monkeypatch.setattr(_hp_search_mod.asyncio, "to_thread", _fake_to_thread)
     monkeypatch.setattr(_hp_search_mod.asyncio, "wait_for", _fake_wait_for)
@@ -100,7 +100,7 @@ def test_show_patient_studies_discards_stale_background_result(monkeypatch):
     async def _fake_wait_for(awaitable, timeout=None):
         return await awaitable
 
-    monkeypatch.setattr(_hp_search_mod, "DicomGrpcClient", _FakeGrpcClient)
+    monkeypatch.setattr(_hp_search_mod, "PatientListSocketClient", _FakeSocketClient)
     monkeypatch.setattr(_hp_search_mod, "check_study_complete", lambda study_uid: False)
     monkeypatch.setattr(_hp_search_mod.asyncio, "to_thread", _fake_to_thread)
     monkeypatch.setattr(_hp_search_mod.asyncio, "wait_for", _fake_wait_for)

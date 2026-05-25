@@ -1,5 +1,6 @@
 from functools import partial
 import logging
+import time  # startup stage timing instrumentation
 
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
                             QSize, Qt)
@@ -191,6 +192,20 @@ class ControlPanelWindow(object):
     def _on_modality_grid_config_changed(self):
         if hasattr(self, "home_widget") and self.home_widget:
             self.home_widget.apply_modality_grid_config_to_open_tabs()
+
+    def _wire_modality_grid_config_signal(self, viewer_config):
+        """Wire the modality-grid configChanged signal once the Viewer
+        Configuration tab has been lazily built and reported ready.
+
+        The viewer-config widget no longer exists when SettingsTabWidget is
+        constructed (it builds on first view), so this connection is deferred
+        until SettingsTabWidget emits viewerConfigReady.
+        """
+        try:
+            if viewer_config is not None:
+                viewer_config.configChanged.connect(self._on_modality_grid_config_changed)
+        except Exception:
+            logger.exception("Failed to wire modality grid config signal")
 
     def _toggle_center_menu(self, *, page: str):
         """Show/hide the center menu and switch to the requested page."""
@@ -533,6 +548,8 @@ class ControlPanelWindow(object):
                 right_tab_area = tab_widget_parent.get_right_tab_area()
 
         # Home widget
+        # [STARTUP_STAGE] instrumentation — pure logging, no behaviour change.
+        _t = time.perf_counter()
         self.home_widget = home_ui.HomePanelWidget(
             tab_widget=self.MainWindow.tab_widget,
             title_bar_tab_area=title_bar_tab_area,
@@ -540,13 +557,23 @@ class ControlPanelWindow(object):
         )
         self.home_widget.set_mainwindow(self.MainWindow)
         self.mainPages.addWidget(self.home_widget)
-
-        # Settings widget
-        self.settings_widget = settings_ui.SettingsTabWidget()
-        self.settings_widget.viewer_config.configChanged.connect(
-            self._on_modality_grid_config_changed
+        logger.warning(
+            f"[STARTUP_STAGE] stage=home_widget ms={(time.perf_counter() - _t) * 1000:.1f}",
+            extra={"component": "viewer"},
         )
+
+        # Settings widget — heavy tabs build lazily on first view (see
+        # SettingsTabWidget). viewer_config does not exist at construction
+        # time, so its configChanged signal is wired when SettingsTabWidget
+        # emits viewerConfigReady.
+        _t = time.perf_counter()
+        self.settings_widget = settings_ui.SettingsTabWidget()
+        self.settings_widget.viewerConfigReady.connect(self._wire_modality_grid_config_signal)
         self.mainPages.addWidget(self.settings_widget)
+        logger.warning(
+            f"[STARTUP_STAGE] stage=settings_widget ms={(time.perf_counter() - _t) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
 
         # Data page
         self.dataPage = QWidget()

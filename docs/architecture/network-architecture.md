@@ -1,18 +1,36 @@
 # Network & Server Communication Architecture
 
-> **Version:** v2.3.3 | **Updated:** 2026-04-14
+> **Version:** v2.4.0 | **Updated:** 2026-05-23
+>
+> **2026-05-23 refresh:** Added the REST / Workflow API channel (previously
+> undocumented), corrected the socket channel's role (it does **not** own
+> admission data), and marked gRPC as legacy. Conclusions are drawn from
+> `docs/architecture/hybrid-communication-model-analysis.md` — read that document
+> for the full hybrid-model analysis, the data-ownership map, and the staged
+> refactor roadmap. **No networking code was changed by that analysis or this
+> refresh; both are documentation-only.**
 
 ## Purpose
 
-AIPacs communicates with the **AIPacs Server** over two transport channels:
+AIPacs talks to the server over **three** channels — two transport channels to the
+PACS core, plus a REST API for reception/workflow metadata:
 
-| Channel | Transport | Port | Primary role |
-|---------|-----------|------|--------------|
-| **Socket (custom protocol)** | TCP + JSON envelope | 50052 | Patient lists, report status, DICOM downloads, admission data |
-| **gRPC** | HTTP/2 + Protobuf | 50051 | Thumbnails only (minor role) |
+| Channel | Transport | Port / Base | Primary role |
+|---------|-----------|-------------|--------------|
+| **Socket (custom protocol)** | TCP + JSON envelope | `50052` — from `config/socket_config.json` via `get_socket_server_settings()` | **Imaging domain:** patient/study list, thumbnails, study/series metadata, DICOM download |
+| **gRPC** | HTTP/2 + Protobuf | `50051` | **Legacy** — superseded by the socket channel; still in the tree but not the primary path |
+| **REST / Workflow API** | HTTP + JSON | `http://81.16.117.196:8080` (env-overridable) | **Workflow domain:** admission/reception data, report status, reporting physician, approval flags, comments, user/doctor lookup |
 
-The socket channel carries >95% of all server traffic.  gRPC is used
-exclusively for study/series thumbnail metadata and image data fetching.
+The socket channel carries the bulk of imaging traffic. gRPC is legacy and largely
+superseded (`grpc_client.py` already routes through a socket client internally).
+The REST API is the authoritative source for reception/workflow metadata.
+
+> **Boundary note:** Report status and reporting-physician data are *workflow*
+> metadata. Socket endpoints for them exist (`GetReportStatus`, `UpdateReportStatus`,
+> `GetReportStatusHistory`, `GetStudiesByReportStatus`) but have been observed to
+> time out in `download_diagnostics.log`; the reliable source is the REST API.
+> Imaging actions must never block on workflow metadata. See the hybrid analysis
+> document for the recommended ownership split and migration stages.
 
 ---
 
@@ -76,6 +94,14 @@ exclusively for study/series thumbnail metadata and image data fetching.
 │   └────────────────────────────────────────────┘                │
 └──────────────────────────────────────────────────────────────────┘
 ```
+
+> **Diagram accuracy note (2026-05-23):** The server-side boxes above predate the
+> REST channel and are illustrative only. In current reality: the **Socket
+> endpoint (`:50052`)** owns imaging (patient/study list, thumbnails, DICOM
+> download); the **gRPC endpoint (`:50051`)** is legacy; and a separate **REST API
+> (`:8080`)** — not shown above — owns admission/reception and report/workflow
+> metadata. "Admission data" is **not** served over the socket. A redrawn diagram
+> is deferred to the architecture refactor (see the hybrid analysis document).
 
 ---
 
@@ -172,20 +198,36 @@ Or broadcast (filtered/skipped by client):
 
 ### Socket endpoints
 
-| Endpoint | Direction | Purpose |
-|----------|-----------|---------|
-| `Login` | Request | Authenticate, receive JWT token (no retry — fail-fast) |
-| `GetPatientList` | Request | Fetch patient list (paginated) |
-| `GetReportStatus` | Request | Get report status for a study |
-| `UpdateReportStatus` | Request | Update report status |
-| `GetReportStatusHistory` | Request | Report status audit trail |
-| `DownloadDicomImages` | Request | Download DICOM images for a series (batched) |
-| `GetInstanceBatch` | Request | Batch instance download within series |
-| `broadcast` | Server→Client | Real-time notifications (new study, status change) |
+Domain column: **Imaging** = belongs on the socket channel; **Workflow** = report/
+admission metadata that ideally belongs on the REST channel (see boundary note in
+Purpose and the hybrid analysis document).
+
+| Endpoint | Domain | Direction | Purpose |
+|----------|--------|-----------|---------|
+| `Login` | Auth | Request | Authenticate, receive JWT token (no retry — fail-fast) |
+| `GetPatientList` | Imaging | Request | Fetch patient/study list (paginated). **Stage 0 capture (2026-05-23) confirmed:** response carries `latest_study_report_status` (flat scalar) but **no** `report` object, **no** `imagingWorkflow`, and **no** reporter name/ID. Reporting-physician must be hydrated from REST. |
+| `GetStudyThumbnails` | Imaging | Request | Study metadata + series thumbnails (primary post-migration path) |
+| `GetStudyInfo` | Imaging | Request | Lightweight study metadata — **observed to time out**; probe timeout reduced to 3 s, falls back to `GetStudyThumbnails` |
+| `QuerySeriesThumbnails` | Imaging | Request | Per-series thumbnails |
+| `GetInstanceBatch` / `DownloadDicomImages` | Imaging | Request | Batched DICOM instance download (download path) |
+| `GetStudyAttachments` / `UploadAttachment` | Mixed | Request | Study attachment download / upload |
+| `GetReportStatus` | Workflow | Request | Report status for a study — **observed to time out** |
+| `UpdateReportStatus` | Workflow | Request | Update report status |
+| `GetReportStatusHistory` | Workflow | Request | Report status audit trail |
+| `GetStudiesByReportStatus` | Workflow | Request | Studies filtered by report status |
+| `broadcast` | — | Server→Client | Real-time frames (new study, status change). **Currently skipped as noise** — AI-PACS has no dedicated subscription/listener; see hybrid analysis §"Realtime" |
 
 ---
 
 ## gRPC Channel
+
+> **Legacy status (2026-05-23):** The gRPC channel is superseded by the socket
+> channel. `GetPatientList` and `GetStudyThumbnails` now have socket equivalents
+> that are the primary path, and `grpc_client.py` already resolves a **socket**
+> client internally (`_get_socket_client()`). The gRPC stack
+> (`dicom_service_pb2*.py`, `grpc_client.py`, `dicom_downloader.py`, `multi.py`) is
+> retained for now but is a candidate for removal in a later, separately-verified
+> cleanup stage. Do not build new features on gRPC.
 
 ### Service definition (`dicom_service.proto`)
 
@@ -206,6 +248,57 @@ Or broadcast (filtered/skipped by client):
 | Insecure channel | Used intentionally — server is on private LAN behind firewall |
 
 ---
+
+## REST / Workflow API Channel
+
+The third channel — previously undocumented here. It is a plain HTTP + JSON REST
+API and is the **authoritative source for reception / workflow / report metadata**.
+It is a *separate concern* from the socket channel and must not be merged with it.
+
+### Base URL & config
+
+| Source | Value |
+|--------|-------|
+| Default base URL | `http://81.16.117.196:8080` |
+| Override (env) | `AIPACS_RECEPTION_BASE_URL` / `RECEPTION_API_BASE_URL` |
+| Auth | `Authorization: Bearer <token>` (token from `SocketTokenManager`) |
+
+The REST base URL is **independent** of the socket host/port. It must never be
+resolved from `get_socket_server_settings()` or the socket config, and the socket
+client must never be pointed at the REST port — keep the two resolutions separate.
+
+### REST endpoints in use
+
+| Endpoint | Purpose | Callers |
+|----------|---------|---------|
+| `GET /api/pacs/patients/{id}` | Patient admission + report metadata + `pacsComment` | `_hp_search.py::_fetch_reception_patient_payload`, `patient_table_widget.py::_fetch_reception_patient_payload`, reception data service |
+| `GET /api/pacs/users/{id}` (and `/api/users/{id}` variants) | Resolve doctor/user ID → full name | `patient_table_widget.py::_fetch_server_user_full_name` |
+| `POST /api/pacs/patients/{id}/comment` | Save reception comment | reception data service |
+
+### Report metadata payload shape
+
+The `GET /api/pacs/patients/{id}` response carries report/workflow data. Shape
+(confirmed against the Hermes reference client; AI-PACS-side REST capture still
+pending):
+
+```
+data (or data[0])
+  └─ report   (may also be nested as  imagingWorkflow.report)
+       ├─ status          "pending" | "in_progress" | "completed"
+       ├─ approvalFlags   { physicianApproved: bool, secretaryApproved: bool }
+       ├─ reportDate
+       ├─ radiologist     { FullName, ... }      ← reporting physician name
+       └─ content / findings
+```
+
+### Rules for the REST channel
+
+- REST calls **MUST** run off the Qt event loop (background `QThread`/daemon
+  thread) — they must never block an imaging action.
+- Workflow metadata (report status, physician, approvals, comments) is
+  **enrichment**: fetch it *after* imaging UI is already usable, then merge it in.
+- The REST base URL/auth are owned by the workflow layer; do not couple them to
+  socket configuration.
 
 ## Authentication
 
@@ -398,6 +491,8 @@ ReportStatusWidget.update_status()
 - Login requests MUST NOT be retried — fail-fast by design.
 - All retry constants MUST live in `modules/download_manager/core/constants.py` — not scattered across files.
 - Server host/port MUST come from `SocketConfig` (which reads `config/socket_config.json`) — not hardcoded.
+- Socket host/port MUST be resolved via `get_socket_server_settings()` (socket port `50052`). MUST NOT use the DICOM `port` from `config/servers.json` (`105`) or the gRPC port (`50051`) for the socket client — this regression has occurred before.
+- Workflow/report/admission metadata MUST be fetched from the REST channel, off the UI thread, as post-hoc enrichment — never on an imaging-critical path.
 
 ### SHOULD
 

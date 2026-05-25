@@ -126,7 +126,7 @@ def _maybe_fix_charset_inplace(in_path: str | os.PathLike) -> bool:
         return True
 
     except Exception as e:
-        print(f"⚠️ charset fix failed for {in_path}: {e}")
+        print(f"[warn] charset fix failed for {in_path}: {e}")
         return False
 
 
@@ -1149,7 +1149,7 @@ def save_image_as_png_fast_first(vtk_image_data, metadata, metadata_fixed, file)
         return str(file_path)
 
     except Exception as e:
-        print(f"⚠️ Fast thumbnail generation failed: {e}, using standard method")
+        print(f"[warn] Fast thumbnail generation failed: {e}, using standard method")
         # fallback به روش معمولی
         return save_image_as_png(vtk_image_data, metadata, metadata_fixed, file)
 
@@ -1213,7 +1213,7 @@ def get_all_series_thumbnail_from_study_folder(study_uid):
     # Check cache first with TTL
     if study_uid in _thumbnail_cache:
         if is_cache_valid(study_uid):
-            print(f"📋 Cache hit for study {study_uid}")
+            print(f"[cache] cache hit for study {study_uid}")
             return _thumbnail_cache[study_uid]
         else:
             # Cache expired, remove it
@@ -1257,7 +1257,7 @@ def cache_thumbnail_data(study_uid, thumbnails):
     _thumbnail_cache[study_uid] = thumbnails
     _cache_timestamps[study_uid] = time.time()
 
-    print(f"💾 Cached thumbnail data for study {study_uid}")
+    print(f"[cache] stored thumbnail data for study {study_uid}")
 
 
 def remove_from_cache(study_uid):
@@ -1269,7 +1269,7 @@ def remove_from_cache(study_uid):
     _study_cache.pop(study_uid, None)
     _cache_ttl.pop(study_uid, None)
 
-    print(f"🗑️ Removed study {study_uid} from cache")
+    print(f"[cache] removed study {study_uid} from cache")
 
 
 def cleanup_old_cache_entries():
@@ -1298,7 +1298,7 @@ def cleanup_old_cache_entries():
         for key in keys_to_remove:
             remove_from_cache(key)
 
-    print(f"🧹 Cache cleanup completed. Current size: {len(_thumbnail_cache)}")
+    print(f"[cache] cleanup done, size={len(_thumbnail_cache)}")
 
 
 def get_cache_stats():
@@ -1637,7 +1637,7 @@ def should_trigger_auto_download(study_uid):
     # اگر تامب‌نیل‌ها وجود نداشته باشند، دانلود خودکار شروع شود
     should_download = not thumbnails_exist
 
-    print(f"🔍 Auto-download check for {study_uid}:")
+    print(f"[check] auto-download check for {study_uid}:")
     print(f"   - Thumbnails exist: {thumbnails_exist}")
     print(f"   - DICOM files exist: {dicom_files_exist}")
     print(f"   - Should trigger download: {should_download}")

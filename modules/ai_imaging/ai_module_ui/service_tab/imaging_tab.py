@@ -2,6 +2,7 @@ import ast
 import csv
 import math
 import json
+import os
 import threading
 from pathlib import Path
 from typing import Optional
@@ -522,6 +523,7 @@ class ImagingToolsTab(AbstractTab):
             
         self.mg_runs_combo.blockSignals(True)
         self.mg_runs_combo.clear()
+        selected_index_to_apply = -1
 
         try:
             data = load_mg_ai_runs(self.study_uid, ATTACHMENT_PATH)
@@ -560,6 +562,7 @@ class ImagingToolsTab(AbstractTab):
 
             if active_index >= 0:
                 self.mg_runs_combo.setCurrentIndex(active_index)
+                selected_index_to_apply = active_index
                 
             self.mg_runs_loaded = True
         except Exception as e:
@@ -567,6 +570,87 @@ class ImagingToolsTab(AbstractTab):
             self.mg_runs_loaded = False
         finally:
             self.mg_runs_combo.blockSignals(False)
+
+        if selected_index_to_apply >= 0:
+            QTimer.singleShot(0, lambda idx=selected_index_to_apply: self._on_mg_run_changed(idx))
+
+    def _save_mg_manifest_selection(self, det_csv: str, cls_csv: str | None) -> None:
+        """Persist selected MG run as active in manifest."""
+        try:
+            if not self.study_uid or not det_csv:
+                return
+
+            base_dir = ATTACHMENT_PATH / self.study_uid
+            base_dir.mkdir(parents=True, exist_ok=True)
+            manifest_path = base_dir / "mg_ai_manifest.json"
+
+            manifest = {"available": [], "active": {}}
+            if manifest_path.exists():
+                try:
+                    with open(manifest_path, "r", encoding="utf-8") as f:
+                        loaded = json.load(f)
+                    if isinstance(loaded, dict):
+                        manifest.update(loaded)
+                except Exception:
+                    pass
+
+            available = list(manifest.get("available", []) or [])
+            new_entry = {
+                "detection": det_csv,
+                "classification": cls_csv,
+            }
+            if not any(
+                e.get("detection") == det_csv and e.get("classification") == cls_csv
+                for e in available
+                if isinstance(e, dict)
+            ):
+                available.append(new_entry)
+
+            manifest["available"] = available
+            manifest["active"] = new_entry
+
+            tmp_path = manifest_path.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(manifest, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_path, manifest_path)
+        except Exception as e:
+            print(f"[MG] Failed to persist manifest selection: {e}")
+
+    def _apply_mg_run_to_selected_viewer(self, det_csv: str, cls_csv: str | None) -> None:
+        """Apply the selected MG run to the current AI viewer immediately."""
+        if not det_csv:
+            return
+
+        if not hasattr(self, 'patient_widget') or not self.patient_widget:
+            return
+        selected_widget = getattr(self.patient_widget, 'selected_widget', None)
+        if selected_widget is None:
+            return
+
+        vtk_widget = selected_widget
+
+        det_path = Path(det_csv)
+        if not det_path.is_absolute():
+            det_path = ATTACHMENT_PATH / self.study_uid / det_csv
+
+        cls_path = None
+        if cls_csv:
+            cls_path = Path(cls_csv)
+            if not cls_path.is_absolute():
+                cls_path = ATTACHMENT_PATH / self.study_uid / cls_csv
+
+        if hasattr(vtk_widget, 'csv_details_path'):
+            vtk_widget.csv_details_path = det_path
+        if hasattr(vtk_widget, 'csv_classification'):
+            vtk_widget.csv_classification = cls_path
+
+        if hasattr(vtk_widget, '_csv_cache') and isinstance(vtk_widget._csv_cache, dict):
+            vtk_widget._csv_cache.clear()
+        if hasattr(vtk_widget, '_series_ai_cache') and isinstance(vtk_widget._series_ai_cache, dict):
+            vtk_widget._series_ai_cache.clear()
+
+        if hasattr(vtk_widget, '_schedule_manager_ai_safe'):
+            vtk_widget._schedule_manager_ai_safe(reason="mg_run_changed")
 
     def _load_bone_age_feature_if_exists(self):
         """
@@ -671,37 +755,8 @@ class ImagingToolsTab(AbstractTab):
         det_csv, cls_csv = data[:2]  # فقط دو مقدار اول را در نظر بگیر
 
         try:
-            # تأیید وجود اجزای لازم
-            if not hasattr(self, 'patient_widget') or not self.patient_widget:
-                print("[_on_mg_run_changed] Patient widget not available")
-                return
-                
-            if not hasattr(self.patient_widget, 'selected_widget') or not self.patient_widget.selected_widget:
-                print("[_on_mg_run_changed] No selected widget")
-                return
-                
-            selected_widget = self.patient_widget.selected_widget
-            if not hasattr(selected_widget, 'vtk_widget') or not selected_widget.vtk_widget:
-                print("[_on_mg_run_changed] No vtk_widget")
-                return
-                
-            vtk_widget = selected_widget.vtk_widget
-            
-            # import به صورت محلی برای جلوگیری از cyclic dependency
-            from modules.viewer.interactor_styles.ai_chat_interactorstyle import AIChatInteractorStyle
-            
-            if not hasattr(vtk_widget, 'current_style') or not vtk_widget.current_style:
-                print("[_on_mg_run_changed] No current_style")
-                return
-                
-            interactor: AIChatInteractorStyle = vtk_widget.current_style
-            
-            # به‌روزرسانی manifest
-            interactor._save_mg_manifest(self.study_uid, det_csv, cls_csv)
-
-            # باز کردن ماژول AI
-            interactor.open_ai_module()
-            
+            self._save_mg_manifest_selection(det_csv, cls_csv)
+            self._apply_mg_run_to_selected_viewer(det_csv, cls_csv)
         except Exception as e:
             error_msg = f"Error in MG run change: {str(e)}"
             print(error_msg)
@@ -856,10 +911,15 @@ class ImagingToolsTab(AbstractTab):
         data_selected = self._sidebar_store[key]
         status = self.rb_abnormal.isChecked()
         box_object: BoxManager = data_selected.get('box_object', None)
-        if not box_object:
-            show_message("Box object not found.")
-            return
-        corner_ijk_points = box_object.ijk_points
+        if box_object:
+            corner_ijk_points = box_object.ijk_points
+        else:
+            csv_box = data_selected.get('csv_box', None)
+            if isinstance(csv_box, (list, tuple)) and len(csv_box) == 4:
+                corner_ijk_points = [float(v) for v in csv_box]
+            else:
+                show_message("Box object not found.")
+                return
 
         print('status:', status)
         print('corner_ijk_points:', corner_ijk_points)
@@ -895,7 +955,8 @@ class ImagingToolsTab(AbstractTab):
             classification: list[str] | None = None,
             features=None,
             select: bool = True,
-            box_object: BoxManager = None
+            box_object: BoxManager = None,
+            csv_box: list[float] | None = None,
     ):
         """
         Add / update MG sidebar item.
@@ -919,13 +980,31 @@ class ImagingToolsTab(AbstractTab):
             entry["status"] = self._normalize_status(status)
 
         if classification is not None:
-            entry["classification"] = [str(c).strip() for c in classification if str(c).strip()]
+            # A classification may arrive as a list or as a single bare string;
+            # normalize both to a clean list of non-empty strings.
+            if isinstance(classification, str):
+                entry["classification"] = (
+                    [classification.strip()] if classification.strip() else []
+                )
+            elif isinstance(classification, (list, tuple)):
+                entry["classification"] = [
+                    str(c).strip() for c in classification if str(c).strip()
+                ]
+            else:
+                entry["classification"] = []
 
         if features is not None:
             if isinstance(features, (list, tuple)):
                 entry["features"] = "\n".join(str(x) for x in features)
             else:
                 entry["features"] = str(features)
+
+        if csv_box is not None:
+            try:
+                if isinstance(csv_box, (list, tuple)) and len(csv_box) == 4:
+                    entry["csv_box"] = [float(v) for v in csv_box]
+            except Exception:
+                pass
 
         entry["box_object"] = box_object
         self._sidebar_store[key] = entry
@@ -1013,19 +1092,85 @@ class ImagingToolsTab(AbstractTab):
         if not self.patient_widget:
             return
 
-        # فرض: active CSV توسط vtk_widget تعیین می‌شود
+        # Resolve active CSV and row from the currently selected AI viewer.
         try:
-            if not hasattr(self.patient_widget, 'lst_nodes_viewer') or not self.patient_widget.lst_nodes_viewer:
+            selected = getattr(self.patient_widget, 'selected_widget', None)
+            vtk_widget = getattr(selected, 'vtk_widget', selected)
+
+            if vtk_widget is None and hasattr(self.patient_widget, 'lst_nodes_viewer') and self.patient_widget.lst_nodes_viewer:
+                first_node = self.patient_widget.lst_nodes_viewer[0]
+                vtk_widget = getattr(first_node, 'vtk_widget', None)
+
+            if vtk_widget is None:
                 show_message("No viewer available.")
                 return
-                
-            vtk_widget = self.patient_widget.lst_nodes_viewer[0].vtk_widget
-            if not hasattr(vtk_widget, 'csv_details_path') or not hasattr(vtk_widget, 'current_row'):
+
+            csv_path = getattr(vtk_widget, 'csv_details_path', None)
+            if not csv_path:
+                # Fallback: recover active CSV from MG run selection/manifest and apply it to the current viewer.
+                det_csv = None
+                cls_csv = None
+
+                try:
+                    if getattr(self, 'mg_runs_combo', None) is not None:
+                        run_data = self.mg_runs_combo.currentData()
+                        if isinstance(run_data, tuple) and len(run_data) >= 1:
+                            det_csv = run_data[0]
+                            cls_csv = run_data[1] if len(run_data) > 1 else None
+                except Exception:
+                    pass
+
+                if not det_csv:
+                    try:
+                        run_info = load_mg_ai_runs(self.study_uid, ATTACHMENT_PATH) or {}
+                        active = run_info.get("active", {}) if isinstance(run_info, dict) else {}
+                        det_csv = active.get("detection") if isinstance(active, dict) else None
+                        cls_csv = active.get("classification") if isinstance(active, dict) else None
+                    except Exception:
+                        pass
+
+                if det_csv:
+                    det_path = Path(det_csv)
+                    if not det_path.is_absolute():
+                        det_path = ATTACHMENT_PATH / self.study_uid / det_csv
+
+                    cls_path = None
+                    if cls_csv:
+                        cls_path = Path(cls_csv)
+                        if not cls_path.is_absolute():
+                            cls_path = ATTACHMENT_PATH / self.study_uid / cls_csv
+
+                    try:
+                        if hasattr(vtk_widget, 'csv_details_path'):
+                            vtk_widget.csv_details_path = det_path
+                        if hasattr(vtk_widget, 'csv_classification'):
+                            vtk_widget.csv_classification = cls_path
+                        if hasattr(vtk_widget, '_csv_cache') and isinstance(vtk_widget._csv_cache, dict):
+                            vtk_widget._csv_cache.clear()
+                        if hasattr(vtk_widget, '_series_ai_cache') and isinstance(vtk_widget._series_ai_cache, dict):
+                            vtk_widget._series_ai_cache.clear()
+                    except Exception:
+                        pass
+
+                    csv_path = det_path
+
+            if not csv_path:
                 show_message("CSV details not available in viewer.")
                 return
-                
-            csv_path = vtk_widget.csv_details_path
-            row = vtk_widget.current_row
+
+            if not hasattr(vtk_widget, 'load_csv') or not hasattr(vtk_widget, 'get_series_ai_data_from_df'):
+                show_message("Viewer does not support CSV apply.")
+                return
+
+            df = vtk_widget.load_csv(csv_path)
+            if df is None:
+                show_message("CSV file could not be loaded.")
+                return
+
+            row = vtk_widget.get_series_ai_data_from_df(df)
+            if row is None:
+                show_message("Current series row not found in CSV.")
+                return
         except Exception as e:
             show_message(f"CSV active not found: {str(e)}")
             return

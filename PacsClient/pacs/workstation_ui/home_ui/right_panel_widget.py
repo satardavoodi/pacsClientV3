@@ -2,8 +2,10 @@
 Right Panel Widget for displaying series information and thumbnails
 """
 
+import base64
+
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QRect
-from PySide6.QtGui import QPixmap, QPainter, QPen
+from PySide6.QtGui import QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QGridLayout, QSizePolicy
 from PacsClient.utils.scroll_style import get_scroll_area_style
 from PacsClient.utils.theme_manager import get_theme_manager
@@ -400,9 +402,11 @@ class RightPanelWidget(QWidget):
             self.hide_loading()
 
             self.current_thumbnail_index = 0
+            self.current_displayed_thumbnail_count = 0
             self.thumbnails_to_display = thumbnails
+            self.thumbnail_rows_to_display = self._build_grouped_thumbnail_rows(thumbnails)
             self._active_progressive_generation = generation if generation is not None else self._display_generation
-            self._set_reserved_content_height(len(thumbnails))
+            self._set_reserved_content_height(len(self.thumbnail_rows_to_display))
 
             # Pre-create the manager once — avoids re-importing on every timer tick.
             from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
@@ -427,8 +431,9 @@ class RightPanelWidget(QWidget):
 
             self.hide_loading()
             total = len(thumbnails)
-            self._set_reserved_content_height(total)
-            self.count_label.setText(f"0/{total} series")
+            rows_to_render = self._build_grouped_thumbnail_rows(thumbnails)
+            self._set_reserved_content_height(len(rows_to_render))
+            self.count_label.setText(f"Loading {total} series...")
 
             from PacsClient.pacs.patient_tab.utils.thumbnail_manager import ThumbnailManager
             temp_manager = ThumbnailManager(
@@ -437,27 +442,45 @@ class RightPanelWidget(QWidget):
             # Suppress repaints while building all widgets — prevents per-addWidget flicker.
             self.content_widget.setUpdatesEnabled(False)
             try:
-                for idx, thumb in enumerate(thumbnails):
-                    thumb_path = thumb.get('file_path')
-                    if not thumb_path:
+                thumb_index = 0
+                for row_idx, row_entry in enumerate(rows_to_render):
+                    if row_entry.get('type') == 'header':
+                        header_label = QLabel(str(row_entry.get('title') or 'Study'))
+                        header_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                        header_label.setStyleSheet("""
+                            QLabel {
+                                color: #93c5fd;
+                                font-size: 12px;
+                                font-weight: 700;
+                                padding: 6px 8px;
+                                background: rgba(59, 130, 246, 0.10);
+                                border: 1px solid rgba(59, 130, 246, 0.25);
+                                border-radius: 6px;
+                            }
+                        """)
+                        self.content_grid.addWidget(header_label, row_idx, 0, 1, 1)
                         continue
 
+                    thumb = row_entry.get('thumb') or {}
+                    thumb_path = thumb.get('file_path') or thumb.get('thumbnail_path')
+
                     try:
-                        pixmap = QPixmap(thumb_path)
+                        pixmap = self._build_pixmap_from_thumb(thumb, thumb_path)
                         if pixmap.isNull():
                             continue
 
                         series_info = self.extract_series_info_from_thumbnail(thumb)
                         combined_widget = temp_manager.create_thumbnail_widget(
                             pixmap=pixmap,
-                            label_text=str(series_info.get('series_number', idx + 1)),
-                            thumbnail_index=idx,
+                            label_text=str(series_info.get('series_number', thumb_index + 1)),
+                            thumbnail_index=thumb_index,
                             series_info=series_info,
                             show_progress=False
                         )
-                        self.content_grid.addWidget(combined_widget, idx, 0, 1, 1)
+                        self.content_grid.addWidget(combined_widget, row_idx, 0, 1, 1)
+                        thumb_index += 1
                     except Exception as e:
-                        print(f"Error displaying thumbnail {idx}: {str(e)}")
+                        print(f"Error displaying thumbnail {thumb_index}: {str(e)}")
             finally:
                 self.content_widget.setUpdatesEnabled(True)
 
@@ -466,6 +489,69 @@ class RightPanelWidget(QWidget):
             print(f"Error in display_thumbnails_immediately: {str(e)}")
             self.hide_loading()
     
+    def _build_pixmap_from_thumb(self, thumb, thumb_path=None):
+        """Build pixmap from file path first, then fallback to embedded base64 data."""
+        pixmap = QPixmap()
+        path = str(thumb_path or '').strip()
+        if path:
+            pixmap = QPixmap(path)
+            if not pixmap.isNull():
+                return pixmap
+
+        raw = (
+            thumb.get('thumbnail_data')
+            or thumb.get('thumbnail_base64')
+            or thumb.get('thumbnailBase64')
+            or thumb.get('thumbnailData')
+            or thumb.get('image_data')
+            or thumb.get('imageBase64')
+            or ''
+        )
+        if isinstance(raw, str) and raw:
+            try:
+                payload = raw.strip()
+                if payload.startswith('data:') and ',' in payload:
+                    payload = payload.split(',', 1)[1]
+                payload = payload.replace('\n', '').replace('\r', '')
+                data = base64.b64decode(payload)
+                pixmap.loadFromData(data)
+            except Exception:
+                try:
+                    padded = payload + ('=' * (-len(payload) % 4))
+                    data = base64.urlsafe_b64decode(padded)
+                    pixmap.loadFromData(data)
+                except Exception:
+                    pass
+        elif isinstance(raw, (bytes, bytearray)):
+            try:
+                pixmap.loadFromData(bytes(raw))
+            except Exception:
+                pass
+
+        if pixmap.isNull():
+            series_number = str(thumb.get('series_number') or '?')
+            return self._build_placeholder_pixmap(series_number)
+
+        return pixmap
+
+    def _build_placeholder_pixmap(self, series_number: str) -> QPixmap:
+        """Generate a lightweight placeholder thumbnail to avoid empty sidebar rows."""
+        width, height = 120, 80
+        pixmap = QPixmap(width, height)
+        pixmap.fill(QColor('#1f2937'))
+
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        pen = QPen(QColor('#3b82f6'))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        painter.drawRoundedRect(2, 2, width - 4, height - 4, 6, 6)
+
+        painter.setPen(QColor('#cbd5e1'))
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, f"Series {series_number}")
+        painter.end()
+        return pixmap
     def display_next_thumbnail(self):
         """Display the next thumbnail in the queue"""
         try:
@@ -474,21 +560,40 @@ class RightPanelWidget(QWidget):
                 self._cancel_thumbnail_timer()
                 return
 
-            if self.current_thumbnail_index >= len(self.thumbnails_to_display):
+            if self.current_thumbnail_index >= len(getattr(self, 'thumbnail_rows_to_display', [])):
                 # All thumbnails displayed, stop the timer
                 self._cancel_thumbnail_timer()
                 # Update final count
                 self.count_label.setText(f"{len(self.thumbnails_to_display)} series")
                 return
-            
-            thumb = self.thumbnails_to_display[self.current_thumbnail_index]
-            thumb_path = thumb.get('file_path')
+
+            row_entry = self.thumbnail_rows_to_display[self.current_thumbnail_index]
+            if row_entry.get('type') == 'header':
+                header_label = QLabel(str(row_entry.get('title') or 'Study'))
+                header_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                header_label.setStyleSheet("""
+                    QLabel {
+                        color: #93c5fd;
+                        font-size: 12px;
+                        font-weight: 700;
+                        padding: 6px 8px;
+                        background: rgba(59, 130, 246, 0.10);
+                        border: 1px solid rgba(59, 130, 246, 0.25);
+                        border-radius: 6px;
+                    }
+                """)
+                self.content_grid.addWidget(header_label, self.current_thumbnail_index, 0, 1, 1)
+                self.current_thumbnail_index += 1
+                return
+
+            thumb = row_entry.get('thumb') or {}
+            thumb_path = thumb.get('file_path') or thumb.get('thumbnail_path')
 
             # print('thumb_path:', thumb_path)
 
-            if thumb_path:
+            if thumb_path or thumb.get('thumbnail_data') or thumb.get('thumbnail_base64') or thumb.get('thumbnailBase64') or thumb.get('thumbnailData') or thumb.get('image_data') or thumb.get('imageBase64'):
                 try:
-                    pixmap = QPixmap(thumb_path)
+                    pixmap = self._build_pixmap_from_thumb(thumb, thumb_path)
                     if not pixmap.isNull():
                         series_info = self.extract_series_info_from_thumbnail(thumb)
 
@@ -500,8 +605,8 @@ class RightPanelWidget(QWidget):
 
                         combined_widget = mgr.create_thumbnail_widget(
                             pixmap=pixmap,
-                            label_text=str(series_info.get('series_number', self.current_thumbnail_index + 1)),
-                            thumbnail_index=self.current_thumbnail_index,
+                            label_text=str(series_info.get('series_number', self.current_displayed_thumbnail_count + 1)),
+                            thumbnail_index=self.current_displayed_thumbnail_count,
                             series_info=series_info,
                             show_progress=False
                         )
@@ -511,6 +616,7 @@ class RightPanelWidget(QWidget):
                         scroll_pos = vbar.value()
 
                         self.content_grid.addWidget(combined_widget, self.current_thumbnail_index, 0, 1, 1)
+                        self.current_displayed_thumbnail_count += 1
 
                         # Restore scroll position (layout recalc shifts it)
                         if scroll_pos > 0:
@@ -522,7 +628,7 @@ class RightPanelWidget(QWidget):
             self.current_thumbnail_index += 1
             
             # Update progress count
-            self.count_label.setText(f"{self.current_thumbnail_index}/{len(self.thumbnails_to_display)} series")
+            self.count_label.setText(f"{self.current_displayed_thumbnail_count}/{len(self.thumbnails_to_display)} series")
             
         except Exception as e:
             # Stop timer on error
@@ -593,6 +699,24 @@ class RightPanelWidget(QWidget):
                 'protocol_name': '',
                 'body_part_examined': ''
             }
+
+    def _build_grouped_thumbnail_rows(self, thumbnails):
+        """Insert study header rows when thumbnail entries include study metadata."""
+        rows = []
+        last_group_key = None
+
+        for thumb in thumbnails or []:
+            study_uid = str(thumb.get('study_uid') or '').strip()
+            study_label = str(thumb.get('study_label') or '').strip()
+            group_key = study_label or study_uid
+
+            if group_key and group_key != last_group_key:
+                rows.append({'type': 'header', 'title': group_key})
+                last_group_key = group_key
+
+            rows.append({'type': 'thumb', 'thumb': thumb})
+
+        return rows
     
     def create_combined_thumbnail_info_widget(self, pixmap, series):
         """DEPRECATED: Use ThumbnailManager.create_thumbnail_widget() for consistency"""

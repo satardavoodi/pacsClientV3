@@ -178,6 +178,14 @@ def _openai_headers(session: BackendSession) -> dict[str, str]:
 
 
 def _coerce_openai_content(content: Any) -> Any:
+    """Convert message content to OpenAI-compatible format.
+
+    Handling:
+      - type="text"      -> kept as-is
+      - type="image"     -> converted to type="image_url" (legacy format)
+      - type="image_url" -> kept as-is (already valid)
+      - any other type   -> passed through unchanged
+    """
     if not isinstance(content, list):
         return content
 
@@ -228,6 +236,30 @@ def _messages_need_content_coercion(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
+# Sentence-ending punctuation (English + Persian/Arabic, incl. full-width forms).
+_SENTENCE_ENDINGS = ".!?。؟！？"
+
+
+def _trim_incomplete_sentence(text: str) -> str:
+    """Trim a *truncated* reply back to its last complete sentence.
+
+    This is only meaningful for responses already known to be cut off
+    (e.g. the API reported ``finish_reason == "length"``). If the text has
+    no sentence-ending punctuation at all, the original text is returned
+    unchanged — a valid, punctuation-free reply must never be blanked out.
+    """
+    text = (text or "").strip()
+    if not text:
+        return ""
+    if text[-1] in _SENTENCE_ENDINGS:
+        return text
+    last_idx = max((text.rfind(ch) for ch in _SENTENCE_ENDINGS), default=-1)
+    if last_idx == -1:
+        # No sentence boundary found — keep the full text rather than discard it.
+        return text
+    return text[: last_idx + 1].strip()
+
+
 def _extract_content_from_body(body: dict[str, Any]) -> str:
     choices = body.get("choices")
     if not isinstance(choices, list) or not choices:
@@ -237,8 +269,16 @@ def _extract_content_from_body(body: dict[str, Any]) -> str:
     message = first.get("message") if isinstance(first.get("message"), dict) else {}
     content = message.get("content")
 
+    # Only trim when the API itself reports the reply was cut off by the
+    # token limit; complete replies are returned verbatim.
+    truncated = str(first.get("finish_reason") or "").strip().lower() == "length"
+
+    def _finalize(value: str) -> str:
+        value = value.strip()
+        return _trim_incomplete_sentence(value) if truncated else value
+
     if isinstance(content, str):
-        return content.strip()
+        return _finalize(content)
 
     if isinstance(content, list):
         text_parts: list[str] = []
@@ -248,11 +288,11 @@ def _extract_content_from_body(body: dict[str, Any]) -> str:
             if str(item.get("type") or "").lower() == "text":
                 text_parts.append(str(item.get("text") or ""))
         if text_parts:
-            return "\n".join(x for x in text_parts if x).strip()
+            return _finalize("\n".join(x for x in text_parts if x))
 
     text_value = first.get("text")
     if isinstance(text_value, str):
-        return text_value.strip()
+        return _finalize(text_value)
 
     raise LLMAPIError("Malformed response: no assistant content found.")
 

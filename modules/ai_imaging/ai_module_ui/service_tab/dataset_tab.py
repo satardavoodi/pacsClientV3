@@ -1,25 +1,22 @@
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
+    QHBoxLayout,
     QTableWidget,
     QTableWidgetItem,
-    QHeaderView
-)
-from PySide6.QtCore import Qt
-from .abstract_tab import AbstractTab
-
-from PySide6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QTableWidget,
-    QTableWidgetItem,
-    QHeaderView
+    QHeaderView,
+    QPushButton,
+    QLabel
 )
 from PySide6.QtCore import Qt
 from .abstract_tab import AbstractTab
 
 import os
 import glob
+import logging
+import qtawesome as qta
+
+logger = logging.getLogger(__name__)
 # =========================================================
 # DataSet CSV Reader (NOW CONNECTABLE + debuggable)
 # =========================================================
@@ -55,7 +52,7 @@ def read_dataset_csvs(csv_paths):
     for path in expanded:
         try:
             if not os.path.exists(path):
-                print(f"[DataSetTab] CSV not found: {path}")
+                logger.info(f"[DataSetTab] CSV not found: {path}")
                 continue
 
             with open(path, newline="", encoding="utf-8") as f:
@@ -88,9 +85,9 @@ def read_dataset_csvs(csv_paths):
                     })
                     n += 1
 
-            print(f"[DataSetTab] loaded {n} rows from: {path}  cols={cols}")
+            logger.info(f"[DataSetTab] loaded {n} rows from: {path}  cols={cols}")
         except Exception as e:
-            print(f"[DataSetTab] ERROR reading CSV '{path}': {e}")
+            logger.info(f"[DataSetTab] ERROR reading CSV '{path}': {e}")
 
     return rows
 
@@ -248,11 +245,83 @@ class DataSetTab(AbstractTab):
 
         if csv_paths:
             self.set_csv_paths(csv_paths, refresh=False)
+        
+        logger.info(f"[DataSetTab] Initialized with study_uid={study_uid}")
 
     def _build_main_layout(self):
         layout = QVBoxLayout()
+        layout.setSpacing(10)
+        
+        # Header section with title, status, and refresh button
+        header_layout = QHBoxLayout()
+        
+        # Title
+        title_label = QLabel("Dataset Viewer")
+        title_label.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #f7fafc;
+                background: transparent;
+            }
+        """)
+        header_layout.addWidget(title_label)
+        
+        # Status label
+        self.status_label = QLabel("Ready")
+        self.status_label.setStyleSheet("""
+            QLabel {
+                color: #6b7280;
+                background: transparent;
+                font-size: 12px;
+                padding: 4px 8px;
+            }
+        """)
+        header_layout.addWidget(self.status_label)
+        
+        header_layout.addStretch()
+        
+        # Refresh button
+        self.refresh_btn = QPushButton()
+        try:
+            self.refresh_btn.setIcon(qta.icon('fa5s.sync-alt', color='#3182ce'))
+        except:
+            pass
+        self.refresh_btn.setText("Refresh")
+        self.refresh_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a202c;
+                border: 1px solid #2d3748;
+                padding: 8px 16px;
+                border-radius: 6px;
+                color: #f7fafc;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: #2d3748; }
+            QPushButton:pressed { background: #0b1015; }
+        """)
+        self.refresh_btn.clicked.connect(self.refresh)
+        header_layout.addWidget(self.refresh_btn)
+        
+        layout.addLayout(header_layout)
+        
+        # Info label showing study UID
+        if self.study_uid:
+            info_label = QLabel(f"Study UID: {self.study_uid}")
+            info_label.setStyleSheet("""
+                QLabel {
+                    color: #6b7280;
+                    background: transparent;
+                    font-size: 11px;
+                    font-family: monospace;
+                }
+            """)
+            layout.addWidget(info_label)
+        
+        # Table widget
         self.dataset_table = DataSetTableWidget()
         layout.addWidget(self.dataset_table)
+        
         return layout
 
     # -----------------------------
@@ -275,13 +344,28 @@ class DataSetTab(AbstractTab):
 
     def _guess_attachment_dir(self):
         """
-        Tries to locate: <project_root>/attachment/<study_uid>
-        based on current working dir and a few parents.
+        Tries to locate: <attachment_path>/<study_uid>
+        First tries ATTACHMENT_PATH from config, then falls back to project search
         """
         import os
         if not self.study_uid:
+            logger.info("[DataSetTab] No study_uid provided")
             return None
 
+        # Try to use ATTACHMENT_PATH from config
+        try:
+            from PacsClient.utils.config import ATTACHMENT_PATH
+            from pathlib import Path
+            attach_path = Path(ATTACHMENT_PATH) / self.study_uid
+            if attach_path.exists() and attach_path.is_dir():
+                logger.info(f"[DataSetTab] Found attachment dir via ATTACHMENT_PATH: {attach_path}")
+                return str(attach_path)
+            else:
+                logger.info(f"[DataSetTab] Attachment dir not found at: {attach_path}")
+        except Exception as e:
+            logger.info(f"[DataSetTab] Could not use ATTACHMENT_PATH: {e}")
+
+        # Fallback: search from current working directory
         candidates = []
         cwd = os.getcwd()
 
@@ -298,7 +382,11 @@ class DataSetTab(AbstractTab):
 
         for c in candidates:
             if os.path.isdir(c):
+                logger.info(f"[DataSetTab] Found attachment dir via search: {c}")
                 return c
+        
+        logger.info(f"[DataSetTab] No attachment directory found for study_uid: {self.study_uid}")
+        logger.info(f"[DataSetTab] Searched candidates: {candidates[:3]}")
         return None
 
 
@@ -306,19 +394,30 @@ class DataSetTab(AbstractTab):
         import os, glob
         attach_dir = self._guess_attachment_dir()
         if not attach_dir:
+            logger.info("[DataSetTab] Cannot auto-discover CSVs: attachment directory not found")
             return []
 
         csvs = sorted(glob.glob(os.path.join(attach_dir, "*.csv")))
+        logger.info(f"[DataSetTab] Found {len(csvs)} CSV files in {attach_dir}")
+        
+        if not csvs:
+            return []
+        
         # prefer your known filenames first
         preferred = []
         rest = []
         for p in csvs:
             name = os.path.basename(p).lower()
-            if "updated_csv_with_boxes" in name or "classification" in name:
+            if "updated_csv_with_boxes" in name or "classification" in name or "dataset" in name:
                 preferred.append(p)
+                logger.info(f"[DataSetTab]   ✓ Preferred: {os.path.basename(p)}")
             else:
                 rest.append(p)
-        return preferred + rest
+                logger.info(f"[DataSetTab]   - Other: {os.path.basename(p)}")
+        
+        result = preferred + rest
+        logger.info(f"[DataSetTab] Auto-discovered {len(result)} CSV files")
+        return result
 
 
     def set_rows(self, rows, *, cache=True):
@@ -327,6 +426,12 @@ class DataSetTab(AbstractTab):
         if cache:
             self._rows_cache = rows
         self.dataset_table.set_rows(rows)
+        
+        # Update status
+        if rows:
+            self._update_status(f"Displaying {len(rows)} rows", "success")
+        else:
+            self._update_status("No data to display", "warning")
 
     def append_rows(self, rows, *, cache=True):
         rows = [] if rows is None else list(rows)
@@ -337,31 +442,84 @@ class DataSetTab(AbstractTab):
         if cache:
             self._rows_cache = []
         self.dataset_table.clear()
+        self._update_status("Data cleared", "info")
 
     def refresh(self):
         try:
+            # Update status
+            self._update_status("Loading data...", "loading")
+            
+            # Try data provider first
             if callable(self._data_provider):
+                logger.info("[DataSetTab] Using data_provider")
                 rows = self._data_provider() or []
                 self.set_rows(rows, cache=True)
+                if rows:
+                    self._update_status(f"Loaded {len(rows)} rows from provider", "success")
+                else:
+                    self._update_status("Data provider returned no rows", "warning")
                 return
 
+            # Try cached rows
             if self._rows_cache:
+                logger.info(f"[DataSetTab] Using cached rows: {len(self._rows_cache)}")
                 self.dataset_table.set_rows(self._rows_cache)
+                self._update_status(f"Displaying {len(self._rows_cache)} cached rows", "success")
                 return
 
             # ✅ auto-discover CSVs if none provided
             if not self._csv_paths:
+                logger.info("[DataSetTab] Auto-discovering CSV files...")
                 auto = self._auto_discover_csv_paths()
                 if auto:
                     self._csv_paths = auto
-                    print(f"[DataSetTab] auto-discovered CSVs: {self._csv_paths}")
+                    logger.info(f"[DataSetTab] Auto-discovered CSVs: {self._csv_paths}")
+                else:
+                    logger.info("[DataSetTab] No CSV files auto-discovered")
 
+            # Try to load from CSV paths
             if self._csv_paths:
+                logger.info(f"[DataSetTab] Loading from CSV paths: {self._csv_paths}")
                 rows = read_dataset_csvs(self._csv_paths)
-                self.set_rows(rows, cache=True)
+                if rows:
+                    self.set_rows(rows, cache=True)
+                    self._update_status(f"Loaded {len(rows)} rows from {len(self._csv_paths)} CSV file(s)", "success")
+                else:
+                    self._update_status(f"No data found in {len(self._csv_paths)} CSV file(s)", "warning")
                 return
 
+            # No data found
+            logger.info("[DataSetTab] No data source available")
             self.clear(cache=False)
+            self._update_status("No data available. No CSV files found for this study.", "error")
 
         except Exception as e:
-            print(f"[DataSetTab] refresh() ERROR: {e}")
+            logger.info(f"[DataSetTab] refresh() ERROR: {e}")
+            import traceback
+            traceback.print_exc()
+            self._update_status(f"Error loading data: {str(e)}", "error")
+    
+    def _update_status(self, message: str, status_type: str = "info"):
+        """Update status label with message and color based on type"""
+        if not hasattr(self, 'status_label'):
+            return
+        
+        colors = {
+            "info": "#6b7280",
+            "loading": "#3182ce",
+            "success": "#10b981",
+            "warning": "#f59e0b",
+            "error": "#ef4444"
+        }
+        
+        color = colors.get(status_type, colors["info"])
+        self.status_label.setText(message)
+        self.status_label.setStyleSheet(f"""
+            QLabel {{
+                color: {color};
+                background: transparent;
+                font-size: 12px;
+                padding: 4px 8px;
+            }}
+        """)
+        logger.info(f"[DataSetTab] Status: {message}")

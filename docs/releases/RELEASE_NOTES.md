@@ -1,9 +1,29 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.0.8 (2026-05-20)
-**Previous Stable:** v3.0.7 (2026-05-19)
-**Release Date:** 2026-05-20
+**Current Stable Version:** v3.0.9 (2026-05-25)
+**Previous Stable:** v3.0.8 (2026-05-20)
+**Release Date:** 2026-05-25
 **Branch:** beta-version
+
+---
+
+## v3.0.9 (2026-05-25) - Workspace sync rollup: multi-study viewer, thumbnail pipeline, DB test isolation, Zeta DM review
+
+### Summary
+
+Consolidation release on top of v3.0.8 that bundles the accumulated workspace work since the last stable checkpoint and publishes it across all mirrored remotes.
+
+### Included
+
+- Multi-study single-tab viewer fix (offset-keyed series, grouped sidebar, repaint-suppressed rebuild) — see `docs/MULTI_STUDY_SINGLE_TAB_PLAN.md`
+- Thumbnail pipeline audit and canonicalization (`THUMBNAIL_PATH/<study_uid>/<series_number>.png`) — see `docs/pipelines/thumbnail-pipeline.md`
+- Database test-isolation hardening + production-DB cleanup tooling — see `COPILOT_REPORT_db_cleanup.md` and `tools/maintenance/cleanup_test_pollution.py`
+- Zeta Download Manager review + fix plan (atomic DICOM/thumbnail writes, single GetStudyInfo probe, dead-gRPC quarantine) — see `docs/plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md`
+- EchoMind viewer-chat updates, AI imaging service-tab fixes, reception report viewer updates
+- Home panel / search service / right-panel thumbnail flow updates
+- Settings UI, mainwindow UI, patient table widget polish
+- Plugin package mirrors resynchronized for canonical module changes
+- Runtime profile, config, and database manager updates
 
 ---
 

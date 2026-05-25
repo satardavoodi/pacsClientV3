@@ -396,6 +396,8 @@ class ReceptionReportsViewer(QWidget):
                     modality = sender_info.split('Modality:')[1].split(',')[0].strip()
                 except:
                     pass
+
+            reporting_physician = self._extract_reporting_physician(report)
             
             # Status emoji
             status_emoji = {
@@ -406,6 +408,8 @@ class ReceptionReportsViewer(QWidget):
             
             item_text = f"{status_emoji} #{report_id} - {patient_id}\n" \
                        f"   {modality} | {time_str}"
+            if reporting_physician:
+                item_text += f"\n   Reporting: {reporting_physician}"
             
             item.setText(item_text)
             item.setData(Qt.UserRole, report)
@@ -443,6 +447,7 @@ class ReceptionReportsViewer(QWidget):
         created_at = report.get('created_at', 0)
         status = report.get('status', 'unknown').upper()
         sender_info = report.get('sender_info', 'N/A')
+        reporting_physician = self._extract_reporting_physician(report) or 'N/A'
         
         try:
             dt = datetime.fromtimestamp(created_at)
@@ -456,6 +461,7 @@ class ReceptionReportsViewer(QWidget):
             <span style='color: #888;'>
             👤 Patient: {patient_id}<br>
             🔬 Study: {study_uid}<br>
+            🩺 Reporting Physician: {reporting_physician}<br>
             📅 Created: {time_str}<br>
             📊 Status: <span style='color: {"#ffc107" if status == "PENDING" else "#4caf50" if status == "READ" else "#888"};'>{status}</span><br>
             ℹ️ Info: {sender_info}
@@ -507,6 +513,25 @@ class ReceptionReportsViewer(QWidget):
         """
         
         self.preview_browser.setHtml(full_html)
+
+    @staticmethod
+    def _extract_reporting_physician(report: dict) -> str:
+        """Normalize reporting-physician value across payload variants."""
+        physician = (
+            report.get('reporting_physician_name')
+            or report.get('reporting_physician')
+            or report.get('reportingPhysicianName')
+            or report.get('ReportingPhysicianName')
+            or report.get('reportingPhysician')
+            or report.get('ReportingPhysician')
+        )
+        if isinstance(physician, dict):
+            physician = (
+                physician.get('FullName')
+                or physician.get('fullName')
+                or physician.get('name')
+            )
+        return str(physician or '').strip()
     
     def _mark_as_read(self):
         """Mark selected report as read."""

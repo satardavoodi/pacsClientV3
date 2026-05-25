@@ -193,402 +193,413 @@ class SeriesDownloader:
         # This avoids the disconnect/reconnect overhead when downloading multiple series
         logger.info(f"🔌 Creating persistent socket connection for study download...")
         socket_client = SocketDicomClient(cancel_check=self.cancel_check)
+        try:
         
-        # Verify authentication before starting series download
-        if not socket_client.ensure_authenticated():
-            logger.error(f"❌ FAILED: No authentication for study {study_uid[:40]}...")
-            socket_client.disconnect()
-            return DownloadResult(
-                success=False,
-                study_uid=study_uid,
-                error_message="No authentication token available"
-            )
-        logger.info(f"✅ Socket connection authenticated and ready")
-        
-        # Download each series SEQUENTIALLY (one at a time)
-        for idx, series_info in enumerate(series_list):
-            # R25: Check for cancellation via cancel_check callback (worker preemption)
-            if self.cancel_check and self.cancel_check():
-                logger.info(f"⏸️ Download cancelled (preemption) - pausing after {idx} series")
-                
-                # Disconnect socket before returning
+            # Verify authentication before starting series download
+            if not socket_client.ensure_authenticated():
+                logger.error(f"❌ FAILED: No authentication for study {study_uid[:40]}...")
                 socket_client.disconnect()
-                return self._build_preempted_result(
+                return DownloadResult(
+                    success=False,
                     study_uid=study_uid,
-                    series_list=series_list,
-                    completed_series=completed_series,
-                    skipped_series=skipped_series,
-                    failed_series=failed_series,
-                    total_downloaded=total_downloaded,
-                    total_skipped=total_skipped,
-                    start_time=start_time,
+                    error_message="No authentication token available"
+                )
+            logger.info(f"✅ Socket connection authenticated and ready")
+        
+            # Download each series SEQUENTIALLY (one at a time)
+            for idx, series_info in enumerate(series_list):
+                # R25: Check for cancellation via cancel_check callback (worker preemption)
+                if self.cancel_check and self.cancel_check():
+                    logger.info(f"⏸️ Download cancelled (preemption) - pausing after {idx} series")
+                
+                    # Disconnect socket before returning
+                    socket_client.disconnect()
+                    return self._build_preempted_result(
+                        study_uid=study_uid,
+                        series_list=series_list,
+                        completed_series=completed_series,
+                        skipped_series=skipped_series,
+                        failed_series=failed_series,
+                        total_downloaded=total_downloaded,
+                        total_skipped=total_skipped,
+                        start_time=start_time,
+                    )
+            
+                # R25: Also check for preemption via rule engine (pending higher priority)
+                waiting_downloads = self.state.get_by_status(DownloadStatus.PENDING)
+                current_state = self.state.get(study_uid)
+            
+                if current_state and self.rules.should_interrupt_for_priority(current_state, waiting_downloads):
+                    logger.info(f"⚡ Higher priority download waiting - pausing current download")
+                
+                    # Disconnect socket before returning
+                    socket_client.disconnect()
+                    return self._build_preempted_result(
+                        study_uid=study_uid,
+                        series_list=series_list,
+                        completed_series=completed_series,
+                        skipped_series=skipped_series,
+                        failed_series=failed_series,
+                        total_downloaded=total_downloaded,
+                        total_skipped=total_skipped,
+                        start_time=start_time,
+                        error_message="Paused for higher priority download",
+                    )
+            
+                # ── Re-check viewed series: if the user clicked a different
+                #    series thumbnail since we started, reorder the remaining
+                #    series so the newly-viewed one is next. ──────────────────
+                current_state = self.state.get(study_uid)
+                new_viewed = getattr(current_state, 'viewed_series_number', None) if current_state else None
+                if new_viewed and str(new_viewed) != str(series_info.series_number):
+                    remaining = series_list[idx:]
+                    viewed_in_remaining = [s for s in remaining if str(s.series_number) == str(new_viewed)]
+                    if viewed_in_remaining:
+                        others_in_remaining = [s for s in remaining if str(s.series_number) != str(new_viewed)]
+                        # Rebuild the tail of series_list in-place
+                        series_list[idx:] = viewed_in_remaining + others_in_remaining
+                        # Re-fetch series_info since the list was reordered
+                        series_info = series_list[idx]
+                        logger.info(f"   ⚡ Reordered remaining series: {new_viewed} moved to next slot (CRITICAL)")
+            
+                series_number = str(series_info.series_number)
+                series_output_dir = study_output_dir / series_number
+            
+                # Enhanced sequential progress logging
+                logger.info("")
+                logger.info(f"═══ Starting Series {idx + 1}/{len(series_list)}: {series_number} ═══")
+                logger.info(f"    Description: {series_info.series_description or 'N/A'}")
+                logger.info(f"    Images: {series_info.image_count}")
+                logger.info(f"    Modality: {series_info.modality or 'N/A'}")
+            
+                # Update current series (ensure UI has series totals immediately)
+                self.state.update(
+                    study_uid,
+                    current_series=series_info.series_uid,
+                    current_series_number=series_number,
+                    current_series_total=series_info.image_count,
+                    current_series_downloaded=0,
+                    current_series_progress=0.0
                 )
             
-            # R25: Also check for preemption via rule engine (pending higher priority)
-            waiting_downloads = self.state.get_by_status(DownloadStatus.PENDING)
-            current_state = self.state.get(study_uid)
-            
-            if current_state and self.rules.should_interrupt_for_priority(current_state, waiting_downloads):
-                logger.info(f"⚡ Higher priority download waiting - pausing current download")
-                
-                # Disconnect socket before returning
-                socket_client.disconnect()
-                return self._build_preempted_result(
-                    study_uid=study_uid,
-                    series_list=series_list,
-                    completed_series=completed_series,
-                    skipped_series=skipped_series,
-                    failed_series=failed_series,
-                    total_downloaded=total_downloaded,
-                    total_skipped=total_skipped,
-                    start_time=start_time,
-                    error_message="Paused for higher priority download",
+                # Check if series already complete (R20)
+                is_complete, existing_count = self.rules.resume_rules.check_series_complete(
+                    series_output_dir,
+                    series_info.image_count
                 )
+                logger.info(f"    📋 R20 check: is_complete={is_complete}, existing={existing_count}, expected={series_info.image_count}, dir={series_output_dir}")
             
-            # ── Re-check viewed series: if the user clicked a different
-            #    series thumbnail since we started, reorder the remaining
-            #    series so the newly-viewed one is next. ──────────────────
-            current_state = self.state.get(study_uid)
-            new_viewed = getattr(current_state, 'viewed_series_number', None) if current_state else None
-            if new_viewed and str(new_viewed) != str(series_info.series_number):
-                remaining = series_list[idx:]
-                viewed_in_remaining = [s for s in remaining if str(s.series_number) == str(new_viewed)]
-                if viewed_in_remaining:
-                    others_in_remaining = [s for s in remaining if str(s.series_number) != str(new_viewed)]
-                    # Rebuild the tail of series_list in-place
-                    series_list[idx:] = viewed_in_remaining + others_in_remaining
-                    # Re-fetch series_info since the list was reordered
-                    series_info = series_list[idx]
-                    logger.info(f"   ⚡ Reordered remaining series: {new_viewed} moved to next slot (CRITICAL)")
-            
-            series_number = str(series_info.series_number)
-            series_output_dir = study_output_dir / series_number
-            
-            # Enhanced sequential progress logging
-            logger.info("")
-            logger.info(f"═══ Starting Series {idx + 1}/{len(series_list)}: {series_number} ═══")
-            logger.info(f"    Description: {series_info.series_description or 'N/A'}")
-            logger.info(f"    Images: {series_info.image_count}")
-            logger.info(f"    Modality: {series_info.modality or 'N/A'}")
-            
-            # Update current series (ensure UI has series totals immediately)
-            self.state.update(
-                study_uid,
-                current_series=series_info.series_uid,
-                current_series_number=series_number,
-                current_series_total=series_info.image_count,
-                current_series_downloaded=0,
-                current_series_progress=0.0
-            )
-            
-            # Check if series already complete (R20)
-            is_complete, existing_count = self.rules.resume_rules.check_series_complete(
-                series_output_dir,
-                series_info.image_count
-            )
-            logger.info(f"    📋 R20 check: is_complete={is_complete}, existing={existing_count}, expected={series_info.image_count}, dir={series_output_dir}")
-            
-            if is_complete:
-                # Series complete - skip download but ensure instances in database
-                skipped_series.append(series_info.series_uid)
-                total_skipped += existing_count
+                if is_complete:
+                    # Series complete - skip download but ensure instances in database
+                    skipped_series.append(series_info.series_uid)
+                    total_skipped += existing_count
 
-                # Track skipped series in state for accurate overall progress
-                if state:
-                    updated_skipped = list(state.skipped_series or [])
-                    if series_info.series_uid not in updated_skipped:
-                        updated_skipped.append(series_info.series_uid)
-                        self.state.update(study_uid, skipped_series=updated_skipped)
+                    # Track skipped series in state for accurate overall progress
+                    if state:
+                        updated_skipped = list(state.skipped_series or [])
+                        if series_info.series_uid not in updated_skipped:
+                            updated_skipped.append(series_info.series_uid)
+                            self.state.update(study_uid, skipped_series=updated_skipped)
                 
-                logger.info(f"    ⏭️ SKIPPED: Series {series_number} already complete ({existing_count} files)")
+                    logger.info(f"    ⏭️ SKIPPED: Series {series_number} already complete ({existing_count} files)")
                 
-                # ✅ CRITICAL FIX: Ensure instances are in database even for skipped series
-                # This handles cases where files exist but instances were never saved to DB
-                if self.database_manager:
-                    try:
-                        # First update series_path
-                        await self._update_series_path_in_db(
-                            series_uid=series_info.series_uid,
-                            series_path=str(series_output_dir)
-                        )
-                        # Then ensure instances are saved
-                        await self._save_series_instances_to_db(
-                            study_uid=study_uid,
-                            series_info=series_info,
-                            series_output_dir=series_output_dir
-                        )
-                    except Exception as e:
-                        logger.warning(f"    ⚠️ Failed to update DB for skipped series: {e}")
+                    # ✅ CRITICAL FIX: Ensure instances are in database even for skipped series
+                    # This handles cases where files exist but instances were never saved to DB
+                    if self.database_manager:
+                        try:
+                            # First update series_path
+                            await self._update_series_path_in_db(
+                                series_uid=series_info.series_uid,
+                                series_path=str(series_output_dir)
+                            )
+                            # Then ensure instances are saved
+                            await self._save_series_instances_to_db(
+                                study_uid=study_uid,
+                                series_info=series_info,
+                                series_output_dir=series_output_dir
+                            )
+                        except Exception as e:
+                            logger.warning(f"    ⚠️ Failed to update DB for skipped series: {e}")
                 
-                # Update progress
-                self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
+                    # Update progress
+                    self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
                 
-                logger.info(f"═══ Completed Series {idx + 1}/{len(series_list)}: {series_number} (SKIPPED) ═══")
-                continue
+                    logger.info(f"═══ Completed Series {idx + 1}/{len(series_list)}: {series_number} (SKIPPED) ═══")
+                    continue
             
-            # ✅ FIX: Use the persistent socket connection created at the start of download_all_series
-            # This avoids creating a new connection for each series, which causes server issues
-            # when downloading multiple series
+                # ✅ FIX: Use the persistent socket connection created at the start of download_all_series
+                # This avoids creating a new connection for each series, which causes server issues
+                # when downloading multiple series
             
-            # ✅ CONNECTION HEALTH CHECK: Verify socket is still connected before each series
-            if not socket_client.connected:
-                logger.warning(f"    ⚠️ Socket connection lost, attempting to reconnect with backoff...")
-                if not socket_client.connect_with_retry():
-                    if socket_client.is_cancelled() or (self.cancel_check and self.cancel_check()):
-                        logger.info(f"    ⏸️ Reconnect cancelled by preemption for series {series_number}")
-                        socket_client.disconnect()
-                        return self._build_preempted_result(
-                            study_uid=study_uid,
-                            series_list=series_list,
-                            completed_series=completed_series,
-                            skipped_series=skipped_series,
-                            failed_series=failed_series,
-                            total_downloaded=total_downloaded,
-                            total_skipped=total_skipped,
-                            start_time=start_time,
-                        )
-                    logger.error(f"    ❌ FAILED: Could not reconnect for series {series_number}")
+                # ✅ CONNECTION HEALTH CHECK: Verify socket is still connected before each series
+                if not socket_client.connected:
+                    logger.warning(f"    ⚠️ Socket connection lost, attempting to reconnect with backoff...")
+                    if not socket_client.connect_with_retry():
+                        if socket_client.is_cancelled() or (self.cancel_check and self.cancel_check()):
+                            logger.info(f"    ⏸️ Reconnect cancelled by preemption for series {series_number}")
+                            socket_client.disconnect()
+                            return self._build_preempted_result(
+                                study_uid=study_uid,
+                                series_list=series_list,
+                                completed_series=completed_series,
+                                skipped_series=skipped_series,
+                                failed_series=failed_series,
+                                total_downloaded=total_downloaded,
+                                total_skipped=total_skipped,
+                                start_time=start_time,
+                            )
+                        logger.error(f"    ❌ FAILED: Could not reconnect for series {series_number}")
+                        failed_series.append(series_info.series_uid)
+                        if state:
+                            updated_failed = list(state.failed_series or [])
+                            if series_info.series_uid not in updated_failed:
+                                updated_failed.append(series_info.series_uid)
+                                self.state.update(study_uid, failed_series=updated_failed)
+                        self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
+                        continue
+                    logger.info(f"    ✅ Socket reconnected successfully")
+            
+                logger.info(f"    📥 Downloading series {series_number} (reusing persistent connection)...")
+            
+                series_result = await socket_client.download_series(
+                    study_uid=study_uid,
+                    series_info=series_info,
+                    output_dir=series_output_dir,
+                    progress_callback=self.progress_callback
+                )
+            
+                if series_result.success:
+                    completed_series.append(series_info.series_uid)
+                    total_downloaded += series_result.downloaded
+                    total_skipped += series_result.skipped
+
+                    # Update completed series list
+                    if state:
+                        updated_completed = list(state.completed_series or [])
+                        if series_info.series_uid not in updated_completed:
+                            updated_completed.append(series_info.series_uid)
+                            self.state.update(study_uid, completed_series=updated_completed)
+                
+                    logger.info(f"    ✅ SUCCESS: {series_result.downloaded} downloaded, {series_result.skipped} skipped ({series_result.elapsed_seconds:.1f}s)")
+                
+                    # ✅ CRITICAL FIX: Update series_path in database so local tab can find files
+                    if self.database_manager:
+                        try:
+                            await self._update_series_path_in_db(
+                                series_uid=series_info.series_uid,
+                                series_path=str(series_output_dir)
+                            )
+                        except Exception as e:
+                            logger.warning(f"    ⚠️ Failed to update series_path: {e}")
+                
+                    # ✅ CRITICAL FIX: Save instances to database after successful download
+                    if self.database_manager and series_result.success:
+                        try:
+                            await self._save_series_instances_to_db(
+                                study_uid=study_uid,
+                                series_info=series_info,
+                                series_output_dir=series_output_dir
+                            )
+                        except Exception as e:
+                            logger.warning(f"    ⚠️ Failed to save instances for series {series_number}: {e}")
+                            # Don't fail the entire download if instance saving fails
+                else:
                     failed_series.append(series_info.series_uid)
                     if state:
                         updated_failed = list(state.failed_series or [])
                         if series_info.series_uid not in updated_failed:
                             updated_failed.append(series_info.series_uid)
                             self.state.update(study_uid, failed_series=updated_failed)
-                    self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
-                    continue
-                logger.info(f"    ✅ Socket reconnected successfully")
-            
-            logger.info(f"    📥 Downloading series {series_number} (reusing persistent connection)...")
-            
-            series_result = await socket_client.download_series(
-                study_uid=study_uid,
-                series_info=series_info,
-                output_dir=series_output_dir,
-                progress_callback=self.progress_callback
-            )
-            
-            if series_result.success:
-                completed_series.append(series_info.series_uid)
-                total_downloaded += series_result.downloaded
-                total_skipped += series_result.skipped
-
-                # Update completed series list
-                if state:
-                    updated_completed = list(state.completed_series or [])
-                    if series_info.series_uid not in updated_completed:
-                        updated_completed.append(series_info.series_uid)
-                        self.state.update(study_uid, completed_series=updated_completed)
                 
-                logger.info(f"    ✅ SUCCESS: {series_result.downloaded} downloaded, {series_result.skipped} skipped ({series_result.elapsed_seconds:.1f}s)")
-                
-                # ✅ CRITICAL FIX: Update series_path in database so local tab can find files
-                if self.database_manager:
-                    try:
-                        await self._update_series_path_in_db(
-                            series_uid=series_info.series_uid,
-                            series_path=str(series_output_dir)
-                        )
-                    except Exception as e:
-                        logger.warning(f"    ⚠️ Failed to update series_path: {e}")
-                
-                # ✅ CRITICAL FIX: Save instances to database after successful download
-                if self.database_manager and series_result.success:
-                    try:
-                        await self._save_series_instances_to_db(
-                            study_uid=study_uid,
-                            series_info=series_info,
-                            series_output_dir=series_output_dir
-                        )
-                    except Exception as e:
-                        logger.warning(f"    ⚠️ Failed to save instances for series {series_number}: {e}")
-                        # Don't fail the entire download if instance saving fails
-            else:
-                failed_series.append(series_info.series_uid)
-                if state:
-                    updated_failed = list(state.failed_series or [])
-                    if series_info.series_uid not in updated_failed:
-                        updated_failed.append(series_info.series_uid)
-                        self.state.update(study_uid, failed_series=updated_failed)
-                
-                logger.error(f"    ❌ FAILED: {series_result.error_message}")
+                    logger.error(f"    ❌ FAILED: {series_result.error_message}")
             
-            # Update progress
-            self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
+                # Update progress
+                self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
             
-            logger.info(f"═══ Completed Series {idx + 1}/{len(series_list)}: {series_number} ═══")
+                logger.info(f"═══ Completed Series {idx + 1}/{len(series_list)}: {series_number} ═══")
         
-        # ── Retry failed series with exponential backoff ────────────────
-        if failed_series and MAX_SERIES_RETRIES > 0:
-            # Build a lookup from series_uid → SeriesInfo for retry
-            series_by_uid = {s.series_uid: s for s in series_list}
+            # ── Retry failed series with exponential backoff ────────────────
+            if failed_series and MAX_SERIES_RETRIES > 0:
+                # Build a lookup from series_uid → SeriesInfo for retry
+                series_by_uid = {s.series_uid: s for s in series_list}
 
-            for retry_round in range(1, MAX_SERIES_RETRIES + 1):
-                if not failed_series:
-                    break
-
-                # Check cancellation
-                if self.cancel_check and self.cancel_check():
-                    logger.info(f"⏸️ Retry cancelled (preemption)")
-                    break
-
-                # Exponential backoff between retry rounds
-                retry_delay = SERIES_RETRY_BASE_DELAY * (2 ** (retry_round - 1))
-                logger.info(
-                    f"🔄 Retry round {retry_round}/{MAX_SERIES_RETRIES} for "
-                    f"{len(failed_series)} failed series (waiting {retry_delay:.0f}s)..."
-                )
-                await asyncio.sleep(retry_delay)
-
-                # Reconnect if socket is down
-                if not socket_client.connected:
-                    logger.info(f"🔌 Reconnecting socket for retry round {retry_round}...")
-                    if not socket_client.connect_with_retry():
-                        if socket_client.is_cancelled() or (self.cancel_check and self.cancel_check()):
-                            logger.info(f"⏸️ Retry reconnect cancelled by preemption")
-                            break
-                        logger.error(f"❌ Reconnect failed for retry round {retry_round}")
+                for retry_round in range(1, MAX_SERIES_RETRIES + 1):
+                    if not failed_series:
                         break
 
-                still_failed = []
-                for series_uid in list(failed_series):
+                    # Check cancellation
                     if self.cancel_check and self.cancel_check():
-                        still_failed.append(series_uid)
-                        continue
+                        logger.info(f"⏸️ Retry cancelled (preemption)")
+                        break
 
-                    s_info = series_by_uid.get(series_uid)
-                    if not s_info:
-                        still_failed.append(series_uid)
-                        continue
+                    # Exponential backoff between retry rounds
+                    retry_delay = SERIES_RETRY_BASE_DELAY * (2 ** (retry_round - 1))
+                    logger.info(
+                        f"🔄 Retry round {retry_round}/{MAX_SERIES_RETRIES} for "
+                        f"{len(failed_series)} failed series (waiting {retry_delay:.0f}s)..."
+                    )
+                    await asyncio.sleep(retry_delay)
 
-                    s_num = str(s_info.series_number)
-                    s_out = study_output_dir / s_num
-
-                    logger.info(f"    🔄 Retrying series {s_num} (attempt {retry_round})...")
-
-                    # Connection check before each series retry
+                    # Reconnect if socket is down
                     if not socket_client.connected:
+                        logger.info(f"🔌 Reconnecting socket for retry round {retry_round}...")
                         if not socket_client.connect_with_retry():
                             if socket_client.is_cancelled() or (self.cancel_check and self.cancel_check()):
-                                logger.info(f"    ⏸️ Retry reconnect cancelled for series {s_num}")
-                                still_failed.append(series_uid)
+                                logger.info(f"⏸️ Retry reconnect cancelled by preemption")
                                 break
-                            logger.error(f"    ❌ Reconnect failed for series {s_num}")
+                            logger.error(f"❌ Reconnect failed for retry round {retry_round}")
+                            break
+
+                    still_failed = []
+                    for series_uid in list(failed_series):
+                        if self.cancel_check and self.cancel_check():
                             still_failed.append(series_uid)
                             continue
 
-                    retry_result = await socket_client.download_series(
-                        study_uid=study_uid,
-                        series_info=s_info,
-                        output_dir=s_out,
-                        progress_callback=self.progress_callback,
+                        s_info = series_by_uid.get(series_uid)
+                        if not s_info:
+                            still_failed.append(series_uid)
+                            continue
+
+                        s_num = str(s_info.series_number)
+                        s_out = study_output_dir / s_num
+
+                        logger.info(f"    🔄 Retrying series {s_num} (attempt {retry_round})...")
+
+                        # Connection check before each series retry
+                        if not socket_client.connected:
+                            if not socket_client.connect_with_retry():
+                                if socket_client.is_cancelled() or (self.cancel_check and self.cancel_check()):
+                                    logger.info(f"    ⏸️ Retry reconnect cancelled for series {s_num}")
+                                    still_failed.append(series_uid)
+                                    break
+                                logger.error(f"    ❌ Reconnect failed for series {s_num}")
+                                still_failed.append(series_uid)
+                                continue
+
+                        retry_result = await socket_client.download_series(
+                            study_uid=study_uid,
+                            series_info=s_info,
+                            output_dir=s_out,
+                            progress_callback=self.progress_callback,
+                        )
+
+                        if retry_result.success:
+                            logger.info(
+                                f"    ✅ Retry SUCCESS: series {s_num} "
+                                f"({retry_result.downloaded} downloaded)"
+                            )
+                            completed_series.append(series_uid)
+                            total_downloaded += retry_result.downloaded
+                            total_skipped += retry_result.skipped
+
+                            # Update state: move from failed to completed
+                            if state:
+                                updated_completed = list(state.completed_series or [])
+                                if series_uid not in updated_completed:
+                                    updated_completed.append(series_uid)
+                                updated_failed_list = list(state.failed_series or [])
+                                if series_uid in updated_failed_list:
+                                    updated_failed_list.remove(series_uid)
+                                self.state.update(
+                                    study_uid,
+                                    completed_series=updated_completed,
+                                    failed_series=updated_failed_list,
+                                )
+
+                            # DB updates
+                            if self.database_manager:
+                                try:
+                                    await self._update_series_path_in_db(
+                                        series_uid=s_info.series_uid,
+                                        series_path=str(s_out),
+                                    )
+                                    await self._save_series_instances_to_db(
+                                        study_uid=study_uid,
+                                        series_info=s_info,
+                                        series_output_dir=s_out,
+                                    )
+                                except Exception as e:
+                                    logger.warning(f"    ⚠️ DB update after retry failed: {e}")
+                        else:
+                            logger.warning(
+                                f"    ❌ Retry FAILED: series {s_num} - {retry_result.error_message}"
+                            )
+                            still_failed.append(series_uid)
+
+                    failed_series = still_failed
+                    logger.info(
+                        f"🔄 Retry round {retry_round} done: "
+                        f"{len(failed_series)} still failed"
                     )
 
-                    if retry_result.success:
-                        logger.info(
-                            f"    ✅ Retry SUCCESS: series {s_num} "
-                            f"({retry_result.downloaded} downloaded)"
-                        )
-                        completed_series.append(series_uid)
-                        total_downloaded += retry_result.downloaded
-                        total_skipped += retry_result.skipped
-
-                        # Update state: move from failed to completed
-                        if state:
-                            updated_completed = list(state.completed_series or [])
-                            if series_uid not in updated_completed:
-                                updated_completed.append(series_uid)
-                            updated_failed_list = list(state.failed_series or [])
-                            if series_uid in updated_failed_list:
-                                updated_failed_list.remove(series_uid)
-                            self.state.update(
-                                study_uid,
-                                completed_series=updated_completed,
-                                failed_series=updated_failed_list,
-                            )
-
-                        # DB updates
-                        if self.database_manager:
-                            try:
-                                await self._update_series_path_in_db(
-                                    series_uid=s_info.series_uid,
-                                    series_path=str(s_out),
-                                )
-                                await self._save_series_instances_to_db(
-                                    study_uid=study_uid,
-                                    series_info=s_info,
-                                    series_output_dir=s_out,
-                                )
-                            except Exception as e:
-                                logger.warning(f"    ⚠️ DB update after retry failed: {e}")
-                    else:
-                        logger.warning(
-                            f"    ❌ Retry FAILED: series {s_num} - {retry_result.error_message}"
-                        )
-                        still_failed.append(series_uid)
-
-                failed_series = still_failed
+            # R25b: If cancellation happened mid-series (socket returned failure without
+            # raising), the cancel flag is now set — return a proper preempted result so
+            # the executor sees error_message with "preemption" instead of None.
+            if self.cancel_check and self.cancel_check():
                 logger.info(
-                    f"🔄 Retry round {retry_round} done: "
-                    f"{len(failed_series)} still failed"
+                    f"⏸️ Download cancelled (preemption) detected after series loop "
+                    f"({len(completed_series)} completed, {len(failed_series)} failed)"
+                )
+                socket_client.disconnect()
+                return self._build_preempted_result(
+                    study_uid=study_uid,
+                    series_list=series_list,
+                    completed_series=completed_series,
+                    skipped_series=skipped_series,
+                    failed_series=failed_series,
+                    total_downloaded=total_downloaded,
+                    total_skipped=total_skipped,
+                    start_time=start_time,
                 )
 
-        # R25b: If cancellation happened mid-series (socket returned failure without
-        # raising), the cancel flag is now set — return a proper preempted result so
-        # the executor sees error_message with "preemption" instead of None.
-        if self.cancel_check and self.cancel_check():
-            logger.info(
-                f"⏸️ Download cancelled (preemption) detected after series loop "
-                f"({len(completed_series)} completed, {len(failed_series)} failed)"
-            )
-            socket_client.disconnect()
-            return self._build_preempted_result(
+            # Calculate elapsed time
+            elapsed = (datetime.now() - start_time).total_seconds()
+        
+            # Determine overall success (R21: skipped series count as success)
+            successful_series = len(completed_series) + len(skipped_series)
+            overall_success = successful_series == len(series_list) and len(failed_series) == 0
+        
+            result = DownloadResult(
+                success=overall_success,
                 study_uid=study_uid,
-                series_list=series_list,
-                completed_series=completed_series,
-                skipped_series=skipped_series,
-                failed_series=failed_series,
-                total_downloaded=total_downloaded,
-                total_skipped=total_skipped,
-                start_time=start_time,
+                downloaded_series=len(completed_series),
+                skipped_series=len(skipped_series),
+                failed_series=len(failed_series),
+                total_series=len(series_list),
+                downloaded_images=total_downloaded,
+                total_images=sum(s.image_count for s in series_list),
+                elapsed_seconds=elapsed
             )
+        
+            # Final summary logging
+            logger.info("")
+            logger.info("=" * 70)
+            logger.info(f"📊 DOWNLOAD COMPLETE: {state.patient_name or 'Unknown'}")
+            logger.info(f"   Series: {successful_series}/{len(series_list)} successful")
+            logger.info(f"   - Downloaded: {len(completed_series)}")
+            logger.info(f"   - Skipped: {len(skipped_series)}")
+            logger.info(f"   - Failed: {len(failed_series)}")
+            logger.info(f"   Images: {total_downloaded} downloaded + {total_skipped} skipped")
+            logger.info(f"   Time: {elapsed:.1f}s")
+            logger.info("=" * 70)
+        
+            # ✅ FIX: Disconnect socket after all series are downloaded
+            logger.info(f"🔌 Closing persistent socket connection...")
+            socket_client.disconnect()
+            logger.info(f"✅ Socket disconnected")
 
-        # Calculate elapsed time
-        elapsed = (datetime.now() - start_time).total_seconds()
-        
-        # Determine overall success (R21: skipped series count as success)
-        successful_series = len(completed_series) + len(skipped_series)
-        overall_success = successful_series == len(series_list) and len(failed_series) == 0
-        
-        result = DownloadResult(
-            success=overall_success,
-            study_uid=study_uid,
-            downloaded_series=len(completed_series),
-            skipped_series=len(skipped_series),
-            failed_series=len(failed_series),
-            total_series=len(series_list),
-            downloaded_images=total_downloaded,
-            total_images=sum(s.image_count for s in series_list),
-            elapsed_seconds=elapsed
-        )
-        
-        # Final summary logging
-        logger.info("")
-        logger.info("=" * 70)
-        logger.info(f"📊 DOWNLOAD COMPLETE: {state.patient_name or 'Unknown'}")
-        logger.info(f"   Series: {successful_series}/{len(series_list)} successful")
-        logger.info(f"   - Downloaded: {len(completed_series)}")
-        logger.info(f"   - Skipped: {len(skipped_series)}")
-        logger.info(f"   - Failed: {len(failed_series)}")
-        logger.info(f"   Images: {total_downloaded} downloaded + {total_skipped} skipped")
-        logger.info(f"   Time: {elapsed:.1f}s")
-        logger.info("=" * 70)
-        
-        # ✅ FIX: Disconnect socket after all series are downloaded
-        logger.info(f"🔌 Closing persistent socket connection...")
-        socket_client.disconnect()
-        logger.info(f"✅ Socket disconnected")
-        
-        return result
+            # DM-M6: flush any progress update still held back by the 10 Hz
+            # throttle so the UI progress bar reliably reaches its final value
+            # at completion instead of stalling just short of 100%.
+            try:
+                self.progress_tracker.force_update(study_uid)
+            except Exception:
+                pass
+
+            return result
+        finally:
+            socket_client.disconnect()
     
     def _update_progress(
         self,

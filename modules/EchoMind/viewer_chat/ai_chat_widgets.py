@@ -1795,6 +1795,9 @@ class UnifiedComposer(QWidget):
         ctl.addWidget(self.btn_confirm_rec, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_mic, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_transcribe_quality, 0, Qt.AlignVCenter)
+        # Quality toggle hidden by default: transcription always starts in
+        # "clear" mode and auto-falls-back to "noisy" on failure.
+        self.btn_transcribe_quality.setVisible(False)
         ctl.addWidget(self.btn_modality, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_all_modality_hq, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_assist_send, 0, Qt.AlignVCenter)

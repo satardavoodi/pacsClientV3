@@ -108,41 +108,66 @@ _ORIGINAL_DB = None
 
 
 def _setup_temp_db():
-    """Redirect database to a temp directory for isolated testing."""
+    """Redirect the database to an isolated temp file for testing.
+
+    The real DB path is resolved INSIDE
+    database._pool._create_sqlite_connection() from
+    PacsClient.utils.data_paths.DATABASE_FILE, so that module attribute is what
+    we patch. (The old code patched database.core._DB_PATH, which nothing reads.)
+    """
     global _TEMP_DIR, _ORIGINAL_DB
     _TEMP_DIR = tempfile.mkdtemp(prefix="db_test_")
-
-    # Patch the database path before importing database modules
-    import database.core as db_core
-
-    _ORIGINAL_DB = getattr(db_core, '_DB_PATH', None)
     temp_db = os.path.join(_TEMP_DIR, "test_dicom.db")
-    db_core._DB_PATH = temp_db
-    # Also reset the pool so it creates fresh connections
-    db_core._pool = []
-    db_core._pool_lock = threading.Lock()
 
+    import PacsClient.utils.data_paths as data_paths
+    import database._pool as db_pool
+
+    # Redirect the path the connection factory actually uses.
+    _ORIGINAL_DB = data_paths.DATABASE_FILE
+    data_paths.DATABASE_FILE = Path(temp_db)
+
+    # Drop any pooled connections that may still point at the real DB.
+    _clear_connection_pool(db_pool)
+
+    # Fail LOUDLY if isolation did not take effect — never silently fall back
+    # to the production database.
+    from database.core import get_db_connection
+    with get_db_connection() as conn:
+        actual = conn.execute("PRAGMA database_list").fetchall()[0][2]
+    if os.path.abspath(actual or "") != os.path.abspath(temp_db):
+        raise RuntimeError(
+            f"Test DB isolation FAILED — connected to {actual!r}, expected "
+            f"{temp_db!r}. Aborting to avoid polluting the production database."
+        )
     return temp_db
 
 
-def _teardown_temp_db():
-    """Clean up temp database."""
-    global _TEMP_DIR, _ORIGINAL_DB
-    import database.core as db_core
-
-    # Close all pool connections
+def _clear_connection_pool(db_pool):
+    """Close and drop every pooled sqlite connection in database._pool."""
     try:
-        for conn in db_core._pool:
-            try:
-                conn._raw.close()
-            except Exception:
-                pass
-        db_core._pool.clear()
+        with db_pool._pool_lock:
+            for conns in list(db_pool._connection_pool.values()):
+                for c in conns:
+                    try:
+                        c.close()
+                    except Exception:
+                        pass
+            db_pool._connection_pool.clear()
     except Exception:
         pass
 
+
+def _teardown_temp_db():
+    """Restore the production DB path and clean up the temp database."""
+    global _TEMP_DIR, _ORIGINAL_DB
+
+    import PacsClient.utils.data_paths as data_paths
+    import database._pool as db_pool
+
+    _clear_connection_pool(db_pool)
+
     if _ORIGINAL_DB is not None:
-        db_core._DB_PATH = _ORIGINAL_DB
+        data_paths.DATABASE_FILE = _ORIGINAL_DB
 
     if _TEMP_DIR and os.path.exists(_TEMP_DIR):
         shutil.rmtree(_TEMP_DIR, ignore_errors=True)

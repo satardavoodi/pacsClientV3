@@ -1307,7 +1307,21 @@ class ThumbnailManager(QObject):
             
             # Use series_number as the key (NOT thumbnail_index)
             series_key = str(series_number)
-            
+
+            # Multi-study patients carry a patient-unique offset key as the
+            # series_number; show the original study-local number to the user.
+            display_series = series_number
+            try:
+                if isinstance(series_info, dict):
+                    _orig = (
+                        series_info.get('_orig_series_number')
+                        or (series_info.get('series') or {}).get('_orig_series_number')
+                    )
+                    if _orig:
+                        display_series = _orig
+            except Exception:
+                display_series = series_number
+
             # Main container widget - SQUARE dimensions
             widget = QWidget()
             widget.setFixedSize(190, 190)
@@ -1336,7 +1350,7 @@ class ThumbnailManager(QObject):
             content_layout.setSpacing(3)
             
             # Simple header - text only with REAL series number
-            header_label = QLabel(f"Series {series_number}")
+            header_label = QLabel(f"Series {display_series}")
             header_label.setFixedHeight(18)
             header_label.setAlignment(Qt.AlignCenter)
             header_label.setStyleSheet(f"""

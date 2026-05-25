@@ -161,7 +161,8 @@ def get_study_info_with_series(study_uid: str) -> dict:
                 SELECT 
                     s.study_uid, s.study_date, s.study_time, s.study_description,
                     s.modality, s.body_part, s.number_of_series, s.number_of_instances,
-                    p.patient_id, p.patient_name, p.birth_date, p.sex, p.age
+                    p.patient_id, p.patient_name, p.birth_date, p.sex, p.age,
+                    s.study_pk
                 FROM studies s
                 JOIN patients p ON s.patient_fk = p.patient_pk
                 WHERE s.study_uid = ?
@@ -171,7 +172,10 @@ def get_study_info_with_series(study_uid: str) -> dict:
             if not study_row:
                 return None
             
-            study_pk = find_study_pk_with_study_uid(study_uid)
+            # DB-5: the JOIN query above already returned this study's row;
+            # reuse its study_pk (last column) instead of a second DB
+            # connection + lookup via find_study_pk_with_study_uid().
+            study_pk = study_row[13]
             cur.execute("""
                 SELECT series_uid, series_number, series_description, modality,
                        image_count, protocol_name, body_part_examined, manufacturer,

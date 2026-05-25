@@ -2,6 +2,7 @@
 # Auto-generated from home_ui.py — Phase 3 split
 
 import logging as _logging
+import time
 import traceback
 
 # Redirect print() to logger to avoid synchronous console I/O on Windows.
@@ -10,15 +11,53 @@ _print_logger = _logging.getLogger(__name__)
 def print(*args, **_kw):  # noqa: A001
     _print_logger.debug(' '.join(str(a) for a in args))
 
-from PacsClient.components import DicomGrpcClient
 from PacsClient.utils import get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.db_manager import get_study_by_study_uid
-from modules.network import dicom_service_pb2, dicom_service_pb2_grpc
+from modules.network.socket_client import PatientListSocketClient
 from modules.offline_cloud_server.service import export_studies_to_offline_cloud, get_all_offline_cloud_servers, list_offline_cloud_studies, record_offline_cloud_sync_event, sync_offline_cloud_study_preview_to_local, sync_offline_cloud_study_to_local, validate_offline_cloud_package
+
+# Per-process record of (host, port) servers whose GetStudyInfo endpoint is
+# unresponsive. The GetStudyInfo probe in get_series_info_from_server has a 3s
+# timeout; on servers that never answer it, that 3s is wasted on EVERY study
+# before the queue/Download-Manager path falls back to GetStudyThumbnails.
+# After the first timeout the server is recorded here and the probe is skipped
+# for the rest of the session. Cleared on restart, so a fixed server re-probes.
+_GETSTUDYINFO_UNSUPPORTED = set()
+
 
 class _HPStudySaveMixin:
     """Study/series save: save complete study info, series info DB/server"""
+
+    def _fetch_study_thumbnails_from_socket(
+        self,
+        study_uid: str,
+        *,
+        include_base64: bool,
+        include_image_data: bool,
+    ):
+        server = self.data_access_panel_widget.get_server_selected()
+        if not server:
+            return None
+
+        host = server.get('host') or server.get('socket_host')
+        from modules.network.socket_config import get_socket_server_settings
+        port = int((get_socket_server_settings() or {}).get('port') or server.get('socket_port') or 50052)
+        if not host:
+            return None
+
+        client = PatientListSocketClient(host=host, port=port, timeout=30)
+        try:
+            return client.get_study_thumbnails(
+                study_uid,
+                include_base64=include_base64,
+                include_image_data=include_image_data,
+            )
+        finally:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
 
     def save_series_info_to_database(self, study_uid: str, series_thumbnails: list):
         """Save series info from gRPC response (delegates to service)."""
@@ -54,46 +93,146 @@ class _HPStudySaveMixin:
                 from PacsClient.utils.db_manager import get_study_info_with_series
                 return get_study_info_with_series(study_uid)
 
-            grpc_client = DicomGrpcClient(host=server['host'], port=50051)
+            # Prefer lightweight metadata endpoint first. This avoids oversized
+            # thumbnail payloads that can exceed socket response limits.
+            host = server.get('host') or server.get('socket_host')
+            from modules.network.socket_config import get_socket_server_settings
+            port = int((get_socket_server_settings() or {}).get('port') or server.get('socket_port') or 50052)
+            if host and (host, port) not in _GETSTUDYINFO_UNSUPPORTED:
+                # Keep this probe SHORT (3s): the GetStudyInfo endpoint is unsupported
+                # on some PACS deployments and never responds — a long timeout stalls
+                # the whole patient-open -> Download Manager path. Fail fast here, then
+                # fall back to the reliable GetStudyThumbnails endpoint below.
+                # If it times out, the server is added to _GETSTUDYINFO_UNSUPPORTED
+                # so later studies skip this dead 3s probe entirely.
+                client = PatientListSocketClient(host=host, port=port, timeout=3)
+                _probe_started = time.monotonic()
+                info_data = None
+                try:
+                    info_data = client.get_study_info(study_uid)
+                except Exception:
+                    info_data = None
+                finally:
+                    try:
+                        client.disconnect()
+                    except Exception:
+                        pass
+                _probe_elapsed = time.monotonic() - _probe_started
 
-            # Create request for study thumbnails with metadata
-            request = dicom_service_pb2.StudyThumbnailsRequest(
-                study_instance_uid=study_uid,
-                include_image_data=False,  # We only need metadata
-                include_base64=False
+                if info_data:
+                    raw_series = (
+                        info_data.get('series')
+                        or info_data.get('series_list')
+                        or info_data.get('series_thumbnails')
+                        or []
+                    )
+                    series_items = raw_series if isinstance(raw_series, list) else []
+
+                    study_info = {
+                        'study_uid': info_data.get('study_instance_uid') or info_data.get('study_uid') or study_uid,
+                        'patient_id': info_data.get('patient_id') or patient_id or '',
+                        'patient_name': info_data.get('patient_name') or '',
+                        'study_date': info_data.get('study_date') or '',
+                        'study_time': info_data.get('study_time') or '',
+                        'study_description': info_data.get('study_description') or info_data.get('description') or '',
+                        'count_of_series': int(
+                            info_data.get('count_of_series')
+                            or info_data.get('total_series')
+                            or len(series_items)
+                        ),
+                        'thumbnails_available': bool(info_data.get('thumbnails_available', True)),
+                        'series': [],
+                    }
+
+                    for series in series_items:
+                        if not isinstance(series, dict):
+                            continue
+                        study_info['series'].append({
+                            'series_uid': str(series.get('series_uid') or series.get('series_instance_uid') or ''),
+                            'series_number': str(series.get('series_number') or ''),
+                            'series_description': str(series.get('series_description') or ''),
+                            'modality': str(series.get('modality') or ''),
+                            'image_count': int(series.get('image_count') or 0),
+                            'protocol_name': str(series.get('protocol_name') or ''),
+                            'body_part_examined': str(series.get('body_part_examined') or series.get('BodyPartExamined') or ''),
+                            'manufacturer': str(series.get('manufacturer') or ''),
+                            'institution_name': str(series.get('institution_name') or ''),
+                        })
+
+                    if study_info['series']:
+                        return study_info
+
+                # GetStudyInfo yielded no usable series. If the call was slow it
+                # almost certainly timed out — record this server so subsequent
+                # studies skip the dead 3s probe and go straight to the
+                # GetStudyThumbnails fallback below.
+                if _probe_elapsed >= 2.5:
+                    _GETSTUDYINFO_UNSUPPORTED.add((host, port))
+                    _print_logger.info(
+                        "[series-info] GetStudyInfo unresponsive on %s:%s (%.1fs) — "
+                        "skipping that probe for the rest of this session",
+                        host, port, _probe_elapsed,
+                    )
+
+            response = self._fetch_study_thumbnails_from_socket(
+                study_uid,
+                include_base64=False,
+                include_image_data=False,
             )
-
-            response = grpc_client.stub.GetStudyThumbnails(request)
+            if not response:
+                # Some servers return series only when base64 thumbnail payload is requested.
+                response = self._fetch_study_thumbnails_from_socket(
+                    study_uid,
+                    include_base64=True,
+                    include_image_data=False,
+                )
+            if (not response) and host:
+                client = PatientListSocketClient(host=host, port=port, timeout=30)
+                try:
+                    response = client.query_series_thumbnails(study_uid=study_uid, patient_id=patient_id)
+                finally:
+                    try:
+                        client.disconnect()
+                    except Exception:
+                        pass
+            if not response:
+                return None
 
             # Extract study information
             study_info = {
-                'study_uid': response.study_instance_uid,
-                'patient_id': response.patient_id,
-                'patient_name': response.patient_name,
-                'study_date': response.study_date,
-                'study_time': getattr(response, 'study_time', ''),  # Try to get study_time if available
-                'study_description': response.study_description,
-                'count_of_series': getattr(response, 'count_of_series', len(response.series_thumbnails)),
-                'thumbnails_available': getattr(response, 'thumbnails_available', True),
+                'study_uid': response.get('study_instance_uid') or study_uid,
+                'patient_id': response.get('patient_id') or patient_id or '',
+                'patient_name': response.get('patient_name') or '',
+                'study_date': response.get('study_date') or '',
+                'study_time': response.get('study_time') or '',
+                'study_description': response.get('study_description') or '',
+                'count_of_series': int(
+                    response.get('count_of_series')
+                    or response.get('total_series')
+                    or len(response.get('series_thumbnails') or response.get('series') or [])
+                ),
+                'thumbnails_available': bool(response.get('thumbnails_available', True)),
                 'series': []
             }
 
             # Extract series information
-            for series in response.series_thumbnails:
+            for series in (response.get('series_thumbnails') or response.get('series') or []):
+                if not isinstance(series, dict):
+                    continue
                 series_info = {
-                    'series_uid': series.series_uid,
-                    'series_number': series.series_number,
-                    'series_description': series.series_description,
-                    'modality': series.modality,
-                    'image_count': series.image_count,
-                    'protocol_name': getattr(series, 'protocol_name', ''),
-                    'body_part_examined': getattr(series, 'body_part_examined', ''),
-                    'manufacturer': getattr(series, 'manufacturer', ''),
-                    'institution_name': getattr(series, 'institution_name', '')
+                    'series_uid': str(series.get('series_uid') or series.get('series_instance_uid') or ''),
+                    'series_number': str(series.get('series_number') or ''),
+                    'series_description': str(series.get('series_description') or ''),
+                    'modality': str(series.get('modality') or ''),
+                    'image_count': int(series.get('image_count') or 0),
+                    'protocol_name': str(series.get('protocol_name') or ''),
+                    'body_part_examined': str(series.get('body_part_examined') or series.get('BodyPartExamined') or ''),
+                    'manufacturer': str(series.get('manufacturer') or ''),
+                    'institution_name': str(series.get('institution_name') or '')
                 }
                 study_info['series'].append(series_info)
-
-            grpc_client.close()
+            if not study_info['series']:
+                return None
             return study_info
 
         except Exception as e:

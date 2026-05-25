@@ -9,6 +9,7 @@ v2.2.8 architecture refactor.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
@@ -19,9 +20,13 @@ import qtawesome as qta
 from PacsClient.utils import search_patients_local
 from modules.offline_cloud_server.service import list_offline_cloud_studies
 from PacsClient.utils.config import SOURCE_PATH
+from PacsClient.utils.structured_logging import emit_download_event
 
 if TYPE_CHECKING:
     from .home_ui import HomePanelWidget
+
+
+_logger = logging.getLogger(__name__)
 
 
 class HomeSearchService:
@@ -169,8 +174,7 @@ class HomeSearchService:
             search_data = home.patient_search_widget.get_search_data()
             search_data_local = search_data.copy()
             
-            # When searching by Patient ID, always ignore date filters (Patient ID is unique)
-            # Otherwise, drop date filters for local search (local DB should return all local studies)
+            # For local search, always ignore date filters so all matching local studies are returned.
             search_data_local['date_from'] = None
             search_data_local['date_to'] = None
 
@@ -195,7 +199,9 @@ class HomeSearchService:
             home.search_progress.setRange(0, max(1, total))
             home.search_progress.setValue(0)
 
-            CHUNK = 25
+            # Smaller chunk = shorter per-batch UI-thread freeze during the
+            # chunk-based table population (rows are inserted on the UI thread).
+            CHUNK = 10
             added = 0
             skipped = 0
 
@@ -277,7 +283,6 @@ class HomeSearchService:
                         if (i % CHUNK == 0) or (i == total):
                             home.patient_table_widget.end_bulk_insert()
                             home.search_progress.setValue(i)
-                            QApplication.processEvents()
                             await asyncio.sleep(0)
                             if i != total:
                                 home.patient_table_widget.begin_bulk_insert()
@@ -356,7 +361,6 @@ class HomeSearchService:
                         home.search_progress.setValue(i)
                         if (i % 25 == 0) or (i == total):
                             home.patient_table_widget.end_bulk_insert()
-                            QApplication.processEvents()
                             await asyncio.sleep(0)
                             if i != total:
                                 home.patient_table_widget.begin_bulk_insert()
@@ -390,7 +394,8 @@ class HomeSearchService:
                               f"Searching {server_name} server via Socket...",
                               cancellable=True)
 
-            home.patient_table_widget.clear_table()
+            # Keep current rows visible while the socket request is in-flight.
+            # This avoids visible blank/flicker when server responses are slow.
             home.search_progress.setVisible(True)
             home.search_progress.setRange(0, 0)
 
@@ -427,8 +432,13 @@ class HomeSearchService:
             total = len(patients or [])
             home.search_progress.setRange(0, max(1, total))
 
-            CHUNK = 25
+            # Rows are inserted on the UI thread; the loop yields to the event
+            # loop every CHUNK rows. Smaller chunk = shorter per-batch UI freeze
+            # (each batch was stalling the main thread ~700-950ms at CHUNK=25).
+            CHUNK = 10
             if patients:
+                # Atomic swap: clear only when fresh results are ready.
+                home.patient_table_widget.clear_table()
                 home.patient_table_widget.begin_bulk_insert()
                 try:
                     for i, patient in enumerate(patients, start=1):
@@ -437,18 +447,37 @@ class HomeSearchService:
                         home._add_socket_patient_to_table(patient)
 
                         if (i % CHUNK == 0) or (i == total):
-                            home.patient_table_widget.end_bulk_insert()
                             home.search_progress.setValue(i)
-                            QApplication.processEvents()
                             await asyncio.sleep(0)
-                            if i != total:
-                                home.patient_table_widget.begin_bulk_insert()
 
                 finally:
                     home.patient_table_widget.end_bulk_insert()
 
                 home._update_connection_indicator_by_status('online', f'Socket Connected - Found {total} patients')
+
+                # N1: post-search reporting-physician hydration.
+                # GetPatientList carries only latest_study_report_status (no reporter
+                # name/ID), so completed rows missing a physician name are enriched
+                # asynchronously from the configurable Reception/API endpoint. Runs
+                # AFTER rows are inserted/displayed; queues background, throttled,
+                # cached REST lookups and never blocks the search or the UI thread.
+                try:
+                    home._sync_completed_reporting_physicians_after_search()
+                except Exception as exc:
+                    # Was a bare 'except: pass' - a silent-fail window that hid
+                    # hydration trigger-call failures (N1 diagnostic finding).
+                    emit_download_event(
+                        _logger, 'reporter-hydration',
+                        phase='trigger_call_failed',
+                        error=type(exc).__name__, detail=str(exc),
+                    )
+                    _logger.warning(
+                        '[reporter-hydration] post-search trigger call failed',
+                        exc_info=True,
+                    )
             else:
+                # No results from current query: clear old rows and show explicit state.
+                home.patient_table_widget.clear_table()
                 home._update_connection_indicator_by_status('busy', 'Socket Connected - No patients found')
 
             try:
@@ -484,8 +513,8 @@ class HomeSearchService:
         
         When searching by Patient ID:
         - Use exact match (no wildcards)
-        - Ignore date filters (Patient ID is unique)
-        - Set limit=1 to get the exact match
+        - Ignore date filters
+        - Keep normal list limit so all studies for that patient can be returned
         """
         socket_params = {
             "limit": 100,
@@ -497,9 +526,7 @@ class HomeSearchService:
         # When searching by Patient ID, use exact match and ignore dates
         if search_data.get('patient_id'):
             socket_params['patient_id'] = search_data['patient_id']
-            # For Patient ID search, limit to 1 result (exact match expected)
-            socket_params['limit'] = 1
-            # Patient ID is unique, so ignore date filters entirely
+            # Date filters are intentionally ignored for direct Patient ID lookup.
         else:
             # For other searches, include date filters
             if search_data.get('date_from'):

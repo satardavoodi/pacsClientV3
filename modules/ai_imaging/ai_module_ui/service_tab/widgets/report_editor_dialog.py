@@ -5,6 +5,8 @@ A professional dialog for viewing and editing medical report HTML content
 with full RTL support, rich text editing capabilities, and maximize/minimize.
 """
 
+import re
+
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QWidget, QTextEdit, QMessageBox, QComboBox, QToolButton,
@@ -31,6 +33,41 @@ from ..reception_data_styles import (
     get_label_style, get_text_edit_style, get_status_badge_style,
     get_toolbar_button_style, is_rtl_content
 )
+
+
+_RTL_EDITOR_STYLESHEET = """
+body, p, div, li, ul, ol, h1, h2, h3, h4, h5, h6, table, tr, td, th {
+    direction: rtl;
+    unicode-bidi: plaintext;
+    text-align: right;
+    font-family: "Tahoma", "Vazirmatn", "Arial", "Segoe UI", sans-serif;
+}
+table {
+    border-collapse: collapse;
+    width: 100%;
+}
+td, th {
+    vertical-align: top;
+}
+pre, code, .ltr {
+    direction: ltr;
+    unicode-bidi: embed;
+    text-align: left;
+}
+"""
+
+_LTR_EDITOR_STYLESHEET = """
+body, p, div, li, ul, ol, h1, h2, h3, h4, h5, h6, table, tr, td, th {
+    direction: ltr;
+    text-align: left;
+    font-family: "Segoe UI", "Arial", sans-serif;
+}
+pre, code {
+    direction: ltr;
+    unicode-bidi: embed;
+    text-align: left;
+}
+"""
 
 
 class ReportEditorDialog(QDialog):
@@ -388,6 +425,19 @@ class ReportEditorDialog(QDialog):
         layout.addStretch()
         
         # Heading dropdown
+        direction_label = QLabel("Direction:")
+        direction_label.setStyleSheet(get_label_style("secondary", "sm"))
+        layout.addWidget(direction_label)
+
+        self.direction_combo = QComboBox()
+        self.direction_combo.addItems(["LTR", "RTL"])
+        self.direction_combo.setFixedWidth(80)
+        self.direction_combo.setStyleSheet(self._get_combo_style())
+        self.direction_combo.setCurrentText("RTL" if self.is_rtl else "LTR")
+        layout.addWidget(self.direction_combo)
+
+        layout.addWidget(self._create_separator())
+
         heading_label = QLabel("Heading:")
         heading_label.setStyleSheet(get_label_style("secondary", "sm"))
         layout.addWidget(heading_label)
@@ -766,6 +816,7 @@ class ReportEditorDialog(QDialog):
         # Font controls
         self.font_combo.currentFontChanged.connect(self._change_font_family)
         self.font_size_spin.valueChanged.connect(self._change_font_size)
+        self.direction_combo.currentTextChanged.connect(self._on_direction_combo_changed)
         self.heading_combo.currentIndexChanged.connect(self._apply_heading)
         
         # Footer buttons
@@ -787,14 +838,75 @@ class ReportEditorDialog(QDialog):
         logger.info(f"[REPORT_EDITOR] Is RTL: {self.is_rtl}")
         
         try:
-            self.text_edit.setHtml(self.original_content)
+            self._apply_report_html(self.original_content)
             self.text_edit.document().setModified(False)
             self._update_counts()
             logger.info("[REPORT_EDITOR] ✅ Content applied successfully")
+            logger.info(
+                "[REPORT_EDITOR] html-normalized rtl=%s has_html_tag=%s has_rtl_marker=%s",
+                self.is_rtl,
+                "<html" in (self.original_content or "").lower(),
+                bool(re.search(r'dir\s*=\s*[\"\']rtl[\"\']|direction\s*:\s*rtl', self.original_content or '', re.IGNORECASE)),
+            )
         except Exception as e:
             logger.error(f"[REPORT_EDITOR] ❌ Error applying content: {e}")
             import traceback
             logger.error(f"[REPORT_EDITOR] Traceback: {traceback.format_exc()}")
+
+    def _apply_report_html(self, html: str):
+        """Render report HTML with a normalized document stylesheet and block direction."""
+        prepared_html = self._prepare_report_html(html or "")
+        self.text_edit.document().setDefaultStyleSheet(self._document_stylesheet())
+        self.text_edit.setHtml(prepared_html)
+        self._normalize_document_blocks()
+
+    def _prepare_report_html(self, html: str) -> str:
+        """Wrap fragment HTML in a directional container when the server payload is not a full document."""
+        content = html or ""
+        if "<html" in content.lower():
+            return content
+
+        direction = "rtl" if self.is_rtl else "ltr"
+        align = "right" if self.is_rtl else "left"
+        return (
+            f"<div class='report-root' dir='{direction}' "
+            f"style='direction: {direction}; unicode-bidi: plaintext; text-align: {align};'>"
+            f"{content}"
+            "</div>"
+        )
+
+    def _document_stylesheet(self) -> str:
+        """Return the default QTextDocument stylesheet for the current direction mode."""
+        return _RTL_EDITOR_STYLESHEET if self.is_rtl else _LTR_EDITOR_STYLESHEET
+
+    def _normalize_document_blocks(self):
+        """Force consistent block direction, alignment, and margins across the whole document."""
+        cursor = self.text_edit.textCursor()
+        cursor.beginEditBlock()
+        cursor.select(QTextCursor.SelectionType.Document)
+
+        block_format = QTextBlockFormat()
+        block_format.setAlignment(
+            Qt.AlignmentFlag.AlignRight if self.is_rtl else Qt.AlignmentFlag.AlignLeft
+        )
+        block_format.setLeftMargin(0)
+        block_format.setRightMargin(0)
+        block_format.setTextIndent(0)
+        try:
+            block_format.setLayoutDirection(
+                Qt.LayoutDirection.RightToLeft if self.is_rtl else Qt.LayoutDirection.LeftToRight
+            )
+        except Exception:
+            pass
+
+        cursor.mergeBlockFormat(block_format)
+        cursor.clearSelection()
+        self.text_edit.setTextCursor(cursor)
+        cursor.endEditBlock()
+
+        self.text_edit.setAlignment(
+            Qt.AlignmentFlag.AlignRight if self.is_rtl else Qt.AlignmentFlag.AlignLeft
+        )
     
     # ═══════════════════════════════════════════════════════════════════════
     # WINDOW CONTROLS
@@ -904,16 +1016,37 @@ class ReportEditorDialog(QDialog):
     
     def _set_alignment(self, alignment):
         """Set paragraph alignment."""
-        self.text_edit.setAlignment(alignment)
+        # Keep direction controls synchronized when user picks explicit left/right.
+        if alignment == Qt.AlignmentFlag.AlignLeft and self.is_rtl:
+            self._set_direction(False)
+        elif alignment == Qt.AlignmentFlag.AlignRight and not self.is_rtl:
+            self._set_direction(True)
+
+        # Force physical left/right on screen (not leading/trailing) so
+        # toolbar labels match what users see in the editor viewport.
+        if alignment == Qt.AlignmentFlag.AlignLeft:
+            effective_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignAbsolute
+        elif alignment == Qt.AlignmentFlag.AlignRight:
+            effective_alignment = Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignAbsolute
+        else:
+            effective_alignment = alignment
+
+        self.text_edit.setAlignment(effective_alignment)
         self._update_alignment_buttons()
     
     def _update_alignment_buttons(self):
         """Update alignment button states."""
         alignment = self.text_edit.alignment()
-        self.btn_align_left.setChecked(alignment == Qt.AlignmentFlag.AlignLeft)
-        self.btn_align_center.setChecked(alignment == Qt.AlignmentFlag.AlignCenter)
-        self.btn_align_right.setChecked(alignment == Qt.AlignmentFlag.AlignRight)
-        self.btn_align_justify.setChecked(alignment == Qt.AlignmentFlag.AlignJustify)
+
+        is_left = bool(alignment & Qt.AlignmentFlag.AlignLeft)
+        is_center = bool(alignment & Qt.AlignmentFlag.AlignHCenter)
+        is_right = bool(alignment & Qt.AlignmentFlag.AlignRight)
+        is_justify = bool(alignment & Qt.AlignmentFlag.AlignJustify)
+
+        self.btn_align_left.setChecked(is_left)
+        self.btn_align_center.setChecked(is_center)
+        self.btn_align_right.setChecked(is_right)
+        self.btn_align_justify.setChecked(is_justify)
     
     def _apply_heading(self, index: int):
         """Apply heading style."""
@@ -951,6 +1084,7 @@ class ReportEditorDialog(QDialog):
         list_format = QTextListFormat()
         list_format.setStyle(QTextListFormat.Style.ListDisc)
         cursor.insertList(list_format)
+        self._apply_direction_to_current_block()
     
     def _insert_number_list(self):
         """Insert or toggle numbered list."""
@@ -958,6 +1092,7 @@ class ReportEditorDialog(QDialog):
         list_format = QTextListFormat()
         list_format.setStyle(QTextListFormat.Style.ListDecimal)
         cursor.insertList(list_format)
+        self._apply_direction_to_current_block()
     
     def _increase_indent(self):
         """Increase paragraph indent."""
@@ -965,6 +1100,7 @@ class ReportEditorDialog(QDialog):
         block_fmt = cursor.blockFormat()
         block_fmt.setIndent(block_fmt.indent() + 1)
         cursor.setBlockFormat(block_fmt)
+        self._apply_direction_to_current_block()
     
     def _decrease_indent(self):
         """Decrease paragraph indent."""
@@ -973,6 +1109,24 @@ class ReportEditorDialog(QDialog):
         if block_fmt.indent() > 0:
             block_fmt.setIndent(block_fmt.indent() - 1)
             cursor.setBlockFormat(block_fmt)
+        self._apply_direction_to_current_block()
+
+    def _apply_direction_to_current_block(self):
+        """Apply current document direction and baseline alignment to cursor block."""
+        cursor = self.text_edit.textCursor()
+        block_fmt = cursor.blockFormat()
+        block_fmt.setAlignment(
+            (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignAbsolute)
+            if self.is_rtl
+            else (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignAbsolute)
+        )
+        try:
+            block_fmt.setLayoutDirection(
+                Qt.LayoutDirection.RightToLeft if self.is_rtl else Qt.LayoutDirection.LeftToRight
+            )
+        except Exception:
+            pass
+        cursor.setBlockFormat(block_fmt)
     
     # ═══════════════════════════════════════════════════════════════════════
     # INSERT ELEMENTS
@@ -1025,25 +1179,37 @@ class ReportEditorDialog(QDialog):
     
     def _toggle_rtl(self):
         """Toggle RTL/LTR direction."""
-        self.is_rtl = not self.is_rtl
-        
-        if self.is_rtl:
-            self.text_edit.setLayoutDirection(Qt.LayoutDirection.RightToLeft)
-            self.btn_rtl.setIcon(qta.icon('fa5s.align-right', color=COLORS['text_primary']))
-            self.rtl_label.setText("RTL")
-        else:
-            self.text_edit.setLayoutDirection(Qt.LayoutDirection.LeftToRight)
-            self.btn_rtl.setIcon(qta.icon('fa5s.align-left', color=COLORS['text_primary']))
-            self.rtl_label.setText("LTR")
-        
-        # Update text alignment for all blocks
-        cursor = self.text_edit.textCursor()
-        cursor.select(QTextCursor.SelectionType.Document)
-        block_format = QTextBlockFormat()
-        block_format.setAlignment(
-            Qt.AlignmentFlag.AlignRight if self.is_rtl else Qt.AlignmentFlag.AlignLeft
+        self._set_direction(not self.is_rtl)
+
+    def _on_direction_combo_changed(self, value: str):
+        """Sync direction changes coming from the format toolbar combo."""
+        requested_rtl = (value or "").upper() == "RTL"
+        self._set_direction(requested_rtl)
+
+    def _set_direction(self, rtl_enabled: bool):
+        """Single source of truth for editor direction state and UI synchronization."""
+        if self.is_rtl == rtl_enabled:
+            return
+
+        self.is_rtl = rtl_enabled
+        self.text_edit.setLayoutDirection(
+            Qt.LayoutDirection.RightToLeft if self.is_rtl else Qt.LayoutDirection.LeftToRight
         )
-        cursor.mergeBlockFormat(block_format)
+        self.btn_rtl.setIcon(
+            qta.icon('fa5s.align-right', color=COLORS['text_primary'])
+            if self.is_rtl
+            else qta.icon('fa5s.align-left', color=COLORS['text_primary'])
+        )
+        self.btn_rtl.setChecked(self.is_rtl)
+        self.rtl_label.setText("RTL" if self.is_rtl else "LTR")
+
+        self.direction_combo.blockSignals(True)
+        self.direction_combo.setCurrentText("RTL" if self.is_rtl else "LTR")
+        self.direction_combo.blockSignals(False)
+
+        current_html = self.text_edit.toHtml()
+        self._apply_report_html(current_html)
+        self._update_alignment_buttons()
     
     # ═══════════════════════════════════════════════════════════════════════
     # OTHER ACTIONS
@@ -1139,7 +1305,7 @@ class ReportEditorDialog(QDialog):
         )
         
         if reply == QMessageBox.StandardButton.Yes:
-            self.text_edit.setHtml(self.original_content)
+            self._apply_report_html(self.original_content)
             self.text_edit.document().setModified(False)
             self._check_modified()
     
@@ -1219,7 +1385,8 @@ class ReportEditorDialog(QDialog):
             reply = QMessageBox.question(
                 self,
                 "Unsaved Changes",
-                "You have unsaved changes. Do you want to save before closing?",
+                "You have unsaved latest edits. Save these edits before closing?\n"
+                "The originally received report snapshot remains stored in User Data.",
                 QMessageBox.StandardButton.Save | 
                 QMessageBox.StandardButton.Discard | 
                 QMessageBox.StandardButton.Cancel,

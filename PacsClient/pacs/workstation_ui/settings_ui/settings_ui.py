@@ -1,14 +1,24 @@
+import logging
 from pathlib import Path
 
 from aipacs_runtime import is_module_enabled
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QTabWidget, QWidget, QLabel, QVBoxLayout
 from .server_settings import ServerSettingsWidget
 from .tools_settings_ui import ToolsSettingsWidget
 from .viewerconfigsetting import ModalityGridConfigWidget
 from .filter_config import FilterConfigWidget
 from .installation_module_settings import InstallationModuleSettingsWidget
+
+logger = logging.getLogger(__name__)
+
+
 class SettingsTabWidget(QTabWidget):
+    # Emitted once the (lazily built) Viewer Configuration tab is created, so
+    # external code can wire its configChanged signal without forcing the heavy
+    # widget to be built during app startup.
+    viewerConfigReady = Signal(object)
+
     def __init__(self, parent=None):
         super(SettingsTabWidget, self).__init__(parent)
         self.setup_ui()
@@ -18,34 +28,110 @@ class SettingsTabWidget(QTabWidget):
         self.apply_dark_theme()  # ✅ NEW: dark theme only for Settings area
 
     def setup_ui(self):
-        self.server_settings = ServerSettingsWidget()
-        self.tools_settings = ToolsSettingsWidget()
-        self.viewer_config=ModalityGridConfigWidget()
-        self.image_filter=FilterConfigWidget()
+        # Heavy tab widgets are created lazily on first view (see
+        # _ensure_tab_initialized / showEvent). Building all of them here was
+        # the single largest contributor to the post-login startup freeze
+        # (~3s), so each tab starts as an empty container and its real widget
+        # is built the first time that tab becomes visible.
+        self.server_settings = None
+        self.tools_settings = None
+        self.viewer_config = None
+        self.image_filter = None
         self.lightviewer_settings = None
         self.echomind_settings = None
-        self.installation_module_settings = InstallationModuleSettingsWidget()
-        self.tab2 = QWidget()
+        self.installation_module_settings = None
 
-        self.addTab(self.server_settings, 'Server Settings')
-        self.addTab(self.tools_settings, 'Tools Settings')
-        #self.addTab(self.tab2, 'Tab 2')
-        self.addTab(self.viewer_config,"Viewer Configuration")
-        self.addTab(self.image_filter,"Image Filter")
-        self.addTab(self.installation_module_settings, "Installation & Updates")
+        self._tab_creators = {}    # tab index -> zero-arg builder callable
+        self._tab_containers = {}  # tab index -> container QWidget
+
+        self._add_lazy_tab('Server Settings', self._create_server_settings)
+        self._add_lazy_tab('Tools Settings', self._create_tools_settings)
+        self._add_lazy_tab('Viewer Configuration', self._create_viewer_config)
+        self._add_lazy_tab('Image Filter', self._create_image_filter)
+        self._add_lazy_tab('Installation & Updates', self._create_installation_settings)
 
         if is_module_enabled("run_cd"):
-            from .lightviewer_settings import LightViewerSettingsWidget
-
-            self.lightviewer_settings = LightViewerSettingsWidget()
-            self.addTab(self.lightviewer_settings, "Light Viewer")
+            self._add_lazy_tab('Light Viewer', self._create_lightviewer_settings)
         if is_module_enabled("echomind"):
-            from .echomind_settings import EchoMindSettingsWidget
+            self._add_lazy_tab('EchoMind', self._create_echomind_settings)
 
-            self.echomind_settings = EchoMindSettingsWidget()
-            self.addTab(self.echomind_settings, "EchoMind")
-        # start ui
+        # Connect AFTER the addTab() calls so the implicit currentChanged(0)
+        # emitted while adding the first tab does not build a tab during
+        # construction (that would put the cost back on the startup path).
+        self.currentChanged.connect(self._on_tab_changed)
+
+        self.tab2 = QWidget()
         self.tab2_ui()
+
+    def _add_lazy_tab(self, label, builder):
+        """Add a tab whose heavy content is built on first view."""
+        container = QWidget()
+        layout = QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 0)
+        idx = self.addTab(container, label)
+        self._tab_creators[idx] = builder
+        self._tab_containers[idx] = container
+        return idx
+
+    def _ensure_tab_initialized(self, idx):
+        """Build the real widget for tab *idx* the first time it is shown."""
+        if idx is None or idx < 0:
+            return
+        builder = self._tab_creators.pop(idx, None)
+        if builder is None:
+            return  # already built, or no lazy creator for this index
+        container = self._tab_containers.pop(idx, None)
+        try:
+            widget = builder()
+        except Exception:
+            logger.exception("[SETTINGS_LAZY] failed to build settings tab idx=%s", idx)
+            return
+        if container is not None and widget is not None:
+            layout = container.layout()
+            if layout is not None:
+                layout.addWidget(widget)
+
+    def _on_tab_changed(self, idx):
+        self._ensure_tab_initialized(idx)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Build whichever tab is current the first time Settings becomes visible.
+        self._ensure_tab_initialized(self.currentIndex())
+
+    def _create_server_settings(self):
+        self.server_settings = ServerSettingsWidget()
+        return self.server_settings
+
+    def _create_tools_settings(self):
+        self.tools_settings = ToolsSettingsWidget()
+        return self.tools_settings
+
+    def _create_viewer_config(self):
+        self.viewer_config = ModalityGridConfigWidget()
+        # Now that the widget exists, let external code wire configChanged.
+        self.viewerConfigReady.emit(self.viewer_config)
+        return self.viewer_config
+
+    def _create_image_filter(self):
+        self.image_filter = FilterConfigWidget()
+        return self.image_filter
+
+    def _create_installation_settings(self):
+        self.installation_module_settings = InstallationModuleSettingsWidget()
+        return self.installation_module_settings
+
+    def _create_lightviewer_settings(self):
+        from .lightviewer_settings import LightViewerSettingsWidget
+
+        self.lightviewer_settings = LightViewerSettingsWidget()
+        return self.lightviewer_settings
+
+    def _create_echomind_settings(self):
+        from .echomind_settings import EchoMindSettingsWidget
+
+        self.echomind_settings = EchoMindSettingsWidget()
+        return self.echomind_settings
 
     def apply_dark_theme(self):
         """

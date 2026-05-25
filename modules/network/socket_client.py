@@ -12,6 +12,12 @@ from modules.network.socket_token_manager import get_socket_token_manager
 
 logger = logging.getLogger(__name__)
 
+_LARGE_PAYLOAD_ENDPOINTS = {
+    "GetStudyThumbnails",
+    "GetStudyInfo",
+    "QuerySeriesThumbnails",
+}
+
 
 class PatientListSocketClient:
     """
@@ -80,13 +86,19 @@ class PatientListSocketClient:
     
     def _recv_exact(self, size: int) -> bytes:
         """Receive exactly *size* bytes from the socket, accumulating partial reads."""
-        data = b''
-        while len(data) < size:
-            chunk = self.socket.recv(min(65536, size - len(data)))
-            if not chunk:
-                return data  # connection closed
-            data += chunk
-        return data
+        if size <= 0:
+            return b''
+
+        buf = bytearray(size)
+        pos = 0
+        chunk_size = 262144 if size > 1048576 else 65536
+        while pos < size:
+            nbytes = self.socket.recv_into(memoryview(buf)[pos:], min(chunk_size, size - pos))
+            if not nbytes:
+                # connection closed before full payload
+                return bytes(buf[:pos])
+            pos += nbytes
+        return bytes(buf)
     
     def send_request(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Send request and receive response"""
@@ -127,11 +139,15 @@ class PatientListSocketClient:
                 
                 logger.debug(f"📤 [Socket] Request sent, waiting for response...")
                 
-                # Loop to handle broadcasts and wait for actual response
-                max_broadcast_retries = 10
+                # Loop to handle broadcasts and wait for actual response.
+                # Use a time deadline (based on socket timeout) instead of a small
+                # fixed retry count to avoid dropping valid responses under bursty
+                # broadcast traffic.
+                max_broadcast_retries = 200
                 broadcast_count = 0
-                
-                while broadcast_count < max_broadcast_retries:
+                response_deadline = time.monotonic() + float(self.timeout or 10.0)
+
+                while time.monotonic() < response_deadline and broadcast_count < max_broadcast_retries:
                     # Receive response length (exactly 4 bytes)
                     response_length_bytes = self._recv_exact(4)
                     if not response_length_bytes or len(response_length_bytes) != 4:
@@ -139,8 +155,15 @@ class PatientListSocketClient:
                     
                     response_length = int.from_bytes(response_length_bytes, byteorder='big')
                     
-                    # Validate response size to prevent excessive allocation
-                    if response_length > 50 * 1024 * 1024:  # 50MB limit
+                    # Validate response size to prevent excessive allocation.
+                    # Study thumbnail payloads can legitimately exceed 50MB when
+                    # base64 thumbnails are requested for many series.
+                    max_response_bytes = 50 * 1024 * 1024
+                    if endpoint in _LARGE_PAYLOAD_ENDPOINTS:
+                        # Hermes uses a 500MB guard for study thumbnail payloads.
+                        # Keep parity to avoid rejecting valid large studies.
+                        max_response_bytes = 500 * 1024 * 1024
+                    if response_length > max_response_bytes:
                         raise Exception(f"Response too large: {response_length} bytes")
                     
                     logger.debug(f"📥 [Socket] Response length: {response_length} bytes")
@@ -159,19 +182,25 @@ class PatientListSocketClient:
                     if response.get('type') == 'broadcast':
                         broadcast_count += 1
                         event_type = response.get('event_type', 'unknown')
-                        logger.debug(f"📡 [Socket] Broadcast message (type: {event_type}), waiting for response... ({broadcast_count}/{max_broadcast_retries})")
+                        logger.debug(
+                            f"📡 [Socket] Broadcast message (type: {event_type}), waiting for response... "
+                            f"({broadcast_count}/{max_broadcast_retries})"
+                        )
                         continue
                     
                     # This is the actual response
                     logger.debug(f"📥 [Socket] Parsed response successfully")
                     return response
                 
-                # If we exit the loop, we received too many broadcasts without a response
-                logger.error(f"❌ [Socket] Received {broadcast_count} broadcasts without getting actual response")
+                # If we exit the loop, we timed out or saw excessive broadcasts without a response.
+                logger.error(
+                    f"❌ [Socket] Did not receive endpoint response in time "
+                    f"(broadcasts={broadcast_count}, timeout={self.timeout}s)"
+                )
                 return None
                 
             except Exception as e:
-                logger.error(f"❌ [Socket] Error in send_request: {e}")
+                logger.error(f"❌ [Socket] Error in send_request endpoint={endpoint}: {e}")
                 self.connected = False
                 if self.socket:
                     try:
@@ -225,6 +254,132 @@ class PatientListSocketClient:
         except Exception as e:
             logger.error(f"❌ Error getting patient list: {e}")
             return None
+
+    def get_study_thumbnails(
+        self,
+        study_instance_uid: str,
+        *,
+        include_base64: bool = True,
+        include_image_data: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch study thumbnails/series metadata via socket endpoint.
+
+        Returns normalized ``data`` payload on success, otherwise ``None``.
+        """
+        try:
+            params: Dict[str, Any] = {
+                "study_instance_uid": str(study_instance_uid or "").strip(),
+                "include_base64": bool(include_base64),
+                "include_image_data": bool(include_image_data),
+            }
+            if not params["study_instance_uid"]:
+                return None
+
+            response = None
+            for attempt in range(2):
+                response = self.send_request("GetStudyThumbnails", params)
+                if response:
+                    break
+                if attempt == 0:
+                    time.sleep(0.2)
+            if not response:
+                return None
+
+            status = str(response.get("status", "") or "").lower()
+            if status not in {"success", "ok"} and not bool(response.get("success")):
+                return None
+
+            data = response.get("data")
+            return data if isinstance(data, dict) else None
+        except Exception as e:
+            logger.error(f"❌ Error getting study thumbnails via socket: {e}")
+            return None
+
+    def get_study_info(self, study_instance_uid: str) -> Optional[Dict[str, Any]]:
+        """Fetch lightweight study metadata via socket endpoint.
+
+        Returns normalized ``data`` payload on success, otherwise ``None``.
+        """
+        try:
+            uid = str(study_instance_uid or "").strip()
+            if not uid:
+                return None
+
+            response = None
+            for attempt in range(2):
+                response = self.send_request("GetStudyInfo", {"study_instance_uid": uid})
+                if response:
+                    break
+                if attempt == 0:
+                    time.sleep(0.2)
+            if not response:
+                return None
+
+            status = str(response.get("status", "") or "").lower()
+            if status not in {"success", "ok"} and not bool(response.get("success")):
+                return None
+
+            data = response.get("data")
+            return data if isinstance(data, dict) else None
+        except Exception as e:
+            logger.error(f"❌ Error getting study info via socket: {e}")
+            return None
+
+    def query_series_thumbnails(
+        self,
+        *,
+        study_uid: str,
+        patient_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch series metadata via QuerySeriesThumbnails endpoint.
+
+        Some server deployments expose richer/safer payloads via this endpoint.
+        Returns a normalized dict payload on success, otherwise ``None``.
+        """
+        try:
+            uid = str(study_uid or "").strip()
+            if not uid:
+                return None
+
+            params: Dict[str, Any] = {
+                "study_instance_uid": uid,
+                "study_uid": uid,
+                "studyUid": uid,
+                "limit": 100,
+                "offset": 0,
+            }
+            pid = str(patient_id or "").strip()
+            if pid:
+                params["patient_id"] = pid
+
+            response = None
+            for attempt in range(2):
+                response = self.send_request("QuerySeriesThumbnails", params)
+                if response:
+                    break
+                if attempt == 0:
+                    time.sleep(0.2)
+            if not response:
+                return None
+
+            status = str(response.get("status", "") or "").lower()
+            if status not in {"success", "ok"} and not bool(response.get("success")):
+                return None
+
+            data = response.get("data")
+            if isinstance(data, dict):
+                return data
+            if isinstance(data, list):
+                return {
+                    "study_instance_uid": uid,
+                    "patient_id": pid,
+                    "series_thumbnails": data,
+                    "count_of_series": len(data),
+                }
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error querying series thumbnails via socket: {e}")
+            return None
     
     # ========== Report Status Methods ==========
     
@@ -244,16 +399,29 @@ class PatientListSocketClient:
         try:
             params = {
                 "study_uid": study_uid,
-                "new_status": new_status
+                "studyUid": study_uid,
+                "new_status": new_status,
+                "newStatus": new_status,
+                "report_status": new_status,
+                "reportStatus": new_status,
+                "status": new_status,
             }
             if user_id:
                 params["user_id"] = user_id
             if comment:
                 params["comment"] = comment
+                params["report_comment"] = comment
+                params["reportComment"] = comment
+                params["pacs_comment"] = comment
+                params["pacsComment"] = {"text": comment}
             
             response = self.send_request("UpdateReportStatus", params)
             
-            if response and response.get("status") == "success":
+            if response and (
+                str(response.get("status", "")).lower() in {"success", "ok"}
+                or bool(response.get("success"))
+                or response.get("updated") is True
+            ):
                 return response
             else:
                 # Better error extraction with full response logging
@@ -280,10 +448,17 @@ class PatientListSocketClient:
             Response dict with status or None on error
         """
         try:
-            params = {"study_uid": study_uid}
+            params = {
+                "study_uid": study_uid,
+                "studyUid": study_uid,
+            }
             response = self.send_request("GetReportStatus", params)
             
-            if response and response.get("status") == "success":
+            if response and (
+                str(response.get("status", "")).lower() in {"success", "ok"}
+                or bool(response.get("success"))
+                or isinstance(response.get("data"), dict)
+            ):
                 return response
             else:
                 error_msg = response.get("error", "Unknown error") if response else "No response"

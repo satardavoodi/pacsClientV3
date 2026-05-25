@@ -25,6 +25,7 @@ from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.db_manager import get_study_by_study_uid
 from modules.network.upload_download_attchments import download_attachments_for_study, download_attachments_for_study_async
 from modules.offline_cloud_server.service import export_studies_to_offline_cloud, get_all_offline_cloud_servers, list_offline_cloud_studies, record_offline_cloud_sync_event, sync_offline_cloud_study_preview_to_local, sync_offline_cloud_study_to_local, validate_offline_cloud_package
+from PacsClient.utils.structured_logging import emit_download_event as _emit_download_event
 
 from .widget import SourceOfPatientLoad
 
@@ -71,6 +72,20 @@ class _HPPatientOpenMixin:
             log_message = f"{log_message} {details}"
         getattr(_logger, level, _logger.info)(log_message)
 
+        # Persist open-trace diagnostics to download_diagnostics.log as a
+        # structured warning event (download component threshold is WARNING).
+        try:
+            _emit_download_event(
+                _logger,
+                "FAST_OPEN_TRACE",
+                study=str(study_uid or ""),
+                phase=str(phase or ""),
+                t_ms=round(self._open_trace_elapsed_ms(study_uid), 1),
+                **merged,
+            )
+        except Exception:
+            pass
+
     def _pending_deferred_counts(self, study_uid) -> tuple[int, int, int]:
         study_key = str(study_uid or '')
         pending_studies = getattr(self, '_deferred_patient_studies_refresh', None) or {}
@@ -95,6 +110,89 @@ class _HPPatientOpenMixin:
             return bool(getattr(widget, '_first_series_displayed', False)) if widget else False
         except Exception:
             return False
+
+    def _resolve_patient_study_uids(self, patient_id: str, fallback_study_uid: str) -> list[str]:
+        """Resolve all study UIDs associated with the selected patient table row."""
+        resolved = []
+        fallback = str(fallback_study_uid or '').strip()
+        pid = str(patient_id or '').strip()
+
+        try:
+            table = getattr(self, 'patient_table_widget', None)
+            if table is not None and hasattr(table, 'results_table'):
+                results_table = table.results_table
+                col_map = getattr(table, 'COL', None) or globals().get('COL', {})
+                patient_id_col = col_map.get('patient_id', 2)
+                study_uid_col = col_map.get('study_uid', 13)
+
+                for row in range(results_table.rowCount()):
+                    pid_item = results_table.item(row, patient_id_col)
+                    if not pid_item or str(pid_item.text() or '').strip() != pid:
+                        continue
+
+                    study_item = results_table.item(row, study_uid_col)
+                    if not study_item:
+                        continue
+
+                    row_primary_uid = str(study_item.text() or '').strip()
+                    row_uids = study_item.data(Qt.UserRole + 10)
+                    if isinstance(row_uids, str):
+                        row_uids = [row_uids]
+                    elif not isinstance(row_uids, list):
+                        row_uids = []
+
+                    for uid in [row_primary_uid, *row_uids]:
+                        uid_str = str(uid or '').strip()
+                        if uid_str and uid_str not in resolved:
+                            resolved.append(uid_str)
+
+            elif table is not None and hasattr(table, 'get_all_patient_data'):
+                for row_data in table.get_all_patient_data() or []:
+                    if str(row_data.get('patient_id') or '').strip() != pid:
+                        continue
+                    row_uids = row_data.get('study_uids') or []
+                    if isinstance(row_uids, str):
+                        row_uids = [row_uids]
+                    elif not isinstance(row_uids, list):
+                        row_uids = []
+                    primary_uid = str(row_data.get('study_uid') or '').strip()
+                    for uid in [primary_uid, *row_uids]:
+                        uid_str = str(uid or '').strip()
+                        if uid_str and uid_str not in resolved:
+                            resolved.append(uid_str)
+        except Exception:
+            pass
+
+        # Fallback: reuse currently displayed right-panel thumbnail payload.
+        # This helps grouped patient rows where table metadata is incomplete but
+        # the sidebar already contains multi-study series data for the same patient.
+        if len(resolved) <= 1:
+            try:
+                right_panel = getattr(self, 'right_panel_widget', None)
+                thumbnails = list(getattr(right_panel, 'thumbnails_to_display', []) or [])
+                for thumb in thumbnails:
+                    uid_str = str((thumb or {}).get('study_uid') or '').strip()
+                    if uid_str and uid_str not in resolved:
+                        resolved.append(uid_str)
+            except Exception:
+                pass
+
+        # Fallback: search-result cache for patient -> grouped study_uids.
+        if len(resolved) <= 1:
+            try:
+                patient_study_map = getattr(self, '_patient_study_uid_map', None) or {}
+                for uid in patient_study_map.get(pid, []) or []:
+                    uid_str = str(uid or '').strip()
+                    if uid_str and uid_str not in resolved:
+                        resolved.append(uid_str)
+            except Exception:
+                pass
+
+        if fallback:
+            if fallback in resolved:
+                resolved.remove(fallback)
+            resolved.insert(0, fallback)
+        return resolved
 
     def _defer_patient_studies_refresh(self, patient_info: dict) -> None:
         pending = getattr(self, '_deferred_patient_studies_refresh', None)
@@ -272,14 +370,18 @@ class _HPPatientOpenMixin:
 
         _t0_double_click = _time.perf_counter()
         _logger.info("[FAST-UX] double_click_t0 study=%s patient=%s", study_uid, patient_id)
+        all_study_uids = self._resolve_patient_study_uids(patient_id, study_uid)
+        if not all_study_uids:
+            all_study_uids = [str(study_uid or '').strip()]
         self._ensure_open_trace_context(
             study_uid,
             t0=_t0_double_click,
             patient_id=str(patient_id),
             patient_name=str(patient_name),
             source=str(getattr(self, 'source_of_patient_load', None)),
+            all_studies=len(all_study_uids),
         )
-        self._log_open_trace(study_uid, 'open_request', report_status=report_status)
+        self._log_open_trace(study_uid, 'open_request', report_status=report_status, all_studies=len(all_study_uids))
 
         try:
             # Prevent duplicate open requests for the same study (double-trigger / re-entrancy)
@@ -423,6 +525,15 @@ class _HPPatientOpenMixin:
             )
             self._log_open_trace(study_uid, 'tab_created', is_local=is_local)
 
+            # Multi-study hint: tell the viewer widget up-front that this patient
+            # has more than one study, so its thumbnail sidebar uses the grouped
+            # render path from the start and skips the single-study early render
+            # (which would otherwise flicker when the grouped render replaces it).
+            try:
+                widget._is_multistudy_hint = len(all_study_uids) > 1
+            except Exception:
+                pass
+
             # Ensure lifecycle hook runs for initial open even if currentChanged is not emitted.
             try:
                 if hasattr(widget, 'on_tab_activated') and (not getattr(widget, '_is_active_patient_tab', False)):
@@ -462,79 +573,90 @@ class _HPPatientOpenMixin:
                         # Get server info
                         server = self.data_access_panel_widget.get_server_selected()
 
-                        # Create study info for Download Manager
-                        # Try to get series info from server if not in study_data
-                        series_list = []
-                        series_count = 0
-                        images_count = 0
+                        aggregated_series = []
+                        for current_study_uid in all_study_uids:
+                            current_study_data = get_study_by_study_uid(study_uid=current_study_uid) or {}
+                            series_list = []
+                            series_count = 0
+                            images_count = 0
 
-                        if study_data and 'series' in study_data:
-                            series_list = study_data.get('series', [])
-                            series_count = len(series_list)
-                            images_count = sum(s.get('image_count', 0) for s in series_list)
-                        else:
-                            # Fetch series info from server if not available
-                            # v2.2.3.2.7: offload synchronous gRPC call to a background thread
-                            # so the main thread event loop stays responsive (1-5s network latency).
-                            try:
-                                import asyncio as _aio
-                                study_info = await _aio.to_thread(self._get_or_fetch_series_info, study_uid, patient_id)
-                                if study_info:
-                                    series_list = study_info.get('series', [])
-                                    series_count = study_info.get('count_of_series', len(series_list))
-                                    images_count = sum(s.get('image_count', 0) for s in series_list)
-                            except Exception as e:
-                                print(f"Warning: Could not fetch series info: {e}")
+                            db_series = current_study_data.get('series') if isinstance(current_study_data, dict) else None
+                            if isinstance(db_series, list) and db_series:
+                                series_list = db_series
+                                series_count = len(series_list)
+                                images_count = sum(s.get('image_count', 0) for s in series_list)
+                            else:
+                                try:
+                                    import asyncio as _aio
+                                    study_info = await _aio.to_thread(self._get_or_fetch_series_info, current_study_uid, patient_id)
+                                    if (not study_info) or (not (study_info.get('series') or [])):
+                                        study_info = await _aio.to_thread(
+                                            self._get_or_fetch_series_info,
+                                            current_study_uid,
+                                            patient_id,
+                                            True,
+                                        )
+                                    if study_info:
+                                        series_list = study_info.get('series', [])
+                                        series_count = study_info.get('count_of_series', len(series_list))
+                                        images_count = sum(s.get('image_count', 0) for s in series_list)
+                                except Exception as e:
+                                    print(f"Warning: Could not fetch series info for {current_study_uid}: {e}")
 
-                        dm_study_data = {
-                            'patient_id': patient_id,
-                            'patient_name': patient_name,
-                            'study_uid': study_uid,
-                            'study_date': study_data.get('study_date', 'Unknown') if study_data else 'Unknown',
-                            'modality': study_data.get('modality', 'Unknown') if study_data else 'Unknown',
-                            'description': study_data.get('study_description', '') if study_data else '',
-                            'series_count': series_count,
-                            'images_count': images_count,
-                            'series': series_list,  # Include series array for Download Manager UI
-                            # Add complete patient information
-                            'patient_age': study_data.get('age', '') if study_data else '',
-                            'patient_sex': study_data.get('sex', '') if study_data else '',
-                            'patient_birth_date': study_data.get('birth_date', '') if study_data else '',
-                            'study_time': study_data.get('study_time', '') if study_data else '',
-                            'body_part': study_data.get('body_part', '') if study_data else '',
-                        }
+                            for series_info in series_list:
+                                if isinstance(series_info, dict) and 'study_uid' not in series_info:
+                                    series_info = dict(series_info)
+                                    series_info['study_uid'] = current_study_uid
+                                aggregated_series.append(series_info)
 
-                        # Ensure series UID -> number mapping is available before download signals fire
-                        if widget and series_list:
-                            try:
-                                widget.set_server_series_info(series_list)
-                                _logger.info(
-                                    "[FAST-THUMB-OVERVIEW] study=%s series_count=%d thumb_stubs_scheduled thumbnail_overview_visible_ms=%.0f",
-                                    study_uid, len(series_list),
-                                    (_time.perf_counter() - _t0_double_click) * 1000.0,
+                            dm_study_data = {
+                                'patient_id': patient_id,
+                                'patient_name': patient_name,
+                                'study_uid': current_study_uid,
+                                'study_date': current_study_data.get('study_date', 'Unknown') if current_study_data else 'Unknown',
+                                'modality': current_study_data.get('modality', 'Unknown') if current_study_data else 'Unknown',
+                                'description': current_study_data.get('study_description', '') if current_study_data else '',
+                                'series_count': series_count,
+                                'images_count': images_count,
+                                'series': series_list,
+                                'patient_age': current_study_data.get('age', '') if current_study_data else '',
+                                'patient_sex': current_study_data.get('sex', '') if current_study_data else '',
+                                'patient_birth_date': current_study_data.get('birth_date', '') if current_study_data else '',
+                                'study_time': current_study_data.get('study_time', '') if current_study_data else '',
+                                'body_part': current_study_data.get('body_part', '') if current_study_data else '',
+                            }
+
+                            _logger.info(
+                                "[FAST-SERIES-DOWNLOAD-QUEUE] study=%s series_count=%d priority=High",
+                                current_study_uid,
+                                len(series_list),
+                            )
+                            if not series_list:
+                                self._log_open_trace(
+                                    current_study_uid,
+                                    'download_queue_skipped_empty_series',
+                                    level='warning',
+                                    patient_id=patient_id,
                                 )
+                                continue
+                            download_manager.start_priority_download_immediately(
+                                study_data=dm_study_data,
+                                server_info=server,
+                                priority="High"
+                            )
+
+                        # Ensure viewer receives full patient-level series map for thumbnail metadata.
+                        if widget and aggregated_series:
+                            try:
+                                widget.set_server_series_info(aggregated_series)
                                 self._log_open_trace(
                                     study_uid,
                                     'thumbnail_stubs_scheduled',
-                                    series_count=len(series_list),
+                                    series_count=len(aggregated_series),
+                                    all_studies=len(all_study_uids),
                                 )
                             except Exception:
                                 pass
-
-                        # ⚡ IMMEDIATE START - pauses all, starts this one right away
-                        # Priority is HIGH (not CRITICAL) for the patient open.
-                        # CRITICAL is reserved for the specific series being viewed.
-                        # When the viewer loads a series, it will escalate that
-                        # series to CRITICAL via set_viewed_series().
-                        _logger.info(
-                            "[FAST-SERIES-DOWNLOAD-QUEUE] study=%s series_count=%d order=top_to_bottom priority=High",
-                            study_uid, len(series_list),
-                        )
-                        download_manager.start_priority_download_immediately(
-                            study_data=dm_study_data,
-                            server_info=server,
-                            priority="High"  # Double-clicked patient = High priority (all series)
-                        )
 
                         # [H7-P1] Pipeline A timeline: download started, DM not yet wired
                         _logger.info(
@@ -551,7 +673,7 @@ class _HPPatientOpenMixin:
                             "[H7-P1] study=%s dm_started=True dm_wired=True t_since_open_ms=%.1f",
                             study_uid, (_time.perf_counter() - _t0_double_click) * 1000.0,
                         )
-                        self._log_open_trace(study_uid, 'download_manager_wired', series_count=len(series_list))
+                        self._log_open_trace(study_uid, 'download_manager_wired', series_count=len(aggregated_series))
                 except Exception as e:
                     self._log_open_trace(study_uid, 'download_manager_error', level='error', error=str(e))
                     print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
@@ -578,7 +700,10 @@ class _HPPatientOpenMixin:
                     )
                 else:
                     asyncio.create_task(self._load_and_display_series_info_async(patient_id, patient_name, study_uid))
-                    asyncio.create_task(self.show_patient_studies(patient_info))
+                    if len(all_study_uids) > 1 and hasattr(self, '_show_grouped_patient_studies'):
+                        asyncio.create_task(self._show_grouped_patient_studies(patient_id, patient_name, all_study_uids))
+                    else:
+                        asyncio.create_task(self.show_patient_studies(patient_info))
                     self._log_open_trace(study_uid, 'ui_tasks_scheduled', right_panel_requested=True, series_info_requested=True)
             except Exception as e:
                 self._log_open_trace(study_uid, 'ui_task_schedule_error', level='error', error=str(e))
@@ -609,16 +734,65 @@ class _HPPatientOpenMixin:
 
                     # Get series list for on-demand download
                     series_list = []
+                    current_series_info = []
                     if hasattr(self, 'right_panel_widget') and hasattr(self.right_panel_widget, '_current_series_info'):
-                        series_list = self.right_panel_widget._current_series_info
+                        current_series_info = list(self.right_panel_widget._current_series_info or [])
 
-                    if not series_list and not is_local:
+                    def _series_study_coverage(items: list) -> set[str]:
+                        covered: set[str] = set()
+                        for item in items or []:
+                            if not isinstance(item, dict):
+                                continue
+                            study_ref = str(item.get('study_uid') or '').strip()
+                            if study_ref:
+                                covered.add(study_ref)
+                        return covered
+
+                    aggregated_series = []
+                    if not is_local:
                         try:
-                            study_info = self._get_or_fetch_series_info(study_uid, patient_id)
-                            if study_info:
-                                series_list = study_info.get('series', [])
+                            for current_study_uid in all_study_uids:
+                                study_info = self._get_or_fetch_series_info(current_study_uid, patient_id)
+                                if not study_info:
+                                    continue
+                                for series_info in study_info.get('series', []) or []:
+                                    if isinstance(series_info, dict) and 'study_uid' not in series_info:
+                                        series_info = dict(series_info)
+                                        series_info['study_uid'] = current_study_uid
+                                    aggregated_series.append(series_info)
                         except Exception:
                             pass
+
+                    # Never let a partial single-study snapshot replace a complete grouped set.
+                    if current_series_info:
+                        coverage = _series_study_coverage(current_series_info)
+                        if len(all_study_uids) <= 1 or coverage.issuperset(set(all_study_uids)):
+                            series_list = current_series_info
+
+                    if not series_list and aggregated_series:
+                        series_list = aggregated_series
+
+                    # If the current-series snapshot is partial, merge any missing studies from the aggregate.
+                    if series_list and aggregated_series and len(all_study_uids) > 1:
+                        seen_pairs: set[tuple[str, str]] = set()
+                        merged: list = []
+                        for series_info in series_list:
+                            if not isinstance(series_info, dict):
+                                continue
+                            key = (str(series_info.get('study_uid') or '').strip(), str(series_info.get('series_uid') or '').strip())
+                            if key in seen_pairs:
+                                continue
+                            seen_pairs.add(key)
+                            merged.append(series_info)
+                        for series_info in aggregated_series:
+                            if not isinstance(series_info, dict):
+                                continue
+                            key = (str(series_info.get('study_uid') or '').strip(), str(series_info.get('series_uid') or '').strip())
+                            if key in seen_pairs:
+                                continue
+                            seen_pairs.add(key)
+                            merged.append(series_info)
+                        series_list = merged
 
                     # Pass series info to widget
                     if widget and series_list:

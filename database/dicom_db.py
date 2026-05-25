@@ -1096,7 +1096,6 @@ def bulk_update_instances(instances_data: list):
         cur = conn.cursor()
         cur.executemany(update_sql, values)
         conn.commit()
-    conn.close()
 
 
 # ---------------------------------------------------------------------------

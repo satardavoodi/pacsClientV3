@@ -1,0 +1,45 @@
+{
+  "patient_id": "42538",
+  "socket": {
+    "host": "192.168.2.222",
+    "port": 50052
+  },
+  "fetch": {
+    "search_ms": 674.12,
+    "rows": 3,
+    "study_uids": [
+      "1.3.12.2.1107.5.2.46.174759.30000026051916330412100000070"
+    ],
+    "study_uid_selected": "1.3.12.2.1107.5.2.46.174759.30000026051916330412100000070",
+    "get_study_thumbnails_ms": 43.58,
+    "raw_has_data": true
+  },
+  "normalize": {
+    "count": 10,
+    "has_series_uid": 10,
+    "has_thumbnail_data": 10
+  },
+  "save": {
+    "saved_count": 10,
+    "existing_file_count": 10,
+    "sample_file": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\user_data\\patients\\thumbnails\\1.3.12.2.1107.5.2.46.174759.30000026051916330412100000070\\3.png"
+  },
+  "main_sidebar": {
+    "pixmap_ok_count": 10,
+    "grid_item_count": 10,
+    "count_label": "10 series"
+  },
+  "patient_sidebar": {
+    "thumbnail_files_found": 10,
+    "thumbnail_files_existing": 10,
+    "tab_thumbnail_loaded": true
+  },
+  "status": "passed",
+  "errors": [],
+  "checks": {
+    "fetch_normalize": true,
+    "save_to_disk": true,
+    "main_sidebar_contract": true,
+    "patient_sidebar_contract": true
+  }
+}

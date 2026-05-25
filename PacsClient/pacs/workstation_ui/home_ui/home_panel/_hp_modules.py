@@ -1,16 +1,19 @@
-﻿"""Module launchers: DM, web browser, education, printing, NPR, CD burn, tabs"""
+﻿"""Module launchers: DM, web browser, education, printing, CD burn, tabs"""
 # Auto-generated from home_ui.py — Phase 3 split
 
 
 
 import asyncio
 import logging
+import threading
 import traceback
 
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit, QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox, QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QWidget
 
 from ..home_module_tabs import activate_or_create_module_tab
 from ..home_widget_utils import is_widget_alive
+from modules.network.socket_client import PatientListSocketClient
 from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes, save_series_json, check_study_exists, get_all_series_thumbnail_from_study_folder, load_json_as_dict, get_study_source_path, get_name_file_from_path, check_study_complete, validate_thumbnail_files, clear_study_cache, get_count_dicom_files_exist, save_image_as_png
 from PacsClient.utils import get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 from aipacs_runtime import is_module_enabled
@@ -19,8 +22,20 @@ from .widget import _ensure_patient_widget, _ensure_ai_main_window, PRIORITY_MAN
 
 logger = logging.getLogger(__name__)
 
+
+class _ZetaDownloadBridge(QObject):
+    """Thread-safe hand-off from a Zeta Download worker thread to the UI thread.
+
+    QTimer.singleShot() does NOT fire when called from a plain worker thread
+    (that thread has no Qt event loop). The enrichment worker therefore emits
+    this signal instead — because the bridge object is created on the UI
+    thread, the connected slot is delivered there via a queued connection.
+    """
+    finished = Signal()
+
+
 class _HPModulesMixin:
-    """Module launchers: DM, web browser, education, printing, NPR, CD burn, tabs"""
+    """Module launchers: DM, web browser, education, printing, CD burn, tabs"""
 
     def set_mainwindow(self, MainWindow):
         self.mainwindow = MainWindow
@@ -148,7 +163,33 @@ class _HPModulesMixin:
 
         if open_ai_client_tab is True:
             try:
+                # Reuse existing Eagle Eye tab for the same study to avoid tab duplication.
+                for i in range(self.tab_widget.count()):
+                    existing_tab = self.tab_widget.widget(i)
+                    if existing_tab is None or type(existing_tab).__name__ != 'AiMainWindow':
+                        continue
+                    if not is_widget_alive(existing_tab):
+                        continue
+
+                    existing_study_uid = None
+                    try:
+                        imaging_tab = getattr(existing_tab, 'imaging_tab', None)
+                        existing_pw = getattr(imaging_tab, 'patient_widget', None)
+                        existing_study_uid = getattr(existing_pw, 'study_uid', None)
+                    except Exception:
+                        existing_study_uid = None
+
+                    if study_uid and existing_study_uid and str(existing_study_uid) != str(study_uid):
+                        continue
+
+                    self.tab_widget.setCurrentWidget(existing_tab)
+                    return existing_tab
+
                 ai_client = _ensure_ai_main_window()(study_uid=study_uid)
+                try:
+                    ai_client._eagle_eye_study_uid = study_uid
+                except Exception:
+                    pass
                 self.tab_widget.addTab(ai_client, "AI Analysis")
                 self.tab_widget.setCurrentWidget(ai_client)
                 return ai_client
@@ -400,23 +441,50 @@ Study UID: {study_uid}
             # Get patient data from PatientTableWidget
             patient_data = self.patient_table_widget.get_patient_data_by_row(row)
             if not patient_data:
+                if hasattr(self, '_log_open_trace'):
+                    try:
+                        self._log_open_trace('', 'plus_no_patient_data', row=int(row) if row is not None else -1, level='warning')
+                    except Exception:
+                        pass
                 raise Exception("Patient data not found")
 
             patient_id = patient_data['patient_id']
             patient_name = patient_data['patient_name']
             study_uid = patient_data['study_uid']
+            if hasattr(self, '_log_open_trace'):
+                try:
+                    self._log_open_trace(
+                        study_uid,
+                        'plus_entry',
+                        patient_id=str(patient_id or ''),
+                        row=int(row) if row is not None else -1,
+                        study_uids_count=len((patient_data.get('study_uids') or []) if isinstance(patient_data.get('study_uids'), list) else ([patient_data.get('study_uids')] if patient_data.get('study_uids') else [])),
+                    )
+                except Exception:
+                    pass
+            study_uids = patient_data.get('study_uids') or []
+            if isinstance(study_uids, str):
+                study_uids = [study_uids]
+            elif not isinstance(study_uids, list):
+                study_uids = []
+
+            if not study_uids:
+                study_uids = [study_uid]
 
             # Loading dialog is already shown in _safe_on_plus_button_clicked
             # No need to show it again here
 
-            patient_info = {
-                "PatientID": patient_id,
-                "PatientName": patient_name,
-                "StudyInstanceUID": study_uid
-            }
-
-            logger.debug("on_plus_button_clicked: starting study thumbnail display")
-            await self.show_patient_studies(patient_info)
+            if len(study_uids) > 1:
+                logger.debug("on_plus_button_clicked: grouped thumbnail display for %d studies", len(study_uids))
+                await self._show_grouped_patient_studies(patient_id, patient_name, study_uids)
+            else:
+                patient_info = {
+                    "PatientID": patient_id,
+                    "PatientName": patient_name,
+                    "StudyInstanceUID": study_uid
+                }
+                logger.debug("on_plus_button_clicked: starting single-study thumbnail display")
+                await self.show_patient_studies(patient_info)
 
         except Exception as e:
             print(f"Error in on_plus_button_clicked: {str(e)}")
@@ -447,12 +515,123 @@ Study UID: {study_uid}
             # Hide loading dialog first
             self.hide_loading()
 
-    def _on_zeta_npr_requested(self, selected_studies, set_current_tab=True):
+    async def _show_grouped_patient_studies(self, patient_id: str, patient_name: str, study_uids: list):
+        """Load thumbnails for multiple studies and display them in grouped order."""
+        server = self.data_access_panel_widget.get_server_selected()
+        if not server:
+            QMessageBox.warning(self, "Server Error", "No PACS server selected. Please select a server first.")
+            return
+
+        combined_thumbnails = []
+        seen_studies = []
+        for uid in study_uids:
+            uid_str = str(uid or '').strip()
+            if uid_str and uid_str not in seen_studies:
+                seen_studies.append(uid_str)
+
+        for index, study_uid in enumerate(seen_studies, start=1):
+            study_label = f"Study {index}"
+            study_thumbs = []
+
+            # Prefer any existing local cache immediately (complete or partial).
+            cached_paths = get_all_series_thumbnail_from_study_folder(study_uid)
+            for series_path in cached_paths:
+                series_number = get_name_file_from_path(series_path)
+                series_info = self.get_series_info_from_database(study_uid, series_number)
+                study_thumbs.append(
+                    {
+                        'file_path': series_path,
+                        'series_number': series_number,
+                        'modality': series_info.get('modality', 'Unknown'),
+                        'series_description': series_info.get('series_description', f'Series {series_number}'),
+                        'image_count': series_info.get('image_count', 0),
+                        'protocol_name': series_info.get('protocol_name', ''),
+                        'body_part_examined': series_info.get('body_part_examined', ''),
+                        'study_uid': study_uid,
+                        'study_label': study_label,
+                        '_study_order': index,
+                    }
+                )
+
+            # Fallback to server thumbnails for non-downloaded studies.
+            if not study_thumbs:
+                def _fetch_in_background() -> dict | None:
+                    host = server.get('host') or server.get('socket_host')
+                    from modules.network.socket_config import get_socket_server_settings
+                    port = int((get_socket_server_settings() or {}).get('port') or server.get('socket_port') or 50052)
+                    if not host:
+                        return None
+                    client = PatientListSocketClient(host=host, port=port)
+                    try:
+                        data = client.get_study_thumbnails(
+                            study_uid,
+                            include_base64=True,
+                            include_image_data=False,
+                        )
+                        if not data:
+                            return None
+                        out = {
+                            'patient_name': data.get('patient_name') or patient_name,
+                            'patient_id': data.get('patient_id') or patient_id,
+                            'study_date': data.get('study_date') or '',
+                            'study_uid': data.get('study_instance_uid') or study_uid,
+                            'thumbnails': [],
+                        }
+                        for series in data.get('series_thumbnails') or []:
+                            if not isinstance(series, dict):
+                                continue
+                            out['thumbnails'].append(
+                                {
+                                    'series_uid': series.get('series_uid', ''),
+                                    'series_number': series.get('series_number', ''),
+                                    'series_description': series.get('series_description', ''),
+                                    'modality': series.get('modality', ''),
+                                    'image_count': series.get('image_count', 0),
+                                    'thumbnail_path': series.get('thumbnail_path', ''),
+                                    'thumbnail_data': series.get('thumbnail_data') or series.get('thumbnail_base64') or '',
+                                }
+                            )
+                        return out
+                    finally:
+                        client.disconnect()
+
+                try:
+                    response = await asyncio.to_thread(_fetch_in_background)
+                except Exception:
+                    response = None
+
+                if response:
+                    response = self.save_thumbnail(response)
+                    for thumb in response.get('thumbnails', []):
+                        if not thumb.get('file_path'):
+                            continue
+                        thumb['study_uid'] = study_uid
+                        thumb['study_label'] = study_label
+                        thumb['_study_order'] = index
+                        study_thumbs.append(thumb)
+
+            combined_thumbnails.extend(study_thumbs)
+
+        if not combined_thumbnails:
+            QMessageBox.information(self, "No Thumbnails", f"No thumbnails available for {patient_name}.")
+            return
+
+        def _series_sort_value(thumb: dict):
+            value = thumb.get('series_number', 0)
+            try:
+                return int(str(value))
+            except Exception:
+                return str(value)
+
+        combined_thumbnails.sort(key=lambda t: (int(t.get('_study_order', 0) or 0), _series_sort_value(t)))
+        self.display_thumbnails(combined_thumbnails)
+
+    def _on_zeta_download_requested(self, selected_studies, set_current_tab=True):
         """
         Handle Zeta Download button click - uses main Download Manager tab
         Updated to use the same Download Manager tab as the sidebar button
         """
-        print('🚀 [Zeta NPR] Button clicked - opening in Download Manager tab')
+        print('🚀 [Zeta Download] Button clicked - opening in Download Manager tab')
         try:
             # Check if server is selected
             server = self.data_access_panel_widget.get_server_selected()
@@ -468,7 +647,7 @@ Study UID: {study_uid}
                 )
                 return
             
-            print(f"🚀 [Zeta NPR] Server selected - {server}")
+            print(f"🚀 [Zeta Download] Server selected - {server}")
             
             # Get or create the main Download Manager tab (same as sidebar button)
             download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
@@ -484,9 +663,80 @@ Study UID: {study_uid}
                         self.tab_widget.setCurrentIndex(i)
                         break
             
-            # Enhance selected_studies with series information if not present
-            for study in selected_studies:
-                if 'series' not in study or not study.get('series'):
+            # Studies missing series info need a series-info fetch from the
+            # PACS server. That fetch is a blocking socket round-trip that can
+            # take many seconds (or time out) against a slow server, so it must
+            # NOT run on the UI thread — doing so froze the whole app. Run the
+            # enrichment on a worker thread, then finish queueing on the UI
+            # thread via QTimer.singleShot (the established pattern here).
+            needs_fetch = [
+                s for s in selected_studies
+                if ('series' not in s or not s.get('series')) and s.get('study_uid')
+            ]
+            try:
+                logger.warning(
+                    "[ZDL_DIAG] trigger selected=%d with_uid=%d with_series=%d needs_fetch=%d",
+                    len(selected_studies),
+                    sum(1 for s in selected_studies if s.get('study_uid')),
+                    sum(1 for s in selected_studies if s.get('series')),
+                    len(needs_fetch),
+                    extra={"component": "download"},
+                )
+            except Exception:
+                pass
+
+            def _finish_zeta_download():
+                try:
+                    try:
+                        logger.warning(
+                            "[ZDL_DIAG] finish: about to add_downloads n=%d detail(uid,series)=%s",
+                            len(selected_studies),
+                            [(bool(s.get('study_uid')), len(s.get('series') or [])) for s in selected_studies],
+                            extra={"component": "download"},
+                        )
+                    except Exception:
+                        pass
+                    # Add studies to download manager
+                    print(f"[Zeta Download] Adding {len(selected_studies)} studies to manager")
+                    download_manager.add_downloads(selected_studies, start_immediately=True)
+                    try:
+                        logger.warning("[ZDL_DIAG] finish: add_downloads call completed", extra={"component": "download"})
+                    except Exception:
+                        pass
+                    print(f"[Zeta Download] Studies added and downloads started automatically")
+                    # Throttle all ZetaBoost warmup workers globally while any download runs.
+                    try:
+                        from modules.zeta_boost.engine import set_global_download_active
+                        set_global_download_active(True)
+                        print("[GlobalDL] set_global_download_active=True")
+                    except Exception:
+                        pass
+
+                    if len(selected_studies) > 0:
+                        print(f"[Zeta Download] ✅ Added {len(selected_studies)} studies to queue")
+                        # UI feedback - downloads will appear in Download Manager tab
+                    else:
+                        print(f"[Zeta Download] ⚠️ No new studies added (may already be in queue)")
+                except Exception as e:
+                    print(f"❌ Error finalizing Zeta Download: {str(e)}")
+                    traceback.print_exc()
+                    QMessageBox.critical(self, "Error", f"Error in Zeta Download: {str(e)}")
+
+            if not needs_fetch:
+                _finish_zeta_download()
+                return
+
+            # Marshal the worker's completion back to the UI thread with a Qt
+            # signal. QTimer.singleShot() from the worker thread would never
+            # fire (no event loop there); this bridge, created on the UI
+            # thread, delivers _finish_zeta_download there via a queued slot.
+            _bridge = _ZetaDownloadBridge()
+            _bridge.finished.connect(_finish_zeta_download)
+            self._zeta_download_bridge = _bridge  # keep a reference alive until it fires
+
+            def _enrich_worker():
+                # Enhance selected_studies with series information if not present.
+                for study in needs_fetch:
                     try:
                         study_uid = study.get('study_uid')
                         patient_id = study.get('patient_id')
@@ -497,27 +747,29 @@ Study UID: {study_uid}
                                 study['series_count'] = study_info.get('count_of_series', len(study.get('series', [])))
                                 if study.get('series'):
                                     study['images_count'] = sum(s.get('image_count', 0) for s in study['series'])
-                                print(f"🚀 [Zeta NPR] Fetched {len(study.get('series', []))} series")
+                                print(f"🚀 [Zeta Download] Fetched {len(study.get('series', []))} series")
                     except Exception as e:
-                        print(f"⚠️ [Zeta NPR] Could not fetch series info: {e}")
-            
-            # Add studies to download manager
-            print(f"[Zeta NPR] Adding {len(selected_studies)} studies to manager")
-            download_manager.add_downloads(selected_studies, start_immediately=True)
-            print(f"[Zeta NPR] Studies added and downloads started automatically")
-            # Throttle all ZetaBoost warmup workers globally while any download runs.
+                        print(f"⚠️ [Zeta Download] Could not fetch series info: {e}")
+                try:
+                    logger.warning(
+                        "[ZDL_DIAG] worker done; enriched detail(uid,series)=%s",
+                        [(bool(s.get('study_uid')), len(s.get('series') or [])) for s in needs_fetch],
+                        extra={"component": "download"},
+                    )
+                except Exception:
+                    pass
+                # Hand back to the UI thread to finish queueing — thread-safe
+                # queued signal (QTimer.singleShot would not fire from here).
+                _bridge.finished.emit()
+
             try:
-                from modules.zeta_boost.engine import set_global_download_active
-                set_global_download_active(True)
-                print("[GlobalDL] set_global_download_active=True")
+                logger.warning(
+                    "[ZDL_DIAG] spawning enrich worker for %d studies", len(needs_fetch),
+                    extra={"component": "download"},
+                )
             except Exception:
                 pass
-
-            if len(selected_studies) > 0:
-                print(f"[Zeta NPR] ✅ Added {len(selected_studies)} studies to queue")
-                # UI feedback - downloads will appear in Download Manager tab
-            else:
-                print(f"[Zeta NPR] ⚠️ No new studies added (may already be in queue)")
+            threading.Thread(target=_enrich_worker, daemon=True, name="zeta-download-enrich").start()
 
         except Exception as e:
             print(f"❌ Error in Zeta Download: {str(e)}")

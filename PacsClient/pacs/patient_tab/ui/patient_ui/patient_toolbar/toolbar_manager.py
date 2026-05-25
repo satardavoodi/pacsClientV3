@@ -6882,11 +6882,10 @@ class ToolbarManager:
         self.update_audio_counter()
         toolbar_layout.addWidget(self._create_separator())
 
-        # AI Chat button
-        ai_chat_btn = create_tool_btn(self.patient_widget, 'AI Analyze', 'eagle.png')
-        ai_chat_btn.clicked.connect(self._on_ai_chat_clicked)
-        toolbar_layout.addWidget(ai_chat_btn)
-        self.tools_button[self.tool_access.AI_CHAT] = ai_chat_btn
+        # Eagle Eye / AI Analysis button
+        ai_analysis_btn = create_tool_btn(self.patient_widget, 'AI Analysis', 'eagle.png')
+        ai_analysis_btn.clicked.connect(self._on_ai_analysis_clicked)
+        toolbar_layout.addWidget(ai_analysis_btn)
 
         # Case of the Day (export current study folder) - position next to Eagle/Eye AI button
         case_btn = create_tool_btn(self.patient_widget, 'Save as Case of the Day', icon_name=None, text_icon="", icon_size=20)
@@ -7181,8 +7180,94 @@ class ToolbarManager:
         if button is not None:
             self._on_mic_clicked(button)
 
-    def _on_ai_chat_clicked(self):
-        self.toggle_ai_chat(self.patient_widget.selected_widget)
+    def _trigger_eagle_eye_analysis_pipeline(self) -> bool:
+        """Trigger AI analysis flow from the active viewer (FAST + ADVANCED safe)."""
+        selected_widget = getattr(self.patient_widget, 'selected_widget', None)
+        if selected_widget is None:
+            logger.warning("Eagle Eye analysis requested with no selected viewer")
+            return False
+
+        # FAST guard: QtFastContainer maps styles to _QtBridgeStyle where
+        # check_status() is a no-op. In FAST mode we must bypass style attach and
+        # run the real AIChatInteractorStyle pipeline through the fallback path.
+        widget_vtk = getattr(selected_widget, 'vtk_widget', selected_widget)
+        is_fast_qt_viewer = bool(getattr(widget_vtk, '_qt_bridge_active', False))
+        if is_fast_qt_viewer:
+            logger.warning(
+                "[EAGLE_EYE_FAST_HANDOFF] viewer_type=%s backend=fast_qt",
+                type(widget_vtk).__name__,
+            )
+
+        # Primary path: attach the interactor style to the selected viewer.
+        if not is_fast_qt_viewer:
+            try:
+                if hasattr(selected_widget, 'set_new_interactorstyle'):
+                    selected_widget.set_new_interactorstyle(AIChatInteractorStyle)
+                    style = getattr(selected_widget, 'current_style', None)
+                    if style is not None and hasattr(style, 'check_status'):
+                        style.check_status(self.patient_widget)
+                        return True
+            except Exception as e:
+                logger.warning(f"Primary Eagle Eye interactor path failed: {e}", exc_info=True)
+
+        # Fallback path: run AI status flow directly from available viewer metadata.
+        try:
+            vtk_widget = getattr(selected_widget, 'vtk_widget', None)
+            if vtk_widget is None:
+                # selected_widget IS the vtk_widget (QtFastContainer in FAST, VTKWidget in Advanced)
+                vtk_widget = selected_widget
+            image_viewer = getattr(vtk_widget, 'image_viewer', None)
+
+            # Ensure metadata_fixed is a real dict — _NullVtkObject stubs are truthy but not dicts.
+            metadata_fixed = {}
+            if image_viewer is not None:
+                _raw = getattr(image_viewer, 'metadata_fixed', None)
+                if isinstance(_raw, dict):
+                    metadata_fixed = _raw
+            if not metadata_fixed:
+                _raw = getattr(self.patient_widget, 'metadata_fixed', None)
+                if isinstance(_raw, dict):
+                    metadata_fixed = _raw
+
+            if not metadata_fixed:
+                logger.warning("Fallback Eagle Eye path: no metadata_fixed available")
+                return False
+
+            # Enrich with series-level modality if absent.
+            # metadata_fixed only carries patient/study DB fields; modality is a series attribute
+            # stored in QtViewerBridge.metadata['series']['modality'] after a series is loaded.
+            if not metadata_fixed.get('modality') and image_viewer is not None:
+                _series_meta = getattr(image_viewer, 'metadata', None)
+                if isinstance(_series_meta, dict):
+                    _mod = _series_meta.get('series', {}).get('modality', '')
+                    if _mod:
+                        metadata_fixed = dict(metadata_fixed)
+                        metadata_fixed['modality'] = _mod
+
+            class _AIImageViewerProxy:
+                pass
+
+            proxy = _AIImageViewerProxy()
+            proxy.vtk_widget = vtk_widget
+            proxy.metadata_fixed = metadata_fixed
+
+            style = AIChatInteractorStyle(proxy)
+            style.check_status(self.patient_widget)
+            return True
+        except Exception as e:
+            logger.error(f"Fallback Eagle Eye pipeline failed: {e}", exc_info=True)
+            return False
+
+    def _on_ai_analysis_clicked(self):
+        pipeline_started = self._trigger_eagle_eye_analysis_pipeline()
+
+        if not pipeline_started:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self.patient_widget,
+                "Eagle Eye",
+                "Eagle Eye analysis could not start. Please ensure an MG/DX series is loaded and selected."
+            )
 
     def _on_upload_menu_clicked(self, _checked=False, *, button=None):
         if button is not None:

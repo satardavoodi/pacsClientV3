@@ -526,12 +526,16 @@ class DownloadStateStore:
         with self._lock:
             completed = [uid for uid, state in self._states.items()
                         if state.status == DownloadStatus.COMPLETED]
-            
-            for uid in completed:
-                self.remove(uid)
-            
-            logger.info(f"🧹 Cleared {len(completed)} completed downloads")
-            return len(completed)
+
+        # Remove OUTSIDE the lock: remove() re-acquires _lock per call and
+        # fires observer notifications outside it (same pattern as update()).
+        # Calling remove() while this method held _lock made Qt-thread
+        # observers run under the download-thread lock.
+        for uid in completed:
+            self.remove(uid)
+
+        logger.info(f"🧹 Cleared {len(completed)} completed downloads")
+        return len(completed)
     
     def get_statistics(self) -> Dict[str, Any]:
         """

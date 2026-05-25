@@ -90,3 +90,11 @@ sendTelegramNotification($submission)`
 config/echomind_settings.tmp
 builder/plugin package/packages/run_cd/payload/python/modules/cd_burner/lightViewer.rar
 builder/plugin package/packages/run_cd/payload/python/modules/cd_burner/lightViewer/
+
+# ── Claude / AI agent workspace (worktrees, session state) ──
+.claude/
+
+# ── Root scratch / temp diff & recovery artifacts ──
+.tmp_diff*
+.tmp_backup_extract/
+_recovery/

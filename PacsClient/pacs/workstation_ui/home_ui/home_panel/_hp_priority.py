@@ -12,11 +12,10 @@ _print_logger = _logging.getLogger(__name__)
 def print(*args, **_kw):  # noqa: A001
     _print_logger.debug(' '.join(str(a) for a in args))
 
-from PacsClient.components import DicomGrpcClient
 from PacsClient.utils import get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 from PacsClient.utils.series_metadata_service import SeriesMetadataService
 from PacsClient.utils.config import SOURCE_PATH
-from modules.network import dicom_service_pb2, dicom_service_pb2_grpc
+from modules.network.socket_client import PatientListSocketClient
 from pathlib import Path
 
 from .widget import PRIORITY_MANAGER_AVAILABLE
@@ -380,31 +379,42 @@ class _HPPriorityMixin:
                 print(f"❌ No server selected for fetching series")
                 return None
                 
-            from modules.network.grpc_client import DicomGrpcClient
-            grpc_client = DicomGrpcClient(host=server['host'], port=50051)
-            
-            # دریافت اطلاعات study با metadata
-            request = dicom_service_pb2.StudyThumbnailsRequest(
-                study_instance_uid=study_uid,
-                include_image_data=False,
-                include_base64=False
-            )
-            response = grpc_client.stub.GetStudyThumbnails(request)
-            grpc_client.close()
+            host = server.get('host') or server.get('socket_host')
+            from modules.network.socket_config import get_socket_server_settings
+            port = int((get_socket_server_settings() or {}).get('port') or server.get('socket_port') or 50052)
+            if not host:
+                print(f"❌ No socket host available for fetching series")
+                return None
+
+            socket_client = PatientListSocketClient(host=host, port=port)
+            try:
+                response = socket_client.get_study_thumbnails(
+                    study_uid,
+                    include_base64=False,
+                    include_image_data=False,
+                )
+            finally:
+                socket_client.disconnect()
+
+            if not response:
+                print(f"❌ Empty socket response for study series metadata")
+                return None
             
             # استخراج و فرمت‌بندی سری‌ها
             series_list = []
-            for series in response.series_thumbnails:
+            for series in response.get('series_thumbnails') or []:
+                if not isinstance(series, dict):
+                    continue
                 series_info = {
-                    'series_uid': series.series_uid,
-                    'series_number': series.series_number,
-                    'series_description': series.series_description,
-                    'modality': series.modality,
-                    'image_count': series.image_count,
-                    'protocol_name': getattr(series, 'protocol_name', ''),
-                    'body_part_examined': getattr(series, 'body_part_examined', ''),
-                    'manufacturer': getattr(series, 'manufacturer', ''),
-                    'institution_name': getattr(series, 'institution_name', '')
+                    'series_uid': str(series.get('series_uid') or ''),
+                    'series_number': str(series.get('series_number') or ''),
+                    'series_description': str(series.get('series_description') or ''),
+                    'modality': str(series.get('modality') or ''),
+                    'image_count': int(series.get('image_count') or 0),
+                    'protocol_name': str(series.get('protocol_name') or ''),
+                    'body_part_examined': str(series.get('body_part_examined') or series.get('BodyPartExamined') or ''),
+                    'manufacturer': str(series.get('manufacturer') or ''),
+                    'institution_name': str(series.get('institution_name') or '')
                 }
                 series_list.append(series_info)
                 

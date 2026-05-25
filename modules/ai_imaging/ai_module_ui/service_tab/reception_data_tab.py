@@ -27,10 +27,13 @@ from .widgets.report_editor_dialog import ReportEditorDialog
 from .widgets.patient_info_card import PatientInfoCard, ReceptionInfoCard
 from .widgets.attachment_viewer import AttachmentGrid, AttachmentThumbnail
 from modules.network.socket_token_manager import get_socket_token_manager
+from modules.network.reception_api_config import get_reception_api_base_url
 from PacsClient.utils.scroll_style import get_scroll_area_style
 import qtawesome as qta
 import os
 import json
+import re
+import time
 
 
 class ZoomableImageView(QGraphicsView):
@@ -335,6 +338,18 @@ class ReceptionDataTab(QWidget):
             # Direct object response
             self.current_data = patient_data
 
+        # Persist server-origin report HTML snapshot immediately when data is
+        # received, so local DB storage does not depend on opening the editor.
+        try:
+            report = (self.current_data.get("report") or {})
+            if not report:
+                report = (self.current_data.get("imagingWorkflow") or {}).get("report") or {}
+            if report:
+                self._persist_server_report_snapshot(report, disk_source="received")
+        except Exception:
+            # Non-fatal: UI rendering should continue even if local snapshot fails.
+            pass
+
         # Display data
 
         self._display_data()
@@ -632,7 +647,7 @@ class ReceptionDataTab(QWidget):
             return
         
         # Get base URL for thumbnail loading
-        base_url = self.service.base_url if hasattr(self.service, 'base_url') else "http://81.16.117.196:8080"
+        base_url = self.service.base_url if hasattr(self.service, 'base_url') else get_reception_api_base_url()
         
         # Create the new AttachmentGrid widget
         attachment_grid = AttachmentGrid(attachments, base_url, self)
@@ -663,7 +678,7 @@ class ReceptionDataTab(QWidget):
         
         # Build full URL
         if file_url.startswith("/"):
-            base_url = self.service.base_url if hasattr(self.service, 'base_url') else "http://81.16.117.196:8080"
+            base_url = self.service.base_url if hasattr(self.service, 'base_url') else get_reception_api_base_url()
             full_url = f"{base_url}{file_url}"
 
         elif file_url.startswith("http://") or file_url.startswith("https://"):
@@ -1217,6 +1232,10 @@ class ReceptionDataTab(QWidget):
         
         logger.info("[AI_REPORT_LOAD] Starting report editor initialization")
         logger.info(f"[AI_REPORT_LOAD] Current report: {report.get('_id', 'N/A')}")
+
+        # Persist the latest server report snapshot locally so the patient flow
+        # always has a durable copy in the User Data database.
+        self._persist_server_report_snapshot(report, disk_source="received")
         
         # Check for AI-generated report from database
         ai_report_content = self._load_ai_report_if_exists()
@@ -1257,6 +1276,124 @@ class ReceptionDataTab(QWidget):
         logger.info("[AI_REPORT_LOAD] Showing dialog")
         dialog.exec()
         logger.info("[AI_REPORT_LOAD] Dialog closed")
+
+    def _collect_possible_patient_ids_for_ai_report(self) -> list[str]:
+        """Collect all known patient identifiers used by report persistence/load paths."""
+        patient = self.current_data.get("patient", {}) if self.current_data else {}
+        possible_patient_ids = []
+
+        for field_value in [
+            self.current_data.get("nationalCode") if self.current_data else None,
+            patient.get("NationalID"),
+            patient.get("_id"),
+            self.current_data.get("receptionId") if self.current_data else None,
+            self.current_data.get("_id") if self.current_data else None,
+            self.current_data.get("studyUID") if self.current_data else None,
+            self.current_data.get("study_uid") if self.current_data else None,
+        ]:
+            if field_value:
+                text_value = str(field_value)
+                if text_value not in possible_patient_ids:
+                    possible_patient_ids.append(text_value)
+
+        return possible_patient_ids
+
+    def _safe_name_fragment(self, value: str) -> str:
+        """Return a filesystem-safe fragment for report snapshot paths."""
+        return re.sub(r"[^A-Za-z0-9._-]+", "_", (value or "unknown")).strip("_") or "unknown"
+
+    def _persist_report_html_to_disk(self, html_content: str, *, source: str, status: str) -> None:
+        """Persist report HTML snapshots to User Data/reports/reception."""
+        if not html_content:
+            return
+
+        from PacsClient.utils.data_paths import RECEPTION_REPORTS_DIR
+
+        patient_obj = (self.current_data or {}).get("patient", {})
+        patient_code = (
+            str(self.patient_id or "")
+            or str((self.current_data or {}).get("patientId") or "")
+            or str((self.current_data or {}).get("nationalCode") or "")
+            or str(patient_obj.get("NationalID") or "")
+            or "unknown"
+        )
+        reception_id = str((self.current_data or {}).get("receptionId") or "")
+
+        target_dir = RECEPTION_REPORTS_DIR / f"patient_{self._safe_name_fragment(patient_code)}"
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        latest_name = f"latest_{source}.html"
+        latest_path = target_dir / latest_name
+
+        previous = ""
+        if latest_path.exists():
+            try:
+                previous = latest_path.read_text(encoding="utf-8", errors="ignore")
+            except Exception:
+                previous = ""
+
+        if previous != html_content:
+            latest_path.write_text(html_content, encoding="utf-8")
+            timestamp = int(time.time())
+            snapshot_name = (
+                f"{source}_r{self._safe_name_fragment(reception_id)}"
+                f"_s{self._safe_name_fragment(status)}_{timestamp}.html"
+            )
+            (target_dir / snapshot_name).write_text(html_content, encoding="utf-8")
+
+    def _persist_server_report_snapshot(self, report: dict, *, disk_source: str = "received") -> None:
+        """Save server-origin report HTML locally (deduplicated by exact content)."""
+        import logging
+        logger = logging.getLogger(__name__)
+
+        try:
+            from PacsClient import utils as U
+
+            html_content = (report.get("content") or report.get("findings") or "").strip()
+            if not html_content:
+                return
+
+            # Defensive schema init so this path never fails due to a missing table.
+            U.ai_ensure_schema()
+
+            possible_patient_ids = self._collect_possible_patient_ids_for_ai_report()
+            if not possible_patient_ids:
+                logger.warning("[AI_REPORT_PERSIST] No patient identifiers found; skipping snapshot save")
+                return
+
+            for search_id in possible_patient_ids:
+                existing_reports = U.ai_get_reception_reports(
+                    patient_id=search_id,
+                    status=None,
+                    limit=25,
+                )
+                if any((item.get("html_content") or "") == html_content for item in existing_reports):
+                    logger.info("[AI_REPORT_PERSIST] Snapshot already exists; skipping duplicate insert")
+                    return
+
+            study_uid = (
+                (self.current_data or {}).get("studyUID")
+                or (self.current_data or {}).get("study_uid")
+                or report.get("studyUID")
+                or report.get("study_uid")
+            )
+            source_status = str(report.get("status", "pending") or "pending")
+            sender_info = f"Source=server_report_editor status={source_status}"
+
+            U.ai_save_reception_report(
+                patient_id=possible_patient_ids[0],
+                html_content=html_content,
+                study_uid=study_uid,
+                sender_info=sender_info,
+            )
+            self._persist_report_html_to_disk(
+                html_content,
+                source=disk_source,
+                status=source_status,
+            )
+            logger.info("[AI_REPORT_PERSIST] Saved server report snapshot to local DB")
+        except Exception as e:
+            logger.warning("[AI_REPORT_PERSIST] Failed to save server snapshot: %s", e)
     
     def _load_ai_report_if_exists(self) -> str | None:
         """
@@ -1270,6 +1407,7 @@ class ReceptionDataTab(QWidget):
         
         try:
             from PacsClient import utils as U
+            U.ai_ensure_schema()
             
             # Debug: Log the full structure
             logger.info(f"[AI_REPORT_LOAD] ====== DEBUG: Current Data Structure ======")
@@ -1308,20 +1446,7 @@ class ReceptionDataTab(QWidget):
             
             # IMPORTANT: Build a list of ALL possible patient IDs to search with
             # This is because AI Chat might use Study UID, but Medical Report Editor has different IDs
-            possible_patient_ids = []
-            
-            # Collect all non-None identifiers
-            for field_value in [
-                self.current_data.get("nationalCode"),
-                patient.get("NationalID"),
-                patient.get("_id"),
-                self.current_data.get("receptionId"),
-                self.current_data.get("_id"),
-                self.current_data.get("studyUID"),
-                self.current_data.get("study_uid"),
-            ]:
-                if field_value and str(field_value) not in possible_patient_ids:
-                    possible_patient_ids.append(str(field_value))
+            possible_patient_ids = self._collect_possible_patient_ids_for_ai_report()
             
             if not possible_patient_ids:
                 logger.warning("[AI_REPORT_LOAD] No patient identifiers found in current data")
@@ -1348,15 +1473,6 @@ class ReceptionDataTab(QWidget):
                     all_reports.extend(reports)
                 else:
                     logger.info(f"[AI_REPORT_LOAD]   ✗ No reports found with this ID")
-            
-            # Remove duplicates (same report ID)
-            seen_ids = set()
-            unique_reports = []
-            for report in all_reports:
-                report_id = report.get('id')
-                if report_id not in seen_ids:
-                    seen_ids.add(report_id)
-                    unique_reports.append(report)
             
             # Remove duplicates (same report ID)
             seen_ids = set()
@@ -1430,6 +1546,12 @@ class ReceptionDataTab(QWidget):
         if not reception_id:
             QMessageBox.warning(dialog, "Error", "Reception number not found.")
             return
+
+        # Persist latest edited report snapshot before/alongside API save.
+        self._persist_server_report_snapshot({
+            "content": new_content,
+            "status": new_status,
+        }, disk_source="edited")
         
         self._save_report_to_api(reception_id, new_content, new_status, dialog)
     

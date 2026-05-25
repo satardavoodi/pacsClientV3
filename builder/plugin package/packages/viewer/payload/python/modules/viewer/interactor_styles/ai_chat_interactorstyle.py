@@ -757,6 +757,12 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
         # 3) Worker
         breast_url = get_server_url('breast')
+        if not breast_url:
+            show_message(
+                "Breast AI service URL is not configured. "
+                "Go to Settings > Server Settings > AI Service URL, approve, then save URLs."
+            )
+            return
         worker = MamoWorker(study_uid, breast_url, det_eval_thr=det_thr)
         self._current_worker = worker
 
@@ -849,6 +855,16 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         # Store reference to overlay for cleanup
         overlay_ref = {'overlay': loading_overlay, 'timer': None}
         boneage_url = get_server_url('boneage')
+        if not boneage_url:
+            try:
+                AiPacsLoadingOverlay.hide_overlay(loading_overlay, fade_ms=0, delay_ms=0)
+            except RuntimeError:
+                pass
+            show_message(
+                "Bone age AI service URL is not configured. "
+                "Go to Settings > Server Settings > AI Service URL, approve, then save URLs."
+            )
+            return
 
         worker = BoneAgeWorker(
             study_uid=study_uid,

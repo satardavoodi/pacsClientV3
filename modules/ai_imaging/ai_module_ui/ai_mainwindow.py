@@ -127,13 +127,8 @@ class AiMainWindow(QMainWindow):
             pass
 
     def _apply_dark_theme(self):
-        # بهتره برای یکنواختی QSS در ویندوز
-        app = QApplication.instance()
-        if app is not None:
-            try:
-                app.setStyle("Fusion")
-            except Exception:
-                pass
+        # Avoid global app style mutation here. Re-applying Fusion at tab-open time
+        # can repolish the full widget tree and block the main thread.
 
         self.setStyleSheet("""
             QWidget {

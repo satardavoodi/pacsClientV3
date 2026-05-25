@@ -221,6 +221,28 @@ class _VCLoadMixin:
 
             series_key = str(series_number)
 
+            # ── Multi-study load resolution ──────────────────────────────────
+            # A non-primary study's series carries a patient-unique offset key.
+            # Resolve its real study folder + original series number so the disk
+            # loader reads the correct study. The offset key stays the cache /
+            # dedup / tracking key throughout this method.
+            ms_disk_series_number = series_number
+            try:
+                _ms_info = getattr(self.parent_widget, '_server_series_info', {}) or {}
+                _ms_entry = _ms_info.get(series_key) if isinstance(_ms_info, dict) else None
+                if isinstance(_ms_entry, dict) and int(_ms_entry.get('_study_slot', 0) or 0) > 0:
+                    _ms_orig = _ms_entry.get('_orig_series_number')
+                    _ms_path = _ms_entry.get('series_path')
+                    if _ms_orig and _ms_path:
+                        ms_disk_series_number = str(_ms_orig)
+                        study_path = str(Path(_ms_path).parent)
+                        logger.debug(
+                            f"[MULTI-STUDY LOAD] key={series_key} -> "
+                            f"study_path={study_path} disk_series={ms_disk_series_number}"
+                        )
+            except Exception:
+                ms_disk_series_number = series_number
+
             # Fast no-op: same series already displayed in target viewport.
             # Prevents duplicate full ITK pipeline when a second request arrives
             # while the first switch has already applied.
@@ -366,7 +388,7 @@ class _VCLoadMixin:
             # has DB/alternative resolution logic.
             estimated_file_count = 0
             try:
-                tentative_folder = Path(study_path) / str(series_number)
+                tentative_folder = Path(study_path) / str(ms_disk_series_number)
                 if tentative_folder.exists() and tentative_folder.is_dir():
                     estimated_file_count = len(list(tentative_folder.glob("*.dcm"))) + len(list(tentative_folder.glob("*.DCM")))
             except Exception:
@@ -390,7 +412,7 @@ class _VCLoadMixin:
                 _dicom_t = time.perf_counter()
                 result = load_single_series_by_number(
                     study_path=study_path,  # Pass correct study path, not series path
-                    series_number=series_number,
+                    series_number=ms_disk_series_number,
                     patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
                     study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
                     ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
@@ -446,6 +468,19 @@ class _VCLoadMixin:
                     return False
                 vtk_image_data, metadata, (patient_pk, study_pk) = item
 
+                # Multi-study: the disk loader used the original series number,
+                # so the returned metadata carries that number. Normalize it to
+                # the patient-unique offset key so the viewer's series tracking
+                # (no-op detection, focus highlight, cache) stays unambiguous
+                # across studies; keep the original number for display.
+                if str(ms_disk_series_number) != series_key:
+                    try:
+                        if isinstance(metadata, dict) and isinstance(metadata.get('series'), dict):
+                            metadata['series']['_orig_series_number'] = str(ms_disk_series_number)
+                            metadata['series']['series_number'] = series_key
+                    except Exception:
+                        pass
+
                 # [H7-P4] Series bind snapshot — 7-field comparison at metadata load time
                 try:
                     _h7_sn = str(series_number)
@@ -495,7 +530,7 @@ class _VCLoadMixin:
                         and not (metadata.get('instances') or [])
                         and _h7_disk_count > 0
                     ):
-                        _repair_sp = Path(study_path) / str(series_number)
+                        _repair_sp = Path(study_path) / str(ms_disk_series_number)
                         if _repair_sp.is_dir():
                             from PacsClient.pacs.patient_tab.utils.image_io import (
                                 _build_metadata_headers_only,

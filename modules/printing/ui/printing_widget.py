@@ -901,15 +901,24 @@ class PrintingWidget(QWidget):
                 if not pix.isNull():
                     return pix.scaled(72, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-        # 1.5) Local thumbnail fallback: thumbnails/{study_uid}/{series_number}.png
+        # 1.5) Unified thumbnail source: the in-memory ThumbnailStore, which
+        #      itself falls back to the canonical on-disk cache at
+        #      THUMBNAIL_PATH/<study_uid>/<series_number>.png. This replaces a
+        #      stale hard-coded ``BASE_PATH/"thumbnails"`` path — BASE_PATH is
+        #      the code root, but thumbnails live under user_data, so the old
+        #      path pointed at the legacy pre-migration location and almost
+        #      always missed (forcing the slow Tier-2 DICOM decode below).
+        #      Resolve against the series' own study_uid for multi-study
+        #      correctness, falling back to the selected study.
         try:
-            study_uid = self._selected_study_uid
+            study_uid = str(series.get("study_uid") or self._selected_study_uid or "").strip()
             series_number = str(series.get("series_number", "")).strip()
             if study_uid and series_number:
-                local_thumb = Path(BASE_PATH) / "thumbnails" / str(study_uid) / f"{series_number}.png"
-                if local_thumb.exists():
-                    pix = QPixmap(str(local_thumb))
-                    if not pix.isNull():
+                from modules.storage.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes
+                thumb_bytes = ThumbnailStore.instance().get_bytes(study_uid, series_number)
+                if thumb_bytes:
+                    pix = make_pixmap_from_bytes(thumb_bytes)
+                    if pix is not None and not pix.isNull():
                         return pix.scaled(72, 54, Qt.KeepAspectRatio, Qt.SmoothTransformation)
         except Exception:
             pass

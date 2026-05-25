@@ -54,8 +54,8 @@ See [Development Setup](docs/development/setup-and-tooling.md) for more details.
 
 ## Module Map
 
-- Viewer, fast path: `PacsClient/pacs/patient_tab/viewers/lightweight_2d_pipeline.py`
-- Viewer, advanced path: `PacsClient/pacs/patient_tab/viewers/viewer_2d.py`
+- Viewer, fast path: `modules/viewer/fast/lightweight_2d_pipeline.py`
+- Viewer, advanced path: `modules/viewer/advanced/viewer_2d.py`
 - Zeta Download Manager: `PacsClient/zeta_download_manager/`
 - Zeta MPR and orthogonal MPR: `PacsClient/pacs/patient_tab/zeta mpr/`, `PacsClient/pacs/patient_tab/orthogonal_mpr/`
 - Advanced imaging and AI tools: `PacsClient/pacs/patient_tab/ui/ai_module_ui/`

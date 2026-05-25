@@ -3,7 +3,7 @@ import logging
 import os
 import re
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QIcon
 from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
@@ -33,6 +33,10 @@ from .external_pacs_settings import _load_config, _save_config
 from .servers_config import (
     load_servers as load_ai_service_urls,
     save_servers as save_ai_service_urls,
+)
+from modules.network.reception_api_config import (
+    get_reception_api_config,
+    reload_reception_api_config,
 )
 
 log = logging.getLogger(__name__)
@@ -138,9 +142,27 @@ class ServerSettingsWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.json_file = _AIPACS_SERVERS_FILE
+        # [Startup] Initial data scans (server list, AI service URLs, external
+        # and cloud server discovery) are deferred until the widget is first
+        # shown — see showEvent / _load_initial_data. This keeps constructing
+        # ServerSettingsWidget cheap so it does not weigh on the lazily built
+        # Settings tab.
+        self._initial_data_loaded = False
         self._setup_ui()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        # Run the (potentially slow) initial data scans once, on first show.
+        if not self._initial_data_loaded:
+            self._initial_data_loaded = True
+            QTimer.singleShot(0, self._load_initial_data)
+
+    def _load_initial_data(self):
+        """Load initial server / service data. Deferred off __init__ so widget
+        construction stays lightweight; invoked once from showEvent."""
         self.load_servers()
         self._load_ai_service_urls()
+        self._load_reception_api_settings()
         self._ext_load_and_display()
         self._cloud_load_and_display()
 
@@ -197,6 +219,7 @@ class ServerSettingsWidget(QWidget):
 
         self._build_left_card(left_column)
         self._build_ai_service_url_card(left_column)
+        self._build_reception_api_card(left_column)
         self._build_right_card(right_column)
         self._build_cloud_card(right_column)
 
@@ -940,7 +963,16 @@ class ServerSettingsWidget(QWidget):
         if not edit:
             return
         if self._validate_ai_service_url(edit.text()):
-            self._set_ai_service_status(name, "Approved", ok=True)
+            # "Approve" should activate the URL path immediately for runtime readers.
+            services = {}
+            for service_name in _AI_SERVICE_NAMES:
+                service_edit = self._ai_service_edits.get(service_name)
+                services[service_name] = (service_edit.text().strip() if service_edit else "")
+
+            if save_ai_service_urls(services):
+                self._set_ai_service_status(name, "Approved", ok=True)
+            else:
+                self._set_ai_service_status(name, "Save Failed", ok=False)
         else:
             self._set_ai_service_status(name, "Invalid", ok=False)
 
@@ -1298,3 +1330,180 @@ class ServerSettingsWidget(QWidget):
         header.setSectionResizeMode(4, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(5, QHeaderView.ResizeToContents)
         self._cloud_on_selection_changed()
+
+    # ========================================================================
+    #  RECEPTION / WORKFLOW API LOGIC  (config/reception_api_config.json)
+    # ========================================================================
+    def _build_reception_api_card(self, parent):
+        """Reception / Workflow REST API endpoint editor.
+
+        This is a *separate* server channel from the PACS imaging socket
+        (socket_config.json / port 50052). It feeds reporter-hydration, the
+        report dialog and the reception data tab.
+        """
+        card = QFrame()
+        card.setObjectName("ServiceUrlCard")
+        card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(14, 10, 14, 14)
+        lay.setSpacing(4)
+
+        hdr = QLabel("Reception / Workflow API")
+        hdr.setObjectName("SectionTitle")
+        lay.addWidget(hdr)
+
+        sub = QLabel(
+            "REST endpoint for admission/reception data, report metadata and "
+            "reporting-physician hydration. Separate from the PACS imaging "
+            "socket channel \u2013 uses your current login credentials."
+        )
+        sub.setObjectName("SectionSubtitle")
+        sub.setWordWrap(True)
+        lay.addWidget(sub)
+
+        panel = QFrame()
+        panel.setObjectName("FormArea")
+        pl = QVBoxLayout(panel)
+        pl.setContentsMargins(14, 10, 14, 10)
+        pl.setSpacing(8)
+
+        row = QGridLayout()
+        row.setHorizontalSpacing(10)
+        row.setVerticalSpacing(8)
+
+        lbl = QLabel("Base URL:")
+        lbl.setObjectName("FormLabel")
+        lbl.setFixedWidth(95)
+        self._reception_api_edit = QLineEdit()
+        self._reception_api_edit.setPlaceholderText("http://host:port")
+        self._reception_api_edit.setFixedHeight(30)
+        self._reception_api_status = QLabel("-")
+        self._reception_api_status.setObjectName("FormLabel")
+        self._reception_api_status.setAlignment(Qt.AlignCenter)
+        self._reception_api_status.setFixedWidth(110)
+        test_btn = QPushButton("Test")
+        test_btn.setProperty("role", "success")
+        test_btn.setFixedHeight(30)
+        test_btn.clicked.connect(self._on_reception_api_test)
+
+        row.addWidget(lbl, 0, 0)
+        row.addWidget(self._reception_api_edit, 0, 1)
+        row.addWidget(self._reception_api_status, 0, 2)
+        row.addWidget(test_btn, 0, 3)
+        row.setColumnStretch(1, 1)
+        pl.addLayout(row)
+
+        btn_row = QHBoxLayout()
+        btn_row.setSpacing(12)
+        save_btn = QPushButton("Save Endpoint")
+        save_btn.setProperty("role", "primary")
+        save_btn.setFixedHeight(30)
+        save_btn.clicked.connect(self._save_reception_api_settings)
+        load_btn = QPushButton("Load")
+        load_btn.setFixedHeight(30)
+        load_btn.clicked.connect(self._load_reception_api_settings)
+        btn_row.addWidget(save_btn, 1)
+        btn_row.addWidget(load_btn, 1)
+        pl.addLayout(btn_row)
+
+        lay.addWidget(panel)
+        parent.addWidget(card)
+
+    def _set_reception_api_status(self, text, ok=None):
+        lbl = getattr(self, "_reception_api_status", None)
+        if not lbl:
+            return
+        lbl.setText(text)
+        if ok is True:
+            lbl.setStyleSheet("color: #10b981; font-weight: 700;")
+        elif ok is False:
+            lbl.setStyleSheet("color: #f59e0b; font-weight: 700;")
+        else:
+            lbl.setStyleSheet("color: #9ca3af;")
+
+    def _load_reception_api_settings(self):
+        edit = getattr(self, "_reception_api_edit", None)
+        if not edit:
+            return
+        try:
+            base_url = get_reception_api_config().get_base_url()
+        except Exception as exc:
+            log.warning("Reception API config load failed: %s", exc)
+            base_url = ""
+        edit.setText(str(base_url or "").strip())
+        self._set_reception_api_status("Loaded", ok=None)
+
+    def _save_reception_api_settings(self):
+        edit = getattr(self, "_reception_api_edit", None)
+        if not edit:
+            return
+        raw = (edit.text() or "").strip()
+        if not raw:
+            QMessageBox.warning(self, "Invalid", "Reception/API base URL is required.")
+            self._set_reception_api_status("Empty", ok=False)
+            return
+        normalized = raw if "://" in raw else ("http://" + raw)
+        try:
+            cfg = get_reception_api_config()
+            cfg.set_base_url(normalized, save_to_file=True)
+            reload_reception_api_config()
+        except Exception as exc:
+            log.error("Failed to save Reception API config: %s", exc)
+            QMessageBox.critical(
+                self, "Error", "Failed to save Reception/API endpoint:\n%s" % exc
+            )
+            self._set_reception_api_status("Save Failed", ok=False)
+            return
+        edit.setText(normalized.rstrip("/"))
+        self._set_reception_api_status("Saved", ok=True)
+        QMessageBox.information(
+            self, "Saved",
+            "Reception/Workflow API endpoint saved.\n"
+            "New REST calls (reporter hydration, report dialog, reception "
+            "tab) will use this endpoint.",
+        )
+
+    def _on_reception_api_test(self):
+        edit = getattr(self, "_reception_api_edit", None)
+        if not edit:
+            return
+        raw = (edit.text() or "").strip()
+        if not raw:
+            self._set_reception_api_status("Empty", ok=False)
+            return
+        normalized = raw if "://" in raw else ("http://" + raw)
+        self._set_reception_api_status("Checking...", ok=None)
+
+        def _thread_main():
+            import socket as _socket
+            from urllib.parse import urlparse as _urlparse
+            from PySide6.QtCore import QTimer as _QTimer
+            ok = False
+            detail = ""
+            try:
+                parsed = _urlparse(normalized)
+                host = parsed.hostname
+                port = parsed.port or (
+                    443 if (parsed.scheme or "").lower() == "https" else 80
+                )
+                if not host:
+                    detail = "Invalid host"
+                else:
+                    with _socket.create_connection((host, int(port)), timeout=3.0):
+                        ok = True
+            except Exception as exc:
+                detail = str(exc)
+
+            def _done():
+                if ok:
+                    self._set_reception_api_status("Reachable", ok=True)
+                else:
+                    self._set_reception_api_status("Unreachable", ok=False)
+                    lbl = getattr(self, "_reception_api_status", None)
+                    if lbl and detail:
+                        lbl.setToolTip(detail)
+
+            _QTimer.singleShot(0, _done)
+
+        import threading as _threading
+        _threading.Thread(target=_thread_main, daemon=True).start()

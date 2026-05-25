@@ -15,7 +15,7 @@ from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QPixmap
 from PySide6.QtWidgets import QApplication, QButtonGroup, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QToolBar, QVBoxLayout, QWidget
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager
-from PacsClient.pacs.patient_tab.utils import VerticalButton, create_attachment_folder, get_name_file_from_path, get_quickly_series_info, open_folder
+from PacsClient.pacs.patient_tab.utils import ThumbnailImageSourceService, VerticalButton, create_attachment_folder, get_name_file_from_path, get_quickly_series_info, open_folder
 from PacsClient.utils.scroll_style import get_scroll_area_style
 
 
@@ -149,6 +149,15 @@ class _PWPanelsMixin:
         self.switch_right_panel("ai_chat", force=True)
 
     def _on_sidebar_ai_module_clicked(self):
+        # User-initiated Eagle Eye click should go through the analysis pipeline
+        # (retry/sensitivity first), not direct tab opening.
+        tm = getattr(self, 'toolbar_manager', None)
+        if tm is not None and hasattr(tm, '_on_ai_analysis_clicked'):
+            try:
+                tm._on_ai_analysis_clicked()
+                return
+            except Exception:
+                pass
         self.switch_right_panel("ai_module", force=True)
 
     def _on_sidebar_advanced_tools_clicked(self):
@@ -263,20 +272,11 @@ class _PWPanelsMixin:
                 self.right_panel.setFixedWidth(self.default_panel_width)  # Reset to default width
             self._apply_sidebar_button_styles(ai_module=True)
             self._auto_open_first_series_for_eagle_eye()
-            
-            # ✅ Show modal loading overlay that blocks all interaction
-            self._show_eagle_eye_loading_ui()
-            
-            # Force process events to ensure loading overlay is rendered
-            QApplication.processEvents()
-            QApplication.processEvents()
-            
-            # Safety timeout: Force remove loading after 10 seconds no matter what
-            QTimer.singleShot(10000, lambda: self._force_hide_eagle_eye_loading())
-            
-            # Open Eagle Eye tab with minimal delay
+
+            # Do not show loading here. Loading belongs to the confirmed AI run path
+            # after sensitivity/retry dialogs in AIChatInteractorStyle.
             if self.method_add_new_tab:
-                QTimer.singleShot(50, lambda: self._open_eagle_eye_tab_with_loading())
+                self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
 
         elif option == 'advanced_tools':
             print("[PatientWidget] Advanced Analysis requested")
@@ -461,7 +461,18 @@ class _PWPanelsMixin:
         if series_name in self.thumbnail_manager.lst_buttons_name:
             return thumb_index  # we don't add new thumbnail
 
-        pixmap = QPixmap(file_path_thumbnail)
+        # Resolve the thumbnail image through the unified source: the shared
+        # in-memory ThumbnailStore first (populated by the download
+        # write-through), then a direct read of the canonical PNG file. The
+        # file path passed in is always the correct per-series path, so a
+        # store miss (e.g. a multi-study non-primary series, whose store key
+        # cannot match the widget's primary study_uid) falls back cleanly to
+        # the exact same QPixmap(file) read used before — no regression.
+        _thumb_src = getattr(self, '_thumbnail_image_source_service', None)
+        if _thumb_src is None:
+            _thumb_src = ThumbnailImageSourceService()
+            self._thumbnail_image_source_service = _thumb_src
+        pixmap = _thumb_src.load_pixmap(self, canonical_series_key, file_path_thumbnail)
         thumb_widget = self.thumbnail_manager.create_thumbnail_widget(
             # pixmap=pixmap, label_text=series_name, sop_instance_uid='test uid', thumbnail_index=thumb_index,
             pixmap=pixmap, label_text=series_name, sop_instance_uid='test uid', thumbnail_index=key_thumbnail,

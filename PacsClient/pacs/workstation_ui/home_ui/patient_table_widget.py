@@ -1,9 +1,9 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,
                                 QPushButton, QLabel, QHeaderView, QAbstractItemView, QCheckBox,
                                 QSizePolicy, QStyledItemDelegate, QDialog, QListWidget, QListWidgetItem,
-                                QDialogButtonBox, QMessageBox, QProgressDialog, QApplication)
+                                QDialogButtonBox, QMessageBox, QProgressDialog, QApplication, QToolButton, QMenu)
 from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex, QItemSelectionModel
-from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont,QIcon
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont,QIcon, QAction
 import threading
 import logging
 import qtawesome as qta
@@ -11,11 +11,16 @@ import asyncio
 import time
 import json
 import os
+import requests
 from pathlib import Path
 from PacsClient.utils import find_patient_pk
+from PacsClient.utils.data_paths import REPORTS_DIR, RECEPTION_REPORTS_DIR
+from PacsClient.utils.config import SOURCE_PATH, ATTACHMENT_PATH, ECHOMIND_MEMORY_DIR, ECHOMIND_LOGS_DIR
 from PacsClient.utils.custom_checkbox import CustomCheckbox
 from PacsClient.utils.theme_manager import get_theme_manager
+from modules.network.socket_token_manager import get_socket_token_manager
 from modules.network.socket_report_status_service import get_report_status_service, REPORT_STATUSES, STATUS_COLORS
+from modules.network.reception_api_config import get_reception_api_base_url
 from .report_status_dialog import ReportStatusDialog
 
 logger = logging.getLogger(__name__)
@@ -564,13 +569,16 @@ class PatientTableWidget(QWidget):
     patientClicked = Signal(str, str, str)  # patient_id, patient_name, study_uid - for thumbnail display
     checkboxStateChanged = Signal(int, bool)  # row index, checked state
     downloadRequested = Signal(list)  # list of patient data dictionaries for download
-    zetaNprRequested = Signal(list)  # list of patient data dictionaries for Zeta Download download
+    zetaDownloadRequested = Signal(list)  # list of patient data dictionaries for Zeta Download download
+    receptionDataRequested = Signal(list)  # list of patient data dictionaries for reception data download
     offlineCloudExportRequested = Signal(list)  # downloaded studies to export into offline cloud package
     offlineCloudSyncRequested = Signal(list)  # selected studies for offline cloud import/export
     cdBurnRequested = Signal(list)  # list of patient data dictionaries for CD burning
     printRequested = Signal()  # request to open printing module with current selected studies
     statusUpdateResult = Signal(str, str, object)  # study_uid, new_status, response
     localStudyStateChanged = Signal(str)  # study_uid changed locally and may need offline cloud autosync
+    reportDialogDataFetchResult = Signal(str, str, str, int)  # study_uid, comment, reporting_physician, fetch_token
+    reportingPhysicianResolved = Signal(str, str, str)  # patient_id, patient_name, reporting_physician
 
     def __init__(self, parent=None):
         super(PatientTableWidget, self).__init__(parent)
@@ -581,6 +589,16 @@ class PatientTableWidget(QWidget):
         self.report_status_service.statusError.connect(self._on_report_status_error)
         # Connect our own signal for status update result
         self.statusUpdateResult.connect(self._handle_status_update_result)
+        self.reportDialogDataFetchResult.connect(self._on_report_dialog_data_fetched)
+        # Background reporter-hydration workers run in non-GUI threads and
+        # cannot touch widgets directly. They emit this signal; the queued
+        # cross-thread connection marshals the column update onto the UI
+        # thread. (QTimer.singleShot does not fire from a worker thread.)
+        self.reportingPhysicianResolved.connect(self.update_reporting_physician_for_patient)
+        self._active_report_dialogs = {}
+        self._comment_cache_lock = threading.Lock()
+        self._report_fetch_lock = threading.Lock()
+        self._report_fetch_tokens = {}
         
         # Theme support
         self.theme_manager = get_theme_manager()
@@ -590,6 +608,11 @@ class PatientTableWidget(QWidget):
         # Cache for download status to avoid repeated file system checks
         self._download_status_cache = {}  # study_uid -> {'status': str, 'timestamp': float}
         self._cache_validity_seconds = 5  # Cache is valid for 5 seconds
+        self._local_status_cache = {}  # (study_uid, patient_id) -> {'data': dict, 'timestamp': float}
+        # Snapshot of EchoMind memory/log filenames, reused across a whole
+        # patient-list population pass instead of re-walking the tree per row.
+        self._echomind_names_cache = None  # list[str] (lowercased file names)
+        self._echomind_names_ts = 0.0
         
         # Font size settings (default: 12px)
         self._table_font_size = self._load_font_size()
@@ -690,6 +713,9 @@ class PatientTableWidget(QWidget):
         # Connect signals
         self.results_table.itemClicked.connect(self._on_patient_clicked)
         self.results_table.itemDoubleClicked.connect(self._on_patient_double_clicked)
+        # Fire thumbnail loading whenever the selected ROW changes, regardless of which
+        # column was clicked (itemClicked is not emitted for setCellWidget cells).
+        self.results_table.selectionModel().currentRowChanged.connect(self._on_current_row_changed)
         # Remove itemChanged connection as we're using checkbox widgets now
         
         # Connect mouse events for cursor management
@@ -742,8 +768,8 @@ class PatientTableWidget(QWidget):
         self.results_table.setColumnWidth(COL['patient_name'], 150)  # Patient name
         self.results_table.setColumnWidth(COL['patient_id'], 100)  # Patient ID
         self.results_table.setColumnWidth(COL['body_part'], 100)  # Body part
-        self.results_table.setColumnWidth(COL['status'], 60)  # Status icon
-        self.results_table.setColumnWidth(COL['report'], 60)  # Report icon
+        self.results_table.setColumnWidth(COL['status'], 150)  # Local availability indicators
+        self.results_table.setColumnWidth(COL['report'], 180)  # Report status / physician
         self.results_table.setColumnWidth(COL['assign'], 60)  # Assign icon
         self.results_table.setColumnWidth(COL['time'], 80)  # Time
         self.results_table.setColumnWidth(COL['date'], 100)  # Date
@@ -958,8 +984,8 @@ class PatientTableWidget(QWidget):
         # Unified Download button for selected patients using Zeta Download Manager
         self.download_btn = QPushButton(qta.icon('fa5s.download', color='white'), "")
         self.download_btn.setToolTip("Download selected studies with Zeta Download Manager")
-        self.download_btn.clicked.connect(self._on_zeta_npr_clicked)
-        self.download_btn.setFixedSize(64, 36)
+        self.download_btn.clicked.connect(self._on_zeta_download_clicked)
+        self.download_btn.setFixedSize(76, 36)
         self.download_btn.setStyleSheet("""
         QPushButton {
             background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -991,10 +1017,48 @@ class PatientTableWidget(QWidget):
         """)
         self.download_btn.setCursor(Qt.PointingHandCursor)
         self.download_btn.setEnabled(False)
-        
-        # Keep zeta_npr_btn as alias for backward compatibility
-        self.zeta_npr_btn = self.download_btn
-        
+
+        # Download overflow menu button (split action UX)
+        self.download_menu_btn = QToolButton(self)
+        self.download_menu_btn.setToolTip("More download options")
+        self.download_menu_btn.setIcon(qta.icon('fa5s.bars', color='white'))
+        self.download_menu_btn.setFixedSize(28, 36)
+        self.download_menu_btn.setPopupMode(QToolButton.InstantPopup)
+        self.download_menu_btn.setStyleSheet("""
+        QToolButton {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #3b82f6, stop:1 #2563eb);
+            color: white;
+            border: 1px solid #3b82f6;
+            border-radius: 8px;
+            padding: 6px;
+            margin: 4px 0px;
+            qproperty-iconSize: 14px;
+        }
+        QToolButton:hover {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #2563eb, stop:1 #1d4ed8);
+            border-color: #2563eb;
+        }
+        QToolButton:pressed {
+            background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                stop:0 #1d4ed8, stop:1 #1e40af);
+        }
+        QToolButton:disabled {
+            background: #374151;
+            border-color: #4b5563;
+            color: #6b7280;
+        }
+        """)
+        self.download_menu_btn.setCursor(Qt.PointingHandCursor)
+        self.download_menu_btn.setEnabled(False)
+
+        download_menu = QMenu(self.download_menu_btn)
+        self.download_reception_action = QAction("Download Reception Data", self.download_menu_btn)
+        self.download_reception_action.triggered.connect(self._on_download_reception_data_clicked)
+        download_menu.addAction(self.download_reception_action)
+        self.download_menu_btn.setMenu(download_menu)
+
         # Delete button for selected downloaded patients - ONLY ICON
         self.delete_btn = QPushButton(qta.icon('fa5s.trash-alt', color='white'), "")
         self.delete_btn.setToolTip("Delete selected downloaded studies")
@@ -1196,6 +1260,7 @@ class PatientTableWidget(QWidget):
         header_layout.addWidget(self.print_btn)
         header_layout.addWidget(self.cd_burn_btn)
         header_layout.addWidget(self.download_btn)
+        header_layout.addWidget(self.download_menu_btn)
         layout.addWidget(header_widget)
         
         # Add table to layout
@@ -1424,6 +1489,34 @@ class PatientTableWidget(QWidget):
         except Exception as e:
             print(f"Error refreshing table anti-aliasing: {str(e)}")
 
+    def _emit_patient_selection(self, row: int):
+        """Emit patient selection signals once per short interval for the same row."""
+        try:
+            if row < 0:
+                return
+
+            now = time.monotonic()
+            last_row = int(getattr(self, '_last_patient_emit_row', -1))
+            last_ts = float(getattr(self, '_last_patient_emit_ts', 0.0) or 0.0)
+            if row == last_row and (now - last_ts) < 0.20:
+                return
+
+            patient_id_item = self.results_table.item(row, COL['patient_id'])
+            patient_name_item = self.results_table.item(row, COL['patient_name'])
+            study_uid_item = self.results_table.item(row, COL['study_uid'])
+
+            if patient_id_item and patient_name_item and study_uid_item:
+                self._last_patient_emit_row = row
+                self._last_patient_emit_ts = now
+                self.patientClicked.emit(
+                    patient_id_item.text(),
+                    patient_name_item.text(),
+                    study_uid_item.text(),
+                )
+                self.thumbnailRequested.emit(row)
+        except Exception as e:
+            print(f"Error emitting patient selection: {str(e)}")
+
     def _on_patient_clicked(self, item):
         """Handle patient single-click event - Show thumbnails"""
         try:
@@ -1436,6 +1529,9 @@ class PatientTableWidget(QWidget):
 
             self.pending_click_item = item
             self.click_timer.start(300)
+
+            # Emit immediately so sidebar refresh is not blocked by timer edge-cases.
+            self._emit_patient_selection(item.row())
 
             # Highlight the clicked row with neon effect
             selected_row = item.row()
@@ -1450,6 +1546,20 @@ class PatientTableWidget(QWidget):
 
         except Exception as e:
             print(f"Error in patient click: {str(e)}")
+
+    def _on_current_row_changed(self, current, previous):
+        """Emit patientClicked whenever the selected row changes.
+
+        This fires for clicks on ANY column — including cells that host custom
+        widgets (status / report / assign) where itemClicked is NOT emitted by Qt.
+        """
+        try:
+            row = current.row()
+            if row < 0 or row == previous.row():
+                return
+            self._emit_patient_selection(row)
+        except Exception as e:
+            print(f"Error in row selection change: {str(e)}")
 
     def highlight_selected_row(self, row_index):
         """Highlight the selected row by selecting it in the table"""
@@ -1515,21 +1625,8 @@ class PatientTableWidget(QWidget):
         try:
             if self.pending_click_item is None:
                 return
-            selected_row = self.pending_click_item.row()
-
-            patient_id_item = self.results_table.item(selected_row, COL['patient_id'])
-            patient_name_item = self.results_table.item(selected_row, COL['patient_name'])
-            study_uid_item = self.results_table.item(selected_row, COL['study_uid'])
-
-            if patient_id_item and patient_name_item and study_uid_item:
-                patient_id = patient_id_item.text()
-                patient_name = patient_name_item.text()
-                study_uid = study_uid_item.text()
-                self.patientClicked.emit(patient_id, patient_name, study_uid)
-                self.thumbnailRequested.emit(selected_row)
-            else:
-                print(f"Warning: Missing table items for row {selected_row}")
-
+            # Selection was already emitted immediately in _on_patient_clicked.
+            # The timer only guards against treating a double-click as a single click.
             self.pending_click_item = None
         except Exception as e:
             print(f"Error in single-click timeout: {str(e)}")
@@ -1585,11 +1682,11 @@ class PatientTableWidget(QWidget):
     def _on_download_clicked(self):
         """
         Handle download button click - Now unified with Zeta Download Manager
-        This method is kept for backward compatibility but delegates to _on_zeta_npr_clicked
+        This method is kept for backward compatibility but delegates to _on_zeta_download_clicked
         """
-        self._on_zeta_npr_clicked()
+        self._on_zeta_download_clicked()
     
-    def _on_zeta_npr_clicked(self):
+    def _on_zeta_download_clicked(self):
         """Handle Zeta Download button click - uses modern Zeta Download Manager"""
         try:
             # Get selected patient data
@@ -1602,7 +1699,7 @@ class PatientTableWidget(QWidget):
                 return
             
             # Emit signal with selected data for Zeta Download
-            self.zetaNprRequested.emit(selected_data)
+            self.zetaDownloadRequested.emit(selected_data)
             
             print(f"🚀 Zeta Download requested for {len(selected_data)} studies")
             
@@ -1610,6 +1707,24 @@ class PatientTableWidget(QWidget):
             print(f"Error in Zeta Download: {str(e)}")
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Error", f"Error in Zeta Download: {str(e)}")
+
+    def _on_download_reception_data_clicked(self):
+        """Handle reception-data-only download action from the split menu."""
+        try:
+            selected_data = self.get_selected_patient_data_list()
+            if not selected_data:
+                QMessageBox.warning(
+                    self,
+                    "No Studies Selected",
+                    "Please select at least one study to download reception data.",
+                )
+                return
+
+            self.receptionDataRequested.emit(selected_data)
+            print(f"[ReceptionData] Download requested for {len(selected_data)} studies")
+        except Exception as e:
+            print(f"Error in reception data download request: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Error preparing reception data download: {str(e)}")
 
     def _on_offline_cloud_sync_clicked(self):
         """Emit selected studies for offline cloud import/export actions."""
@@ -1779,6 +1894,215 @@ class PatientTableWidget(QWidget):
         except Exception as e:
             print(f"Error checking if study {study_uid} is downloaded: {e}")
             return False
+
+    @staticmethod
+    def _sanitize_id_for_filename(value: str) -> str:
+        text = str(value or '').strip()
+        safe = ''.join(ch if (ch.isalnum() or ch in ('-', '_')) else '_' for ch in text)
+        return safe or 'unknown'
+
+    @staticmethod
+    def _is_audio_extension(ext: str) -> bool:
+        return ext in {'.mp3', '.wav', '.m4a', '.ogg', '.aac', '.flac', '.webm'}
+
+    @staticmethod
+    def _is_document_extension(ext: str) -> bool:
+        return ext in {
+            '.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.csv', '.json',
+            '.jpg', '.jpeg', '.png', '.bmp', '.gif', '.tif', '.tiff', '.webp', '.dcm'
+        }
+
+    @staticmethod
+    def _looks_like_ai_artifact(name: str) -> bool:
+        lowered = str(name or '').lower()
+        ai_tokens = (
+            'echomind', 'echo_mind', 'eagleeye', 'eagle_eye', 'mg_ai',
+            'updated_csv_with_boxes', 'inference', 'detection', 'classification', 'seg'
+        )
+        return any(token in lowered for token in ai_tokens)
+
+    def _read_reception_payload_flags(self, patient_id: str) -> tuple[bool, bool]:
+        """Return (documents_present, voice_present) from cached reception payload file."""
+        pid = self._sanitize_id_for_filename(patient_id)
+        bundle_path = RECEPTION_REPORTS_DIR / 'downloads' / f'patient_{pid}.json'
+        if not bundle_path.exists():
+            return False, False
+
+        docs_present = True
+        voice_present = False
+
+        try:
+            with open(bundle_path, 'r', encoding='utf-8') as fh:
+                payload = json.load(fh)
+
+            reception_payload = payload.get('reception_payload') if isinstance(payload, dict) else {}
+            if isinstance(reception_payload, dict):
+                candidates = reception_payload.get('attachments')
+                if not isinstance(candidates, list):
+                    candidates = reception_payload.get('files')
+                if isinstance(candidates, list):
+                    for item in candidates:
+                        if not isinstance(item, dict):
+                            continue
+                        item_type = str(item.get('attachment_type') or item.get('type') or '').strip().lower()
+                        item_format = str(item.get('file_format') or item.get('format') or '').strip().lower()
+                        item_name = str(item.get('file_name') or item.get('name') or '').strip().lower()
+                        if item_type == 'audio' or item_format in {'mp3', 'wav', 'm4a', 'ogg', 'aac', 'flac', 'webm'}:
+                            voice_present = True
+                            break
+                        if any(item_name.endswith(ext) for ext in ('.mp3', '.wav', '.m4a', '.ogg', '.aac', '.flac', '.webm')):
+                            voice_present = True
+                            break
+        except Exception:
+            pass
+
+        return docs_present, voice_present
+
+    # Shared qtawesome icon->QPixmap cache. The same (name, color, size)
+    # combinations repeat on every patient-table row (status chips, assign,
+    # report icons). Rendering each SVG variant once and reusing the QPixmap
+    # removes ~6 icon rasterizations per row from the row-population hot path.
+    _ICON_PIXMAP_CACHE = {}
+
+    def _icon_pixmap(self, name, color, w, h):
+        """Return a cached QPixmap for a qtawesome icon variant."""
+        key = (name, color, int(w), int(h))
+        pm = self._ICON_PIXMAP_CACHE.get(key)
+        if pm is None:
+            pm = qta.icon(name, color=color).pixmap(int(w), int(h))
+            self._ICON_PIXMAP_CACHE[key] = pm
+        return pm
+
+    def _get_echomind_filenames(self):
+        """Return a cached, lowercased list of EchoMind memory/log file names.
+
+        The EchoMind AI-indicator check needs to know whether any trace file
+        references a study UID. The previous implementation re-walked the whole
+        EchoMind memory/logs tree (rglob) for every study row without a local
+        AI artifact — O(rows x files) of disk I/O during patient-list
+        population. The directory contents barely change during a population
+        pass, so the file-name list is snapshotted once and reused, walking the
+        tree at most once per `_cache_validity_seconds` window (same staleness
+        window already used by `_local_status_cache`).
+        """
+        now = time.time()
+        names = self._echomind_names_cache
+        if names is not None and (now - float(self._echomind_names_ts)) < self._cache_validity_seconds:
+            return names
+        names = []
+        for echo_root in (ECHOMIND_MEMORY_DIR, ECHOMIND_LOGS_DIR):
+            try:
+                if not echo_root.exists():
+                    continue
+                for p in echo_root.rglob('*'):
+                    try:
+                        if p.is_file():
+                            names.append(p.name.lower())
+                    except OSError:
+                        continue
+            except Exception:
+                continue
+        self._echomind_names_cache = names
+        self._echomind_names_ts = now
+        return names
+
+    def _compute_local_status_flags(self, study_uid: str, patient_id: str = '') -> dict:
+        """Compute local-only availability flags for Status column."""
+        study_uid = str(study_uid or '').strip()
+        patient_id = str(patient_id or '').strip()
+        cache_key = (study_uid, patient_id)
+
+        now = time.time()
+        cached = self._local_status_cache.get(cache_key)
+        if cached and (now - float(cached.get('timestamp', 0.0))) < self._cache_validity_seconds:
+            return dict(cached.get('data') or {})
+
+        dicom_available = self._is_study_downloaded(study_uid)
+        docs_available = False
+        voice_available = False
+        ai_available = False
+
+        # Scan study-scoped attachment folder once.
+        attach_root = ATTACHMENT_PATH / study_uid
+        if attach_root.exists() and attach_root.is_dir():
+            for root, _dirs, files in os.walk(attach_root):
+                if not files:
+                    continue
+                for file_name in files:
+                    file_path = Path(root) / file_name
+                    ext = file_path.suffix.lower()
+
+                    if self._is_audio_extension(ext):
+                        voice_available = True
+                    elif self._is_document_extension(ext):
+                        docs_available = True
+
+                    if self._looks_like_ai_artifact(file_name):
+                        ai_available = True
+
+                    if docs_available and voice_available and ai_available:
+                        break
+                if docs_available and voice_available and ai_available:
+                    break
+
+        # Reception cache may activate both document and voice indicators.
+        if patient_id:
+            r_docs, r_voice = self._read_reception_payload_flags(patient_id)
+            docs_available = docs_available or r_docs
+            voice_available = voice_available or r_voice
+            try:
+                local_entry = self._load_local_comment_entry(patient_id, study_uid)
+                if isinstance(local_entry, dict) and str(local_entry.get('comment') or '').strip():
+                    docs_available = True
+            except Exception:
+                pass
+
+        # EchoMind traces associated with study_uid activate AI indicator.
+        # Uses a snapshot of EchoMind file names (see _get_echomind_filenames)
+        # so the tree is walked once per population pass, not once per row.
+        suid_lower = study_uid.lower()
+        if suid_lower and not ai_available:
+            for name in self._get_echomind_filenames():
+                if suid_lower in name:
+                    ai_available = True
+                    break
+
+        flags = {
+            'dicom': bool(dicom_available),
+            'documents': bool(docs_available),
+            'voice': bool(voice_available),
+            'ai': bool(ai_available),
+        }
+        self._local_status_cache[cache_key] = {'data': flags, 'timestamp': now}
+        return flags
+
+    def _build_local_status_widget(self, study_uid: str, patient_id: str = '') -> QWidget:
+        """Render DCM/DOC/VOC/AI indicators for local availability."""
+        flags = self._compute_local_status_flags(study_uid, patient_id)
+
+        container = QWidget()
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(4, 0, 4, 0)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignCenter)
+
+        def _chip(icon: str, label: str, active: bool, tip: str):
+            chip = QLabel()
+            icon_color = '#10b981' if active else '#6b7280'
+            text_color = '#10b981' if active else '#9ca3af'
+            chip.setPixmap(self._icon_pixmap(icon, icon_color, 12, 12))
+            chip.setText(f" {label}")
+            chip.setStyleSheet(f"color: {text_color}; background: transparent; border: none; font-size: 10px;")
+            chip.setToolTip(tip)
+            return chip
+
+        layout.addWidget(_chip('fa5s.x-ray', 'DCM', flags.get('dicom', False), 'Local DICOM images'))
+        layout.addWidget(_chip('fa5s.folder-open', 'DOC', flags.get('documents', False), 'Local documents / attachments'))
+        layout.addWidget(_chip('fa5s.volume-up', 'VOC', flags.get('voice', False), 'Local voice files'))
+        layout.addWidget(_chip('fa5s.robot', 'AI', flags.get('ai', False), 'Local AI results'))
+
+        container.setStyleSheet('background: transparent; border: none;')
+        return container
     
     def _delete_local_studies(self, studies_to_delete):
         """Delete local DICOM files and attachments for selected studies"""
@@ -1904,13 +2228,15 @@ class PatientTableWidget(QWidget):
         
         if selected_count > 0:
             self.download_btn.setEnabled(True)
-            self.zeta_npr_btn.setEnabled(True)  # Enable Zeta Download button
+            self.download_btn.setEnabled(True)  # Enable Zeta Download button
+            self.download_menu_btn.setEnabled(True)
             self.cd_burn_btn.setEnabled(True)  # CD burn فعال برای همه انتخاب شده‌ها
             self.print_btn.setEnabled(True)
             # متن فقط هنگام hover نشان داده می‌شود
         else:
             self.download_btn.setEnabled(False)
-            self.zeta_npr_btn.setEnabled(False)  # Disable Zeta Download button
+            self.download_btn.setEnabled(False)  # Disable Zeta Download button
+            self.download_menu_btn.setEnabled(False)
             self.cd_burn_btn.setEnabled(False)
             self.print_btn.setEnabled(False)
             # متن پاک می‌شود
@@ -1969,29 +2295,18 @@ class PatientTableWidget(QWidget):
                 'timestamp': time.time()
             }
             
-            # Determine icon and color
-            if status == 'complete':
-                icon_name = 'fa5s.check-circle'
-                icon_color = '#10b981'  # green
-                tooltip = "Downloaded completely"
-            elif status == 'partial':
-                icon_name = 'fa5s.exclamation-triangle'
-                icon_color = '#f59e0b'  # orange/amber - warning triangle for partial
-                tooltip = "Partially downloaded"
-            else:
-                icon_name = 'fa5s.times-circle'
-                icon_color = '#ef4444'  # red
-                tooltip = "Not downloaded"
-            
             for row in range(self.results_table.rowCount()):
                 uid_item = self.results_table.item(row, COL['study_uid'])
                 if uid_item and uid_item.text() == study_uid:
-                    lbl = QLabel()
-                    lbl.setPixmap(qta.icon(icon_name, color=icon_color).pixmap(20, 20))
-                    lbl.setAlignment(Qt.AlignCenter)
-                    lbl.setStyleSheet("background: transparent; border: none;")
-                    lbl.setToolTip(tooltip)
-                    self.results_table.setCellWidget(row, COL['status'], lbl)
+                    patient_id_item = self.results_table.item(row, COL['patient_id'])
+                    patient_id = patient_id_item.text().strip() if patient_id_item else ''
+                    cache_key = (str(study_uid or '').strip(), patient_id)
+                    self._local_status_cache.pop(cache_key, None)
+                    self.results_table.setCellWidget(
+                        row,
+                        COL['status'],
+                        self._build_local_status_widget(study_uid, patient_id),
+                    )
                     
                     # ✅ به‌روزرسانی وضعیت دکمه‌های Download و Delete
                     self._update_download_button_state()
@@ -2157,10 +2472,19 @@ class PatientTableWidget(QWidget):
         if not hasattr(self, "_insert_seq"):
             self._insert_seq = 0
 
+        patient_id = kwargs.get('patient_id', '') or ''
+        patient_name = kwargs.get('patient_name', '') or ''
+
+        # Grouping rule (server-side patient rows): keep one row per patient.
+        if 'study_uids' in kwargs:
+            existing_row = self._find_existing_patient_row(patient_id, patient_name)
+            if existing_row is not None:
+                self._merge_patient_row(existing_row, kwargs)
+                return
+
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
 
-        patient_id = kwargs.get('patient_id', '') or ''
         visited_patient = self.check_patient_visited(patient_id)
 
         # --- Select checkbox with CustomCheckbox ---
@@ -2188,8 +2512,12 @@ class PatientTableWidget(QWidget):
         self.results_table.setCellWidget(row, COL['select'], checkbox_container)
 
         # --- Values with safe defaults ---
-        patient_name = kwargs.get('patient_name', '') or ''
         body_part = kwargs.get('body_part', '') or ''
+        incoming_study_uids = kwargs.get('study_uids') or []
+        if isinstance(incoming_study_uids, str):
+            incoming_study_uids = [incoming_study_uids]
+        elif not isinstance(incoming_study_uids, list):
+            incoming_study_uids = []
 
         # تاریخ و ساعت ورودی‌های مختلف را پشتیبانی می‌کنیم
         raw_date = kwargs.get('date') or kwargs.get('study_date') or ''
@@ -2206,6 +2534,12 @@ class PatientTableWidget(QWidget):
         modality = kwargs.get('modality', '') or ''
         age = kwargs.get('age', '') or ''
         description = kwargs.get('description', '') or ''
+        reporting_physician = kwargs.get('reporting_physician') or ''
+        initial_comment = str(kwargs.get('initial_comment') or '').strip()
+        if reporting_physician:
+            rp = str(reporting_physician).strip()
+            if rp and rp.lower() not in str(description).lower():
+                description = f"{description} | Reporting: {rp}" if description else f"Reporting: {rp}"
         study_uid = kwargs.get('study_uid', '') or ''
 
         # normalize counts to str (empty -> "")
@@ -2216,31 +2550,17 @@ class PatientTableWidget(QWidget):
         images_text = "" if images_cnt in (None, "", "N/A") else str(images_num)
 
         # --- Status widgets ---
-        # Support three states: 'complete', 'partial', 'not_downloaded'
         download_status = kwargs.get('download_status', None)
         is_downloaded = bool(kwargs.get('is_downloaded', False))
         is_reported = bool(kwargs.get('is_reported', False))
         assign_to = kwargs.get('assign_to', '')
         is_assigned = bool(kwargs.get('is_assigned', bool(assign_to)))
-
-        # Determine icon and color based on download status
-        if download_status == 'complete' or (download_status is None and is_downloaded):
-            icon_name = 'fa5s.check-circle'
-            icon_color = '#10b981'  # green
-        elif download_status == 'partial':
-            icon_name = 'fa5s.exclamation-triangle'
-            icon_color = '#f59e0b'  # orange/amber - warning triangle for partial
-        else:
-            icon_name = 'fa5s.times-circle'
-            icon_color = '#ef4444'  # red
-
-        status_label = QLabel()
-        status_label.setPixmap(qta.icon(icon_name, color=icon_color).pixmap(16, 16))
-        status_label.setAlignment(Qt.AlignCenter)
-        status_label.setStyleSheet("background: transparent; border: none;")
+        status_widget = self._build_local_status_widget(study_uid, patient_id)
 
         # Report status - get from kwargs or default to pending
-        report_status = kwargs.get('report_status', 'pending')
+        report_status = str(kwargs.get('report_status', 'pending') or '').strip().lower()
+        if report_status == 'complete':
+            report_status = 'completed'
         if not report_status or report_status not in REPORT_STATUSES:
             report_status = 'pending'
         
@@ -2251,33 +2571,22 @@ class PatientTableWidget(QWidget):
         report_layout.setAlignment(Qt.AlignCenter)
         
         report_label = QLabel()
-        # Choose icon based on status
-        status_icon_map = {
-            'pending': 'fa5s.clock',
-            'awaiting_physician_approval': 'fa5s.user-md',
-            'awaiting_secretary_approval': 'fa5s.user-tie',
-            'awaiting_approval': 'fa5s.hourglass-half',
-            'physician_approved': 'fa5s.check-circle',
-            'secretary_approved': 'fa5s.check-circle',
-            'completed': 'fa5s.check-double',
-            'archived': 'fa5s.archive'
-        }
-        icon_name = status_icon_map.get(report_status, 'fa5s.file-alt')
-        color = STATUS_COLORS.get(report_status, '#f59e0b')
-        
-        report_label.setPixmap(qta.icon(icon_name, color=color).pixmap(16, 16))
-        report_label.setAlignment(Qt.AlignCenter)
-        report_label.setStyleSheet("background: transparent; border: none;")
+        self._apply_report_status_display(report_label, report_status, str(reporting_physician or ''))
         report_label.setCursor(Qt.PointingHandCursor)
-        report_label.setToolTip(f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n(Click to change)")
         
         # Make label clickable - use closure to capture variables
-        def make_click_handler(uid, status, pname, pid):
+        def make_click_handler(uid, status, pname, pid, physician):
             def handler(event):
-                self._on_report_status_clicked(uid, status, pname, pid)
+                self._on_report_status_clicked(uid, status, pname, pid, physician)
             return handler
         
-        report_label.mousePressEvent = make_click_handler(study_uid, report_status, patient_name, patient_id)
+        report_label.mousePressEvent = make_click_handler(
+            study_uid,
+            report_status,
+            patient_name,
+            patient_id,
+            reporting_physician,
+        )
         
         report_layout.addWidget(report_label)
         report_container.setStyleSheet("background: transparent;")
@@ -2292,10 +2601,10 @@ class PatientTableWidget(QWidget):
             self._report_status_cache[study_uid] = report_status
 
         assign_label = QLabel()
-        assign_label.setPixmap(qta.icon(
+        assign_label.setPixmap(self._icon_pixmap(
             'fa5s.user-check' if is_assigned else 'fa5s.user-times',
-            color='#3b82f6' if is_assigned else '#6b7280'
-        ).pixmap(16, 16))
+            '#3b82f6' if is_assigned else '#6b7280',
+            16, 16))
         assign_label.setAlignment(Qt.AlignCenter)
         assign_label.setStyleSheet("background: transparent; border: none;")
         if assign_to:
@@ -2339,6 +2648,8 @@ class PatientTableWidget(QWidget):
             patient_name_item.setForeground(QColor('#f59e0b'))  # Orange = opened
             patient_name_item.setData(Qt.UserRole + 1, 'opened')
         # else: default color (not opened)
+        patient_name_item.setData(Qt.UserRole + 2, str(reporting_physician or '').strip())
+        patient_name_item.setData(Qt.UserRole + 3, initial_comment)
         
         self.results_table.setItem(row, COL['patient_name'], patient_name_item)
         self.results_table.setItem(row, COL['patient_id'], _mk(patient_id, patient_id.lower()))
@@ -2350,14 +2661,22 @@ class PatientTableWidget(QWidget):
         self.results_table.setItem(row, COL['modality'], _mk(modality, modality.lower()))
         self.results_table.setItem(row, COL['age'], _mk(str(age) if age is not None else "", age_num))
         self.results_table.setItem(row, COL['description'], _mk(description, description.lower()))
-        self.results_table.setItem(row, COL['study_uid'], _mk(study_uid, self._insert_seq))
+        study_uid_item = _mk(study_uid, self._insert_seq)
+        merged_study_uids = []
+        for uid in [study_uid, *incoming_study_uids]:
+            uid_str = str(uid or '').strip()
+            if uid_str and uid_str not in merged_study_uids:
+                merged_study_uids.append(uid_str)
+        if merged_study_uids:
+            study_uid_item.setData(Qt.UserRole + 10, merged_study_uids)
+        self.results_table.setItem(row, COL['study_uid'], study_uid_item)
         self.results_table.setItem(row, COL['order'], _mk(str(self._insert_seq), self._insert_seq))
 
         # ستون «order» برای بازگشت به ترتیب اولیه
         self.results_table.setItem(row, COL['order'], _mk(str(self._insert_seq), self._insert_seq))
 
         # وضعیت‌ها
-        self.results_table.setCellWidget(row, COL['status'], status_label)
+        self.results_table.setCellWidget(row, COL['status'], status_widget)
         self.results_table.setCellWidget(row, COL['report'], report_container)
         self.results_table.setCellWidget(row, COL['assign'], assign_label)
 
@@ -2401,13 +2720,16 @@ class PatientTableWidget(QWidget):
     def _finalize_bulk_insert_ui(self):
         self._update_results_count()
         self.refresh_table_anti_aliasing()
-        self.auto_resize_columns()
+        row_count = int(self.results_table.rowCount() or 0)
+        # resizeColumnsToContents is expensive on large tables; keep fixed widths then.
+        if row_count <= 120:
+            self.auto_resize_columns()
         # Apply default date-descending sort when no user-selected sort is active
         if getattr(self, '_active_sort_col', None) is None:
             self._programmatic_sort(COL['date'], Qt.DescendingOrder)
         self.results_table.viewport().update()
     
-    def _on_report_status_clicked(self, study_uid: str, current_status: str, patient_name: str, patient_id: str):
+    def _on_report_status_clicked(self, study_uid: str, current_status: str, patient_name: str, patient_id: str, reporting_physician: str = ""):
         """Handle click on report status icon"""
         print(f"\n🖱️ [UI] Report status icon clicked")
         print(f"   Study UID: {study_uid}")
@@ -2433,7 +2755,30 @@ class PatientTableWidget(QWidget):
         if not patient_id:
             id_item = self.results_table.item(row, COL['patient_id'])
             patient_id = id_item.text() if id_item else ""
-        
+        if not reporting_physician:
+            name_item = self.results_table.item(row, COL['patient_name'])
+            if name_item:
+                reporting_physician = str(name_item.data(Qt.UserRole + 2) or "").strip()
+        if reporting_physician and reporting_physician.startswith('{') and reporting_physician.endswith('}'):
+            try:
+                physician_obj = json.loads(reporting_physician)
+                if isinstance(physician_obj, dict):
+                    reporting_physician = (
+                        physician_obj.get('FullName')
+                        or physician_obj.get('fullName')
+                        or physician_obj.get('name')
+                        or physician_obj.get('Name')
+                        or reporting_physician
+                    )
+            except Exception:
+                pass
+        if not reporting_physician:
+            desc_item = self.results_table.item(row, COL['description'])
+            desc_text = desc_item.text() if desc_item else ""
+            marker = "Reporting:"
+            if marker in desc_text:
+                reporting_physician = desc_text.split(marker, 1)[1].split("|", 1)[0].strip()
+
         print(f"📋 [UI] Opening status change dialog...")
         # Open status change dialog
         dialog = ReportStatusDialog(
@@ -2441,8 +2786,28 @@ class PatientTableWidget(QWidget):
             study_uid=study_uid,
             current_status=current_status,
             patient_name=patient_name,
-            patient_id=patient_id
+            patient_id=patient_id,
+            reporting_physician=reporting_physician,
         )
+        name_item = self.results_table.item(row, COL['patient_name'])
+        cached_comment = str(name_item.data(Qt.UserRole + 3) or '').strip() if name_item else ''
+        if cached_comment:
+            dialog.set_comment(cached_comment)
+            dialog.comment_text.setPlaceholderText("Refreshing latest comment from server...")
+        else:
+            dialog.comment_text.setPlaceholderText("Loading comment and reporting physician...")
+        self._active_report_dialogs[study_uid] = dialog
+        with self._report_fetch_lock:
+            fetch_token = int(self._report_fetch_tokens.get(study_uid, 0)) + 1
+            self._report_fetch_tokens[study_uid] = fetch_token
+
+        def _on_dialog_finished(_=0, uid=study_uid):
+            self._active_report_dialogs.pop(uid, None)
+            with self._report_fetch_lock:
+                self._report_fetch_tokens.pop(uid, None)
+
+        dialog.finished.connect(_on_dialog_finished)
+        self._fetch_report_comment_async(study_uid, patient_id, fetch_token)
         
         # Connect signal with lambda to capture comment
         def on_status_changed(uid, old_st, new_st):
@@ -2450,7 +2815,7 @@ class PatientTableWidget(QWidget):
             print(f"   UID: {uid}, Old: {old_st}, New: {new_st}")
             comment = dialog.get_comment()
             print(f"   Comment: {comment}")
-            self._change_report_status(uid, old_st, new_st, comment)
+            self._change_report_status(uid, old_st, new_st, comment, patient_id)
         
         dialog.statusChanged.connect(on_status_changed)
         
@@ -2461,8 +2826,445 @@ class PatientTableWidget(QWidget):
             pass
         else:
             print(f"❌ [UI] Dialog rejected")
+
+    @staticmethod
+    def _extract_reporting_physician_name_from_patient_payload(patient_payload: dict) -> str:
+        """Extract physician name from Hermes-like patient REST payload."""
+        if not isinstance(patient_payload, dict):
+            return ""
+
+        report_obj = patient_payload.get('report') if isinstance(patient_payload.get('report'), dict) else {}
+
+        candidates = [
+            patient_payload.get('reporting_physician_name'),
+            patient_payload.get('reporting_physician'),
+            patient_payload.get('reportingPhysicianName'),
+            patient_payload.get('reportingPhysician'),
+            patient_payload.get('radiologist'),
+            report_obj.get('reporting_physician_name'),
+            report_obj.get('reporting_physician'),
+            report_obj.get('reportingPhysicianName'),
+            report_obj.get('reportingPhysician'),
+            report_obj.get('radiologist'),
+            # `radiologist` is null on the server for completed studies; the
+            # report's approver is the de-facto reporting physician.
+            report_obj.get('approvedBy'),
+        ]
+
+        for value in candidates:
+            if isinstance(value, dict):
+                value = (
+                    value.get('FullName')
+                    or value.get('fullName')
+                    or value.get('full_name')
+                    or value.get('displayName')
+                    or value.get('Name')
+                    or value.get('name')
+                    or (str(value.get('firstName') or value.get('first_name') or '').strip()
+                        + ' '
+                        + str(value.get('lastName') or value.get('last_name') or '').strip()).strip()
+                    or value.get('username')
+                )
+            text_value = str(value or '').strip()
+            if text_value:
+                return text_value
+        return ""
+
+    @staticmethod
+    def _fetch_reception_patient_payload(patient_id: str) -> dict:
+        """Fetch REST patient payload used by Hermes reception tab for physician/comment."""
+        pid = str(patient_id or '').strip()
+        if not pid:
+            return {}
+
+        # Reception/Workflow API base URL is resolved from the configurable
+        # endpoint (config/reception_api_config.json), not a hard-coded IP.
+        base_url = get_reception_api_base_url()
+        url = f"{base_url}/api/pacs/patients/{pid}"
+
+        # The Reception/Workflow API is authenticated; it shares the logged-in
+        # user's token with the PACS socket channel. The reporting-physician
+        # data lives in the auth-gated `report` block, so the request must
+        # carry the bearer token (an anonymous GET yields no physician, which
+        # is why the report popup kept showing "N/A").
+        headers = {}
+        try:
+            token = get_socket_token_manager().get_token() or ''
+            if token:
+                headers = {'Authorization': f'Bearer {token}', 'token': token}
+        except Exception:
+            headers = {}
+
+        try:
+            response = requests.get(url, timeout=10, headers=headers)
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                return {}
+            data = payload.get('data', payload)
+            if isinstance(data, list):
+                data = data[0] if data else {}
+            return data if isinstance(data, dict) else {}
+        except Exception as exc:
+            logger.debug("Failed REST patient fetch for physician fallback (pid=%s): %s", pid, exc)
+            return {}
+
+    @staticmethod
+    def _extract_reporting_user_id_from_patient_payload(patient_payload: dict) -> str:
+        """Extract reporting actor ID when server sends IDs instead of a populated user object."""
+        if not isinstance(patient_payload, dict):
+            return ""
+
+        report_obj = patient_payload.get('report') if isinstance(patient_payload.get('report'), dict) else {}
+        candidates = [
+            report_obj.get('radiologist'),
+            patient_payload.get('radiologist'),
+        ]
+
+        for value in candidates:
+            if isinstance(value, dict):
+                nested_id = value.get('_id') or value.get('id') or value.get('userId')
+                if nested_id:
+                    return str(nested_id).strip()
+            text_value = str(value or '').strip()
+            if text_value:
+                return text_value
+        return ""
+
+    @staticmethod
+    def _format_reporting_physician_display(name: str, user_id: str) -> str:
+        display_name = str(name or '').strip()
+        display_id = str(user_id or '').strip()
+        if display_name and display_id:
+            return f"{display_name} (ID: {display_id})"
+        if display_name:
+            return display_name
+        if display_id:
+            return f"ID: {display_id}"
+        return ""
+
+    @staticmethod
+    def _fetch_server_user_full_name(user_id: str) -> str:
+        """Resolve user full name from authenticated REST user endpoints."""
+        uid = str(user_id or '').strip()
+        if not uid:
+            return ""
+
+        token = get_socket_token_manager().get_token() or ''
+        if not token:
+            return ""
+
+        # Reception/Workflow API base URL is resolved from the configurable
+        # endpoint (config/reception_api_config.json), not a hard-coded IP.
+        base_url = get_reception_api_base_url()
+
+        headers = {
+            'Authorization': f'Bearer {token}',
+            'token': token,
+        }
+
+        endpoints = [
+            f"{base_url}/api/pacs/users/{uid}",
+            f"{base_url}/api/users/{uid}",
+            f"{base_url}/api/pacs/user/{uid}",
+            f"{base_url}/api/user/{uid}",
+        ]
+
+        for url in endpoints:
+            try:
+                response = requests.get(url, timeout=3.0, headers=headers)
+                if response.status_code >= 400:
+                    continue
+                payload = response.json() if 'json' in response.headers.get('content-type', '').lower() else {}
+                data = payload.get('data', payload) if isinstance(payload, dict) else {}
+                if isinstance(data, list):
+                    data = data[0] if data else {}
+                if not isinstance(data, dict):
+                    continue
+                full_name = (
+                    data.get('FullName')
+                    or data.get('fullName')
+                    or data.get('full_name')
+                    or data.get('displayName')
+                    or data.get('name')
+                    or data.get('Name')
+                    or (str(data.get('firstName') or data.get('first_name') or '').strip()
+                        + ' '
+                        + str(data.get('lastName') or data.get('last_name') or '').strip()).strip()
+                )
+                if full_name:
+                    return str(full_name).strip()
+            except Exception:
+                continue
+        return ""
+
+    def _fetch_report_comment_async(self, study_uid: str, patient_id: str = "", fetch_token: int = 0) -> None:
+        """Fetch existing comment and physician in a worker thread to avoid blocking the UI."""
+        def _worker() -> None:
+            comment = ""
+            reporting_physician = ""
+            reporting_physician_id = ""
+            try:
+                # Local-first cache fallback (for offline/pending-sync writes).
+                local_entry = self._load_local_comment_entry(patient_id, study_uid)
+                if isinstance(local_entry, dict):
+                    comment = str(local_entry.get('comment') or "")
+
+                # Fast path first: REST patient payload (Hermes source of truth).
+                reception_payload = self._fetch_reception_patient_payload(patient_id)
+                if reception_payload:
+                    if not reporting_physician:
+                        reporting_physician = self._extract_reporting_physician_name_from_patient_payload(reception_payload)
+                    reporting_user_id = self._extract_reporting_user_id_from_patient_payload(reception_payload)
+                    if reporting_user_id:
+                        reporting_physician_id = reporting_user_id
+                        if not reporting_physician:
+                            reporting_physician = self._fetch_server_user_full_name(reporting_user_id)
+                    if not comment:
+                        pacs_comment = reception_payload.get('pacsComment')
+                        if isinstance(pacs_comment, dict):
+                            comment = str(pacs_comment.get('text') or "")
+
+                # Emit the fast REST result immediately so the dialog updates
+                # without waiting on the report-status socket fallback below,
+                # which can block for the full connection timeout (~30s) when
+                # the server does not answer GetReportStatus. The slow path
+                # still runs and re-emits if it finds anything more.
+                self.reportDialogDataFetchResult.emit(
+                    study_uid,
+                    str(comment or ""),
+                    str(self._format_reporting_physician_display(
+                        reporting_physician, reporting_physician_id) or ""),
+                    int(fetch_token or 0),
+                )
+
+                # Slow path fallback only when still unresolved.
+                if (not reporting_physician or not comment) and study_uid:
+                    status_payload = self.report_status_service.get_report_status(study_uid) or {}
+                    payload_data = status_payload.get('data', {}) if isinstance(status_payload, dict) else {}
+                    payload_comment_obj = payload_data.get('pacsComment') if isinstance(payload_data, dict) else {}
+                    top_comment_obj = status_payload.get('pacsComment') if isinstance(status_payload, dict) else {}
+                    if not isinstance(payload_comment_obj, dict):
+                        payload_comment_obj = {}
+                    if not isinstance(top_comment_obj, dict):
+                        top_comment_obj = {}
+                    if not comment:
+                        comment = (
+                            status_payload.get('comment')
+                            or status_payload.get('report_comment')
+                            or status_payload.get('reportComment')
+                            or status_payload.get('pacs_comment')
+                            or top_comment_obj.get('text')
+                            or payload_data.get('comment')
+                            or payload_data.get('report_comment')
+                            or payload_data.get('reportComment')
+                            or payload_data.get('pacs_comment')
+                            or payload_comment_obj.get('text')
+                            or comment
+                            or ""
+                        )
+                    if not reporting_physician:
+                        reporting_physician = self._extract_reporting_physician_from_status_payload(status_payload)
+
+                reporting_physician = self._format_reporting_physician_display(
+                    reporting_physician,
+                    reporting_physician_id,
+                )
+            except Exception as exc:
+                logger.warning("Failed to prefetch report comment for %s: %s", study_uid, exc)
+            self.reportDialogDataFetchResult.emit(
+                study_uid,
+                str(comment or ""),
+                str(reporting_physician or ""),
+                int(fetch_token or 0),
+            )
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _extract_reporting_physician_from_status_payload(self, status_payload: dict) -> str:
+        """Extract reporting physician from status payload with broad key compatibility."""
+        if not isinstance(status_payload, dict):
+            return ""
+        payload_data = status_payload.get('data', {})
+        if not isinstance(payload_data, dict):
+            payload_data = {}
+
+        candidates = [
+            status_payload.get('reporting_physician'),
+            status_payload.get('reportingPhysician'),
+            status_payload.get('reportingPhysicianName'),
+            status_payload.get('reporting_physician_name'),
+            payload_data.get('reporting_physician'),
+            payload_data.get('reportingPhysician'),
+            payload_data.get('reportingPhysicianName'),
+            payload_data.get('reporting_physician_name'),
+            status_payload.get('radiologist'),
+            payload_data.get('radiologist'),
+            payload_data.get('physician_name'),
+            status_payload.get('physician_name'),
+            payload_data.get('doctor_name'),
+            status_payload.get('doctor_name'),
+            payload_data.get('doctorName'),
+            status_payload.get('doctorName'),
+            payload_data.get('doctor'),
+            status_payload.get('doctor'),
+        ]
+
+        for value in candidates:
+            if isinstance(value, dict):
+                value = (
+                    value.get('FullName')
+                    or value.get('fullName')
+                    or value.get('full_name')
+                    or value.get('displayName')
+                    or value.get('name')
+                    or value.get('Name')
+                    or (str(value.get('firstName') or value.get('first_name') or '').strip()
+                        + ' '
+                        + str(value.get('lastName') or value.get('last_name') or '').strip()).strip()
+                    or value.get('username')
+                )
+            text_value = str(value or '').strip()
+            if text_value:
+                return text_value
+        return ""
+
+    def _on_report_dialog_data_fetched(self, study_uid: str, comment: str, reporting_physician: str, fetch_token: int) -> None:
+        """Apply fetched comment/physician to the currently open report dialog, if still active."""
+        with self._report_fetch_lock:
+            current_token = int(self._report_fetch_tokens.get(study_uid, 0))
+        if int(fetch_token or 0) != current_token:
+            return
+
+        # Keep table row metadata in sync with fetched server values so the
+        # Report column can render physician text without requiring another click.
+        try:
+            for row in range(self.results_table.rowCount()):
+                uid_item = self.results_table.item(row, COL['study_uid'])
+                if not uid_item or uid_item.text().strip() != str(study_uid or '').strip():
+                    continue
+
+                name_item = self.results_table.item(row, COL['patient_name'])
+                if name_item is not None:
+                    if reporting_physician:
+                        name_item.setData(Qt.UserRole + 2, str(reporting_physician or '').strip())
+                    if comment:
+                        name_item.setData(Qt.UserRole + 3, str(comment or '').strip())
+
+                report_widget = self.results_table.cellWidget(row, COL['report'])
+                if report_widget and report_widget.layout() and report_widget.layout().count() > 0:
+                    report_label = report_widget.layout().itemAt(0).widget()
+                    if report_label is not None:
+                        status_value = str(getattr(report_widget, 'report_status', 'pending') or 'pending')
+                        self._apply_report_status_display(
+                            report_label,
+                            status_value,
+                            str(reporting_physician or '').strip(),
+                        )
+
+                break
+        except Exception:
+            pass
+
+        dialog = self._active_report_dialogs.get(study_uid)
+        if dialog is None:
+            return
+        try:
+            dialog.comment_text.setPlaceholderText("Comment about status change...")
+            # Do not overwrite user input only when user changed text after prefill.
+            current_text = dialog.comment_text.toPlainText().strip()
+            initial_text = str(getattr(dialog, '_initial_comment', '') or '').strip()
+            if current_text and current_text != initial_text:
+                if reporting_physician and hasattr(dialog, 'set_reporting_physician'):
+                    dialog.set_reporting_physician(reporting_physician)
+                return
+            dialog.set_comment(comment)
+            if reporting_physician and hasattr(dialog, 'set_reporting_physician'):
+                dialog.set_reporting_physician(reporting_physician)
+        except RuntimeError:
+            # Dialog can already be deleted if user closed it while thread was finishing.
+            self._active_report_dialogs.pop(study_uid, None)
     
-    def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = ""):
+    def _local_comment_cache_path(self) -> Path:
+        REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+        return REPORTS_DIR / "report_comment_cache.json"
+
+    def _load_local_comment_cache(self) -> dict:
+        path = self._local_comment_cache_path()
+        if not path.exists():
+            return {}
+        try:
+            data = json.loads(path.read_text(encoding='utf-8'))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def _save_local_comment_entry(self, patient_id: str, study_uid: str, comment: str, sync_state: str, sync_error: str = "") -> bool:
+        pid = str(patient_id or '').strip()
+        suid = str(study_uid or '').strip()
+        if not pid and not suid:
+            return False
+
+        key = pid or suid
+        entry = {
+            'patient_id': pid,
+            'study_uid': suid,
+            'comment': str(comment or ''),
+            'sync_state': str(sync_state or 'local_only'),
+            'sync_error': str(sync_error or ''),
+            'updated_at': time.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+        with self._comment_cache_lock:
+            cache = self._load_local_comment_cache()
+            cache[key] = entry
+            self._local_comment_cache_path().write_text(
+                json.dumps(cache, ensure_ascii=False, indent=2),
+                encoding='utf-8',
+            )
+        return True
+
+    def _load_local_comment_entry(self, patient_id: str, study_uid: str) -> dict:
+        pid = str(patient_id or '').strip()
+        suid = str(study_uid or '').strip()
+        with self._comment_cache_lock:
+            cache = self._load_local_comment_cache()
+        if pid and isinstance(cache.get(pid), dict):
+            return cache.get(pid)
+        if suid and isinstance(cache.get(suid), dict):
+            return cache.get(suid)
+        return {}
+
+    @staticmethod
+    def _sync_comment_to_server(patient_id: str, comment: str) -> dict:
+        pid = str(patient_id or '').strip()
+        if not pid:
+            return {'success': False, 'error': 'Missing patient ID for comment sync'}
+
+        # Reception/Workflow API base URL is resolved from the configurable
+        # endpoint (config/reception_api_config.json), not a hard-coded IP.
+        base_url = get_reception_api_base_url()
+        url = f"{base_url}/api/pacs/patients/{pid}/comment"
+
+        try:
+            token = get_socket_token_manager().get_token() or ''
+            headers = {'Content-Type': 'application/json'}
+            if token:
+                headers['Authorization'] = f'Bearer {token}'
+                headers['token'] = token
+
+            response = requests.post(
+                url,
+                json={'comment': str(comment or '')},
+                timeout=12,
+                headers=headers,
+            )
+            response.raise_for_status()
+            payload = response.json() if 'json' in (response.headers.get('content-type', '').lower()) else {}
+            return {'success': True, 'payload': payload}
+        except Exception as exc:
+            return {'success': False, 'error': str(exc)}
+
+    def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = "", patient_id: str = ""):
         """Change report status for a study"""
         print(f"\n{'='*60}")
         print(f"🔄 [PatientTable] Starting status change: {study_uid}")
@@ -2474,19 +3276,45 @@ class PatientTableWidget(QWidget):
         logger.info(f"   New status: {new_status}")
         logger.info(f"   Comment: {comment}")
         logger.info(f"   Service available: {self.report_status_service is not None}")
+
+        # Requirement: save locally first, then sync server.
+        local_saved = self._save_local_comment_entry(patient_id, study_uid, comment, sync_state='local_only')
         
         # Run in background thread to avoid blocking UI
         def update_status_thread():
             try:
                 logger.info(f"📡 [PatientTable-Thread] Calling update_report_status service...")
                 logger.info(f"   Thread ID: {threading.current_thread().ident}")
-                
-                response = self.report_status_service.update_report_status(
-                    study_uid, new_status, user_id=None, comment=comment
-                )
-                
-                logger.info(f"📥 [PatientTable-Thread] Response received: {response}")
-                self.statusUpdateResult.emit(study_uid, new_status, response)
+
+                status_response = None
+                if str(new_status or '') != str(old_status or ''):
+                    status_response = self.report_status_service.update_report_status(
+                        study_uid, new_status, user_id=None, comment=comment
+                    )
+
+                comment_sync = self._sync_comment_to_server(patient_id, comment)
+                if comment_sync.get('success'):
+                    self._save_local_comment_entry(patient_id, study_uid, comment, sync_state='synced')
+                else:
+                    self._save_local_comment_entry(
+                        patient_id,
+                        study_uid,
+                        comment,
+                        sync_state='pending_sync',
+                        sync_error=str(comment_sync.get('error') or ''),
+                    )
+
+                response_payload = {
+                    'status_response': status_response,
+                    'comment_sync': comment_sync,
+                    'local_saved': local_saved,
+                    'old_status': old_status,
+                    'new_status': new_status,
+                    'comment': comment,
+                    'patient_id': patient_id,
+                }
+                logger.info(f"📥 [PatientTable-Thread] Response received: {response_payload}")
+                self.statusUpdateResult.emit(study_uid, new_status, response_payload)
             except Exception as e:
                 logger.error(f"❌ [PatientTable-Thread] Exception in update_status_thread: {e}")
                 import traceback
@@ -2508,26 +3336,35 @@ class PatientTableWidget(QWidget):
         logger.info(f"   Response: {response}")
         
         if response:
+            status_response = response.get('status_response') if isinstance(response, dict) else None
+            comment_sync = response.get('comment_sync') if isinstance(response, dict) else None
+            local_saved = bool(response.get('local_saved')) if isinstance(response, dict) else False
+            old_status = str(response.get('old_status') or '') if isinstance(response, dict) else ''
+            requested_status = str(response.get('new_status') or new_status) if isinstance(response, dict) else new_status
+
             # Check if it's local-only update
-            is_local_only = response.get('local_only', False)
+            is_local_only = False
+            if isinstance(status_response, dict):
+                is_local_only = status_response.get('local_only', False)
             
             # Get report_status from server response (preferred) or use new_status as fallback
             server_status = None
-            if isinstance(response, dict):
+            if isinstance(status_response, dict):
                 server_status = (
-                    response.get('report_status') or 
-                    response.get('reportStatus') or 
-                    response.get('latest_study_report_status') or
-                    response.get('new_status')
+                    status_response.get('report_status') or
+                    status_response.get('reportStatus') or
+                    status_response.get('latest_study_report_status') or
+                    status_response.get('new_status')
                 )
-            
+
             # Use server status if available, otherwise use the status we sent
-            final_status = server_status if server_status else new_status
+            final_status = server_status if server_status else requested_status
             logger.info(f"   Final status: {final_status}")
             logger.info(f"   Is local only: {is_local_only}")
-            
+
             # Update UI immediately
-            self._update_report_status_in_table(study_uid, final_status)
+            if requested_status != old_status:
+                self._update_report_status_in_table(study_uid, final_status)
             
             # UPDATE OPEN PATIENT WIDGET (if exists)
             try:
@@ -2553,12 +3390,38 @@ class PatientTableWidget(QWidget):
                 logger.warning(f"[PatientTable] Could not update open patient widget: {e}")
             
             status_label = REPORT_STATUSES.get(final_status, final_status)
-            
-            if is_local_only:
+
+            comment_synced = bool(isinstance(comment_sync, dict) and comment_sync.get('success'))
+            comment_sync_error = str((comment_sync or {}).get('error') or '') if isinstance(comment_sync, dict) else ''
+
+            if comment_synced and requested_status == old_status:
+                logger.info("✅ Comment synced successfully (no status change)")
+                QMessageBox.information(
+                    self,
+                    "Comment Synced",
+                    "Comment was saved locally and synced with server successfully.",
+                )
+            elif comment_synced:
+                logger.info("✅ Status + comment synced successfully")
+                QMessageBox.information(
+                    self,
+                    "Success",
+                    f"Report status changed to '{status_label}'.\n"
+                    "Comment was saved locally and synced with server successfully.",
+                )
+            elif local_saved:
+                logger.warning("⚠️ Local save succeeded but comment sync failed")
+                QMessageBox.warning(
+                    self,
+                    "Saved Locally",
+                    "Comment was saved locally but server sync failed.\n"
+                    f"Reason: {comment_sync_error or 'Unknown error'}",
+                )
+            elif is_local_only:
                 logger.warning(f"⚠️ Status updated locally only (server sync failed)")
                 QMessageBox.warning(
-                    self, 
-                    "Local Update Only", 
+                    self,
+                    "Local Update Only",
                     f"Report status changed to '{status_label}'.\n\n"
                     f"⚠️ Warning: Changes saved locally only.\n"
                     f"Server synchronization failed."
@@ -2592,39 +3455,91 @@ class PatientTableWidget(QWidget):
                     if report_layout and report_layout.count() > 0:
                         report_label = report_layout.itemAt(0).widget()
                         if report_label:
-                            # Update icon
-                            status_icon_map = {
-                                'pending': 'fa5s.clock',
-                                'awaiting_physician_approval': 'fa5s.user-md',
-                                'awaiting_secretary_approval': 'fa5s.user-tie',
-                                'awaiting_approval': 'fa5s.hourglass-half',
-                                'physician_approved': 'fa5s.check-circle',
-                                'secretary_approved': 'fa5s.check-circle',
-                                'completed': 'fa5s.check-double',
-                                'archived': 'fa5s.archive'
-                            }
-                            icon_name = status_icon_map.get(new_status, 'fa5s.file-alt')
-                            color = STATUS_COLORS.get(new_status, '#f59e0b')
-                            report_label.setPixmap(qta.icon(icon_name, color=color).pixmap(20, 20))
-                            report_label.setToolTip(f"Report Status: {REPORT_STATUSES.get(new_status, new_status)}\n(Click to change)")
-                            
                             # Update stored status
                             widget.report_status = new_status
-                            
-                            # Update click handler - use closure to capture variables
+
+                            # Update click handler and report display
                             patient_name_item = self.results_table.item(row, COL['patient_name'])
                             patient_id_item = self.results_table.item(row, COL['patient_id'])
                             patient_name = patient_name_item.text() if patient_name_item else ""
                             patient_id = patient_id_item.text() if patient_id_item else ""
-                            
-                            def make_click_handler(uid, status, pname, pid):
+                            reporting_physician = self._resolve_reporting_physician_for_row(row)
+                            self._apply_report_status_display(report_label, new_status, reporting_physician)
+
+                            def make_click_handler(uid, status, pname, pid, physician):
                                 def handler(event):
-                                    self._on_report_status_clicked(uid, status, pname, pid)
+                                    self._on_report_status_clicked(uid, status, pname, pid, physician)
                                 return handler
                             
-                            report_label.mousePressEvent = make_click_handler(study_uid, new_status, patient_name, patient_id)
+                            report_label.mousePressEvent = make_click_handler(
+                                study_uid,
+                                new_status,
+                                patient_name,
+                                patient_id,
+                                reporting_physician,
+                            )
                 break
-    
+
+    def _resolve_reporting_physician_for_row(self, row: int) -> str:
+        patient_name_item = self.results_table.item(row, COL['patient_name'])
+        value = str(patient_name_item.data(Qt.UserRole + 2) or "").strip() if patient_name_item else ""
+
+        if value and value.startswith('{') and value.endswith('}'):
+            try:
+                physician_obj = json.loads(value)
+                if isinstance(physician_obj, dict):
+                    value = (
+                        physician_obj.get('FullName')
+                        or physician_obj.get('fullName')
+                        or physician_obj.get('name')
+                        or physician_obj.get('Name')
+                        or value
+                    )
+            except Exception:
+                pass
+
+        return str(value or "").strip()
+
+    def _apply_report_status_display(self, report_label: QLabel, report_status: str, reporting_physician: str) -> None:
+        status_icon_map = {
+            'pending': 'fa5s.clock',
+            'awaiting_physician_approval': 'fa5s.user-md',
+            'awaiting_secretary_approval': 'fa5s.user-tie',
+            'awaiting_approval': 'fa5s.hourglass-half',
+            'physician_approved': 'fa5s.check-circle',
+            'secretary_approved': 'fa5s.check-circle',
+            'completed': 'fa5s.check-double',
+            'archived': 'fa5s.archive'
+        }
+
+        physician_text = str(reporting_physician or '').strip()
+        if ' (ID:' in physician_text:
+            physician_text = physician_text.split(' (ID:', 1)[0].strip()
+        if physician_text.startswith('ID:'):
+            physician_text = ''
+        if len(physician_text) == 24 and all(ch in '0123456789abcdefABCDEF' for ch in physician_text):
+            physician_text = ''
+        normalized_status = str(report_status or '').strip().lower()
+        if normalized_status in ('completed', 'complete') and physician_text:
+            report_label.clear()
+            report_label.setText(physician_text)
+            report_label.setAlignment(Qt.AlignCenter)
+            report_label.setStyleSheet("background: transparent; border: none; color: #10b981; font-size: 11px; font-weight: 600;")
+            report_label.setToolTip(
+                f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n"
+                f"Reporting Physician: {physician_text}\n"
+                "(Click to change)"
+            )
+            return
+
+        icon_name = status_icon_map.get(report_status, 'fa5s.file-alt')
+        color = STATUS_COLORS.get(report_status, '#f59e0b')
+        report_label.setText('')
+        report_label.setPixmap(self._icon_pixmap(icon_name, color, 16, 16))
+        report_label.setAlignment(Qt.AlignCenter)
+        report_label.setStyleSheet("background: transparent; border: none;")
+        report_label.setToolTip(f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n(Click to change)")
+
     def _on_report_status_updated(self, study_uid: str, old_status: str, new_status: str):
         """Handle report status updated signal from service"""
         self._update_report_status_in_table(study_uid, new_status)
@@ -2643,8 +3558,8 @@ class PatientTableWidget(QWidget):
             COL['patient_name']: 140,
             COL['patient_id']: 90,
             COL['body_part']: 90,
-            COL['status']: 60,
-            COL['report']: 60,
+            COL['status']: 150,
+            COL['report']: 140,
             COL['assign']: 60,
             COL['time']: 75,
             COL['date']: 90,
@@ -2673,6 +3588,10 @@ class PatientTableWidget(QWidget):
         self.results_table.setRowCount(0)
         self._last_checked_checkbox = None  # anchor widget no longer exists after clear
         self.select_all_state = False
+        # Bound the per-search report-status cache so it does not grow
+        # unbounded across a long session of repeated searches.
+        if hasattr(self, '_report_status_cache'):
+            self._report_status_cache.clear()
         select_header = self.results_table.horizontalHeaderItem(COL['select'])
         if select_header:
             select_header.setText("⬜")
@@ -2682,6 +3601,18 @@ class PatientTableWidget(QWidget):
         if not (0 <= row < self.results_table.rowCount()):
             return None
         val = lambda c: (self.results_table.item(row, c).text() if self.results_table.item(row, c) else "")
+        study_uid_item = self.results_table.item(row, COL['study_uid'])
+        study_uids = []
+        if study_uid_item is not None:
+            stored_uids = study_uid_item.data(Qt.UserRole + 10)
+            if isinstance(stored_uids, list):
+                for uid in stored_uids:
+                    uid_str = str(uid or '').strip()
+                    if uid_str and uid_str not in study_uids:
+                        study_uids.append(uid_str)
+            uid_text = study_uid_item.text().strip()
+            if uid_text and uid_text not in study_uids:
+                study_uids.insert(0, uid_text)
         data = {
             'patient_name': val(COL['patient_name']),
             'patient_id': val(COL['patient_id']),
@@ -2692,9 +3623,174 @@ class PatientTableWidget(QWidget):
             'modality': val(COL['modality']),
             'age': val(COL['age']),
             'description': val(COL['description']),
-            'study_uid': val(COL['study_uid'])
+            'study_uid': val(COL['study_uid']),
+            'study_uids': study_uids,
         }
+        # Fall back to the UserRole-stored UID list when the visible study_uid
+        # cell is empty. Without this, a validly-selected row whose UID lives
+        # only in item data is silently dropped from the selection and the
+        # download "doesn't start".
+        if not data['study_uid'] and study_uids:
+            data['study_uid'] = study_uids[0]
         return data if data['study_uid'] else None
+
+    def _find_existing_patient_row(self, patient_id: str, patient_name: str):
+        """Return existing row index for a patient if present, else None."""
+        pid = str(patient_id or '').strip()
+        pname = str(patient_name or '').strip()
+        if not pid:
+            return None
+
+        for row in range(self.results_table.rowCount()):
+            pid_item = self.results_table.item(row, COL['patient_id'])
+            if not pid_item or pid_item.text().strip() != pid:
+                continue
+            if not pname:
+                return row
+            name_item = self.results_table.item(row, COL['patient_name'])
+            existing_name = name_item.text().strip() if name_item else ''
+            if not existing_name or existing_name == pname:
+                return row
+        return None
+
+    def _merge_patient_row(self, row: int, incoming: dict):
+        """Merge study metadata into an existing patient row (one-row-per-patient rule)."""
+        uid_item = self.results_table.item(row, COL['study_uid'])
+        if uid_item is None:
+            return
+
+        existing_uids = uid_item.data(Qt.UserRole + 10)
+        if not isinstance(existing_uids, list):
+            existing_uids = []
+        primary_uid = uid_item.text().strip()
+        if primary_uid and primary_uid not in existing_uids:
+            existing_uids.insert(0, primary_uid)
+
+        incoming_uid = str(incoming.get('study_uid', '') or '').strip()
+        incoming_uids = incoming.get('study_uids') or []
+        if isinstance(incoming_uids, str):
+            incoming_uids = [incoming_uids]
+        elif not isinstance(incoming_uids, list):
+            incoming_uids = []
+
+        for uid in [incoming_uid, *incoming_uids]:
+            uid_str = str(uid or '').strip()
+            if uid_str and uid_str not in existing_uids:
+                existing_uids.append(uid_str)
+        uid_item.setData(Qt.UserRole + 10, existing_uids)
+
+        # Keep description consistent with merged patient studies count.
+        desc_item = self.results_table.item(row, COL['description'])
+        if desc_item is not None:
+            desc_text = desc_item.text() or ''
+            desc_base = desc_text.split('| Studies:', 1)[0].strip()
+            studies_count = len(existing_uids)
+            if studies_count > 1:
+                desc_item.setText(f"{desc_base} | Studies: {studies_count}" if desc_base else f"Studies: {studies_count}")
+
+        incoming_physician = str(incoming.get('reporting_physician') or '').strip()
+        incoming_comment = str(incoming.get('initial_comment') or '').strip()
+        name_item = self.results_table.item(row, COL['patient_name'])
+        if name_item is not None:
+            if incoming_physician:
+                name_item.setData(Qt.UserRole + 2, incoming_physician)
+            if incoming_comment:
+                name_item.setData(Qt.UserRole + 3, incoming_comment)
+
+        if incoming_physician:
+            report_widget = self.results_table.cellWidget(row, COL['report'])
+            if report_widget and report_widget.layout() and report_widget.layout().count() > 0:
+                report_label = report_widget.layout().itemAt(0).widget()
+                if report_label:
+                    status_value = getattr(report_widget, 'report_status', 'pending')
+                    self._apply_report_status_display(report_label, status_value, incoming_physician)
+
+        if getattr(self, '_bulk_insert_depth', 0) > 0:
+            self._bulk_insert_dirty = True
+        else:
+            self._finalize_bulk_insert_ui()
+
+    def update_reporting_physician_for_patient(self, patient_id: str, patient_name: str, reporting_physician: str):
+        """Update stored/displayed physician text for existing patient rows."""
+        pid = str(patient_id or '').strip()
+        pname = str(patient_name or '').strip()
+        physician = str(reporting_physician or '').strip()
+        if not pid or not physician:
+            return
+
+        updated = False
+        for row in range(self.results_table.rowCount()):
+            pid_item = self.results_table.item(row, COL['patient_id'])
+            if not pid_item or pid_item.text().strip() != pid:
+                continue
+
+            name_item = self.results_table.item(row, COL['patient_name'])
+            if name_item is not None:
+                name_item.setData(Qt.UserRole + 2, physician)
+                updated = True
+
+            desc_item = self.results_table.item(row, COL['description'])
+            if desc_item is not None:
+                desc_text = str(desc_item.text() or '').strip()
+                if 'reporting:' not in desc_text.lower():
+                    desc_item.setText(f"{desc_text} | Reporting: {physician}" if desc_text else f"Reporting: {physician}")
+                    updated = True
+
+            report_widget = self.results_table.cellWidget(row, COL['report'])
+            if report_widget and report_widget.layout() and report_widget.layout().count() > 0:
+                report_label = report_widget.layout().itemAt(0).widget()
+                if report_label:
+                    status_value = getattr(report_widget, 'report_status', 'pending')
+                    self._apply_report_status_display(report_label, status_value, physician)
+                    updated = True
+
+            # Patient list grouping is one-row-per-patient; stop after first hit.
+            break
+
+        if updated:
+            self.results_table.viewport().update()
+
+    def collect_completed_rows_missing_reporting_physician(self):
+        """Return (patient_id, patient_name, study_uid) for completed rows with no displayable physician text."""
+        pending_rows = []
+
+        for row in range(self.results_table.rowCount()):
+            report_widget = self.results_table.cellWidget(row, COL['report'])
+            if not report_widget:
+                continue
+
+            status_value = str(getattr(report_widget, 'report_status', 'pending') or 'pending').strip().lower()
+            if status_value == 'complete':
+                status_value = 'completed'
+            if status_value != 'completed':
+                continue
+
+            physician_text = self._resolve_reporting_physician_for_row(row)
+            physician_text = str(physician_text or '').strip()
+            if ' (ID:' in physician_text:
+                physician_text = physician_text.split(' (ID:', 1)[0].strip()
+            if physician_text.startswith('ID:'):
+                physician_text = ''
+            if len(physician_text) == 24 and all(ch in '0123456789abcdefABCDEF' for ch in physician_text):
+                physician_text = ''
+            if physician_text.lower() in {'n/a', 'na', 'none', 'null', 'unknown', '-'}:
+                physician_text = ''
+
+            if physician_text:
+                continue
+
+            pid_item = self.results_table.item(row, COL['patient_id'])
+            pname_item = self.results_table.item(row, COL['patient_name'])
+            uid_item = self.results_table.item(row, COL['study_uid'])
+
+            patient_id = pid_item.text().strip() if pid_item else ''
+            patient_name = pname_item.text().strip() if pname_item else ''
+            study_uid = uid_item.text().strip() if uid_item else ''
+
+            if patient_id and study_uid:
+                pending_rows.append((patient_id, patient_name, study_uid))
+
+        return pending_rows
 
     def get_selected_patient_data(self):
         r = self.results_table.currentRow()
@@ -3483,13 +4579,54 @@ class PatientTableWidget(QWidget):
                 logger.error("Failed to save column settings")
     
     def _programmatic_sort(self, col: int, order: Qt.SortOrder):
-        """Sort table programmatically without enabling user-wide sorting"""
+        """Sort table programmatically without enabling user-wide sorting.
+
+        QTableWidget.sortItems() reorders the data items, but the per-row
+        checkbox cell-widgets do not travel with them reliably — so after a
+        sort the *checked* state lands on the wrong studies (or appears to
+        vanish), and pressing Download then finds nothing selected. To keep
+        selection correct, the set of checked study UIDs is captured before
+        the sort and re-applied by study identity afterwards.
+        """
+        # Capture which studies are checked BEFORE the sort (rows still aligned).
+        checked_uids = set()
+        try:
+            for row in range(self.results_table.rowCount()):
+                cb = self._get_checkbox_for_row(row)
+                if cb is not None and cb.isChecked():
+                    rd = self._extract_row_data(row)
+                    if rd and rd.get('study_uid'):
+                        checked_uids.add(rd['study_uid'])
+        except Exception:
+            checked_uids = set()
+
         was_enabled = self.results_table.isSortingEnabled()
         # Temporarily enable sorting to make sortItems work
         self.results_table.setSortingEnabled(True)
         self.results_table.sortItems(col, order)
         # Restore previous state
         self.results_table.setSortingEnabled(was_enabled)
+
+        # Re-apply the checkbox state by study identity so the selection
+        # survives the sort regardless of how the cell-widgets reflowed.
+        try:
+            self._checkbox_change_guard = True
+            for row in range(self.results_table.rowCount()):
+                cb = self._get_checkbox_for_row(row)
+                if cb is None:
+                    continue
+                rd = self._extract_row_data(row)
+                should_check = bool(rd and rd.get('study_uid') in checked_uids)
+                if cb.isChecked() != should_check:
+                    cb.setChecked(should_check)
+        except Exception:
+            pass
+        finally:
+            self._checkbox_change_guard = False
+        try:
+            self._update_download_button_state()
+        except Exception:
+            pass
 
     def _sort_by_default(self):
         """Return to default order: date descending, most-recent first."""

@@ -16,6 +16,7 @@ import qtawesome as qta
 import sys
 import logging
 import os
+import time  # startup stage timing instrumentation
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +56,17 @@ class MainWindowWidget(QWidget):
         
         # ✅ Initialize database FIRST before any other initialization
         # This ensures api_token_usage and other tables exist before anything tries to access them
+        # [STARTUP_STAGE] instrumentation: brackets the post-login window-build
+        # freeze so the dominant sub-phase can be identified. Pure logging — no
+        # behaviour change; safe to remove once startup is optimized.
+        _t_startup_begin = time.perf_counter()
+        _t = time.perf_counter()
         init_database()
         migrate_fix_null_study_paths()
+        logger.warning(
+            f"[STARTUP_STAGE] stage=db_init_migrate ms={(time.perf_counter() - _t) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
         
         self.setWindowIcon(QIcon(fr"{IMAGES_LOGIN_PATH}/favicon.ico"))
         self.setWindowFlags(Qt.FramelessWindowHint if IS_WINDOWS else Qt.Window)
@@ -84,7 +94,12 @@ class MainWindowWidget(QWidget):
         self.theme_manager = get_theme_manager()
         self._active_theme = self.theme_manager.current_theme()
 
+        _t = time.perf_counter()
         self.setup_ui()
+        logger.warning(
+            f"[STARTUP_STAGE] stage=setup_ui ms={(time.perf_counter() - _t) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
         self.window_buttons()
         if IS_WINDOWS:
             self._init_frameless_resize()
@@ -96,13 +111,27 @@ class MainWindowWidget(QWidget):
         logger.info("Shortcut Manager initialized")
 
         # Now add AIPacs tab (which will connect to shortcut manager)
+        _t = time.perf_counter()
         self.add_AIPacs_tab()
+        logger.warning(
+            f"[STARTUP_STAGE] stage=add_AIPacs_tab ms={(time.perf_counter() - _t) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
         self._schedule_startup_import_if_requested()
         self.theme_manager.themeChanged.connect(self.apply_theme)
+        _t = time.perf_counter()
         self.apply_theme(self._active_theme)
+        logger.warning(
+            f"[STARTUP_STAGE] stage=apply_theme ms={(time.perf_counter() - _t) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
 
         # Register all long-lived resources with the lifecycle manager
         self._register_lifecycle_resources()
+        logger.warning(
+            f"[STARTUP_STAGE] stage=MainWindowWidget_total ms={(time.perf_counter() - _t_startup_begin) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
 
     def _schedule_startup_import_if_requested(self):
         """Schedule optional startup import if a folder was provided at launch."""

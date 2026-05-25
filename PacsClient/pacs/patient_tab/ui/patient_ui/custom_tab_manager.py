@@ -814,6 +814,29 @@ class CustomTabManager:
             # Switch to another available tab if exists, otherwise go to home
             self._switch_to_remaining_tab_after_close(tab_index)
 
+            # Ensure a patient viewer widget's own teardown runs and the
+            # widget is destroyed. closeEvent-based cleanup (cancel background
+            # tasks, stop timers, release VTK) otherwise only fires when the
+            # widget's own close button is used; closing via the tab control
+            # would leave the widget — and its timers/tasks — leaked.
+            # closeEvent is idempotent, so this is safe even when
+            # close_patient_tab was itself reached from closeEvent.
+            # Service tabs (Download Manager, Education, Web, Reception) are
+            # left untouched — they may be reused after their tab is closed.
+            widget = tab_data.get('widget')
+            is_service_tab = bool(
+                tab_data.get('is_download_manager_tab')
+                or tab_data.get('is_education_tab')
+                or tab_data.get('is_web_browser_tab')
+                or tab_data.get('is_reception_tab')
+            )
+            if widget is not None and not is_service_tab:
+                try:
+                    widget.close()
+                    widget.deleteLater()
+                except Exception:
+                    pass
+
     def _switch_to_remaining_tab_after_close(self, closed_index):
         """
         After closing a tab, switch to another available tab.
@@ -864,15 +887,10 @@ class CustomTabManager:
         
         # Get all items sorted by old index
         sorted_tabs = sorted(self.patient_tabs.items(), key=lambda x: x[0])
-        
-        for old_index, tab_data in sorted_tabs:
-            # New index is one less than old index if old index > closed tab index
-            # But since we already removed the tab and called removeTab,
-            # we need to recalculate based on position in the sorted list
-            # Actually, we need to iterate through the actual tab_widget to get correct indices
-            pass
-        
-        # Better approach: iterate through actual tab widget and rebuild mappings
+
+        # Rebuild mappings by matching each stored widget against the actual
+        # tab widget, so indices stay correct after QTabWidget's implicit
+        # index shift on removeTab().
         for i in range(self.tab_widget.count()):
             widget = self.tab_widget.widget(i)
             # Find matching tab_data from old patient_tabs

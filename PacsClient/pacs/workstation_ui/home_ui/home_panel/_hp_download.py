@@ -3,9 +3,12 @@
 
 import asyncio
 from functools import partial
+import json
 import logging as _logging
 import os
+import threading
 import traceback
+from datetime import datetime
 
 # Redirect print() to logger to avoid synchronous console I/O on Windows.
 _print_logger = _logging.getLogger(__name__)
@@ -13,11 +16,14 @@ def print(*args, **_kw):  # noqa: A001
     _print_logger.debug(' '.join(str(a) for a in args))
 
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit, QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox, QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QWidget
+from PySide6.QtCore import QTimer
 
 from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes, save_series_json, check_study_exists, get_all_series_thumbnail_from_study_folder, load_json_as_dict, get_study_source_path, get_name_file_from_path, check_study_complete, validate_thumbnail_files, clear_study_cache, get_count_dicom_files_exist, save_image_as_png
 from PacsClient.utils import get_all_patients, search_patients_local, find_patient_pk, find_study_pk, insert_patient, insert_study, insert_series, find_series_pk, find_study_pk_with_study_uid, CallerTypes
 from PacsClient.utils.config import SOURCE_PATH
+from PacsClient.utils.data_paths import RECEPTION_REPORTS_DIR
 from PacsClient.utils.db_manager import get_study_by_study_uid
+from PacsClient.utils.db_manager import get_patient_by_study_uid
 from modules.network.zeta_adapter import get_zeta_download_manager_widget, get_zeta_executor, get_zeta_worker_pool, start_zeta_download, create_download_task_from_study
 from pathlib import Path
 
@@ -101,6 +107,191 @@ class _HPDownloadMixin:
             if str(study.get("study_uid") or "").strip()
         })
 
+    @staticmethod
+    def _sanitize_id_for_filename(value: str) -> str:
+        text = str(value or '').strip()
+        safe = ''.join(ch if (ch.isalnum() or ch in ('-', '_')) else '_' for ch in text)
+        return safe or 'unknown'
+
+    def _collect_reception_download_targets(self, selected_studies):
+        """Collect unique patient targets and related study_uids for reception-data download."""
+        by_patient = {}
+        for study in (selected_studies or []):
+            patient_id = str(study.get('patient_id') or '').strip()
+            patient_name = str(study.get('patient_name') or '').strip()
+
+            study_uids = []
+            primary_uid = str(study.get('study_uid') or '').strip()
+            if primary_uid:
+                study_uids.append(primary_uid)
+            raw_uids = study.get('study_uids') or []
+            if isinstance(raw_uids, str):
+                raw_uids = [raw_uids]
+            if isinstance(raw_uids, list):
+                for uid in raw_uids:
+                    uid_str = str(uid or '').strip()
+                    if uid_str and uid_str not in study_uids:
+                        study_uids.append(uid_str)
+
+            # Fallback to DB lookup when row payload is missing patient_id.
+            if not patient_id and study_uids:
+                patient_row = get_patient_by_study_uid(study_uids[0]) or {}
+                patient_id = str(patient_row.get('patient_id') or '').strip()
+                if not patient_name:
+                    patient_name = str(patient_row.get('patient_name') or '').strip()
+
+            if not patient_id:
+                continue
+
+            existing = by_patient.get(patient_id)
+            if existing is None:
+                by_patient[patient_id] = {
+                    'patient_id': patient_id,
+                    'patient_name': patient_name,
+                    'study_uids': list(study_uids),
+                }
+            else:
+                if not existing.get('patient_name') and patient_name:
+                    existing['patient_name'] = patient_name
+                for uid in study_uids:
+                    if uid not in existing['study_uids']:
+                        existing['study_uids'].append(uid)
+
+        return list(by_patient.values())
+
+    def _persist_reception_data_bundle(self, bundle: dict) -> Path:
+        """Persist reception/report payload to user_data for later offline reuse."""
+        target_dir = RECEPTION_REPORTS_DIR / 'downloads'
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        patient_part = self._sanitize_id_for_filename(bundle.get('patient_id'))
+        target_file = target_dir / f'patient_{patient_part}.json'
+        temp_file = target_file.with_suffix('.tmp')
+
+        with open(temp_file, 'w', encoding='utf-8') as fh:
+            json.dump(bundle, fh, ensure_ascii=False, indent=2)
+        os.replace(temp_file, target_file)
+        return target_file
+
+    def _download_reception_data_for_targets(self, targets, *, source_tag: str):
+        """Fetch and persist reception/report-related payloads for each patient target."""
+        results = []
+        report_service = getattr(getattr(self, 'patient_table_widget', None), 'report_status_service', None)
+        get_report_status = getattr(report_service, 'get_report_status', None)
+
+        for target in (targets or []):
+            patient_id = str(target.get('patient_id') or '').strip()
+            patient_name = str(target.get('patient_name') or '').strip()
+            study_uids = [str(uid or '').strip() for uid in (target.get('study_uids') or []) if str(uid or '').strip()]
+
+            if not patient_id:
+                continue
+
+            reception_payload = {}
+            report_status_by_study_uid = {}
+            error_text = ''
+
+            try:
+                reception_payload = self._fetch_reception_patient_payload(patient_id)
+                if callable(get_report_status):
+                    for study_uid in study_uids:
+                        try:
+                            report_status_by_study_uid[study_uid] = get_report_status(study_uid) or {}
+                        except Exception as exc:
+                            _print_logger.debug("[ReceptionData] report status fetch failed study_uid=%s err=%s", study_uid, exc)
+
+                bundle = {
+                    'schema_version': 1,
+                    'source': source_tag,
+                    'fetched_at': datetime.utcnow().isoformat() + 'Z',
+                    'patient_id': patient_id,
+                    'patient_name': patient_name,
+                    'study_uids': study_uids,
+                    'reception_payload': reception_payload,
+                    'report_status_by_study_uid': report_status_by_study_uid,
+                }
+                file_path = self._persist_reception_data_bundle(bundle)
+                results.append({'patient_id': patient_id, 'ok': True, 'file_path': str(file_path)})
+            except Exception as exc:
+                error_text = str(exc)
+                _print_logger.exception("[ReceptionData] Failed for patient_id=%s", patient_id)
+                results.append({'patient_id': patient_id, 'ok': False, 'error': error_text})
+
+        return results
+
+    def _on_reception_data_download_requested(self, selected_studies):
+        """Handle explicit 'Download Reception Data' action from patient-table dropdown."""
+        targets = self._collect_reception_download_targets(selected_studies)
+        if not targets:
+            QMessageBox.warning(
+                self,
+                "No Valid Selection",
+                "No valid patient identifiers were found in the current selection.",
+            )
+            return
+
+        def _worker():
+            results = self._download_reception_data_for_targets(targets, source_tag='manual_reception_download')
+
+            def _notify():
+                ok_count = sum(1 for r in results if r.get('ok'))
+                fail_count = sum(1 for r in results if not r.get('ok'))
+                if fail_count == 0:
+                    QMessageBox.information(
+                        self,
+                        "Reception Data Download",
+                        f"Saved reception/report data for {ok_count} patient(s) under user data.",
+                    )
+                else:
+                    QMessageBox.warning(
+                        self,
+                        "Reception Data Download",
+                        f"Saved: {ok_count} patient(s)\nFailed: {fail_count} patient(s)\n"
+                        "Check logs for failed items.",
+                    )
+
+            QTimer.singleShot(0, _notify)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def _queue_reception_data_download_for_study(self, study_uid: str):
+        """Auto-fetch reception data for a completed image download (non-blocking)."""
+        suid = str(study_uid or '').strip()
+        if not suid:
+            return
+
+        completed = getattr(self, '_auto_reception_completed_studies', None)
+        inflight = getattr(self, '_auto_reception_inflight_studies', None)
+        if completed is None:
+            completed = set()
+            self._auto_reception_completed_studies = completed
+        if inflight is None:
+            inflight = set()
+            self._auto_reception_inflight_studies = inflight
+
+        if suid in completed or suid in inflight:
+            return
+
+        patient_row = get_patient_by_study_uid(suid) or {}
+        patient_id = str(patient_row.get('patient_id') or '').strip()
+        patient_name = str(patient_row.get('patient_name') or '').strip()
+        if not patient_id:
+            return
+
+        inflight.add(suid)
+        target = [{'patient_id': patient_id, 'patient_name': patient_name, 'study_uids': [suid]}]
+
+        def _worker():
+            try:
+                self._download_reception_data_for_targets(target, source_tag='post_image_download')
+            except Exception:
+                _print_logger.exception("[ReceptionData] Auto fetch failed study_uid=%s", suid)
+            finally:
+                inflight.discard(suid)
+                completed.add(suid)
+
+        threading.Thread(target=_worker, daemon=True).start()
+
     def _get_or_create_download_manager_tab(self, activate_tab: bool = False):
         """Get existing Download Manager tab or create new one (delegates to service).
 
@@ -183,6 +374,11 @@ class _HPDownloadMixin:
                 if self._auto_open_after_download:
                     print(f"[AUTO_OPEN] Opening study {study_uid}...")
                     self._auto_open_downloaded_study(study_uid)
+
+            # Optional UX integration: after image download completes, persist
+            # the related reception/report payload in user_data asynchronously.
+            if status == 'complete':
+                self._queue_reception_data_download_for_study(study_uid)
 
             print(f"{'='*70}\n")
 
