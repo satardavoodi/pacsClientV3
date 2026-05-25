@@ -52,6 +52,24 @@ from PacsClient.utils.runtime_correlation import (
 )
 
 
+# --- Native-fault tracing (additive, best-effort) ---------------------------
+# faulthandler writes a native + Python traceback straight to a file if the
+# process hits a fatal fault (segfault, access violation, stack overflow).
+# It bypasses the async logging queue, so such a hard crash still leaves a
+# trace on disk. Guarded so it can never prevent startup.
+try:
+    import faulthandler as _faulthandler
+    from PacsClient.utils.data_paths import LOGS_DIR as _LOGS_DIR
+
+    _LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    _native_fault_log = open(
+        _LOGS_DIR / "native_fault.log", "a", buffering=1, encoding="utf-8"
+    )
+    _faulthandler.enable(file=_native_fault_log, all_threads=True)
+except Exception:
+    pass
+
+
 def _emit_console(message: str) -> None:
     """Emit startup/CLI console text without direct print calls."""
     text = f"{message}\n"

@@ -2086,20 +2086,31 @@ class PatientTableWidget(QWidget):
         layout.setSpacing(6)
         layout.setAlignment(Qt.AlignCenter)
 
-        def _chip(icon: str, label: str, active: bool, tip: str):
+        # Status indicators: an icon for DICOM (download), Document (folder)
+        # and Voice (microphone); literal text "AI" for AI results. A chip is
+        # added ONLY when that data exists for the row, so nothing is shown by
+        # default -- only the indicators that apply.
+        def _chip(tip: str, icon: str = '', text: str = '') -> QLabel:
             chip = QLabel()
-            icon_color = '#10b981' if active else '#6b7280'
-            text_color = '#10b981' if active else '#9ca3af'
-            chip.setPixmap(self._icon_pixmap(icon, icon_color, 12, 12))
-            chip.setText(f" {label}")
-            chip.setStyleSheet(f"color: {text_color}; background: transparent; border: none; font-size: 10px;")
+            chip.setAlignment(Qt.AlignCenter)
             chip.setToolTip(tip)
+            if icon:
+                chip.setPixmap(self._icon_pixmap(icon, '#10b981', 16, 16))
+                chip.setStyleSheet('background: transparent; border: none;')
+            else:
+                chip.setText(text)
+                chip.setStyleSheet('color: #10b981; background: transparent; '
+                                   'border: none; font-size: 11px; font-weight: bold;')
             return chip
 
-        layout.addWidget(_chip('fa5s.x-ray', 'DCM', flags.get('dicom', False), 'Local DICOM images'))
-        layout.addWidget(_chip('fa5s.folder-open', 'DOC', flags.get('documents', False), 'Local documents / attachments'))
-        layout.addWidget(_chip('fa5s.volume-up', 'VOC', flags.get('voice', False), 'Local voice files'))
-        layout.addWidget(_chip('fa5s.robot', 'AI', flags.get('ai', False), 'Local AI results'))
+        if flags.get('dicom', False):
+            layout.addWidget(_chip('Local DICOM images', icon='fa5s.download'))
+        if flags.get('documents', False):
+            layout.addWidget(_chip('Local documents / attachments', icon='fa5s.folder'))
+        if flags.get('voice', False):
+            layout.addWidget(_chip('Local voice files', icon='fa5s.microphone'))
+        if flags.get('ai', False):
+            layout.addWidget(_chip('Local AI results', text='AI'))
 
         container.setStyleSheet('background: transparent; border: none;')
         return container

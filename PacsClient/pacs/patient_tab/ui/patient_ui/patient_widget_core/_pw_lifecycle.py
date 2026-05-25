@@ -260,9 +260,12 @@ class _PWLifecycleMixin:
                         try:
                             node: NodeViewer
                             vtk_widget: VTKWidget = getattr(node, 'vtk_widget', None)
-                            if vtk_widget is not None and hasattr(vtk_widget, 'cleanup_image_viewer'):
+                            if vtk_widget is not None:
                                 try:
-                                    vtk_widget.cleanup_image_viewer()
+                                    if hasattr(vtk_widget, 'cleanup_image_viewer'):
+                                        vtk_widget.cleanup_image_viewer()  # Advanced viewer (VTKWidget)
+                                    elif hasattr(vtk_widget, 'cleanup'):
+                                        vtk_widget.cleanup()  # FAST viewer (QtFastContainer)
                                 except:
                                     pass
 

@@ -7,11 +7,12 @@
 
 ---
 
-## v3.0.9 (2026-05-25) - Workspace sync rollup: multi-study viewer, thumbnail pipeline, DB test isolation, Zeta DM review
+## v3.0.9 (2026-05-25) - Workspace sync rollup + crash hardening + license
 
 ### Summary
 
-Consolidation release on top of v3.0.8 that bundles the accumulated workspace work since the last stable checkpoint and publishes it across all mirrored remotes.
+Consolidation release on top of v3.0.8 that bundles all accumulated workspace
+fixes, crash-hardening additions, and the new AI-PACS proprietary EULA.
 
 ### Included
 
@@ -24,6 +25,26 @@ Consolidation release on top of v3.0.8 that bundles the accumulated workspace wo
 - Settings UI, mainwindow UI, patient table widget polish
 - Plugin package mirrors resynchronized for canonical module changes
 - Runtime profile, config, and database manager updates
+
+### Crash hardening (2026-05-25 patch)
+
+- `faulthandler` wired into `main.py` startup — writes a native + Python
+  traceback to `user_data/logs/native_fault.log` on hard native crashes
+  (`0xC0000409` Qt fail-fast, segfault, stack overflow), bypassing the async
+  logging queue so evidence survives even a silent kill — see `CRASH_ANALYSIS_2026-05-25.md`
+- `qt_fast_container.py`, `qt_slice_viewer.py`: viewer memory / rendering fixes
+  identified in crash analysis
+- `thumbnail_manager.py`: additional null-guard and cleanup hardening
+- `patient_table_widget.py`, `_hp_modules.py`: home-page stability fixes
+- `_vc_warmup.py`, `_pw_lifecycle.py`: lifecycle/warmup hardening
+- Crash-diagnostics tooling: `crash-diagnostics/` (setup scripts, eval docs)
+
+### License
+
+- `LICENSE` replaced: MIT template → **AI-PACS End User License Agreement
+  (EULA) v3.0.9**, effective 2026-05-25. Proprietary software license covering
+  all AI-PACS components, clinical-use disclaimers, AI-module limitations,
+  patient-data responsibility, and export-control obligations.
 
 ---
 

@@ -356,8 +356,10 @@ class QtFastContainer(QWidget):
             # Remove any existing widgets from layout
             while self._container_layout.count() > 0:
                 item = self._container_layout.takeAt(0)
-                if item.widget():
-                    item.widget().setParent(None)
+                _old_w = item.widget() if item else None
+                if _old_w is not None:
+                    _old_w.setParent(None)
+                    _old_w.deleteLater()
             
             # Add the QtSliceViewer to the layout
             qt_viewer.setParent(self)  # Ensure proper parent
@@ -481,8 +483,10 @@ class QtFastContainer(QWidget):
         # Remove any previous widgets from the container layout
         while self._container_layout.count() > 0:
             item = self._container_layout.takeAt(0)
-            if item and item.widget():
-                item.widget().setParent(None)
+            _old_w = item.widget() if item else None
+            if _old_w is not None:
+                _old_w.setParent(None)
+                _old_w.deleteLater()
 
         # Embed QtSliceViewer in the layout so it fills the cell
         qt_viewer.setParent(self)
@@ -1004,8 +1008,26 @@ class QtFastContainer(QWidget):
 
     # ── Lifecycle ─────────────────────────────────────────────────────────
     def cleanup(self) -> None:
+        # Idempotent: the patient-tab teardown loop and closeEvent() may both
+        # call this. Guard so the bridge is torn down exactly once.
+        if getattr(self, '_cleaned_up', False):
+            return
+        self._cleaned_up = True
         try:
             if self._qt_bridge and hasattr(self._qt_bridge, 'cleanup'):
                 self._qt_bridge.cleanup()
+        except Exception:
+            pass
+
+    def closeEvent(self, event) -> None:
+        # Belt-and-suspenders: ensure the FAST viewer's bridge/pipeline,
+        # threads, timers and caches are released even if the container is
+        # closed by a path other than the patient-tab teardown loop.
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+        try:
+            super().closeEvent(event)
         except Exception:
             pass

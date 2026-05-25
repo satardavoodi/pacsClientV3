@@ -538,6 +538,12 @@ class QtSliceViewer(QWidget):
         self._pixmap = None
         self._image_width = 0
         self._image_height = 0
+        # Safety net: never leave Python GC disabled if a stack-drag session
+        # was interrupted (series cleared / tab closed mid-drag). Idempotent.
+        try:
+            self._reenable_gc_after_drag()
+        except Exception:
+            pass
         self.update()
 
     def get_zoom(self) -> float:

@@ -517,6 +517,12 @@ Study UID: {study_uid}
 
     async def _show_grouped_patient_studies(self, patient_id: str, patient_name: str, study_uids: list):
         """Load thumbnails for multiple studies and display them in grouped order."""
+        # Snapshot the current patient-selection request id. If the user clicks
+        # a different patient while the (slow) multi-study fetch below is still
+        # awaiting, this lets us drop the stale result instead of rendering one
+        # patient's thumbnails under another (patient-safety guard).
+        _request_id = int(getattr(self, '_active_thumb_request_id', 0) or 0)
+
         server = self.data_access_panel_widget.get_server_selected()
         if not server:
             QMessageBox.warning(self, "Server Error", "No PACS server selected. Please select a server first.")
@@ -611,6 +617,12 @@ Study UID: {study_uid}
                         study_thumbs.append(thumb)
 
             combined_thumbnails.extend(study_thumbs)
+
+        # Drop a stale result: if the active patient selection changed while
+        # the multi-study fetch above was awaiting, do not render (or pop a
+        # dialog for) a patient the user is no longer looking at.
+        if int(getattr(self, '_active_thumb_request_id', 0) or 0) != _request_id:
+            return
 
         if not combined_thumbnails:
             QMessageBox.information(self, "No Thumbnails", f"No thumbnails available for {patient_name}.")

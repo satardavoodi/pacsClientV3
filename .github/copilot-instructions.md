@@ -1,6 +1,6 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.0.9 (2026-05-25) — Workspace sync rollup on top of v3.0.8: multi-study viewer fix, thumbnail pipeline canonicalization, DB test isolation + cleanup, Zeta DM review. See `docs/releases/VERSION_3.0.9_RELEASE.md`.
+**Current Stable Version:** v3.0.9 (2026-05-25) — Workspace sync rollup + crash hardening (faulthandler native-fault log, viewer/home-panel stability fixes) + AI-PACS proprietary EULA (replaces MIT template). See `docs/releases/VERSION_3.0.9_RELEASE.md`.
 
 **Previous Stable:** v3.0.8 (2026-05-20) — Stable release checkpoint with hardening updates (DM retry, socket client, worker pool, UI fixes). See `docs/releases/VERSION_3.0.8_RELEASE.md`.
 

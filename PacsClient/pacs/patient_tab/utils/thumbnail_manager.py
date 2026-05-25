@@ -1729,6 +1729,18 @@ class ThumbnailManager(QObject):
     def set_series_pending(self, series_number: str):
         try:
             series_key = self._resolve_series_key(series_number)
+
+            # Do not downgrade a series that has already finished
+            # downloading. A thumbnail re-render or refresh (e.g. on a
+            # patient-tab switch) must not gray out a completed series.
+            # Genuine restarts reset state via start_series_download() /
+            # reset_all_states(), never through this method.
+            if (
+                series_key in self.ready_series
+                or self._get_series_projection_state(series_key) == "completed"
+            ):
+                return
+
             self.ready_series.discard(series_key)
 
             # Update new border style
@@ -1876,6 +1888,18 @@ class ThumbnailManager(QObject):
                 progress_percent = float(progress_percent)
             except Exception:
                 progress_percent = 0.0
+
+            # Stale-update guard: once a series has completed, a late or
+            # deferred sub-100% progress tick must NOT resurrect the blue
+            # "downloading" matte. complete_series_download() has already
+            # hidden the overlays and early-returns on re-entry, so a stale
+            # update here would re-show glass_overlay/progress_overlay with
+            # nothing left to hide them again. Drop it.
+            if progress_percent < 100.0 and (
+                self._get_series_projection_state(series_key) == "completed"
+                or series_key in self.ready_series
+            ):
+                return
 
             if (
                 not _force

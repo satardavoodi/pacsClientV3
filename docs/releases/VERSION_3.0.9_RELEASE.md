@@ -18,6 +18,10 @@ fixes (multi-study viewer, thumbnail pipeline, DB test isolation, Zeta DM
 review) have been merged into the canonical workspace with their as-built
 records committed alongside.
 
+A follow-up patch on 2026-05-25 adds crash-hardening (faulthandler native-fault
+log), viewer / home-panel stability fixes identified by crash analysis, and
+replaces the MIT license template with the AI-PACS proprietary EULA.
+
 ---
 
 ## Version Alignment
