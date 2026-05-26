@@ -8,6 +8,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QFileDialog,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -16,6 +17,8 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -102,12 +105,44 @@ class InstallationModuleSettingsWidget(QWidget):
         self.refresh_updates()
 
     def _setup_ui(self) -> None:
-        root = QVBoxLayout(self)
+        # ── Outer scroll-area scaffolding ────────────────────────────────
+        # The page content (title + intro + Package Workflow + module table
+        # + action row + Update Source + update actions) is taller than the
+        # Settings tab viewport on smaller monitors, which previously made
+        # the bottom sections overlap. Wrap everything in a vertical
+        # QScrollArea so the page scrolls cleanly when it overflows.
+        # Archetype 1 / Archetype 4 spirit — give the layout an overflow
+        # path instead of letting Qt squash widgets together.
+        # See docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        scroll.viewport().setStyleSheet("background: transparent;")
+        outer.addWidget(scroll)
+
+        # Content widget — receives all the page widgets via its own
+        # QVBoxLayout. The scroll area resizes this widget to match its
+        # viewport width but lets the height grow as the content needs.
+        content = QWidget()
+        content.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
+        scroll.setWidget(content)
+
+        root = QVBoxLayout(content)
         root.setContentsMargins(18, 18, 18, 18)
-        root.setSpacing(14)
+        root.setSpacing(18)
 
         title = QLabel("Installation & Updates")
-        title.setStyleSheet("font-size: 22px; font-weight: 800;")
+        title.setStyleSheet(
+            "font-size: 24px; font-weight: 800; color: #f3f4f6;"
+            "padding-bottom: 4px;"
+        )
         root.addWidget(title)
 
         intro = QLabel(
@@ -116,6 +151,7 @@ class InstallationModuleSettingsWidget(QWidget):
             "This page also checks for newer core or module releases from a configured update source."
         )
         intro.setWordWrap(True)
+        intro.setStyleSheet("color: #cbd5e1; padding-bottom: 4px;")
         root.addWidget(intro)
 
         if not is_frozen():
@@ -124,17 +160,67 @@ class InstallationModuleSettingsWidget(QWidget):
                 f"`{RESPECT_DEV_MODULE_PROFILE_ENV}=1` is set."
             )
             dev_note.setWordWrap(True)
+            dev_note.setStyleSheet("color: #94a3b8;")
             root.addWidget(dev_note)
 
+        # Local stylesheet override for the two QGroupBox sections on this
+        # page. The page-cascade style sets title font-size to 28 px which
+        # is too large for the section-vs-content hierarchy here; this
+        # override gives section titles 16 px (larger than the 13 px body
+        # text by ~25 %) and provides clear vertical separation between
+        # the title and the first child widget (padding-top: 28 px keeps
+        # the title from sitting on top of the content).
+        section_style = (
+            "QGroupBox {"
+            "  border: 1px solid #232a33;"
+            "  border-radius: 10px;"
+            "  background: #10141a;"
+            "  margin-top: 18px;"
+            "  padding: 28px 14px 14px 14px;"
+            "}"
+            "QGroupBox::title {"
+            "  subcontrol-origin: margin;"
+            "  subcontrol-position: top left;"
+            "  left: 14px;"
+            "  top: 2px;"
+            "  padding: 2px 10px;"
+            "  font-size: 16px;"
+            "  font-weight: 700;"
+            "  color: #f3f4f6;"
+            "  background: #10141a;"
+            "}"
+        )
+
         summary_box = QGroupBox("Package Workflow")
+        summary_box.setStyleSheet(section_style)
         summary_layout = QGridLayout(summary_box)
-        summary_layout.addWidget(QLabel("1. Select a module row."), 0, 0)
-        summary_layout.addWidget(QLabel("2. Install package from file, folder, or URL."), 1, 0)
-        summary_layout.addWidget(QLabel("3. Check the update source for newer core or module versions."), 2, 0)
-        summary_layout.addWidget(QLabel("4. Run a test and restart the workstation if required."), 3, 0)
+        # Generous inner margins + spacing so the 4 workflow steps don't
+        # crowd the title above them.
+        summary_layout.setContentsMargins(8, 8, 8, 8)
+        summary_layout.setHorizontalSpacing(12)
+        summary_layout.setVerticalSpacing(8)
+        # Archetype 2: setWordWrap on each step so long text doesn't clip on
+        # narrow columns.
+        for _row, _text in enumerate([
+            "1. Select a module row.",
+            "2. Install package from file, folder, or URL.",
+            "3. Check the update source for newer core or module versions.",
+            "4. Run a test and restart the workstation if required.",
+        ]):
+            _lbl = QLabel(_text)
+            _lbl.setWordWrap(True)
+            _lbl.setStyleSheet("color: #e5e7eb; font-size: 13px; padding: 2px 0;")
+            summary_layout.addWidget(_lbl, _row, 0)
         root.addWidget(summary_box)
 
-        actions = QHBoxLayout()
+        # ── Action buttons row ───────────────────────────────────────────
+        # 7 buttons in a horizontal row — on narrower windows the row would
+        # previously push some buttons off the right edge. Archetype 1: wrap
+        # the row in a horizontal QScrollArea so the row scrolls instead of
+        # clipping. The buttons themselves keep their natural sizes.
+        actions_container = QWidget()
+        actions = QHBoxLayout(actions_container)
+        actions.setContentsMargins(0, 0, 0, 0)
         actions.setSpacing(8)
 
         self.refresh_btn = QPushButton("Refresh")
@@ -166,7 +252,13 @@ class InstallationModuleSettingsWidget(QWidget):
         actions.addWidget(self.open_runtime_btn)
 
         actions.addStretch(1)
-        root.addLayout(actions)
+
+        try:
+            from PacsClient.utils.responsive_layout import wrap_in_horizontal_scroll
+            self._actions_scroll = wrap_in_horizontal_scroll(actions_container, max_height=46)
+            root.addWidget(self._actions_scroll)
+        except Exception:  # pragma: no cover — defensive fallback
+            root.addWidget(actions_container)
 
         self.table = QTableWidget(0, 7, self)
         self.table.setHorizontalHeaderLabels(
@@ -176,6 +268,11 @@ class InstallationModuleSettingsWidget(QWidget):
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.verticalHeader().setVisible(False)
+        # Each module row at default style is ~30 px. 1 header + 6 rows = 210 px
+        # plus a little padding gives a comfortable "show at least 6 modules
+        # at once" minimum height. The table still stretches when the page
+        # has more room (it's added with stretch=1).
+        self.table.setMinimumHeight(240)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.ResizeToContents)
@@ -188,16 +285,29 @@ class InstallationModuleSettingsWidget(QWidget):
 
         self.status_label = QLabel("")
         self.status_label.setWordWrap(True)
+        self.status_label.setStyleSheet("color: #cbd5e1; padding: 2px 0;")
         root.addWidget(self.status_label)
 
         update_box = QGroupBox("Update Source")
+        update_box.setStyleSheet(section_style)
         update_layout = QVBoxLayout(update_box)
+        # Generous inner margins + spacing so the source info / actions
+        # don't crowd the title above them.
+        update_layout.setContentsMargins(8, 8, 8, 8)
+        update_layout.setSpacing(10)
 
         self.update_source_label = QLabel("")
         self.update_source_label.setWordWrap(True)
+        self.update_source_label.setStyleSheet("color: #e5e7eb; font-size: 13px;")
         update_layout.addWidget(self.update_source_label)
 
-        update_actions = QHBoxLayout()
+        # Update Source action row — 5 buttons. Wrap in a horizontal
+        # QScrollArea so the row scrolls instead of clipping the right
+        # side on narrower Settings columns (same Archetype 1 treatment
+        # as the main module-actions row above).
+        update_actions_container = QWidget()
+        update_actions = QHBoxLayout(update_actions_container)
+        update_actions.setContentsMargins(0, 0, 0, 0)
         update_actions.setSpacing(8)
 
         self.check_updates_btn = QPushButton("Check Updates")
@@ -221,7 +331,15 @@ class InstallationModuleSettingsWidget(QWidget):
         update_actions.addWidget(self.open_update_source_btn)
 
         update_actions.addStretch(1)
-        update_layout.addLayout(update_actions)
+
+        try:
+            from PacsClient.utils.responsive_layout import wrap_in_horizontal_scroll
+            self._update_actions_scroll = wrap_in_horizontal_scroll(
+                update_actions_container, max_height=46,
+            )
+            update_layout.addWidget(self._update_actions_scroll)
+        except Exception:  # pragma: no cover — defensive fallback
+            update_layout.addWidget(update_actions_container)
 
         self.update_table = QTableWidget(0, 6, self)
         self.update_table.setHorizontalHeaderLabels(
@@ -243,9 +361,14 @@ class InstallationModuleSettingsWidget(QWidget):
 
         self.update_status_label = QLabel("")
         self.update_status_label.setWordWrap(True)
+        self.update_status_label.setStyleSheet("color: #cbd5e1; padding: 2px 0;")
         update_layout.addWidget(self.update_status_label)
 
         root.addWidget(update_box)
+        # Final spacer at the bottom of the scrollable content so the
+        # last section has a small breathing area beneath it when the
+        # page scrolls to its end.
+        root.addStretch(1)
 
     def _selected_record(self) -> dict | None:
         row = self.table.currentRow()

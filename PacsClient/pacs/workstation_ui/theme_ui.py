@@ -66,7 +66,7 @@ class ThemeCustomizationDialog(QDialog):
         preview_layout.setSpacing(0)
 
         self.preview_title = QFrame(self.preview_frame)
-        self.preview_title.setFixedHeight(34)
+        self.preview_title.setMinimumHeight(34)  # Archetype 5
         preview_title_layout = QHBoxLayout(self.preview_title)
         preview_title_layout.setContentsMargins(12, 0, 12, 0)
         preview_title_layout.addWidget(QLabel("AIPacs Preview"))
@@ -80,7 +80,7 @@ class ThemeCustomizationDialog(QDialog):
         preview_body_layout.setSpacing(0)
 
         self.preview_menu = QFrame(self.preview_body)
-        self.preview_menu.setFixedWidth(118)
+        self.preview_menu.setMinimumWidth(118)  # Archetype 5
         menu_layout = QVBoxLayout(self.preview_menu)
         menu_layout.setContentsMargins(12, 12, 12, 12)
         menu_layout.setSpacing(8)

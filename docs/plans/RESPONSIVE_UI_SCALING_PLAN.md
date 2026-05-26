@@ -1,6 +1,7 @@
 # Responsive UI Scaling Plan — AIPacs Windows Desktop
-**Created:** 2026-05-20  
-**Status:** Draft — ready for implementation
+**Created:** 2026-05-20
+**Revised:** 2026-05-26 — pre-implementation review (see §16 Revision Log)
+**Status:** Draft — review pass complete; ready for staged implementation with gates
 
 ---
 
@@ -179,12 +180,23 @@ Constants defined at lines 77–82 — updating only these 6 constants propagate
 
 ### 3.1 New central module: `PacsClient/utils/ui_scaling.py`
 
+> **Revision 2026-05-26.** The original draft persisted to
+> `BASE_PATH/config/...`. In a frozen Nuitka build `BASE_PATH` is the install
+> directory (e.g. `d:\ai-pacs\aipacs\`), which is **not user-writable**.
+> Persistence must go through `SOCKET_CONFIG_PATH` from
+> `PacsClient.utils.config` — that resolves to `roaming_config_root()` in
+> frozen mode and `BASE_PATH/config` in dev mode, exactly matching the rest of
+> the project's writable-config pattern. We also stop coupling the UI-scale
+> key to the viewer-backend config file (avoids accidental coupling with the
+> `modules/viewer/viewer_backend_config.py` consumer) and use a dedicated
+> `ui_settings.json`.
+
 ```python
 """Central UI scale-factor helper.
 
 Scale 1.0 = zero visual change (safety invariant).
 Range: [0.75, 1.50].
-Persisted in config/viewer_backend_settings.json key "ui_scale_factor".
+Persisted in {SOCKET_CONFIG_PATH}/ui_settings.json key "ui_scale_factor".
 """
 from __future__ import annotations
 import json
@@ -192,26 +204,39 @@ from pathlib import Path
 
 _scale_factor: float = 1.0
 
+_UI_SETTINGS_FILENAME = "ui_settings.json"
+_SCALE_KEY = "ui_scale_factor"
+_MIN_SCALE = 0.75
+_MAX_SCALE = 1.50
+
+
+def _clamp(factor: float) -> float:
+    try:
+        f = float(factor)
+    except Exception:
+        return 1.0
+    return max(_MIN_SCALE, min(_MAX_SCALE, f))
+
 
 def sf(px: int) -> int:
     """Scale an integer pixel value. Returns px unchanged when factor == 1.0."""
     if _scale_factor == 1.0:
-        return px
-    return max(1, round(px * _scale_factor))
+        return int(px)
+    return max(1, int(round(px * _scale_factor)))
 
 
 def sf_f(px: float) -> float:
     """Scale a float pixel value (for CSS f-strings)."""
     if _scale_factor == 1.0:
-        return px
+        return float(px)
     return max(1.0, px * _scale_factor)
 
 
 def sf_pt(pt: int) -> int:
     """Scale a font point size. Minimum 6pt."""
     if _scale_factor == 1.0:
-        return pt
-    return max(6, round(pt * _scale_factor))
+        return int(pt)
+    return max(6, int(round(pt * _scale_factor)))
 
 
 def get_scale() -> float:
@@ -221,12 +246,29 @@ def get_scale() -> float:
 def set_scale(factor: float) -> None:
     """Clamp to [0.75, 1.50] and update module-level factor."""
     global _scale_factor
-    _scale_factor = max(0.75, min(1.50, float(factor)))
+    _scale_factor = _clamp(factor)
+
+
+def _ui_settings_path() -> Path:
+    """Resolve the writable UI-settings file.
+
+    Uses SOCKET_CONFIG_PATH so frozen builds land in roaming_config_root()
+    and dev builds land in BASE_PATH/config — same pattern as other
+    user-mutable config in the project.
+    """
+    from PacsClient.utils.config import SOCKET_CONFIG_PATH
+    return Path(SOCKET_CONFIG_PATH) / _UI_SETTINGS_FILENAME
 
 
 def detect_screen_scale() -> float:
-    """Read primary screen DPI, same formula as PrintingWidget._scaled().
-    Returns 1.0 if QApplication is not yet initialised.
+    """Best-effort screen-DPI heuristic.
+
+    **Caveat (Qt 6):** PySide6 enables high-DPI scaling by default and
+    normalises `QScreen.logicalDotsPerInch()` to 96 on Windows. On most
+    systems this function will therefore return 1.0 even at 125%/150%
+    Windows scaling — Qt has already auto-scaled the UI. Treat this
+    function as a fallback only; the authoritative source is the saved
+    user preference. See §14 (Qt 6 high-DPI interaction).
     """
     try:
         from PySide6.QtWidgets import QApplication
@@ -236,52 +278,61 @@ def detect_screen_scale() -> float:
         screen = app.primaryScreen()
         if screen is None:
             return 1.0
-        dpi = screen.logicalDotsPerInch()
-        return max(0.75, min(1.50, dpi / 96.0))
+        dpi = float(screen.logicalDotsPerInch())
+        return _clamp(dpi / 96.0)
     except Exception:
         return 1.0
 
 
 def load_scale_from_config() -> float:
-    """Read ui_scale_factor from viewer_backend_settings.json.
+    """Read ui_scale_factor from ui_settings.json.
     Returns 1.0 on any error or if key is absent.
     """
     try:
-        from PacsClient.utils.config import BASE_PATH
-        cfg_path = BASE_PATH / "config" / "viewer_backend_settings.json"
+        cfg_path = _ui_settings_path()
         if cfg_path.exists():
             data = json.loads(cfg_path.read_text(encoding="utf-8"))
-            val = data.get("ui_scale_factor", 1.0)
-            return max(0.75, min(1.50, float(val)))
+            return _clamp(data.get(_SCALE_KEY, 1.0))
     except Exception:
         pass
     return 1.0
 
 
 def save_scale_to_config(factor: float) -> None:
-    """Write ui_scale_factor to viewer_backend_settings.json."""
+    """Write ui_scale_factor to ui_settings.json (writable config dir)."""
     try:
-        from PacsClient.utils.config import BASE_PATH
-        cfg_path = BASE_PATH / "config" / "viewer_backend_settings.json"
+        cfg_path = _ui_settings_path()
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
         data: dict = {}
         if cfg_path.exists():
-            data = json.loads(cfg_path.read_text(encoding="utf-8"))
-        data["ui_scale_factor"] = max(0.75, min(1.50, float(factor)))
+            try:
+                data = json.loads(cfg_path.read_text(encoding="utf-8"))
+            except Exception:
+                data = {}
+        data[_SCALE_KEY] = _clamp(factor)
         cfg_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
     except Exception:
+        # Persistence is best-effort; never crash the app over a settings write.
         pass
 ```
 
 ### 3.2 Integration in `main.py`
 
-Insert after `configure_diagnostic_logging()`, **before** the first widget is created:
+Insert after the existing `QApplication.setAttribute(...)` calls (around line ~804) but **before** the first widget is created:
 
 ```python
-# ── UI scale: detect from saved config, fall back to screen DPI ──
-from PacsClient.utils.ui_scaling import load_scale_from_config, detect_screen_scale, set_scale as _set_ui_scale
-_saved_scale = load_scale_from_config()
-_set_ui_scale(_saved_scale if _saved_scale != 1.0 else detect_screen_scale())
+# ── UI scale: load saved user preference; default 1.0 (no auto-detect-and-apply) ──
+# Qt 6 already auto-scales on high-DPI; we deliberately do NOT compound that
+# at startup. The user adjusts the scale in Settings → restart-on-apply.
+from PacsClient.utils.ui_scaling import load_scale_from_config, set_scale as _set_ui_scale
+_set_ui_scale(load_scale_from_config())  # returns 1.0 if no preference saved
 ```
+
+> **Revision 2026-05-26.** The earlier draft applied `detect_screen_scale()`
+> when no saved value existed. This stacks on top of Qt 6's already-active
+> high-DPI auto-scaling and would silently make the UI larger on first launch
+> for any user above 100% Windows scaling. The new flow keeps `sf()` at 1.0
+> until the user opts in via Settings.
 
 ### 3.3 Scaling Rules
 
@@ -310,6 +361,11 @@ _set_ui_scale(_saved_scale if _saved_scale != 1.0 else detect_screen_scale())
 | 8 | QSize / setFixedSize called with already-computed int — no type error | LOW | All geometry calls | `sf()` returns `int`; confirm at Phase 0 with one smoke test |
 | 9 | R5/R22 DM table rebuild if settings UI changes trigger style update | LOW | `settings_ui.py` | Settings UI has no DM timing dependency; safe to scale |
 | 10 | Viewer hot paths (set_slice, wheelEvent, paintEvent) | CRITICAL | `vtk_widget.py`, `lightweight_2d_pipeline.py` | **Out of scope** — these files are not touched in any phase |
+| 11 | **Qt 6 auto-scaling already in effect** — Qt6 auto-scales geometry on high-DPI displays by default; `logicalDotsPerInch()` is normalised to 96. `sf()` therefore *stacks on top of* Qt auto-scaling, not in place of it. On a 150% Windows display set to `sf()=1.5` the effective scale would be **2.25×**, not 1.5×. | HIGH | all phases | Default `sf()` to 1.0 in production. Treat `detect_screen_scale()` as advisory only — never as auto-applied default. Document that the slider in Settings (Phase 10) is the user-facing knob, applied on restart. |
+| 12 | Accidental edit of multi-study regression-guarded code (`_vc_load.py`, `_vc_switch.py`, `_pw_panels.py`, `patient_widget_core/widget.py`) | HIGH | files listed in project `CLAUDE.md` § "Multi-study viewer" | Before editing those files for Phase 4, re-read `docs/MULTI_STUDY_SINGLE_TAB_PLAN.md`. Touch only the literal numbers in the replacement table — no surrounding logic. |
+| 13 | `_vc_load.py` contains incidental `font-size: 14px` (progress dialog at line ~2099) — **NOT** in Phase 4 scope; leaving it un-scaled is intentional. | LOW | `_vc_load.py` | Plan does not modify `_vc_load.py`. Drift between a progress-dialog font and the rest of the UI is cosmetically acceptable vs. the regression risk of touching a multi-study-sensitive file. |
+| 14 | `PrintingWidget._scaled()` reads `self.screen().logicalDotsPerInch()` per-instance; the new `sf()` is module-level constant. On a multi-monitor setup where the print dialog is dragged to a different-DPI monitor, the two systems can disagree. | MEDIUM | `printing_widget.py` vs `ui_scaling.py` | Phase 7 keeps `self._scaled()` as documented; explicit known-limitation note added to §14. Both formulas only run at `__init__` so the drift is "what the screen was when the dialog opened" — acceptable. |
+| 15 | External QSS files | LOW | none found | Verified 2026-05-26: no `.qss` files exist on disk. All stylesheets are embedded Python strings. Plan inventory is complete on this dimension. |
 
 ---
 
@@ -429,13 +485,14 @@ Phase 0 (`ui_scaling.py` creation) has zero risk — it is a new file with no ca
 
 ---
 
-### Phase 4 — `_pw_panels.py`, `widget.py`, `sidebar_widget.py`, `thumbnail_panel.py` (viewer sidebar)
-**Risk:** Medium — thumbnails must stay aligned between `thumbnail_panel.py` and `_pw_panels.py`  
+### Phase 4 — `_pw_panels.py`, `widget.py`, `sidebar_widget.py`, `thumbnail_panel.py`, `reception_panel_widget.py` (viewer sidebar)
+**Risk:** Medium — thumbnails must stay aligned between `thumbnail_panel.py` and `_pw_panels.py`; multi-study regression-guard applies to `_pw_panels.py` and `patient_widget_core/widget.py` (see Risk #12).
 **Files:**
 - `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/widget.py`
 - `PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_panels.py`
 - `PacsClient/pacs/patient_tab/ui/patient_ui/sidebar_widget.py`
 - `PacsClient/pacs/patient_tab/ui/patient_ui/thumbnail_panel.py`
+- `PacsClient/pacs/patient_tab/ui/patient_ui/reception_panel_widget.py` *(added 2026-05-26 — has 10× `font-size: 14px` plus a few fixed sizes; same scaling rules)*
 
 **Replacements:**
 
@@ -516,7 +573,20 @@ Phase 0 (`ui_scaling.py` creation) has zero risk — it is a new file with no ca
 | `setFixedSize(250, 48)` (logo) | `setFixedSize(sf(250), sf(48))` |
 | dropdown popup widths `220–500` | `sf(220)` … `sf(500)` |
 
-**Commit:** `feat(ui): scale viewer toolbar (toolbar_manager.py, 5 tiers)`
+**Revision 2026-05-26 — split commits per tier.** The original plan
+proposed a single 4-hour commit for all five tiers. Given the file is 6900+
+lines and 21 `QSize/setIconSize` call sites alone, a single atomic commit is
+too risky to revert cleanly. Each tier is now its own commit:
+
+- `feat(ui): scale viewer toolbar — Tier A badges/separator`
+- `feat(ui): scale viewer toolbar — Tier B button geometry`
+- `feat(ui): scale viewer toolbar — Tier C icon sizes`
+- `feat(ui): scale viewer toolbar — Tier D CSS fonts`
+- `feat(ui): scale viewer toolbar — Tier E logo and dropdown widths`
+
+After **each** tier: run the toolbar smoke test (open a multi-image study,
+exercise the dropdowns, switch tools), then commit. Do **not** start the
+next tier until smoke passes.
 
 ---
 
@@ -718,3 +788,184 @@ After each phase, run this sequence before committing:
 | 9 — web_browser | 1 | Low | 0.5 h |
 | 10 — main.py + settings hook | 2 | Low | 1 h |
 | **Total** | **~20 files** | | **~13 h** |
+
+> Revised total (2026-05-26): Phase 5 is now 5 separate commits, Phase 4 adds
+> `reception_panel_widget.py`. Realistic total **≈ 15 h** end-to-end including
+> verification, not counting any rework discovered during Phase 5 smoke tests.
+
+---
+
+## 14. Qt 6 High-DPI Interaction (Standards & Best Practices)
+
+PySide6 / Qt 6 enables high-DPI scaling by default. The Qt 5 attributes
+`AA_EnableHighDpiScaling` / `AA_DisableHighDpiScaling` were **removed in Qt 6**
+— there is no longer a way to opt out. `main.py` (verified 2026-05-26) does
+not set any DPI-related attribute, so the framework default applies.
+
+What this means for `sf()`:
+
+- On a 150% Windows display, Qt already renders `setFixedWidth(100)` at ~150
+  device pixels. `QScreen.logicalDotsPerInch()` returns **96.0** in this
+  configuration (Qt normalises coordinates to device-independent pixels).
+- `dpi / 96.0` therefore evaluates to 1.0 on most Windows systems — meaning
+  the existing `PrintingWidget._scaled()` is effectively a no-op there, and
+  the new `detect_screen_scale()` will behave the same.
+- A user-facing `sf()` slider in Settings (Phase 10) is the **only reliable
+  knob** for relative size control on top of Qt's autoscale. Auto-detect
+  remains as a non-default fallback only.
+
+Best practices we are following:
+
+1. **Pass logical (device-independent) pixels to Qt.** Qt handles the
+   physical-pixel multiplication. `sf()` is a *user-preference* multiplier
+   layered on top — never a substitute for Qt's high-DPI pipeline.
+2. **`devicePixelRatio()` for raster images.** When loading icons/pixmaps
+   that must stay crisp at scale, prefer vector (SVG) sources or supply `@2x`
+   variants. (Out of scope for this plan; flagged for follow-up.)
+3. **Use `pt` for fonts where possible.** Qt scales `pt`-typed fonts by
+   `logicalDotsPerInch / 72`, which composes correctly with both system
+   scaling and `sf_pt()`. The `font-size: 28px` → `sf_pt(18)pt` conversion in
+   §3.3 R6 follows this guidance.
+4. **Stylesheet rebuild only on `__init__`.** Re-applying a CSS string every
+   paint or resize is what would actually hurt performance — not `sf()`
+   itself. Performance rule P2 already encodes this.
+5. **Single source of scale.** Only `ui_scaling.py` owns the scale factor.
+   `PrintingWidget._scaled()` is the documented exception (its per-screen DPI
+   read is correct in isolation; see Risk #14).
+
+---
+
+## 15. Implementation Standards — required by every phase
+
+These are the non-negotiable rules each commit must satisfy:
+
+1. **Imports.** Top of file only: `from PacsClient.utils.ui_scaling import sf, sf_f, sf_pt`. No deeper relative imports.
+2. **Identity guarantee.** Every commit must keep the app pixel-identical at `_scale_factor = 1.0`. The reviewer will spot-check this with a screenshot diff against the pre-commit baseline.
+3. **No structural changes.** A scaling commit edits literal numbers only — it does **not** rename, reorder, refactor, or add/remove widgets.
+4. **CSS strings stay `__init__`-time.** If a CSS block was rebuilt on every signal in the old code, that is a separate pre-existing bug — do not "fix" it inside a scaling commit. File a follow-up.
+5. **No `sf()` in hot paths.** Static analysis grep before each commit:
+   ```powershell
+   git diff --staged | Select-String "sf\(" | Select-String "paintEvent|wheelEvent|set_slice|mouseMoveEvent"
+   ```
+   Expected: zero hits. Any hit → revert the offending line.
+6. **Tests before commit.** Run at minimum:
+   - `pytest tests/ -q -x -k "not slow"` (whatever tests currently pass — do not introduce new failures)
+   - Manual smoke per `CLAUDE.md` startup sequence: MRI modality → yesterday → click 3 patients → confirm thumbnails load.
+7. **Plugin mirror sync (Phase 7 only).** Verify SHA equality between canonical and `builder/plugin package/...` copy of `printing_widget.py` before commit.
+8. **Logging untouched.** No `print()`, no new logger calls inside a scaling commit. If you observe a logging gap, file a follow-up.
+
+---
+
+## 16. Revision Log
+
+### 2026-05-26 — Pre-implementation review pass
+
+Verified audit numbers against live code on `E:\ai-pacs\ai-pacs codes\ai-pacs beta version\`:
+- `mainwindow_ui.py` — confirmed `setFixedHeight(84)` (line 598), `setFixedHeight(70)` (624), `setFixedSize(46, 32)` ×3 (981/1010/1039), `setMinimumSize(900, 520)` (74). ✓
+- `AIPacs_ui.py` — confirmed constant block (lines 78–83). Plan had this at "77–82"; new range is 78–83 due to a one-line shift; functionally identical. ✓
+- `patient_tab_widget.py` — confirmed `setFixedSize(52, 63)` (43, 48), `setFixedSize(18, 18)` (103), `setFixedWidth(252)` (114), `setFixedHeight(70)` (115), `QPixmap(28, 28)` (143). ✓
+- `_pw_panels.py`, `widget.py`, `thumbnail_panel.py` — confirmed `setFixedWidth(40)`, `default_panel_width = 260`, `reception_panel_width`, `setFixedWidth(216)`. ✓
+- `toolbar_manager.py` — 21 `QSize/setIconSize` call sites confirmed; Phase 5 sizing justified. ✓
+- `PrintingWidget._scaled()` — confirmed at lines 135–144, formula `max(1.0, min(2.0, dpi / 96.0))`. ✓
+- `PacsClient/utils/config.py` — confirmed `BASE_PATH = PROJECT_ROOT` (code dir, **not** writable in frozen builds) and `SOCKET_CONFIG_PATH = roaming_config_root()` in frozen mode. Plan §3.1 path corrected. ✓
+- `main.py` — confirmed Qt high-DPI attributes **not** set; relies on Qt 6 framework default. §14 added to document this. ✓
+- External `.qss` files — none found. Audit is complete on this dimension. ✓
+
+Changes applied:
+1. `§3.1` — moved persistence from `BASE_PATH/config/viewer_backend_settings.json` to a writable, frozen-safe `SOCKET_CONFIG_PATH/ui_settings.json`. Added `_clamp()` helper, hardened `save_scale_to_config()`, decoupled from viewer-backend config.
+2. `§3.2` — main.py snippet no longer auto-applies `detect_screen_scale()`; default behaviour is `_scale_factor = 1.0` until the user opts in via Settings. Avoids silent double-scaling on top of Qt 6 auto-scale.
+3. `§4` — added 5 new risk rows (#11–#15): Qt 6 auto-scale interaction, multi-study regression guard, intentional skip of `_vc_load.py`, multi-monitor drift between `_scaled()` and `sf()`, external QSS verification.
+4. `§Phase 4` — added `reception_panel_widget.py` (10× font-size:14px).
+5. `§Phase 5` — split single commit into 5 per-tier commits with smoke gate between tiers.
+6. `§13` — timeline footnote updated to ~15 h realistic.
+7. Added `§14` Qt 6 high-DPI interaction / best practices.
+8. Added `§15` Implementation standards (per-commit gates).
+9. Added `§16` this revision log.
+
+Open questions — answered by user 2026-05-26:
+- **(Q1) — RESTART-ONLY.** Settings slider writes the value via `save_scale_to_config()`, shows a "Restart to apply" prompt, and does **not** attempt live re-application. Justification: live polish/unpolish across the whole widget tree is fragile and would force us to touch a lot of widget lifecycles for marginal UX benefit. Restart is the standard, low-risk pattern for app-wide layout changes.
+- **(Q2) — MANUAL FOR NOW, with follow-up.** The identity gate uses manual eyeball + screenshot comparison against a baseline saved before each phase under `docs/plans/responsive_ui_baselines/phaseN_pre.png`. A `pytest-qt` + perceptual-hash harness is filed as a non-blocking follow-up item (see §17 follow-ups). This avoids adding test infrastructure pressure on Phase 0–Phase 10 delivery.
+- **(Q3) — RANGE CONFIRMED [0.75, 1.50].** Verified against Qt 6.11 high-DPI guidance (see §17): "Integer scale factors are preferred; 25% increments also give good results." The slider will therefore be **25%-step quantised** (0.75, 1.00, 1.25, 1.50) rather than free-floating. The `max(sf(40), 28)` guard on the 40-px sidebars covers the 0.75 floor (40 × 0.75 = 30 ≥ 28). Going below 0.75 is not supported.
+
+---
+
+## 17. Standards Conformance — Verified Against Qt 6.11 Official Documentation
+
+**Source:** [Qt 6.11 High DPI documentation](https://doc.qt.io/qt-6/highdpi.html) (fetched 2026-05-26).
+
+This section documents why each choice in this plan is consistent with the Qt-recommended approach, and what the Qt-native alternatives are and why we reject them for AI-PACS.
+
+### 17.1 Qt 6 default high-DPI behaviour — what we inherit for free
+
+Per Qt docs:
+- "Qt supports high-DPI displays on all platforms and provides a unified API that abstracts over any platform differences."
+- "Qt will automatically account for the display resolution when using higher-level APIs such as Qt Widgets … applications only need to provide high-resolution assets, such as images and icons. Changes in the platform's user preferences are automatically picked up."
+- On Windows specifically: "Qt uses the Windows display scale settings automatically; no specific settings are required. For example, if a display is configured for 175% scale, then Qt apps will see a device pixel ratio of 1.75 on that screen."
+- "Qt 6 is Per-Monitor DPI Aware V2 by default."
+
+**Implication for AI-PACS:** at the default `_scale_factor = 1.0` we already get correct rendering at any Windows scale (100%, 125%, 150%, 175%, 200%) because Qt 6 handles it. `sf()` is **layered on top** of this — it is a user-preference multiplier, not a replacement for Qt's HiDPI pipeline.
+
+### 17.2 Why we do NOT use `QT_SCALE_FACTOR`
+
+Per Qt docs (verbatim from the Environment Variable Reference): "**QT_SCALE_FACTOR** — Sets a global scale factor. **For debugging and testing purposes.**"
+
+Reasons this is wrong for AI-PACS:
+1. Qt explicitly classifies it as a debug/test knob, not a user-preference mechanism.
+2. It scales **everything** uniformly — including the viewer hot paths (`vtk_widget.py`, `lightweight_2d_pipeline.py`) that the project rules require us to leave alone. A global multiplier would alter clinical image presentation.
+3. It is an environment variable and would have to be set before `QApplication` is constructed, which complicates Settings-driven user control.
+
+### 17.3 Why we do NOT use `QT_SCREEN_SCALE_FACTORS` or `QT_USE_PHYSICAL_DPI`
+
+Per Qt docs:
+- "QT_SCREEN_SCALE_FACTORS — Setting this environment variable is **not recommended** since it prevents Qt from using system DPI values."
+- "QT_USE_PHYSICAL_DPI — Using logical DPI is normally the best option; this environment variable can be set in cases where logical DPI is not available."
+
+We rely on Windows display settings as the canonical platform-level scale source (Qt-recommended). The `sf()` user knob is layered on top per the project's clinical-ergonomics needs.
+
+### 17.4 Why a custom helper IS the standard pattern for our use case
+
+Per Qt docs (Configuring section): "Qt does **not** provide end-user facilities to configure the behavior of Qt's high-DPI support."
+
+Translation: if an application wants a user-adjustable in-app UI scale slider (which we do), it must implement one itself. There is no Qt-supplied mechanism we are bypassing. A small helper that:
+1. Multiplies geometry literals at `__init__` time
+2. Identity-passes at scale 1.0
+3. Persists the user preference to a writable config file
+4. Applies on application restart
+
+…is the established pattern in mature PySide6 codebases that need per-app scale control. The PrintingWidget `_scaled()` method (already in this codebase) follows the same pattern at a smaller scope; we are generalising it consistently.
+
+### 17.5 Scale-factor rounding policy (Qt 6 default = `PassThrough`)
+
+Per Qt docs: "Integer scale factors (for example, 1.0 or 2.0) are preferred for best results. 'Rounding' the scale factor to 25% increments can also give good results. Setting the scale factor or DPI to the exact physical display DPI may not give good visual results due to the fractional scaling involved."
+
+Implications already incorporated:
+- Slider quantised to 25% steps (Q3 above).
+- We do **not** call `QGuiApplication.setHighDpiScaleFactorRoundingPolicy()` — Qt 6's default of `PassThrough` is correct for AI-PACS, since changing the rounding policy could alter the device pixel ratio that VTK code is currently happy with. Out of scope; flagged for follow-up only if rendering artifacts appear.
+
+### 17.6 Image asset handling (follow-up, not in this plan)
+
+Per Qt docs: "the application should also include high-DPI versions of static image assets … using a special naming convention for the high-density assets, for example `logo@2x.png` … Qt will automatically choose the best representation for the target display at runtime."
+
+AI-PACS icons today are mostly Feather SVGs under `Qss/icons/fefefe/feather/`, which scale natively. Where raster PNGs exist (e.g. logo), an `@2x` variant would crisp them up at 200% Windows scaling. This is a **follow-up** task, explicitly **not** part of this plan — it is purely an asset-quality improvement and has no interaction with `sf()`.
+
+### 17.7 Performance — sf() introduces no runtime overhead
+
+- `sf()` is identity-fast at `_scale_factor == 1.0` (`if _scale_factor == 1.0: return px`). On the default install this is one integer comparison and one return — sub-nanosecond.
+- Every `sf()` call site is at widget `__init__` time. No `sf()` is in `paintEvent`, `wheelEvent`, `set_slice`, `mouseMoveEvent`, or any hot path. The pre-commit grep gate in §15(5) enforces this.
+- CSS stylesheets are built as f-strings exactly once per widget construction. `setStyleSheet()` is called once. No per-frame style recomputation.
+- `_scale_factor` is a module-level Python float — read access is a dict-lookup-free local-namespace fetch. No QSettings round-trip, no I/O, no allocation.
+
+Net runtime cost at default scale: **zero measurable overhead.** This was a top-line user requirement and is satisfied by the helper's design, not by adding caching or memoisation (which would introduce its own load).
+
+### 17.8 Follow-ups (non-blocking, post-implementation)
+
+1. **`@2x` icon variants** for the logo and any raster PNGs (§17.6).
+2. **`pytest-qt` + perceptual-hash visual regression harness** (Q2).
+3. **`setHighDpiScaleFactorRoundingPolicy()`** evaluation — only if rendering artifacts surface at 125%/175% Windows scaling.
+4. **SVG migration** for any remaining raster icons in the toolbar.
+
+None of these block Phase 0–Phase 10 delivery. They are quality-of-life improvements that should be filed as separate tickets after the core scaling work lands and is verified.
+
+### 17.9 Approval gate
+
+The user (project owner) confirmed on 2026-05-26: range [0.75, 1.50] OK, restart-on-apply OK, harness choice deferred to reviewer (manual chosen). With §17 confirming the approach matches Qt's documented standard pattern (no Qt-native alternative exists for our use case), and §14 / §15 / §16 covering risks, standards, and revision history, **Phase 0 implementation may begin** as soon as the user gives the explicit go-ahead.

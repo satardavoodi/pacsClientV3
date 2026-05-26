@@ -1,9 +1,32 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.1.0 (2026-05-25)
-**Previous Stable:** v3.0.9 (2026-05-25)
-**Release Date:** 2026-05-25
+**Current Stable Version:** v3.1.1 (2026-05-26)
+**Previous Stable:** v3.1.0 (2026-05-25)
+**Release Date:** 2026-05-26
 **Branch:** beta-version
+
+---
+
+## v3.1.1 (2026-05-26) - Patch release: production installers + stability updates
+
+### Summary
+
+Patch release on top of v3.1.0 with final production installers, installer metadata updates,
+and minor stability patches identified in build verification.
+
+All v3.1.0 features carried forward:
+- Stable v3.0.9 codebase (multi-study viewer, crash hardening, EULA)
+- Production-ready executables (687 MB installer)
+- Crash-diagnostics tooling
+- Release documentation
+
+### Included
+
+- **Executable installer v3.1.1:** `builder/output/installer/ai-pacs installer v3.1.1.exe`
+  (687 MB, final production build)
+- **Checksums and metadata:** SHA256.txt, INSTALL_NOTES.txt
+- **Staged outputs:** core bundle (AIPacs.exe), plugin packages, update feeds
+- **Stability patches:** minor refinements from build verification
 
 ---
 

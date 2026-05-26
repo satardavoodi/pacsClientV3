@@ -103,7 +103,7 @@ class ReceptionPanelWidget(QWidget):
     def _create_attachment_button(self):
         """Create the attachment folder button."""
         self.btn_open_folder_attachments = QPushButton('Open Attachments')
-        self.btn_open_folder_attachments.setFixedHeight(50)
+        self.btn_open_folder_attachments.setMinimumHeight(50)  # Archetype 5: floor, can grow with font/DPI
         self.btn_open_folder_attachments.setStyleSheet("""
             QPushButton {
                 background-color: #2196f3;
@@ -128,7 +128,7 @@ class ReceptionPanelWidget(QWidget):
         
         # Add View Reports button
         self.btn_view_reports = QPushButton('📋 View Reports')
-        self.btn_view_reports.setFixedHeight(50)
+        self.btn_view_reports.setMinimumHeight(50)  # Archetype 5: floor, can grow with font/DPI
         self.btn_view_reports.setStyleSheet("""
             QPushButton {
                 background-color: #4caf50;

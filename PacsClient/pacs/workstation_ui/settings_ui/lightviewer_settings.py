@@ -43,26 +43,30 @@ class LightViewerSettingsWidget(QWidget):
             QGroupBox {
                 background-color: #10141a;
                 border: 1px solid #232a33;
-                border-radius: 12px;
-                padding: 18px 20px 18px 20px;
-                padding-top: 44px;
-                margin-top: 28px;
+                border-radius: 10px;
+                /* Reserve room for the title so the first child widget
+                   never overlaps it. margin-top is the gap between the
+                   parent and the box outline; padding-top is the gap
+                   between the outline and the first child widget. */
+                margin-top: 14px;
+                padding: 22px 16px 14px 16px;
                 font-weight: 700;
                 color: #e5e7eb;
-                font-size: 14px;
+                font-size: 13px;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
-                left: 18px;
-                top: 2px;
-                padding: 6px 16px;
-                font-size: 28px;
-                font-weight: 900;
+                left: 14px;
+                top: 0px;
+                padding: 2px 10px;
+                /* Match the body font-size so the title sits flush above the
+                   content. The previous 28px font + thick padding overlapped
+                   the path-input row below. */
+                font-size: 14px;
+                font-weight: 700;
                 color: #f3f4f6;
-                background-color: #0f1319;
-                border: 1px solid #232a33;
-                border-radius: 11px;
+                background-color: #10141a;
             }
             QLabel {
                 color: #e5e7eb;
@@ -136,35 +140,93 @@ class LightViewerSettingsWidget(QWidget):
         
         # Path input with browse button
         path_layout = QHBoxLayout()
-        
+        path_layout.setSpacing(8)
+
         self.path_edit = QLineEdit()
         self.path_edit.setPlaceholderText("Select the Light Viewer executable (.exe)")
         self.path_edit.setReadOnly(True)
-        path_layout.addWidget(self.path_edit)
+        # Explicit read-only styling so the field reads as a value-display
+        # rather than an editable input — and so the inner padding matches
+        # the surrounding Browse... button height (Archetype 5).
+        try:
+            from PacsClient.utils.responsive_layout import set_form_field_size
+            set_form_field_size(self.path_edit, min_height=30, expanding=True)
+        except Exception:  # pragma: no cover — defensive
+            self.path_edit.setMinimumHeight(30)
+        self.path_edit.setStyleSheet(
+            "QLineEdit {"
+            "  background-color: #1b2230;"
+            "  color: #e5e7eb;"
+            "  border: 1px solid #2b313b;"
+            "  border-radius: 6px;"
+            "  padding: 4px 10px;"
+            "  selection-background-color: #2563eb;"
+            "}"
+            "QLineEdit:read-only {"
+            # Match the editable look so the read-only state doesn't render
+            # as a flat black strip next to the Browse... button.
+            "  background-color: #1b2230;"
+            "  color: #e5e7eb;"
+            "}"
+            "QLineEdit:focus {"
+            "  border-color: #3b82f6;"
+            "}"
+        )
+        path_layout.addWidget(self.path_edit, 1)
         
         self.browse_btn = QPushButton("Browse...")
-        self.browse_btn.setFixedWidth(100)
+        # Archetype 5: keep the 100 px floor but let the button grow with font /
+        # DPI so the label can never be hard-clipped. See
+        # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        try:
+            from PacsClient.utils.responsive_layout import set_form_field_size
+            set_form_field_size(self.browse_btn, min_height=30, min_width=100)
+        except Exception:  # pragma: no cover — defensive
+            self.browse_btn.setMinimumWidth(100)
         self.browse_btn.clicked.connect(self.browse_for_viewer)
         self.browse_btn.setCursor(Qt.PointingHandCursor)
         path_layout.addWidget(self.browse_btn)
         
         viewer_layout.addLayout(path_layout)
-        
-        # Status label
+
+        # Status label (single-line summary like "⚠ File does not exist").
+        # Lives BELOW the path field on its own row — never overlaps the field.
+        # Transparent background prevents the "black artifact" appearance
+        # the user observed when the field and the label sat against each
+        # other with different default backgrounds.
         self.viewer_status_label = QLabel("")
-        self.viewer_status_label.setStyleSheet("color: #94a3b8; font-size: 14px; padding: 5px;")
+        self.viewer_status_label.setStyleSheet(
+            "color: #94a3b8; font-size: 13px; padding: 4px 2px;"
+            "background: transparent; border: none;"
+        )
         viewer_layout.addWidget(self.viewer_status_label)
 
+        # Details label (multi-line warnings, sizing info, etc.).
         self.viewer_details_label = QLabel("")
         self.viewer_details_label.setWordWrap(True)
-        self.viewer_details_label.setStyleSheet("color: #94a3b8; font-size: 12px; padding: 0 5px 5px 5px;")
+        self.viewer_details_label.setStyleSheet(
+            "color: #94a3b8; font-size: 12px; padding: 0 2px 4px 2px;"
+            "background: transparent; border: none;"
+        )
+        # Archetype 2: explicit MinimumExpanding vertical policy so the
+        # wrapped detail block can grow when the column narrows.
+        try:
+            from PySide6.QtWidgets import QSizePolicy as _QSP
+            self.viewer_details_label.setSizePolicy(_QSP.Preferred, _QSP.MinimumExpanding)
+        except Exception:  # pragma: no cover — defensive
+            pass
         viewer_layout.addWidget(self.viewer_details_label)
         
         # Clear button
         clear_layout = QHBoxLayout()
         clear_layout.addStretch()
         self.clear_btn = QPushButton("Clear Path")
-        self.clear_btn.setFixedWidth(100)
+        # Archetype 5 — same rationale as browse_btn above.
+        try:
+            from PacsClient.utils.responsive_layout import set_form_field_size
+            set_form_field_size(self.clear_btn, min_height=30, min_width=100)
+        except Exception:  # pragma: no cover — defensive
+            self.clear_btn.setMinimumWidth(100)
         self.clear_btn.clicked.connect(self.clear_viewer_path)
         self.clear_btn.setCursor(Qt.PointingHandCursor)
         self.clear_btn.setStyleSheet("""
@@ -226,7 +288,7 @@ class LightViewerSettingsWidget(QWidget):
         # Save button
         save_btn = QPushButton("Save Settings")
         save_btn.clicked.connect(self.save_settings)
-        save_btn.setFixedWidth(150)
+        save_btn.setMinimumWidth(150)  # Archetype 5: floor, can grow with font
         save_btn.setStyleSheet("""
             QPushButton {
                 background-color: #16a34a;

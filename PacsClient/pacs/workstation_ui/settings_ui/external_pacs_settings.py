@@ -140,31 +140,31 @@ class ExternalPacsSettingsWidget(QWidget):
 
         self._new_btn = QPushButton("New…")
         self._new_btn.setObjectName("primary")
-        self._new_btn.setFixedWidth(110)
+        self._new_btn.setMinimumWidth(110)  # Archetype 5: button-row floor; grows with font/DPI
         self._new_btn.clicked.connect(self._on_new)
         btn_col.addWidget(self._new_btn)
 
         self._delete_btn = QPushButton("Delete")
         self._delete_btn.setObjectName("danger")
-        self._delete_btn.setFixedWidth(110)
+        self._delete_btn.setMinimumWidth(110)  # Archetype 5: button-row floor; grows with font/DPI
         self._delete_btn.setEnabled(False)
         self._delete_btn.clicked.connect(self._on_delete)
         btn_col.addWidget(self._delete_btn)
 
         self._edit_btn = QPushButton("Edit…")
-        self._edit_btn.setFixedWidth(110)
+        self._edit_btn.setMinimumWidth(110)  # Archetype 5: button-row floor; grows with font/DPI
         self._edit_btn.setEnabled(False)
         self._edit_btn.clicked.connect(self._on_edit)
         btn_col.addWidget(self._edit_btn)
 
         self._refresh_btn = QPushButton("Refresh")
-        self._refresh_btn.setFixedWidth(110)
+        self._refresh_btn.setMinimumWidth(110)  # Archetype 5: button-row floor; grows with font/DPI
         self._refresh_btn.clicked.connect(self._load_and_display)
         btn_col.addWidget(self._refresh_btn)
 
         self._echo_btn = QPushButton("Echo")
         self._echo_btn.setObjectName("success")
-        self._echo_btn.setFixedWidth(110)
+        self._echo_btn.setMinimumWidth(110)  # Archetype 5: button-row floor; grows with font/DPI
         self._echo_btn.setEnabled(False)
         self._echo_btn.clicked.connect(self._on_echo_clicked)
         btn_col.addWidget(self._echo_btn)

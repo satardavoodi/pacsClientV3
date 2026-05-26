@@ -390,17 +390,71 @@ class _HPSearchMixin:
         threading.Thread(target=_worker, daemon=True).start()
 
     def _build_cached_thumbnail_payload(self, study_uid: str) -> dict:
-        """Build right-panel thumbnail payload from local thumbnail files + DB series metadata."""
+        """Build right-panel thumbnail payload from local thumbnail files + DB series metadata.
+
+        Robust DB lookup (2026-05-26 hardening): the previous implementation made
+        one DB call per series via get_series_info_from_database (which casts
+        int(series_number) and re-resolves study_pk every time). When the lookup
+        miss-matched (filename had leading zeros, non-integer naming, transient
+        study_pk resolution failure), it returned {} → image_count fell back to 0
+        and the thumbnail renderer dropped the blue "N images" badge in favour of
+        the grey "Series N" label, producing the visible footer overwrite reported
+        for patient 43670 (and others).
+
+        Fix: pull ALL series for the study in ONE call via get_series_by_study_uid,
+        key them by string series_number (both with and without leading-zero
+        normalisation), then look up each disk thumbnail tolerantly. This makes
+        Path 1 (_load_thumbnails_for_downloaded_study, DB-driven) and Path 2
+        (this method, disk-driven) produce identical metadata for the same
+        underlying DB state — preserving image_count > 0 on the re-render so the
+        blue badge stays put.
+        """
         payload = {'thumbnails': []}
+
+        # Build a tolerant series_number → row index once, so the second render
+        # produces the SAME image_count / description as Path 1's DB render.
+        series_index: dict = {}
+        try:
+            from database.manager import get_series_by_study_uid as _get_all_series
+            for _row in (_get_all_series(study_uid) or []):
+                sn_raw = _row.get('series_number', '')
+                sn_str = str(sn_raw if sn_raw is not None else '').strip()
+                if not sn_str:
+                    continue
+                series_index[sn_str] = _row
+                # also index the leading-zero-stripped variant for disk-name mismatch
+                stripped = sn_str.lstrip('0') or '0'
+                series_index.setdefault(stripped, _row)
+        except Exception:
+            series_index = {}
+
         for series_path in get_all_series_thumbnail_from_study_folder(study_uid):
             series_number = get_name_file_from_path(series_path)
-            series_info = self.get_series_info_from_database(study_uid, series_number)
+            sn_key = str(series_number or '').strip()
+            series_info = series_index.get(sn_key) \
+                or series_index.get(sn_key.lstrip('0') or '0') \
+                or {}
+            # Final safety net: if the bulk lookup truly missed (study_pk race,
+            # orphan thumbnail file), fall back to the original per-series call
+            # so we don't lose data that single-shot lookup could still find.
+            if not series_info:
+                try:
+                    series_info = self.get_series_info_from_database(study_uid, series_number) or {}
+                except Exception:
+                    series_info = {}
+
             payload['thumbnails'].append(
                 {
                     'file_path': series_path,
                     'series_number': series_number,
                     'modality': series_info.get('modality', 'Unknown'),
-                    'series_description': series_info.get('series_description', f'Series {series_number}'),
+                    # Empty fallback (not 'Series N'): the renderer in
+                    # thumbnail_manager only emits the blue "N images" badge when
+                    # image_count>0 AND no description-already-rendered overlap.
+                    # A literal 'Series N' description visually competes with the
+                    # blue badge so we keep description blank when DB has no real
+                    # value, letting image_count drive the footer.
+                    'series_description': series_info.get('series_description', ''),
                     'image_count': series_info.get('image_count', 0),
                     'protocol_name': series_info.get('protocol_name', ''),
                     'body_part_examined': series_info.get('body_part_examined', ''),

@@ -98,14 +98,39 @@ class CustomTabManager:
         # Dedicated container for tab buttons so the logo stays fixed on the left.
         self.title_bar_tabs_container = QWidget(self.title_bar_tab_area)
         self.title_bar_tabs_container.setObjectName("TitleBarTabsContainer")
-        self.title_bar_tabs_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        # Container sizes to its content (the chips). Horizontal scroll area
+        # below handles overflow when the title bar is narrower than the
+        # chip strip's natural width — see Archetype 1 in
+        # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        self.title_bar_tabs_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self.title_bar_tabs_layout = QHBoxLayout(self.title_bar_tabs_container)
         self.title_bar_tabs_layout.setContentsMargins(0, 0, 0, 0)
         self.title_bar_tabs_layout.setSpacing(4)
-        self.title_bar_tabs_layout.addStretch(1)
+        # Note: no addStretch() here — the outer scroll area + outer stretch
+        # absorb extra space. An inner stretch would defeat horizontal scroll
+        # by always reporting unbounded preferred width.
 
-        self.title_bar_layout.addWidget(self.title_bar_tabs_container, 1)
+        # Archetype 1: wrap the chip strip in a horizontal QScrollArea so when
+        # the title bar can't fit all chips (e.g. 4 chips on a 1280-wide
+        # monitor), the strip becomes scrollable instead of letting chips
+        # overlap each other (the previous defect — close buttons were hidden
+        # behind subsequent chips on narrower monitors).
+        try:
+            from PacsClient.utils.responsive_layout import wrap_in_horizontal_scroll
+            self._title_bar_tabs_scroll = wrap_in_horizontal_scroll(
+                self.title_bar_tabs_container,
+                max_height=70,  # matches PatientTabWidget.setFixedHeight(70)
+            )
+            self.title_bar_layout.addWidget(self._title_bar_tabs_scroll, 1)
+        except Exception as _scroll_exc:  # pragma: no cover — defensive
+            # Fallback: original behaviour if helper import fails.
+            logger.warning(
+                "[CustomTabManager] responsive scroll wrap unavailable (%s); "
+                "falling back to plain container", _scroll_exc,
+            )
+            self.title_bar_tabs_layout.addStretch(1)
+            self.title_bar_layout.addWidget(self.title_bar_tabs_container, 1)
         self.title_bar_layout.addStretch(1)
         
         # Hide the original tab bar

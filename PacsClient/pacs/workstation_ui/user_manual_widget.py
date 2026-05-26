@@ -535,7 +535,7 @@ class UserManualWidget(QWidget):
     def _build_header(self) -> QWidget:
         header = QFrame()
         header.setObjectName("ManualHeader")
-        header.setFixedHeight(50)
+        header.setMinimumHeight(50)  # Archetype 5
         header.setStyleSheet(
             "QFrame#ManualHeader {"
             "  background-color: #0f1623;"
@@ -577,7 +577,7 @@ class UserManualWidget(QWidget):
         # ── TOC list ──────────────────────────────────────────
         self._toc = QListWidget()
         self._toc.setObjectName("ManualTOC")
-        self._toc.setFixedWidth(118)
+        self._toc.setMinimumWidth(118)  # Archetype 5
         self._toc.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._toc.setStyleSheet("""
             QListWidget#ManualTOC {

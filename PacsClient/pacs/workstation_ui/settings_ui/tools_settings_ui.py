@@ -22,7 +22,7 @@ class ColorButton(QPushButton):
         self.current_color = initial_color
         self.clicked.connect(self.pick_color)
         self.update_button_color()
-        self.setFixedHeight(34)
+        self.setMinimumHeight(34)  # Archetype 5: floor, can grow with font
         self.setCursor(Qt.PointingHandCursor)
     
     def update_button_color(self):
@@ -90,7 +90,7 @@ class ToolSettingsPanel(QGroupBox):
         self.line_width_spin.setRange(0.5, 20.0)
         self.line_width_spin.setSingleStep(0.5)
         self.line_width_spin.setValue(self.style.line_width)
-        self.line_width_spin.setFixedWidth(90)
+        self.line_width_spin.setMinimumWidth(90)  # Archetype 5: floor, can grow
         self.line_width_spin.setSuffix(" px")
         line_width_layout.addWidget(self.line_width_spin)
         line_width_layout.addStretch()
@@ -125,7 +125,7 @@ class ToolSettingsPanel(QGroupBox):
         self.font_size_spin.setRange(8, 72)
         self.font_size_spin.setSingleStep(2)
         self.font_size_spin.setValue(self.style.font_size)
-        self.font_size_spin.setFixedWidth(90)
+        self.font_size_spin.setMinimumWidth(90)  # Archetype 5: floor, can grow
         self.font_size_spin.setSuffix(" pt")
         font_size_layout.addWidget(self.font_size_spin)
         font_size_layout.addStretch()
@@ -315,13 +315,13 @@ class ToolsSettingsWidget(QWidget):
         # Reset to defaults button
         reset_btn = QPushButton("Reset to Defaults")
         reset_btn.clicked.connect(self.reset_to_defaults)
-        reset_btn.setFixedWidth(140)
+        reset_btn.setMinimumWidth(140)  # Archetype 5: floor, can grow
         button_layout.addWidget(reset_btn)
         
         # Save button
         save_btn = QPushButton("Save Settings")
         save_btn.clicked.connect(self.save_settings)
-        save_btn.setFixedWidth(140)
+        save_btn.setMinimumWidth(140)  # Archetype 5: floor, can grow
         save_btn.setStyleSheet("""
             QPushButton {
                 background-color: #16a34a;

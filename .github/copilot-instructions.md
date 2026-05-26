@@ -1,8 +1,8 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.1.0 (2026-05-25) — Release package rollup: stable v3.0.9 codebase + production installers (687 MB) + crash hardening + AI-PACS EULA. See `docs/releases/VERSION_3.1.0_RELEASE.md`.
+**Current Stable Version:** v3.1.1 (2026-05-26) — Patch release: production installers + stability updates on top of v3.1.0. See `docs/releases/VERSION_3.1.1_RELEASE.md`.
 
-**Previous Stable:** v3.0.9 (2026-05-25) — Workspace sync rollup + crash hardening (faulthandler native-fault log, viewer/home-panel stability fixes) + AI-PACS proprietary EULA (replaces MIT template). See `docs/releases/VERSION_3.0.9_RELEASE.md`.
+**Previous Stable:** v3.1.0 (2026-05-25) — Release package rollup: stable v3.0.9 codebase + production installers (687 MB) + crash hardening + AI-PACS EULA. See `docs/releases/VERSION_3.1.0_RELEASE.md`.
 
 **Previous Stable:** v3.0.7 (2026-05-19) — Stable backup release checkpoint for the current validated beta branch state. See `docs/releases/VERSION_3.0.7_RELEASE.md`.
 

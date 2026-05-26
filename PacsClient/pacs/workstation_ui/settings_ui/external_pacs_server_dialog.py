@@ -211,12 +211,12 @@ class ExternalPacsServerDialog(QDialog):
 
         ok_btn = QPushButton("OK")
         ok_btn.setObjectName("primary")
-        ok_btn.setFixedSize(100, 38)
+        ok_btn.setMinimumSize(100, 38)  # Archetype 5: floor, can grow
         ok_btn.clicked.connect(self._on_ok)
         btn_row.addWidget(ok_btn)
 
         cancel_btn = QPushButton("Cancel")
-        cancel_btn.setFixedSize(100, 38)
+        cancel_btn.setMinimumSize(100, 38)  # Archetype 5: floor, can grow
         cancel_btn.clicked.connect(self.reject)
         btn_row.addWidget(cancel_btn)
 

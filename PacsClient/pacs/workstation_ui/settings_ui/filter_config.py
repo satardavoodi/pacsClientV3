@@ -46,7 +46,9 @@ def compact_grid():
 
 
 def compact_spin(spin, w=100):
-    spin.setFixedWidth(w)
+    # Archetype 5: minimum-width floor so the spinner can grow with font/DPI
+    # rather than clipping its value. See RESPONSIVE_UI_CONVENTION.md.
+    spin.setMinimumWidth(w)
     spin.setAlignment(Qt.AlignCenter)
     return spin
 

@@ -747,7 +747,7 @@ class SecretaryConfirmDialog(QDialog):
 
         self._no_btn = QPushButton("No, Cancel")
         self._no_btn.setCursor(Qt.PointingHandCursor)
-        self._no_btn.setFixedHeight(34)
+        self._no_btn.setMinimumHeight(34)  # Archetype 5: floor, can grow with font/DPI
         self._no_btn.setMinimumWidth(114)
         self._no_btn.setStyleSheet(
             "QPushButton {"
@@ -766,7 +766,7 @@ class SecretaryConfirmDialog(QDialog):
 
         self._yes_btn = QPushButton("Yes, Proceed")
         self._yes_btn.setCursor(Qt.PointingHandCursor)
-        self._yes_btn.setFixedHeight(34)
+        self._yes_btn.setMinimumHeight(34)  # Archetype 5: floor, can grow with font/DPI
         self._yes_btn.setMinimumWidth(122)
         self._yes_btn.setDefault(True)
         self._yes_btn.setStyleSheet(
@@ -820,7 +820,14 @@ class SecretaryButtonWidget(QWidget):
         super().__init__(parent)
         self.setObjectName("secretaryButtonWidget")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.setMinimumHeight(396)
+        # Archetype 5: minimum height floor lowered from 396 → 240. On a
+        # 1024-tall monitor (Monitor B in the test plan) the previous 396 px
+        # floor combined with the Patient Search section above forced the
+        # left sidebar to overflow; with 240 px the panel still fits the
+        # orb comfortably at its 90-px minimum diameter, and scrolling
+        # picks up the rest if the user wants the orb larger.
+        # See docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        self.setMinimumHeight(240)
         self._log_box_height = 28
         self._log_popup = None
         self._log_lines = []
@@ -1091,10 +1098,34 @@ class SecretaryButtonWidget(QWidget):
             self.log_expand_icon.move(icon_x, icon_y)
             self.log_expand_icon.raise_()
 
-        max_by_width = max(90, self.width() - 8)
-        max_by_height = max(90, self.height() - (self._log_box_height + 26))
-        diameter = min(340, max_by_width, max_by_height)
-        diameter = max(90, int(diameter * 0.80))
+        # Adaptive orb sizing for the EchoMind Secretary panel.
+        # History:
+        #   - Original: hard floor of 90 px and 80% of available space — on
+        #     narrow sidebars (≤ 240 px on Monitor B) the orb dominated the
+        #     column.
+        #   - W6 follow-up #6: floor 60 px, scale 0.78, ceiling 340 px so
+        #     the orb keeps shrinking under pressure.
+        #   - 2026-05-26 user request #1: 10% larger overall. Scale 0.78 →
+        #     0.86, ceiling 340 → 374, floor 60 → 66.
+        #   - 2026-05-26 user request #2: 20% larger, less black margin.
+        #     Scale 0.86 → 0.96, ceiling 374 → 449, floor 66 → 80, buffer
+        #     +26 → +14.
+        #   - 2026-05-26 user request #3 (final): 10% smaller again to
+        #     dial in the sweet spot before testing. All three knobs
+        #     multiplied by 0.9 (rounded to integer pixels). Net effect
+        #     versus original W6-follow-up #6: about 10-12 % larger orb
+        #     with tighter margins, but ~10 % smaller than the previous
+        #     "+20 %" pass.
+        # The widget still uses setFixedSize on the orb specifically — the
+        # orb MUST be a perfect circle (radial symmetry), which is the
+        # convention's documented leaf case for setFixedSize. Click/hover
+        # behaviour is driven by orb_button's own signals — unchanged.
+        # See docs/conventions/RESPONSIVE_UI_CONVENTION.md §"When you cannot
+        # avoid setFixed*".
+        avail_w = max(72, self.width() - 8)
+        avail_h = max(72, self.height() - (self._log_box_height + 18))
+        diameter = min(404, avail_w, avail_h)
+        diameter = max(72, int(diameter * 0.86))
         self.orb_button.setFixedSize(diameter, diameter)
 
     def set_active(self, active):

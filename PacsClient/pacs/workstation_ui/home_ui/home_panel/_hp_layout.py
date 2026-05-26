@@ -72,9 +72,15 @@ class _HPLayoutMixin:
         left_layout = QVBoxLayout(left_panel)
         left_layout.setContentsMargins(4, 4, 4, 4)
         left_layout.setSpacing(6)
-        left_panel.setMinimumWidth(self._left_sidebar_width)
-        left_panel.setMaximumWidth(self._left_sidebar_width)
-        left_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        # Archetype 4: relax the previously-pinned width to a range so the
+        # tri-pane QSplitter (set up at the end of widget.py construction)
+        # can resize the sidebar against its siblings on narrower monitors.
+        # Floor protects readability of the controls inside; ceiling
+        # prevents the sidebar from dominating very wide monitors. See
+        # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        left_panel.setMinimumWidth(max(240, self._left_sidebar_width - 60))
+        left_panel.setMaximumWidth(self._left_sidebar_width + 180)
+        left_panel.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         left_panel.setStyleSheet('''
             QWidget {
                 background: #0f1419;
@@ -285,11 +291,13 @@ class _HPLayoutMixin:
             self.secretary_button_widget = SecretaryButtonWidget()
             left_layout.addWidget(self.secretary_button_widget, 1)
         else:
-            # Reserve the same vertical space so the sidebar layout is not distorted
-            # when EchoMind is not installed.  SecretaryButtonWidget uses
-            # setMinimumHeight(396) + Expanding, so we mirror that exactly.
+            # Reserve the same vertical space so the sidebar layout is not
+            # distorted when EchoMind is not installed.
+            # SecretaryButtonWidget uses setMinimumHeight(240) + Expanding
+            # (lowered from 396 in W6 follow-up for smaller monitors),
+            # mirror that exactly.
             _secretary_placeholder = QWidget()
-            _secretary_placeholder.setMinimumHeight(396)
+            _secretary_placeholder.setMinimumHeight(240)
             _secretary_placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             _secretary_placeholder.setStyleSheet("background: transparent;")
             left_layout.addWidget(_secretary_placeholder, 1)
@@ -407,9 +415,11 @@ class _HPLayoutMixin:
         self.left_panel_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.left_panel_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.left_panel_scroll.setStyleSheet(get_scroll_area_style())
-        self.left_panel_scroll.setMinimumWidth(self._left_sidebar_width + 8)
-        self.left_panel_scroll.setMaximumWidth(self._left_sidebar_width + 8)
-        self.left_panel_scroll.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        # Archetype 4: match the relaxed range applied to the inner panel
+        # above so the QSplitter (in widget.py) can resize this column.
+        self.left_panel_scroll.setMinimumWidth(max(240, self._left_sidebar_width - 60) + 8)
+        self.left_panel_scroll.setMaximumWidth(self._left_sidebar_width + 188)
+        self.left_panel_scroll.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
         self.left_panel_scroll.setWidget(left_panel)
         self.main_layout.addWidget(self.left_panel_scroll)
 

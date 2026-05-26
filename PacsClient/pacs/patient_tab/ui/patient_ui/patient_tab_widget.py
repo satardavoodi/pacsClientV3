@@ -74,8 +74,21 @@ class PatientTabWidget(QWidget):
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(2)
 
-        # Patient name label
-        self.name_label = QLabel(self.patient_name)
+        # Patient name label — Archetype 3 (PatientNameLabel, a DICOM-aware
+        # variant of ElidedLabel). For names in DICOM PN format
+        # (e.g. "ABDOLHOSEIN^MOHAMMAD ABAS"), it prefers showing whole
+        # name components rather than chopping the family name mid-character:
+        #   1. Full string fits     → "ABDOLHOSEIN MOHAMMAD ABAS"
+        #   2. Family+given fits    → "ABDOLHOSEIN MOHAMMAD ABAS" (space-joined)
+        #   3. Just family fits     → "ABDOLHOSEIN" (no ellipsis)
+        #   4. Family overflows     → "ABDOLHOSE…" (last-resort right-elide)
+        # Full name is always available as a tooltip.
+        # See docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        try:
+            from PacsClient.utils.responsive_layout import PatientNameLabel
+            self.name_label = PatientNameLabel(self.patient_name)
+        except Exception:  # pragma: no cover — defensive fallback
+            self.name_label = QLabel(self.patient_name)
         self.name_label.setObjectName("PatientName")
         self.name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
@@ -93,9 +106,13 @@ class PatientTabWidget(QWidget):
         # info_layout.addWidget(self.separator_line)
         info_layout.addWidget(self.id_label)
 
-        # Add widgets to main layout
-        main_layout.addWidget(info_container)
-        main_layout.addStretch()
+        # Add widgets to main layout — give info_container stretch=1 so it
+        # claims the row's remaining width instead of being squeezed to its
+        # sizeHint by a sibling addStretch(). Without this, the PatientNameLabel
+        # only ever sees its (small) sizeHint width and elides too aggressively
+        # — the user-visible truncation regression. The close button still hugs
+        # the right edge because nothing follows it in the row.
+        main_layout.addWidget(info_container, 1)
 
         # Add close button with minimal space (reduced by 30%)
         self.close_button = QLabel("×")

@@ -96,6 +96,14 @@ class StorageCleanupPanelWidget(QWidget):
             "Core app data (e.g., license and global configuration) is never deleted."
         )
         cleanup_desc.setWordWrap(True)
+        # Archetype 2: explicit MinimumExpanding vertical policy so the
+        # wrapped description can grow tall when the column narrows. See
+        # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        try:
+            from PySide6.QtWidgets import QSizePolicy as _QSP
+            cleanup_desc.setSizePolicy(_QSP.Preferred, _QSP.MinimumExpanding)
+        except Exception:  # pragma: no cover — defensive
+            pass
         cleanup_desc.setStyleSheet(
             "color: #d1d5db; font-size: 14px; padding: 10px; "
             "background-color: #1f2937; border-radius: 6px; line-height: 1.6;"
@@ -636,7 +644,7 @@ class StorageCleanupPanelWidget(QWidget):
             progress_bar.setRange(0, 100)
             progress_bar.setValue(int(used_pct))
             progress_bar.setTextVisible(False)
-            progress_bar.setFixedHeight(20)  # Taller for better visibility
+            progress_bar.setMinimumHeight(20)  # Archetype 5: floor, can grow with font
             progress_bar.setStyleSheet(f"""
                 QProgressBar {{
                     border: 2px solid #4b5563;

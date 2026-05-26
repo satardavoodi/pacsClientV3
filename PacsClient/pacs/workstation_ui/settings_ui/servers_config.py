@@ -124,18 +124,20 @@ class ServersConfigWidget(QWidget):
             row.setSpacing(10)
 
             lbl = QLabel(name)
-            lbl.setFixedWidth(90)
+            # Archetype 5: row of form widgets — minimum-size floors so each
+            # widget can grow with font/DPI. See RESPONSIVE_UI_CONVENTION.md.
+            lbl.setMinimumWidth(90)
 
             le = QLineEdit()
             le.setPlaceholderText("http://host:port")
-            le.setFixedSize(URL_W, URL_H)
-            le.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            le.setMinimumSize(URL_W, URL_H)
+            le.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
             status = QLabel("—")
-            status.setFixedWidth(STATUS_W)
+            status.setMinimumWidth(STATUS_W)
 
             btn = QPushButton("Approve")   # قبلاً "Test"
-            btn.setFixedSize(BTN_W, BTN_H)
+            btn.setMinimumSize(BTN_W, BTN_H)
             btn.setProperty("role", "secondary")
             btn.clicked.connect(partial(self._on_test_clicked, name=name))
 
@@ -157,12 +159,12 @@ class ServersConfigWidget(QWidget):
 
         self.save_urls_btn = QPushButton("Save URLs")
         self.save_urls_btn.setProperty("role", "success")
-        self.save_urls_btn.setFixedHeight(36)
+        self.save_urls_btn.setMinimumHeight(36)  # Archetype 5
         self.save_urls_btn.clicked.connect(self.on_save)
 
         self.load_urls_btn = QPushButton("Load")
         self.load_urls_btn.setProperty("role", "secondary")
-        self.load_urls_btn.setFixedHeight(36)
+        self.load_urls_btn.setMinimumHeight(36)  # Archetype 5
         self.load_urls_btn.clicked.connect(self.load_from_file)
 
         btn_row.addWidget(self.save_urls_btn)

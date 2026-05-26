@@ -43,8 +43,9 @@ class DataAccessPanelWidget(QWidget):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(0)
         
-        # Set fixed height for consistent tab bar appearance
-        self.setFixedHeight(180)
+        # Archetype 5: minimum-height floor so the tab bar area can grow
+        # with font/DPI. Consistent visual height preserved at default font.
+        self.setMinimumHeight(180)
 
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self.on_tab_changed)

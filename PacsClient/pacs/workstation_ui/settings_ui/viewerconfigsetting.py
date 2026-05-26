@@ -71,7 +71,9 @@ class GridPickerPopup(QFrame):
         for r in range(max_size):
             for c in range(max_size):
                 btn = QPushButton()
-                btn.setFixedSize(29, 29)  # Larger cells for easier targeting
+                # Archetype 5: minimum-size floor for the modality grid cell;
+                # allows growth with font/DPI while keeping a 29x29 visual floor.
+                btn.setMinimumSize(29, 29)
                 btn.setCursor(Qt.PointingHandCursor)
                 btn.enterEvent = lambda e, rr=r, cc=c: self._hover(rr, cc)
                 btn.clicked.connect(partial(self._on_cell_clicked, rows=r + 1, cols=c + 1))
@@ -97,14 +99,47 @@ class GridPickerPopup(QFrame):
 # ============================================================
 class GridPickerButton(QPushButton):
     def __init__(self, rows: int, cols: int, parent=None):
-        super().__init__(f"{rows} × {cols}", parent)
+        # Compact label "1×2 ▾" — single space separates dimension from
+        # the dropdown glyph so QPushButton's default-centered text reads
+        # cleanly.
+        super().__init__(f"{rows}×{cols} ▾", parent)
         self.rows = rows
         self.cols = cols
-        self.setFixedWidth(100)  # Wider for better readability
-        self.setMinimumHeight(34)  # Taller for easier clicking
+        # FIXED 78×24 so every picker has identical geometry — guarantees
+        # baseline alignment with the modality label (28 px) and ✕ (24 px)
+        # in the surrounding QGridLayout. setFixedSize is appropriate here
+        # because the button label has a known short upper-bound width
+        # ("1×2 ▾" through "9×9 ▾", all <= 8 chars). Documented leaf usage
+        # per RESPONSIVE_UI_CONVENTION.md.
+        self.setFixedSize(78, 24)
+        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setCursor(Qt.PointingHandCursor)
+        self.setToolTip("Click to choose a grid layout (rows × cols)")
+        # No text-align CSS — QPushButton centers its label by default.
+        # Padding tuned so the text sits visually centred without an icon.
         self.setStyleSheet(
-            "QPushButton { font-size: 14px; font-weight: 600; }"
+            "QPushButton {"
+            "  font-size: 12px;"
+            "  font-weight: 600;"
+            "  color: #f1f5f9;"
+            "  background-color: #2d3748;"
+            "  border: 1px solid #3b4658;"
+            "  border-radius: 5px;"
+            "  padding: 0 6px;"
+            "}"
+            "QPushButton:hover {"
+            "  background-color: #3b4658;"
+            "  border-color: #3b82f6;"
+            "  color: #ffffff;"
+            "}"
+            "QPushButton:pressed {"
+            "  background-color: #1e293b;"
+            "  border-color: #60a5fa;"
+            "}"
+            "QPushButton:focus {"
+            "  border-color: #3b82f6;"
+            "  outline: none;"
+            "}"
         )
         self.clicked.connect(self._open_picker)
 
@@ -117,7 +152,8 @@ class GridPickerButton(QPushButton):
     def _set_grid(self, rows, cols):
         self.rows = rows
         self.cols = cols
-        self.setText(f"{rows} × {cols}")
+        # Keep the dropdown indicator consistent with __init__.
+        self.setText(f"{rows}×{cols} ▾")
 
 
 # ============================================================
@@ -263,47 +299,90 @@ class ModalityGridConfigWidget(QWidget):
         left_panel_layout.addWidget(left_title)
 
         self.grid = QGridLayout()
-        self.grid.setHorizontalSpacing(16)  # More horizontal space
-        self.grid.setVerticalSpacing(13)  # More vertical space
+        self.grid.setHorizontalSpacing(12)
+        self.grid.setVerticalSpacing(10)
+        # 7-column layout with a fixed-width spacer between the two halves:
+        #   col 0  Modality (left half)
+        #   col 1  Picker
+        #   col 2  Remove ✕
+        #   col 3  Spacer (24 px gap between the two halves)
+        #   col 4  Modality (right half)
+        #   col 5  Picker
+        #   col 6  Remove ✕
+        # Picker columns (1, 5) and modality columns (0, 4) are pinned to
+        # sensible minimum widths so the row geometry is predictable on
+        # any monitor. The spacer column ensures the left half's ✕ button
+        # never sits flush against the right half's modality label.
+        self.grid.setColumnMinimumWidth(0, 56)
+        self.grid.setColumnMinimumWidth(1, 78)
+        self.grid.setColumnMinimumWidth(2, 30)
+        self.grid.setColumnMinimumWidth(3, 24)   # the spacer between halves
+        self.grid.setColumnMinimumWidth(4, 56)
+        self.grid.setColumnMinimumWidth(5, 78)
+        self.grid.setColumnMinimumWidth(6, 30)
 
-        for i, h in enumerate(["Modality", "Layout", ""]):
+        for col, h in [(0, "Modality"), (1, "Layout"), (4, "Modality"), (5, "Layout")]:
             lbl = QLabel(h)
-            lbl.setStyleSheet("font-weight: 600; font-size: 14px; color: #d1d5db;")
-            self.grid.addWidget(lbl, 0, i)
+            lbl.setStyleSheet(
+                "font-weight: 600; font-size: 12px; color: #94a3b8;"
+                "letter-spacing: 0.4px; text-transform: uppercase;"
+                "padding: 0 0 4px 2px;"
+            )
+            self.grid.addWidget(lbl, 0, col)
 
         left_panel_layout.addLayout(self.grid)
 
         # ---------- Add Row ----------
+        # Layout: [Name label] [Name combo — stretches] [Grid label] [Grid combo] [Add]
+        # The Name combo gets stretch=1 so it absorbs available row width;
+        # this prevents the prior visual where the combo rendered as a
+        # narrow box right next to the label. Archetype 5 floors guarantee
+        # legibility even when the row is compressed.
         add_row = QHBoxLayout()
-        add_row.setSpacing(12)
+        add_row.setSpacing(10)
 
         self.new_name = QComboBox()
         self.new_name.setEditable(True)
-        self.new_name.setFixedWidth(108)  # Wider for better readability
+        self.new_name.setMinimumWidth(160)
+        self.new_name.setMinimumHeight(32)
+        self.new_name.setPlaceholderText("e.g. CT, MR, US…")
+        self.new_name.setStyleSheet(
+            "QComboBox {"
+            "  background-color: #2d3748;"
+            "  border: 1px solid #3b4658;"
+            "  border-radius: 6px;"
+            "  padding: 4px 10px;"
+            "  color: #f1f5f9;"
+            "  font-size: 13px;"
+            "}"
+            "QComboBox:focus { border-color: #3b82f6; }"
+        )
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(self.GRID_PRESETS.keys())
-        self.preset_combo.setFixedWidth(90)  # Wider
+        self.preset_combo.setMinimumWidth(96)
+        self.preset_combo.setMinimumHeight(32)
+        self.preset_combo.setStyleSheet(self.new_name.styleSheet())
 
         add_btn = QPushButton("Add")
         add_btn.setProperty("role", "success")
-        add_btn.setMinimumWidth(90)
+        add_btn.setMinimumWidth(96)
+        add_btn.setMinimumHeight(32)
         add_btn.setCursor(Qt.PointingHandCursor)
         add_btn.clicked.connect(self.add_modality)
 
         name_label = QLabel("Name")
-        name_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+        name_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #d1d5db;")
         grid_label = QLabel("Grid")
-        grid_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+        grid_label.setStyleSheet("font-size: 14px; font-weight: 600; color: #d1d5db;")
 
         add_row.addWidget(name_label)
-        add_row.addWidget(self.new_name)
+        add_row.addWidget(self.new_name, 1)   # stretch absorbs slack
         add_row.addSpacing(12)
         add_row.addWidget(grid_label)
         add_row.addWidget(self.preset_combo)
-        add_row.addSpacing(16)
+        add_row.addSpacing(12)
         add_row.addWidget(add_btn)
-        add_row.addStretch(1)
 
         left_panel_layout.addLayout(add_row)
 
@@ -334,6 +413,12 @@ class ModalityGridConfigWidget(QWidget):
             "background-color: #1f2937; border-radius: 4px; line-height: 1.5;"
         )
         viewer_mode_desc.setWordWrap(True)
+        # Archetype 2: see gpu_status_label below.
+        try:
+            from PySide6.QtWidgets import QSizePolicy as _QSP
+            viewer_mode_desc.setSizePolicy(_QSP.Preferred, _QSP.MinimumExpanding)
+        except Exception:  # pragma: no cover — defensive
+            pass
         viewer_mode_row.addWidget(viewer_mode_desc)
 
         left_panel_layout.addLayout(viewer_mode_row)
@@ -359,6 +444,16 @@ class ModalityGridConfigWidget(QWidget):
 
         self.gpu_status_label = QLabel()
         self.gpu_status_label.setWordWrap(True)
+        # Archetype 2: explicit vertical-growth size policy so the wrapped
+        # description can occupy as many lines as it needs at any monitor
+        # width. Without this Qt would pick the label's sizeHint() at
+        # construction time and may clip on narrower-than-default columns.
+        # See docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        try:
+            from PySide6.QtWidgets import QSizePolicy as _QSP
+            self.gpu_status_label.setSizePolicy(_QSP.Preferred, _QSP.MinimumExpanding)
+        except Exception:  # pragma: no cover — defensive
+            pass
         self.gpu_status_label.setStyleSheet(
             "color: #d1d5db; font-size: 13px; padding: 9px; "
             "background-color: #1f2937; border-radius: 4px; line-height: 1.5;"
@@ -540,45 +635,85 @@ class ModalityGridConfigWidget(QWidget):
             if w:
                 w.deleteLater()
 
-        headers = ["Modality", "Layout", "", "Modality", "Layout", ""]
-        for i, h in enumerate(headers):
+        # 7-column layout — see _setup_ui's column-width pinning for the
+        # full structure. Headers go into cols 0/1 (left half) and 4/5
+        # (right half); col 3 is the spacer between halves.
+        for col, h in [(0, "Modality"), (1, "Layout"), (4, "Modality"), (5, "Layout")]:
             header_label = QLabel(h)
-            header_label.setStyleSheet("font-weight: 600; font-size: 14px; color: #d1d5db;")
-            self.grid.addWidget(header_label, 0, i)
+            header_label.setStyleSheet(
+                "font-weight: 600; font-size: 12px; color: #94a3b8;"
+                "letter-spacing: 0.4px; text-transform: uppercase;"
+                "padding: 0 0 4px 2px;"
+            )
+            self.grid.addWidget(header_label, 0, col)
 
         self.modality_widgets.clear()
 
         items = list(self.config_data.items())
         row = 1
-        col_block = 0  # 0 or 1 (left / right column)
+        col_block = 0  # 0 = left half, 1 = right half
 
         for name, cfg in items:
-            base_col = col_block * 3
+            # Left half uses cols 0/1/2; right half uses cols 4/5/6.
+            # Col 3 stays empty (the spacer).
+            base_col = 0 if col_block == 0 else 4
 
             lbl = QLabel(name)
-            lbl.setFixedWidth(100)  # Wider for readability
-            lbl.setStyleSheet("font-size: 14px; font-weight: 600; color: #e5e7eb;")
+            # Fixed height matches the picker/remove (28 px) so every cell
+            # in the row aligns on its baseline.
+            lbl.setMinimumHeight(28)
+            lbl.setMaximumHeight(28)
+            lbl.setMinimumWidth(56)
+            lbl.setStyleSheet(
+                "font-size: 14px; font-weight: 600; color: #f1f5f9;"
+                "letter-spacing: 0.3px; padding: 0 4px;"
+            )
+            # Center vertically so the label aligns with the picker / ✕.
+            lbl.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
 
             picker = GridPickerButton(cfg["rows"], cfg["cols"])
 
             rm = QToolButton()
             rm.setText("✕")
-            rm.setFixedSize(36, 36)  # Larger clickable area
+            # Matches picker height for a clean row baseline. Muted grey
+            # at rest, red on hover (destructive-action affordance).
+            rm.setFixedSize(24, 24)
             rm.setCursor(Qt.PointingHandCursor)
+            rm.setToolTip(f"Remove the {name} modality from the grid layout")
             rm.setStyleSheet(
-                "QToolButton { font-size: 16px; font-weight: bold; color: #e2e8f0; "
-                "background-color: #1d4ed8; border: 1px solid #1e40af; border-radius: 6px; } "
-                "QToolButton:hover { background-color: #1e40af; }"
+                "QToolButton {"
+                "  font-size: 12px;"
+                "  font-weight: 600;"
+                "  color: #94a3b8;"
+                "  background-color: transparent;"
+                "  border: 1px solid #2b313b;"
+                "  border-radius: 5px;"
+                "  padding: 0;"
+                "}"
+                "QToolButton:hover {"
+                "  color: #ffffff;"
+                "  background-color: #dc2626;"
+                "  border-color: #b91c1c;"
+                "}"
+                "QToolButton:pressed {"
+                "  background-color: #b91c1c;"
+                "  border-color: #991b1b;"
+                "}"
             )
             rm.clicked.connect(partial(self._on_remove_modality_clicked, name=name))
 
-            self.grid.addWidget(lbl, row, base_col + 0)
-            self.grid.addWidget(picker, row, base_col + 1)
-            self.grid.addWidget(rm, row, base_col + 2)
+            # All three widgets in this row use Qt.AlignVCenter so they
+            # share the same vertical centerline regardless of any small
+            # height differences. AlignLeft/Center for horizontal:
+            # modality label is left-aligned (its content); picker and ✕
+            # are centered inside their cell.
+            self.grid.addWidget(lbl, row, base_col + 0, Qt.AlignVCenter | Qt.AlignLeft)
+            self.grid.addWidget(picker, row, base_col + 1, Qt.AlignVCenter | Qt.AlignLeft)
+            self.grid.addWidget(rm, row, base_col + 2, Qt.AlignVCenter | Qt.AlignLeft)
 
             self.modality_widgets[name] = picker
 
-            # Every two items → go to next row
+            # Every two items → next row
             if col_block == 1:
                 row += 1
                 col_block = 0

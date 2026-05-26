@@ -190,9 +190,19 @@ class RightPanelWidget(QWidget):
         self.loading_spinner = LoadingSpinner(self)
         self.loading_spinner.hide()
         
-        # Set fixed width - calculated for 180px thumbnails + margins + scrollbar
-        # Calculation: 180px (thumbnail) + 10px (left margin) + 10px (right margin) + 16px (scrollbar) = 216px
-        self.setFixedWidth(216)
+        # Archetype 4: allow the right rail to resize within a sensible
+        # range so the home QSplitter (in widget.py) can rebalance the
+        # tri-pane on narrow / wide monitors. Floor protects the 180 px
+        # thumbnail + margins; ceiling prevents the rail from dominating
+        # very wide monitors. See docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        # Original: setFixedWidth(216).
+        self.setMinimumWidth(200)
+        self.setMaximumWidth(360)
+        try:
+            from PySide6.QtWidgets import QSizePolicy as _QSP
+            self.setSizePolicy(_QSP.Preferred, _QSP.Expanding)
+        except Exception:  # pragma: no cover — defensive
+            pass
     
     def _get_header_title_stylesheet(self):
         """Get themed header title stylesheet"""

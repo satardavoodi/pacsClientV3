@@ -282,31 +282,31 @@ class ServerSettingsWidget(QWidget):
         form.setVerticalSpacing(6)
 
         lbl_name = QLabel("Name:"); lbl_name.setObjectName("FormLabel")
-        lbl_name.setFixedWidth(55)
+        lbl_name.setMinimumWidth(55)  # Archetype 5: form-label floor; can grow
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Server Name")
-        self.name_edit.setFixedHeight(28)
+        self.name_edit.setMinimumHeight(28)  # Archetype 5: grows with font/DPI
         lbl_host = QLabel("Host:"); lbl_host.setObjectName("FormLabel")
-        lbl_host.setFixedWidth(55)
+        lbl_host.setMinimumWidth(55)  # Archetype 5: form-label floor; can grow
         self.host_edit = QLineEdit()
         self.host_edit.setPlaceholderText("192.168.1.100")
-        self.host_edit.setFixedHeight(28)
+        self.host_edit.setMinimumHeight(28)  # Archetype 5: grows with font/DPI
         form.addWidget(lbl_name, 0, 0)
         form.addWidget(self.name_edit, 0, 1)
         form.addWidget(lbl_host, 0, 2)
         form.addWidget(self.host_edit, 0, 3)
 
         lbl_port = QLabel("Port:"); lbl_port.setObjectName("FormLabel")
-        lbl_port.setFixedWidth(55)
+        lbl_port.setMinimumWidth(55)  # Archetype 5: form-label floor; can grow
         self.port_edit = QLineEdit()
         self.port_edit.setPlaceholderText("104")
-        self.port_edit.setFixedHeight(28)
+        self.port_edit.setMinimumHeight(28)  # Archetype 5: grows with font/DPI
         lbl_ae = QLabel("AE Title:"); lbl_ae.setObjectName("FormLabel")
-        lbl_ae.setFixedWidth(55)
+        lbl_ae.setMinimumWidth(55)  # Archetype 5: form-label floor; can grow
         self.ae_title_edit = QLineEdit()
         self.ae_title_edit.setPlaceholderText("AE_TITLE")
         self.ae_title_edit.setMaxLength(16)
-        self.ae_title_edit.setFixedHeight(28)
+        self.ae_title_edit.setMinimumHeight(28)  # Archetype 5: grows with font/DPI
         form.addWidget(lbl_port, 1, 0)
         form.addWidget(self.port_edit, 1, 1)
         form.addWidget(lbl_ae, 1, 2)
@@ -322,12 +322,12 @@ class ServerSettingsWidget(QWidget):
 
         self.save_btn = QPushButton("Save")
         self.save_btn.setProperty("role", "primary")
-        self.save_btn.setFixedHeight(30)
+        self.save_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self.save_btn.clicked.connect(self.save_server)
 
         self.verify_btn = QPushButton("Verify")
         self.verify_btn.setProperty("role", "success")
-        self.verify_btn.setFixedHeight(30)
+        self.verify_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self.verify_btn.clicked.connect(
             lambda: asyncio.create_task(self.verify_connection())
         )
@@ -342,12 +342,12 @@ class ServerSettingsWidget(QWidget):
 
         self.delete_btn = QPushButton("Delete")
         self.delete_btn.setProperty("role", "danger")
-        self.delete_btn.setFixedHeight(30)
+        self.delete_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self.delete_btn.clicked.connect(self.delete_server)
         self.delete_btn.setEnabled(False)
 
         self.clear_btn = QPushButton("Clear")
-        self.clear_btn.setFixedHeight(30)
+        self.clear_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self.clear_btn.clicked.connect(self.clear_form)
 
         btn_row2.addWidget(self.delete_btn, 1)
@@ -395,19 +395,19 @@ class ServerSettingsWidget(QWidget):
         for row, service_name in enumerate(_AI_SERVICE_NAMES):
             name_label = QLabel(service_name)
             name_label.setObjectName("FormLabel")
-            name_label.setFixedWidth(95)
+            name_label.setMinimumWidth(95)  # Archetype 5: form-label floor; can grow
 
             edit = QLineEdit()
             edit.setPlaceholderText("http://host:port")
-            edit.setFixedHeight(30)
+            edit.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
 
             status = QLabel("-")
             status.setObjectName("FormLabel")
             status.setAlignment(Qt.AlignCenter)
-            status.setFixedWidth(90)
+            status.setMinimumWidth(90)  # Archetype 5: status-pill floor; can grow
 
             approve_btn = QPushButton("Approve")
-            approve_btn.setFixedHeight(30)
+            approve_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
             approve_btn.clicked.connect(
                 lambda _checked=False, name=service_name: self._on_ai_service_test(name)
             )
@@ -428,11 +428,11 @@ class ServerSettingsWidget(QWidget):
 
         self._ai_service_save_btn = QPushButton("Save URLs")
         self._ai_service_save_btn.setProperty("role", "primary")
-        self._ai_service_save_btn.setFixedHeight(30)
+        self._ai_service_save_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._ai_service_save_btn.clicked.connect(self._save_ai_service_urls)
 
         self._ai_service_load_btn = QPushButton("Load")
-        self._ai_service_load_btn.setFixedHeight(30)
+        self._ai_service_load_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._ai_service_load_btn.clicked.connect(self._load_ai_service_urls)
 
         btn_row.addWidget(self._ai_service_save_btn, 1)
@@ -498,18 +498,18 @@ class ServerSettingsWidget(QWidget):
         form.setVerticalSpacing(6)
 
         lbl_ae = QLabel("Local AE:"); lbl_ae.setObjectName("FormLabel")
-        lbl_ae.setFixedWidth(55)
+        lbl_ae.setMinimumWidth(55)  # Archetype 5: form-label floor; can grow
         self._local_ae_edit = QLineEdit()
         self._local_ae_edit.setMaxLength(16)
         self._local_ae_edit.setPlaceholderText("AIPACS_SCU")
-        self._local_ae_edit.setFixedHeight(28)
+        self._local_ae_edit.setMinimumHeight(28)  # Archetype 5: grows with font/DPI
         lbl_port = QLabel("Port:"); lbl_port.setObjectName("FormLabel")
-        lbl_port.setFixedWidth(55)
+        lbl_port.setMinimumWidth(55)  # Archetype 5: form-label floor; can grow
         self._local_port_spin = QSpinBox()
         self._local_port_spin.setRange(1, 65535)
         self._local_port_spin.setValue(11112)
-        self._local_port_spin.setFixedHeight(28)
-        self._local_port_spin.setFixedWidth(120)
+        self._local_port_spin.setMinimumHeight(28)  # Archetype 5: grows with font/DPI
+        self._local_port_spin.setMinimumWidth(120)  # Archetype 5: port-spin floor; can grow
         form.addWidget(lbl_ae, 0, 0)
         form.addWidget(self._local_ae_edit, 0, 1, 1, 3)
 
@@ -517,7 +517,7 @@ class ServerSettingsWidget(QWidget):
         form.addWidget(self._local_port_spin, 1, 1)
         save_scp = QPushButton("Save SCP")
         save_scp.setProperty("role", "primary")
-        save_scp.setFixedHeight(28)
+        save_scp.setMinimumHeight(28)  # Archetype 5: grows with font/DPI
         save_scp.clicked.connect(self._ext_save_scp_settings)
         form.addWidget(save_scp, 1, 3)
 
@@ -531,12 +531,12 @@ class ServerSettingsWidget(QWidget):
 
         self._ext_new_btn = QPushButton("New\u2026")
         self._ext_new_btn.setProperty("role", "primary")
-        self._ext_new_btn.setFixedHeight(30)
+        self._ext_new_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._ext_new_btn.clicked.connect(self._ext_on_new)
 
         self._ext_echo_btn = QPushButton("Echo")
         self._ext_echo_btn.setProperty("role", "success")
-        self._ext_echo_btn.setFixedHeight(30)
+        self._ext_echo_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._ext_echo_btn.setEnabled(False)
         self._ext_echo_btn.clicked.connect(
             lambda: asyncio.create_task(self._ext_on_echo())
@@ -544,7 +544,7 @@ class ServerSettingsWidget(QWidget):
 
         self._ext_verify_all_btn = QPushButton("Verify All")
         self._ext_verify_all_btn.setProperty("role", "success")
-        self._ext_verify_all_btn.setFixedHeight(30)
+        self._ext_verify_all_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._ext_verify_all_btn.clicked.connect(self._ext_verify_all)
 
         bar1.addWidget(self._ext_new_btn, 1)
@@ -558,17 +558,17 @@ class ServerSettingsWidget(QWidget):
 
         self._ext_delete_btn = QPushButton("Delete")
         self._ext_delete_btn.setProperty("role", "danger")
-        self._ext_delete_btn.setFixedHeight(30)
+        self._ext_delete_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._ext_delete_btn.setEnabled(False)
         self._ext_delete_btn.clicked.connect(self._ext_on_delete)
 
         self._ext_edit_btn = QPushButton("Edit\u2026")
-        self._ext_edit_btn.setFixedHeight(30)
+        self._ext_edit_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._ext_edit_btn.setEnabled(False)
         self._ext_edit_btn.clicked.connect(self._ext_on_edit)
 
         self._ext_refresh_btn = QPushButton("Refresh")
-        self._ext_refresh_btn.setFixedHeight(30)
+        self._ext_refresh_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._ext_refresh_btn.clicked.connect(self._ext_load_and_display)
 
         bar2.addWidget(self._ext_delete_btn, 1)
@@ -618,6 +618,21 @@ class ServerSettingsWidget(QWidget):
         self._cloud_table.verticalHeader().setDefaultSectionSize(38)
         self._cloud_table.setStyleSheet(_TABLE_STYLE)
         self._cloud_table.setMinimumHeight(130)
+        # Archetype 6: stretch the Folder column (index 1) and size the rest
+        # to their content. Long folder paths previously truncated to
+        # "C:/Users/vahid/Dropbo..." on Monitor B because the column was at
+        # a fixed default width with no stretch. See
+        # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        try:
+            from PacsClient.utils.responsive_layout import set_table_column_policy
+            set_table_column_policy(self._cloud_table, stretch_column=1)
+        except Exception:  # pragma: no cover — defensive
+            try:
+                _h = self._cloud_table.horizontalHeader()
+                _h.setSectionResizeMode(QHeaderView.ResizeToContents)
+                _h.setSectionResizeMode(1, QHeaderView.Stretch)
+            except Exception:
+                pass
         self._cloud_table.itemSelectionChanged.connect(self._cloud_on_selection_changed)
         lay.addWidget(self._cloud_table, 1)
 
@@ -660,7 +675,7 @@ class ServerSettingsWidget(QWidget):
             self._cloud_manifest_btn,
             self._cloud_refresh_btn,
         ):
-            btn.setFixedHeight(30)
+            btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
             pl.addWidget(btn)
         pl.addStretch()
         lay.addWidget(panel)
@@ -828,7 +843,7 @@ class ServerSettingsWidget(QWidget):
 
             verify_btn = QPushButton("Verify")
             verify_btn.setProperty("role", "success")
-            verify_btn.setFixedHeight(28)
+            verify_btn.setMinimumHeight(28)  # Archetype 5: grows with font/DPI
             verify_btn.setStyleSheet(
                 "font-size: 11px; padding: 2px 8px; min-height: 24px;"
             )
@@ -1373,17 +1388,17 @@ class ServerSettingsWidget(QWidget):
 
         lbl = QLabel("Base URL:")
         lbl.setObjectName("FormLabel")
-        lbl.setFixedWidth(95)
+        lbl.setMinimumWidth(95)  # Archetype 5: form-label floor; can grow
         self._reception_api_edit = QLineEdit()
         self._reception_api_edit.setPlaceholderText("http://host:port")
-        self._reception_api_edit.setFixedHeight(30)
+        self._reception_api_edit.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         self._reception_api_status = QLabel("-")
         self._reception_api_status.setObjectName("FormLabel")
         self._reception_api_status.setAlignment(Qt.AlignCenter)
-        self._reception_api_status.setFixedWidth(110)
+        self._reception_api_status.setMinimumWidth(110)  # Archetype 5: status floor; can grow
         test_btn = QPushButton("Test")
         test_btn.setProperty("role", "success")
-        test_btn.setFixedHeight(30)
+        test_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         test_btn.clicked.connect(self._on_reception_api_test)
 
         row.addWidget(lbl, 0, 0)
@@ -1397,10 +1412,10 @@ class ServerSettingsWidget(QWidget):
         btn_row.setSpacing(12)
         save_btn = QPushButton("Save Endpoint")
         save_btn.setProperty("role", "primary")
-        save_btn.setFixedHeight(30)
+        save_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         save_btn.clicked.connect(self._save_reception_api_settings)
         load_btn = QPushButton("Load")
-        load_btn.setFixedHeight(30)
+        load_btn.setMinimumHeight(30)  # Archetype 5: grows with font/DPI
         load_btn.clicked.connect(self._load_reception_api_settings)
         btn_row.addWidget(save_btn, 1)
         btn_row.addWidget(load_btn, 1)

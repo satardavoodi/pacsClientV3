@@ -202,10 +202,97 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         self.setup_left_panel()
         self.setup_center_panel()
         self.setup_right_panel()
+        # Archetype 4: convert the tri-pane HBoxLayout into a user-resizable
+        # QSplitter so the user can drag dividers to rebalance the layout on
+        # narrower monitors. Previously left/right were pinned and the centre
+        # patient table could not reclaim space — 6 of 12 columns were
+        # hidden by default on a 1280-wide monitor.
+        # See docs/conventions/RESPONSIVE_UI_CONVENTION.md and
+        # docs/plans/responsive_ui_baselines/comparison_AB.md issue #3.
+        self._wrap_home_tripane_in_splitter()
         # set combo for register server_settings changes
         UpdaterDataFromServerToHome().set_combo_server(self.data_access_panel_widget)
         # Defer anti-aliasing to after the first paint so the main page appears faster.
         QTimer.singleShot(0, self.apply_anti_aliasing)
         self.theme_manager.themeChanged.connect(self.apply_theme)
         self.apply_theme(self._active_theme)
+
+    def _wrap_home_tripane_in_splitter(self):
+        """Reparent the three home panels (left scroll, centre table, right
+        rail) into a horizontal QSplitter so the user can drag the dividers.
+
+        Failure-safe: if anything goes wrong (helper import, widget missing),
+        the original QHBoxLayout layout remains and the app behaves as before.
+        """
+        try:
+            from PacsClient.utils.responsive_layout import horizontal_splitter
+            from PySide6.QtCore import QSettings
+
+            left = getattr(self, "left_panel_scroll", None)
+            center = getattr(self, "patient_table_widget", None)
+            right = getattr(self, "right_panel_widget", None)
+            if left is None or center is None or right is None:
+                return  # Nothing to wrap — keep original layout.
+
+            # Remove each widget from the main layout. removeWidget unparents
+            # it from the layout but keeps it alive (still owned by self).
+            self.main_layout.removeWidget(left)
+            self.main_layout.removeWidget(center)
+            self.main_layout.removeWidget(right)
+
+            # Build the splitter. Children are reparented into the splitter
+            # automatically by addWidget inside horizontal_splitter().
+            self._home_splitter = horizontal_splitter(
+                left, center, right,
+                stretch_factors=[0, 1, 0],
+                collapsible=False,
+                handle_width=4,
+            )
+
+            # Default sizes mirror the previous fixed widths so first run
+            # looks identical to pre-change behaviour on Monitor A (1920).
+            # Total = 314 + 750 + 216 = 1280 — fits exactly on Monitor B.
+            self._home_splitter.setSizes([314, 750, 216])
+
+            # Add the splitter back into main_layout in place of the three
+            # panels. Stretch 1 so it absorbs all available horizontal space.
+            self.main_layout.addWidget(self._home_splitter, 1)
+
+            # Persistence: load saved state if present; save on every drag.
+            try:
+                self._home_splitter_settings = QSettings("AIPacs", "AIPacs")
+                state = self._home_splitter_settings.value(
+                    "home/tripane_splitter_state"
+                )
+                if state is not None:
+                    # QSettings may return a QByteArray; restoreState accepts it.
+                    self._home_splitter.restoreState(state)
+
+                def _on_splitter_moved(_pos, _idx):
+                    try:
+                        self._home_splitter_settings.setValue(
+                            "home/tripane_splitter_state",
+                            self._home_splitter.saveState(),
+                        )
+                    except Exception:  # pragma: no cover — settings write failure
+                        pass
+
+                self._home_splitter.splitterMoved.connect(_on_splitter_moved)
+            except Exception:  # pragma: no cover — defensive
+                # Persistence is best-effort; never crash the home panel
+                # over a settings read/write failure.
+                pass
+        except Exception as _wrap_exc:  # pragma: no cover — defensive
+            # If the wrap fails for any reason, the original QHBoxLayout
+            # has already added all three panels — the app remains usable
+            # without the splitter.
+            try:
+                import logging as _logging
+                _logging.getLogger(__name__).warning(
+                    "[HomePanel] tri-pane splitter wrap failed (%s); "
+                    "falling back to fixed-width HBoxLayout",
+                    _wrap_exc,
+                )
+            except Exception:
+                pass
 

@@ -183,12 +183,13 @@ class ReceptionReportsViewer(QWidget):
         
         self.status_filter = QComboBox()
         self.status_filter.addItems(["All", "Pending", "Read", "Archived"])
-        self.status_filter.setFixedWidth(120)
+        # Archetype 5: floor, can grow with font/DPI.
+        self.status_filter.setMinimumWidth(120)
         layout.addWidget(self.status_filter)
-        
+
         # Refresh button
         self.btn_refresh = QPushButton("🔄 Refresh")
-        self.btn_refresh.setFixedWidth(100)
+        self.btn_refresh.setMinimumWidth(100)  # Archetype 5
         layout.addWidget(self.btn_refresh)
         
         return layout

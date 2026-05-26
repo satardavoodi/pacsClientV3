@@ -396,7 +396,14 @@ class ControlPanelWindow(object):
         # Center slide menu (hidden by default)
         self.centerMenuContainer = QFrame(self.centralwidget)
         self.centerMenuContainer.setObjectName(u"centerMenuContainer")
-        self.centerMenuContainer.setFixedWidth(self._center_panel_width)
+        # Archetype 5: minimum-width floor instead of a hard pin so the
+        # theme / about / etc. slide-out menu can grow on wide monitors and
+        # shrink (down to a readable floor of 280 px) on narrower ones.
+        # The user's request: when this panel opens, only the centre patient
+        # list should shrink — the home_splitter (W1) with
+        # stretch_factors=[0,1,0] enforces that exactly.
+        self.centerMenuContainer.setMinimumWidth(280)
+        self.centerMenuContainer.setMaximumWidth(self._center_panel_width)
         self.centerMenuContainer.setStyleSheet("background-color: #2d3748; border-radius: 10px; margin: 5px;")
         self.centerMenuContainer.hide()
 
@@ -617,7 +624,12 @@ class ControlPanelWindow(object):
         # Right menu (hidden by default)
         self.rightMenuContainer = QFrame(self.mainBodyContent)
         self.rightMenuContainer.setObjectName(u"rightMenuContainer")
-        self.rightMenuContainer.setFixedWidth(self._right_panel_width)
+        # Archetype 5: minimum-width floor (280 px) + maximum cap (400 px).
+        # Same rationale as centerMenuContainer above. The home_splitter's
+        # stretch_factors=[0,1,0] (W1) ensures only the centre patient list
+        # shrinks when this panel opens.
+        self.rightMenuContainer.setMinimumWidth(280)
+        self.rightMenuContainer.setMaximumWidth(self._right_panel_width)
         self.rightMenuContainer.setStyleSheet("background-color: #2d3748; border-radius: 10px; margin: 5px;")
         self.rightMenuContainer.hide()
 
@@ -807,27 +819,77 @@ class ControlPanelWindow(object):
         self.mainPages.setCurrentIndex(1)
 
     def open_data_analysis(self):
-        """Open data analysis dashboard and refresh metrics."""
+        """Open data analysis dashboard and refresh metrics.
+
+        Heavy work (module import, dashboard construction, force-refresh of
+        storage-backed metrics) is deferred to the next event-loop tick via
+        QTimer.singleShot(0, …) so the page swap and the "Loading…" hint
+        paint immediately. Previously this method blocked the main thread
+        for several seconds on first open, causing a visible UI freeze.
+        """
+        # 1) Swap to the data page right away so the user sees something.
         self.mainPages.setCurrentIndex(2)
+
+        # 2) If the dashboard already exists just refresh it (also deferred).
+        if self.data_analysis_widget is not None:
+            from PySide6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(0, self._refresh_data_analysis_async)
+            return
+
+        # 3) First open — show a clear "loading" placeholder so the user
+        # knows the freeze isn't a hang. Then defer the heavy init.
         try:
-            if self.data_analysis_widget is None:
-                from modules.data_analysis import DataAnalysisDashboard
-
-                if hasattr(self, "_data_analysis_placeholder") and self._data_analysis_placeholder is not None:
-                    self.verticalLayout_29.removeWidget(self._data_analysis_placeholder)
-                    self._data_analysis_placeholder.deleteLater()
-                    self._data_analysis_placeholder = None
-
-                self.data_analysis_widget = DataAnalysisDashboard(
-                    self.dataPage,
-                    auth_user=self._data_analysis_auth_user,
+            if hasattr(self, "_data_analysis_placeholder") and self._data_analysis_placeholder is not None:
+                self._data_analysis_placeholder.setText(
+                    "Loading Data Analysis dashboard…\n"
+                    "Initializing charts and metrics (one-time per session)."
                 )
-                self.verticalLayout_29.addWidget(self.data_analysis_widget)
+        except Exception:  # pragma: no cover — defensive
+            pass
 
-            if hasattr(self.data_analysis_widget, "refresh_data"):
-                self.data_analysis_widget.refresh_data(force_storage_refresh=True)
+        from PySide6.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(0, self._init_data_analysis_async)
+
+    def _init_data_analysis_async(self):
+        """Deferred construction of the Data Analysis dashboard.
+
+        Runs on the next event-loop tick so the parent's setCurrentIndex(2)
+        page swap and the "Loading…" placeholder have already painted.
+        """
+        try:
+            from modules.data_analysis import DataAnalysisDashboard
+
+            if hasattr(self, "_data_analysis_placeholder") and self._data_analysis_placeholder is not None:
+                self.verticalLayout_29.removeWidget(self._data_analysis_placeholder)
+                self._data_analysis_placeholder.deleteLater()
+                self._data_analysis_placeholder = None
+
+            self.data_analysis_widget = DataAnalysisDashboard(
+                self.dataPage,
+                auth_user=self._data_analysis_auth_user,
+            )
+            self.verticalLayout_29.addWidget(self.data_analysis_widget)
         except Exception as e:
             logger.exception("Error opening data analysis dashboard: %s", e)
+            return
+
+        # Refresh after a second event-loop tick — gives the dashboard a
+        # chance to lay out before the storage-backed refresh runs.
+        try:
+            from PySide6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(0, self._refresh_data_analysis_async)
+        except Exception:  # pragma: no cover — defensive
+            pass
+
+    def _refresh_data_analysis_async(self):
+        """Deferred refresh of the Data Analysis dashboard metrics."""
+        try:
+            if self.data_analysis_widget is not None and hasattr(
+                self.data_analysis_widget, "refresh_data"
+            ):
+                self.data_analysis_widget.refresh_data(force_storage_refresh=True)
+        except Exception as e:
+            logger.exception("Error refreshing data analysis dashboard: %s", e)
         
     def open_download_manager(self):
         """Open download manager tab"""

@@ -665,6 +665,16 @@ class PatientTableWidget(QWidget):
         ]
         self.results_table.setHorizontalHeaderLabels(headers)
         self.results_table.horizontalHeader().setTextElideMode(Qt.ElideRight)
+        # Archetype 6: smooth horizontal scrolling when the table is narrower
+        # than the sum of column widths (common on Monitor B at 1280 px).
+        # ScrollPerPixel gives mouse-wheel-friendly scrolling; ScrollPerItem
+        # would jump column-by-column. See
+        # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        try:
+            self.results_table.setHorizontalScrollMode(QTableWidget.ScrollPerPixel)
+            self.results_table.setTextElideMode(Qt.ElideRight)
+        except Exception:  # pragma: no cover — defensive
+            pass
 
         # Center all header text
         header = self.results_table.horizontalHeader()
@@ -775,7 +785,11 @@ class PatientTableWidget(QWidget):
 
         # ULTRA MINIMAL column widths - exact size for content
         self.results_table.setColumnWidth(COL['select'], 50)  # Checkbox column
-        self.results_table.setColumnWidth(COL['patient_name'], 150)  # Patient name
+        # Patient name: 200 px default (was 150). DICOM PN strings like
+        # "ABDOLHOSEIN MOHAMMAD ABAS" (after collapsing ^ to space) need
+        # about 200 px to render fully at the default 13 px font; the
+        # column stays Interactive so the user can drag wider/narrower.
+        self.results_table.setColumnWidth(COL['patient_name'], 200)
         self.results_table.setColumnWidth(COL['patient_id'], 100)  # Patient ID
         self.results_table.setColumnWidth(COL['body_part'], 100)  # Body part
         self.results_table.setColumnWidth(COL['status'], 150)  # Local availability indicators
@@ -962,9 +976,19 @@ class PatientTableWidget(QWidget):
         header_layout.setSpacing(12)
         header_layout.setAlignment(Qt.AlignVCenter)
         
-        # Title
-        title_label = QLabel("Patient Studies")
+        # Title — Archetype 3 (ElidedLabel) so the title displays an explicit
+        # ellipsis + tooltip on narrow monitors rather than hard-clipping
+        # ("Patient Studies" → "Patient Stu" on Monitor B was the previous
+        # defect). See docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        try:
+            from PacsClient.utils.responsive_layout import ElidedLabel
+            title_label = ElidedLabel("Patient Studies")
+        except Exception:  # pragma: no cover — defensive fallback
+            title_label = QLabel("Patient Studies")
         title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        # Floor width so the title doesn't shrink to nothing when the stretch
+        # collapses; ElidedLabel will start truncating below this with "...".
+        title_label.setMinimumWidth(60)
         title_label.setStyleSheet("""
             QLabel {
                 font-size: 14px;
@@ -973,12 +997,20 @@ class PatientTableWidget(QWidget):
                 padding: 6px 0px;
             }
         """)
-        
-        # Enhanced results count label
-        self.results_count_label = QLabel()
+
+        # Enhanced results count label — Archetype 3 (ElidedLabel) for the
+        # same reason as title above; "16 studies found" → "1 study f" on
+        # Monitor B was the previous defect.
+        try:
+            from PacsClient.utils.responsive_layout import ElidedLabel as _ElidedLabel
+            self.results_count_label = _ElidedLabel()
+        except Exception:  # pragma: no cover — defensive fallback
+            self.results_count_label = QLabel()
         self.results_count_label.setPixmap(qta.icon('fa5s.chart-bar', color='#a0aec0').pixmap(12, 12))
         self.results_count_label.setText(" 0 studies found")
         self.results_count_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        # Match the title floor — let it shrink but keep enough room to read.
+        self.results_count_label.setMinimumWidth(80)
         self.results_count_label.setStyleSheet("""
             QLabel {
                 font-size: 14px;
@@ -1151,7 +1183,17 @@ class PatientTableWidget(QWidget):
             "(for USB / Dropbox / Google Drive style exchange)"
         )
         self.offline_export_btn.clicked.connect(self._on_offline_cloud_sync_clicked)
-        self.offline_export_btn.setFixedHeight(40)
+        # Archetype 5: pin a sensible minimum width (icon + readable label)
+        # rather than a fixed size. On Monitor B the label was previously
+        # truncated to "Offline S:" because the button had no width floor.
+        try:
+            from PacsClient.utils.responsive_layout import set_form_field_size
+            set_form_field_size(
+                self.offline_export_btn, min_height=40, min_width=120
+            )
+        except Exception:  # pragma: no cover — defensive
+            self.offline_export_btn.setMinimumHeight(40)
+            self.offline_export_btn.setMinimumWidth(120)
         self.offline_export_btn.setCursor(Qt.PointingHandCursor)
         self.offline_export_btn.setEnabled(False)
 
@@ -1989,6 +2031,14 @@ class PatientTableWidget(QWidget):
         docs_available = False
         voice_available = False
         ai_available = False
+        # Future server-driven indicator (see _build_local_status_widget for the
+        # rendering hook). When the reception system signals that the patient
+        # has previous imaging exams — e.g. via a national-ID / linked-patient
+        # lookup — this flag will flip True and the folder icon will appear in
+        # the Status column. The wire-up to the reception payload is intentionally
+        # not done yet; populate it from _read_reception_payload_flags or a
+        # dedicated reception field when the server starts emitting it.
+        previous_history_available = False
 
         # Scan study-scoped attachment folder once.
         attach_root = ATTACHMENT_PATH / study_uid
@@ -2040,9 +2090,33 @@ class PatientTableWidget(QWidget):
             'documents': bool(docs_available),
             'voice': bool(voice_available),
             'ai': bool(ai_available),
+            # Reserved: when the reception server tells us this patient has
+            # previous imaging exams (national-ID or linked-patient match),
+            # this flag drives the folder icon in the Status column. The
+            # current `documents` chip (local attachments) is hidden by the
+            # _SHOW_LOCAL_DOCS_FOLDER_ICON gate; `previous_history` will take
+            # over the folder-icon slot once the server field is available.
+            'previous_history': bool(previous_history_available),
         }
         self._local_status_cache[cache_key] = {'data': flags, 'timestamp': now}
         return flags
+
+    # ------------------------------------------------------------------
+    # Status-column folder-icon gates
+    # ------------------------------------------------------------------
+    # The folder icon historically signalled "local documents / attachments
+    # available for this study". That signal isn't useful in current workflows,
+    # so the LOCAL-DOCS path is hidden. The icon is being repurposed: in the
+    # future the same folder icon will indicate that the reception server
+    # reports PREVIOUS IMAGING EXAMS for this patient (matched by national ID
+    # or linked patient IDs). The render path is kept here, gated by two
+    # independent flags, so the future wire-up is a one-line change:
+    #   1. Populate `previous_history_available` in
+    #      `_compute_local_status_flags` from the reception payload.
+    #   2. Flip `_SHOW_PREVIOUS_HISTORY_FOLDER_ICON` to True.
+    # Until then both gates stay False and the icon doesn't appear.
+    _SHOW_LOCAL_DOCS_FOLDER_ICON = False
+    _SHOW_PREVIOUS_HISTORY_FOLDER_ICON = False
 
     def _build_local_status_widget(self, study_uid: str, patient_id: str = '') -> QWidget:
         """Render DCM/DOC/VOC/AI indicators for local availability."""
@@ -2073,8 +2147,18 @@ class PatientTableWidget(QWidget):
 
         if flags.get('dicom', False):
             layout.addWidget(_chip('Local DICOM images', icon='fa5s.download'))
-        if flags.get('documents', False):
+        # Legacy folder icon (local documents / attachments) — gated off but the
+        # code path is preserved so it can be re-enabled by flipping
+        # _SHOW_LOCAL_DOCS_FOLDER_ICON True. See the class-level comment for
+        # why this icon is being held back.
+        if self._SHOW_LOCAL_DOCS_FOLDER_ICON and flags.get('documents', False):
             layout.addWidget(_chip('Local documents / attachments', icon='fa5s.folder'))
+        # Future folder icon — "patient has previous imaging exams". Wired up
+        # but not active; populate `previous_history` in
+        # _compute_local_status_flags from the reception server first, then
+        # flip _SHOW_PREVIOUS_HISTORY_FOLDER_ICON to True.
+        if self._SHOW_PREVIOUS_HISTORY_FOLDER_ICON and flags.get('previous_history', False):
+            layout.addWidget(_chip('Previous imaging exams on file', icon='fa5s.folder'))
         if flags.get('voice', False):
             layout.addWidget(_chip('Local voice files', icon='fa5s.microphone', color='#ef4444'))
         if flags.get('ai', False):
@@ -2452,6 +2536,40 @@ class PatientTableWidget(QWidget):
         patient_id = kwargs.get('patient_id', '') or ''
         patient_name = kwargs.get('patient_name', '') or ''
 
+        # ── Per-study dedup guard ───────────────────────────────────────
+        # The home-search paths (LOCAL DB search in home_search_service.py
+        # line ~267 and OFFLINE_CLOUD search at line ~348) call this
+        # method with `study_uid` (singular) only — they do NOT pass
+        # `study_uids` (plural), so the server-side grouping branch below
+        # never fires for them. Without this guard, a re-search / refresh
+        # / report-status update re-runs the search and INSERTS a NEW row
+        # for the same study_uid each time, producing the visible 2–3x
+        # duplicate rows the user reported (same patient_id, same date,
+        # same body part, only the underline state differs).
+        #
+        # Strategy: if a row with the same study_uid already exists, treat
+        # this call as a soft refresh — update the row's state-bearing
+        # fields (report status, local availability via the status widget,
+        # reporting physician) and return without inserting a new row.
+        # This preserves the existing _merge_patient_row server-grouping
+        # path (which is unchanged below) and adds a defensive guard for
+        # the single-study path so the table stays at one row per study.
+        incoming_study_uid = str(kwargs.get('study_uid', '') or '').strip()
+        if incoming_study_uid:
+            for _row in range(self.results_table.rowCount()):
+                _uid_item = self.results_table.item(_row, COL['study_uid'])
+                if _uid_item and _uid_item.text().strip() == incoming_study_uid:
+                    # Same study already in the table — refresh state in place.
+                    try:
+                        self._refresh_existing_study_row(_row, kwargs)
+                    except Exception:
+                        # Defensive: if the refresh helper fails for any
+                        # reason, do NOT fall through to insertRow (that
+                        # would re-create the duplicate). Just return; the
+                        # next refresh cycle will retry the state update.
+                        pass
+                    return
+
         # Grouping rule (server-side patient rows): keep one row per patient.
         if 'study_uids' in kwargs:
             existing_row = self._find_existing_patient_row(patient_id, patient_name)
@@ -2605,8 +2723,20 @@ class PatientTableWidget(QWidget):
 
         # --- Set items ---
         # Patient name color: default=not opened, orange=opened, green=synced
-        patient_name_item = _mk(patient_name, patient_name.lower())
-        
+        # Display-friendly name: DICOM PN format is "FAMILY^GIVEN^MIDDLE^..."
+        # Collapse the ^ separator to a space for natural reading
+        # ("ABDOLHOSEIN^MOHAMMAD ABAS" → "ABDOLHOSEIN MOHAMMAD ABAS").
+        # When the column is narrower than the full string, Qt's native
+        # ElideRight then chops at a natural word boundary that begins with
+        # the family name (e.g., "ABDOLHOSEIN MOH…") rather than the prior
+        # awkward "ABDOLHOSEIN^MOH…". The original `patient_name` (with ^)
+        # is preserved in the tooltip and used as the sort key for
+        # consistent ordering against other places in the code.
+        _display_name = (patient_name or "").replace("^", " ").strip() or patient_name
+        patient_name_item = _mk(_display_name, (patient_name or "").lower())
+        if patient_name and patient_name != _display_name:
+            patient_name_item.setToolTip(patient_name)
+
         # Check visit status from database (opened/synced)
         visit_status = None
         if study_uid:
@@ -3714,6 +3844,102 @@ class PatientTableWidget(QWidget):
             self._bulk_insert_dirty = True
         else:
             self._finalize_bulk_insert_ui()
+
+    def _refresh_existing_study_row(self, row: int, incoming: dict) -> None:
+        """Soft-refresh an existing patient-table row whose study_uid matches.
+
+        Called by add_patient_data's per-study dedup guard when the search
+        / refresh layer tries to add a study_uid that's already in the
+        table. Only state-bearing fields are touched — geometry, checkbox
+        widget, delegate, and the underlying QTableWidgetItems are kept
+        as-is so the user's current selection / scroll position / drag
+        ordering are preserved.
+
+        Fields refreshed:
+          - Local download / availability status indicator (via the
+            existing _build_local_status_widget; rebuilt if the cell
+            already had one so it reflects the latest disk state)
+          - Report status pill (report_status kwarg)
+          - Reporting physician text (UserRole + 2 on patient name)
+          - Initial comment text (UserRole + 3 on patient name)
+          - Image count / series count (if higher than what's shown)
+          - Visit status colour (the orange/green underline) is left to
+            update_visited_status — this helper does not interfere.
+        """
+        try:
+            study_uid_value = str(incoming.get('study_uid') or '').strip()
+            patient_id_value = str(incoming.get('patient_id') or '').strip()
+
+            # Status pill (local download / availability indicator).
+            if study_uid_value:
+                try:
+                    new_status_widget = self._build_local_status_widget(
+                        study_uid_value, patient_id_value
+                    )
+                    if new_status_widget is not None:
+                        # Replace the cell widget in place. setCellWidget
+                        # detaches and deletes the previous widget cleanly.
+                        self.results_table.setCellWidget(
+                            row, COL['status'], new_status_widget
+                        )
+                except Exception:
+                    pass
+
+            # Report status pill (only update if a new status was supplied).
+            incoming_report = str(incoming.get('report_status') or '').strip().lower()
+            if incoming_report == 'complete':
+                incoming_report = 'completed'
+            if incoming_report and incoming_report in REPORT_STATUSES:
+                report_widget = self.results_table.cellWidget(row, COL['report'])
+                if report_widget and report_widget.layout() and report_widget.layout().count() > 0:
+                    report_label = report_widget.layout().itemAt(0).widget()
+                    if report_label:
+                        physician_for_display = (
+                            str(incoming.get('reporting_physician') or '').strip()
+                            or str(getattr(report_widget, 'reporting_physician', '') or '').strip()
+                        )
+                        self._apply_report_status_display(
+                            report_label, incoming_report, physician_for_display
+                        )
+                        try:
+                            report_widget.report_status = incoming_report
+                            if physician_for_display:
+                                report_widget.reporting_physician = physician_for_display
+                        except Exception:
+                            pass
+
+            # Reporting physician + initial comment carried on the
+            # patient-name item (used by tooltips and downstream lookups).
+            name_item = self.results_table.item(row, COL['patient_name'])
+            if name_item is not None:
+                incoming_physician = str(incoming.get('reporting_physician') or '').strip()
+                if incoming_physician:
+                    name_item.setData(Qt.UserRole + 2, incoming_physician)
+                incoming_comment = str(incoming.get('initial_comment') or '').strip()
+                if incoming_comment:
+                    name_item.setData(Qt.UserRole + 3, incoming_comment)
+
+            # Image count: bump only if the incoming value is higher (a
+            # download-in-progress refresh shouldn't be allowed to lower
+            # the displayed count when the previous refresh saw more).
+            try:
+                incoming_images = incoming.get('images_count')
+                if incoming_images not in (None, '', 'N/A'):
+                    incoming_images_int = int(incoming_images)
+                    images_item = self.results_table.item(row, COL['images'])
+                    if images_item is not None:
+                        try:
+                            current_images_int = int(images_item.text())
+                        except Exception:
+                            current_images_int = -1
+                        if incoming_images_int > current_images_int:
+                            images_item.setText(str(incoming_images_int))
+            except Exception:
+                pass
+        except Exception as exc:
+            # Defensive: never crash the search/refresh flow on a state-
+            # refresh failure. The next refresh cycle will retry.
+            print(f"[ROW_REFRESH] Error refreshing study row {row}: {exc}")
 
     def update_reporting_physician_for_patient(self, patient_id: str, patient_name: str, reporting_physician: str):
         """Update stored/displayed physician text for existing patient rows."""

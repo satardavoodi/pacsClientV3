@@ -595,7 +595,10 @@ class MainWindowWidget(QWidget):
     def setup_title_bar(self, parent_layout):
         self.title_bar = QFrame()
         self.title_bar.setObjectName("TitleBar")
-        self.title_bar.setFixedHeight(84)
+        # Archetype 5: minimum-height floor so the title bar can grow if a
+        # child (user info container, larger font) needs more room. See
+        # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        self.title_bar.setMinimumHeight(84)
 
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(10, 2, 5, 2)
@@ -621,7 +624,9 @@ class MainWindowWidget(QWidget):
         user_container = QFrame()
         user_container.setObjectName("UserInfoContainer")
         self.user_info_container = user_container
-        user_container.setFixedHeight(70)
+        # Archetype 5: minimum-height floor (Archetype 5). Width already
+        # uses setMinimumWidth which is correct.
+        user_container.setMinimumHeight(70)
         user_container.setMinimumWidth(170)
         user_container.setStyleSheet("""
             QFrame#UserInfoContainer {
