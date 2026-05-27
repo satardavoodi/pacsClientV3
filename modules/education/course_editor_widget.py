@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QTextEdit, QListWidget, QListWidgetItem, QMessageBox, QFrame,
     QSplitter, QDialog, QStackedWidget
 )
-from PySide6.QtCore import Qt, Signal, QSize
+from PySide6.QtCore import Qt, Signal, QSize, QTimer
 from PySide6.QtGui import QFont, QIcon
 
 from modules.education.course_database import (
@@ -505,14 +505,40 @@ class CourseEditorWidget(QWidget):
             self.slide_title_input.blockSignals(False)
     
     def on_title_changed(self, text):
-        """Handle slide title change."""
-        if self.current_slide_pk:
-            try:
-                update_slide(self.current_slide_pk, title=text)
-                # Reload slide list to show updated title
-                self.load_slides()
-            except Exception as e:
-                print(f"Error updating title: {e}")
+        """Handle slide title change.
+
+        Each keystroke must persist the title, but rebuilding the slide
+        sidebar on every keystroke (the old behavior) discarded the visual
+        selection of the currently-edited slide and caused flicker. Persist
+        immediately, then debounce the sidebar refresh and re-apply the
+        selection on rebuild.
+        """
+        if not self.current_slide_pk:
+            return
+        try:
+            update_slide(self.current_slide_pk, title=text)
+        except Exception as e:
+            print(f"Error updating title: {e}")
+            return
+
+        if not hasattr(self, '_title_refresh_timer') or self._title_refresh_timer is None:
+            self._title_refresh_timer = QTimer(self)
+            self._title_refresh_timer.setSingleShot(True)
+            self._title_refresh_timer.timeout.connect(self._refresh_slide_list_preserve_selection)
+        self._title_refresh_timer.stop()
+        self._title_refresh_timer.start(400)
+
+    def _refresh_slide_list_preserve_selection(self):
+        """Rebuild the slide sidebar but keep the visual selection on the active slide."""
+        active_pk = self.current_slide_pk
+        self.load_slides()
+        if active_pk is None:
+            return
+        for i in range(self.slide_list_layout.count() - 1):
+            item = self.slide_list_layout.itemAt(i)
+            widget = item.widget() if item else None
+            if widget is not None and hasattr(widget, 'slide_pk') and hasattr(widget, 'set_selected'):
+                widget.set_selected(widget.slide_pk == active_pk)
     
     def on_content_changed(self):
         """Handle content changes."""

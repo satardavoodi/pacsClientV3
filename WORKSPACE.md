@@ -39,6 +39,12 @@ Workspace docs live at:
   — full cross-project documentation (system overview, integration
   surface, shared user model, licensing, Case-of-the-Day bridge, ATI
   prep, glossary).
+- [`d:\work space AI-Pacs company\`](file:///d:/work%20space%20AI-Pacs%20company/) —
+  workspace container: `WORKSPACE_CONTEXT.md` (safety/clinical
+  guardrails), `docs\decisions\` (ADRs that affect both projects),
+  `docs\runbooks\` (cross-project ops), `docs\INDEX.md` (navigation
+  hub). The three-root VS Code workspace
+  (`AI-PACS-Ecosystem.code-workspace`) lives here too.
 
 ## What is *not* cross-project (no workspace-doc needed)
 

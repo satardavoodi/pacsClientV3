@@ -655,6 +655,22 @@ class BadgeButton(QPushButton):
         self._badge.move(x, y)
 
 
+def _emit_case_of_day_saved_signal(*, study_uid: str = "", patient_id: str = ""):
+    """Fire the application-wide Case-of-Day saved signal.
+
+    Lives at module scope (not on ToolbarManager) so dialog ``saved`` lambdas
+    can reference it without needing access to the toolbar instance. Falls
+    back silently if the signal hub is unavailable for any reason.
+    """
+    try:
+        from modules.education.case_of_day_database import case_of_day_events
+        hub = case_of_day_events()
+        if hub is not None:
+            hub.saved.emit({"study_uid": study_uid, "patient_id": patient_id})
+    except Exception:
+        pass
+
+
 class ToolbarManager:
     def __init__(self, patient_widget):
         self.patient_widget = patient_widget
@@ -6898,6 +6914,20 @@ class ToolbarManager:
         except Exception:
             case_btn.setText("COTD")
         case_btn.clicked.connect(self._save_case_of_day_from_patient)
+        # Keep a reference so the count badge can update on save / load.
+        self._case_of_day_btn = case_btn
+        # The badge widget is created lazily inside _refresh_case_of_day_badge
+        # — it must be a child of the button's PARENT (the toolbar) so that
+        # the overlay can sit at the button's top-right corner without being
+        # clipped to the button's 40-pixel rect. We can't compute the parent
+        # / geometry until after the button has been added to the layout, so
+        # defer everything to the refresh call below.
+        self._case_of_day_badge = None
+        try:
+            from PySide6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(0, self._refresh_case_of_day_badge)
+        except Exception:
+            pass
         toolbar_layout.addWidget(case_btn)
 
         toolbar_layout.addWidget(self._create_separator())
@@ -7482,6 +7512,93 @@ class ToolbarManager:
             # Fallback to active layout only
             self._capture_active_layout()
 
+    # ------------------------------------------------------------------
+    # Case-of-Day badge + global save signal
+    # ------------------------------------------------------------------
+    def _refresh_case_of_day_badge(self):
+        """Refresh the small "N" badge anchored to the Case-of-Day button.
+
+        The badge is a child of the BUTTON'S PARENT (the toolbar widget),
+        not the button itself — otherwise Qt clips it to the button's 40-px
+        rect and the overlay becomes invisible. Positioning is computed in
+        the parent's coordinate space using ``button.geometry()``.
+
+        Counts how many Case-of-Day entries reference the current patient
+        (matched by ``patient_id`` OR ``study_uid``) and shows/hides the
+        badge accordingly. Safe to call any number of times; never raises.
+        """
+        try:
+            button = getattr(self, "_case_of_day_btn", None)
+            if button is None:
+                return
+            parent = button.parentWidget()
+            if parent is None:
+                return
+
+            # Lazy-create the badge widget as a child of the toolbar parent.
+            badge = getattr(self, "_case_of_day_badge", None)
+            if badge is None:
+                from PySide6.QtWidgets import QLabel as _QLabel
+                badge = _QLabel(parent)
+                badge.setObjectName("caseOfDayBadge")
+                badge.setStyleSheet(
+                    "QLabel#caseOfDayBadge { "
+                    "background-color: #ef4444; color: white; "
+                    "border: 1px solid #b91c1c; border-radius: 8px; "
+                    "font-size: 10px; font-weight: bold; padding: 0 4px; "
+                    "}"
+                )
+                badge.setAlignment(Qt.AlignCenter)
+                badge.setVisible(False)
+                badge.setFixedHeight(16)
+                badge.setMinimumWidth(16)
+                # Mouse-transparent: clicks still reach the button beneath.
+                try:
+                    badge.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                except Exception:
+                    pass
+                self._case_of_day_badge = badge
+            else:
+                # If the button's parent changed (rare), reparent the badge.
+                if badge.parentWidget() is not parent:
+                    badge.setParent(parent)
+
+            try:
+                from modules.education.case_of_day_database import has_case_of_day_for_patient
+            except Exception:
+                badge.setVisible(False)
+                return
+            patient_id = str(getattr(self.patient_widget, "patient_id", "") or "")
+            study_uid = str(getattr(self.patient_widget, "study_uid", "") or "")
+            count = has_case_of_day_for_patient(patient_id=patient_id, study_uid=study_uid)
+            if count > 0:
+                badge.setText(str(count if count < 100 else "99+"))
+                badge.adjustSize()
+                bw = max(16, badge.width())
+                bh = badge.height()
+                # Anchor at the upper-right corner of the button, in the
+                # parent's coordinate space.
+                btn_geom = button.geometry()  # already in parent coords
+                x = btn_geom.right() - bw + 4
+                y = btn_geom.top() - 4
+                # Clamp inside the parent's visible area so the badge can't
+                # vanish past the toolbar's edges.
+                x = max(0, min(x, parent.width() - bw))
+                y = max(0, min(y, parent.height() - bh))
+                badge.move(x, y)
+                badge.setVisible(True)
+                badge.raise_()
+                button.setToolTip(
+                    f"Save current study as Case of the Day\n"
+                    f"({count} saved case{'s' if count != 1 else ''} for this patient)"
+                )
+            else:
+                badge.setVisible(False)
+                button.setToolTip("Save current study as Case of the Day")
+        except Exception:
+            # Never let badge maintenance break the toolbar.
+            pass
+
     def _save_case_of_day_from_patient(self):
         """
         Export the current study folder into Education/MyCourse/CaseOfTheDay storage
@@ -7493,7 +7610,11 @@ class ToolbarManager:
             from PySide6.QtWidgets import QApplication
             from PacsClient.pacs.patient_tab.utils.utils import get_quickly_series_info
             from PacsClient.pacs.patient_tab.utils.utils import get_study_source_path
-            from modules.education.case_of_day_database import copy_dicom_folder_to_case_storage
+            from modules.education.case_of_day_database import (
+                copy_dicom_folder_to_case_storage,
+                extract_dicom_metadata,
+                load_reception_payload_for_patient,
+            )
             from modules.education.case_of_day_widget import CaseOfDayEntryDialog
 
             source_folder = getattr(self.patient_widget, "import_folder_path", None)
@@ -7551,7 +7672,21 @@ class ToolbarManager:
                 return
 
             info = get_quickly_series_info(source_folder) or {}
-            modality = str(info.get("modality") or "").strip()
+
+            # Pull the rich DICOM metadata so the dialog can auto-fill almost
+            # everything. Both `get_quickly_series_info` and the dedicated
+            # `extract_dicom_metadata` are best-effort; we union them and let
+            # the user override anything they don't like.
+            dicom_meta = {}
+            try:
+                dicom_meta = extract_dicom_metadata(source_folder) or {}
+            except Exception:
+                dicom_meta = {}
+
+            modality = (
+                dicom_meta.get("modality")
+                or str(info.get("modality") or "").strip()
+            )
 
             # Transfer files immediately: copy into Case-of-Day storage, then open the entry form.
             QApplication.setOverrideCursor(Qt.WaitCursor)
@@ -7560,19 +7695,56 @@ class ToolbarManager:
             finally:
                 QApplication.restoreOverrideCursor()
 
+            # Best-effort: pre-load cached reception data for this patient so
+            # the dialog can drop it into the case package as reception.json
+            # without going back to disk a second time.
+            reception_payload = None
+            try:
+                pid_for_reception = str(patient_id or dicom_meta.get("patient_id") or "")
+                if pid_for_reception:
+                    reception_payload = load_reception_payload_for_patient(pid_for_reception)
+            except Exception:
+                reception_payload = None
+
+            prefill = {
+                "dicom_folder_path": dest_folder,
+                "original_source_path": source_folder,
+                "cleanup_on_cancel": True,
+                "source_type": "patient_export",
+                "modality": modality,
+                "patient_id": str(patient_id or dicom_meta.get("patient_id") or ""),
+                "patient_name": str(dicom_meta.get("patient_name") or ""),
+                "study_uid": str(
+                    study_uid
+                    or info.get("study_uid")
+                    or dicom_meta.get("study_uid")
+                    or ""
+                ),
+                "study_description": str(dicom_meta.get("study_description") or ""),
+                "study_date": str(dicom_meta.get("study_date") or ""),
+                "body_part": str(dicom_meta.get("body_part") or ""),
+                "reception_payload": reception_payload,
+            }
+
             dlg = CaseOfDayEntryDialog(
                 parent=self.patient_widget,
-                prefill={
-                    "dicom_folder_path": dest_folder,
-                    "original_source_path": source_folder,
-                    "cleanup_on_cancel": True,
-                    "source_type": "patient_export",
-                    "modality": modality,
-                    "patient_id": str(patient_id or ""),
-                    "study_uid": str(study_uid or info.get("study_uid") or ""),
-                },
+                prefill=prefill,
             )
+            # Refresh the toolbar badge AND broadcast a global signal whenever
+            # the dialog confirms a save, so the Education > Case of the Day
+            # tab can pick up the new entry without the user navigating away
+            # and back.
+            try:
+                dlg.saved.connect(lambda _payload: self._refresh_case_of_day_badge())
+                dlg.saved.connect(lambda _payload: _emit_case_of_day_saved_signal(
+                    study_uid=str(study_uid or ""),
+                    patient_id=str(patient_id or ""),
+                ))
+            except Exception:
+                pass
             dlg.exec()
+            # Final refresh after the dialog closes (covers manual close paths).
+            self._refresh_case_of_day_badge()
         except Exception as exc:
             QMessageBox.warning(self.patient_widget, "Export Failed", str(exc))
 

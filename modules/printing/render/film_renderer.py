@@ -82,7 +82,12 @@ def render_film(
         y_px = int((y_in + header_height_in) * dpi)
         w_px = int(w_in * dpi)
         h_px = int(h_in * dpi)
-        scaled = render.pixmap.scaled(w_px, h_px)
+        # Smooth + aspect-preserving scaling — this is the export path that
+        # produces the print pixmap, so jagged scaling here would print
+        # visibly aliased. Cell sizes already factor in image aspect.
+        scaled = render.pixmap.scaled(
+            w_px, h_px, Qt.KeepAspectRatio, Qt.SmoothTransformation
+        )
         painter.drawPixmap(x_px, y_px, scaled)
 
         is_scout_image = scout_info is not None and image_idx == 0

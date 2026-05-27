@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v3.1.1 (2026-05-26)
+> **Current Stable Version:** v3.1.2 (2026-05-26)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 

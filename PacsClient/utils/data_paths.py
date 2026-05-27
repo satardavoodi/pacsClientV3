@@ -44,7 +44,15 @@ EDUCATION_DIR:           Path = USER_DATA_ROOT / "education"
 EDUCATION_COURSES_DIR:   Path = EDUCATION_DIR / "courses"
 EDUCATION_ASSETS_DIR:    Path = EDUCATION_DIR / "assets"
 EDUCATION_MY_COURSE_DIR: Path = EDUCATION_COURSES_DIR / "MyCourse"
-CASE_OF_DAY_DIR:         Path = EDUCATION_MY_COURSE_DIR / "CaseOfTheDay"
+
+# Case of the Day storage. Promoted to a top-level Education subfolder so every
+# saved case is a self-contained educational package living under
+#     user_data/education/Case of the Day/case_<timestamp>_<hint>/
+# Older cases that were stored under the legacy path (kept below for migration
+# and backward-compat lookups) continue to resolve via their absolute paths
+# stored in the case_of_day_entries DB rows.
+CASE_OF_DAY_DIR:         Path = EDUCATION_DIR / "Case of the Day"
+CASE_OF_DAY_LEGACY_DIR:  Path = EDUCATION_MY_COURSE_DIR / "CaseOfTheDay"
 
 # ━━ AI / Segmentation ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 AI_DIR:           Path = USER_DATA_ROOT / "ai"
@@ -84,7 +92,7 @@ DATABASE_FILE: Path = DATABASE_DIR / "dicom.db"
 _ALL_DIRS = [
     DICOM_IMAGES_DIR, ATTACHMENTS_DIR, THUMBNAILS_DIR,
     EDUCATION_COURSES_DIR, EDUCATION_ASSETS_DIR,
-    EDUCATION_MY_COURSE_DIR, CASE_OF_DAY_DIR,
+    EDUCATION_MY_COURSE_DIR, CASE_OF_DAY_DIR, CASE_OF_DAY_LEGACY_DIR,
     SEGMENTS_DIR,
     ECHOMIND_MEMORY_DIR, ECHOMIND_LOGS_DIR,
     RECEPTION_REPORTS_DIR,

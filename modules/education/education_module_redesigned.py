@@ -844,7 +844,7 @@ class CourseDetailsPanel(QFrame):
         
         # Add content structure
         root = QTreeWidgetItem(content_tree)
-        root.setText(0, f"ًں“ڑ {slides_count} Slides")
+        root.setText(0, f"{slides_count} Slides")
         
         layout.addWidget(content_tree)
         
@@ -1076,12 +1076,12 @@ class LibraryPage(QWidget):
     def on_search_changed(self, text):
         """Handle search text change."""
         self.current_search = text
-        # Debounce search
-        if hasattr(self, 'search_timer'):
-            self.search_timer.stop()
-        self.search_timer = QTimer()
-        self.search_timer.setSingleShot(True)
-        self.search_timer.timeout.connect(self.apply_filters)
+        # Debounce search — reuse a single QTimer instead of leaking a new one per keystroke.
+        if not hasattr(self, 'search_timer') or self.search_timer is None:
+            self.search_timer = QTimer(self)
+            self.search_timer.setSingleShot(True)
+            self.search_timer.timeout.connect(self.apply_filters)
+        self.search_timer.stop()
         self.search_timer.start(300)  # 300ms debounce
     
     def on_filters_changed(self, filters):
@@ -1464,6 +1464,11 @@ class MyCoursesPage(QWidget):
         self.downloaded_btn = QPushButton("Downloaded (from Library)")
         self.imported_btn = QPushButton("Imported")
         self.case_of_day_btn = QPushButton("Case of the Day")
+        # Case of the Day is now a top-level Education tab — the in-page shortcut
+        # button is hidden to avoid two entry points for the same flow. The
+        # widget is still constructed so legacy `switch_view('case_of_day')`
+        # calls keep working.
+        self.case_of_day_btn.setVisible(False)
         for btn in [self.downloaded_btn, self.created_btn, self.imported_btn, self.case_of_day_btn]:
             btn.setFixedHeight(36)
             btn.setMinimumWidth(150)
@@ -1670,11 +1675,12 @@ class MyCoursesPage(QWidget):
     
     def _on_search_changed(self, text):
         self.current_search = text
-        if hasattr(self, 'search_timer'):
-            self.search_timer.stop()
-        self.search_timer = QTimer()
-        self.search_timer.setSingleShot(True)
-        self.search_timer.timeout.connect(self.load_courses)
+        # Reuse a single debounce timer — creating a new QTimer per keystroke leaks.
+        if not hasattr(self, 'search_timer') or self.search_timer is None:
+            self.search_timer = QTimer(self)
+            self.search_timer.setSingleShot(True)
+            self.search_timer.timeout.connect(self.load_courses)
+        self.search_timer.stop()
         self.search_timer.start(250)
 
     def _on_resource_filter_changed(self, _index):
@@ -3457,23 +3463,38 @@ class EducationModuleRedesigned(QWidget):
         """)
         
         # Create tabs
+        from modules.education.case_of_day_widget import CaseOfDayLocalServerPage
+
         self.library_page = LibraryPage()
         self.mycourses_page = MyCoursesPage()
         self.build_page = BuildCoursePage()
-        
+        # Case of the Day is now a top-level tab. It hosts a Local / Server
+        # segmented header; only the Local section is functional today (the
+        # Server section is a placeholder for the future shared-feed flow).
+        self.case_of_day_tab = CaseOfDayLocalServerPage()
+
         self.tab_widget.addTab(self.library_page, "Library")
         self.tab_widget.addTab(self.mycourses_page, "My Courses")
         self.tab_widget.addTab(self.build_page, "Build Course")
-        
+        self.tab_widget.addTab(self.case_of_day_tab, "Case of the Day")
+
         layout.addWidget(self.tab_widget)
-        
+
         # Connect signals
         self.library_page.course_opened.connect(self.on_course_opened)
         self.library_page.course_edited.connect(self.on_course_edited)
         self.mycourses_page.course_opened.connect(self.on_course_opened)
         self.mycourses_page.course_edited.connect(self.on_course_edited)
+        # Cases can be opened either from the legacy My Courses button OR from
+        # the new top-level tab — wire both into the same handler.
         self.mycourses_page.case_of_day_opened.connect(self.on_case_of_day_opened)
+        self.case_of_day_tab.case_opened.connect(self.on_case_of_day_opened)
         self.build_page.course_created.connect(self.on_course_created)
+        # Switch to the new tab whenever a case is created from the toolbar
+        # path so the user sees the freshly-saved card.
+        self.case_of_day_tab.case_created.connect(
+            lambda: self.tab_widget.setCurrentWidget(self.case_of_day_tab)
+        )
         _retint_widget_tree(self, self._theme)
     
     def on_course_opened(self, course_data):
@@ -3574,23 +3595,220 @@ class EducationModuleRedesigned(QWidget):
                 "differential_diagnosis": entry.differential_diagnosis,
                 "dicom_folder_path": entry.dicom_folder_path,
                 "patient_id": entry.patient_id,
+                "patient_name": getattr(entry, "patient_name", ""),
                 "study_uid": entry.study_uid,
+                "study_description": getattr(entry, "study_description", ""),
+                "study_date": getattr(entry, "study_date", ""),
             }
 
-            host_tab_widget, _, host_owner = self._resolve_tab_host()
-            viewer = CaseOfDayViewerWidget(case_data, parent=host_owner if host_owner else self)
-            tab_title = f"Case - {entry.diagnosis or entry.body_part or entry.modality}"
+            host_tab_widget, host_custom_tab_manager, host_owner = self._resolve_tab_host()
+            tab_title = f"Case - {entry.diagnosis or entry.body_part or entry.modality or 'Untitled'}"
 
-            if host_tab_widget is not None:
-                tab_index = host_tab_widget.addTab(viewer, tab_title)
-                host_tab_widget.setCurrentIndex(tab_index)
-            else:
-                viewer.setWindowTitle(tab_title)
-                viewer.showMaximized()
+            # PREFERRED PATH — open the underlying study via the home page's
+            # ``add_new_tab_widget`` flow so the viewer is wired EXACTLY like
+            # opening from the patient list. That route is the one that has
+            # working drag-and-drop, slice scrolling, stack stepping, and
+            # caching. The wrapped CaseOfDayViewerWidget had a subtle
+            # interaction with the FAST viewer that pinned every series to
+            # "1 / 1" — re-using the proven path avoids that entire class of
+            # bug.
+            #
+            # We then enrich the new tab with the Case-of-Day clinical header
+            # (diagnosis / protocol / differential / description) as a thin
+            # top strip so the educational context isn't lost.
+            host_panel = getattr(host_owner, 'home_widget', None) or host_owner
+            opened_widget = None
+            if host_panel is not None and hasattr(host_panel, 'add_new_tab_widget'):
+                try:
+                    from PacsClient.pacs.patient_tab.utils import get_study_source_path
+                    from PacsClient.utils import CallerTypes as _CT
+                    study_uid = str(case_data.get('study_uid') or '').strip()
+                    folder_path = None
+                    if study_uid:
+                        candidate, have_content = get_study_source_path(study_uid)
+                        if candidate and have_content:
+                            folder_path = str(candidate)
+                    if folder_path is None:
+                        folder_path = str(case_data.get('dicom_folder_path') or '').strip() or None
+                    # Mirror the exact arguments used by the normal patient
+                    # double-click flow in `_hp_patient_open.py` so the viewer's
+                    # multi-slice load path is wired the same way:
+                    #   caller=SERVER, folder_path=<study source path>,
+                    #   enable_progressive_mode=True
+                    # Passing False there made the viewer treat the series as
+                    # complete-on-arrival, pinning multi-slice volumes to
+                    # "1 / 1" because the click-to-load step never re-built
+                    # the full volume.
+                    print(
+                        f"[CASE-OF-DAY] open via add_new_tab_widget "
+                        f"study_uid={study_uid} folder={folder_path}"
+                    )
+                    opened_widget = host_panel.add_new_tab_widget(
+                        patient_id=case_data.get('patient_id') or None,
+                        patient_name=case_data.get('patient_name') or 'Case of the Day',
+                        folder_path=folder_path,
+                        caller=_CT.SERVER,
+                        study_uid=study_uid or None,
+                        enable_progressive_mode=True,
+                    )
+                except Exception as path_exc:
+                    print(f"[CASE-OF-DAY] add_new_tab_widget path failed: {path_exc}")
+                    opened_widget = None
+
+            if opened_widget is None:
+                # Fallback to the legacy wrapper widget. Less optimal viewer
+                # behavior but at least the case opens.
+                viewer = CaseOfDayViewerWidget(case_data, parent=host_owner if host_owner else self)
+                if host_tab_widget is not None:
+                    tab_index = host_tab_widget.addTab(viewer, tab_title)
+                    host_tab_widget.setCurrentIndex(tab_index)
+                else:
+                    viewer.setWindowTitle(tab_title)
+                    viewer.showMaximized()
+                return
+
+            # Re-title the freshly-opened tab so it's clear this is a Case of
+            # the Day rather than a routine patient open. The custom tab
+            # manager wires labels via update_tab_manager; setTabText covers
+            # the underlying QTabWidget if the manager isn't present.
+            try:
+                if host_custom_tab_manager and opened_widget is not None:
+                    idx = host_tab_widget.indexOf(opened_widget) if host_tab_widget else -1
+                    if idx >= 0 and host_tab_widget is not None:
+                        host_tab_widget.setTabText(idx, tab_title)
+            except Exception:
+                pass
+
+            # Switch the top tab chrome into Case-of-Day educational mode —
+            # repurposes the name slot to "Case of the Day", the ID slot to
+            # the diagnosis, and switches the painted border from blue to
+            # green. Underlying patient_id / patient_name / study_uid stay
+            # intact for the viewer's DB lookups.
+            try:
+                ctm = host_custom_tab_manager
+                if ctm is not None and opened_widget is not None:
+                    tab_info = None
+                    # custom_tab_manager.patient_tabs is dict[tab_index] -> {custom_tab, widget, ...}
+                    for ti_index, ti in (getattr(ctm, 'patient_tabs', {}) or {}).items():
+                        if ti.get('widget') is opened_widget:
+                            tab_info = ti
+                            break
+                    if tab_info is not None:
+                        custom_tab = tab_info.get('custom_tab')
+                        if custom_tab is not None and hasattr(custom_tab, 'set_case_of_day_mode'):
+                            custom_tab.set_case_of_day_mode(case_data.get('diagnosis') or '')
+            except Exception as tab_exc:
+                print(f"[CASE-OF-DAY] tab-chrome customize failed (non-fatal): {tab_exc}")
+
+            # Lay the case-of-day clinical context strip ABOVE the patient
+            # widget inside the tab (small QFrame inserted at index 0 of the
+            # widget's main layout). This keeps the educational header in
+            # view while the viewer still uses the proven study-open
+            # pipeline below it.
+            try:
+                self._inject_case_of_day_header(opened_widget, case_data)
+            except Exception as header_exc:
+                print(f"[CASE-OF-DAY] header inject failed (non-fatal): {header_exc}")
         except Exception as exc:
             print(f"Error opening Case of the Day: {exc}")
             import traceback
             traceback.print_exc()
+
+    def _inject_case_of_day_header(self, viewer_widget, case_data: Dict[str, Any]) -> None:
+        """Prepend a small Case-of-Day context strip to the patient widget
+        layout. Renders only when the widget exposes a top-level layout we
+        can insert into.
+
+        IDEMPOTENT: ``add_new_tab_widget`` dedupes by study_uid and may return
+        an existing widget — if we already attached a strip for this case,
+        update its text in place instead of inserting a second one.
+        """
+        from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QFont
+
+        layout = viewer_widget.layout() if hasattr(viewer_widget, 'layout') else None
+        if layout is None:
+            return
+
+        # If we already inserted a strip on this widget, refresh its label
+        # text but don't add a second strip.
+        existing_strip = getattr(viewer_widget, '_case_of_day_header_strip', None)
+        if existing_strip is not None:
+            try:
+                bits = []
+                if (case_data.get("modality") or "").strip():
+                    bits.append(str(case_data['modality']).strip())
+                if (case_data.get("body_part") or "").strip():
+                    bits.append(str(case_data['body_part']).strip())
+                diag = (case_data.get("diagnosis") or "").strip()
+                if diag:
+                    bits.append(diag)
+                meta_text = "  ·  ".join(bits) if bits else "Case of the Day"
+                existing_meta = getattr(existing_strip, '_meta_label', None)
+                if existing_meta is not None:
+                    existing_meta.setText(meta_text)
+                return
+            except Exception:
+                # If the in-place update fails for any reason, fall through
+                # and (re-)attach a fresh strip below.
+                pass
+
+        t = self._theme
+        strip = QFrame()
+        strip.setStyleSheet(
+            f"QFrame {{ background-color: {t['panel_bg']}; "
+            f"border-bottom: 1px solid {t['border']}; }}"
+        )
+        strip.setFixedHeight(48)
+        row = QHBoxLayout(strip)
+        row.setContentsMargins(16, 6, 16, 6)
+        row.setSpacing(12)
+
+        badge = QLabel("Case of the Day")
+        badge_font = QFont()
+        badge_font.setPointSize(10)
+        badge_font.setWeight(QFont.DemiBold)
+        badge.setFont(badge_font)
+        badge.setStyleSheet(
+            f"QLabel {{ color: white; background-color: {t['accent']}; "
+            f"padding: 4px 10px; border-radius: 4px; }}"
+        )
+        row.addWidget(badge)
+
+        bits = []
+        if (case_data.get("modality") or "").strip():
+            bits.append(str(case_data['modality']).strip())
+        if (case_data.get("body_part") or "").strip():
+            bits.append(str(case_data['body_part']).strip())
+        diag = (case_data.get("diagnosis") or "").strip()
+        if diag:
+            bits.append(diag)
+        meta_text = "  ·  ".join(bits) if bits else "Case of the Day"
+        meta = QLabel(meta_text)
+        meta.setStyleSheet(
+            f"QLabel {{ color: {t['text_primary']}; font-size: 11pt; font-weight: 600; }}"
+        )
+        meta.setWordWrap(True)
+        row.addWidget(meta, 1)
+        # Cache the label so future calls can update text in place instead
+        # of stacking another strip on top.
+        strip._meta_label = meta
+
+        # Insert at the very top of the patient widget's main layout.
+        try:
+            layout.insertWidget(0, strip)
+        except Exception:
+            # Some layouts may not support insertWidget — fall back to addWidget
+            # (lands at the bottom, but the strip is still visible).
+            layout.addWidget(strip)
+
+        # Tag the widget so the idempotency check above sees the strip
+        # next time this method is called for the same widget.
+        try:
+            viewer_widget._case_of_day_header_strip = strip
+        except Exception:
+            pass
 
 
 # ==================== DEMO ENTRY POINT ====================

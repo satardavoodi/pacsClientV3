@@ -241,27 +241,49 @@ def init_database():
             )
         """)
 
-        # Case of the Day (My Course) tables
+        # Case of the Day (My Course) tables.
+        # NOTE: only `diagnosis` is functionally required. The NOT NULL columns
+        # below are kept for back-compat with already-installed databases; the
+        # application layer is allowed to insert empty strings ("") for any
+        # field other than diagnosis. New databases use empty defaults.
         cur.execute("""
             CREATE TABLE IF NOT EXISTS case_of_day_entries (
                 case_pk INTEGER PRIMARY KEY AUTOINCREMENT,
-                saved_by TEXT NOT NULL,
-                modality TEXT NOT NULL,
-                body_part TEXT NOT NULL,
+                saved_by TEXT DEFAULT '',
+                modality TEXT DEFAULT '',
+                body_part TEXT DEFAULT '',
                 diagnosis TEXT NOT NULL,
                 anatomical_classification TEXT DEFAULT '',
                 protocol_details TEXT DEFAULT '',
                 description TEXT DEFAULT '',
                 differential_diagnosis TEXT DEFAULT '',
-                dicom_folder_path TEXT NOT NULL,
+                dicom_folder_path TEXT DEFAULT '',
                 original_source_path TEXT DEFAULT '',
                 source_type TEXT DEFAULT 'manual',
                 patient_id TEXT DEFAULT '',
+                patient_name TEXT DEFAULT '',
                 study_uid TEXT DEFAULT '',
+                study_description TEXT DEFAULT '',
+                study_date TEXT DEFAULT '',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+
+        # Lightweight migration for existing databases: add the patient/study
+        # metadata columns introduced in v3.0.x. ALTER TABLE ADD COLUMN is
+        # idempotent here because we guard with PRAGMA table_info.
+        try:
+            cur.execute("PRAGMA table_info(case_of_day_entries)")
+            existing_cod_cols = {col[1] for col in cur.fetchall()}
+            if 'patient_name' not in existing_cod_cols:
+                cur.execute("ALTER TABLE case_of_day_entries ADD COLUMN patient_name TEXT DEFAULT ''")
+            if 'study_description' not in existing_cod_cols:
+                cur.execute("ALTER TABLE case_of_day_entries ADD COLUMN study_description TEXT DEFAULT ''")
+            if 'study_date' not in existing_cod_cols:
+                cur.execute("ALTER TABLE case_of_day_entries ADD COLUMN study_date TEXT DEFAULT ''")
+        except Exception as e:
+            logger.warning("Case-of-Day migration warning: %s", e)
 
         cur.execute("""
             CREATE TABLE IF NOT EXISTS case_of_day_body_parts (

@@ -73,19 +73,24 @@ def insert_course(name: str, description: str = "", author: str = "",
     with get_db_connection() as conn:
         cur = conn.cursor()
         cur.execute("""
-            INSERT INTO courses (course_name, course_description, author_name, 
+            INSERT INTO courses (course_name, course_description, author_name,
                                outline, thumbnail_path, tags, modality, body_regions,
                                level, is_my_course, is_downloaded, resource_type,
                                content_origin, validation_status, needs_attention,
                                import_source_path, import_manifest_path, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
         """, (name, description, author, outline, thumbnail_path,
-              tags_json, modality, regions_json, level, 
+              tags_json, modality, regions_json, level,
               1 if is_my_course else 0, 1 if is_downloaded else 0, normalized_type,
               content_origin or "local", validation_status or "ok",
               1 if needs_attention else 0, import_source_path or "",
               import_manifest_path or ""))
-        return cur.lastrowid
+        new_pk = cur.lastrowid
+        # The pool rolls back uncommitted writes on return (see
+        # database/_pool.py::_return_to_pool). Without this explicit commit,
+        # the INSERT vanishes the moment this `with` block exits.
+        conn.commit()
+        return new_pk
 
 
 def update_course(course_pk: int, name: str = None, description: str = None, 
@@ -161,6 +166,7 @@ def update_course(course_pk: int, name: str = None, description: str = None,
             params.append(course_pk)
             query = f"UPDATE courses SET {', '.join(updates)} WHERE course_pk = ?"
             cur.execute(query, params)
+            conn.commit()  # pool rolls back uncommitted writes
 
 
 def delete_course(course_pk: int):
@@ -168,6 +174,7 @@ def delete_course(course_pk: int):
     with get_db_connection() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM courses WHERE course_pk = ?", (course_pk,))
+        conn.commit()  # pool rolls back uncommitted writes
 
 
 def get_all_courses() -> List[Dict[str, Any]]:
@@ -293,18 +300,20 @@ def insert_slide(course_fk: int, slide_order: int, title: str = "",
             INSERT INTO slides (course_fk, slide_order, slide_title, slide_notes)
             VALUES (?, ?, ?, ?)
         """, (course_fk, slide_order, title, notes))
-        return cur.lastrowid
+        new_pk = cur.lastrowid
+        conn.commit()  # pool rolls back uncommitted writes
+        return new_pk
 
 
-def update_slide(slide_pk: int, slide_order: int = None, title: str = None, 
+def update_slide(slide_pk: int, slide_order: int = None, title: str = None,
                  notes: str = None):
     """Update an existing slide."""
     with get_db_connection() as conn:
         cur = conn.cursor()
-        
+
         updates = []
         params = []
-        
+
         if slide_order is not None:
             updates.append("slide_order = ?")
             params.append(slide_order)
@@ -314,11 +323,12 @@ def update_slide(slide_pk: int, slide_order: int = None, title: str = None,
         if notes is not None:
             updates.append("slide_notes = ?")
             params.append(notes)
-        
+
         if updates:
             params.append(slide_pk)
             query = f"UPDATE slides SET {', '.join(updates)} WHERE slide_pk = ?"
             cur.execute(query, params)
+            conn.commit()  # pool rolls back uncommitted writes
 
 
 def delete_slide(slide_pk: int):
@@ -326,6 +336,7 @@ def delete_slide(slide_pk: int):
     with get_db_connection() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM slides WHERE slide_pk = ?", (slide_pk,))
+        conn.commit()  # pool rolls back uncommitted writes
 
 
 def get_slides_for_course(course_pk: int) -> List[Dict[str, Any]]:
@@ -368,28 +379,30 @@ def insert_slide_content(slide_fk: int, content_type: str, content_order: int,
     """
     with get_db_connection() as conn:
         cur = conn.cursor()
-        
+
         content_data_json = json.dumps(content_data)
         layout_json = json.dumps(layout_position) if layout_position else None
-        
+
         cur.execute("""
-            INSERT INTO slide_content (slide_fk, content_type, content_order, 
+            INSERT INTO slide_content (slide_fk, content_type, content_order,
                                       content_data, layout_position)
             VALUES (?, ?, ?, ?, ?)
         """, (slide_fk, content_type, content_order, content_data_json, layout_json))
-        return cur.lastrowid
+        new_pk = cur.lastrowid
+        conn.commit()  # pool rolls back uncommitted writes
+        return new_pk
 
 
-def update_slide_content(content_pk: int, content_type: str = None, 
+def update_slide_content(content_pk: int, content_type: str = None,
                         content_order: int = None, content_data: Dict[str, Any] = None,
                         layout_position: Dict[str, Any] = None):
     """Update existing slide content."""
     with get_db_connection() as conn:
         cur = conn.cursor()
-        
+
         updates = []
         params = []
-        
+
         if content_type is not None:
             updates.append("content_type = ?")
             params.append(content_type)
@@ -402,11 +415,12 @@ def update_slide_content(content_pk: int, content_type: str = None,
         if layout_position is not None:
             updates.append("layout_position = ?")
             params.append(json.dumps(layout_position))
-        
+
         if updates:
             params.append(content_pk)
             query = f"UPDATE slide_content SET {', '.join(updates)} WHERE content_pk = ?"
             cur.execute(query, params)
+            conn.commit()  # pool rolls back uncommitted writes
 
 
 def delete_slide_content(content_pk: int):
@@ -414,6 +428,7 @@ def delete_slide_content(content_pk: int):
     with get_db_connection() as conn:
         cur = conn.cursor()
         cur.execute("DELETE FROM slide_content WHERE content_pk = ?", (content_pk,))
+        conn.commit()  # pool rolls back uncommitted writes
 
 
 def get_content_for_slide(slide_pk: int) -> List[Dict[str, Any]]:
@@ -477,13 +492,14 @@ def reorder_slides(course_pk: int, slide_pks_in_order: List[int]):
     """
     with get_db_connection() as conn:
         cur = conn.cursor()
-        
+
         for order, slide_pk in enumerate(slide_pks_in_order, start=1):
             cur.execute("""
-                UPDATE slides 
-                SET slide_order = ? 
+                UPDATE slides
+                SET slide_order = ?
                 WHERE slide_pk = ? AND course_fk = ?
             """, (order, slide_pk, course_pk))
+        conn.commit()  # pool rolls back uncommitted writes
 
 
 def save_course_asset(file_path: str, course_pk: int) -> str:

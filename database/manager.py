@@ -828,6 +828,76 @@ def get_filming_folder_for_study(study_uid: str) -> str | None:
 
 
 # ============================================================================
+# Print-status tracking — separate from has_filming. ``has_filming`` is set
+# when a preview is *saved*; ``has_printed`` is set when the print job is
+# actually dispatched (local or DICOM). Both columns coexist so the patient
+# list status column can render distinct icons for "preview saved" vs.
+# "patient printed".
+# ============================================================================
+
+def ensure_print_status_columns():
+    """Ensure ``has_printed`` and ``last_printed_at`` columns exist on studies."""
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            cur.execute("PRAGMA table_info(studies)")
+            columns = [info[1] for info in cur.fetchall()]
+            if 'has_printed' not in columns:
+                cur.execute("ALTER TABLE studies ADD COLUMN has_printed INTEGER DEFAULT 0")
+            if 'last_printed_at' not in columns:
+                cur.execute("ALTER TABLE studies ADD COLUMN last_printed_at TEXT DEFAULT NULL")
+            conn.commit()
+        except Exception as e:
+            logger.warning("[DB] Error ensuring print-status columns: %s", e)
+
+
+def mark_study_printed(study_uid: str) -> bool:
+    """Flag a study as printed and stamp the current time.
+
+    Called from the Printing module after a successful print job (OS or
+    DICOM). Idempotent — re-printing just updates the timestamp.
+    """
+    if not study_uid:
+        return False
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            ensure_print_status_columns()
+            cur.execute(
+                """
+                UPDATE studies
+                SET has_printed = 1,
+                    last_printed_at = CURRENT_TIMESTAMP
+                WHERE study_uid = ?
+                """,
+                (study_uid,),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        except Exception as e:
+            logger.warning("[DB] Error marking study printed: %s", e)
+            return False
+
+
+def is_study_printed(study_uid: str) -> bool:
+    """Return True if *study_uid* has been printed."""
+    if not study_uid:
+        return False
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        try:
+            ensure_print_status_columns()
+            cur.execute(
+                "SELECT COALESCE(has_printed, 0) FROM studies WHERE study_uid = ?",
+                (study_uid,),
+            )
+            row = cur.fetchone()
+            return bool(row and row[0])
+        except Exception:
+            return False
+
+
+# ============================================================================
 # Visit Status Management
 # ============================================================================
 

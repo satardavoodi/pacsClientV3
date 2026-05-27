@@ -633,6 +633,84 @@ class PatientTableWidget(QWidget):
         # Load saved column settings after UI is set up
         self._load_saved_settings()
 
+        # Subscribe to the global Case-of-Day saved signal so the Status
+        # column icon (graduation cap) appears immediately on the right
+        # patient row, without the user having to refresh manually.
+        try:
+            from modules.education.case_of_day_database import case_of_day_events
+            hub = case_of_day_events()
+            if hub is not None:
+                hub.saved.connect(self._on_case_of_day_saved)
+        except Exception:
+            pass
+
+    def _on_case_of_day_saved(self, payload: dict):
+        """Refresh the Status column for the affected row(s).
+
+        Invalidates the per-row cache for the matching study/patient and
+        rebuilds the cell widget so the new graduation-cap icon shows up.
+        """
+        try:
+            study_uid = str((payload or {}).get('study_uid') or '').strip()
+            patient_id = str((payload or {}).get('patient_id') or '').strip()
+            # Clear cache entries that match either identifier so the next
+            # _compute_local_status_flags call re-queries the DB.
+            stale_keys = []
+            for key in list(self._local_status_cache.keys()):
+                k_study, k_pid = key
+                if (study_uid and str(k_study) == study_uid) or (
+                    patient_id and str(k_pid) == patient_id
+                ):
+                    stale_keys.append(key)
+            for key in stale_keys:
+                self._local_status_cache.pop(key, None)
+            # Rebuild the affected Status cells in place.
+            self._rebuild_status_cells_for(
+                study_uid=study_uid, patient_id=patient_id
+            )
+        except Exception:
+            pass
+
+    def _rebuild_status_cells_for(self, *, study_uid: str = "", patient_id: str = "") -> None:
+        """Rebuild the Status column widget for every row whose patient or
+        study matches. No-op when neither argument is provided.
+
+        Uses the module-level ``COL`` map for column indices so it stays
+        correct even if the schema is reordered.
+        """
+        if not study_uid and not patient_id:
+            return
+        if not hasattr(self, 'results_table') or self.results_table is None:
+            return
+        try:
+            status_col = COL.get('status', 4) if isinstance(COL, dict) else 4
+            study_col = COL.get('study_uid') if isinstance(COL, dict) else None
+            patient_col = COL.get('patient_id') if isinstance(COL, dict) else None
+            for row in range(self.results_table.rowCount()):
+                row_pid = ''
+                row_suid = ''
+                try:
+                    if patient_col is not None:
+                        pid_item = self.results_table.item(row, patient_col)
+                        if pid_item:
+                            row_pid = str(pid_item.text() or '').strip()
+                    if study_col is not None:
+                        suid_item = self.results_table.item(row, study_col)
+                        if suid_item:
+                            row_suid = str(suid_item.text() or '').strip()
+                except Exception:
+                    pass
+                if (study_uid and row_suid == study_uid) or (
+                    patient_id and row_pid == patient_id
+                ):
+                    try:
+                        new_widget = self._build_local_status_widget(row_suid, row_pid)
+                        self.results_table.setCellWidget(row, status_col, new_widget)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
 
     def setup_ui(self):
         """Setup the Patient Table UI"""
@@ -2085,6 +2163,26 @@ class PatientTableWidget(QWidget):
                     ai_available = True
                     break
 
+        # Case of the Day indicator. Cheap DB lookup keyed by patient_id and
+        # study_uid (OR semantics) — same query the viewer toolbar badge uses.
+        case_of_day_count = 0
+        try:
+            from modules.education.case_of_day_database import has_case_of_day_for_patient
+            case_of_day_count = int(
+                has_case_of_day_for_patient(patient_id=patient_id, study_uid=study_uid) or 0
+            )
+        except Exception:
+            case_of_day_count = 0
+
+        # Print status indicator. Set by the Printing module after a
+        # successful print job (OS or DICOM).
+        has_printed = False
+        try:
+            from database.manager import is_study_printed
+            has_printed = bool(is_study_printed(study_uid))
+        except Exception:
+            has_printed = False
+
         flags = {
             'dicom': bool(dicom_available),
             'documents': bool(docs_available),
@@ -2097,6 +2195,12 @@ class PatientTableWidget(QWidget):
             # _SHOW_LOCAL_DOCS_FOLDER_ICON gate; `previous_history` will take
             # over the folder-icon slot once the server field is available.
             'previous_history': bool(previous_history_available),
+            # New surfaces — Case of the Day (graduation cap) and Printed
+            # (printer icon). The count is also stashed so the tooltip can
+            # show "2 saved cases" without re-querying.
+            'case_of_day': case_of_day_count > 0,
+            'case_of_day_count': case_of_day_count,
+            'printed': has_printed,
         }
         self._local_status_cache[cache_key] = {'data': flags, 'timestamp': now}
         return flags
@@ -2163,6 +2267,18 @@ class PatientTableWidget(QWidget):
             layout.addWidget(_chip('Local voice files', icon='fa5s.microphone', color='#ef4444'))
         if flags.get('ai', False):
             layout.addWidget(_chip('Local AI results', text='AI'))
+        # Case of the Day — graduation cap. Tooltip includes the count so a
+        # patient with multiple saved cases still surfaces a single icon.
+        if flags.get('case_of_day', False):
+            count = int(flags.get('case_of_day_count') or 0)
+            cod_tip = (
+                f"Saved as Case of the Day ({count} case{'s' if count != 1 else ''})"
+            )
+            layout.addWidget(_chip(cod_tip, icon='fa5s.graduation-cap', color='#f59e0b'))
+        # Print status — printer icon when the study has been printed at
+        # least once via the Printing module (local or DICOM).
+        if flags.get('printed', False):
+            layout.addWidget(_chip('Patient has been printed', icon='fa5s.print', color='#60a5fa'))
 
         container.setStyleSheet('background: transparent; border: none;')
         return container

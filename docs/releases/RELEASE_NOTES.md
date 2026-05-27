@@ -1,9 +1,27 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.1.1 (2026-05-26)
-**Previous Stable:** v3.1.0 (2026-05-25)
+**Current Stable Version:** v3.1.2 (2026-05-26)
+**Previous Stable:** v3.1.1 (2026-05-26)
 **Release Date:** 2026-05-26
 **Branch:** beta-version
+
+---
+
+## v3.1.2 (2026-05-26) - Patch: responsive UI scaling + installer v3.1.2
+
+### Summary
+
+Patch release consolidating responsive UI scaling updates with final v3.1.2
+production installer. All v3.1.1 and v3.0.9 features carried forward.
+
+### Included
+
+- Responsive UI scaling plan implementation and deployment
+- Home panel, search, and table widget scaling fixes
+- Patient table widget responsive layout updates
+- Series display and selection scaling improvements
+- All v3.1.1 features (v3.1.1 installer + crash hardening + EULA)
+- All v3.0.9 codebase (multi-study viewer, thumbnail pipeline, DB isolation, Zeta DM)
 
 ---
 

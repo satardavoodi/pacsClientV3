@@ -168,7 +168,17 @@ class FilmPreviewWidget(QGraphicsView):
             y_px = int((y_in + header_height_in) * preview_dpi)
             w_px = int(w_in * preview_dpi)
             h_px = int(h_in * preview_dpi)
-            scaled = rendered.pixmap.scaled(w_px, h_px)
+            # Use KeepAspectRatio + SmoothTransformation: previously the
+            # tile was stretched into the cell with the default
+            # IgnoreAspectRatio + FastTransformation pair, producing both
+            # distortion (when image aspect ≠ cell aspect) and visible
+            # aliasing. The grid layout engine already accounts for image
+            # aspect ratio when sizing (w_px, h_px), so KeepAspectRatio is
+            # a no-op for correctly-fitted cells and a safety net for
+            # mismatches.
+            scaled = rendered.pixmap.scaled(
+                w_px, h_px, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
             tile_index = len(self._tiles)
             item = TileItem(tile_index, scaled)
             item.setPos(x_px, y_px)
@@ -713,8 +723,25 @@ class FilmPreviewWidget(QGraphicsView):
         super().mouseReleaseEvent(event)
 
     def wheelEvent(self, event):
-        # Keep wheel zoom unless user explicitly requests change.
-        self._apply_zoom(event.angleDelta().y())
+        """Wheel zoom.
+
+        ``angleDelta().y()`` is typically ±120 per notch on most mice. The
+        old implementation forwarded the raw 120 to ``_apply_zoom`` whose
+        sensitivity is tuned for per-pixel drag deltas, which produced an
+        ~60% zoom step per notch — far too aggressive. Normalize each wheel
+        notch into a small fixed step before delegating, so a single notch
+        gives ~10% zoom change either way."""
+        try:
+            notches = event.angleDelta().y() / 120.0
+        except Exception:
+            notches = 0
+        if not notches:
+            return
+        # Translate notches into a per-pixel-equivalent delta tuned to match
+        # the drag-zoom feel: 1 notch ≈ +/- ~10% zoom.
+        equivalent_delta = 20.0 * notches
+        self._apply_zoom(equivalent_delta)
+        event.accept()
 
     def _handle_selection_click(self, event) -> None:
         item = self.itemAt(event.position().toPoint())

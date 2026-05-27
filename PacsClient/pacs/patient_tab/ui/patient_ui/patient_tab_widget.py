@@ -22,6 +22,14 @@ class PatientTabWidget(QWidget):
         self.thumbnail_path = thumbnail_path
         self.study_uid = study_uid
         self.thumbnail_pixmap = None
+        # Case-of-Day mode — when enabled, the tab's name/id labels are
+        # repurposed for educational case context (name slot shows
+        # "Case of the Day", id slot shows the diagnosis) and the painted
+        # border switches from the normal blue/grey to green so the user
+        # can tell at a glance this is an educational view, not the
+        # routine clinical patient open.
+        self.case_of_day_mode = False
+        self.case_of_day_diagnosis = ""
 
         # Set cursor to pointing hand
         self.setCursor(Qt.PointingHandCursor)
@@ -294,6 +302,20 @@ class PatientTabWidget(QWidget):
     def update_patient_info(self, patient_name=None, patient_id=None, thumbnail_path=None, study_uid=None):
         """Update patient information"""
         lst_nulls = ['N/A', '', None]
+        # In Case-of-Day mode, the name/id labels are repurposed — DO NOT
+        # let the regular metadata pipeline overwrite them with real patient
+        # values; that would erase the educational header the user just set.
+        if self.case_of_day_mode:
+            # Still pick up study_uid (used for dedupe) and thumbnail
+            # (purely cosmetic) but skip the text overrides.
+            if thumbnail_path and thumbnail_path not in lst_nulls:
+                if self.thumbnail_path != thumbnail_path:
+                    self.thumbnail_path = thumbnail_path
+                    self.load_thumbnail()
+            if study_uid and self.study_uid in lst_nulls:
+                self.study_uid = study_uid
+            return
+
         if patient_name and self.patient_name in lst_nulls:
             self.patient_name = patient_name
             self.name_label.setText(patient_name)
@@ -310,6 +332,33 @@ class PatientTabWidget(QWidget):
 
         if study_uid and self.study_uid in lst_nulls:
             self.study_uid = study_uid
+
+    def set_case_of_day_mode(self, diagnosis: str = ""):
+        """Switch this tab chrome into Case-of-Day educational mode.
+
+        - Replaces the patient name label with "Case of the Day"
+        - Replaces the patient ID label with the diagnosis
+        - Re-paints with a green border instead of the clinical blue
+        - Future metadata refreshes from the PatientWidget are ignored
+          (see update_patient_info), so the educational header sticks.
+
+        The real `patient_id`, `patient_name`, and `study_uid` are NOT
+        touched — only the on-screen labels — so the underlying viewer
+        keeps working with the original study identity.
+        """
+        self.case_of_day_mode = True
+        self.case_of_day_diagnosis = (diagnosis or "").strip()
+        try:
+            self.name_label.setText("Case of the Day")
+        except Exception:
+            pass
+        try:
+            display_diag = self.case_of_day_diagnosis or "—"
+            self.id_label.setText(f"Dx: {display_diag}")
+        except Exception:
+            pass
+        # Force the paintEvent to refresh so the green border is drawn.
+        self.update()
 
     def get_tab_text(self):
         """Get the text to display on the tab"""
@@ -417,8 +466,17 @@ class PatientTabWidget(QWidget):
         # Get current state
         is_active = self.is_active()
 
-        # Set border color based on state (matching AiPacs button style)
-        if is_active:
+        # Set border color based on state (matching AiPacs button style).
+        # Case-of-Day mode overrides both active and inactive colors with
+        # green so the user can visually tell an educational case apart
+        # from a routine clinical patient tab.
+        if self.case_of_day_mode:
+            if is_active:
+                border_color = QColor("#15803d")  # green-700 — active educational
+            else:
+                border_color = QColor("#22c55e")  # green-500 — inactive educational
+            border_width = 2
+        elif is_active:
             border_color = QColor("#2b6cb0")  # Dark blue for active
             border_width = 2
         else:
@@ -436,7 +494,11 @@ class PatientTabWidget(QWidget):
 
         # Add subtle shadow for active tabs
         if is_active:
-            shadow_pen = QPen(QColor(102, 126, 234, 50), 1)
+            if self.case_of_day_mode:
+                shadow_color = QColor(34, 197, 94, 60)  # green-500 glow
+            else:
+                shadow_color = QColor(102, 126, 234, 50)
+            shadow_pen = QPen(shadow_color, 1)
             painter.setPen(shadow_pen)
             shadow_rect = rect.adjusted(1, 1, 1, 1)
             painter.drawRoundedRect(shadow_rect, 8, 8)

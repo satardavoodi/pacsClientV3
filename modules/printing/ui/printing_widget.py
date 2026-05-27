@@ -41,6 +41,7 @@ from PySide6.QtWidgets import (
 from modules.printing.constants import DEFAULT_FILM_SIZES, DEFAULT_LAYOUTS
 from modules.printing.core import FilmLayout, FilmSize, PrintJob, PrinterConfig, SeriesSelection, ViewportState
 from modules.printing.core import load_printing_config, validate_print_job
+from modules.printing.core.config import save_printing_config
 from modules.printing.data import get_series_for_study
 from modules.printing.data.filming_manager import FilmingDataManager
 from modules.printing.ui.film_preview_widget import FilmPreviewWidget
@@ -88,16 +89,10 @@ class PrintingWidget(QWidget):
 
         self._viewport_state = ViewportState()
         self._printer_configs = self._load_printer_configs()
-        self._dicom_print_settings = {
-            "ip_address": "127.0.0.1",
-            "port": 104,
-            "ae_title": "PRINTER",
-            "local_ae_title": "AIPACS",
-            "film_orientation": "PORTRAIT",
-            "medium_type": "PAPER",
-            "film_destination": "PROCESSOR",
-            "print_priority": "MED",
-        }
+        # Load persisted DICOM printer settings (IP / port / AE titles / film
+        # orientation etc.) from printing_config.json so the user doesn't have
+        # to re-enter them every time they open the Printing tab.
+        self._dicom_print_settings = self._load_dicom_print_settings()
 
         self.theme_manager = get_theme_manager()
         self._theme = self.theme_manager.current_theme()
@@ -115,21 +110,27 @@ class PrintingWidget(QWidget):
             self._load_filming_pages()
 
     def eventFilter(self, watched, event):
-        """Debug event filter to log mouse events on series list."""
-        if watched == self.series_list.viewport():
-            from PySide6.QtCore import QEvent
-            if event.type() == QEvent.MouseButtonPress:
-                mouse_event = event
-                modifiers = mouse_event.modifiers()
-                ctrl_held = bool(modifiers & Qt.ControlModifier)
-                shift_held = bool(modifiers & Qt.ShiftModifier)
-                print(f"[MOUSE_DEBUG] MouseButtonPress: Ctrl={ctrl_held}, Shift={shift_held}, button={mouse_event.button()}")
-            elif event.type() == QEvent.MouseButtonRelease:
-                mouse_event = event
-                modifiers = mouse_event.modifiers()
-                ctrl_held = bool(modifiers & Qt.ControlModifier)
-                shift_held = bool(modifiers & Qt.ShiftModifier)
-                print(f"[MOUSE_DEBUG] MouseButtonRelease: Ctrl={ctrl_held}, Shift={shift_held}, button={mouse_event.button()}")
+        """Optional mouse-event tracer for the series list.
+
+        The previous implementation spammed every click with two ``print``
+        lines, polluting the runtime log and adding measurable latency on
+        slow consoles. The filter now stays silent unless the
+        ``AIPACS_PRINTING_MOUSE_DEBUG`` environment variable is set, so the
+        diagnostic capability is preserved without the runtime noise.
+        """
+        try:
+            from os import environ
+            if environ.get("AIPACS_PRINTING_MOUSE_DEBUG") and watched == self.series_list.viewport():
+                from PySide6.QtCore import QEvent
+                if event.type() in (QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+                    mods = event.modifiers()
+                    kind = "Press" if event.type() == QEvent.MouseButtonPress else "Release"
+                    print(
+                        f"[MOUSE_DEBUG] {kind}: Ctrl={bool(mods & Qt.ControlModifier)}, "
+                        f"Shift={bool(mods & Qt.ShiftModifier)}, button={event.button()}"
+                    )
+        except Exception:
+            pass
         return super().eventFilter(watched, event)
 
     def _scaled(self, px: int) -> int:
@@ -1348,9 +1349,14 @@ class PrintingWidget(QWidget):
         overlay_info["sequence_start"] = start_idx + 1
         print(f"[PRINTING-DISPLAY] Calling set_tiles with {len(page_paths)} paths, layout {layout.rows}x{layout.cols}")
         self.preview_widget.set_tiles(film_size, layout, page_paths, overlay_info=overlay_info)
-        self._film_pixmap = self.preview_widget.export_film_pixmap(dpi=150)
-        print(f"[PRINTING-DISPLAY] export_film_pixmap returned: {self._film_pixmap is not None}")
-        
+        # IMPORTANT: do NOT regenerate the full 150-DPI film pixmap here on
+        # every page change. ``set_tiles`` already decoded each DICOM at
+        # preview DPI, and ``export_film_pixmap`` would decode them all over
+        # again — doubling work on every Next/Prev click. We invalidate the
+        # cached export and recompute it lazily in ``_save_preview`` /
+        # ``_handle_print``, the only consumers of ``_film_pixmap``.
+        self._film_pixmap = None
+
         self.page_label.setText(f"Page {self._current_page + 1}/{self._total_pages}")
         self.prev_page_btn.setEnabled(self._current_page > 0)
         self.next_page_btn.setEnabled(self._current_page < self._total_pages - 1)
@@ -1367,12 +1373,20 @@ class PrintingWidget(QWidget):
             self._update_page_display()
 
     def _handle_print(self):
-        if self._film_pixmap is None:
+        # If the user clicked Print without first generating a preview, do
+        # that now. The cached low-DPI ``_film_pixmap`` is invalidated by
+        # ``_update_page_display`` after every nav, so we don't trust it
+        # past existence — we always re-render at the printer's higher DPI.
+        if not self._selected_paths:
             self._generate_preview()
-            if self._film_pixmap is None:
+            if not self._selected_paths:
                 return
 
-        high_res_pixmap = self._render_for_print(dpi=300)
+        try:
+            high_res_pixmap = self._render_for_print(dpi=300)
+        except Exception as exc:
+            print(f"[PRINTING] high-res render failed: {exc}")
+            high_res_pixmap = None
         if high_res_pixmap is None:
             QMessageBox.warning(self, "Print", "Failed to render print image.")
             return
@@ -1390,6 +1404,8 @@ class PrintingWidget(QWidget):
             success = handler.print_film(high_res_pixmap, selected_printer)
             if not success:
                 QMessageBox.warning(self, "Print", "OS print canceled or failed.")
+            else:
+                self._mark_current_study_printed()
             return
 
         if self.printer_type_combo.currentText() == "DICOM Printer":
@@ -1404,11 +1420,43 @@ class PrintingWidget(QWidget):
                 success = handler.send_print_job(job)
                 if not success:
                     QMessageBox.warning(self, "DICOM Print", "DICOM print failed.")
+                else:
+                    self._mark_current_study_printed()
             except Exception as exc:
                 QMessageBox.warning(self, "DICOM Print", str(exc))
             return
 
         QMessageBox.warning(self, "Print", "Unsupported printer type.")
+
+    def _mark_current_study_printed(self) -> None:
+        """Flag the currently-selected study as printed in the DB and notify
+        any subscribers (patient list Status column) so the printer icon
+        appears on the patient row immediately.
+        """
+        study_uid = str(self._selected_study_uid or "").strip()
+        if not study_uid:
+            return
+        try:
+            from database.manager import mark_study_printed
+            mark_study_printed(study_uid)
+        except Exception as exc:
+            print(f"[PRINTING] mark_study_printed failed: {exc}")
+        # Best-effort UI hint to refresh patient-list status icons.
+        try:
+            from modules.education.case_of_day_database import case_of_day_events
+            # Reuse the case-of-day hub for now — its handler in the patient
+            # list invalidates the row's cache and rebuilds the Status cell,
+            # which is exactly what we want here too. Payload signals the
+            # nature of the event so future subscribers can discriminate.
+            hub = case_of_day_events()
+            if hub is not None:
+                hub.saved.emit({
+                    "study_uid": study_uid,
+                    "patient_id": str((self._selected_patient_info or {}).get("patient_id") or ""),
+                    "event": "printed",
+                })
+        except Exception:
+            pass
 
     def _build_print_job(self, printer: PrinterConfig) -> PrintJob:
         layout = self._current_layout
@@ -1650,6 +1698,7 @@ class PrintingWidget(QWidget):
                     "print_priority": priority_combo.currentText(),
                 }
             )
+            self._persist_dicom_print_settings()
             self.printer_status.setText(
                 f"DICOM: {self._dicom_print_settings['ip_address']}:{self._dicom_print_settings['port']} ({self._dicom_print_settings['ae_title']})"
             )
@@ -1732,22 +1781,38 @@ class PrintingWidget(QWidget):
 
     def _save_preview(self):
         """Save current preview page to filming folder."""
+        # Lazy export: most page-nav happens without saving, so we only pay
+        # the cost of re-rendering at save time. See _update_page_display.
+        if self._film_pixmap is None:
+            try:
+                self._film_pixmap = self.preview_widget.export_film_pixmap(dpi=150)
+            except Exception as exc:
+                print(f"[PRINTING] Lazy export for save failed: {exc}")
+                self._film_pixmap = None
         if self._film_pixmap is None:
             QMessageBox.warning(self, "Save Preview", "Generate a preview first.")
             return
-        
+
         if not self._active_patient:
             QMessageBox.warning(self, "Save Preview", "No patient selected.")
             return
-        
+
         # Get patient folder from study_uid
         study_uid = self._active_patient.get("study_uid")
         if not study_uid:
             QMessageBox.warning(self, "Save Preview", "Patient study UID not found.")
             return
-        
-        # Construct patient folder path (assuming attachment/StudyInstanceUID structure)
-        patient_folder = Path(BASE_PATH) / "attachment" / study_uid
+
+        # Filming pages live under the canonical user_data attachments dir,
+        # not the legacy ``BASE_PATH/attachment/`` location. The old path
+        # pointed at the code root and was lost on every reinstall.
+        try:
+            from PacsClient.utils.data_paths import ATTACHMENTS_DIR
+            patient_folder = Path(ATTACHMENTS_DIR) / study_uid
+        except Exception:
+            # Fallback: keep the legacy path so behaviour degrades gracefully
+            # if the import ever moves.
+            patient_folder = Path(BASE_PATH) / "attachment" / study_uid
         if not patient_folder.exists():
             patient_folder.mkdir(parents=True, exist_ok=True)
         
@@ -1801,7 +1866,23 @@ class PrintingWidget(QWidget):
             filming_folder = Path(folder_from_db)
             patient_folder = filming_folder.parent
         else:
-            patient_folder = Path(BASE_PATH) / "attachment" / study_uid
+            # Match the save path: prefer the canonical attachments dir.
+            try:
+                from PacsClient.utils.data_paths import ATTACHMENTS_DIR
+                patient_folder = Path(ATTACHMENTS_DIR) / study_uid
+            except Exception:
+                patient_folder = Path(BASE_PATH) / "attachment" / study_uid
+
+            # Back-compat: if the new location is empty but the legacy
+            # BASE_PATH/attachment/<study> has saved pages from a previous
+            # build, fall through to it so we don't silently "lose" them.
+            try:
+                if not (patient_folder / "Filming").is_dir():
+                    legacy = Path(BASE_PATH) / "attachment" / study_uid
+                    if (legacy / "Filming").is_dir():
+                        patient_folder = legacy
+            except Exception:
+                pass
 
         pages = FilmingDataManager.load_filming_pages(patient_folder)
         self._saved_filming_pages = pages
@@ -1999,6 +2080,49 @@ class PrintingWidget(QWidget):
         if not self.preview_widget:
             return
         self.preview_widget.set_sync_mode(checked)
+
+    # ------------------------------------------------------------------
+    # DICOM printer settings persistence (kept in printing_config.json so
+    # the user doesn't have to re-enter IP / AE title every session)
+    # ------------------------------------------------------------------
+    _DICOM_DEFAULTS: dict = {
+        "ip_address": "127.0.0.1",
+        "port": 104,
+        "ae_title": "PRINTER",
+        "local_ae_title": "AIPACS",
+        "film_orientation": "PORTRAIT",
+        "medium_type": "PAPER",
+        "film_destination": "PROCESSOR",
+        "print_priority": "MED",
+    }
+
+    def _load_dicom_print_settings(self) -> dict:
+        """Read persisted DICOM printer settings, falling back to defaults."""
+        try:
+            cfg = load_printing_config() or {}
+            stored = cfg.get("dicom_printer") or {}
+            if not isinstance(stored, dict):
+                stored = {}
+        except Exception:
+            stored = {}
+        merged = dict(self._DICOM_DEFAULTS)
+        merged.update({k: v for k, v in stored.items() if k in merged})
+        # Defensive coercion: port must be int.
+        try:
+            merged["port"] = int(merged.get("port") or 104)
+        except Exception:
+            merged["port"] = 104
+        return merged
+
+    def _persist_dicom_print_settings(self) -> None:
+        """Write the current ``self._dicom_print_settings`` back to disk.
+        Silent on failure — settings still take effect for this session."""
+        try:
+            cfg = load_printing_config() or {}
+            cfg["dicom_printer"] = dict(self._dicom_print_settings)
+            save_printing_config(cfg)
+        except Exception as exc:
+            print(f"[PRINTING] persist DICOM settings failed: {exc}")
 
     def _load_printer_configs(self) -> List[PrinterConfig]:
         config = load_printing_config()
