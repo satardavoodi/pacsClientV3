@@ -255,7 +255,7 @@ class _HPPatientOpenMixin:
                     worker_ms=round((_time.perf_counter() - _t0) * 1000.0, 1),
                     error=str(e),
                 )
-                print(f"⚠️ [THREAD] Error downloading attachments: {e}")
+                _logger.error("[THREAD] Error downloading attachments: %s", e, exc_info=True)
 
         threading.Thread(target=_worker, daemon=True).start()
 
@@ -387,7 +387,7 @@ class _HPPatientOpenMixin:
             # Prevent duplicate open requests for the same study (double-trigger / re-entrancy)
             if study_uid in self._opening_studies:
                 self._log_open_trace(study_uid, 'duplicate_open_blocked')
-                print(f"⚠️ Duplicate open prevented for study {study_uid}")
+                _logger.info("Duplicate open prevented for study %s", study_uid)
                 return
 
             # If already open, just focus it and exit
@@ -395,7 +395,7 @@ class _HPPatientOpenMixin:
             if existing_widget:
                 try:
                     if not is_widget_alive(existing_widget):
-                        print(f"⚠️ Existing widget for study {study_uid} has been deleted, creating new one")
+                        _logger.warning("Existing widget for study %s has been deleted, creating new one", study_uid)
                         self.dict_tabs_widget.pop(study_uid, None)
                     else:
                         idx = self.tab_widget.indexOf(existing_widget)
@@ -419,7 +419,7 @@ class _HPPatientOpenMixin:
                             return
                 except Exception as e:
                     self._log_open_trace(study_uid, 'existing_tab_focus_error', level='error', error=str(e))
-                    print(f"⚠️ Error switching to existing tab: {e}")
+                    _logger.warning("Error switching to existing tab: %s", e, exc_info=True)
                     # Continue with normal flow if tab switching fails
 
             self._opening_studies.add(study_uid)
@@ -510,13 +510,13 @@ class _HPPatientOpenMixin:
                         self.custom_tab_manager.set_tab_active(tab_index)
                         print(f"✅ [TAB] Activated tab at index {tab_index}")
                 except Exception as e:
-                    print(f"⚠️ [TAB] Error activating tab: {e}")
+                    _logger.warning("[TAB] Error activating tab: %s", e, exc_info=True)
             else:
                 try:
                     self.tab_widget.setCurrentWidget(widget)
                     print("✅ [TAB] Activated tab via setCurrentWidget")
                 except Exception as e:
-                    print(f"⚠️ [TAB] Error setting current widget: {e}")
+                    _logger.warning("[TAB] Error setting current widget: %s", e, exc_info=True)
 
             # [H7-P1] Pipeline A timeline: tab created
             _logger.info(
@@ -540,7 +540,7 @@ class _HPPatientOpenMixin:
                     widget.on_tab_activated()
                     print(f"✅ [TAB] Forced on_tab_activated for study {study_uid}")
             except Exception as e:
-                print(f"⚠️ [TAB] Failed forced on_tab_activated: {e}")
+                _logger.warning("[TAB] Failed forced on_tab_activated: %s", e, exc_info=True)
 
             # Connect to first-series displayed signal (to hide loading)
             try:
@@ -601,7 +601,7 @@ class _HPPatientOpenMixin:
                                         series_count = study_info.get('count_of_series', len(series_list))
                                         images_count = sum(s.get('image_count', 0) for s in series_list)
                                 except Exception as e:
-                                    print(f"Warning: Could not fetch series info for {current_study_uid}: {e}")
+                                    _logger.warning("Could not fetch series info for %s: %s", current_study_uid, e)
 
                             for series_info in series_list:
                                 if isinstance(series_info, dict) and 'study_uid' not in series_info:
@@ -676,7 +676,7 @@ class _HPPatientOpenMixin:
                         self._log_open_trace(study_uid, 'download_manager_wired', series_count=len(aggregated_series))
                 except Exception as e:
                     self._log_open_trace(study_uid, 'download_manager_error', level='error', error=str(e))
-                    print(f"⚠️ Error adding to Download Manager: {e}")  # Log for debugging
+                    _logger.error("Error adding to Download Manager: %s", e, exc_info=True)
 
             # --- STEP 3.6: UI-bound async tasks must run on main thread/event loop ---
             try:
@@ -707,7 +707,7 @@ class _HPPatientOpenMixin:
                     self._log_open_trace(study_uid, 'ui_tasks_scheduled', right_panel_requested=True, series_info_requested=True)
             except Exception as e:
                 self._log_open_trace(study_uid, 'ui_task_schedule_error', level='error', error=str(e))
-                print(f"⚠️ [UI] Error scheduling UI tasks: {e}")
+                _logger.error("[UI] Error scheduling UI tasks: %s", e, exc_info=True)
 
             # --- STEP 4: Background tasks (non-blocking via threading to avoid async conflicts) ---
             def _background_setup_thread():
@@ -730,7 +730,7 @@ class _HPPatientOpenMixin:
                             else:
                                 self._start_attachment_download_in_background(study_uid, trigger='immediate')
                         except Exception as e:
-                            print(f"⚠️ [THREAD] Error downloading attachments: {e}")
+                            _logger.error("[THREAD] Error downloading attachments: %s", e, exc_info=True)
 
                     # Get series list for on-demand download
                     series_list = []
@@ -805,7 +805,7 @@ class _HPPatientOpenMixin:
 
                 except Exception as e:
                     self._log_open_trace(study_uid, 'background_setup_error', level='error', error=str(e))
-                    print(f"⚠️ [BACKGROUND] Error in background setup: {e}")
+                    _logger.error("[BACKGROUND] Error in background setup: %s", e, exc_info=True)
 
             # Start background tasks in a separate thread (no async conflicts)
             threading.Thread(target=_background_setup_thread, daemon=True).start()
@@ -818,7 +818,7 @@ class _HPPatientOpenMixin:
 
             # Everything is handled in the fast path above
         except Exception as e:
-            print(f"Error in patient double-click handler: {str(e)}")
+            _logger.error("Error in patient double-click handler: %s", e, exc_info=True)
             self._log_open_trace(study_uid, 'open_error', level='error', error=str(e))
             self._trace_action_done(action_id, phase='double_click_error', extra={'study_uid': str(study_uid), 'error': str(e)})
             # Hide loading on error
@@ -867,7 +867,7 @@ class _HPPatientOpenMixin:
             self._opening_studies.discard(study_uid)
             print(f"Removed study {study_uid} from opening studies set")
         except Exception as e:
-            print(f"Error removing study from opening studies: {e}")
+            _logger.error("Error removing study from opening studies: %s", e, exc_info=True)
 
     def _maybe_hide_double_click_loading(self):
         if not getattr(self, '_double_click_loading_active', False):
@@ -927,12 +927,12 @@ class _HPPatientOpenMixin:
                         # Add to Zeta with high priority
                         zeta_manager.add_downloads([study_dict], start_immediately=True)
                     else:
-                        print("Failed to create Zeta Download Manager")
+                        _logger.error("Failed to create Zeta Download Manager")
                 else:
-                    print("No server selected")
+                    _logger.warning("No server selected for patient double-click")
 
         except Exception as e:
-            print(f"Error in patient double-click handler: {str(e)}")
+            _logger.error("Error in patient double-click handler: %s", e, exc_info=True)
             import traceback
             traceback.print_exc()
 
@@ -974,7 +974,7 @@ class _HPPatientOpenMixin:
                 self._autosync_studies_to_offline_cloud(offline_cloud_server, [study_uid], show_errors=False)
                 
         except Exception as e:
-            print(f"⚠️ Error closing tab: {e}")
+            _logger.warning("Error closing tab: %s", e, exc_info=True)
 
     def cleanup(self):
         """Release resources owned by HomePanelWidget.
@@ -1010,6 +1010,6 @@ class _HPPatientOpenMixin:
                     _ = widget.isVisible()
                     widget.series_downloaded.emit(str(series_number))
                 except RuntimeError:
-                    print(f"⚠️ Widget deleted, cannot emit signal for series {series_number}")
+                    _logger.warning("Widget deleted, cannot emit series_downloaded signal for series %s", series_number)
         except Exception as e:
-            print(f"⚠️ Error emitting series_downloaded signal: {e}")
+            _logger.error("Error emitting series_downloaded signal: %s", e, exc_info=True)

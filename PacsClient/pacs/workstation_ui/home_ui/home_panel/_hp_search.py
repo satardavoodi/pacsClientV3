@@ -1,4 +1,4 @@
-﻿"""Search & table population: local/server search, patient table delegates"""
+"""Search & table population: local/server search, patient table delegates"""
 # Auto-generated from home_ui.py — Phase 3 split
 
 
@@ -124,7 +124,10 @@ class _HPSearchMixin:
             if server:
                 asyncio.create_task(self.search_patients_from_server_async())
         except Exception as e:
-            print(f"Error in default search: {str(e)}")
+            # Was print() — failures here were invisible in app.log before
+            # 2026-05-28. Default search runs at boot; a silent failure here
+            # left a blank patient table with no diagnostic record.
+            _logger.error("Error in default search: %s", e, exc_info=True)
 
     def _on_server_tab_changed(self, index):
         """Auto-trigger search when the user switches tabs in Server Selection."""
@@ -798,7 +801,16 @@ class _HPSearchMixin:
             # Keep search path fast: do not trigger extra network hydration here.
 
         except Exception as e:
-            print(f"Error adding Socket patient to table: {e}")
+            # Was print() — per-row failures (malformed patient dict,
+            # missing study_uid, type coercion error) caused patients to
+            # silently drop from the patient table with no diagnostic
+            # record. The catch-all app.log handler (2026-05-28) makes
+            # this visible.
+            _logger.error(
+                "Error adding Socket patient to table (patient_id=%r): %s",
+                patient.get('patient_id') if isinstance(patient, dict) else None,
+                e, exc_info=True,
+            )
 
     def _save_socket_patient_to_db(self, patient):
         """Save Socket patient data to local database (delegates to service)."""
@@ -869,11 +881,19 @@ class _HPSearchMixin:
                         kwargs['download_status'] = download_status
                         kwargs['is_downloaded'] = (download_status == 'complete')
                 except Exception as ex:
-                    print(f"[WARN] Error in download status check: {ex}")
+                    # Was print() — failures here silently mark every row as
+                    # not_downloaded, hiding storage-layer or DB lock issues.
+                    _logger.warning(
+                        "Error in download status check (study_uid=%r): %s",
+                        study_uid, ex, exc_info=True,
+                    )
                     kwargs['download_status'] = 'not_downloaded'
                     kwargs['is_downloaded'] = False
             except Exception as e:
-                print(f"Error checking download status: {e}")
+                # Was print() — outer guard around download-status setup.
+                _logger.error(
+                    "Error checking download status: %s", e, exc_info=True,
+                )
                 kwargs['download_status'] = 'not_downloaded'
                 kwargs['is_downloaded'] = False
 
@@ -1313,7 +1333,13 @@ class _HPSearchMixin:
                 retry_block_until[study_uid_str] = time.monotonic() + 2.5
                 if hasattr(self, '_log_open_trace'):
                     self._log_open_trace(study_uid, 'right_panel_socket_error', level='error', error=str(socket_error))
-                print(f"Socket thumbnail error: {str(socket_error)}")
+                # Was print() — duplicates the _log_open_trace path above but
+                # also lands in app.log with stack so a regression like the
+                # 2026-05-27 GetStudyInfo stall has a stack-trace record.
+                _logger.error(
+                    "Socket thumbnail error (study_uid=%r): %s",
+                    study_uid, socket_error, exc_info=True,
+                )
 
                 fallback_payload = self._build_cached_thumbnail_payload(study_uid)
                 if fallback_payload.get('thumbnails'):

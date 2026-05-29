@@ -1353,14 +1353,15 @@ class ThumbnailManager(QObject):
 
             # Main container widget - SQUARE dimensions
             widget = QWidget()
-            widget.setFixedSize(190, 190)
+            widget.setFixedSize(190, 215)  # 2026-05-29: was 190 - made taller so both server description label
+            # and image-count label can coexist (per user request).
             main_layout = QVBoxLayout(widget)
             main_layout.setContentsMargins(0, 0, 0, 0)
             main_layout.setSpacing(0)
             
             # Create circular progress border frame
             progress_border = CircularProgressborder(theme=self._theme)
-            progress_border.setFixedSize(190, 190)
+            progress_border.setFixedSize(190, 215)  # mirrors widget height
             border_layout = QVBoxLayout(progress_border)
             border_layout.setContentsMargins(8, 8, 8, 8)
             border_layout.setSpacing(3)
@@ -1501,7 +1502,7 @@ class ThumbnailManager(QObject):
             
             # Glass overlay for progress
             glass_overlay = QWidget(widget)
-            glass_overlay.setGeometry(0, 0, 190, 190)
+            glass_overlay.setGeometry(0, 0, 190, 215)  # mirrors widget
             glass_overlay.setStyleSheet("""
                 QWidget {
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
@@ -1544,7 +1545,7 @@ class ThumbnailManager(QObject):
             label_width = 100
             label_height = 65
             label_x = (190 - label_width) // 2
-            label_y = (190 - label_height) // 2
+            label_y = (215 - label_height) // 2  # mirrors widget height
             progress_overlay.setGeometry(label_x, label_y, label_width, label_height)
             
             # Add inner glow effect

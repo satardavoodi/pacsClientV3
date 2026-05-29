@@ -717,6 +717,10 @@ class PatientTableWidget(QWidget):
         # Enhanced table widget with checkbox column
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(TOTAL_COLS)
+        # 2026-05-29 user request: remove vertical separator lines between
+        # data cells in patient rows. Header keeps vertical separators via
+        # the QHeaderView::section "border-right" rule (~line 1458).
+        self.results_table.setShowGrid(False)
 
         # Keep default header for now
         # self.custom_header = CustomHeaderView(Qt.Horizontal, self.results_table)
@@ -1606,7 +1610,33 @@ class PatientTableWidget(QWidget):
             print(f"Error emitting patient selection: {str(e)}")
 
     def _on_patient_clicked(self, item):
-        """Handle patient single-click event - Show thumbnails"""
+        """Handle patient single-click event - Show thumbnails.
+
+        2026-05-29 double-click reliability fix:
+            The explicit `highlight_selected_row(...)` call used to run on
+            every single click. That helper does
+                clearSelection() -> selectRow(row) -> viewport().update()
+            inside the itemClicked handler. The clearSelection +
+            selectRow pair fires `currentRowChanged` TWICE, and
+            `viewport().update()` forces a synchronous repaint. On
+            slower systems / under UI load that work blocked the event
+            loop long enough to push the second mouse press of the
+            user's double-click past Qt's `doubleClickInterval`
+            (~400 ms on Windows). Qt then classified the second press
+            as a fresh single click — Qt emitted `itemClicked` instead
+            of `itemDoubleClicked`, the patient never opened, and the
+            user saw "reloads thumbnails" instead of the viewer tab.
+
+            With `setSelectionBehavior(SelectRows)` +
+            `setSelectionMode(ExtendedSelection)`, Qt's own
+            mousePressEvent ALREADY clears other selections and selects
+            the clicked row natively. The explicit highlight call was
+            redundant - so we drop it on the non-Ctrl path. The Ctrl
+            branch still needs `toggle_row_selection` because Ctrl+click
+            is supposed to OPT OUT of clear-others (which Qt's
+            ExtendedSelection mode already does, but we keep our
+            explicit handler because it tracks our internal state).
+        """
         try:
             if item.column() == COL['select']:
                 return
@@ -1621,16 +1651,15 @@ class PatientTableWidget(QWidget):
             # Emit immediately so sidebar refresh is not blocked by timer edge-cases.
             self._emit_patient_selection(item.row())
 
-            # Highlight the clicked row with neon effect
-            selected_row = item.row()
-
             # Handle multi-selection with Ctrl key
             if ctrl_pressed:
                 # Toggle selection of the current row without clearing other selections
-                self.toggle_row_selection(selected_row)
-            else:
-                # Normal single selection (clear others and select this one)
-                self.highlight_selected_row(selected_row)
+                self.toggle_row_selection(item.row())
+            # Non-Ctrl path: do NOT call highlight_selected_row here. Qt's
+            # ExtendedSelection mode + SelectRows behaviour already does
+            # clear-others + select-clicked-row in mousePressEvent. See
+            # the docstring above for why the redundant work was breaking
+            # double-click detection.
 
         except Exception as e:
             print(f"Error in patient click: {str(e)}")

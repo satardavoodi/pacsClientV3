@@ -1,10 +1,19 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v3.1.2 (2026-05-26)
+> **Current Stable Version:** v3.1.3 (2026-05-27)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
 ## Quick Start for AI Agents
+
+**Brand-new to this repo?** Read these four documents in order:
+
+1. [**For Future Agents (onboarding)**](for-future-agents/README.md) — framework discipline + critical knowledge
+2. [**Audit Overview (2026-05-28)**](AUDIT_2026-05-28_OVERVIEW.md) — every stage report + cumulative numbers
+3. [**Index by Subsystem**](INDEX_BY_SUBSYSTEM.md) — given a subsystem, which docs and tests apply
+4. [**Test Inventory by Guard**](../tests/INDEX_BY_GUARD.md) — given a test name, what it protects
+
+Once oriented, the existing per-task table below still applies.
 
 | I need to... | Go to |
 |-------------|-------|

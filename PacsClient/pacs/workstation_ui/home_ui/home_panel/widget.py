@@ -217,6 +217,105 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         self.theme_manager.themeChanged.connect(self.apply_theme)
         self.apply_theme(self._active_theme)
 
+        # ── Unified Command Layer wire-up (2026-05-28) ──────────────────────
+        # Builds the CommandBus that serves chat orb / voice / AI agent /
+        # GUI tests through a single entry point. SystemAdapter always wires;
+        # HomeAdapter wires here; ViewerAdapter (read-only) wires when an
+        # active-patient-tab getter is available; DownloadAdapter wires lazily
+        # (DM widget is constructed on first download click). Fail-safe — any
+        # error leaves self.command_bus = None and existing call sites work.
+        # See docs/plans/architecture/UNIFIED_COMMAND_LAYER_2026-05-27.md
+        self.command_bus = None
+        try:
+            from modules.EchoMind.secretary import build_command_bus
+            self.command_bus = build_command_bus(
+                home_widget=self,
+                # Read-only viewer probes — see MULTI_STUDY_SINGLE_TAB_PLAN.md
+                get_active_patient_tab=self._get_active_patient_tab_for_bus,
+                get_main_tab_widget=lambda: self.tab_widget,
+                # Module launchers — populated for modules cleanly reachable
+                # from the home widget context. Per-patient-tab modules
+                # (per-tab MPR, Print, Eagle Eye drag-drop) bind lazily when
+                # a patient tab is opened. Unregistered modules return a
+                # MODULE_NOT_REGISTERED error envelope (typed, recoverable).
+                module_launchers={
+                    "eagle_ai": self._launcher_eagle_ai_from_home,
+                },
+            )
+            print(f"[CommandBus] wired with {len(self.command_bus.actions())} action(s)")
+        except Exception as _cmd_bus_err:  # noqa: BLE001
+            print(f"[CommandBus] init failed (non-fatal): {_cmd_bus_err}")
+
+    def _launcher_eagle_ai_from_home(self, entities: dict):
+        """Open Eagle Eye (AiMainWindow) from the home context.
+
+        Returns the window instance, or None on any failure. Fail-safe —
+        a launch error returns ``ok=False, error_code=MODULE_LAUNCH_FAILED``
+        to the caller via the ModuleAdapter, never crashes the home widget.
+        """
+        try:
+            AiCls = _ensure_ai_main_window()
+            study_uid = (entities or {}).get("study_uid")
+            window = AiCls(study_uid=study_uid) if study_uid else AiCls()
+            try:
+                window.show()
+            except Exception:
+                pass
+            return window
+        except Exception as _err:  # noqa: BLE001
+            print(f"[CommandBus] eagle_ai launcher failed: {_err}")
+            return None
+
+    def _get_active_patient_tab_for_bus(self):
+        """Return the currently-active PatientWidget tab, or None.
+
+        Used by ViewerCommandAdapter to dereference the live patient widget
+        on every read. Stays trivially safe — never mutates state.
+        """
+        try:
+            tw = self.tab_widget
+            if tw is None:
+                return None
+            current = tw.currentWidget()
+            # Distinguish a PatientWidget from a DownloadManager / other
+            # tab by attribute fingerprint (single duck check).
+            if current is None:
+                return None
+            if hasattr(current, "lst_thumbnails_data") or hasattr(current, "lst_nodes_viewer"):
+                return current
+            return None
+        except Exception:
+            return None
+
+    def _attach_download_adapter_lazy(self, dm_widget):
+        """Late-bind the DownloadAdapter once the DM widget is constructed.
+
+        Called from the download-button click path (where dm_widget is
+        produced via get_zeta_download_manager_widget). Idempotent: a second
+        attach for the same widget is a no-op. Fail-safe.
+        """
+        if self.command_bus is None or dm_widget is None:
+            return
+        try:
+            if self.command_bus.registry.has_action("cancel_download"):
+                return  # already attached
+            from modules.EchoMind.secretary.adapters import DownloadCommandAdapter
+            adapter = DownloadCommandAdapter(dm_widget=dm_widget)
+            self.command_bus.registry.register(
+                "download", adapter, actions={
+                    "cancel_download":       "cancel_download",
+                    "pause_download":        "pause_download",
+                    "resume_download":       "resume_download",
+                    "check_download_status": "check_download_status",
+                    "list_downloads":        "list_downloads",
+                    "download_statistics":   "download_statistics",
+                },
+            )
+            print(f"[CommandBus] DownloadAdapter attached "
+                  f"({len(self.command_bus.actions())} actions total)")
+        except Exception as _dl_err:  # noqa: BLE001
+            print(f"[CommandBus] DownloadAdapter attach failed: {_dl_err}")
+
     def _wrap_home_tripane_in_splitter(self):
         """Reparent the three home panels (left scroll, centre table, right
         rail) into a horizontal QSplitter so the user can drag the dividers.

@@ -1,0 +1,387 @@
+{
+  "_meta": {
+    "generated": "2026-05-28",
+    "source": "tests/_kpi/schema.py",
+    "note": "Last-known-good values; updated only via tools/kpi_update_baseline.py."
+  },
+  "kpis": {
+    "bulk_download.first_chunk_ms": {
+      "workflow": "bulk_download",
+      "unit": "ms",
+      "hard": 5000,
+      "warn": 2500,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Click Download → first downloaded byte hits disk"
+    },
+    "bulk_download.queue_build_ms": {
+      "workflow": "bulk_download",
+      "unit": "ms",
+      "hard": 3000,
+      "warn": 1500,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Click Download → DM queue table populated"
+    },
+    "cancel_download.elapsed_ms": {
+      "workflow": "bulk_download",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 100,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "check_download_status.elapsed_ms": {
+      "workflow": "bulk_download",
+      "unit": "ms",
+      "hard": 50,
+      "warn": 20,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "count_aipacs_processes.elapsed_ms": {
+      "workflow": "process",
+      "unit": "ms",
+      "hard": 1000,
+      "warn": 400,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "count_native_faults_since.elapsed_ms": {
+      "workflow": "crash",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 80,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "crash.native_fault_count": {
+      "workflow": "crash",
+      "unit": "count",
+      "hard": 0,
+      "warn": 0,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "db.query_ms.find_patient_pk": {
+      "workflow": "database",
+      "unit": "ms",
+      "hard": 50,
+      "warn": 20,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "db.query_ms.get_study_info_with_series": {
+      "workflow": "database",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 100,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "db.query_ms.insert_series": {
+      "workflow": "database",
+      "unit": "ms",
+      "hard": 100,
+      "warn": 50,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "download_statistics.elapsed_ms": {
+      "workflow": "bulk_download",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 80,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "get_active_series.elapsed_ms": {
+      "workflow": "viewer",
+      "unit": "ms",
+      "hard": 80,
+      "warn": 40,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "get_active_tab.elapsed_ms": {
+      "workflow": "viewer",
+      "unit": "ms",
+      "hard": 80,
+      "warn": 40,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Read active patient-tab snapshot"
+    },
+    "get_multistudy_info.elapsed_ms": {
+      "workflow": "viewer",
+      "unit": "ms",
+      "hard": 120,
+      "warn": 60,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Enumerate the studies grouped under the active tab"
+    },
+    "get_thumbnails_data.elapsed_ms": {
+      "workflow": "viewer",
+      "unit": "ms",
+      "hard": 150,
+      "warn": 80,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Read all series metadata for the active patient"
+    },
+    "list_downloads.elapsed_ms": {
+      "workflow": "bulk_download",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 80,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "list_open_tabs.elapsed_ms": {
+      "workflow": "viewer",
+      "unit": "ms",
+      "hard": 80,
+      "warn": 40,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "mpr.build_ms": {
+      "workflow": "mpr",
+      "unit": "ms",
+      "hard": 4000,
+      "warn": 2000,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Open MPR → all three orthogonal views ready"
+    },
+    "patient_open.elapsed_ms": {
+      "workflow": "patient_open",
+      "unit": "ms",
+      "hard": 400,
+      "warn": 250,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "End-to-end: click row → right panel populated"
+    },
+    "patient_open.right_panel_socket_ms": {
+      "workflow": "patient_open",
+      "unit": "ms",
+      "hard": 400,
+      "warn": 250,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "right_panel_socket_start → right_panel_socket_done"
+    },
+    "pause_download.elapsed_ms": {
+      "workflow": "bulk_download",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 100,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "probe_idle_cpu.elapsed_ms": {
+      "workflow": "process",
+      "unit": "ms",
+      "hard": 20000,
+      "warn": 10000,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Includes the sampling window (default 5 s)"
+    },
+    "proc.idle_cpu_pct": {
+      "workflow": "process",
+      "unit": "%",
+      "hard": 5.0,
+      "warn": 2.0,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "proc.rss_mb_growth_per_hour": {
+      "workflow": "process",
+      "unit": "MB/h",
+      "hard": 50,
+      "warn": 20,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Drift in RSS during a long session — leak signal"
+    },
+    "proc.rss_mb_steady": {
+      "workflow": "process",
+      "unit": "MB",
+      "hard": 1500,
+      "warn": 1000,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "proc.zombie_after_close": {
+      "workflow": "process",
+      "unit": "count",
+      "hard": 0,
+      "warn": 0,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Processes named python.exe/aipacs.exe still alive"
+    },
+    "recovery.restart_to_ready_ms": {
+      "workflow": "recovery",
+      "unit": "ms",
+      "hard": 15000,
+      "warn": 8000,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "resume_download.elapsed_ms": {
+      "workflow": "bulk_download",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 100,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "search.first_row_render_ms": {
+      "workflow": "search",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 100,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Server response → first table row painted"
+    },
+    "search.server_round_trip_ms": {
+      "workflow": "search",
+      "unit": "ms",
+      "hard": 1500,
+      "warn": 800,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Click Search → server GetPatientList response"
+    },
+    "session.no_leak_after_8h": {
+      "workflow": "session",
+      "unit": "bool",
+      "hard": 1,
+      "warn": 1,
+      "higher_better": true,
+      "last_known_good": null,
+      "description": ""
+    },
+    "snapshot_resources.elapsed_ms": {
+      "workflow": "process",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 80,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "socket.send_request_ms.GetPatientList": {
+      "workflow": "socket",
+      "unit": "ms",
+      "hard": 1500,
+      "warn": 800,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "socket.send_request_ms.GetSeriesImages": {
+      "workflow": "socket",
+      "unit": "ms",
+      "hard": 3000,
+      "warn": 1500,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "socket.send_request_ms.GetStudyThumbnails": {
+      "workflow": "socket",
+      "unit": "ms",
+      "hard": 500,
+      "warn": 250,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "socket.send_request_ms.QuerySeriesThumbnails": {
+      "workflow": "socket",
+      "unit": "ms",
+      "hard": 500,
+      "warn": 250,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": ""
+    },
+    "thumbnail.cross_patient_leak": {
+      "workflow": "thumbnail",
+      "unit": "count",
+      "hard": 0,
+      "warn": 0,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Thumbnails of patient A visible in patient B viewer"
+    },
+    "thumbnail.load_ms": {
+      "workflow": "thumbnail",
+      "unit": "ms",
+      "hard": 200,
+      "warn": 100,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Per-thumbnail load time"
+    },
+    "ui.freeze_ms_per_session": {
+      "workflow": "ui",
+      "unit": "ms",
+      "hard": 1000,
+      "warn": 200,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Total ms event loop was blocked >50ms during session"
+    },
+    "viewer.first_render_ms": {
+      "workflow": "viewer",
+      "unit": "ms",
+      "hard": 800,
+      "warn": 500,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Series loaded → first frame painted"
+    },
+    "viewer.scroll_fps": {
+      "workflow": "viewer",
+      "unit": "fps",
+      "hard": 30,
+      "warn": 45,
+      "higher_better": true,
+      "last_known_good": null,
+      "description": "Stack scroll frames per second"
+    },
+    "viewer.stack_rebuild_ms": {
+      "workflow": "viewer",
+      "unit": "ms",
+      "hard": 500,
+      "warn": 300,
+      "higher_better": false,
+      "last_known_good": null,
+      "description": "Layout change → all viewports rebuilt"
+    }
+  }
+}

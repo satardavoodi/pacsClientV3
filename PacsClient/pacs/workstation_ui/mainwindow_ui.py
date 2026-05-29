@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QApplication, QFrame, QLabel, QPushButton,
     QHBoxLayout, QVBoxLayout, QTabWidget,
     QAbstractButton, QLineEdit, QTextEdit, QPlainTextEdit,
-    QComboBox, QSpinBox, QAbstractSlider, QTabBar
+    QComboBox, QSpinBox, QAbstractSlider, QTabBar, QSizePolicy
 )
 from PySide6.QtCore import QEvent, QTimer
 
@@ -599,6 +599,14 @@ class MainWindowWidget(QWidget):
         # child (user info container, larger font) needs more room. See
         # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
         self.title_bar.setMinimumHeight(84)
+        # Post-audit live finding (2026-05-29): without a ceiling +
+        # Fixed vertical size policy, the QVBoxLayout above let the
+        # title_bar QFrame grow to ~180 px tall - a big empty band
+        # between the AI-Pacs logo and the patient search panel. The
+        # 84 px floor stays for content sizing; 94 px ceiling gives
+        # 10 px of breathing room for slightly taller fonts/icons.
+        self.title_bar.setMaximumHeight(110)  # 2026-05-29: was 94 - too tight for patient tab content (chip 70 + close button + text). 110 keeps the tight look but stops clipping.
+        self.title_bar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         title_layout = QHBoxLayout(self.title_bar)
         title_layout.setContentsMargins(10, 2, 5, 2)
@@ -606,9 +614,11 @@ class MainWindowWidget(QWidget):
 
         self.tab_area = QFrame()
         self.tab_area.setObjectName("TabArea")
-        title_layout.addWidget(self.tab_area)
-
-        title_layout.addStretch()
+        # 2026-05-29 user request: give tab_area horizontal stretch=1 so the
+        # patient tab strip claims the leftover width (was being squeezed to
+        # its sizeHint by a sibling addStretch()). Tabs can now spread across
+        # ~2/3 of the title bar before horizontal scrolling kicks in.
+        title_layout.addWidget(self.tab_area, 1)
 
         # Right-side tab area (next to admin/user info)
         self.right_tab_area = QFrame()
@@ -628,6 +638,15 @@ class MainWindowWidget(QWidget):
         # uses setMinimumWidth which is correct.
         user_container.setMinimumHeight(70)
         user_container.setMinimumWidth(170)
+        # Stage 9 follow-up (2026-05-29): without an upper bound + Fixed
+        # vertical size policy, Qt's default Preferred/Preferred let the
+        # pill grow vertically to fill the title bar, rendering as a tall
+        # portrait box (~170x120) that overflowed into the search panel
+        # below. The pill needs ~70 px of content; cap at 74 px and forbid
+        # vertical expansion so the title-bar height stays at its 84 px
+        # floor regardless of available space.
+        user_container.setMaximumHeight(74)
+        user_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         user_container.setStyleSheet("""
             QFrame#UserInfoContainer {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,

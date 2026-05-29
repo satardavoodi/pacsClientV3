@@ -317,11 +317,21 @@ class _HPModulesMixin:
                 
                 # Check if tab addition failed due to max patient tabs limit
                 if tab_index == -1:
+                    # 2026-05-29: read the live limit from custom_tab_manager
+                    # instead of hardcoding a stale literal. The message used to
+                    # say "3" even after MAX_PATIENT_TABS was bumped to 4.
+                    # Lazy import keeps this module's import surface unchanged.
+                    try:
+                        from PacsClient.pacs.patient_tab.ui.patient_ui.custom_tab_manager import (
+                            MAX_PATIENT_TABS as _max_tabs,
+                        )
+                    except Exception:  # pragma: no cover — defensive
+                        _max_tabs = 4
                     # Show error message
                     QMessageBox.warning(
                         self,
                         "Maximum Patient Tabs Reached",
-                        f"You can only open a maximum of 3 patient tabs at once.\n\n"
+                        f"You can only open a maximum of {_max_tabs} patient tabs at once.\n\n"
                         f"Please close one of the existing patient tabs before opening a new one."
                     )
                     # Clean up the widget

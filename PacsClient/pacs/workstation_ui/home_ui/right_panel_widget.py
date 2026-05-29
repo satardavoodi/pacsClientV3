@@ -86,7 +86,16 @@ class LoadingSpinner(QWidget):
 class RightPanelWidget(QWidget):
     """Right panel widget for displaying series information and thumbnails"""
 
-    THUMBNAIL_BOX_HEIGHT = 190
+    # MUST match ThumbnailManager.create_thumbnail_widget's widget.setFixedSize(190, 215)
+    # (PacsClient/pacs/patient_tab/utils/thumbnail_manager.py:1356).
+    # _set_reserved_content_height multiplies this by the visible row count
+    # and locks content_widget min == max == reserved_height. If this value
+    # is SMALLER than the real card height (e.g. 190 vs 215), the grid is
+    # squeezed and cards overlap each other vertically. See 2026-05-29
+    # round-2 home-thumbnail-overlap regression — the user-reported
+    # overlap survived a setVerticalSpacing bump because the root cause
+    # was the under-reserved height, not the grid spacing.
+    THUMBNAIL_BOX_HEIGHT = 215
     DEFAULT_MAX_WIDGET_HEIGHT = 16777215
     
     # Signals
@@ -178,9 +187,24 @@ class RightPanelWidget(QWidget):
         self.content_grid = QGridLayout(self.content_widget)
         # Move thumbnail to the left side with minimal margins
         # Small left margin, larger right margin to push thumbnail left
-        self.content_grid.setContentsMargins(8, 6, 14, 6)  # Left-aligned with proper spacing
+        # 2026-05-29 round-3 dotted-border-clip fix:
+        #   Real clearance between the card's right edge and the
+        #   AlwaysOn vertical scrollbar (12 px) is:
+        #       gap = panel_width - left_margin(8) - card_width(190) - scrollbar(12)
+        #           = panel_width - 210
+        #   The grid right margin DOES NOT change this — with AlignLeft
+        #   a fixed-width card sits at x = left_margin regardless of how
+        #   much right padding the grid drawing area has. The right
+        #   margin matters only if alignment is Center / Right OR if the
+        #   child has Expanding policy. We keep the larger right margin
+        #   (30) for visual breathing room at wide panel widths, but the
+        #   *real* fix is the setMinimumWidth bump below — without that
+        #   floor, narrow panel widths (200-219 px) produce a 0 px or
+        #   negative gap and the dotted border visually clips into the
+        #   scrollbar.
+        self.content_grid.setContentsMargins(8, 6, 30, 6)
         self.content_grid.setHorizontalSpacing(6)  # Reduced spacing for better fit
-        self.content_grid.setVerticalSpacing(6)   # Reduced spacing for better fit
+        self.content_grid.setVerticalSpacing(14)  # 2026-05-29: was 6 - increased so 215-tall thumbnail cards no longer overlap each other vertically.
         self.content_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)  # Align thumbnails to the left
         
         self.scroll_area.setWidget(self.content_widget)
@@ -192,11 +216,19 @@ class RightPanelWidget(QWidget):
         
         # Archetype 4: allow the right rail to resize within a sensible
         # range so the home QSplitter (in widget.py) can rebalance the
-        # tri-pane on narrow / wide monitors. Floor protects the 180 px
-        # thumbnail + margins; ceiling prevents the rail from dominating
-        # very wide monitors. See docs/conventions/RESPONSIVE_UI_CONVENTION.md.
-        # Original: setFixedWidth(216).
-        self.setMinimumWidth(200)
+        # tri-pane on narrow / wide monitors. Floor protects the 190 px
+        # thumbnail card + margins + scrollbar; ceiling prevents the rail
+        # from dominating very wide monitors. See
+        # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
+        # Original: setFixedWidth(216). Prior min: 200 (too tight — the
+        # card right edge sat at x=198 and the AlwaysOn scrollbar
+        # starts at x=panel_width-12, so a 200 px panel had a -10 px
+        # "gap" and the dotted border visually clipped into the
+        # scrollbar). 232 = 8 left margin + 190 card + 22 visible gap +
+        # 12 scrollbar — guarantees ≥ 22 px clearance at the minimum
+        # width AND lets the AlignLeft cards still sit cleanly at the
+        # left edge.
+        self.setMinimumWidth(232)
         self.setMaximumWidth(360)
         try:
             from PySide6.QtWidgets import QSizePolicy as _QSP

@@ -1,13 +1,28 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.1.2 (2026-05-26)
-**Previous Stable:** v3.1.1 (2026-05-26)
-**Release Date:** 2026-05-26
+**Current Stable Version:** v3.1.3 (2026-05-27)
+**Previous Stable:** v3.1.2 (2026-05-26)
+**Release Date:** 2026-05-27
 **Branch:** beta-version
 
 ---
 
-## v3.1.2 (2026-05-26) - Patch: responsive UI scaling + installer v3.1.2
+## v3.1.3 (2026-05-27) - Patch release: installer v3.1.3
+
+### Summary
+
+Patch release bundling the v3.1.2 responsive UI codebase with final v3.1.3
+production installer. All v3.1.2 and v3.0.9 features carried forward.
+
+### Included
+
+- Final v3.1.3 production installer (687 MB, Inno Setup 6)
+- All v3.1.2 responsive UI scaling and stability updates
+- All v3.1.1 + v3.0.9 codebase features (multi-study viewer, crash hardening, EULA)
+
+---
+
+## v3.1.2 (2026-05-26) - Patch release: responsive UI scaling + installer v3.1.2
 
 ### Summary
 

@@ -1,107 +1,105 @@
-# Test Suite Hub
+# AI-PACS Tests
 
-This folder contains the project test suites organized by subsystem.
-
-> Scope: this index covers `tests/` only. There are additional module-local tests (for example under `modules/EchoMind/secretary/tests/`).
-
----
-
-## Quick start
-
-Run from repository root:
-
-- `.venv\Scripts\python.exe tests\download_manager\run_dm_test.py`
-- `.venv\Scripts\python.exe tests\download_manager\test_dm_stress.py`
-- `.venv\Scripts\python.exe tests\load\run_load_test.py`
-- `.venv\Scripts\python.exe tests\database\run_db_test.py`
-- `.venv\Scripts\python.exe -m pytest tests\viewer\test_fast_viewer_pipeline.py -v`
-- `.venv\Scripts\python.exe -m pytest tests\smoke\test_import_smoke.py -v`
-- `.venv\Scripts\python.exe -m pytest tests\connection_between_modules\ -v`
-
-There is no single universal test runner for all suites; run suites separately.
+**For navigation by intent, see:**
+- [**INDEX_BY_GUARD.md**](INDEX_BY_GUARD.md) — every guard test and what it protects
+- [**QUICKSTART.md**](QUICKSTART.md) — 5-minute onboarding (how to run, where to add tests, the hard rules)
+- [**../docs/AUDIT_2026-05-28_OVERVIEW.md**](../docs/AUDIT_2026-05-28_OVERVIEW.md) — what the staged audit added
 
 ---
 
-## Suite map
+Tests are split into two top-level categories by **how they execute**:
 
-| Suite | Purpose | Key files | Typical entrypoint |
-|---|---|---|---|
-| `download_manager/` | DM state machine, coordinator, rules, retries, stress | `test_download_manager.py`, `test_dm_stress.py` | `run_dm_test.py` |
-| `performance/` | KPI scenario runners, comparison harness tests, FAST synthetic benchmarks, Block 1/2/3 KPI summaries, and anti-orphan job inventories | `test_b25_scenarios.py`, `test_clearcanvas_aipacs_kpi_harness.py`, `test_block_kpi_harness.py`, `test_pipeline_job_block_model.py` | `pytest tests/performance/ -v` |
-| `load/` | multi-patient/multi-series load scenarios | `run_load_test.py` | `run_load_test.py` |
-| `viewer/` | FAST/ADV viewer pipeline, backend config, geometry, drag-drop, tool layer | `test_fast_viewer_pipeline.py`, `test_fast_viewer_live_sync.py`, `test_viewer_backend_config.py` | `pytest tests/viewer/...` |
-| `fast/` | FAST sync geometry and FAST download/UI behavior | `test_sync_sparse_stack.py`, `test_sync_validity_classification.py` | `pytest tests/fast/ -v` |
-| `fast_viewer/` | FAST viewer functional/tool/perf slices | `test_tools_*.py`, `test_sync.py`, `test_performance.py` | `pytest tests/fast_viewer/ -v` |
-| `network/` | socket/gRPC protocol and behavior checks | `test_network.py` | direct python run |
-| `database/` | DB pool, CRUD, context-manager behavior | `test_database.py` | `run_db_test.py` |
-| `ui_services/` | home UI service layer checks | `test_ui_services.py` | direct python run |
-| `smoke/` | import smoke and basic sanity | `test_import_smoke.py` | `pytest tests/smoke/ -v` |
-| `connection_between_modules/` | cross-module contract checks | `test_connection_between_modules.py` | `pytest tests/connection_between_modules/ -v` |
-| `builder/` | packaging/build and plugin package tests | `test_plugin_package_*.py` | `pytest tests/builder/ -v` |
-| `runtime/` | runtime graphics + module loading behavior | `test_aipacs_runtime_*.py` | `pytest tests/runtime/ -v` |
-| `module_system/` | installation package behavior | `test_module_installation_packages.py` | `pytest tests/module_system/ -v` |
-| `printing/` | printing data/repository checks | `test_printing_series_repository.py` | `pytest tests/printing/ -v` |
-| `web_browser/` | browser state store behavior | `test_web_browser_state_store.py` | `pytest tests/web_browser/ -v` |
-| `offline_cloud_server/` | offline cloud server tests | `test_offline_cloud_server.py` | `run_offline_cloud_server_test.py` |
-| `system/` | stress/system-level scenarios | `test_system_stress.py` | `pytest tests/system/ -v` |
-| `diagnostics/` | scenario harness + KPI/failure detectors | `run_diagnostic.py`, `scenarios/s*.py` | `run_diagnostic.py` |
-| `cd_burner/` | cd burner portability checks | `test_cd_burner_portability.py` | `pytest tests/cd_burner/ -v` |
-| `manual_archive/` | relocated one-off scripts kept for historical context, not canonical regression coverage | `root_ad_hoc/*.py` | manual run only |
+| Folder | What it contains | How to run |
+|---|---|---|
+| `tests/code/` | Pure-Python + headless-Qt tests. No visible window required. Safe in CI. **The 167 existing tests live here.** | `pytest tests/code/` |
+| `tests/gui/` | Live-driver tests that interact with a real running AI-PACS window via UI automation (pywinauto, EchoMind Secretary, or Anthropic computer-use MCP). | See `tests/gui/README.md` |
+
+This split is binary on purpose: if a test can run from a CI pipeline without a display, it is *code*; if it needs a real desktop UI in front of it, it is *gui*.
 
 ---
 
-## Recommended run order by intent
+## tests/code/
 
-### Fast confidence pass (developer loop)
-1. `tests/smoke/`
-2. `tests/viewer/test_fast_viewer_pipeline.py`
-3. `tests/download_manager/run_dm_test.py`
-4. `tests/network/test_network.py`
+Subdivided by domain — same hierarchy that existed before the split:
 
-### ClearCanvas benchmark workflow validation
-1. `pytest tests/performance/test_clearcanvas_aipacs_kpi_harness.py -v`
-2. review `tests/performance/clearcanvas_aipacs_scenarios.json`
-3. review `tests/performance/clearcanvas_aipacs_benchmark_model.json`
-4. follow `docs/analysis/CLEARCANVAS_BENCHMARK_EXECUTION.md`
+```
+tests/code/
+├── architecture/    # cross-module constraints, signal hygiene, layering
+├── build/           # PyInstaller / Nuitka build checks
+├── builder/         # plugin packaging
+├── cd_burner/
+├── connection_between_modules/
+├── database/        # SQLite isolation, pollution cleanup
+├── diagnostics/
+├── download_manager/  # Zeta DM internals
+├── fast/            # FAST viewer non-UI bits
+├── fast_viewer/     # FAST viewer with offscreen Qt
+├── load/
+├── manual_archive/  # legacy test snapshots
+├── module_system/   # module registry & loader
+├── network/         # socket + (retired) gRPC
+├── offline_cloud_server/
+├── performance/     # perf benchmarks
+├── printing/
+├── runtime/         # aipacs_runtime helpers
+├── smoke/           # quick app-start smoke
+├── startup/
+├── storage/         # cleanup panel
+├── system/          # cross-cutting regression guards (e.g. 2026-05-27)
+├── ui_services/     # UI-thread dispatch, lifecycle
+├── utils/           # logging lint, config helpers
+├── viewer/          # main viewer + VTK + drag-drop (headless)
+└── web_browser/
+```
 
-### Release confidence pass
-1. DM + DM stress
-2. Load suite
-3. Viewer + FAST + FAST_VIEWER suites
-4. Database + network + runtime
-5. Connection/system/builder suites
+Some tests under `code/` import `PySide6` but never show a window — they construct
+QWidgets in offscreen mode and only assert on object state. Set the Qt platform
+to `offscreen` before running on a headless box:
+
+```bash
+export QT_QPA_PLATFORM=offscreen   # macOS/Linux
+$env:QT_QPA_PLATFORM = "offscreen" # PowerShell
+pytest tests/code/
+```
+
+### Recurring regression guards
+
+`tests/code/system/test_2026_05_27_regression_guards.py` is the structural
+guard for the three fixes shipped 2026-05-27. It fails the build if any of
+them regresses:
+
+- `client.get_study_info(` reappears in the GetStudyInfo probe path
+  (`_hp_study_save.py` — would re-introduce the 6.8 s download-start stall).
+- The Eagle Eye MG mirror loses its `QTimer.singleShot(0, _do_mirror)`
+  defer (would re-introduce the 0x8001010d COM crash on drag-drop).
+- The multi-patient Download metadata pre-fetch loses its
+  `ThreadPoolExecutor` (would re-introduce the 6-30 s UI freeze when
+  selecting 20-30 patients).
+
+Run just these:
+
+```bash
+pytest tests/code/system/test_2026_05_27_regression_guards.py -v
+```
 
 ---
 
-## Naming and placement conventions
+## tests/gui/
 
-- Use `test_<feature>.py` for pytest files.
-- Keep scenario runners as `run_<suite>_test.py` when a custom runner exists.
-- Place helper fixtures in suite-local `conftest.py` when practical.
-- Put long-running scenario scripts under the closest subsystem suite (`load/`, `diagnostics/`, `system/`) instead of `viewer/`.
-- Keep ad-hoc one-off validation scripts under `tests/manual_archive/`, not in repository root.
+Tests under `tests/gui/` need a running AI-PACS source build (the Python
+window — never the frozen `aipacs.exe`). They are not run in CI; they're for
+local validation and KPI extraction.
+
+See `tests/gui/README.md` for which driver to use and how to extend.
 
 ---
 
-## Notes for AI agents
+## Running everything
 
-When asked to "run tests", first determine if user wants:
-- **targeted suite** (preferred during debugging), or
-- **broad confidence pass** (slower).
-
-Use this folder map to route quickly to the smallest suite covering the issue.
-
-For ClearCanvas comparison work, start with:
-
-1. `docs/analysis/CLEARCANVAS_BENCHMARK_EXECUTION.md`
-2. `tests/performance/clearcanvas_aipacs_scenarios.json`
-3. `tests/performance/clearcanvas_aipacs_benchmark_model.json`
-4. `tests/performance/test_clearcanvas_aipacs_kpi_harness.py`
-
-For the new block-based performance model, also read:
-
-5. `docs/plans/FAST_BLOCK_PERFORMANCE_ARCHITECTURE.md`
-6. `tests/performance/block_kpi_model.json`
-7. `tests/performance/test_block_kpi_harness.py`
-8. `docs/plans/FAST_PIPELINE_JOB_BLOCK_INVENTORY.md`
-9. `tests/performance/pipeline_job_block_model.json`
+| Command | What it does |
+|---|---|
+| `pytest tests/code/` | Run the full code-only suite. Required for PRs. |
+| `pytest tests/code/<dir>/` | Run one domain (e.g. `tests/code/download_manager/`). |
+| `pytest tests/code/system/test_2026_05_27_regression_guards.py -v` | Regression guards only — fast smoke for the 2026-05-27 fixes. |
+| `python tests/gui/live_walkthroughs/extract_2026_05_27_kpis.py` | Parse the live log files and print KPI PASS/CHECK for the 2026-05-27 fixes. Run after a live session. |
+| `python tests/gui/pywinauto/run_patient_open_smoke.py` | Drive a real AI-PACS window through the patient-open path (pywinauto). Requires source build running. |

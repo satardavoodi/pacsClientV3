@@ -2,6 +2,8 @@
 # Auto-generated from home_ui.py — Phase 3 split
 
 import asyncio
+import concurrent.futures
+import time as _time
 from functools import partial
 import json
 import logging as _logging
@@ -52,7 +54,15 @@ class _HPDownloadMixin:
             
             # Get or create Zeta Download Manager
             zeta_manager = self._get_or_create_download_manager_tab()
-            
+
+            # Lazy-attach the DownloadAdapter to the CommandBus the first
+            # time the DM widget is materialised. No-op on subsequent calls.
+            try:
+                if hasattr(self, "_attach_download_adapter_lazy"):
+                    self._attach_download_adapter_lazy(zeta_manager)
+            except Exception:
+                pass
+
             if not zeta_manager:
                 QMessageBox.critical(self, "Error", "Failed to create Zeta Download Manager")
                 return
@@ -64,24 +74,102 @@ class _HPDownloadMixin:
                         self.tab_widget.setCurrentIndex(i)
                         break
             
-            # Enhance studies with series information before adding
-            for study in selected_studies:
-                if 'series' not in study or not study.get('series'):
+            # ── Enhance studies with series information before adding ──
+            #
+            # PERF FIX (multi-patient queue slowness, 2026-05-27): the previous
+            # implementation looped through `selected_studies` sequentially on
+            # the UI thread, calling `_get_or_fetch_series_info(study_uid, …)`
+            # for each study that didn't already carry a populated `series`
+            # list. Each call does a socket round-trip to the PACS server
+            # (GetStudyThumbnails / QuerySeriesThumbnails) costing ~200-500 ms;
+            # for 20-30 selected patients that produced a 6-30 s UI freeze
+            # before the DM queue table populated. The fix parallelizes those
+            # I/O-bound fetches across a thread pool while pumping
+            # QApplication.processEvents() so the UI stays responsive. The
+            # ordering of `selected_studies` and the per-study dict mutation
+            # contract are preserved — only the wait pattern changed, so the
+            # subsequent `zeta_manager.add_downloads(...)` call sees the same
+            # enriched study dicts as before. Dedup correctness is unaffected
+            # because `add_downloads` does its own `state_store.get` dedup.
+            studies_needing_fetch = [
+                s for s in selected_studies
+                if (not s.get('series')) and s.get('study_uid')
+            ]
+            already_populated = len(selected_studies) - len(studies_needing_fetch)
+            print(
+                f"[Old Download] Pre-fetch needed for {len(studies_needing_fetch)} / "
+                f"{len(selected_studies)} studies (already populated: {already_populated})"
+            )
+
+            if studies_needing_fetch:
+                _prefetch_start = _time.monotonic()
+                # Cap workers so we never saturate the socket server. 8 is a
+                # sensible default; bound by the count of fetches in flight.
+                max_workers = max(1, min(8, len(studies_needing_fetch)))
+
+                def _fetch_one(study_ref):
+                    """Fetch series info for one study. Returns (study_ref, info, err)."""
                     try:
-                        study_uid = study.get('study_uid')
-                        patient_id = study.get('patient_id')
-                        if study_uid:
-                            print(f"[Old Download] Fetching series info for {study.get('patient_name')}...")
-                            study_info = self._get_or_fetch_series_info(study_uid, patient_id)
+                        info = self._get_or_fetch_series_info(
+                            study_ref.get('study_uid'),
+                            study_ref.get('patient_id'),
+                        )
+                        return (study_ref, info, None)
+                    except Exception as exc:
+                        return (study_ref, None, exc)
+
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=max_workers,
+                    thread_name_prefix="DM-Prefetch",
+                ) as executor:
+                    futures = [executor.submit(_fetch_one, s) for s in studies_needing_fetch]
+                    completed = 0
+                    total = len(futures)
+                    # Drain futures while keeping the UI responsive. We poll
+                    # at a short interval and call QApplication.processEvents
+                    # so the user can scroll/cancel while the prefetch runs.
+                    pending = set(futures)
+                    while pending:
+                        done, pending = concurrent.futures.wait(
+                            pending,
+                            timeout=0.05,
+                            return_when=concurrent.futures.FIRST_COMPLETED,
+                        )
+                        for fut in done:
+                            completed += 1
+                            try:
+                                study_ref, study_info, err = fut.result()
+                            except Exception as exc:
+                                print(f"⚠️ [Old Download] Prefetch worker crashed: {exc}")
+                                continue
+                            if err is not None:
+                                print(
+                                    f"⚠️ [Old Download] Could not fetch series info for "
+                                    f"{study_ref.get('patient_name')}: {err}"
+                                )
+                                continue
                             if study_info:
-                                study['series'] = study_info.get('series', [])
-                                study['series_count'] = study_info.get('count_of_series', len(study.get('series', [])))
-                                if study.get('series'):
-                                    study['images_count'] = sum(s.get('image_count', 0) for s in study['series'])
-                                print(f"[Old Download] ✅ Fetched {len(study.get('series', []))} series")
-                    except Exception as e:
-                        print(f"⚠️ [Old Download] Could not fetch series info: {e}")
-            
+                                study_ref['series'] = study_info.get('series', [])
+                                study_ref['series_count'] = study_info.get(
+                                    'count_of_series', len(study_ref.get('series', []))
+                                )
+                                if study_ref.get('series'):
+                                    study_ref['images_count'] = sum(
+                                        s.get('image_count', 0) for s in study_ref['series']
+                                    )
+                        # Keep the UI thread responsive during parallel I/O.
+                        try:
+                            QApplication.processEvents()
+                        except Exception:
+                            pass
+
+                _prefetch_elapsed = (_time.monotonic() - _prefetch_start) * 1000
+                print(
+                    f"[Old Download] ✅ Parallel pre-fetch complete: {completed}/{total} "
+                    f"studies in {_prefetch_elapsed:.0f} ms "
+                    f"(workers={max_workers})"
+                )
+
             print(f"[Old Download] Adding {len(selected_studies)} studies to manager")
             
             # Add downloads to Zeta

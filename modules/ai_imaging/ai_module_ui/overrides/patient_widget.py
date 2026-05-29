@@ -1,7 +1,7 @@
 import asyncio
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QSlider, QWidget, QGroupBox, QVBoxLayout, QButtonGroup, QFrame
 
 from PacsClient.pacs.patient_tab.ui import PatientWidget
@@ -239,6 +239,19 @@ class AIPatientWidget(PatientWidget):
         drag-and-drop (which passes vtk_widget= as a keyword) that raised
         TypeError, the drop silently failed and the viewer stayed stuck on
         its loading spinner.
+
+        CRASH-HARDENING (Eagle Eye drag-drop, native fault 0x8001010d):
+        The previous implementation ran the mirror super().change_series_on_viewer
+        call SYNCHRONOUSLY immediately after the primary switch. On a drag-drop
+        this stacked two full VTK series loads (with paint/render events) into
+        the same event-loop turn, while the Windows OLE drop's COM context was
+        still settling — observed as a fatal RPC_E_CANTCALLOUT_ININPUTSYNCCALL
+        crash in `user_data/logs/native_fault.log`. The mirror call is now
+        deferred via QTimer.singleShot(0) so it runs on the next event-loop
+        iteration, after the primary switch's paint/render and the OLE drop
+        context have fully released. Each step is also individually guarded so
+        a failure on the mirror viewer can never propagate back into the drop
+        completion path on the primary viewer.
         """
         # Tolerate a legacy target_viewer_id keyword but never forward it.
         kwargs.pop('target_viewer_id', None)
@@ -247,7 +260,7 @@ class AIPatientWidget(PatientWidget):
             series_index, flag_change_selected_widget, vtk_widget, slider, allow_paired,
         )
 
-        # For MG, mirror the same series onto the other viewer.
+        # For MG, mirror the same series onto the other viewer — DEFERRED.
         try:
             if hasattr(self, 'lst_node_viewers') and len(self.lst_node_viewers) >= 2:
                 if 0 <= series_index < len(self.lst_thumbnails_data):
@@ -255,19 +268,64 @@ class AIPatientWidget(PatientWidget):
                         self.lst_thumbnails_data[series_index].get('modality', '')
                     ).upper()
                     if modality == 'MG':
-                        for node in self.lst_node_viewers[:2]:
-                            node_widget = getattr(node, 'vtk_widget', None)
-                            if node_widget is None or node_widget is vtk_widget:
-                                continue
-                            super().change_series_on_viewer(
-                                series_index,
-                                flag_change_selected_widget=False,
-                                vtk_widget=node_widget,
-                                slider=getattr(node, 'slider', None),
-                                allow_paired=allow_paired,
-                            )
+                        self._schedule_mg_mirror(
+                            series_index=series_index,
+                            primary_vtk_widget=vtk_widget,
+                            allow_paired=allow_paired,
+                        )
         except Exception as e:
             logger.warning(f"[MG] viewer sync after series change failed: {e}")
 
         return result
+
+    def _schedule_mg_mirror(self, *, series_index, primary_vtk_widget, allow_paired):
+        """Mirror MG series load onto every other viewer, on a later event tick.
+
+        Runs on a 0-ms QTimer so the primary switch's VTK paint/render and the
+        OLE drag-drop's COM context have fully released before we kick the
+        second heavy series load. See change_series_on_viewer docstring for
+        the crash-hardening context.
+        """
+        def _do_mirror():
+            try:
+                node_list = list(getattr(self, 'lst_node_viewers', []) or [])[:2]
+            except Exception:
+                return
+            for node in node_list:
+                try:
+                    node_widget = getattr(node, 'vtk_widget', None)
+                except Exception:
+                    node_widget = None
+                if node_widget is None or node_widget is primary_vtk_widget:
+                    continue
+                try:
+                    # Cheap shiboken liveness probe — guards against the
+                    # mirror viewer being torn down between schedule and fire.
+                    _ = node_widget.objectName()
+                except Exception:
+                    continue
+                try:
+                    super(AIPatientWidget, self).change_series_on_viewer(
+                        series_index,
+                        flag_change_selected_widget=False,
+                        vtk_widget=node_widget,
+                        slider=getattr(node, 'slider', None),
+                        allow_paired=allow_paired,
+                    )
+                except Exception as mirror_err:
+                    logger.warning(
+                        "[MG] mirror series=%s onto secondary viewer failed: %s",
+                        series_index, mirror_err,
+                    )
+
+        try:
+            QTimer.singleShot(0, _do_mirror)
+        except Exception as sched_err:
+            # If scheduling itself fails, fall back to a synchronous mirror
+            # rather than silently skipping it — preserves prior behavior.
+            logger.warning("[MG] mirror scheduling failed (%s); running inline", sched_err)
+            try:
+                _do_mirror()
+            except Exception:
+                pass
 

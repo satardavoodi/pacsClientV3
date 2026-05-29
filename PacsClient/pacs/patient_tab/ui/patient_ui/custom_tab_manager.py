@@ -107,9 +107,22 @@ class CustomTabManager:
         self.title_bar_tabs_layout = QHBoxLayout(self.title_bar_tabs_container)
         self.title_bar_tabs_layout.setContentsMargins(0, 0, 0, 0)
         self.title_bar_tabs_layout.setSpacing(4)
-        # Note: no addStretch() here — the outer scroll area + outer stretch
-        # absorb extra space. An inner stretch would defeat horizontal scroll
-        # by always reporting unbounded preferred width.
+        # 2026-05-29 round-4 left-align fix:
+        #   widgetResizable=True on the wrapping QScrollArea expands this
+        #   container to the viewport width. With Fixed-size chips and NO
+        #   stretch, Qt's QHBoxLayout distributes the leftover horizontal
+        #   space evenly around the chips — they appear CENTERED inside the
+        #   scroll area instead of left-packed.
+        #   A trailing addStretch(1) absorbs the leftover space on the right,
+        #   pinning chips to the left edge (which is what the user expects
+        #   and matches the AI-Pacs logo on the far left).
+        #   This does NOT defeat horizontal scroll: QSpacerItem.sizeHint()
+        #   is (0, 0), so it contributes 0 to the layout's preferred width.
+        #   When the natural chip-strip width exceeds the viewport, the
+        #   scroll area still scrolls correctly.
+        #   _add_title_bar_tab_widget uses count()-1 → inserts NEW chips
+        #   before this stretch, preserving left-to-right chip order.
+        self.title_bar_tabs_layout.addStretch(1)
 
         # Archetype 1: wrap the chip strip in a horizontal QScrollArea so when
         # the title bar can't fit all chips (e.g. 4 chips on a 1280-wide
@@ -120,7 +133,7 @@ class CustomTabManager:
             from PacsClient.utils.responsive_layout import wrap_in_horizontal_scroll
             self._title_bar_tabs_scroll = wrap_in_horizontal_scroll(
                 self.title_bar_tabs_container,
-                max_height=70,  # matches PatientTabWidget.setFixedHeight(70)
+                max_height=80,  # 2026-05-29 user request: was 70 (matched PatientTabWidget) but gave zero buffer - patient tab bottom edge was visually clipped. 80 = 70 tab + 10 buffer.
             )
             self.title_bar_layout.addWidget(self._title_bar_tabs_scroll, 1)
         except Exception as _scroll_exc:  # pragma: no cover — defensive
@@ -131,7 +144,13 @@ class CustomTabManager:
             )
             self.title_bar_tabs_layout.addStretch(1)
             self.title_bar_layout.addWidget(self.title_bar_tabs_container, 1)
-        self.title_bar_layout.addStretch(1)
+        # 2026-05-29 left-alignment notes:
+        # - Outer title_bar_layout has NO trailing addStretch — scroll_area at
+        #   stretch=1 claims ALL leftover width up to user_info_container.
+        # - Inner title_bar_tabs_layout has a trailing addStretch(1) — chips
+        #   are pinned to the left edge of the (now wide) scroll viewport.
+        # Together: scroll area is wide, chips sit on the left, scrolling
+        # still works when chip-strip natural width exceeds viewport width.
         
         # Hide the original tab bar
         self.tab_widget.tabBar().setVisible(False)
@@ -496,7 +515,7 @@ class CustomTabManager:
         """
         Add a new patient tab with custom UI
         Prevents duplicate tabs for the same patient using study_uid
-        Limits total patient tabs to MAX_PATIENT_TABS (3)
+        Limits total patient tabs to MAX_PATIENT_TABS (see module-level constant)
         
         Args:
             patient_name: Name of the patient

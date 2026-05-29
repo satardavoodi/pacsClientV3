@@ -38,7 +38,6 @@ from typing import Iterable, Optional
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFontMetrics, QResizeEvent
 from PySide6.QtWidgets import (
-    QAbstractScrollArea,
     QFrame,
     QHeaderView,
     QLabel,
@@ -104,8 +103,20 @@ def wrap_in_horizontal_scroll(
     sa.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
     if not frame:
         sa.setFrameShape(QFrame.NoFrame)
-    # Scroll per pixel so chips and toolbar buttons drag smoothly.
-    sa.setHorizontalScrollMode(QAbstractScrollArea.ScrollPerPixel)
+    # Smooth horizontal scroll for the chip strip / toolbar row.
+    #
+    # NOTE - 2026-05-28 Stage 9 fix: this line used to read
+    # `sa.setHorizontalScrollMode(QAbstractScrollArea.ScrollPerPixel)`
+    # which is silently wrong: setHorizontalScrollMode lives on
+    # QAbstractItemView (used by QTableView etc.), NOT on
+    # QAbstractScrollArea or QScrollArea. PySide6 raised AttributeError
+    # at runtime, the caller in custom_tab_manager.py:119 caught it via
+    # try/except and fell back to a non-scrolling container - silently
+    # disabling the chip-strip horizontal scroll on narrow monitors
+    # (the original defect this wrap was meant to fix).
+    # The correct way to tune QScrollArea scrolling smoothness is the
+    # scrollbar's single-step value.
+    sa.horizontalScrollBar().setSingleStep(8)
     if max_height is not None:
         sa.setMaximumHeight(int(max_height))
         sa.setMinimumHeight(int(max_height))

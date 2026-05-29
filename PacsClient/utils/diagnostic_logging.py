@@ -181,6 +181,26 @@ class DbOnlyFilter(logging.Filter):
         return component == "db"
 
 
+class CatchAllOtherFilter(logging.Filter):
+    """Captures records NOT routed to one of the specialised component files.
+
+    Without this filter, records tagged ``component=ui`` (which is the
+    default fallback in _infer_component) only ever reach the console
+    handler. That made app.log invisible to anyone reading the
+    project's user_data/logs/ directory — the documented log location.
+
+    This filter is the inverse of the three specialised filters and is
+    attached to a new ``app.log`` handler in configure_diagnostic_logging.
+    See docs/plans/architecture/LIVE_VALIDATION_2026-05-28_v2.md (Gap #1).
+    """
+
+    _SPECIALISED_COMPONENTS = frozenset({"download", "viewer", "db"})
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        component = getattr(record, "component", _infer_component(record.name))
+        return component not in self._SPECIALISED_COMPONENTS
+
+
 class SafeRotatingFileHandler(RotatingFileHandler):
     """RotatingFileHandler variant that degrades gracefully on Windows locks.
 
@@ -493,12 +513,30 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     db_handler.addFilter(DbOnlyFilter())
     db_handler.addFilter(threshold_filter)
 
+    # Catch-all handler for everything that isn't routed to the three
+    # specialised files (i.e. component=ui plus any future component).
+    # This is what makes app.log the "general application log" users see.
+    app_handler = SafeRotatingFileHandler(
+        logs_dir / "app.log",
+        maxBytes=max_bytes,
+        backupCount=backup_count,
+        encoding="utf-8",
+    )
+    app_handler.setLevel(logging.DEBUG)
+    app_handler.setFormatter(formatter)
+    app_handler.addFilter(context_filter)
+    app_handler.addFilter(CatchAllOtherFilter())
+    app_handler.addFilter(threshold_filter)
+
     if async_enabled:
-        _install_async_file_logging(root, [viewer_handler, download_handler, db_handler])
+        _install_async_file_logging(
+            root, [viewer_handler, download_handler, db_handler, app_handler]
+        )
     else:
         root.addHandler(viewer_handler)
         root.addHandler(download_handler)
         root.addHandler(db_handler)
+        root.addHandler(app_handler)
 
     app_session_id = os.getenv("AIPACS_ACTION_SESSION_ID") or new_correlation_id("sess")
     os.environ["AIPACS_ACTION_SESSION_ID"] = app_session_id

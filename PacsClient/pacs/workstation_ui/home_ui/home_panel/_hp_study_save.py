@@ -2,6 +2,7 @@
 # Auto-generated from home_ui.py — Phase 3 split
 
 import logging as _logging
+import threading
 import time
 import traceback
 
@@ -17,13 +18,37 @@ from PacsClient.utils.db_manager import get_study_by_study_uid
 from modules.network.socket_client import PatientListSocketClient
 from modules.offline_cloud_server.service import export_studies_to_offline_cloud, get_all_offline_cloud_servers, list_offline_cloud_studies, record_offline_cloud_sync_event, sync_offline_cloud_study_preview_to_local, sync_offline_cloud_study_to_local, validate_offline_cloud_package
 
-# Per-process record of (host, port) servers whose GetStudyInfo endpoint is
-# unresponsive. The GetStudyInfo probe in get_series_info_from_server has a 3s
-# timeout; on servers that never answer it, that 3s is wasted on EVERY study
-# before the queue/Download-Manager path falls back to GetStudyThumbnails.
-# After the first timeout the server is recorded here and the probe is skipped
-# for the rest of the session. Cleared on restart, so a fixed server re-probes.
+# ─────────────────────────────────────────────────────────────────────────
+# GetStudyInfo probe regression guard (download-start delay, ZETA §14)
+#
+# This file is the integration surface for the GetStudyInfo probe inside
+# get_series_info_from_server(). The probe is gated by:
+#   1. _GETSTUDYINFO_UNSUPPORTED  - per-process set of (host, port) servers
+#      whose GetStudyInfo endpoint never answers. Once a probe times out the
+#      server is added here and the probe is SKIPPED for the rest of the
+#      session — falling straight through to the reliable
+#      GetStudyThumbnails / QuerySeriesThumbnails endpoints below.
+#   2. _GETSTUDYINFO_PROBE_LOCK  - serializes the very FIRST probe per server.
+#      Multiple patient-open threads racing the empty skip-cache would
+#      otherwise each stall ~3s in parallel before populating the cache.
+#
+# REGRESSION WARNING — DO NOT REPLACE THE send_request("GetStudyInfo", …)
+# CALL BELOW WITH client.get_study_info(study_uid). The higher-level
+# get_study_info() helper performs an internal 2-attempt retry with
+# time.sleep(0.2) between attempts (see modules/network/socket_client.py
+# `def get_study_info`); on a server that never answers this turns the
+# intended ~3s fast probe into ~6.2s every time, re-introducing a ~6.8s
+# patient-open / download-start stall (multiple opens stack up because the
+# skip-cache isn't populated until the first probe finally returns). This
+# regression has been reintroduced multiple times by well-intentioned
+# refactors that "tidy up" the explicit send_request call into the
+# higher-level helper. The fast single-attempt probe MUST stay here.
+# See: docs/plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md
+#      §14 and the project CLAUDE.md "Zeta Download Manager" regression
+#      guard for the full record.
+# ─────────────────────────────────────────────────────────────────────────
 _GETSTUDYINFO_UNSUPPORTED = set()
+_GETSTUDYINFO_PROBE_LOCK = threading.Lock()
 
 
 class _HPStudySaveMixin:
@@ -105,18 +130,57 @@ class _HPStudySaveMixin:
                 # fall back to the reliable GetStudyThumbnails endpoint below.
                 # If it times out, the server is added to _GETSTUDYINFO_UNSUPPORTED
                 # so later studies skip this dead 3s probe entirely.
+                #
+                # REGRESSION GUARD (ZETA §14): use raw send_request("GetStudyInfo")
+                # — a SINGLE attempt with the 3s timeout. NEVER call
+                # client.get_study_info(study_uid); that helper retries twice
+                # (~6.2s on a dead endpoint) and re-introduces a ~6.8s download-
+                # start stall. See module docstring above for full context.
                 client = PatientListSocketClient(host=host, port=port, timeout=3)
                 _probe_started = time.monotonic()
                 info_data = None
+                response = None
+                _had_response = False
                 try:
-                    info_data = client.get_study_info(study_uid)
+                    # Serialize the FIRST probe per server so racing patient
+                    # opens don't all eat the 3s timeout in parallel before
+                    # the _GETSTUDYINFO_UNSUPPORTED skip-cache is populated.
+                    with _GETSTUDYINFO_PROBE_LOCK:
+                        # Re-check inside the lock: a sibling thread may have
+                        # just timed out and populated the cache while we were
+                        # waiting on the lock.
+                        if (host, port) in _GETSTUDYINFO_UNSUPPORTED:
+                            response = None
+                        else:
+                            try:
+                                response = client.send_request(
+                                    "GetStudyInfo",
+                                    {"study_instance_uid": str(study_uid or "").strip()},
+                                )
+                                _had_response = response is not None
+                            except Exception:
+                                response = None
+                                _had_response = False
                 except Exception:
-                    info_data = None
+                    response = None
+                    _had_response = False
                 finally:
                     try:
                         client.disconnect()
                     except Exception:
                         pass
+
+                # Normalize the response payload to the same shape the rest of
+                # this function expects from the (deprecated) get_study_info()
+                # helper.
+                if response is not None:
+                    try:
+                        status = str(response.get("status", "") or "").lower()
+                        if status in {"success", "ok"} or bool(response.get("success")):
+                            info_data = response.get("data") or response
+                    except Exception:
+                        info_data = None
+
                 _probe_elapsed = time.monotonic() - _probe_started
 
                 if info_data:
@@ -162,17 +226,19 @@ class _HPStudySaveMixin:
                     if study_info['series']:
                         return study_info
 
-                # GetStudyInfo yielded no usable series. If the call was slow it
-                # almost certainly timed out — record this server so subsequent
-                # studies skip the dead 3s probe and go straight to the
+                # GetStudyInfo yielded no usable series. If the call was slow
+                # OR the server returned nothing at all, record this server so
+                # subsequent studies skip the dead probe and go straight to the
                 # GetStudyThumbnails fallback below.
-                if _probe_elapsed >= 2.5:
-                    _GETSTUDYINFO_UNSUPPORTED.add((host, port))
-                    _print_logger.info(
-                        "[series-info] GetStudyInfo unresponsive on %s:%s (%.1fs) — "
-                        "skipping that probe for the rest of this session",
-                        host, port, _probe_elapsed,
-                    )
+                if _probe_elapsed >= 2.5 or not _had_response:
+                    if (host, port) not in _GETSTUDYINFO_UNSUPPORTED:
+                        _GETSTUDYINFO_UNSUPPORTED.add((host, port))
+                        _print_logger.info(
+                            "[series-info] GetStudyInfo unresponsive on %s:%s "
+                            "(%.1fs, had_response=%s) — skipping that probe for "
+                            "the rest of this session",
+                            host, port, _probe_elapsed, _had_response,
+                        )
 
             response = self._fetch_study_thumbnails_from_socket(
                 study_uid,
