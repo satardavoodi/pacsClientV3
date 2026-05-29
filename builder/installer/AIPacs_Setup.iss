@@ -34,6 +34,17 @@ SetupIconFile=..\..\Qss\images\favicon.ico
 ; Installer EULA must remain proprietary and require explicit acceptance.
 LicenseFile=EULA.txt
 UninstallDisplayIcon={app}\AIPacs.exe
+UninstallDisplayName={#MyAppName} {#MyAppVersion}
+VersionInfoVersion={#MyAppVersion}
+; Standard-update behaviour: when AIPacs is running during an upgrade, use the
+; Windows Restart Manager to close it automatically so its files are not locked.
+; This removes the "close the app / files in use" failures that previously forced
+; a manual uninstall before reinstalling. RestartApplications=no keeps it simple:
+; we close the running app but do not relaunch it at the end of setup (the [Run]
+; entry already offers an optional launch).
+CloseApplications=yes
+CloseApplicationsFilter=*.exe,*.dll,*.pyd
+RestartApplications=no
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -607,6 +618,111 @@ begin
     '}';
 
   SaveStringToFile(ProfilePath, JsonText, False);
+end;
+
+function GetPreviousUninstaller(): String;
+var
+  UninstallKey: String;
+  Value: String;
+begin
+  // Inno records its uninstaller under <AppId>_is1. The AppId in [Setup] is the
+  // literal GUID {2D6A29F1-11CF-4A1B-9C3A-0D6B14661E65}. RegQueryStringValue uses
+  // the subkey string verbatim (no constant expansion), so the GUID is safe inline.
+  Result := '';
+  UninstallKey :=
+    'SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\' +
+    '{2D6A29F1-11CF-4A1B-9C3A-0D6B14661E65}_is1';
+
+  if RegQueryStringValue(HKLM64, UninstallKey, 'QuietUninstallString', Value) then
+    Result := Value
+  else if RegQueryStringValue(HKLM32, UninstallKey, 'QuietUninstallString', Value) then
+    Result := Value
+  else if RegQueryStringValue(HKLM64, UninstallKey, 'UninstallString', Value) then
+    Result := Value
+  else if RegQueryStringValue(HKLM32, UninstallKey, 'UninstallString', Value) then
+    Result := Value;
+end;
+
+procedure RunPreviousUninstaller(const UninstallString: String);
+var
+  Prog: String;
+  Params: String;
+  Rest: String;
+  ClosingQuote: Integer;
+  UpperParams: String;
+  ResultCode: Integer;
+  Waited: Integer;
+  ExePath: String;
+begin
+  // QuietUninstallString is normally '"<path>\unins000.exe" /SILENT ...'.
+  // Split the quoted program path from its parameters.
+  if Copy(UninstallString, 1, 1) = '"' then
+  begin
+    Rest := Copy(UninstallString, 2, Length(UninstallString));
+    ClosingQuote := Pos('"', Rest);
+    if ClosingQuote = 0 then
+    begin
+      Prog := UninstallString;
+      Params := '';
+    end
+    else
+    begin
+      Prog := Copy(Rest, 1, ClosingQuote - 1);
+      Params := Trim(Copy(Rest, ClosingQuote + 1, Length(Rest)));
+    end;
+  end
+  else
+  begin
+    Prog := UninstallString;
+    Params := '';
+  end;
+
+  // Force a fully silent, non-restarting uninstall regardless of how the
+  // recorded string was formed.
+  UpperParams := Uppercase(Params);
+  if Pos('/SILENT', UpperParams) = 0 then
+    Params := Trim(Params + ' /SILENT');
+  if Pos('/SUPPRESSMSGBOXES', UpperParams) = 0 then
+    Params := Trim(Params + ' /SUPPRESSMSGBOXES');
+  if Pos('/NORESTART', UpperParams) = 0 then
+    Params := Trim(Params + ' /NORESTART');
+
+  ExePath := AddBackslash(WizardDirValue()) + 'AIPacs.exe';
+
+  if Exec(Prog, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    // The Inno uninstaller relaunches a temporary copy of itself, so the initial
+    // Exec call can return before removal actually finishes. Wait (bounded to
+    // ~60 s) until the previous AIPacs.exe is gone so the new payload is never
+    // copied on top of an in-progress uninstall.
+    Waited := 0;
+    while FileExists(ExePath) and (Waited < 60000) do
+    begin
+      Sleep(500);
+      Waited := Waited + 500;
+    end;
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+var
+  PreviousUninstaller: String;
+begin
+  // Standard-update behaviour: if a previous AIPacs (same AppId) is registered,
+  // run its uninstaller silently before laying down the new build. This gives a
+  // clean slate on every upgrade (removing orphaned PyInstaller engine files that
+  // an in-place overwrite would leave behind) without the operator having to
+  // uninstall manually first.
+  //
+  // User data is preserved: the previous uninstaller only removes files it logged
+  // at install time. Downloaded DICOMs/cache under {app}\User Data and the module
+  // packages under {commonappdata}\AIPacs are not in that log, so they survive.
+  Result := '';
+  NeedsRestart := False;
+
+  PreviousUninstaller := GetPreviousUninstaller();
+  if PreviousUninstaller <> '' then
+    RunPreviousUninstaller(PreviousUninstaller);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
