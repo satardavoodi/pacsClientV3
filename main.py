@@ -1195,7 +1195,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.1.3")
+    app.setApplicationVersion("3.1.4")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1206,7 +1206,19 @@ if __name__ == "__main__":
     theme_manager = get_theme_manager()
 
     def _apply_application_theme(theme=None):
-        themed_stylesheet = theme_manager.build_application_stylesheet(theme) + get_scroll_area_style()
+        # Default ("v1") path is byte-identical to before. The parallel "v2"
+        # design layer is opt-in via PacsClient.utils.ui_variant, and ANY failure
+        # in it falls back to v1 — so the live clinical UI can never be broken by
+        # the new design language. See docs/design/CLAUDE_DESIGN_WORKSTATION_V1_PLAN.md.
+        base_stylesheet = theme_manager.build_application_stylesheet(theme)
+        try:
+            from PacsClient.utils.ui_variant import get_ui_variant
+            if get_ui_variant() == "v2":
+                from PacsClient.utils.theme_v2 import build_application_stylesheet_v2
+                base_stylesheet = build_application_stylesheet_v2(theme_manager, theme)
+        except Exception:
+            base_stylesheet = theme_manager.build_application_stylesheet(theme)
+        themed_stylesheet = base_stylesheet + get_scroll_area_style()
         app.setStyleSheet(themed_stylesheet)
 
     _apply_application_theme(theme_manager.current_theme())

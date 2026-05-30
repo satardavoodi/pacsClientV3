@@ -187,6 +187,14 @@ class PatientSearchWidget(QWidget):
                     stop:0 #065f46, stop:1 #064e3b);
             }
         """)
+        # V2 parallel design (opt-in, default OFF): render Search as the single
+        # accent "primary" action. No-op unless ui_variant('home')=='v2'; any
+        # failure leaves the V1 green style above untouched.
+        try:
+            from PacsClient.utils.v2_style import apply_search_button_v2
+            apply_search_button_v2(self.search_btn)
+        except Exception:
+            pass
         self.search_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.search_btn.clicked.connect(self._on_search_clicked)
         self.search_button_layout.addWidget(self.search_btn)
@@ -677,6 +685,13 @@ class PatientSearchWidget(QWidget):
                 }}
                 """
             )
+            # V2 parallel design (opt-in, default OFF): keep Search on the accent
+            # primary style after theme re-applies. No-op unless home == v2.
+            try:
+                from PacsClient.utils.v2_style import apply_search_button_v2
+                apply_search_button_v2(self.search_btn)
+            except Exception:
+                pass
         if hasattr(self, "cancel_search_btn"):
             self.cancel_search_btn.setStyleSheet(
                 f"""

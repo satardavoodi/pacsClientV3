@@ -333,6 +333,13 @@ class _PWPanelsMixin:
                 border-radius: 8px;
             }
         """)
+        # V2 parallel design (opt-in, default OFF): real accent header (fixes the
+        # off-palette purple). No-op unless ui_variant('viewer')=='v2'.
+        try:
+            from PacsClient.utils.v2_style import apply_thumbnail_header_v2
+            apply_thumbnail_header_v2(title_label)
+        except Exception:
+            pass
 
         # Count indicator
         self.thumb_count_label = QLabel("0 series")

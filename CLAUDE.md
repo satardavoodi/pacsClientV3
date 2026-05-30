@@ -186,3 +186,36 @@ Key invariants that must not be broken:
 - Deferred / outstanding: review-doc steps S2.3, S2.5, S3.2–S3.5, Phase 4, and the
   subprocess-spawn pre-warm — all test-gated. Run `tests/download_manager/` before
   resuming.
+
+### Viewer/Home "V2" design layer (parallel, flag-gated — 2026-05-30)
+Before editing `PacsClient/utils/v2_style.py`, `PacsClient/utils/ui_variant.py`, the viewer
+toolbar styling (`patient_tab/.../patient_toolbar/toolbar_manager.py`), or home-page widget
+styling, **read `docs/design/V2_DESIGN_SYSTEM_AS_BUILT.md`** (authoritative as-built; the
+`*_REVIEW.md` / `*_PLAN.md` files are background).
+
+Key invariants that must not be broken:
+- V2 is **opt-in and default OFF** (`get_ui_variant(module)` via env `AIPACS_UI_VARIANT` or
+  `config/ui_variant.json`). With the flag off, V1 must render **byte-identical** — every
+  `apply_*_v2()` wrapper checks `home_is_v2()` / `viewer_is_v2()` and no-ops otherwise.
+- **Apply at the source, not after the fact.** Each `apply_*_v2()` is called from *inside* the
+  widget's V1 source style function (e.g. `_apply_qtoolbutton_style`, `_apply_split_*_style`,
+  `_apply_dropdown_button_style`, `PatientTableWidget._apply_theme`) so it survives the app's
+  frequent re-styling. Calling it from an outer creation site regresses under re-style.
+- Split-pair toolbar buttons draw their **own** box (split geometry) and share one hover via the
+  `_SplitGroup` event filter setting `groupHover` on both halves. Status menus keep the semantic
+  status **dot** colour; only chrome/text are quieted. Tokens only — no hard-coded hex except
+  builder fallbacks.
+- Run `tests/code/test_v2_style_scaffold.py` + `test_ui_variant_scaffold.py` after any change.
+
+### FAST stack-drag pressure sampler (main-thread stall fix — 2026-05-30)
+Before editing the FAST stack-drag path in `modules/viewer/fast/qt_viewer_bridge.py`, **read
+`docs/plans/performance/FAST_STACK_DRAG_PRESSURE_FIX_2026-05-30.md`**.
+- The drag-pressure sampler (`_FastDragPressureSampler.sample()`) runs synchronous
+  psutil/system-stat calls and is **off by default**, gated by `_FAST_STACK_PRESSURE_ENABLED`
+  (env `AIPACS_FAST_STACK_PRESSURE=1`). `_sample_drag_pressure()` early-returns the cached phase
+  when disabled. **Keep that guard** — it removed 300–500 ms mid-drag UI stalls that made stacking
+  choppy on high-slice-count series.
+- **Never** call psutil (`virtual_memory`, `io_counters`, `cpu_times`, `disk_io_counters`)
+  synchronously on the main thread in the stack-drag or wheel-scroll hot path.
+- The sampler's `phase` is telemetry-only — it must never drive rendering, reference lines,
+  geometry overlays, or WL/filters.

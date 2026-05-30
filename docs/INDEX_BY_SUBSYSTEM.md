@@ -45,6 +45,21 @@ When you're about to touch a subsystem, this index tells you which docs to read 
 
 ---
 
+### UI / Design system (V2, flag-gated) + viewer interaction
+
+| Doc | What's in it |
+|---|---|
+| **[`design/V2_DESIGN_SYSTEM_AS_BUILT.md`](design/V2_DESIGN_SYSTEM_AS_BUILT.md)** | **Required reading before editing `v2_style.py`, `ui_variant.py`, toolbar/home styling.** Flag gating, apply-at-source rule, where each V2 style is applied, design-language invariants, how to extend. |
+| [`design/DROPDOWN_SUBMENU_REVIEW.md`](design/DROPDOWN_SUBMENU_REVIEW.md) | Original dropdown/submenu review (rollout now complete). |
+| [`design/VIEWER_TOOLBAR_INTERACTION_REVIEW.md`](design/VIEWER_TOOLBAR_INTERACTION_REVIEW.md) | Toolbar hover / dropdown attach / menu layout review. |
+| **[`plans/performance/FAST_STACK_DRAG_PRESSURE_FIX_2026-05-30.md`](plans/performance/FAST_STACK_DRAG_PRESSURE_FIX_2026-05-30.md)** | Stack-drag main-thread stall fix: drag-pressure psutil sampler gated off by default (`AIPACS_FAST_STACK_PRESSURE`). Don't call psutil on the drag hot path. |
+
+**Guard tests:**
+- `tests/code/test_v2_style_scaffold.py` — pure-function QSS builder + gate guards
+- `tests/code/test_ui_variant_scaffold.py` — flag resolution never raises
+
+---
+
 ### Patient search + patient list
 
 | Doc | What's in it |

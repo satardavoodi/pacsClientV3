@@ -161,6 +161,15 @@ def _apply_dropdown_button_style(btn, theme, icon_color='#60a5fa'):
         }}
     """)
 
+    # V2 parallel design (opt-in, default OFF): flat dropdown row with a clean
+    # two-column layout (fixed icon column + left-aligned text) so every icon and
+    # label lines up. No-op unless ui_variant('viewer')=='v2'; V1 style above stays.
+    try:
+        from PacsClient.utils.v2_style import apply_dropdown_item_v2
+        apply_dropdown_item_v2(btn)
+    except Exception:
+        pass
+
 
 def _apply_tool_button_style(btn, theme, w, h):
     accent = theme.get('accent', '#374151')
@@ -248,6 +257,15 @@ def _apply_tool_button_style(btn, theme, w, h):
         }}
     """)
 
+    # V2 parallel design (opt-in, default OFF): replace the heavy 3D-bevel block
+    # with a flat/ghost toolbar button (light until hover/active). No-op unless
+    # ui_variant('viewer')=='v2'; the V1 style above stays otherwise.
+    try:
+        from PacsClient.utils.v2_style import apply_tool_button_v2
+        apply_tool_button_v2(btn, w, h)
+    except Exception:
+        pass
+
 
 def _apply_split_left_style(btn, theme):
     """Left-side hamburger button in a split-button pair — matches tool-button accent."""
@@ -332,6 +350,14 @@ def _apply_split_left_style(btn, theme):
             color: {_darken(button_text, 80)};
         }}
     """)
+
+    # V2 parallel design (opt-in, default OFF): transparent inner (no box of its
+    # own); the single unified box is drawn on the container. No-op unless viewer == v2.
+    try:
+        from PacsClient.utils.v2_style import apply_split_inner_v2
+        apply_split_inner_v2(btn, "left")
+    except Exception:
+        pass
 
 
 def _apply_split_right_style(btn, theme, use_danger=False):
@@ -424,6 +450,14 @@ def _apply_split_right_style(btn, theme, use_danger=False):
         }}
     """)
 
+    # V2 parallel design (opt-in, default OFF): transparent inner (no box of its
+    # own); the single unified box is drawn on the container. No-op unless viewer == v2.
+    try:
+        from PacsClient.utils.v2_style import apply_split_inner_v2
+        apply_split_inner_v2(btn, "right")
+    except Exception:
+        pass
+
 
 def _apply_qtoolbutton_style(btn, theme):
     """QToolButton (e.g. series layout) in the toolbar."""
@@ -484,6 +518,15 @@ def _apply_qtoolbutton_style(btn, theme):
             margin-bottom: -1px;
         }}
     """)
+
+    # V2 parallel design (opt-in, default OFF): flat/ghost QToolButton (light
+    # until hover/active = accent) instead of the heavy 3D-bevel block. No-op
+    # unless ui_variant('viewer')=='v2'; the V1 style above stays otherwise.
+    try:
+        from PacsClient.utils.v2_style import apply_qtoolbutton_v2
+        apply_qtoolbutton_v2(btn)
+    except Exception:
+        pass
 
 
 def create_dropdown_tool(text, icon_name=None, icon_color='#60a5fa', theme=None):
@@ -608,6 +651,13 @@ class BadgeButton(QPushButton):
                 font-family: 'Roboto', sans-serif;
             }}
         """)
+        # V2 parallel design (opt-in, default OFF): calm accent/blue badge (not
+        # alarming red), flat + tight. No-op unless ui_variant('viewer')=='v2'.
+        try:
+            from PacsClient.utils.v2_style import apply_badge_v2
+            apply_badge_v2(self._badge)
+        except Exception:
+            pass
 
     def setCount(self, n: int):
         """تنظیم عدد badge؛ اگر <=0 باشد مخفی می‌شود."""
@@ -769,6 +819,12 @@ class ToolbarManager:
             for button in self.patient_widget.findChildren(QToolButton):
                 if button.property('_theme_style_type') == 'tool_button':
                     _apply_qtoolbutton_style(button, self._theme)
+            # V2: re-apply the unified split-pair hover with the current accent.
+            try:
+                from PacsClient.utils.v2_style import apply_split_hover_groups_v2
+                apply_split_hover_groups_v2(self.patient_widget)
+            except Exception:
+                pass
         except Exception as e:
             print(f"Error updating toolbar theme: {e}")
 
@@ -2324,6 +2380,14 @@ class ToolbarManager:
             """)
             layout.addWidget(header)
 
+            # V2 parallel design (opt-in, default OFF): flat panel + quiet header.
+            try:
+                from PacsClient.utils.v2_style import apply_dropdown_panel_v2, apply_dropdown_header_v2
+                apply_dropdown_panel_v2(dropdown)
+                apply_dropdown_header_v2(header)
+            except Exception:
+                pass
+
             # Lock Sync toggle button
             lock_sync_enabled = getattr(self.patient_widget, '_lock_sync_enabled', False)
             lock_icon_name = 'fa5s.lock' if lock_sync_enabled else 'fa5s.lock-open'
@@ -2354,6 +2418,18 @@ class ToolbarManager:
                     border-color: #6b7280;
                 }}
             """)
+            # V2: flat aligned row + quiet the amber/green lock colour to the accent
+            # language (the lock vs lock-open icon SHAPE still conveys the state).
+            try:
+                from PacsClient.utils.v2_style import apply_dropdown_item_v2, viewer_is_v2
+                if viewer_is_v2():
+                    from PacsClient.utils.theme_manager import get_theme_manager
+                    _t = get_theme_manager().current_theme()
+                    _lc = _t.get('accent', '#3182ce') if lock_sync_enabled else _t.get('text_muted', '#93a4b7')
+                    lock_sync_btn.setIcon(qta.icon(lock_icon_name, color=_lc))
+                apply_dropdown_item_v2(lock_sync_btn)
+            except Exception:
+                pass
             lock_sync_btn.clicked.connect(partial(self._on_lock_sync_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(lock_sync_btn)
 
@@ -2363,6 +2439,13 @@ class ToolbarManager:
             dropdown.setFixedWidth(220)
             dropdown.raise_()
             dropdown.activateWindow()
+            # V2: snug attachment — re-anchor under the trigger (small gap) and clamp
+            # to the screen. No-op in V1; the caller's own positioning above stands.
+            try:
+                from PacsClient.utils.v2_style import position_dropdown_v2
+                position_dropdown_v2(dropdown, button)
+            except Exception:
+                pass
             dropdown.show()
         except Exception as e:
             print(f"[ERROR] Failed to show sync dropdown: {e}")
@@ -2689,6 +2772,21 @@ class ToolbarManager:
     def _on_mic_pause_toggle(self):
         soundbox = self.get_soundbox()
         soundbox.toggle_pause_inline()
+        # Reflect the new paused state on the button DIRECTLY. _update_mic_record_ui()
+        # early-returns when the soundbox is not actively recording (which includes
+        # the paused state), so relying on it alone left the play/pause icon stuck.
+        try:
+            if self._mic_pause_btn is not None:
+                is_paused = bool(soundbox.is_paused())
+                if is_paused:
+                    self._mic_pause_btn.setIcon(qta.icon('fa5s.play', color='#fbbf24'))
+                    self._mic_pause_btn.setToolTip('Resume Recording')
+                else:
+                    self._mic_pause_btn.setIcon(qta.icon('fa5s.pause', color='#fbbf24'))
+                    self._mic_pause_btn.setToolTip('Pause Recording')
+                self._mic_last_paused_state = is_paused
+        except Exception:
+            pass
         self._update_mic_record_ui()
 
     def _get_study_uid(self):
@@ -2741,6 +2839,13 @@ class ToolbarManager:
             dropdown.activateWindow()
 
             print("[DEBUG] About to show dropdown...")
+            # V2: snug attachment — re-anchor under the trigger (small gap) and clamp
+            # to the screen. No-op in V1; the caller's own positioning above stands.
+            try:
+                from PacsClient.utils.v2_style import position_dropdown_v2
+                position_dropdown_v2(dropdown, button)
+            except Exception:
+                pass
             dropdown.show()
             print("[DEBUG] Dropdown shown!")
         except Exception as e:
@@ -2777,6 +2882,13 @@ class ToolbarManager:
             dropdown.activateWindow()
 
             print("[DEBUG] About to show dropdown...")
+            # V2: snug attachment — re-anchor under the trigger (small gap) and clamp
+            # to the screen. No-op in V1; the caller's own positioning above stands.
+            try:
+                from PacsClient.utils.v2_style import position_dropdown_v2
+                position_dropdown_v2(dropdown, button)
+            except Exception:
+                pass
             dropdown.show()
             print("[DEBUG] Dropdown shown!")
         except Exception as e:
@@ -2797,6 +2909,12 @@ class ToolbarManager:
                     border-radius: 10px;
                 }
             """)
+            # V2 (opt-in, default OFF): flat token dropdown panel. No-op unless viewer == v2.
+            try:
+                from PacsClient.utils.v2_style import apply_dropdown_panel_v2
+                apply_dropdown_panel_v2(dropdown)
+            except Exception:
+                pass
 
             layout = QVBoxLayout(dropdown)
             layout.setContentsMargins(10, 10, 10, 10)
@@ -2818,6 +2936,12 @@ class ToolbarManager:
                     margin-bottom: 4px;
                 }
             """)
+            # V2 (opt-in, default OFF): quiet caption header. No-op unless viewer == v2.
+            try:
+                from PacsClient.utils.v2_style import apply_dropdown_header_v2
+                apply_dropdown_header_v2(header)
+            except Exception:
+                pass
             layout.addWidget(header)
 
             # Angle button
@@ -2882,6 +3006,13 @@ class ToolbarManager:
             dropdown.activateWindow()
 
             self.handle_buttons_checked()
+            # V2: snug attachment — re-anchor under the trigger (small gap) and clamp
+            # to the screen. No-op in V1; the caller's own positioning above stands.
+            try:
+                from PacsClient.utils.v2_style import position_dropdown_v2
+                position_dropdown_v2(dropdown, button)
+            except Exception:
+                pass
             dropdown.show()
         except Exception as e:
             print(f"[ERROR] Failed to show measurements dropdown: {e}")
@@ -3060,6 +3191,13 @@ class ToolbarManager:
             dropdown.setFixedWidth(280)
             dropdown.raise_()
             dropdown.activateWindow()
+            # V2: snug attachment — re-anchor under the trigger (small gap) and clamp
+            # to the screen. No-op in V1; the caller's own positioning above stands.
+            try:
+                from PacsClient.utils.v2_style import position_dropdown_v2
+                position_dropdown_v2(dropdown, button)
+            except Exception:
+                pass
             dropdown.show()
         except Exception as e:
             print(f"[ERROR] Failed to show WL presets dropdown: {e}")
@@ -3158,6 +3296,13 @@ class ToolbarManager:
             dropdown.activateWindow()
 
             self.handle_buttons_checked()
+            # V2: snug attachment — re-anchor under the trigger (small gap) and clamp
+            # to the screen. No-op in V1; the caller's own positioning above stands.
+            try:
+                from PacsClient.utils.v2_style import position_dropdown_v2
+                position_dropdown_v2(dropdown, button)
+            except Exception:
+                pass
             dropdown.show()
         except Exception as e:
             print(f"[ERROR] Failed to show MPR dropdown: {e}")
@@ -3228,6 +3373,13 @@ class ToolbarManager:
             dropdown.raise_()
             dropdown.activateWindow()
 
+            # V2: snug attachment — re-anchor under the trigger (small gap) and clamp
+            # to the screen. No-op in V1; the caller's own positioning above stands.
+            try:
+                from PacsClient.utils.v2_style import position_dropdown_v2
+                position_dropdown_v2(dropdown, button)
+            except Exception:
+                pass
             dropdown.show()
         except Exception as e:
             print(f"[ERROR] Failed to show rotation dropdown: {e}")
@@ -6883,6 +7035,21 @@ class ToolbarManager:
         mic_pause_btn.setStyleSheet(_mic_ctrl_style('#fbbf24'))
         mic_pause_btn.clicked.connect(self._on_mic_pause_toggle)
 
+        # V2 parallel design (opt-in, default OFF): flat voice controls matching the
+        # toolbar — transparent rest, soft-tint hover + coloured border, fill on
+        # press. Keeps each button's semantic colour (cancel=red, send=green,
+        # pause=amber) so meaning stays clear. No-op unless viewer == v2.
+        try:
+            from PacsClient.utils.v2_style import apply_mic_control_v2, viewer_is_v2
+            apply_mic_control_v2(mic_cancel_btn, 'danger')
+            apply_mic_control_v2(mic_send_btn, 'primary')
+            apply_mic_control_v2(mic_pause_btn, 'warning')
+            if viewer_is_v2():
+                mic_controls_layout.setSpacing(4)
+                mic_controls_layout.setContentsMargins(4, 0, 0, 0)
+        except Exception:
+            pass
+
         mic_controls_layout.addWidget(mic_cancel_btn)
         mic_controls_layout.addWidget(mic_send_btn)
         mic_controls_layout.addWidget(mic_pause_btn)
@@ -7156,6 +7323,14 @@ class ToolbarManager:
         
         # افزودن scroll area به نوار ابزار
         toolbar.addWidget(scroll_area)
+
+        # V2 parallel design (opt-in, default OFF): give each split-button pair a
+        # single unified hover (both halves highlight together). No-op unless viewer == v2.
+        try:
+            from PacsClient.utils.v2_style import apply_split_hover_groups_v2
+            apply_split_hover_groups_v2(self.patient_widget)
+        except Exception:
+            pass
 
     def _on_measurements_menu_clicked(self, _checked=False, *, button=None):
         if button is not None:
@@ -7936,7 +8111,15 @@ class ToolbarManager:
             """)
             header.setAlignment(Qt.AlignCenter)
             layout.addWidget(header)
-            
+
+            # V2 parallel design (opt-in, default OFF): flat panel + quiet header.
+            try:
+                from PacsClient.utils.v2_style import apply_dropdown_panel_v2, apply_dropdown_header_v2
+                apply_dropdown_panel_v2(dropdown)
+                apply_dropdown_header_v2(header)
+            except Exception:
+                pass
+
             # Current status display
             current_status = getattr(self.patient_widget, 'report_status', 'pending')
             from modules.network.socket_report_status_service import REPORT_STATUSES
@@ -7956,7 +8139,14 @@ class ToolbarManager:
             """)
             current_label.setAlignment(Qt.AlignCenter)
             layout.addWidget(current_label)
-            
+
+            # V2: neutral chip instead of the green tint.
+            try:
+                from PacsClient.utils.v2_style import apply_dropdown_status_chip_v2
+                apply_dropdown_status_chip_v2(current_label)
+            except Exception:
+                pass
+
             # Separator
             line = QWidget()
             line.setFixedHeight(1)
@@ -7984,7 +8174,18 @@ class ToolbarManager:
                 # Icon label
                 icon_label = QLabel(icon)
                 icon_label.setStyleSheet(f"font-size: 16px; background: transparent;")
-                
+                # V2: give the emoji a fixed-width column wide enough for the
+                # double-glyph icons (e.g. ✅👨‍⚕️) so nothing is truncated, while
+                # single-glyph icons center in the same width — every text label
+                # below then starts at the same x (vertical alignment). Gated.
+                try:
+                    from PacsClient.utils.v2_style import viewer_is_v2
+                    if viewer_is_v2():
+                        icon_label.setFixedWidth(56)
+                        icon_label.setAlignment(Qt.AlignCenter)
+                except Exception:
+                    pass
+
                 # Text
                 text_label = QLabel(f"{display_name}")
                 text_label.setStyleSheet(f"""
@@ -7993,6 +8194,12 @@ class ToolbarManager:
                     font-weight: {'700' if is_current else '500'};
                     background: transparent;
                 """)
+                # V2: neutral label text (no amber) — gated.
+                try:
+                    from PacsClient.utils.v2_style import apply_dropdown_status_text_v2
+                    apply_dropdown_status_text_v2(text_label, is_current)
+                except Exception:
+                    pass
                 
                 # Status indicator
                 indicator = QWidget()
@@ -8025,6 +8232,14 @@ class ToolbarManager:
                     }}
                 """
                 btn_container.setStyleSheet(base_style)
+                # V2: flat row — transparent rest, accent_soft hover, accent when
+                # current; replaces the per-status coloured borders/gradients. The
+                # small status dot still carries the colour semantics. Gated.
+                try:
+                    from PacsClient.utils.v2_style import apply_dropdown_status_row_v2
+                    apply_dropdown_status_row_v2(btn_container, is_current)
+                except Exception:
+                    pass
                 btn_container.setCursor(Qt.PointingHandCursor)
                 
                 # Click handler
@@ -8036,6 +8251,15 @@ class ToolbarManager:
             
             # Sync-only button at bottom
             sync_btn = create_dropdown_tool('🔄 Sync', 'fa5s.cloud-upload-alt', '#10b981')
+            # V2: quiet the green sync icon to the accent language (gated).
+            try:
+                from PacsClient.utils.v2_style import viewer_is_v2
+                if viewer_is_v2():
+                    from PacsClient.utils.theme_manager import get_theme_manager
+                    _accent = get_theme_manager().current_theme().get('accent', '#3182ce')
+                    sync_btn.setIcon(qta.icon('fa5s.cloud-upload-alt', color=_accent))
+            except Exception:
+                pass
             sync_btn.clicked.connect(
                 lambda: [
                     dropdown.close(),
@@ -8068,6 +8292,13 @@ class ToolbarManager:
             dropdown.activateWindow()
             
             self._status_dropdown = dropdown
+            # V2: snug attachment — re-anchor under the trigger (small gap) and clamp
+            # to the screen. No-op in V1; the caller's own positioning above stands.
+            try:
+                from PacsClient.utils.v2_style import position_dropdown_v2
+                position_dropdown_v2(dropdown, button)
+            except Exception:
+                pass
             dropdown.show()
             
         except Exception as e:

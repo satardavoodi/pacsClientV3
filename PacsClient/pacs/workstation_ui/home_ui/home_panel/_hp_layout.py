@@ -196,6 +196,14 @@ class _HPLayoutMixin:
                 border-color: #6d28d9;
             }
         """)
+        # V2 parallel design (opt-in, default OFF): demote to a secondary/outline
+        # button (removes the off-palette purple) so the accent Search button is
+        # the single primary. No-op unless ui_variant('home')=='v2'.
+        try:
+            from PacsClient.utils.v2_style import apply_adaptive_button_v2
+            apply_adaptive_button_v2(self.adaptive_layout_btn)
+        except Exception:
+            pass
         self.adaptive_layout_btn.clicked.connect(self.apply_adaptive_layout)
         adaptive_header_layout.addWidget(self.adaptive_layout_btn)
         left_layout.addWidget(adaptive_header_widget)
@@ -485,6 +493,14 @@ class _HPLayoutMixin:
             """)
 
             # اطمینان از وسط چین بودن تمام هدرهای فرعی
+            # V2 parallel design (opt-in, default OFF): token-based table header.
+            # No-op unless ui_variant('home')=='v2'; V1 header style above stays.
+            try:
+                from PacsClient.utils.v2_style import apply_table_header_v2
+                apply_table_header_v2(table.horizontalHeader())
+            except Exception:
+                pass
+
             for i in range(table.columnCount()):
                 header_item = table.horizontalHeaderItem(i)
                 if header_item:
@@ -607,6 +623,13 @@ class _HPLayoutMixin:
                 }}
                 """
             )
+            # V2 parallel design (opt-in, default OFF): keep the adaptive button
+            # secondary after this theme re-apply. No-op unless home == v2.
+            try:
+                from PacsClient.utils.v2_style import apply_adaptive_button_v2
+                apply_adaptive_button_v2(self.adaptive_layout_btn)
+            except Exception:
+                pass
         if hasattr(self, "server_group"):
             self.server_group.setStyleSheet(
                 f"""

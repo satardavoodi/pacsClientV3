@@ -88,7 +88,14 @@ class ThumbnailPanel(QWidget):
         # Title
         title_label = QLabel("Series Thumbnails")
         title_label.setStyleSheet(self._get_header_title_stylesheet())
-        
+        # V2 parallel design (opt-in, default OFF): use the real theme accent
+        # (fixes the off-palette purple fallback). No-op unless viewer == v2.
+        try:
+            from PacsClient.utils.v2_style import apply_thumbnail_header_v2
+            apply_thumbnail_header_v2(title_label)
+        except Exception:
+            pass
+
         # Count indicator
         self.thumb_count_label = QLabel("0 series")
         self.thumb_count_label.setStyleSheet(self._get_header_count_stylesheet())
@@ -221,6 +228,12 @@ class ThumbnailPanel(QWidget):
             for widget in header_widgets:
                 if "Series Thumbnails" in widget.text():
                     widget.setStyleSheet(self._get_header_title_stylesheet())
+                    # V2 (opt-in, default OFF): keep the accent header after re-apply.
+                    try:
+                        from PacsClient.utils.v2_style import apply_thumbnail_header_v2
+                        apply_thumbnail_header_v2(widget)
+                    except Exception:
+                        pass
                 elif "series" in widget.text().lower():
                     widget.setStyleSheet(self._get_header_count_stylesheet())
             

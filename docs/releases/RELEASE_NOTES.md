@@ -1,9 +1,28 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.1.3 (2026-05-27)
-**Previous Stable:** v3.1.2 (2026-05-26)
-**Release Date:** 2026-05-27
+**Current Stable Version:** v3.1.4 (2026-05-28)
+**Previous Stable:** v3.1.3 (2026-05-27)
+**Release Date:** 2026-05-28
 **Branch:** beta-version
+
+---
+
+## v3.1.4 (2026-05-28) - Release: final v3.1.4 installer + test architecture
+
+### Summary
+
+Final release consolidating the v3.1.3 codebase with comprehensive test
+infrastructure reorganization, command bus system, KPI collection framework, and
+final v3.1.4 production installer.
+
+### Included
+
+- Comprehensive test reorganization (`tests/ → tests/code/`) with architecture audit
+- GUI test suite (pywinauto, echomind-driven, live walkthroughs)
+- Command bus system (EchoMind adapters, registry, envelope)
+- KPI collection and reporting framework
+- Final v3.1.4 production installer (687 MB)
+- All v3.1.3 + v3.0.9 features (responsive UI, crash hardening, EULA, multi-study viewer)
 
 ---
 

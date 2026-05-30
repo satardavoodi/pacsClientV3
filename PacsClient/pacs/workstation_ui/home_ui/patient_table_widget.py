@@ -1464,7 +1464,16 @@ class PatientTableWidget(QWidget):
                 }}
             """
             self.results_table.setStyleSheet(table_stylesheet)
-            
+
+            # V2 parallel design (opt-in, default OFF): comfortable row density +
+            # softer accent selection. No-op unless ui_variant('home')=='v2'; the
+            # V1 table_stylesheet above stays in place otherwise.
+            try:
+                from PacsClient.utils.v2_style import apply_results_table_v2
+                apply_results_table_v2(self.results_table)
+            except Exception:
+                pass
+
             # Update delegates to use theme colors
             # The delegates will read theme colors when painting
             self.results_table.viewport().update()
