@@ -1,0 +1,4 @@
+# AI-PACS Identity — never commit secrets or per-user state
+/google_oauth.json
+/identity.json
+/secrets/

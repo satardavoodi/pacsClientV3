@@ -1,8 +1,16 @@
-from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel, 
+from PySide6.QtWidgets import (QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QLabel,
                                QFrame, QSizePolicy, QGraphicsDropShadowEffect)
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Signal
 from PySide6.QtGui import QPixmap, QPainter, QColor, QFont, QPen
 import qtawesome as qta
+
+# Theme-aware service tab chrome: the gradient and border now follow the
+# active workstation theme so service tabs (Download Manager, Web Browser,
+# etc.) sit visually inside the rest of the chrome under every palette.
+try:
+    from PacsClient.utils.theme_manager import get_theme_manager
+except Exception:  # pragma: no cover — defensive fallback
+    get_theme_manager = None
 
 
 class ServiceTabWidget(QWidget):
@@ -25,6 +33,28 @@ class ServiceTabWidget(QWidget):
         
         self.setup_ui()
         self.apply_styling()
+
+        # Re-style on theme switch.
+        try:
+            if get_theme_manager is not None:
+                get_theme_manager().themeChanged.connect(self._on_theme_changed)
+        except Exception:
+            pass
+
+    def _on_theme_changed(self, _theme: dict) -> None:
+        try:
+            self.apply_styling()
+            self.update()
+        except Exception:
+            pass
+
+    def _current_theme(self) -> dict:
+        try:
+            if get_theme_manager is not None:
+                return get_theme_manager().current_theme() or {}
+        except Exception:
+            pass
+        return {}
         
     def setup_ui(self):
         """Setup the main layout and widgets"""
@@ -105,31 +135,45 @@ class ServiceTabWidget(QWidget):
         self.setFixedHeight(70)  # Keep same height as logo/tab strip
         
     def apply_styling(self):
-        """Apply beautiful styling to the tab widget"""
-        
-        # Styling similar to PatientTabWidget
-        stylesheet = """
-            ServiceTabWidget {
+        """Apply beautiful styling to the tab widget.
+
+        Gradient / border now derive from the active workstation theme so a
+        service tab sits visually inside whatever palette the user has picked
+        (instead of stamping a fixed dark-grey + indigo border on every theme).
+        """
+        t = self._current_theme()
+        panel_alt = t.get("panel_alt_bg", "#1f2937")
+        panel_deep = t.get("panel_deep_bg", "#111827")
+        border_color = t.get("border", "rgba(148, 163, 184, 0.35)")
+        accent = t.get("accent", "#6366f1")
+        tab_hover = t.get("tab_hover_bg", "#273449")
+        text_primary = t.get("text_primary", "#ffffff")
+
+        themed_prefix = f"""
+            ServiceTabWidget {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1f2937, stop:1 #111827) !important;
-                border: 1px solid rgba(148, 163, 184, 0.35) !important;
+                    stop:0 {panel_alt}, stop:1 {panel_deep}) !important;
+                border: 1px solid {border_color} !important;
                 border-radius: 10px !important;
                 min-height: 45px !important;
                 max-width: 170px !important;
-                color: #ffffff !important;
-            }
-            
-            ServiceTabWidget:hover {
+                color: {text_primary} !important;
+            }}
+
+            ServiceTabWidget:hover {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #273449, stop:1 #16202f) !important;
-                border: 1px solid rgba(129, 140, 248, 0.5) !important;
-            }
-            
-            ServiceTabWidget.active {
+                    stop:0 {tab_hover}, stop:1 {panel_deep}) !important;
+                border: 1px solid {accent} !important;
+            }}
+
+            ServiceTabWidget.active {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1e3a8a, stop:1 #1e293b) !important;
-                border: 1px solid rgba(99, 102, 241, 0.7) !important;
-            }
+                    stop:0 {accent}, stop:1 {panel_deep}) !important;
+                border: 1px solid {accent} !important;
+            }}
+        """
+
+        stylesheet = themed_prefix + """
             
             QFrame#IconContainer {
                 background: rgba(255, 255, 255, 0.08);

@@ -198,7 +198,9 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
         self.progress_dialog = None
-        self.thread_pool = ThreadPoolExecutor()
+        # Cap workers so rapid patient-list cycling cannot spike concurrent DB
+        # queries competing with the download subprocess (default was min(32, cpu+4)).
+        self.thread_pool = ThreadPoolExecutor(max_workers=4)
         self.setup_left_panel()
         self.setup_center_panel()
         self.setup_right_panel()

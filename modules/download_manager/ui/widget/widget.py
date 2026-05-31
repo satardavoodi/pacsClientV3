@@ -446,7 +446,13 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
             pass
 
         try:
-            self.worker_pool.stop_all()
+            # Prefer a non-blocking cancel on close so an active download does not
+            # block the UI thread for up to ~6 s (worker.wait per worker in stop_all).
+            _wp = self.worker_pool
+            if hasattr(_wp, 'cancel_all_non_blocking'):
+                _wp.cancel_all_non_blocking()
+            else:
+                _wp.stop_all()
         except Exception:
             logger.exception("[DM] Failed to stop worker pool during cleanup")
 

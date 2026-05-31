@@ -177,20 +177,30 @@ class _DMWorkersMixin:
             task = self._tasks.get(study_uid)
 
             if not task:
-                logger.warning(f"🚀 [WORKER-START] ⚠️ Task not in memory, attempting to reconstruct from database...")
+                logger.warning("🚀 [WORKER-START] ⚠️ Task not in memory; reconstructing OFF the UI thread...")
                 logger.warning(f"🚀 [WORKER-START] Available tasks in memory: {list(self._tasks.keys())}")
-                
-                # Try to reconstruct task from database
-                task = self._reconstruct_task_from_database(study_uid)
-                
-                if task:
-                    logger.info(f"🚀 [WORKER-START] ✅ Task reconstructed from database with {len(task.series_list)} series")
-                    # Store it for future use
-                    self._tasks[study_uid] = task
-                else:
-                    logger.error(f"🚀 [WORKER-START] ❌ Failed to reconstruct task from database")
-                    logger.error(f"🚀 [WORKER-START] Cannot start download without task information")
-                    return False
+
+                # Do NOT call _reconstruct_task_from_database here: it performs a
+                # synchronous server metadata fetch (fetch_study_metadata_sync) with
+                # up to ~16 s of blocking retries, freezing the Qt UI thread. Offload
+                # it and resume the worker start on the UI thread when it completes.
+                import threading as _thr
+                from PySide6.QtCore import QTimer as _QTimer
+
+                def _reconstruct_then_resume(_suid=study_uid):
+                    _t = self._reconstruct_task_from_database(_suid)
+
+                    def _resume():
+                        if _t:
+                            self._tasks[_suid] = _t
+                            self._start_download_worker(_suid)
+                        else:
+                            logger.error("🚀 [WORKER-START] ❌ reconstruct failed; cannot start %s", _suid[:40])
+                    _QTimer.singleShot(0, _resume)
+
+                _thr.Thread(target=_reconstruct_then_resume, daemon=True,
+                            name=f"TaskReconstruct-{study_uid[:8]}").start()
+                return False
 
             logger.info(f"🚀 [WORKER-START] Found task with {len(task.series_list)} series")
 
@@ -838,13 +848,24 @@ class _DMWorkersMixin:
                         f"(retry {state.retry_count + 1}/{MAX_RETRIES})"
                     )
                     
-                    # Increment retry count and move to PENDING for re-queue
-                    self.state_store.update(
-                        state.study_uid,
-                        status=DownloadStatus.PENDING,
-                        retry_count=state.retry_count + 1,
-                        error_message=None  # Clear error for fresh attempt
-                    )
+                    # Defer the re-queue with an exponential, capped backoff so a
+                    # persistently failing server cannot hot-loop worker respawns.
+                    from PySide6.QtCore import QTimer as _QTimer
+                    _delay_ms = min(30000, 3000 * (state.retry_count + 1))
+                    _suid = state.study_uid
+                    _rc = state.retry_count + 1
+
+                    def _requeue(suid=_suid, rc=_rc):
+                        try:
+                            self.state_store.update(
+                                suid,
+                                status=DownloadStatus.PENDING,
+                                retry_count=rc,
+                                error_message=None,
+                            )
+                        except Exception:
+                            logger.exception("auto-retry deferred re-queue failed for %s", suid[:40])
+                    _QTimer.singleShot(_delay_ms, _requeue)
                 else:
                     logger.warning(
                         f"⚠️ {state.patient_name} exceeded max retries ({MAX_RETRIES}), "

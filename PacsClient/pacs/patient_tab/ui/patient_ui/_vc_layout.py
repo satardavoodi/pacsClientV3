@@ -28,13 +28,38 @@ class _VCLayoutMixin:
 
     @staticmethod
     def _viewport_container_styles(active: bool) -> str:
+        """Border + tint for the per-viewport container frame.
+
+        Active viewport now derives its border color from the workstation
+        theme's `accent` token (was hard-coded sky-blue `#60a5fa`). The
+        inner tint is a low-alpha version of the same accent so the cue
+        stays subtle but unambiguously matches whatever palette the user
+        has picked.
+
+        Imported lazily so this static method doesn't pay the
+        theme-manager import cost on module load.
+        """
+        try:
+            from PacsClient.utils.theme_manager import get_theme_manager
+            from PySide6.QtGui import QColor as _QColor
+            theme = get_theme_manager().current_theme()
+            accent_hex = theme.get("accent", "#60a5fa")
+            qc = _QColor(accent_hex)
+            if not qc.isValid():
+                qc = _QColor("#60a5fa")
+            r, g, b = qc.red(), qc.green(), qc.blue()
+            active_tint = f"rgba({r}, {g}, {b}, 0.08)"
+        except Exception:
+            accent_hex = "#60a5fa"
+            active_tint = "rgba(96, 165, 250, 0.08)"
+
         if active:
-            return """
-                QFrame#ViewportContainer {
-                    border: 2px solid #60a5fa;
+            return f"""
+                QFrame#ViewportContainer {{
+                    border: 2px solid {accent_hex};
                     border-radius: 4px;
-                    background-color: rgba(96, 165, 250, 0.08);
-                }
+                    background-color: {active_tint};
+                }}
             """
         return """
             QFrame#ViewportContainer {
@@ -210,6 +235,16 @@ class _VCLayoutMixin:
             logger.debug("   ًں“گ Creating grid layout...")
             try:
                 layout = QGridLayout()
+                # IMPORTANT: keep at (0, 0, 0, 0). A previous attempt at
+                # (2, 2, 2, 2) — to reserve space for the QFrame's accent
+                # border — caused the VTK render window to render at its
+                # un-shrunk size while being positioned 2 px inset, so the
+                # DICOM image and bottom overlay text overflowed past the
+                # container's bottom border. The border-visibility problem
+                # is resolved instead by VP-fix-1 (FAST viewer
+                # `margin_bottom = 16`) and VP-fix-2 (VTK viewer
+                # `bottom = 0.04`), which keep overlay text comfortably
+                # inside the viewport without shrinking the widget itself.
                 layout.setContentsMargins(0, 0, 0, 0)
                 layout.setSpacing(0)
                 logger.debug("   âœ… Grid layout created")

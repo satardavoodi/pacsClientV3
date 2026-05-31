@@ -16,6 +16,17 @@ from PySide6.QtWidgets import QWidget, QHBoxLayout, QToolBar
 from PySide6.QtCore import Qt, Signal
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager
 
+# Theme-aware header toolbar: previously the gradient and border colors
+# were hard-coded slate (#1f2937 → #111827, border #374151, separator
+# #4b5563), which kept the same look under every workstation theme. Now
+# the gradient + border come from the active theme's panel + border
+# tokens, so a Green/Yellow/Dark Red theme paints a tonally consistent
+# toolbar instead of a stranded slate strip.
+try:
+    from PacsClient.utils.theme_manager import get_theme_manager
+except Exception:  # pragma: no cover — defensive fallback
+    get_theme_manager = None
+
 
 class HeaderWidget(QWidget):
     """
@@ -44,6 +55,62 @@ class HeaderWidget(QWidget):
         self.toolbar = None
         
         self._setup_ui()
+
+        # Re-style on theme switch so the toolbar background follows the
+        # active workstation theme live (no app restart needed).
+        try:
+            if get_theme_manager is not None:
+                get_theme_manager().themeChanged.connect(self._on_theme_changed)
+        except Exception:
+            pass
+
+    def _current_theme(self) -> dict:
+        try:
+            if get_theme_manager is not None:
+                return get_theme_manager().current_theme() or {}
+        except Exception:
+            pass
+        return {}
+
+    def _on_theme_changed(self, _theme: dict) -> None:
+        try:
+            if self.toolbar is not None:
+                self.toolbar.setStyleSheet(self._build_toolbar_stylesheet())
+        except Exception:
+            pass
+
+    def _build_toolbar_stylesheet(self, start_color: str = "", end_color: str = "") -> str:
+        """Stylesheet for the header toolbar.
+
+        Reads start/end gradient colors from the theme by default
+        (panel_alt_bg → panel_deep_bg), and uses the theme's `border` token
+        for the surrounding frame and a slightly lighter mix for the
+        separator. `start_color` / `end_color` overrides allow callers to
+        force a specific gradient (used by `update_gradient`).
+        """
+        t = self._current_theme()
+        gstart = start_color or t.get("panel_alt_bg", "#1f2937")
+        gend = end_color or t.get("panel_deep_bg", "#111827")
+        border = t.get("border", "#374151")
+        # Separator: just the border with a touch more weight so it reads
+        # as an intentional divider without competing with the toolbar's
+        # own border.
+        separator = t.get("border", "#4b5563")
+        return f"""
+            QToolBar {{
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 {gstart}, stop:1 {gend});
+                border: 1px solid {border};
+                border-radius: 12px;
+                padding: 2px;
+                spacing: 2px;
+            }}
+            QToolBar::separator:horizontal {{
+                width: 1px;
+                background-color: {separator};
+                margin: 1px 4px;
+            }}
+        """
     
     def _setup_ui(self):
         """Set up the header UI components."""
@@ -62,25 +129,12 @@ class HeaderWidget(QWidget):
     def _create_toolbar(self):
         """Create and configure the toolbar."""
         self.toolbar = QToolBar()
-        self.toolbar.setStyleSheet('''
-            QToolBar {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1f2937, stop:1 #111827);
-                border: 1px solid #374151;
-                border-radius: 12px;
-                padding: 2px;
-                spacing: 2px;
-            }
-            QToolBar::separator:horizontal {
-                width: 1px;
-                background-color: #4b5563;
-                margin: 1px 4px;
-            }
-        ''')
-        
+        # Theme-aware stylesheet (was hard-coded slate gradient + border).
+        self.toolbar.setStyleSheet(self._build_toolbar_stylesheet())
+
         # Set toolbar properties
         self.toolbar.setContentsMargins(8, 4, 8, 4)
-        
+
         # Initialize toolbar manager
         self._initialize_toolbar_manager()
     
@@ -158,22 +212,12 @@ class HeaderWidget(QWidget):
             start_color: Starting color for gradient
             end_color: Ending color for gradient
         """
-        new_style = f'''
-            QToolBar {{
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {start_color}, stop:1 {end_color});
-                border: 1px solid #374151;
-                border-radius: 12px;
-                padding: 2px;
-                spacing: 2px;
-            }}
-            QToolBar::separator:horizontal {{
-                width: 1px;
-                background-color: #4b5563;
-                margin: 1px 4px;
-            }}
-        '''
-        self.toolbar.setStyleSheet(new_style)
+        # Build with explicit gradient overrides but still derive border /
+        # separator from the active theme so caller-specified gradients
+        # don't trap the rest of the chrome in slate.
+        self.toolbar.setStyleSheet(
+            self._build_toolbar_stylesheet(start_color=start_color, end_color=end_color)
+        )
     
     def set_toolbar_enabled(self, enabled: bool):
         """

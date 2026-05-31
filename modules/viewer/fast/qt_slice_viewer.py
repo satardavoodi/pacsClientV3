@@ -1990,11 +1990,23 @@ class QtSliceViewer(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, False)
 
     def _paint_annotations(self, painter: QPainter) -> None:
-        """Paint corner text annotations."""
+        """Paint corner text annotations.
+
+        Safe-area margins:
+        - top/left/right use `margin` (small, 8 px) — text starts close to
+          the corner so it doesn't waste image real estate.
+        - bottom uses a larger `margin_bottom` so the last line of text has
+          breathing room above the container's accent border. With only
+          ``margin`` (8 px) the LAST line's background sits 1–2 px above
+          the bottom edge of the widget, which visually fuses with the
+          2 px container border on the home page viewport — the user
+          reported overlay text "too close to the viewport boundary".
+        """
         painter.setFont(self._annotation_font)
         fm = QFontMetrics(self._annotation_font)
         line_height = fm.height() + 2
         margin = 8
+        margin_bottom = 16  # 2× top margin — clear safe-area for last line
         padding = 4
 
         ann = self._annotations
@@ -2020,7 +2032,7 @@ class QtSliceViewer(QWidget):
             s for s in [ann.slice_thickness, ann.image_size, ann.scale_info, ann.window_level]
             if s
         ]
-        y_bottom = self.height() - margin - len(bottom_left_lines) * line_height
+        y_bottom = self.height() - margin_bottom - len(bottom_left_lines) * line_height
         self._draw_text_block(painter, fm, bottom_left_lines, margin, y_bottom, line_height, padding)
 
         # Bottom-right: Display info
@@ -2028,7 +2040,7 @@ class QtSliceViewer(QWidget):
             s for s in [ann.hospital_name]
             if s
         ]
-        y_bottom_r = self.height() - margin - len(bottom_right_lines) * line_height
+        y_bottom_r = self.height() - margin_bottom - len(bottom_right_lines) * line_height
         self._draw_text_block_right(painter, fm, bottom_right_lines, margin, y_bottom_r, line_height, padding)
 
     def _draw_text_block(

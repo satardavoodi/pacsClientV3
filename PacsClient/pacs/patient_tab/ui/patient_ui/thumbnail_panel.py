@@ -147,8 +147,10 @@ class ThumbnailPanel(QWidget):
     def _get_header_title_stylesheet(self):
         """Get themed header title stylesheet"""
         theme = self._active_theme
-        accent = theme.get('accent', '#7c3aed')
-        accent_pressed = theme.get('accent_pressed', '#5b21b6')
+        # Fallback aligned with Blue baseline (#3182ce / #2c5282) so a stray
+        # theme miss doesn't surface a violet button in any of the seven themes.
+        accent = theme.get('accent', '#3182ce')
+        accent_pressed = theme.get('accent_pressed', '#2c5282')
         
         return f"""
             QLabel {{
@@ -606,6 +608,13 @@ class ThumbnailPanel(QWidget):
         پاکسازی همه timerها
         """
         try:
+            # Disconnect from the app-lifetime ThemeManager so the closed tab's
+            # thumbnail panel does not stay pinned as a live signal receiver.
+            try:
+                if getattr(self, 'theme_manager', None) is not None:
+                    self.theme_manager.themeChanged.disconnect(self._on_theme_changed)
+            except (TypeError, RuntimeError):
+                pass
             # توقف و پاک کردن thumbnail timer
             if hasattr(self, 'thumbnail_runner') and self.thumbnail_runner:
                 self.thumbnail_runner.stop()
@@ -711,48 +720,65 @@ class ThumbnailPanel(QWidget):
         print(f"Error in display_next_cached_thumbnail: {exc}")
     
     def show_loading_indicator(self, message="Loading..."):
-        """Show loading indicator with message"""
+        """Show loading indicator with message — themed via warning token."""
         try:
             # Update header status if available
             if hasattr(self, 'status_label'):
                 self.status_label.setText(message)
-                self.status_label.setStyleSheet("""
-                    QLabel {
-                        color: #f59e0b;
-                        font-size: 12px;
-                        padding: 2px 6px;
-                        background: rgba(245, 158, 11, 0.1);
-                        border: 1px solid rgba(245, 158, 11, 0.3);
-                        border-radius: 4px;
-                    }
-                """)
-            
+                self.status_label.setStyleSheet(self._build_status_pill_style("warning"))
+
             print(f"⏳ Loading: {message}")
-            
+
         except Exception as e:
             print(f"Error showing loading indicator: {e}")
-    
+
     def hide_loading_indicator(self):
-        """Hide loading indicator"""
+        """Hide loading indicator — themed via success token."""
         try:
             # Clear status if available
             if hasattr(self, 'status_label'):
                 self.status_label.setText("Ready")
-                self.status_label.setStyleSheet("""
-                    QLabel {
-                        color: #10b981;
-                        font-size: 12px;
-                        padding: 2px 6px;
-                        background: rgba(16, 185, 129, 0.1);
-                        border: 1px solid rgba(16, 185, 129, 0.3);
-                        border-radius: 4px;
-                    }
-                """)
-            
+                self.status_label.setStyleSheet(self._build_status_pill_style("success"))
+
             print("✅ Loading complete")
-            
+
         except Exception as e:
             print(f"Error hiding loading indicator: {e}")
+
+    def _build_status_pill_style(self, semantic_key: str) -> str:
+        """Stylesheet for the thumbnail-panel header status pill.
+
+        `semantic_key` is one of "warning" / "success" / "danger" — the
+        corresponding theme token drives BOTH the text color and the
+        rgba glow + border ring, so the pill stays visually coherent
+        across all seven themes (Yellow's olive success vs Dark Red's
+        pink success, etc.).
+        """
+        try:
+            from PacsClient.utils.theme_manager import get_theme_manager
+            from PySide6.QtGui import QColor as _QColor
+            theme = get_theme_manager().current_theme()
+            hex_color = theme.get(semantic_key, "#f59e0b")
+            qc = _QColor(hex_color)
+            if not qc.isValid():
+                qc = _QColor("#f59e0b")
+            r, g, b = qc.red(), qc.green(), qc.blue()
+            return (
+                f"QLabel {{ color: {hex_color}; font-size: 12px; "
+                f"padding: 2px 6px; "
+                f"background: rgba({r}, {g}, {b}, 0.10); "
+                f"border: 1px solid rgba({r}, {g}, {b}, 0.30); "
+                f"border-radius: 4px; }}"
+            )
+        except Exception:
+            # Fallback — matches the original hard-coded look so the UI
+            # never falls back to "no style at all".
+            fallback_hex = "#f59e0b" if semantic_key == "warning" else "#10b981"
+            return (
+                f"QLabel {{ color: {fallback_hex}; font-size: 12px; "
+                f"padding: 2px 6px; background: rgba(245, 158, 11, 0.1); "
+                f"border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 4px; }}"
+            )
     
     def show_thumbnail_loading(self, total_count):
         """Show thumbnail loading progress"""

@@ -149,6 +149,13 @@ class _HPSearchMixin:
         self.patient_search_widget.set_searching_state(True)
         self._cancel_search_requested = False
 
+        # First search → warm up the Download Manager in the background so the
+        # first patient double-click doesn't pay the cold-start cost (the DM
+        # singleton + worker pool + state store + socket client + UI are
+        # otherwise built lazily on the first open). Downloads nothing; runs once
+        # per session, deferred so it overlaps the search server round-trip.
+        self._warmup_download_manager_once()
+
         if tab_selected == 'local':
             self.source_of_patient_load = SourceOfPatientLoad.DB
             # قبلاً sync بود؛ حالا async و قابل لغو:
@@ -161,6 +168,92 @@ class _HPSearchMixin:
         elif tab_selected == 'import':
             self.source_of_patient_load = SourceOfPatientLoad.IMPORT
             pass
+
+    def _warmup_download_manager_once(self) -> None:
+        """Pre-build the Download Manager on the FIRST patient search so the first
+        patient double-click doesn't pay the cold-start cost.
+
+        Creating the DM singleton builds the worker pool, state store, rule
+        engine, executor, intent coordinator, the socket metadata client and the
+        DM UI — all otherwise constructed lazily on the first open (observed:
+        "Created Zeta Download Manager widget singleton" fired during the first
+        double-click, adding cold-start latency the 2nd/3rd patients never pay).
+        This warmup downloads NO patient data; it only prepares that
+        infrastructure.
+
+        Idempotent + once per session. The DM is a QWidget (main-thread only) so
+        this runs on the UI thread but is deferred (singleShot 0) so it overlaps
+        the search server round-trip instead of blocking the first open.
+        """
+        if getattr(self, '_dm_warmup_started', False):
+            return
+        self._dm_warmup_started = True
+
+        def _do_warmup():
+            import time as _t
+            _t0 = _t.perf_counter()
+            try:
+                from pathlib import Path as _P
+                from PacsClient.utils.config import SOURCE_PATH as _SRC
+                from modules.network.zeta_adapter import get_zeta_download_manager_widget
+                get_zeta_download_manager_widget(base_output_dir=_P(_SRC))
+                # Optional: pre-boot one idle download subprocess (flag-gated OFF
+                # by default via AIPACS_DM_PREWARM) so the very first download also
+                # skips the ~2 s Windows subprocess spawn.
+                try:
+                    from modules.download_manager.workers.prewarm import (
+                        get_download_prewarm_pool, prewarm_enabled,
+                    )
+                    if prewarm_enabled():
+                        get_download_prewarm_pool().ensure_warm()
+                except Exception:
+                    pass
+                _logger.info(
+                    "[DM-WARMUP] Download Manager warm in %.0fms (first-search trigger)",
+                    (_t.perf_counter() - _t0) * 1000.0,
+                )
+            except Exception:
+                _logger.warning("[DM-WARMUP] warmup failed (non-fatal)", exc_info=True)
+
+            # Background: pre-read FAST-viewer source files into Python's linecache
+            # so PySide6's shibokensupport feature-check (inspect.getsource →
+            # linecache → tokenize.open → disk) does not pay a disk read while
+            # creating viewer widgets on the drag/interaction path (measured ~1.9s
+            # main-thread stall inside _create_qt_viewer). Pure read-into-cache on a
+            # daemon thread — no behaviour change, never touches the UI / VTK.
+            def _warm_viewer_linecache():
+                try:
+                    import linecache as _lc, os as _os
+                    _here = _os.path.dirname(_os.path.abspath(__file__))
+                    _pacs = _os.path.dirname(_os.path.dirname(_os.path.dirname(_here)))
+                    _vdir = _os.path.join(_pacs, "patient_tab")
+                    _n = 0
+                    for _dp, _dn, _fns in _os.walk(_vdir):
+                        for _fn in _fns:
+                            if _fn.endswith(".py"):
+                                try:
+                                    _lc.getlines(_os.path.join(_dp, _fn))
+                                    _n += 1
+                                except Exception:
+                                    pass
+                    _logger.info(
+                        "[DM-WARMUP] linecache pre-warmed %d viewer source files", _n
+                    )
+                except Exception:
+                    pass
+            try:
+                import threading as _thr
+                _thr.Thread(
+                    target=_warm_viewer_linecache, name="linecache-warm", daemon=True
+                ).start()
+            except Exception:
+                pass
+
+        try:
+            from PySide6.QtCore import QTimer as _QTimer
+            _QTimer.singleShot(0, _do_warmup)
+        except Exception:
+            _do_warmup()
 
     def cancel_search(self):
         """Cancel the current search operation"""

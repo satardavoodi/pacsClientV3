@@ -599,11 +599,16 @@ class _PWSeriesMixin:
 
             # Run loading in background
             loop = asyncio.get_event_loop()
-            loaded = await loop.run_in_executor(
-                executor,
-                self._load_single_series_on_demand,
-                series_number
-            )
+            try:
+                loaded = await loop.run_in_executor(
+                    executor,
+                    self._load_single_series_on_demand,
+                    series_number
+                )
+            finally:
+                # One-shot pool: release its worker thread as soon as the await
+                # completes so it cannot accumulate one live thread per series load.
+                executor.shutdown(wait=False)
 
             if not loaded:
                 print(f"[ASYNC LOAD ERROR] Failed to load series {series_number}")

@@ -358,6 +358,15 @@ class _PWLifecycleMixin:
                 return
             self._pw_close_handled = True
 
+            # Disconnect from the app-lifetime ThemeManager so this closed tab does
+            # not leave a live receiver on the singleton (per-tab memory retention).
+            try:
+                _tm = getattr(self, '_app_theme_manager', None)
+                if _tm is not None:
+                    _tm.themeChanged.disconnect(self._on_app_theme_changed)
+            except (TypeError, RuntimeError):
+                pass
+
             try:
                 self.on_tab_deactivated()
             except Exception:
@@ -737,6 +746,15 @@ class _PWLifecycleMixin:
         try:
             if hasattr(self, 'viewer_controller') and self.viewer_controller:
                 self.viewer_controller.on_tab_activated()
+        except Exception:
+            pass
+        # A series that finished downloading while this tab was inactive still
+        # showed the loading overlay on return. Re-sync thumbnail completion
+        # state shortly after activation (deferred so it never blocks the switch).
+        try:
+            from PySide6.QtCore import QTimer as _QTimer
+            if hasattr(self, 'resync_thumbnail_download_states'):
+                _QTimer.singleShot(150, self.resync_thumbnail_download_states)
         except Exception:
             pass
 

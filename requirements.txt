@@ -25,3 +25,11 @@ comtypes>=1.3.0
 SpeechRecognition>=3.10.0
 pyaudio
 webrtcvad
+
+# ── External Identity module (Google OAuth + secure token storage) ──
+# Additive, feature-flagged (AIPACS_IDENTITY_MODULE / config). google-auth is
+# already pulled in by google-api-python-client; pinned here for clarity.
+google-auth>=2.29.0
+google-auth-oauthlib>=1.2.0
+keyring>=24.0.0
+cryptography>=42.0.0

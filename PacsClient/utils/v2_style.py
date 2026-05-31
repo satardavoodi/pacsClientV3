@@ -1,11 +1,19 @@
-"""Per-widget V2 styling helpers for the parallel AI-PACS design migration.
+"""Per-widget V2 styling helpers for the AI-PACS design migration.
 
-Each helper is **opt-in**: it is a no-op unless the relevant module's
-``ui_variant`` is ``"v2"`` (default is ``"v1"``). Helpers build QSS from the
-active theme tokens (never hard-coded hex) and **never raise** — on any error
-the caller keeps its existing V1 style untouched. This is how Phase 2+ migrates
-individual widgets without disturbing the live V1 UI. See
-``docs/design/CLAUDE_DESIGN_WORKSTATION_V1_PLAN.md``.
+V2 is now the **default** workstation design (2026-05-31). Each helper is
+gated by the relevant module's `ui_variant`:
+
+- ``"v2"`` (the default) — the helper applies its V2 stylesheet
+- ``"v1"`` — the helper no-ops, leaving the legacy V1 stylesheet in place
+
+Helpers build QSS from the active theme tokens (never hard-coded hex) and
+**never raise** — on any error the caller keeps its existing V1 style
+untouched. The V1 path therefore remains the safe fallback for anyone who
+wants the legacy look (set ``AIPACS_UI_VARIANT=v1`` or write
+``{"variant": "v1"}`` to ``<USER_DATA_ROOT>/config/ui_variant.json``).
+
+See ``docs/design/CLAUDE_DESIGN_WORKSTATION_V1_PLAN.md`` and
+``docs/design/THEME_SYSTEM_REVIEW_2026-05-30.md``.
 """
 from __future__ import annotations
 
@@ -16,6 +24,14 @@ def home_is_v2() -> bool:
     """True only when the Home module is opted into the v2 design. Never raises."""
     try:
         return get_ui_variant("home") == "v2"
+    except Exception:
+        return False
+
+
+def settings_is_v2() -> bool:
+    """True only when the Settings module is opted into the v2 design. Never raises."""
+    try:
+        return get_ui_variant("settings") == "v2"
     except Exception:
         return False
 
@@ -640,6 +656,240 @@ def apply_thumbnail_header_v2(label) -> bool:
         from PacsClient.utils.theme_manager import get_theme_manager
 
         label.setStyleSheet(thumbnail_header_qss(get_theme_manager().current_theme()))
+        return True
+    except Exception:
+        return False
+
+
+def home_panel_header_qss(theme: dict) -> str:
+    """V2 quiet panel header for the Home right-rail 'Study Information' title.
+    Replaces the heavy filled blue gradient with a flat header (panel surface,
+    secondary text, 1px border) so it stops competing with the primary Search
+    button. Keeps the label readable; drops the 'looks like a button' weight.
+    Pure function for testability."""
+    text = theme.get("text_secondary", "#e5e7eb")
+    panel_alt = theme.get("panel_alt_bg", "#1a202c")
+    border = theme.get("border", "#2d3748")
+    return (
+        "QLabel {\n"
+        "    font-size: 13px;\n"
+        "    font-weight: 600;\n"
+        "    font-family: 'Roboto', sans-serif;\n"
+        "    color: " + text + ";\n"
+        "    padding: 6px 10px;\n"
+        "    background: " + panel_alt + ";\n"
+        "    border: 1px solid " + border + ";\n"
+        "    border-radius: 8px;\n"
+        "    margin: 0px;\n"
+        "}\n"
+    )
+
+
+def home_count_chip_qss(theme: dict) -> str:
+    """V2 quiet count chip for Home counters ('N series', 'N studies found') —
+    muted text on a faint surface, not a filled accent pill. Pure function."""
+    text_muted = theme.get("text_muted", "#93a4b7")
+    panel_alt = theme.get("panel_alt_bg", "#1a202c")
+    border = theme.get("border", "#2d3748")
+    return (
+        "QLabel {\n"
+        "    font-size: 9px;\n"
+        "    font-weight: 600;\n"
+        "    font-family: 'Roboto', sans-serif;\n"
+        "    color: " + text_muted + ";\n"
+        "    padding: 4px 8px;\n"
+        "    background: " + panel_alt + ";\n"
+        "    border: 1px solid " + border + ";\n"
+        "    border-radius: 8px;\n"
+        "    margin: 0px;\n"
+        "}\n"
+    )
+
+
+def apply_home_panel_header_v2(label) -> bool:
+    """If Home is in v2, flatten the right-rail panel header (quiet, not filled
+    accent). Applied from the header's source style fn. Never raises."""
+    try:
+        if not home_is_v2():
+            return False
+        from PacsClient.utils.theme_manager import get_theme_manager
+
+        label.setStyleSheet(home_panel_header_qss(get_theme_manager().current_theme()))
+        return True
+    except Exception:
+        return False
+
+
+def apply_home_count_chip_v2(label) -> bool:
+    """If Home is in v2, render a Home counter as a quiet chip. Never raises."""
+    try:
+        if not home_is_v2():
+            return False
+        from PacsClient.utils.theme_manager import get_theme_manager
+
+        label.setStyleSheet(home_count_chip_qss(get_theme_manager().current_theme()))
+        return True
+    except Exception:
+        return False
+
+
+def home_toolbar_button_qss(theme: dict, role: str = "neutral") -> str:
+    """V2 style for a Home sub-toolbar button so the row reads as ONE flat family
+    instead of separate coloured gradient blocks. ``role``:
+      * ``primary`` (download) — the single filled-accent action of this row,
+      * ``danger`` (delete) — flat ghost that only reddens on hover/press,
+      * ``neutral`` (refresh / settings / print / sync / font) — flat ghost,
+        soft-accent on hover.
+    Pure function for testability."""
+    text = theme.get("text_secondary", "#e5e7eb")
+    accent = theme.get("accent", "#3182ce")
+    accent_hover = theme.get("accent_hover", accent)
+    accent_soft = theme.get("accent_soft", "#21314a")
+    danger = theme.get("danger", "#ef4444")
+    button_text = theme.get("button_text", "#ffffff")
+    text_muted = theme.get("text_muted", "#93a4b7")
+    border = theme.get("border", "#2d3748")
+    panel_alt = theme.get("panel_alt_bg", "#1a202c")
+    if role == "primary":
+        return (
+            "QPushButton {\n"
+            "    background: " + accent + ";\n"
+            "    color: " + button_text + ";\n"
+            "    border: 1px solid " + accent + ";\n"
+            "    border-radius: 8px;\n"
+            "    padding: 6px 12px;\n"
+            "    margin: 4px 0px;\n"
+            "    font-size: 12px;\n"
+            "    font-family: 'Roboto', sans-serif;\n"
+            "    font-weight: 600;\n"
+            "    qproperty-iconSize: 16px;\n"
+            "}\n"
+            "QPushButton:hover {\n    background: " + accent_hover + ";\n}\n"
+            "QPushButton:disabled {\n    background: " + panel_alt + ";\n    color: " + text_muted + ";\n    border-color: " + border + ";\n}\n"
+        )
+    if role == "danger":
+        hover_bg = _hex_to_rgba(danger, 0.16)
+        hover_brd = danger
+        press_fill = danger
+    else:  # neutral
+        hover_bg = accent_soft
+        hover_brd = accent
+        press_fill = accent
+    return (
+        "QPushButton {\n"
+        "    background: transparent;\n"
+        "    color: " + text + ";\n"
+        "    border: 1px solid transparent;\n"
+        "    border-radius: 8px;\n"
+        # Tight horizontal padding so fixed-width text buttons (A+ / A-, 36px) keep
+        # their full label; icon-only buttons still center their 16px icon.
+        "    padding: 6px 4px;\n"
+        "    margin: 4px 0px;\n"
+        "    font-size: 12px;\n"
+        "    font-family: 'Roboto', sans-serif;\n"
+        "    font-weight: 600;\n"
+        "    qproperty-iconSize: 16px;\n"
+        "}\n"
+        "QPushButton:hover {\n    background: " + hover_bg + ";\n    border: 1px solid " + hover_brd + ";\n}\n"
+        "QPushButton:pressed {\n    background: " + press_fill + ";\n    color: " + button_text + ";\n}\n"
+        "QPushButton:disabled {\n    background: transparent;\n    color: " + text_muted + ";\n}\n"
+    )
+
+
+def apply_home_toolbar_buttons_v2(items) -> bool:
+    """If Home is in v2, flatten the sub-toolbar buttons into one ghost family.
+    ``items`` is an iterable of ``(button, role)``. ONE gate check for the whole
+    batch (``get_ui_variant`` hits disk, so we never call it per button). Applied
+    from inside the table's ``_apply_theme`` so it survives re-styling. Never raises."""
+    try:
+        if not home_is_v2():
+            return False
+        from PacsClient.utils.theme_manager import get_theme_manager
+
+        theme = get_theme_manager().current_theme()
+        for btn, role in items:
+            try:
+                btn.setStyleSheet(home_toolbar_button_qss(theme, str(role or "neutral")))
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return False
+
+
+def settings_stylesheet_qss(theme: dict, arrow_icon: str = "") -> str:
+    """V2 token stylesheet for the Settings tab widget (scoped to
+    ``QTabWidget#SettingsTabWidget``). Mirrors the V1 structure 1:1 so every control
+    stays styled, but swaps the hard-coded hex for theme tokens and applies the V2
+    refinements: accent-token selected tab, ghost buttons with soft-accent hover +
+    accent border, accent focus ring, and a calm GroupBox title (V1's 28px/900 title
+    was jarring). Placeholder-replace build so QSS braces need no escaping. Pure."""
+    repl = {
+        "__BG__": theme.get("panel_bg", "#0b0d10"),
+        "__SURFACE__": theme.get("card_bg", theme.get("panel_alt_bg", "#0f1319")),
+        "__PANEL_ALT__": theme.get("panel_alt_bg", "#10141a"),
+        "__INPUT_BG__": theme.get("menu_bg", "#1b2230"),
+        "__BORDER__": theme.get("border", "#232a33"),
+        "__TEXT__": theme.get("text_secondary", "#e5e7eb"),
+        "__TEXT_STRONG__": theme.get("text_primary", "#f3f4f6"),
+        "__TEXT_MUTED__": theme.get("text_muted", "#93a4b7"),
+        "__ACCENT__": theme.get("accent", "#3182ce"),
+        "__ACCENT_SOFT__": theme.get("accent_soft", "#21314a"),
+        "__BTN_TEXT__": theme.get("button_text", "#ffffff"),
+        "__ARROW__": arrow_icon or "",
+    }
+    style = """
+        QTabWidget#SettingsTabWidget { background: __BG__; color: __TEXT__; }
+        QTabWidget#SettingsTabWidget QWidget { background: __BG__; color: __TEXT__; }
+        QTabWidget#SettingsTabWidget::pane { border: 1px solid __BORDER__; border-radius: 12px; background: __BG__; top: -1px; }
+        QTabWidget#SettingsTabWidget QTabBar::tab { background: __PANEL_ALT__; color: __TEXT__; border: 1px solid __BORDER__; border-bottom: none; border-radius: 8px 8px 0 0; padding: 11px 20px; margin-right: 3px; font-size: 14px; min-width: 120px; }
+        QTabWidget#SettingsTabWidget QTabBar::tab:selected { background: __ACCENT__; color: __BTN_TEXT__; border-color: __ACCENT__; }
+        QTabWidget#SettingsTabWidget QTabBar::tab:hover:!selected { background: __ACCENT_SOFT__; color: __TEXT_STRONG__; }
+        QTabWidget#SettingsTabWidget QTableWidget, QTabWidget#SettingsTabWidget QTableView { background: __SURFACE__; alternate-background-color: __PANEL_ALT__; gridline-color: __BORDER__; border: 1px solid __BORDER__; border-radius: 10px; selection-background-color: __ACCENT__; selection-color: __BTN_TEXT__; }
+        QTabWidget#SettingsTabWidget QHeaderView::section { background: __PANEL_ALT__; color: __TEXT__; padding: 6px 8px; border: 1px solid __BORDER__; font-weight: 700; }
+        QTabWidget#SettingsTabWidget QTableCornerButton::section { background: __PANEL_ALT__; border: 1px solid __BORDER__; }
+        QTabWidget#SettingsTabWidget QLabel { font-size: 14px; }
+        QTabWidget#SettingsTabWidget QCheckBox { spacing: 8px; font-size: 14px; }
+        QTabWidget#SettingsTabWidget QLineEdit, QTabWidget#SettingsTabWidget QTextEdit, QTabWidget#SettingsTabWidget QPlainTextEdit { background: __INPUT_BG__; color: __TEXT__; border: 1px solid __BORDER__; border-radius: 8px; padding: 6px 10px; min-height: 34px; font-size: 14px; selection-background-color: __ACCENT__; selection-color: __BTN_TEXT__; }
+        QTabWidget#SettingsTabWidget QLineEdit:focus, QTabWidget#SettingsTabWidget QTextEdit:focus, QTabWidget#SettingsTabWidget QPlainTextEdit:focus { border: 1px solid __ACCENT__; }
+        QTabWidget#SettingsTabWidget QComboBox, QTabWidget#SettingsTabWidget QSpinBox, QTabWidget#SettingsTabWidget QDoubleSpinBox { background: __INPUT_BG__; color: __TEXT__; border: 1px solid __BORDER__; border-radius: 8px; padding: 5px 10px; min-height: 34px; font-size: 14px; }
+        QTabWidget#SettingsTabWidget QComboBox { padding-right: 34px; }
+        QTabWidget#SettingsTabWidget QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; border-left: 1px solid __BORDER__; width: 28px; }
+        QTabWidget#SettingsTabWidget QComboBox::down-arrow { image: url(__ARROW__); width: 14px; height: 14px; }
+        QTabWidget#SettingsTabWidget QComboBox QAbstractItemView { background: __SURFACE__; color: __TEXT__; border: 1px solid __BORDER__; selection-background-color: __ACCENT__; selection-color: __BTN_TEXT__; }
+        QTabWidget#SettingsTabWidget QGroupBox { border: 1px solid __BORDER__; border-radius: 12px; margin-top: 28px; padding: 18px 20px 18px 20px; padding-top: 40px; background: __PANEL_ALT__; }
+        QTabWidget#SettingsTabWidget QGroupBox::title { subcontrol-origin: margin; subcontrol-position: top left; left: 18px; top: 2px; padding: 5px 14px; color: __TEXT__; background: __SURFACE__; border: 1px solid __BORDER__; border-radius: 8px; font-size: 13px; font-weight: 700; }
+        QTabWidget#SettingsTabWidget QPushButton { background: transparent; color: __TEXT__; border: 1px solid __BORDER__; border-radius: 8px; padding: 8px 14px; min-height: 36px; font-size: 14px; font-weight: 600; }
+        QTabWidget#SettingsTabWidget QPushButton:hover { background: __ACCENT_SOFT__; border-color: __ACCENT__; }
+        QTabWidget#SettingsTabWidget QPushButton:pressed { background: __ACCENT__; color: __BTN_TEXT__; }
+        QTabWidget#SettingsTabWidget QPushButton:disabled { background: transparent; color: __TEXT_MUTED__; border-color: __BORDER__; }
+        QTabWidget#SettingsTabWidget QSlider::groove:horizontal { background: __BORDER__; height: 6px; border-radius: 3px; }
+        QTabWidget#SettingsTabWidget QSlider::handle:horizontal { background: __ACCENT__; width: 16px; margin: -6px 0; border-radius: 8px; }
+        QTabWidget#SettingsTabWidget QFrame[frameShape="4"], QTabWidget#SettingsTabWidget QFrame[frameShape="5"] { color: __BORDER__; border: none; }
+        QTabWidget#SettingsTabWidget QScrollBar:vertical { background: __SURFACE__; width: 12px; margin: 0px; border: 1px solid __BORDER__; }
+        QTabWidget#SettingsTabWidget QScrollBar::handle:vertical { background: __BORDER__; min-height: 24px; border-radius: 6px; }
+        QTabWidget#SettingsTabWidget QScrollBar::handle:vertical:hover { background: __ACCENT__; }
+        QTabWidget#SettingsTabWidget QScrollBar::add-line:vertical, QTabWidget#SettingsTabWidget QScrollBar::sub-line:vertical { height: 0px; }
+        QTabWidget#SettingsTabWidget QScrollBar:horizontal { background: __SURFACE__; height: 12px; margin: 0px; border: 1px solid __BORDER__; }
+        QTabWidget#SettingsTabWidget QScrollBar::handle:horizontal { background: __BORDER__; min-width: 24px; border-radius: 6px; }
+        QTabWidget#SettingsTabWidget QScrollBar::handle:horizontal:hover { background: __ACCENT__; }
+        QTabWidget#SettingsTabWidget QScrollBar::add-line:horizontal, QTabWidget#SettingsTabWidget QScrollBar::sub-line:horizontal { width: 0px; }
+    """
+    for _k, _v in repl.items():
+        style = style.replace(_k, _v)
+    return style
+
+
+def apply_settings_v2(widget, arrow_icon: str = "") -> bool:
+    """If Settings is in v2, replace the scoped Settings stylesheet with the V2 token
+    version. Called from ``SettingsTabWidget.apply_dark_theme`` right after it sets the
+    V1 sheet, so V1 is byte-identical unless settings==v2. Never raises."""
+    try:
+        if not settings_is_v2():
+            return False
+        from PacsClient.utils.theme_manager import get_theme_manager
+
+        widget.setStyleSheet(settings_stylesheet_qss(get_theme_manager().current_theme(), arrow_icon))
         return True
     except Exception:
         return False

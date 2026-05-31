@@ -463,7 +463,9 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
 
     logs_dir = _ensure_logs_dir()
 
-    max_bytes = int(os.getenv("AIPACS_LOG_MAX_BYTES", str(20 * 1024 * 1024)) or str(20 * 1024 * 1024))
+    # Floor at 1 MB so a misconfigured env value (e.g. "0") can't disable rotation
+    # and let a single log file grow without bound.
+    max_bytes = max(1024 * 1024, int(os.getenv("AIPACS_LOG_MAX_BYTES", str(20 * 1024 * 1024)) or str(20 * 1024 * 1024)))
     backup_count = int(os.getenv("AIPACS_LOG_BACKUP_COUNT", "3") or "3")
 
     # ---- Async file logging (game-changer #1) ----------------------------

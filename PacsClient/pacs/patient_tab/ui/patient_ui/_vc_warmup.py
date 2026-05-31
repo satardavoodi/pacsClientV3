@@ -521,6 +521,14 @@ class _VCWarmupMixin:
 
     def clear_all_caches_for_close(self):
         """Hard cache purge for patient-tab close to avoid cross-tab memory retention."""
+        # Disconnect this controller's slot from the app-lifetime ThemeManager so a
+        # closed tab does not leave a live receiver pinning its object graph.
+        try:
+            _tm = getattr(self, '_theme_manager', None)
+            if _tm is not None:
+                _tm.themeChanged.disconnect(self._on_theme_changed_refresh_viewports)
+        except (TypeError, RuntimeError):
+            pass
         try:
             self._stop_background_prefetch()
         except Exception:
@@ -544,6 +552,18 @@ class _VCWarmupMixin:
 
         try:
             self._progressive_grow_timer.stop()
+        except Exception:
+            pass
+
+        # Shut down the per-tab header-fill ThreadPoolExecutor so its worker
+        # thread does not outlive the closed tab. The thread holds a closure
+        # referencing this controller; leaving it running pins the whole tab
+        # object graph and accumulates one live thread per patient opened.
+        try:
+            _hdr_pool = getattr(self, '_header_fill_executor', None)
+            if _hdr_pool is not None:
+                _hdr_pool.shutdown(wait=False)
+                self._header_fill_executor = None
         except Exception:
             pass
 

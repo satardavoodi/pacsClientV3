@@ -1,10 +1,10 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.1.4 (2026-05-28) — Release: final v3.1.4 installer + test architecture. See `docs/releases/VERSION_3.1.4_RELEASE.md`.
+**Current Stable Version:** v3.1.5 (2026-05-28) — Final release: v3.1.5 installer. See `docs/releases/VERSION_3.1.5_RELEASE.md`.
+
+**Previous Stable:** v3.1.4 (2026-05-28) — Release: test infrastructure + command bus. See `docs/releases/VERSION_3.1.4_RELEASE.md`.
 
 **Previous Stable:** v3.1.3 (2026-05-27) — Patch: installer v3.1.3. See `docs/releases/VERSION_3.1.3_RELEASE.md`.
-
-**Previous Stable:** v3.1.2 (2026-05-26) — Patch: responsive UI scaling. See `docs/releases/VERSION_3.1.2_RELEASE.md`.
 
 **Previous Stable:** v3.0.7 (2026-05-19) — Stable backup release checkpoint for the current validated beta branch state. See `docs/releases/VERSION_3.0.7_RELEASE.md`.
 

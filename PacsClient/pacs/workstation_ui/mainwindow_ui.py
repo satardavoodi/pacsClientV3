@@ -711,6 +711,41 @@ class MainWindowWidget(QWidget):
 
         title_layout.addWidget(user_container)
 
+        # ── External Identity module (additive, feature-flagged, default OFF) ──
+        # Adds a "Connected Accounts" menu to the EXISTING account container so a
+        # logged-in user can link external identities (Google, …). The server login
+        # and the labels above are unchanged. When the flag is OFF this imports
+        # nothing new and is a no-op; any failure is swallowed so the title bar can
+        # never break. See docs/plans/cloud-consultation/.
+        try:
+            from modules.Identity.feature_flags import identity_module_enabled
+
+            if identity_module_enabled():
+                try:
+                    from modules.cloud_consultation.ui.account_hook import (
+                        attach_account_popup,
+                    )
+
+                    attach_account_popup(
+                        user_container, auth_user=self.auth_user, parent_window=self
+                    )
+                except Exception as _popup_exc:
+                    logger.warning(
+                        "Account popup unavailable, falling back to basic menu: %s",
+                        _popup_exc,
+                    )
+                    from modules.Identity.ui.account_menu_hook import (
+                        attach_identity_account_menu,
+                    )
+
+                    attach_identity_account_menu(
+                        user_container,
+                        auth_user=self.auth_user,
+                        parent_window=self,
+                    )
+        except Exception as _identity_exc:  # never break the title bar
+            logger.warning("Identity account-menu hook skipped: %s", _identity_exc)
+
     def get_tab_area(self):
         return self.tab_area
 

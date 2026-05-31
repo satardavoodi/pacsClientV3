@@ -327,6 +327,46 @@ class VoiceWidget(QWidget):
             return False
         return self._start_new_recording(selected_widget, show_ui=False)
 
+    def closeEvent(self, event):
+        try:
+            self._cleanup_voice_widget()
+        except Exception:
+            pass
+        super().closeEvent(event)
+
+    def _cleanup_voice_widget(self):
+        """Remove installed event filters, disconnect the app-state signal, stop the
+        timer and release the audio stream on teardown — so a closed voice widget
+        cannot receive events on a dangling C++ filter (a 0x8001010d / fail-fast
+        hazard) or leak its stream/timer."""
+        try:
+            if getattr(self, '_main_window', None) is not None:
+                self._main_window.removeEventFilter(self)
+        except Exception:
+            pass
+        try:
+            if getattr(self, 'patient_widget', None) is not None:
+                self.patient_widget.removeEventFilter(self)
+        except Exception:
+            pass
+        try:
+            if getattr(self, '_app', None) is not None:
+                self._app.applicationStateChanged.disconnect(self._on_app_state_changed)
+        except (TypeError, RuntimeError):
+            pass
+        try:
+            if getattr(self, '_timer', None) is not None:
+                self._timer.stop()
+        except Exception:
+            pass
+        try:
+            if getattr(self, '_stream', None) is not None:
+                self._stream.stop()
+                self._stream.close()
+                self._stream = None
+        except Exception:
+            pass
+
     def stop_and_save_inline(self):
         self._on_save_clicked(inline_override=True)
 

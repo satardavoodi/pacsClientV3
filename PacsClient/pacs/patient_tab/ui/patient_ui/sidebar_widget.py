@@ -15,6 +15,15 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QButtonGroup
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPainter
 
+# Theme-aware sidebar: the rotated Series / Reception Data / AI Chat tabs
+# now follow the active workstation theme. Previously the selected-tab
+# background was hard-coded Material blue (#2196f3), which clashed with
+# every non-Blue theme.
+try:
+    from PacsClient.utils.theme_manager import get_theme_manager
+except Exception:  # pragma: no cover — defensive fallback
+    get_theme_manager = None
+
 
 class VerticalButton(QPushButton):
     """
@@ -62,13 +71,39 @@ class SidebarWidget(QWidget):
         
         self._setup_ui()
         self._connect_signals()
+
+        # Re-style on theme switch so the selected-tab background follows
+        # the active accent live.
+        try:
+            if get_theme_manager is not None:
+                get_theme_manager().themeChanged.connect(self._on_theme_changed)
+        except Exception:
+            pass
+
+    def _current_theme(self) -> dict:
+        try:
+            if get_theme_manager is not None:
+                return get_theme_manager().current_theme() or {}
+        except Exception:
+            pass
+        return {}
+
+    def _on_theme_changed(self, _theme: dict) -> None:
+        """ThemeManager callback — rebuild button stylesheets so the
+        selected tab picks up the new accent immediately."""
+        try:
+            self._update_button_styles(self.current_panel)
+        except Exception:
+            pass
     
     def _setup_ui(self):
         """Set up the sidebar UI components."""
         # Configure sidebar widget
         self.setFixedWidth(40)
-        self.setStyleSheet("""
-            background-color: #171b1e;
+        t = self._current_theme()
+        panel_deep = t.get("panel_deep_bg", "#171b1e")
+        self.setStyleSheet(f"""
+            background-color: {panel_deep};
             border-top-left-radius: 12px;
             border-bottom-left-radius: 12px;
             margin: 0px;
@@ -135,18 +170,26 @@ class SidebarWidget(QWidget):
     def _get_button_style(self, checked: bool) -> str:
         """
         Get the appropriate button style based on checked state.
-        
+
+        Colors derive from the active workstation theme: checked uses the
+        theme `accent` / `accent_pressed` tokens (was hard-coded Material
+        blue #2196f3 / #1976d2), inactive uses subtle neutral panel colors.
+
         Args:
             checked: Whether the button is checked/active
-            
+
         Returns:
             CSS style string for the button
         """
+        t = self._current_theme()
         if checked:
-            return """
-                QPushButton {
-                    background-color: #2196f3;
-                    color: white;
+            accent = t.get("accent", "#2196f3")
+            accent_hover = t.get("accent_hover", "#1976d2")
+            button_text = t.get("button_text", "white")
+            return f"""
+                QPushButton {{
+                    background-color: {accent};
+                    color: {button_text};
                     font-weight: bold;
                     font-size: 14px;
                     line-height: 1.4;
@@ -154,16 +197,22 @@ class SidebarWidget(QWidget):
                     border: none;
                     border-radius: 8px;
                     padding: 14px 0;
-                }
-                QPushButton:hover {
-                    background-color: #1976d2;
-                }
+                }}
+                QPushButton:hover {{
+                    background-color: {accent_hover};
+                }}
             """
         else:
-            return """
-                QPushButton {
-                    background-color: #222;
-                    color: #aaa;
+            # Inactive: keep the muted neutral look so the selected tab
+            # always pops, regardless of theme.
+            menu_bg = t.get("menu_bg", "#222")
+            menu_hover = t.get("menu_hover_bg", "#333")
+            text_muted = t.get("text_muted", "#aaa")
+            text_secondary = t.get("text_secondary", "#ccc")
+            return f"""
+                QPushButton {{
+                    background-color: {menu_bg};
+                    color: {text_muted};
                     font-weight: bold;
                     font-size: 14px;
                     line-height: 1.4;
@@ -171,11 +220,11 @@ class SidebarWidget(QWidget):
                     border: none;
                     border-radius: 8px;
                     padding: 14px 0;
-                }
-                QPushButton:hover {
-                    background-color: #333;
-                    color: #ccc;
-                }
+                }}
+                QPushButton:hover {{
+                    background-color: {menu_hover};
+                    color: {text_secondary};
+                }}
             """
     
     def _switch_panel(self, panel_name: str):

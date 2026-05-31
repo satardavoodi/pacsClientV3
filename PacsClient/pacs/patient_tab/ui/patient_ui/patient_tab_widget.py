@@ -4,6 +4,15 @@ from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QTimer, Signal
 from PySide6.QtGui import QPixmap, QPainter, QColor, QFont, QLinearGradient, QPen, QMouseEvent
 import os
 
+# Theme-aware tab chrome: when the user switches workstation theme (Blue → Green
+# → Yellow, etc.) the tab's painted border and gradient backdrop should follow
+# the active accent. Case-of-Day mode still wins so educational cases stay
+# unambiguously green regardless of theme.
+try:
+    from PacsClient.utils.theme_manager import get_theme_manager
+except Exception:  # pragma: no cover — defensive fallback
+    get_theme_manager = None
+
 
 class PatientTabWidget(QWidget):
     """
@@ -37,6 +46,33 @@ class PatientTabWidget(QWidget):
         self.setup_ui()
         self.load_thumbnail()
         self.apply_styling()
+
+        # Subscribe to theme switches so the tab chrome re-styles live without
+        # waiting for the widget to be re-shown. Best-effort: the wrapped
+        # try/except keeps the legacy demo / standalone-import paths from
+        # crashing if the theme manager isn't available.
+        try:
+            if get_theme_manager is not None:
+                get_theme_manager().themeChanged.connect(self._on_theme_changed)
+        except Exception:
+            pass
+
+    def _on_theme_changed(self, _theme: dict) -> None:
+        """ThemeManager.themeChanged callback — re-apply styling + repaint border."""
+        try:
+            self.apply_styling()
+            self.update()
+        except Exception:
+            pass
+
+    def _current_theme(self) -> dict:
+        """Active theme dict or an empty dict if the theme manager is missing."""
+        try:
+            if get_theme_manager is not None:
+                return get_theme_manager().current_theme() or {}
+        except Exception:
+            pass
+        return {}
 
     def setup_ui(self):
         """Setup the main layout and widgets"""
@@ -182,29 +218,53 @@ class PatientTabWidget(QWidget):
         self.thumbnail_label.setPixmap(pixmap)
 
     def apply_styling(self):
-        """Apply beautiful styling to the tab widget"""
+        """Apply beautiful styling to the tab widget.
 
-        # Styling similar to AiPacs button
-        stylesheet = """
-            PatientTabWidget {
-                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-                border: 2px solid #4a5568 !important;
+        The default/hover/active gradients used to be hard-coded indigo→violet
+        (`#667eea→#764ba2`), which clashed with every non-Blue theme. The
+        gradient now derives from the active theme's `tab_bg`, `accent`, and
+        `accent_secondary` tokens so a Green theme produces a green tab, a
+        Yellow theme produces an amber tab, etc. The `!important` flags stay
+        to defeat the global stylesheet's button styling.
+        """
+        t = self._current_theme()
+        # Fallbacks line up with the Blue baseline so an unthemed instance
+        # still renders the historical look.
+        tab_bg = t.get("tab_bg", "#1f2850")
+        panel_bg = t.get("panel_bg", "#111a34")
+        accent = t.get("accent", "#3182ce")
+        accent_secondary = t.get("accent_secondary", "#0284c7")
+        accent_pressed = t.get("accent_pressed", "#2c5282")
+        border_color = t.get("border", "#4a5568")
+        text_primary = t.get("text_primary", "#f8fafc")
+
+        # Theme-aware prefix (f-string — needs braces escaped). The rest of
+        # the stylesheet below stays raw with regular CSS braces.
+        themed_prefix = f"""
+            PatientTabWidget {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {tab_bg}, stop:0.55 {panel_bg}, stop:1 {tab_bg}) !important;
+                border: 2px solid {border_color} !important;
                 border-radius: 8px !important;
                 min-height: 45px !important;
                 max-width: 170px !important;
-                color: #ffffff !important;
-            }
-            
-            PatientTabWidget:hover {
-                background: linear-gradient(135deg, #5a67d8 0%, #6b46c1 100%) !important;
-                border: 2px solid #3182ce !important;
-            }
-            
-            PatientTabWidget.active {
-                background: linear-gradient(135deg, #4c51bf 0%, #553c9a 100%) !important;
-                border: 2px solid #2b6cb0 !important;
-            }
-            
+                color: {text_primary} !important;
+            }}
+
+            PatientTabWidget:hover {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {accent_secondary}, stop:0.55 {tab_bg}, stop:1 {panel_bg}) !important;
+                border: 2px solid {accent} !important;
+            }}
+
+            PatientTabWidget.active {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {accent}, stop:0.55 {accent_pressed}, stop:1 {panel_bg}) !important;
+                border: 2px solid {accent} !important;
+            }}
+        """
+
+        stylesheet = themed_prefix + """
             QFrame#ThumbnailContainer {
                 background: rgba(255, 255, 255, 0.2);
                 border-radius: 6px;
@@ -466,21 +526,24 @@ class PatientTabWidget(QWidget):
         # Get current state
         is_active = self.is_active()
 
-        # Set border color based on state (matching AiPacs button style).
+        # Set border color based on state.
         # Case-of-Day mode overrides both active and inactive colors with
         # green so the user can visually tell an educational case apart
-        # from a routine clinical patient tab.
+        # from a routine clinical patient tab. Otherwise the border tracks
+        # the active workstation theme — active tab uses `accent`, inactive
+        # uses the theme's `border` token.
         if self.case_of_day_mode:
             if is_active:
                 border_color = QColor("#15803d")  # green-700 — active educational
             else:
                 border_color = QColor("#22c55e")  # green-500 — inactive educational
             border_width = 2
-        elif is_active:
-            border_color = QColor("#2b6cb0")  # Dark blue for active
-            border_width = 2
         else:
-            border_color = QColor("#4a5568")  # Gray for inactive
+            t = self._current_theme()
+            if is_active:
+                border_color = QColor(t.get("accent", "#2b6cb0"))
+            else:
+                border_color = QColor(t.get("border", "#4a5568"))
             border_width = 2
 
         # Draw border
@@ -492,12 +555,16 @@ class PatientTabWidget(QWidget):
         rect = self.rect().adjusted(border_width // 2, border_width // 2, -border_width // 2, -border_width // 2)
         painter.drawRoundedRect(rect, 8, 8)
 
-        # Add subtle shadow for active tabs
+        # Add subtle shadow for active tabs. Glow uses the theme accent (with
+        # low alpha) so it harmonises with whatever palette the user picks;
+        # Case-of-Day keeps its dedicated green halo.
         if is_active:
             if self.case_of_day_mode:
                 shadow_color = QColor(34, 197, 94, 60)  # green-500 glow
             else:
-                shadow_color = QColor(102, 126, 234, 50)
+                # Use the theme accent border color, just with reduced alpha.
+                shadow_color = QColor(border_color)
+                shadow_color.setAlpha(60)
             shadow_pen = QPen(shadow_color, 1)
             painter.setPen(shadow_pen)
             shadow_rect = rect.adjusted(1, 1, 1, 1)

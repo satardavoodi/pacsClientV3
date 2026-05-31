@@ -130,9 +130,14 @@ class CombinedDelegate(QStyledItemDelegate):
         self.theme_manager = theme_manager or get_theme_manager()
         # Status -> underline colour. A value may be a theme key (resolved
         # against the active theme) or a literal hex colour.
+        # Both 'synced' and 'opened' now resolve to theme tokens so the
+        # row indicator stays harmonious across all seven themes (Blue's
+        # `info`=#06b6d4 cyan, Green's =#14b8a6 teal, Yellow's =#f59e0b
+        # amber, etc.) instead of stamping a fixed Material blue on every
+        # palette.
         self._status_to_theme_color = {
-            'synced': 'success',      # Green  - viewed + report completed (unchanged)
-            'opened': '#60a5fa',      # Blue (faint, light) - opened but not finished (was warning/yellow)
+            'synced': 'success',      # Green/teal  - viewed + report completed
+            'opened': 'info',         # Cyan/teal   - opened but not finished
         }
 
     def paint(self, painter, option, index):
@@ -176,6 +181,21 @@ class CombinedDelegate(QStyledItemDelegate):
                 painter.drawLine(rect.left() + 6, y, rect.right() - 6, y)
 
                 painter.restore()
+
+
+class _CenterNumericDelegate(CombinedDelegate):
+    """V2 (home) only: center-aligns a numeric column (Images, Age) so the values
+    sit balanced in the cell (equal spacing both sides) and read cleanly as box
+    sizes change. Reuses CombinedDelegate's painting (selection, underline)
+    unchanged — it only adjusts text alignment via initStyleOption. Installed once
+    at table construction when home==v2, so no per-paint flag read."""
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        try:
+            option.displayAlignment = Qt.AlignHCenter | Qt.AlignVCenter
+        except Exception:
+            pass
 
 
 COL = {
@@ -929,6 +949,18 @@ class PatientTableWidget(QWidget):
         except Exception as e:
             print(f"Error setting up select all header: {e}")
         
+    def _make_v2_toolbar_separator(self):
+        """A thin vertical divider for the V2 sub-toolbar clusters (token border)."""
+        from PySide6.QtWidgets import QFrame
+        sep = QFrame()
+        sep.setFrameShape(QFrame.VLine)
+        sep.setFixedWidth(1)
+        border = (getattr(self, '_active_theme', None) or {}).get('border', '#2d3748')
+        sep.setStyleSheet(
+            f"QFrame {{ background: {border}; border: none; max-width: 1px; margin: 8px 6px; }}"
+        )
+        return sep
+
     def _setup_patient_name_delegate(self):
         """Setup custom delegate for patient name column"""
         delegate = CombinedDelegate(self.results_table, is_patient_name_column=True, theme_manager=self.theme_manager)
@@ -938,9 +970,24 @@ class PatientTableWidget(QWidget):
         """Setup custom delegate for neon highlight effect on all columns"""
         # Apply the combined delegate to all columns except the checkbox column (COL['select'])
         # For the patient name column, we already set it with is_patient_name_column=True
+        #
+        # V2 (home): center-align the numeric columns (Images, Age) so values sit
+        # balanced in the cell. The flag is read ONCE here (get_ui_variant hits disk,
+        # so it must never run per-row/per-paint); the delegate subclass carries the
+        # alignment with no further checks.
+        _v2_numeric = False
+        try:
+            from PacsClient.utils.v2_style import home_is_v2
+            _v2_numeric = home_is_v2()
+        except Exception:
+            _v2_numeric = False
+        _numeric_cols = (COL['images'], COL['age'])
         for col in range(self.results_table.columnCount()):
             if col != COL['select'] and col != COL['patient_name']:  # Don't apply to checkbox column or patient name column
-                delegate = CombinedDelegate(self.results_table, is_patient_name_column=False, theme_manager=self.theme_manager)
+                if _v2_numeric and col in _numeric_cols:
+                    delegate = _CenterNumericDelegate(self.results_table, is_patient_name_column=False, theme_manager=self.theme_manager)
+                else:
+                    delegate = CombinedDelegate(self.results_table, is_patient_name_column=False, theme_manager=self.theme_manager)
                 self.results_table.setItemDelegateForColumn(col, delegate)
 
     def _on_header_clicked(self, logical_index):
@@ -1341,14 +1388,28 @@ class PatientTableWidget(QWidget):
         self.font_decrease_btn.setStyleSheet(utility_button_style)
         self.font_decrease_btn.setCursor(Qt.PointingHandCursor)
         
+        # V2 (home): group the sub-toolbar into view | config | study-actions with
+        # thin dividers, so the row reads as clusters instead of one undifferentiated
+        # strip. Flag read ONCE here (never per-row). No-op in V1 — same order, no seps.
+        _v2_toolbar = False
+        try:
+            from PacsClient.utils.v2_style import home_is_v2 as _home_is_v2
+            _v2_toolbar = _home_is_v2()
+        except Exception:
+            _v2_toolbar = False
+
         header_layout.addWidget(title_label)
         header_layout.addStretch()
         header_layout.addWidget(self.results_count_label)
         header_layout.addWidget(self.font_decrease_btn)
         header_layout.addWidget(self.font_increase_btn)
         header_layout.addWidget(self.refresh_btn)
+        if _v2_toolbar:
+            header_layout.addWidget(self._make_v2_toolbar_separator())
         header_layout.addWidget(self.settings_btn)
         header_layout.addWidget(self.delete_btn)
+        if _v2_toolbar:
+            header_layout.addWidget(self._make_v2_toolbar_separator())
         header_layout.addWidget(self.offline_export_btn)
         header_layout.addWidget(self.print_btn)
         header_layout.addWidget(self.cd_burn_btn)
@@ -1417,6 +1478,35 @@ class PatientTableWidget(QWidget):
             utility_accent = theme.get('panel_alt_bg', '#64748b')
             for btn in [self.settings_btn, self.refresh_btn, self.font_increase_btn, self.font_decrease_btn]:
                 self._update_utility_button_stylesheet(btn, utility_accent)
+
+            # V2 (home): flatten the sub-toolbar's coloured gradient blocks into one
+            # flat ghost family — download = the single filled-accent primary, delete
+            # = danger-on-hover, the rest neutral ghost. One gate check for the batch.
+            # No-op in V1; applied here so it survives this re-style pass.
+            try:
+                from PacsClient.utils.v2_style import apply_home_toolbar_buttons_v2
+                _v2_applied = apply_home_toolbar_buttons_v2([
+                    (self.download_btn, 'primary'),
+                    (self.delete_btn, 'danger'),
+                    (self.offline_export_btn, 'neutral'),
+                    (self.cd_burn_btn, 'neutral'),
+                    (self.print_btn, 'neutral'),
+                    (self.settings_btn, 'neutral'),
+                    (self.refresh_btn, 'neutral'),
+                    (self.font_increase_btn, 'neutral'),
+                    (self.font_decrease_btn, 'neutral'),
+                ])
+                # Download is the critical action — in V2 make it a wider, LABELLED
+                # primary so it reads as the main call-to-action (icon-only 76px was
+                # too small for its importance). V1 keeps the original 76px icon button.
+                if _v2_applied:
+                    try:
+                        self.download_btn.setText(" Download")
+                        self.download_btn.setFixedWidth(132)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
             
             # Update header widget styling
             header_bg = theme.get('panel_bg', '#0f1419')
@@ -2260,6 +2350,51 @@ class PatientTableWidget(QWidget):
     _SHOW_LOCAL_DOCS_FOLDER_ICON = False
     _SHOW_PREVIOUS_HISTORY_FOLDER_ICON = False
 
+    # Status-icon contrast guard:
+    # For each semantic icon that *must* keep its meaning across themes
+    # (graduation cap = case-of-day; print = printed; mic = voice), we pin a
+    # canonical color and a high-contrast fallback. The picker swaps to the
+    # fallback when the canonical color's WCAG contrast vs the active
+    # panel_bg drops below the threshold. This fixes the Yellow-theme
+    # graduation-cap bleed without polluting the other six themes (the
+    # canonical gold reads fine on every dark theme except Yellow).
+    _STATUS_ICON_PALETTE = {
+        # icon-key: (canonical, high-contrast-fallback)
+        'graduation_cap':   ('#fbbf24', '#fde68a'),  # amber-400 → amber-200
+        'print':            ('#60a5fa', '#bfdbfe'),  # blue-400  → blue-200
+        'voice':            ('#ef4444', '#fca5a5'),  # red-500   → red-300
+    }
+
+    @staticmethod
+    def _wcag_contrast_ratio(fg_hex: str, bg_hex: str) -> float:
+        """Compute the WCAG 2.1 contrast ratio between two #rrggbb colors.
+        Returns a number between 1.0 (no contrast) and 21.0 (max contrast)."""
+        from PySide6.QtGui import QColor
+
+        def _lin(channel: int) -> float:
+            c = channel / 255.0
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+        def _luma(hex_color: str) -> float:
+            qc = QColor(hex_color)
+            if not qc.isValid():
+                return 0.0
+            return 0.2126 * _lin(qc.red()) + 0.7152 * _lin(qc.green()) + 0.0722 * _lin(qc.blue())
+
+        L1, L2 = _luma(fg_hex), _luma(bg_hex)
+        lighter, darker = (L1, L2) if L1 >= L2 else (L2, L1)
+        return (lighter + 0.05) / (darker + 0.05)
+
+    def _contrast_safe_color(self, icon_key: str, theme_bg_hex: str, threshold: float = 3.0) -> str:
+        """Pick canonical or high-contrast variant of a semantic-icon color.
+        Falls back to canonical if the icon_key isn't in the palette."""
+        canonical, fallback = self._STATUS_ICON_PALETTE.get(icon_key, (None, None))
+        if canonical is None:
+            return '#10b981'
+        if self._wcag_contrast_ratio(canonical, theme_bg_hex) >= threshold:
+            return canonical
+        return fallback
+
     def _build_local_status_widget(self, study_uid: str, patient_id: str = '') -> QWidget:
         """Render DCM/DOC/VOC/AI indicators for local availability."""
         flags = self._compute_local_status_flags(study_uid, patient_id)
@@ -2274,6 +2409,12 @@ class PatientTableWidget(QWidget):
         # and Voice (microphone); literal text "AI" for AI results. A chip is
         # added ONLY when that data exists for the row, so nothing is shown by
         # default -- only the indicators that apply.
+        #
+        # Some semantic icon colors clash with certain themes (e.g. graduation
+        # gold #fbbf24 fades into Yellow-theme amber backgrounds). The
+        # `_contrast_safe_color` helper below picks between the canonical
+        # color and a high-contrast fallback when the contrast ratio against
+        # the active panel_bg drops below WCAG AA-large (3.0:1).
         def _chip(tip: str, icon: str = '', text: str = '', color: str = '#10b981') -> QLabel:
             chip = QLabel()
             chip.setAlignment(Qt.AlignCenter)
@@ -2301,8 +2442,20 @@ class PatientTableWidget(QWidget):
         # flip _SHOW_PREVIOUS_HISTORY_FOLDER_ICON to True.
         if self._SHOW_PREVIOUS_HISTORY_FOLDER_ICON and flags.get('previous_history', False):
             layout.addWidget(_chip('Previous imaging exams on file', icon='fa5s.folder'))
+        # Resolve the active panel background once so we can ask the contrast
+        # guard whether each semantic icon needs to swap to its high-contrast
+        # variant (relevant primarily on the Yellow theme).
+        try:
+            theme_bg = self.theme_manager.current_theme().get('panel_bg', '#0f1419')
+        except Exception:
+            theme_bg = '#0f1419'
+
         if flags.get('voice', False):
-            layout.addWidget(_chip('Local voice files', icon='fa5s.microphone', color='#ef4444'))
+            layout.addWidget(_chip(
+                'Local voice files',
+                icon='fa5s.microphone',
+                color=self._contrast_safe_color('voice', theme_bg),
+            ))
         if flags.get('ai', False):
             layout.addWidget(_chip('Local AI results', text='AI'))
         # Case of the Day — graduation cap. Tooltip includes the count so a
@@ -2312,11 +2465,19 @@ class PatientTableWidget(QWidget):
             cod_tip = (
                 f"Saved as Case of the Day ({count} case{'s' if count != 1 else ''})"
             )
-            layout.addWidget(_chip(cod_tip, icon='fa5s.graduation-cap', color='#f59e0b'))
+            layout.addWidget(_chip(
+                cod_tip,
+                icon='fa5s.graduation-cap',
+                color=self._contrast_safe_color('graduation_cap', theme_bg),
+            ))
         # Print status — printer icon when the study has been printed at
         # least once via the Printing module (local or DICOM).
         if flags.get('printed', False):
-            layout.addWidget(_chip('Patient has been printed', icon='fa5s.print', color='#60a5fa'))
+            layout.addWidget(_chip(
+                'Patient has been printed',
+                icon='fa5s.print',
+                color=self._contrast_safe_color('print', theme_bg),
+            ))
 
         container.setStyleSheet('background: transparent; border: none;')
         return container
@@ -4251,9 +4412,41 @@ class PatientTableWidget(QWidget):
                             item.setBackground(QColor('#3182ce'))
                             item.setForeground(QColor('#ffffff'))
     
+    def _build_modality_count_summary(self):
+        """Build a modality-aware results summary, e.g. ' 32 MRI studies found' or
+        ' 32 MRI studies, 16 CT studies found' (most common modality first). Returns
+        None on any problem so the caller can fall back to the plain count."""
+        try:
+            from collections import Counter
+            tally = Counter()
+            for row in range(self.results_table.rowCount()):
+                it = self.results_table.item(row, COL['modality'])
+                mod = (it.text().strip().upper() if (it and it.text()) else '') or 'OTHER'
+                tally[mod] += 1
+            if not tally:
+                return None
+            label_map = {'MR': 'MRI'}  # show the friendly name; other codes pass through
+            parts = []
+            for mod, n in tally.most_common():
+                label = label_map.get(mod, mod)
+                noun = 'study' if n == 1 else 'studies'
+                parts.append(f"{n} {label} {noun}")
+            return " " + ", ".join(parts) + " found"
+        except Exception:
+            return None
+
     def _update_results_count(self):
         """Update the results count label"""
         count = self.results_table.rowCount()
+        # V2 (home): replace the plain 'N studies found' with a modality-aware summary.
+        # Gated + computed once per search (never per-row/per-paint). V1 keeps plain text.
+        _summary = None
+        try:
+            from PacsClient.utils.v2_style import home_is_v2
+            if count > 0 and home_is_v2():
+                _summary = self._build_modality_count_summary()
+        except Exception:
+            _summary = None
         if count == 0:
             self.results_count_label.setPixmap(qta.icon('fa5s.chart-bar', color='#ef4444').pixmap(12, 12))
             self.results_count_label.setText(" No studies found")
@@ -4269,7 +4462,7 @@ class PatientTableWidget(QWidget):
             """)
         elif count == 1:
             self.results_count_label.setPixmap(qta.icon('fa5s.chart-bar', color='#10b981').pixmap(12, 12))
-            self.results_count_label.setText(" 1 study found")
+            self.results_count_label.setText(_summary or " 1 study found")
             self.results_count_label.setStyleSheet("""
                 QLabel {
                     font-size: 12px;
@@ -4282,7 +4475,7 @@ class PatientTableWidget(QWidget):
             """)
         else:
             self.results_count_label.setPixmap(qta.icon('fa5s.chart-bar', color='#3b82f6').pixmap(12, 12))
-            self.results_count_label.setText(f" {count} studies found")
+            self.results_count_label.setText(_summary or f" {count} studies found")
             self.results_count_label.setStyleSheet("""
                 QLabel {
                     font-size: 12px;

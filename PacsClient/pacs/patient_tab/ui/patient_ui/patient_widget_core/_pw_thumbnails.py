@@ -577,6 +577,9 @@ class _PWThumbnailsMixin:
 
             thumb_index = 0
             total_series = 0
+            # Resolve the study path ONCE for the whole render pass — constant for
+            # the widget; resolving per series triggers a disk scan (UI stall).
+            _sp_downloaded = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             for su, slot, group in groups:
                 cached = check_and_get_thumbnails(self.import_folder_path, su) or []
                 cached_by_stem = {Path(p).stem: p for p in cached}
@@ -604,7 +607,7 @@ class _PWThumbnailsMixin:
                     rendered_any = True
                     if tm is not None:
                         try:
-                            if self._is_series_downloaded(key):
+                            if self._is_series_downloaded(key, study_path=_sp_downloaded):
                                 tm.set_series_ready(key)
                             else:
                                 tm.set_series_pending(key)
@@ -650,6 +653,7 @@ class _PWThumbnailsMixin:
         """Render thumbnail widgets from cached file paths."""
         try:
             thumb_index = 0
+            _sp_downloaded = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             for thumbnail_file in thumbnails:
                 series_number = Path(thumbnail_file).stem
                 series_info = self._server_series_info.get(str(series_number))
@@ -661,7 +665,7 @@ class _PWThumbnailsMixin:
                 )
                 # ✅ Mark downloaded series with green border; keep others pending
                 if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                    if self._is_series_downloaded(series_number):
+                    if self._is_series_downloaded(series_number, study_path=_sp_downloaded):
                         self.thumbnail_manager.set_series_ready(series_number)
                     else:
                         self.thumbnail_manager.set_series_pending(series_number)
@@ -699,6 +703,7 @@ class _PWThumbnailsMixin:
             db_update_entries: list = []
 
             thumb_index = 0
+            _sp_downloaded = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             for series in sorted(series_entries, key=_sort_key):
                 file_path = series.get('file_path')
                 series_number = str(series.get('series_number', ''))
@@ -727,7 +732,7 @@ class _PWThumbnailsMixin:
                 )
                 # ✅ Default pending style unless series data is already downloaded
                 if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                    if self._is_series_downloaded(series_number):
+                    if self._is_series_downloaded(series_number, study_path=_sp_downloaded):
                         self.thumbnail_manager.set_series_ready(series_number)
                     else:
                         self.thumbnail_manager.set_series_pending(series_number)
@@ -773,8 +778,15 @@ class _PWThumbnailsMixin:
         except Exception:
             return 0
 
-    def _is_series_downloaded(self, series_identifier: str) -> bool:
-        """Return True only when local DICOM availability satisfies expected completeness."""
+    def _is_series_downloaded(self, series_identifier: str, study_path: str = None) -> bool:
+        """Return True only when local DICOM availability satisfies expected completeness.
+
+        ``study_path`` lets loop callers pass the (constant) resolved study path
+        once instead of triggering a per-series disk scan via
+        ``_get_correct_study_path`` (glob + parent iterdir + a glob per sibling).
+        When None it is resolved here exactly as before — unchanged behaviour for
+        non-loop callers.
+        """
         try:
             resolution = resolve_series_expected_count(
                 series_identifier,
@@ -783,7 +795,8 @@ class _PWThumbnailsMixin:
                 thumbnail_items=getattr(self, 'lst_thumbnails_data', []) or [],
             )
             series_key = resolution.series_identifier
-            study_path = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
+            if study_path is None:
+                study_path = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             base_path = Path(study_path) if study_path else Path(self.import_folder_path or "")
             if not base_path or not base_path.exists():
                 return False
@@ -881,6 +894,9 @@ class _PWThumbnailsMixin:
             if thumb_container:
                 thumb_container.setUpdatesEnabled(False)
 
+            # Resolve the study path ONCE per render pass — constant for the
+            # widget; resolving per series triggers a disk scan (UI stall).
+            _sp_downloaded = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
             for thumbnail_file in thumbnails:
                 thumbnail_file: Path
                 series_number = thumbnail_file.stem
@@ -894,7 +910,7 @@ class _PWThumbnailsMixin:
                                                                      series_info=series_info_from_server)
                 # ✅ Existing thumbnails mean series likely downloaded
                 if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                    if self._is_series_downloaded(series_number):
+                    if self._is_series_downloaded(series_number, study_path=_sp_downloaded):
                         self.thumbnail_manager.set_series_ready(series_number)
                     else:
                         self.thumbnail_manager.set_series_pending(series_number)
@@ -912,4 +928,53 @@ class _PWThumbnailsMixin:
                 else:
                     self._suppress_thumb_scroll_reset = False
         return thumb_index
+
+    def resync_thumbnail_download_states(self):
+        """Re-evaluate on-disk completeness for the series shown in this tab and
+        clear any stale 'loading' overlay for series that finished downloading
+        while the tab was inactive (Issue: returning to a tab still shows the
+        glass overlay even though the series is fully downloaded).
+
+        Safe + idempotent: it ONLY upgrades genuinely-complete series to ready
+        (clearing the overlay) and never marks an incomplete series, so a
+        still-downloading series keeps its loading state. Cheap — only this
+        patient's series, on the main thread, reusing the (already hoisted)
+        study-path resolution. Works for single- and multi-study (offset keys).
+        """
+        try:
+            tm = getattr(self, 'thumbnail_manager', None)
+            if tm is None:
+                return
+            keys = list(getattr(tm, 'series_widgets', {}) or {})
+            if not keys:
+                return
+            sp = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
+            for key in keys:
+                try:
+                    if self._is_series_downloaded(key, study_path=sp):
+                        tm.set_series_ready(key)
+                        # set_series_ready only sets the green border. The
+                        # glass/matte loading overlay is hidden by the download
+                        # progress path (_apply_compact_progress_state), which is
+                        # suppressed while the tab is inactive — so a series that
+                        # finished downloading off-tab keeps its overlay on return.
+                        # Clear the overlays here too (main-thread Qt ops; this
+                        # method runs on tab activation).
+                        try:
+                            _w = (getattr(tm, 'series_widgets', {}) or {}).get(key)
+                            if _w is not None:
+                                _changed = False
+                                for _ov_name in ('glass_overlay', 'progress_overlay'):
+                                    _ov = getattr(_w, _ov_name, None)
+                                    if _ov is not None and _ov.isVisible():
+                                        _ov.setVisible(False)
+                                        _changed = True
+                                if _changed:
+                                    _w.update()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+        except Exception:
+            pass
 

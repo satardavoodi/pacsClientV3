@@ -17,6 +17,16 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QPushButton, QFrame,
 from PySide6.QtCore import Qt, Signal
 from PacsClient.pacs.patient_tab.utils import create_attachment_folder, open_folder
 
+# Theme-aware reception buttons: previously the Open Attachments button was
+# pinned to Material blue (#2196f3) and View Reports to Material green
+# (#4caf50). They now follow the active workstation theme's `accent` and
+# `success` tokens so a Green/Yellow/Red theme produces tonally consistent
+# chrome.
+try:
+    from PacsClient.utils.theme_manager import get_theme_manager
+except Exception:  # pragma: no cover — defensive fallback
+    get_theme_manager = None
+
 
 class ReceptionPanelWidget(QWidget):
     """
@@ -47,6 +57,93 @@ class ReceptionPanelWidget(QWidget):
         
         self._setup_ui()
         self._connect_signals()
+
+        # Subscribe to theme switches so the buttons re-style live.
+        try:
+            if get_theme_manager is not None:
+                get_theme_manager().themeChanged.connect(self._on_theme_changed)
+        except Exception:
+            pass
+
+    def _current_theme(self) -> dict:
+        try:
+            if get_theme_manager is not None:
+                return get_theme_manager().current_theme() or {}
+        except Exception:
+            pass
+        return {}
+
+    def _on_theme_changed(self, _theme: dict) -> None:
+        """Re-apply button stylesheets when the workstation theme changes."""
+        try:
+            if hasattr(self, "btn_open_folder_attachments"):
+                self.btn_open_folder_attachments.setStyleSheet(
+                    self._build_accent_button_stylesheet()
+                )
+            if hasattr(self, "btn_view_reports"):
+                self.btn_view_reports.setStyleSheet(
+                    self._build_success_button_stylesheet()
+                )
+        except Exception:
+            pass
+
+    def _build_accent_button_stylesheet(self) -> str:
+        """Stylesheet for the Open Attachments button — uses theme `accent`."""
+        t = self._current_theme()
+        accent = t.get("accent", "#2196f3")
+        accent_hover = t.get("accent_hover", "#1976d2")
+        accent_pressed = t.get("accent_pressed", "#1565c0")
+        button_text = t.get("button_text", "white")
+        return f"""
+            QPushButton {{
+                background-color: {accent};
+                color: {button_text};
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {accent_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {accent_pressed};
+            }}
+            QPushButton:disabled {{
+                background-color: #666;
+                color: #999;
+            }}
+        """
+
+    def _build_success_button_stylesheet(self) -> str:
+        """Stylesheet for the View Reports button — uses theme `success`."""
+        t = self._current_theme()
+        success = t.get("success", "#4caf50")
+        success_hover = t.get("success_hover", "#45a049")
+        # We don't have a success_pressed token; derive a darker shade by
+        # falling back to success_subtle (typically a deep saturated tint).
+        success_pressed = t.get("success_subtle", "#3d8b40")
+        button_text = t.get("button_text", "white")
+        return f"""
+            QPushButton {{
+                background-color: {success};
+                color: {button_text};
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: bold;
+            }}
+            QPushButton:hover {{
+                background-color: {success_hover};
+            }}
+            QPushButton:pressed {{
+                background-color: {success_pressed};
+            }}
+            QPushButton:disabled {{
+                background-color: #666;
+                color: #999;
+            }}
+        """
     
     def _setup_ui(self):
         """Set up the reception panel UI components."""
@@ -104,51 +201,19 @@ class ReceptionPanelWidget(QWidget):
         """Create the attachment folder button."""
         self.btn_open_folder_attachments = QPushButton('Open Attachments')
         self.btn_open_folder_attachments.setMinimumHeight(50)  # Archetype 5: floor, can grow with font/DPI
-        self.btn_open_folder_attachments.setStyleSheet("""
-            QPushButton {
-                background-color: #2196f3;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #1976d2;
-            }
-            QPushButton:pressed {
-                background-color: #1565c0;
-            }
-            QPushButton:disabled {
-                background-color: #666;
-                color: #999;
-            }
-        """)
+        # Themed stylesheet — derives from active workstation theme accent.
+        self.btn_open_folder_attachments.setStyleSheet(
+            self._build_accent_button_stylesheet()
+        )
         self.btn_open_folder_attachments.setEnabled(False)
-        
+
         # Add View Reports button
         self.btn_view_reports = QPushButton('📋 View Reports')
         self.btn_view_reports.setMinimumHeight(50)  # Archetype 5: floor, can grow with font/DPI
-        self.btn_view_reports.setStyleSheet("""
-            QPushButton {
-                background-color: #4caf50;
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-            QPushButton:disabled {
-                background-color: #666;
-                color: #999;
-            }
-        """)
+        # Themed stylesheet — derives from active workstation theme `success`.
+        self.btn_view_reports.setStyleSheet(
+            self._build_success_button_stylesheet()
+        )
         self.btn_view_reports.setEnabled(False)
     
     def _add_widgets_to_layout(self):

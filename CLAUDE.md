@@ -187,16 +187,23 @@ Key invariants that must not be broken:
   subprocess-spawn pre-warm — all test-gated. Run `tests/download_manager/` before
   resuming.
 
-### Viewer/Home "V2" design layer (parallel, flag-gated — 2026-05-30)
+### Viewer/Home "V2" design layer (DEFAULT — flipped 2026-05-31)
 Before editing `PacsClient/utils/v2_style.py`, `PacsClient/utils/ui_variant.py`, the viewer
 toolbar styling (`patient_tab/.../patient_toolbar/toolbar_manager.py`), or home-page widget
 styling, **read `docs/design/V2_DESIGN_SYSTEM_AS_BUILT.md`** (authoritative as-built; the
-`*_REVIEW.md` / `*_PLAN.md` files are background).
+`*_REVIEW.md` / `*_PLAN.md` files are background). The full theme + per-widget audit landed
+in `docs/design/THEME_SYSTEM_REVIEW_2026-05-30.md`.
 
 Key invariants that must not be broken:
-- V2 is **opt-in and default OFF** (`get_ui_variant(module)` via env `AIPACS_UI_VARIANT` or
-  `config/ui_variant.json`). With the flag off, V1 must render **byte-identical** — every
-  `apply_*_v2()` wrapper checks `home_is_v2()` / `viewer_is_v2()` and no-ops otherwise.
+- V2 is now the **default** workstation design. `get_ui_variant(module)` returns `"v2"` when
+  no env var or config override is present. V1 is preserved as a **backup/legacy variant**
+  reachable via env `AIPACS_UI_VARIANT=v1` or `<USER_DATA_ROOT>/config/ui_variant.json`
+  containing `{"variant": "v1"}` (or any per-module override). Every `apply_*_v2()` wrapper
+  still checks `home_is_v2()` / `viewer_is_v2()` and **no-ops back to V1** when the user
+  pins V1, so the legacy path remains byte-identical to its pre-migration self.
+- The build-default constant is `_BUILD_DEFAULT_VARIANT` in `PacsClient/utils/ui_variant.py`.
+  To re-flip the default for a build (or for a single user via env var), change that one
+  string — every call site reads from it.
 - **Apply at the source, not after the fact.** Each `apply_*_v2()` is called from *inside* the
   widget's V1 source style function (e.g. `_apply_qtoolbutton_style`, `_apply_split_*_style`,
   `_apply_dropdown_button_style`, `PatientTableWidget._apply_theme`) so it survives the app's

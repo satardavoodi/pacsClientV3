@@ -132,20 +132,48 @@ class DownloadProcessWorker(QThread):
             # that the subprocess target is evaluated inside the subprocess.
             from .download_process_entry import _run_download_in_process
 
-            ctx = mp.get_context("spawn")
-            self._process = ctx.Process(  # type: ignore[assignment]
-                target=_run_download_in_process,
-                args=(
-                    self.task,
-                    config_dict,
-                    self._result_queue,
-                    self._cancel_event,
-                    os.getcwd(),
-                ),
-                name=f"DL-{study_uid[:20]}",
-                daemon=True,   # dies automatically if the main process exits
-            )
-            self._process.start()
+            # ── Optional pre-warm reuse (AIPACS_DM_PREWARM, OFF by default) ──
+            # If enabled and an idle pre-warmed subprocess is ready, hand it the
+            # job instead of spawning a fresh one — the ~2.3 s Windows spawn boot
+            # was already paid off the user-visible path. Any failure falls back
+            # to the normal spawn below; pre-warm must never break a download.
+            _warm = None
+            try:
+                from .prewarm import get_download_prewarm_pool, prewarm_enabled
+                if prewarm_enabled():
+                    _warm = get_download_prewarm_pool().acquire(self.task, config_dict)
+            except Exception:
+                _warm = None
+
+            if _warm is not None:
+                # Adopt the already-booted spare and its IPC primitives.
+                self._process, self._result_queue, self._cancel_event = _warm
+                logger.info(
+                    "🔥 Reused pre-warmed download subprocess (pid=%s) for %s",
+                    self._process.pid,
+                    self.task.patient_name,
+                    extra={
+                        "component": "ipc",
+                        "study_uid": study_uid,
+                        "download_job_id": self.download_job_id,
+                        "action_session_id": self.action_session_id,
+                    },
+                )
+            else:
+                ctx = mp.get_context("spawn")
+                self._process = ctx.Process(  # type: ignore[assignment]
+                    target=_run_download_in_process,
+                    args=(
+                        self.task,
+                        config_dict,
+                        self._result_queue,
+                        self._cancel_event,
+                        os.getcwd(),
+                    ),
+                    name=f"DL-{study_uid[:20]}",
+                    daemon=True,   # dies automatically if the main process exits
+                )
+                self._process.start()
             logger.info(
                 "🚀 Download subprocess started (pid=%s) for %s",
                 self._process.pid,

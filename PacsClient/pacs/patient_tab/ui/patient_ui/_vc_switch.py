@@ -754,7 +754,19 @@ class _VCSwitchMixin:
                     self._interactive_load_in_progress = False
                     self._set_zeta_external_interactive_busy(bool(self._async_switch_inflight), reason="finish_async_switch_finally")
 
-            self._queue_on_ui_thread(_finish_on_ui)
+            try:
+                self._queue_on_ui_thread(_finish_on_ui)
+            except Exception:
+                # Last-resort cleanup: if _finish_on_ui cannot be marshalled to the
+                # UI thread, clear the inflight guards here so this viewer is not
+                # permanently blocked from every future series switch.
+                logger.exception("[ASYNC SWITCH] failed to queue _finish_on_ui series=%s", series_number)
+                self._async_switch_inflight.discard(inflight_key)
+                self._interactive_load_in_progress = False
+                try:
+                    self._set_zeta_external_interactive_busy(bool(self._async_switch_inflight), reason="finish_queue_failed")
+                except Exception:
+                    pass
 
         threading.Thread(target=_worker, daemon=True, name=f"AsyncSwitchLoad-{series_number}-v{viewer_id}").start()
 

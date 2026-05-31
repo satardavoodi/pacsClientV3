@@ -5,8 +5,27 @@ This module provides centralized styling for the Reception Data Tab.
 All colors, fonts, and CSS styles are defined here for consistency and maintainability.
 """
 
+import re
+from html import unescape
+
 from PacsClient.utils.css_utils import get_roboto_font_family
 from PacsClient.utils.scroll_style import get_scroll_area_style as get_shared_scroll_area_style
+
+# Strippers so HTML markup never skews RTL/LTR detection. <style>/<script>
+# block *contents* (all Latin CSS/JS — Qt's toHtml() emits a big <style> block)
+# must be removed wholesale, not just their tags, then comments, then tags.
+_STYLE_SCRIPT_RE = re.compile(r"<(?:style|script)\b[^>]*>.*?</(?:style|script)>",
+                              re.IGNORECASE | re.DOTALL)
+_HTML_COMMENT_RE = re.compile(r"<!--.*?-->", re.DOTALL)
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+# Unicode blocks that denote Persian/Arabic (RTL) script.
+_RTL_RANGES = (
+    (0x0600, 0x06FF),  # Arabic
+    (0x0750, 0x077F),  # Arabic Supplement
+    (0x08A0, 0x08FF),  # Arabic Extended-A
+    (0xFB50, 0xFDFF),  # Arabic Presentation Forms-A
+    (0xFE70, 0xFEFF),  # Arabic Presentation Forms-B
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # COLOR CONSTANTS
@@ -546,21 +565,39 @@ def get_image_viewer_style():
 # HELPER FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def is_rtl_content(text, sample_size=500):
+def is_rtl_content(text, sample_size=4000):
     """
-    Check if text contains predominantly RTL characters.
-    
+    Check if text is predominantly RTL (Persian/Arabic).
+
+    HTML reports are stripped of tags/entities first so that markup and
+    attributes (which are Latin: ``<p style=...>``, ``font-family`` \u2026) do not
+    skew the count toward LTR. The dominant script of the *visible* text then
+    decides direction: a report that is, say, 85% Persian reads right-to-left
+    even when it embeds English terms like "MRI" or "Disc Bulging".
+
     Args:
-        text: Text to check
-        sample_size: Number of characters to sample
-    
+        text: Text or HTML to check.
+        sample_size: Max number of *visible* characters to inspect (after tags
+            are removed) \u2014 large enough to cover a full report.
+
     Returns:
-        bool: True if text is predominantly RTL
+        bool: True if Persian/Arabic letters outnumber Latin letters.
     """
+    if not text:
+        return False
+    try:
+        visible = _STYLE_SCRIPT_RE.sub(" ", text)
+        visible = _HTML_COMMENT_RE.sub(" ", visible)
+        visible = _HTML_TAG_RE.sub(" ", visible)
+        visible = unescape(visible)
+    except Exception:
+        visible = text
+
     rtl_chars = 0
     ltr_chars = 0
-    for char in text[:sample_size]:
-        if '\u0600' <= char <= '\u06FF' or '\u0750' <= char <= '\u077F':  # Arabic/Persian
+    for char in visible[:sample_size]:
+        o = ord(char)
+        if any(lo <= o <= hi for lo, hi in _RTL_RANGES):
             rtl_chars += 1
         elif 'a' <= char.lower() <= 'z':
             ltr_chars += 1

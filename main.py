@@ -70,6 +70,24 @@ except Exception:
     pass
 
 
+# --- Stale temp-file sweep (additive, best-effort) --------------------------
+# The FAST lazy-volume backend writes aipacs_lazy_*.bin mmap temp files and only
+# cleans the ones it registered, on a clean exit. A native fail-fast leaves them
+# behind, so sweep old ones (>6h old, never a live instance's) at startup.
+try:
+    import glob as _glob
+    import tempfile as _tempfile
+    _stale_cutoff = time.time() - 6 * 3600
+    for _stale in _glob.glob(os.path.join(_tempfile.gettempdir(), "aipacs_lazy_*.bin")):
+        try:
+            if os.path.getmtime(_stale) < _stale_cutoff:
+                os.remove(_stale)
+        except OSError:
+            pass
+except Exception:
+    pass
+
+
 def _emit_console(message: str) -> None:
     """Emit startup/CLI console text without direct print calls."""
     text = f"{message}\n"
@@ -740,6 +758,67 @@ if __name__ == "__main__":
             _original_excepthook(exc_type, exc_value, exc_tb)
 
     sys.excepthook = _aipacs_excepthook
+
+    # ── threading.excepthook: surface exceptions from background/daemon threads ──
+    # Without this, an unhandled exception in a worker thread (async series load,
+    # download/enrich workers, warmup) vanishes silently — no log, no trace — and
+    # can leave per-cycle state flags stuck (e.g. inflight guards), which is how a
+    # workflow "stops working" after repeated use. Additive, behaviour-neutral.
+    def _aipacs_threading_excepthook(args):
+        _crash_logger = logging.getLogger("aipacs.crash")
+        try:
+            import traceback as _tb_mod
+            _crash_logger.critical(
+                "UNHANDLED EXCEPTION in thread %r:\n%s",
+                getattr(args, "thread", None),
+                "".join(
+                    _tb_mod.format_exception(
+                        args.exc_type, args.exc_value, args.exc_traceback
+                    )
+                ),
+                extra={"component": "crash"},
+            )
+        except Exception:
+            pass
+
+    try:
+        threading.excepthook = _aipacs_threading_excepthook
+    except Exception:
+        pass
+
+    # ── qInstallMessageHandler: capture Qt's C++-side diagnostic messages ────────
+    # Qt emits messages such as "QObject::~QObject: Timers cannot be stopped from
+    # another thread" and "Internal C++ object already deleted" directly from C++;
+    # these never reach Python logging by default. Routing them to the log gives
+    # early warning of QObject-lifetime faults — a suspected native fail-fast
+    # trigger. Observation only: the handler logs and never alters control flow.
+    try:
+        from PySide6.QtCore import (
+            qInstallMessageHandler as _qInstallMessageHandler,
+            QtMsgType as _QtMsgType,
+        )
+
+        _qt_logger = logging.getLogger("aipacs.qt")
+        _QT_MSG_LEVELS = {
+            _QtMsgType.QtDebugMsg: logging.DEBUG,
+            _QtMsgType.QtInfoMsg: logging.INFO,
+            _QtMsgType.QtWarningMsg: logging.WARNING,
+            _QtMsgType.QtCriticalMsg: logging.ERROR,
+            _QtMsgType.QtFatalMsg: logging.CRITICAL,
+        }
+
+        def _aipacs_qt_message_handler(mode, context, message):
+            try:
+                _level = _QT_MSG_LEVELS.get(mode, logging.WARNING)
+                _qt_logger.log(
+                    _level, "[Qt] %s", message, extra={"component": "crash"}
+                )
+            except Exception:
+                pass
+
+        _qInstallMessageHandler(_aipacs_qt_message_handler)
+    except Exception:
+        pass
     # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     # ── S2: Session sentinel — startup banner (additive, observation-only) ───
@@ -1195,7 +1274,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.1.4")
+    app.setApplicationVersion("3.1.5")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

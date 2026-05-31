@@ -192,7 +192,57 @@ class _HPPatientOpenMixin:
             if fallback in resolved:
                 resolved.remove(fallback)
             resolved.insert(0, fallback)
+
+        # ── Cross-patient safety guard (clinical data isolation) ──────────────
+        # A patient tab must ONLY ever contain studies that belong to THIS
+        # patient_id. The fallbacks above (right-panel payload, search caches,
+        # grouped table rows) can occasionally surface a study UID that actually
+        # belongs to a different, previously-viewed patient. Left unchecked that
+        # opens the tab as a bogus "multi-study" patient and mixes the other
+        # patient's thumbnails AND download-queue jobs in — because both the
+        # grouped sidebar and open STEP 3.5 (download queueing) consume this
+        # list. Drop any resolved study we can POSITIVELY attribute to a
+        # DIFFERENT patient via the local DB. Studies we cannot attribute (not
+        # yet in the DB — e.g. a fresh server patient) are KEPT so normal opens
+        # never break; the clicked study (`fallback`) is always kept. The guard
+        # only runs for multi-study candidates (len > 1), so the common
+        # single-study open does zero extra DB work.
+        if pid and len(resolved) > 1:
+            guarded = []
+            for uid in resolved:
+                if uid == fallback:
+                    guarded.append(uid)
+                    continue
+                owner = self._study_owner_patient_id(uid)
+                if owner and owner != pid:
+                    try:
+                        self._log_open_trace(
+                            uid, 'study_uid_cross_patient_dropped', level='warning',
+                            requested_patient_id=pid, owner_patient_id=owner,
+                        )
+                    except Exception:
+                        pass
+                    continue
+                guarded.append(uid)
+            if guarded:
+                resolved = guarded
+
         return resolved
+
+    def _study_owner_patient_id(self, study_uid: str):
+        """Best-effort owner lookup: the patient_id that owns ``study_uid`` per
+        the local DB (studies→patients join), or None when unknown (study not in
+        the DB yet). Never raises — used only by the cross-patient guard."""
+        try:
+            uid = str(study_uid or '').strip()
+            if not uid:
+                return None
+            from PacsClient.utils.db_manager import get_patient_by_study_uid
+            info = get_patient_by_study_uid(uid) or {}
+            owner = str(info.get('patient_id') or '').strip()
+            return owner or None
+        except Exception:
+            return None
 
     def _defer_patient_studies_refresh(self, patient_info: dict) -> None:
         pending = getattr(self, '_deferred_patient_studies_refresh', None)

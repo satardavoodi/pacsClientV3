@@ -227,6 +227,7 @@ class _VCLoadMixin:
             # loader reads the correct study. The offset key stays the cache /
             # dedup / tracking key throughout this method.
             ms_disk_series_number = series_number
+            _ms_resolved = False
             try:
                 _ms_info = getattr(self.parent_widget, '_server_series_info', {}) or {}
                 _ms_entry = _ms_info.get(series_key) if isinstance(_ms_info, dict) else None
@@ -236,10 +237,50 @@ class _VCLoadMixin:
                     if _ms_orig and _ms_path:
                         ms_disk_series_number = str(_ms_orig)
                         study_path = str(Path(_ms_path).parent)
-                        logger.debug(
-                            f"[MULTI-STUDY LOAD] key={series_key} -> "
-                            f"study_path={study_path} disk_series={ms_disk_series_number}"
+                        _ms_resolved = True
+                        logger.info(
+                            "[MULTI-STUDY LOAD] key=%s -> study_path=%s disk_series=%s (entry)",
+                            series_key, study_path, ms_disk_series_number,
                         )
+                # Robust fallback: an offset key whose _server_series_info entry was
+                # dropped/rebuilt (e.g. by a later set_server_series_info) would otherwise
+                # fall back to the PRIMARY study path and silently fail to load — the
+                # reported symptom "a later study's series won't load, previous image stays".
+                # Recompute (study_uid, original_series) from the offset key using the SAME
+                # ordering the index builder uses, honoring the documented
+                # {SOURCE_PATH}/{study_uid}/{orig_series} layout. Offset keys only
+                # (>= 1_000_000), so single-study / primary-study loads are untouched.
+                if not _ms_resolved:
+                    try:
+                        _key_int = int(series_key)
+                    except (TypeError, ValueError):
+                        _key_int = 0
+                    if _key_int >= 1_000_000:
+                        _slot = _key_int // 1_000_000
+                        _orig = _key_int % 1_000_000
+                        _studies = getattr(self.parent_widget, '_studies_series', {}) or {}
+                        _primary = str(getattr(self.parent_widget, 'study_uid', '') or '')
+                        _ordered = ([_primary] if _primary in _studies else []) + sorted(
+                            _su for _su in _studies.keys() if _su != _primary
+                        )
+                        if 0 <= _slot < len(_ordered):
+                            from PacsClient.utils.config import SOURCE_PATH as _SRC
+                            _su = _ordered[_slot]
+                            ms_disk_series_number = str(_orig)
+                            study_path = str(Path(_SRC) / _su)
+                            _ms_resolved = True
+                            logger.info(
+                                "[MULTI-STUDY LOAD] key=%s -> study_path=%s disk_series=%s "
+                                "(offset-key fallback slot=%s entry_present=%s)",
+                                series_key, study_path, ms_disk_series_number, _slot,
+                                isinstance(_ms_entry, dict),
+                            )
+                        else:
+                            logger.warning(
+                                "[MULTI-STUDY LOAD] key=%s slot=%s out of range "
+                                "(ordered_studies=%s); load may use primary path",
+                                series_key, _slot, len(_ordered),
+                            )
             except Exception:
                 ms_disk_series_number = series_number
 
@@ -797,7 +838,9 @@ class _VCLoadMixin:
                             pass
 
         except Exception as e:
-            self.logger.debug(f"Error applying loaded series data: {e}")
+            # Was DEBUG (invisible) — elevate so a failed/half-applied series is
+            # diagnosable in app.log; exc_info captures the faulting line.
+            self.logger.warning("Error applying loaded series data: %s", e, exc_info=True)
 
     def _queue_on_ui_thread(self, func):
         """Run callable on the Qt UI thread, even when called from worker threads."""

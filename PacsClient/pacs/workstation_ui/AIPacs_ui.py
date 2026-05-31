@@ -4,7 +4,7 @@ import time  # startup stage timing instrumentation
 
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
                             QSize, Qt)
-from PySide6.QtGui import (QFont, QIcon, QPixmap, QCursor)
+from PySide6.QtGui import (QFont, QIcon, QPixmap, QCursor, QColor, QPainter, QPen)
 from PySide6.QtWidgets import (QComboBox, QFrame, QHBoxLayout,
                                QLabel, QLineEdit, QProgressBar,
                                QPushButton, QScrollArea, QSizePolicy, QSpacerItem,
@@ -136,18 +136,76 @@ class ControlPanelWindow(object):
             }}
         """
 
+    def _build_theme_swatch_icon(self, theme_name: str) -> QIcon:
+        """Render a horizontal row of 4 colored pills representing the
+        theme's key semantic tokens (accent, success, warning, danger).
+
+        Lets the user preview palette differences across themes at a glance
+        without applying any of them. The pixmap is sized to sit nicely on
+        the left of the theme name inside the existing QPushButton.
+        """
+        card_theme = self.theme_manager.theme_by_name(theme_name)
+        tokens = [
+            card_theme.get("accent", "#3182ce"),
+            card_theme.get("success", "#10b981"),
+            card_theme.get("warning", "#f59e0b"),
+            card_theme.get("danger", "#ef4444"),
+        ]
+
+        # Render at 2x for crisp scaling on high-DPI displays.
+        scale = 2
+        pip_w, pip_h = 14 * scale, 14 * scale
+        gap = 3 * scale
+        total_w = pip_w * len(tokens) + gap * (len(tokens) - 1)
+        total_h = pip_h
+        pix = QPixmap(total_w, total_h)
+        pix.fill(Qt.transparent)
+        painter = QPainter(pix)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        for i, color in enumerate(tokens):
+            qc = QColor(color)
+            if not qc.isValid():
+                qc = QColor("#888888")
+            x = i * (pip_w + gap)
+            painter.setBrush(qc)
+            painter.setPen(QPen(QColor(0, 0, 0, 90), 1))
+            painter.drawRoundedRect(x, 0, pip_w, pip_h, 3 * scale, 3 * scale)
+        painter.end()
+        pix.setDevicePixelRatio(scale)
+        return QIcon(pix)
+
     def _build_theme_card_style(self, theme_name: str, selected: bool) -> str:
+        """Build the per-card stylesheet for the Theme selector.
+
+        Selected cards get a noticeably stronger affordance:
+        - 3px accent border (was 2px)
+        - Bottom-edge stop of the gradient swaps to the theme's accent color,
+          producing a subtle accent "wash" along the lower edge
+        - 4px inset shadow simulated via padding so the active card sits
+          slightly proud of its siblings
+
+        The previous 2px border alone was easy to miss when scanning the
+        2x4 grid; this combination makes the active theme obvious without
+        adding a separate checkmark badge.
+        """
         card_theme = self.theme_manager.theme_by_name(theme_name)
         border_color = self._active_theme["accent"] if selected else card_theme["border"]
-        inset = card_theme["accent"] if selected else card_theme["menu_bg"]
+        border_width = "3px" if selected else "2px"
+        # Selected: tint the bottom stop with the theme's accent so the
+        # card visibly carries its "active" identity. Unselected: keep the
+        # original three-stop gradient.
+        if selected:
+            bottom_stop = card_theme["accent"]
+        else:
+            bottom_stop = card_theme["panel_bg"]
         return f"""
             QPushButton {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 {card_theme['window_bg']},
                     stop:0.55 {card_theme['menu_bg']},
-                    stop:1 {card_theme['panel_bg']});
+                    stop:1 {bottom_stop});
                 color: {card_theme['text_primary']};
-                border: 2px solid {border_color};
+                border: {border_width} solid {border_color};
                 border-radius: 12px;
                 padding: 10px;
                 text-align: left;
@@ -166,6 +224,12 @@ class ControlPanelWindow(object):
         for theme_name, button in self._theme_preview_buttons.items():
             button.setChecked(theme_name == current_name)
             button.setStyleSheet(self._build_theme_card_style(theme_name, theme_name == current_name))
+            # Re-render the swatch icon — picks up any palette edits the user
+            # made via the Customizer (Custom theme's tokens shift after Apply).
+            try:
+                button.setIcon(self._build_theme_swatch_icon(theme_name))
+            except Exception:
+                pass
         if hasattr(self, "themeStatusLabel"):
             self.themeStatusLabel.setText(f"Active theme: {current_name}")
 
@@ -448,8 +512,16 @@ class ControlPanelWindow(object):
         for index, theme_name in enumerate(self.theme_manager.theme_names()):
             button = QPushButton(theme_name, self.page_3)
             button.setCheckable(True)
-            button.setMinimumHeight(68)
+            button.setMinimumHeight(72)
             button.clicked.connect(partial(self._on_theme_preview_clicked, name=theme_name))
+            # Render the 4-swatch palette preview as the button's icon so the
+            # user can compare accent/success/warning/danger across themes
+            # without applying any of them.
+            try:
+                button.setIcon(self._build_theme_swatch_icon(theme_name))
+                button.setIconSize(QSize(72, 16))
+            except Exception:
+                pass
             self._theme_preview_buttons[theme_name] = button
             self.themePreviewGrid.addWidget(button, index // 2, index % 2)
         self.verticalLayout_7.addLayout(self.themePreviewGrid)

@@ -850,7 +850,16 @@ class _VCProgressiveMixin:
         if not self._is_fast_viewer_mode():
             return
 
-        if downloaded < total and not _should_admit_progressive_signal(self, str(series_number), terminal=False):
+        # A series the user is ACTIVELY viewing must keep growing as chunks arrive,
+        # or the viewport sticks on the first chunk (e.g. 30/100) under download
+        # load — the UI-admission throttle here was rejecting EVERY incremental
+        # progress signal (observed live: 88 series_images_progress signals → 0
+        # grows). Only throttle background (non-viewed) series; the viewed series'
+        # grow is already time-budgeted (_FAST_PROGRESSIVE_GROW_BUDGET_MS = 8ms),
+        # so admitting it cannot freeze the UI.
+        if (downloaded < total
+                and not _has_viewer_interest_for_series()
+                and not _should_admit_progressive_signal(self, str(series_number), terminal=False)):
             return
 
         # Terminal idempotence: once this cycle already reached COMPLETE
@@ -1888,6 +1897,13 @@ class _VCProgressiveMixin:
             float(grow_event.get("mono_ms", _corr_now_mono_ms())),
         )
 
+        # Bind new_count BEFORE the loop: the budget-exhausted `break` below can
+        # exit before the in-loop `new_count = pending_count` fallback runs (and an
+        # empty `viewers` skips it entirely), yet new_count is referenced after the
+        # loop — without this guard that raises UnboundLocalError on every grow tick,
+        # so the series stays stuck partial (observed live: "_grow_progressive_fast
+        # failed series=203: cannot access local variable 'new_count'" → stuck 66/156).
+        new_count = int(pending_count)
         for vtk_w, node in viewers:
             if grow_budget_ms is not None:
                 elapsed_pre_ms = float(now_ms() - _t_grow)

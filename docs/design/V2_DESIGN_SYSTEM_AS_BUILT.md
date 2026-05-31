@@ -49,6 +49,13 @@ regress under re-styling.
 | Results table header | `apply_table_header_v2` | `home_ui/home_panel/_hp_layout.py` |
 | Patient results table (density + soft selection) | `apply_results_table_v2` | `home_ui/patient_table_widget.py::_apply_theme` |
 | "Series Thumbnails" sidebar header (purple→accent) | `apply_thumbnail_header_v2` | `patient_widget_core/_pw_panels.py` |
+| Right-rail "Study Information" header (filled blue → quiet flat header) | `apply_home_panel_header_v2` (`home_panel_header_qss`) | `home_ui/right_panel_widget.py` |
+| Right-rail series-count chip (quiet) | `apply_home_count_chip_v2` (`home_count_chip_qss`) | `home_ui/right_panel_widget.py` |
+| Sub-toolbar buttons → one flat ghost family (download=primary, delete=danger, rest neutral) | `apply_home_toolbar_buttons_v2` (`home_toolbar_button_qss`) | `home_ui/patient_table_widget.py::_apply_theme` |
+| Numeric table columns (Images/Age) **center-aligned** (balanced spacing) | `_CenterNumericDelegate` (gate read once in `_setup_neon_highlight_delegate`) | `home_ui/patient_table_widget.py` |
+| Modality-aware results summary ("N MRI studies, M CT studies found") | `_build_modality_count_summary` (gated in `_update_results_count`) | `home_ui/patient_table_widget.py` |
+| Sub-toolbar cluster separators (view \| config \| study-actions) | `_make_v2_toolbar_separator` (gated insert in `header_layout`) | `home_ui/patient_table_widget.py` |
+| Critical **Download** button widened + labelled (76→132px, " Download") | gated block in `_apply_theme` (on `apply_home_toolbar_buttons_v2` return) | `home_ui/patient_table_widget.py` |
 
 ### Viewer toolbar & menus (`get_ui_variant('viewer') == 'v2'`)
 | Element | Helper | Applied in |
@@ -65,6 +72,15 @@ regress under re-styling.
 | Selected Status dropdown | panel + header + `dropdown_status_chip/row/text` + sync icon; emoji fixed-width column | `_show_status_upload_dropdown` |
 | Inline voice controls (cancel/send/pause) | `apply_mic_control_v2` (`mic_control_qss`, roles danger/primary/warning) | viewer toolbar build (the `_mic_*` buttons) |
 | Dropdown **attachment/positioning** (snug anchor + 4px gap + screen clamp) | `position_dropdown_v2` (pure `clamp_popup_position`) | called before every `_show_*_dropdown`'s `dropdown.show()` |
+
+### Settings (`get_ui_variant('settings') == 'v2'`)
+| Element | Helper | Applied in |
+|---|---|---|
+| Whole Settings tab widget (token sheet: accent tabs/focus, ghost buttons, calm GroupBox title) | `apply_settings_v2` (`settings_stylesheet_qss`) | `settings_ui/settings_ui.py::apply_dark_theme` |
+
+The Settings sheet is a single object-scoped block (`QTabWidget#SettingsTabWidget …`), so the V2
+version is a full token-based replacement applied right after the V1 sheet — mirrors every selector
+1:1 so nothing goes unstyled; V1 is byte-identical unless `settings==v2`.
 
 ### Behavioural fixes shipped alongside the visual work (NOT gated — these are bug fixes)
 - **Voice play/pause toggle:** `_on_mic_pause_toggle` / `_update_mic_record_ui` now flip the
@@ -110,7 +126,12 @@ quieting; mic-control flat/ghost + semantic role; `_hex_to_rgba`. **Run these af
 Home slices, viewer toolbar (flat/ghost + unified split hover), badge, voice toggle, all dropdown
 panels/headers, dropdown item two-column alignment across all menus, the Selected Status and Sync
 Options dropdowns, the inline voice controls, and the **dropdown attachment/positioning pass**
-(snug anchor + 4px gap + screen clamp on all 9 toolbar dropdowns) are **done**. Remaining optional
-polish: optional swap of status emoji glyphs for monochrome line icons (deferred, would change
-semantics); extending V2 to the remaining module surfaces (EchoMind, Eagle Eye, Education, Printing,
-Settings) per the phased plan in `CLAUDE_DESIGN_WORKSTATION_V1_PLAN.md`.
+(snug anchor + 4px gap + screen clamp on all 9 toolbar dropdowns) are **done**. The **Home cluster
+review** (`HOME_CLUSTER_LAYOUT_REVIEW.md`) is also done: single primary blue, quiet Study-Information
+header, flat ghost sub-toolbar + cluster separators, right-aligned numeric columns, widened/labelled
+Download button.
+
+**Phase 4 (other modules) — started:** **Settings** is now V2 (token stylesheet, gated
+`settings==v2`). Remaining: EchoMind, Eagle Eye, Education, Printing per the phased plan in
+`CLAUDE_DESIGN_WORKSTATION_V1_PLAN.md`. Optional polish: swap status emoji glyphs for monochrome line
+icons (deferred — would change semantics).

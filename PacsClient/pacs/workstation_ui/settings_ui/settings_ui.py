@@ -361,6 +361,15 @@ class SettingsTabWidget(QTabWidget):
         """
         self.setStyleSheet(style.replace("__ARROW__", arrow_icon))
 
+        # V2 parallel design (opt-in, default OFF): replace the scoped sheet with the
+        # token version (accent tabs, ghost buttons, calm GroupBox title). No-op unless
+        # ui_variant('settings')=='v2'; the V1 sheet above stays otherwise.
+        try:
+            from PacsClient.utils.v2_style import apply_settings_v2
+            apply_settings_v2(self, arrow_icon)
+        except Exception:
+            pass
+
     def on_ai_servers_saved(self, services: dict):
         print("AI servers updated:", services)
 

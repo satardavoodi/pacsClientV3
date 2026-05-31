@@ -188,6 +188,22 @@ class ViewerController(
         # Track current layout to avoid redundant re-applies
         self._current_layout = None
 
+        # Theme subscription — re-style all viewport containers when the
+        # workstation theme switches mid-session. Without this, viewports
+        # created under one theme keep their original accent border even
+        # after the user picks a different theme.
+        # NOTE: the `_on_theme_changed_refresh_viewports` method is defined
+        # FAR below this __init__ — keep that placement; an earlier attempt
+        # at putting it here in the middle of __init__ swallowed every line
+        # below it into the method body and broke drag-drop / click-load.
+        try:
+            from PacsClient.utils.theme_manager import get_theme_manager
+            self._theme_manager = get_theme_manager()
+            self._theme_manager.themeChanged.connect(self._on_theme_changed_refresh_viewports)
+        except Exception as theme_exc:
+            self.logger.debug("Theme subscription unavailable: %s", theme_exc)
+            self._theme_manager = None
+
         # Per-viewport request/version state to avoid stale async apply
         self._viewer_request_token = {}  # viewer_id -> token
 
@@ -383,6 +399,32 @@ class ViewerController(
         self._completion_sweep_timer = QTimer()
         self._completion_sweep_timer.setInterval(3000)   # 3 seconds
         self._completion_sweep_timer.timeout.connect(self._completion_sweep_tick)
+
+    def _on_theme_changed_refresh_viewports(self, _theme: dict = None) -> None:
+        """Re-apply each viewport container's stylesheet so its border picks
+        up the new theme accent. Called by ThemeManager.themeChanged from
+        the subscription wired at the bottom of __init__.
+
+        IMPORTANT: this method MUST live outside __init__ (it was previously
+        misplaced inside the constructor body, which swallowed every
+        attribute-init line below it into the method and broke drag-drop /
+        click-load in the viewer).
+        """
+        try:
+            for node in (self.lst_nodes_viewer or []):
+                container = getattr(node, 'widget', None)
+                if container is None:
+                    continue
+                active = bool(container.property("active"))
+                # `_viewport_container_styles` is a staticmethod on the
+                # _VCLayoutMixin (which this class inherits), so calling it
+                # via self is fine.
+                try:
+                    container.setStyleSheet(self._viewport_container_styles(active=active))
+                except Exception:
+                    pass
+        except Exception:
+            pass
 
     def _block_diag_label(self) -> str:
         try:

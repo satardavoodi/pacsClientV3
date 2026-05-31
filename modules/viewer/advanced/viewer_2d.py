@@ -1060,10 +1060,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # _top_right
 
         # update top_right actors pos
+        # Bottom margin doubled (0.02 → 0.04) so the last line of bottom-left
+        # overlay text (WW:WL) sits a safe distance above the container's
+        # accent border. Top stays at 0.98 — top text is already comfortable.
         top = 0.98
         right = 0.94
         left = 0.02
-        bottom = 0.02
+        bottom = 0.04
 
         self.dicom_tags_actors.im_slice_actor.SetPosition(right, top)
         self.dicom_tags_actors.im_study_date_actor.SetPosition(right, top - (1 * gap))
@@ -1227,7 +1230,12 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.load_top_left_actors(render=False)
 
     def load_bottom_left_actors(self, render=True):
-        bottom = 0.02
+        # 0.04 normalized = ~4% safe-area above the viewport's lower edge.
+        # Previously 0.02 placed the last line (WW:WL) within ~8 px of the
+        # container's accent border on a typical 400 px-tall viewport,
+        # which the user reported as "too close to the viewport boundary"
+        # in 2026-05-30 review.
+        bottom = 0.04
         left = 0.02
         gap = 0.02
 
@@ -1271,7 +1279,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         self.load_bottom_left_actors(render=False)
 
     def load_bottom_right_actors(self, render=True):
-        bottom = 0.02
+        # 0.04 normalized matches load_bottom_left_actors() — extra safe-area
+        # so the Hospital name doesn't sit on the viewport border.
+        bottom = 0.04
         right = 0.96
 
         hospital_name = self.metadata_fixed.get('institution_name', 'N/A')

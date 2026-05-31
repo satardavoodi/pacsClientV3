@@ -28,7 +28,7 @@ class LoadingSpinner(QWidget):
         
         # Get theme color
         self.theme_manager = get_theme_manager()
-        self._accent_color = self.theme_manager.current_theme().get('accent', '#7c3aed')
+        self._accent_color = self.theme_manager.current_theme().get('accent', '#3182ce')
         
         # Style with semi-transparent background
         self.setStyleSheet("""
@@ -40,7 +40,7 @@ class LoadingSpinner(QWidget):
     
     def update_theme(self, theme):
         """Update spinner accent color when theme changes"""
-        self._accent_color = theme.get('accent', '#7c3aed')
+        self._accent_color = theme.get('accent', '#3182ce')
         self.update()
     
     def start(self):
@@ -150,6 +150,13 @@ class RightPanelWidget(QWidget):
         self.title_label = QLabel("Study Information")
         self.title_label.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.title_label.setStyleSheet(self._get_header_title_stylesheet())
+        # V2 (home): flatten the heavy filled-blue header to a quiet panel header
+        # so it stops competing with the primary Search button. No-op in V1.
+        try:
+            from PacsClient.utils.v2_style import apply_home_panel_header_v2
+            apply_home_panel_header_v2(self.title_label)
+        except Exception:
+            pass
         # Blue 'Study Information' section takes all remaining header width.
         self.title_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         
@@ -157,6 +164,12 @@ class RightPanelWidget(QWidget):
         self.count_label = QLabel("0 series")
         self.count_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
         self.count_label.setStyleSheet(self._get_header_count_stylesheet())
+        # V2 (home): quiet count chip (muted, faint surface). No-op in V1.
+        try:
+            from PacsClient.utils.v2_style import apply_home_count_chip_v2
+            apply_home_count_chip_v2(self.count_label)
+        except Exception:
+            pass
         # Series-count section: hug its text (e.g. "24 series"); never expand.
         self.count_label.setSizePolicy(QSizePolicy.Maximum, QSizePolicy.Preferred)
         
@@ -239,8 +252,8 @@ class RightPanelWidget(QWidget):
     def _get_header_title_stylesheet(self):
         """Get themed header title stylesheet"""
         theme = self._active_theme
-        accent = theme.get('accent', '#7c3aed')
-        accent_pressed = theme.get('accent_pressed', '#5b21b6')
+        accent = theme.get('accent', '#3182ce')
+        accent_pressed = theme.get('accent_pressed', '#2c5282')
         
         return f"""
             QLabel {{

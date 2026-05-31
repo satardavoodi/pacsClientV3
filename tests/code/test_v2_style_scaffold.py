@@ -109,6 +109,81 @@ def test_thumbnail_header_qss_defaults_are_safe():
     assert "border-radius: 8px;" in qss
 
 
+def test_home_panel_header_qss_is_flat_not_filled_accent():
+    theme = {"text_secondary": "#dbe7f3", "panel_alt_bg": "#1b2433",
+             "border": "#33415a", "accent": "#3182ce"}
+    qss = v2_style.home_panel_header_qss(theme)
+    assert "#1b2433" in qss               # quiet panel surface, not the accent gradient
+    assert "qlineargradient" not in qss   # heavy filled gradient is gone
+    assert "#3182ce" not in qss           # not a filled accent header anymore
+    assert "QLabel" in qss
+
+
+def test_home_count_chip_qss_is_muted():
+    qss = v2_style.home_count_chip_qss({"text_muted": "#93a4b7",
+                                        "panel_alt_bg": "#1b2433", "border": "#33415a"})
+    assert "#93a4b7" in qss               # muted text
+    assert "qlineargradient" not in qss
+    assert "border-radius: 8px;" in qss
+
+
+def test_home_header_chip_defaults_are_safe():
+    assert "QLabel" in v2_style.home_panel_header_qss({})
+    assert "QLabel" in v2_style.home_count_chip_qss({})
+
+
+def test_home_toolbar_button_qss_roles():
+    theme = {"text_secondary": "#e5e7eb", "accent": "#3182ce", "accent_hover": "#4a90d9",
+             "accent_soft": "#21314a", "danger": "#ef4444", "button_text": "#ffffff"}
+    primary = v2_style.home_toolbar_button_qss(theme, "primary")
+    danger = v2_style.home_toolbar_button_qss(theme, "danger")
+    neutral = v2_style.home_toolbar_button_qss(theme, "neutral")
+    # primary = the single filled-accent action (not a gradient block)
+    assert "background: #3182ce;" in primary
+    assert "qlineargradient" not in primary
+    # danger + neutral are flat ghost at rest
+    assert "background: transparent;" in danger
+    assert "background: transparent;" in neutral
+    # danger reddens only on hover (soft rgba of danger)
+    assert "rgba(239, 68, 68" in danger
+    # neutral hovers to soft accent
+    assert "#21314a" in neutral
+    # none of them is a heavy gradient block
+    assert "qlineargradient" not in danger and "qlineargradient" not in neutral
+
+
+def test_home_toolbar_button_qss_defaults_are_safe():
+    assert "QPushButton" in v2_style.home_toolbar_button_qss({})
+    assert "QPushButton" in v2_style.home_toolbar_button_qss({}, "primary")
+
+
+def test_settings_is_v2_reflects_flag(monkeypatch):
+    monkeypatch.setattr(v2_style, "get_ui_variant", lambda module=None: "v1")
+    assert v2_style.settings_is_v2() is False
+    monkeypatch.setattr(v2_style, "get_ui_variant", lambda module=None: "v2")
+    assert v2_style.settings_is_v2() is True
+
+
+def test_settings_stylesheet_qss_uses_tokens_and_calms_groupbox_title():
+    theme = {"accent": "#3182ce", "accent_soft": "#21314a", "panel_bg": "#111927",
+             "panel_alt_bg": "#1a202c", "card_bg": "#0f1319", "border": "#2d3748",
+             "text_secondary": "#dbe7f3", "button_text": "#ffffff"}
+    qss = v2_style.settings_stylesheet_qss(theme, arrow_icon="x.png")
+    assert "QTabWidget#SettingsTabWidget" in qss        # stays scoped
+    assert "#3182ce" in qss                              # accent token applied
+    assert "#3b82f6" not in qss                          # the V1 hard-coded blue is gone
+    assert "font-size: 13px; font-weight: 700;" in qss   # calmed GroupBox title (was 28px/900)
+    assert "font-size: 28px" not in qss                  # the jarring big title is gone
+    assert "url(x.png)" in qss                           # arrow placeholder substituted
+    assert "__ACCENT__" not in qss and "__BORDER__" not in qss  # all placeholders replaced
+
+
+def test_settings_stylesheet_qss_defaults_are_safe():
+    qss = v2_style.settings_stylesheet_qss({})
+    assert "QTabWidget#SettingsTabWidget" in qss
+    assert "__" not in qss.replace("__ARROW__", "")  # no leftover token placeholders (arrow may be empty)
+
+
 def test_tool_button_qss_is_ghost_with_accent_active():
     theme = {"text_secondary": "#e5e7eb", "panel_alt_bg": "#1a202c",
              "accent": "#3182ce", "button_text": "#ffffff", "border": "#2d3748"}

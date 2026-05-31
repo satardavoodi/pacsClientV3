@@ -886,8 +886,14 @@ class ReportEditorDialog(QDialog):
         cursor.select(QTextCursor.SelectionType.Document)
 
         block_format = QTextBlockFormat()
+        # Use AlignAbsolute so AlignRight means the physical right edge. Without
+        # it, Qt swaps AlignLeft/AlignRight in an RTL block, so AlignRight would
+        # render at the LEFT edge — which is exactly the "Persian not starting at
+        # the right" bug. (Matches _set_alignment / _apply_direction_to_current_block.)
         block_format.setAlignment(
-            Qt.AlignmentFlag.AlignRight if self.is_rtl else Qt.AlignmentFlag.AlignLeft
+            (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignAbsolute)
+            if self.is_rtl
+            else (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignAbsolute)
         )
         block_format.setLeftMargin(0)
         block_format.setRightMargin(0)
@@ -905,7 +911,9 @@ class ReportEditorDialog(QDialog):
         cursor.endEditBlock()
 
         self.text_edit.setAlignment(
-            Qt.AlignmentFlag.AlignRight if self.is_rtl else Qt.AlignmentFlag.AlignLeft
+            (Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignAbsolute)
+            if self.is_rtl
+            else (Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignAbsolute)
         )
     
     # ═══════════════════════════════════════════════════════════════════════

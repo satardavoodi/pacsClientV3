@@ -327,7 +327,12 @@ class PatientWidget(_PWSyncMixin, _PWAdvancedMixin, _PWPanelsMixin, _PWViewersMi
         # Disable loading overlay (no fade, no screen overlay)
         
         self._priority_series_queue = []  # صف سری‌های اولویت‌دار
-        self._priority_display_timer = QTimer()
+        # Parent the timer to self so Qt stops and deletes it when the widget is
+        # destroyed, even if the explicit exit path is skipped (e.g. the tab is
+        # closed via the tab-bar button). A parentless QTimer keeps firing every
+        # 500ms into a half-torn-down widget after close — a QObject-lifetime
+        # hazard and a contributor to per-session resource retention.
+        self._priority_display_timer = QTimer(self)
         self._priority_display_timer.setInterval(500)  # هر 500ms بررسی کن
         self._priority_display_timer.timeout.connect(self._process_priority_series_queue)
         self._priority_display_timer.start()

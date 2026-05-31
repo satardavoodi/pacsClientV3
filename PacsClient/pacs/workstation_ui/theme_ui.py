@@ -3,7 +3,10 @@ from __future__ import annotations
 from functools import partial
 
 from PySide6.QtGui import QColor
+from copy import deepcopy
+
 from PySide6.QtWidgets import (
+    QCheckBox,
     QColorDialog,
     QDialog,
     QDialogButtonBox,
@@ -37,6 +40,12 @@ class ThemeCustomizationDialog(QDialog):
             "menu_bg": base_palette.get("menu_bg", self.theme["menu_bg"]),
             "panel_bg": base_palette.get("panel_bg", self.theme["panel_bg"]),
         }
+        # Live-preview state: when enabled, every swatch change is pushed to
+        # the running app immediately via update_custom_theme. We snapshot
+        # the original theme manager state so Cancel can restore it.
+        self._original_active_theme_name = self.theme_manager.current_theme_name()
+        self._original_custom_palette = deepcopy(self.theme_manager.current_custom_theme())
+        self._live_preview_enabled = False
         self._swatch_buttons: dict[str, QPushButton] = {}
         self._build_ui()
         self._refresh_preview()
@@ -131,9 +140,17 @@ class ThemeCustomizationDialog(QDialog):
         reset_btn.clicked.connect(self._reset_to_active_theme)
         layout.addWidget(reset_btn)
 
+        # Live-preview toggle — when enabled, edits propagate to the running
+        # workstation in real time. Default OFF; Cancel restores the prior
+        # active theme + custom palette snapshot if it was enabled.
+        self.live_preview_checkbox = QCheckBox("Live preview (apply changes to the running app)", self)
+        self.live_preview_checkbox.setChecked(False)
+        self.live_preview_checkbox.stateChanged.connect(self._on_live_preview_toggled)
+        layout.addWidget(self.live_preview_checkbox)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel, parent=self)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self._on_reject)
         layout.addWidget(buttons)
 
         self.setStyleSheet(
@@ -165,6 +182,56 @@ class ThemeCustomizationDialog(QDialog):
             return
         self.colors[key] = color.name(QColor.HexRgb)
         self._refresh_preview()
+        # Push to the running app if live-preview is on.
+        self._push_live_if_enabled()
+
+    def _on_live_preview_toggled(self, state: int) -> None:
+        """Toggle handler — checked: push current palette to the workstation;
+        unchecked: restore the pre-dialog theme snapshot."""
+        from PySide6.QtCore import Qt as _Qt
+        self._live_preview_enabled = state == _Qt.Checked
+        if self._live_preview_enabled:
+            self._push_live_if_enabled()
+        else:
+            self._restore_original_theme()
+
+    def _push_live_if_enabled(self) -> None:
+        """Apply the current dialog palette to the workstation when the
+        live-preview toggle is on. Silently no-ops otherwise."""
+        if not getattr(self, "_live_preview_enabled", False):
+            return
+        try:
+            self.theme_manager.update_custom_theme(dict(self.colors))
+        except Exception:
+            pass
+
+    def _restore_original_theme(self) -> None:
+        """Roll back to the theme manager state snapshotted at dialog open.
+        Used when the user un-toggles live preview mid-edit OR clicks Cancel
+        after live preview was on."""
+        try:
+            # If the original active theme was Custom, restore the prior custom
+            # palette first; otherwise switch back to the named theme so the
+            # palette dict the user had before opening the dialog comes back.
+            if self._original_active_theme_name == "Custom":
+                self.theme_manager.update_custom_theme(self._original_custom_palette)
+            else:
+                self.theme_manager.set_active_theme(self._original_active_theme_name)
+        except Exception:
+            pass
+
+    def _on_accept(self) -> None:
+        """OK was clicked — commit nothing extra. The outer caller already
+        reads custom_palette() and calls update_custom_theme, which will
+        persist correctly whether or not live preview was on."""
+        self.accept()
+
+    def _on_reject(self) -> None:
+        """Cancel was clicked — if live preview was on, roll the workstation
+        back to its pre-dialog state."""
+        if getattr(self, "_live_preview_enabled", False):
+            self._restore_original_theme()
+        self.reject()
 
     def _on_swatch_clicked(self, _checked=False, *, key: str) -> None:
         self._pick_color(key)
@@ -178,6 +245,7 @@ class ThemeCustomizationDialog(QDialog):
             "panel_bg": current["panel_bg"],
         }
         self._refresh_preview()
+        self._push_live_if_enabled()
 
     def _refresh_preview(self) -> None:
         t = _theme_blueprint(

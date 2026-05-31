@@ -14,7 +14,9 @@ Features:
 """
 
 import logging
+import re
 from datetime import datetime
+from html import unescape
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QTextBrowser, QPushButton, QLabel, QComboBox, QMessageBox,
@@ -25,6 +27,20 @@ from PySide6.QtGui import QFont
 
 
 logger = logging.getLogger(__name__)
+
+# --- Bidirectional text detection -----------------------------------------
+# Crude tag stripper so HTML markup/attributes don't skew the letter counts.
+_HTML_TAG_RE = re.compile(r"<[^>]*>")
+
+# Unicode blocks that denote Persian/Arabic (RTL) script. Kept as explicit
+# codepoint ranges (ASCII source — no literal RTL/BOM characters in the file).
+_RTL_RANGES = (
+    (0x0600, 0x06FF),  # Arabic
+    (0x0750, 0x077F),  # Arabic Supplement
+    (0x08A0, 0x08FF),  # Arabic Extended-A
+    (0xFB50, 0xFDFF),  # Arabic Presentation Forms-A
+    (0xFE70, 0xFEFF),  # Arabic Presentation Forms-B
+)
 
 
 class ReceptionReportsViewer(QWidget):
@@ -457,7 +473,7 @@ class ReceptionReportsViewer(QWidget):
             time_str = "Unknown"
         
         info_html = f"""
-        <div style='background-color: #2b2b2b; padding: 10px; border-radius: 6px; margin-bottom: 10px;'>
+        <div dir='ltr' style='direction: ltr; text-align: left; background-color: #2b2b2b; padding: 10px; border-radius: 6px; margin-bottom: 10px;'>
             <b>Report #{report_id}</b><br>
             <span style='color: #888;'>
             👤 Patient: {patient_id}<br>
@@ -471,14 +487,29 @@ class ReceptionReportsViewer(QWidget):
         """
         
         self.report_info_label.setText(f"Report #{report_id} - {patient_id}")
-        
+
         # Display HTML content
         html_content = report.get('html_content', '<i>No content</i>')
-        
+
+        # --- Bidirectional / RTL handling ---------------------------------
+        # Flow the *whole* report according to its dominant language: a
+        # predominantly-Persian report reads right-to-left and right-aligned,
+        # a predominantly-English report reads left-to-right and left-aligned.
+        # The metadata header above stays LTR (app-generated English). Embedded
+        # English inside Persian (and vice-versa) is shaped by Qt's BiDi engine.
+        base_dir = self._detect_base_direction(html_content)
+        content_align = "right" if base_dir == "rtl" else "left"
+        # Widget layout direction sets the default base direction/alignment for
+        # any report block that does not specify its own — this is what makes a
+        # Persian report right-align instead of hugging the left edge.
+        self.preview_browser.setLayoutDirection(
+            Qt.RightToLeft if base_dir == "rtl" else Qt.LeftToRight
+        )
+
         # Wrap content with styling
         full_html = f"""
         <!DOCTYPE html>
-        <html>
+        <html dir="{base_dir}">
         <head>
             <style>
                 body {{
@@ -487,16 +518,19 @@ class ReceptionReportsViewer(QWidget):
                     background-color: #2b2b2b;
                     margin: 0;
                     padding: 16px;
+                    direction: {base_dir};
+                    text-align: {content_align};
                 }}
                 table {{
                     border-collapse: collapse;
                     width: 100%;
                     margin: 10px 0;
+                    direction: {base_dir};
                 }}
                 th, td {{
                     border: 1px solid #3a3a3a;
                     padding: 8px;
-                    text-align: left;
+                    text-align: {content_align};
                 }}
                 th {{
                     background-color: #1e1e1e;
@@ -506,13 +540,13 @@ class ReceptionReportsViewer(QWidget):
         </head>
         <body>
             {info_html}
-            <div style='border-top: 2px solid #3a3a3a; padding-top: 15px;'>
+            <div dir="{base_dir}" style='direction: {base_dir}; text-align: {content_align}; border-top: 2px solid #3a3a3a; padding-top: 15px;'>
                 {html_content}
             </div>
         </body>
         </html>
         """
-        
+
         self.preview_browser.setHtml(full_html)
 
     @staticmethod
@@ -533,7 +567,41 @@ class ReceptionReportsViewer(QWidget):
                 or physician.get('name')
             )
         return str(physician or '').strip()
-    
+
+    @staticmethod
+    def _detect_base_direction(html_content: str) -> str:
+        """
+        Decide the dominant base direction of a report's body.
+
+        Strips HTML tags/entities, then compares the number of Persian/Arabic
+        letters against Latin letters in the *visible* text. Returns ``"rtl"``
+        when Persian/Arabic is dominant (the common case here) and ``"ltr"``
+        when Latin is dominant. Embedded English words inside Persian text are
+        still shaped correctly by Qt's Unicode BiDi engine regardless of the
+        base direction — this only controls the report's *overall* flow and
+        alignment, exactly as a mostly-Persian report should read right-to-left.
+        """
+        try:
+            visible = _HTML_TAG_RE.sub(" ", html_content or "")
+            visible = unescape(visible)
+        except Exception:
+            visible = html_content or ""
+
+        rtl = 0
+        ltr = 0
+        for ch in visible:
+            o = ord(ch)
+            if any(lo <= o <= hi for lo, hi in _RTL_RANGES):
+                rtl += 1
+            elif 65 <= o <= 90 or 97 <= o <= 122:  # A-Z, a-z
+                ltr += 1
+
+        if rtl == 0 and ltr == 0:
+            # No strong letters (digits/punctuation only) — default to RTL to
+            # match the predominantly-Persian reception-report workflow.
+            return "rtl"
+        return "rtl" if rtl >= ltr else "ltr"
+
     def _mark_as_read(self):
         """Mark selected report as read."""
         if not self.selected_report:

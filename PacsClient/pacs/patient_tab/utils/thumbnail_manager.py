@@ -259,6 +259,13 @@ class CircularProgressborder(QFrame):
     def cleanup(self):
         """Clean up resources and timers"""
         try:
+            # Disconnect from the app-lifetime ThemeManager so the closed tab's
+            # thumbnail manager does not stay pinned as a live signal receiver.
+            try:
+                if getattr(self, 'theme_manager', None) is not None:
+                    self.theme_manager.themeChanged.disconnect(self._on_theme_changed)
+            except (TypeError, RuntimeError):
+                pass
             if hasattr(self, 'dot_timer') and self.dot_timer:
                 self.dot_timer.stop()
                 self.dot_timer.deleteLater()
@@ -338,22 +345,29 @@ class CircularProgressborder(QFrame):
         #   Blue   - the series is downloaded but not viewed yet.
         # A download in progress keeps its blue progress arc; a series that
         # is neither downloaded nor viewed stays gray (pending).
+        # All five states now derive their colour from the active workstation
+        # theme:
+        #   selected   → accent        (was hard-coded purple #8b5cf6)
+        #   viewed     → success       (was hard-coded green   #10b981)
+        #   ready      → info          (was hard-coded blue    #3b82f6)
+        #   downloading→ info
+        #   pending    → border (neutral grey)
+        # This keeps the SEMANTIC palette (accent=current, success=done,
+        # info=available) but lets it shift with the workstation theme so
+        # the thumbnail badges stop fighting non-Blue palettes.
         if self._is_selected:
-            # Purple - currently active / currently being viewed.
-            border_color = QColor('#8b5cf6')
-            bg_color = QColor('#8b5cf6')
+            border_color = QColor(self._theme.get('accent', '#8b5cf6'))
+            bg_color = QColor(self._theme.get('accent', '#8b5cf6'))
             bg_color.setAlpha(30)
         elif self._viewed and not self._downloading:
-            # Green - viewed at least once, no longer the active series.
-            # Gated on `not self._downloading` so an in-progress download
-            # keeps its blue progress indicator.
-            border_color = QColor('#10b981')
-            bg_color = QColor('#10b981')
+            # `success` token — universally "completed" across themes.
+            border_color = QColor(self._theme.get('success', '#10b981'))
+            bg_color = QColor(self._theme.get('success', '#10b981'))
             bg_color.setAlpha(22)
         elif self._is_ready:
-            # Blue - downloaded but not viewed yet.
-            border_color = QColor('#3b82f6')
-            bg_color = QColor('#3b82f6')
+            # `info` token — "available, not yet viewed".
+            border_color = QColor(self._theme.get('info', '#3b82f6'))
+            bg_color = QColor(self._theme.get('info', '#3b82f6'))
             bg_color.setAlpha(20)
         elif self._downloading and self._progress > 0:
             # Downloading - Use theme info color (blue)
@@ -432,21 +446,35 @@ class ModernProgressBar(QProgressBar):
         self.animation.setDuration(300)  # 300ms smooth animation
         self.animation.setEasingCurve(QEasingCurve.OutCubic)
         
-        self.setStyleSheet("""
-            QProgressBar {
+        # Theme-aware progress bar: chunk colour follows accent, track
+        # follows the deep panel token. Falls back to the original blue
+        # baseline if the theme manager is unavailable (e.g. during early
+        # construction).
+        try:
+            from PacsClient.utils.theme_manager import get_theme_manager
+            _pb_theme = get_theme_manager().current_theme()
+            _pb_track = _pb_theme.get('panel_deep_bg', '#1a202c')
+            _pb_accent = _pb_theme.get('accent', '#3182ce')
+            _pb_text = _pb_theme.get('text_primary', '#ffffff')
+        except Exception:
+            _pb_track = '#1a202c'
+            _pb_accent = '#3182ce'
+            _pb_text = '#ffffff'
+        self.setStyleSheet(f"""
+            QProgressBar {{
                 border: none;
                 border-radius: 8px;
-                background: #1a202c;
+                background: {_pb_track};
                 text-align: center;
                 font-size: 9px;
                 font-weight: bold;
-                color: #ffffff;
+                color: {_pb_text};
                 padding: 2px;
-            }
-            QProgressBar::chunk {
-                background: #3182ce;
+            }}
+            QProgressBar::chunk {{
+                background: {_pb_accent};
                 border-radius: 6px;
-            }
+            }}
         """)
     
     def setValueAnimated(self, value):
@@ -500,50 +528,38 @@ class StatusLabel(QLabel):
         
         self.setPendingStyle()
     
+    def _themed_status_style(self, color_hex: str) -> str:
+        """Status-pill stylesheet keyed off a theme color (warning / info /
+        success). Keeps the SEMANTIC palette but lets each state's hue
+        track the active workstation theme."""
+        return (
+            f"QLabel {{ font-size: 10px; font-weight: bold; "
+            f"color: {color_hex}; background: transparent; "
+            f"border: 1px solid {color_hex}; border-radius: 4px; "
+            f"padding: 2px 4px; }}"
+        )
+
+    def _theme_color(self, key: str, fallback: str) -> str:
+        try:
+            from PacsClient.utils.theme_manager import get_theme_manager
+            return get_theme_manager().current_theme().get(key, fallback)
+        except Exception:
+            return fallback
+
     def setPendingStyle(self):
-        """Set pending status style"""
+        """Set pending status style — uses theme warning."""
         self.setText("Pending...")
-        self.setStyleSheet("""
-            QLabel {
-                font-size: 10px;
-                font-weight: bold;
-                color: #fbbf24;
-                background: transparent;
-                border: 1px solid #fbbf24;
-                border-radius: 4px;
-                padding: 2px 4px;
-            }
-        """)
-    
+        self.setStyleSheet(self._themed_status_style(self._theme_color('warning', '#fbbf24')))
+
     def setDownloadingStyle(self, text=""):
-        """Set downloading status style"""
+        """Set downloading status style — uses theme info."""
         self.setText(text)
-        self.setStyleSheet("""
-            QLabel {
-                font-size: 10px;
-                font-weight: bold;
-                color: #3182ce;
-                background: transparent;
-                border: 1px solid #3182ce;
-                border-radius: 4px;
-                padding: 2px 4px;
-            }
-        """)
-    
+        self.setStyleSheet(self._themed_status_style(self._theme_color('info', '#3182ce')))
+
     def setCompleteStyle(self):
-        """Set complete status style"""
+        """Set complete status style — uses theme success."""
         self.setText("Ready")
-        self.setStyleSheet("""
-            QLabel {
-                font-size: 10px;
-                font-weight: bold;
-                color: #10b981;
-                background: transparent;
-                border: 1px solid #10b981;
-                border-radius: 4px;
-                padding: 2px 4px;
-            }
-        """)
+        self.setStyleSheet(self._themed_status_style(self._theme_color('success', '#10b981')))
 
 
 class DraggableButton(QPushButton):
@@ -991,15 +1007,23 @@ class ThumbnailManager(QObject):
             count_label = QLabel(text)
             count_label.setFixedHeight(20)
             count_label.setAlignment(Qt.AlignCenter)
-            count_label.setStyleSheet("""
-                QLabel {
+            # Theme-aware accent for the "{N} images" count text — was
+            # hard-coded #3b82f6 (Material blue), which clashed with every
+            # non-Blue theme. Mirrors the themed path in
+            # `_create_thumbnail_widget` so both code paths surface the
+            # same color regardless of which branch produced the label.
+            count_color = (
+                self._theme.get('accent', '#3b82f6') if hasattr(self, '_theme') and self._theme else '#3b82f6'
+            )
+            count_label.setStyleSheet(f"""
+                QLabel {{
                     font-size: 12px;
                     font-weight: bold;
-                    color: #3b82f6;
+                    color: {count_color};
                     background: transparent;
                     border: none;
                     padding: 2px;
-                }
+                }}
             """)
             content_layout.addWidget(count_label)
             widget.count_label = count_label
@@ -2575,83 +2599,94 @@ class ThumbnailManager(QObject):
         ایجاد ویجت نمایش پیشرفت دانلود خودکار
         """
         try:
+            # Auto-download widget: previously stamped Material blue
+            # (#3182ce) on every theme. Now derives from the active theme:
+            # accent for borders + key labels, panel_bg for chrome, text
+            # tokens for the body status text.
+            t = self._theme if hasattr(self, '_theme') and self._theme else {}
+            accent = t.get('accent', '#3182ce')
+            panel_alt = t.get('panel_alt_bg', '#2d3748')
+            panel_deep = t.get('panel_deep_bg', '#1a202c')
+            text_secondary = t.get('text_secondary', '#cbd5e0')
+            text_primary = t.get('text_primary', '#ffffff')
+
             # ایجاد ویجت اصلی
             self.auto_download_widget = QWidget()
             self.auto_download_widget.setFixedSize(180, 120)
-            self.auto_download_widget.setStyleSheet("""
-                QWidget {
-                    background: #2d3748;
-                    border: 2px solid #3182ce;
+            self.auto_download_widget.setStyleSheet(f"""
+                QWidget {{
+                    background: {panel_alt};
+                    border: 2px solid {accent};
                     border-radius: 8px;
                     margin: 2px;
-                }
+                }}
             """)
-            
+
             # ایجاد layout
             layout = QVBoxLayout(self.auto_download_widget)
             layout.setContentsMargins(8, 8, 8, 8)
             layout.setSpacing(4)
-            
+
             # عنوان
             title_label = QLabel("Auto Download")
             title_label.setAlignment(Qt.AlignCenter)
-            title_label.setStyleSheet("""
-                QLabel {
+            title_label.setStyleSheet(f"""
+                QLabel {{
                     font-size: 12px;
                     font-weight: bold;
-                    color: #3182ce;
+                    color: {accent};
                     background: transparent;
                     border: none;
-                }
+                }}
             """)
             layout.addWidget(title_label)
-            
+
             # پیشرفت کلی
             self.auto_progress_bar = QProgressBar()
             self.auto_progress_bar.setRange(0, 100)
             self.auto_progress_bar.setValue(0)
-            self.auto_progress_bar.setStyleSheet("""
-                QProgressBar {
+            self.auto_progress_bar.setStyleSheet(f"""
+                QProgressBar {{
                     border: none;
                     border-radius: 4px;
-                    background: #1a202c;
+                    background: {panel_deep};
                     text-align: center;
                     font-size: 10px;
                     font-weight: bold;
-                    color: #ffffff;
+                    color: {text_primary};
                     height: 20px;
-                }
-                QProgressBar::chunk {
-                    background: #3182ce;
+                }}
+                QProgressBar::chunk {{
+                    background: {accent};
                     border-radius: 4px;
-                }
+                }}
             """)
             layout.addWidget(self.auto_progress_bar)
-            
+
             # وضعیت
             self.auto_status_label = QLabel("Preparing...")
             self.auto_status_label.setAlignment(Qt.AlignCenter)
-            self.auto_status_label.setStyleSheet("""
-                QLabel {
+            self.auto_status_label.setStyleSheet(f"""
+                QLabel {{
                     font-size: 9px;
-                    color: #cbd5e0;
+                    color: {text_secondary};
                     background: transparent;
                     border: none;
-                }
+                }}
             """)
             layout.addWidget(self.auto_status_label)
-            
+
             # شمارنده
             self.auto_counter_label = QLabel("0/0")
             self.auto_counter_label.setAlignment(Qt.AlignCenter)
-            self.auto_counter_label.setStyleSheet("""
-                QLabel {
+            self.auto_counter_label.setStyleSheet(f"""
+                QLabel {{
                     font-size: 10px;
                     font-weight: bold;
-                    color: #3182ce;
+                    color: {accent};
                     background: transparent;
                     border: none;
-                }
+                }}
             """)
             layout.addWidget(self.auto_counter_label)
             

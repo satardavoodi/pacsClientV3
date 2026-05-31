@@ -1,12 +1,32 @@
 from PySide6.QtWidgets import QApplication, QWidget, QTabWidget, QVBoxLayout, QLabel, QComboBox, QPushButton, \
     QFileDialog, QHBoxLayout
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+from PySide6.QtGui import QFont, QColor
 from pathlib import Path
 
 from PacsClient.utils import get_all_selectable_servers, get_selectable_server
 from PacsClient.utils.theme_manager import get_theme_manager
 import qtawesome as qta
+
+
+def _rgba_glow(hex_color: str, alpha_top: float = 0.10, alpha_bottom: float = 0.05, alpha_border: float = 0.30) -> tuple:
+    """Convert a #rrggbb hex to (rgba_top, rgba_bottom, rgba_border) strings
+    for the connection-status pill (background gradient + border ring).
+
+    Returning all three at once keeps the glow visually consistent — when the
+    user switches theme the semantic status color stays meaningful (green ==
+    ready, amber == checking, red == not found) but the surrounding glow
+    follows that same hue so the pill doesn't gain a stray color cast.
+    """
+    qc = QColor(hex_color)
+    if not qc.isValid():
+        qc = QColor("#10b981")
+    r, g, b = qc.red(), qc.green(), qc.blue()
+    return (
+        f"rgba({r}, {g}, {b}, {alpha_top})",
+        f"rgba({r}, {g}, {b}, {alpha_bottom})",
+        f"rgba({r}, {g}, {b}, {alpha_border})",
+    )
 
 
 class DataAccessPanelWidget(QWidget):
@@ -294,59 +314,70 @@ class DataAccessPanelWidget(QWidget):
             
             self.server_selected = server_name
             
-            # Update connection status
-            self.connection_status.setPixmap(qta.icon('fa5s.spinner', color='#f59e0b').pixmap(8, 8))
+            # Update connection status — colors now derive from the active
+            # theme's semantic tokens (`warning` for the in-flight check,
+            # `success` for ready/offline-ready, `danger` for not-found) so a
+            # Yellow / Green / Dark Red workstation theme produces a status
+            # pill whose hue matches the rest of the chrome.
+            t = self.theme_manager.current_theme()
+            warning_hex = t.get("warning", "#f59e0b")
+            warn_top, warn_bot, warn_border = _rgba_glow(warning_hex)
+            self.connection_status.setPixmap(qta.icon('fa5s.spinner', color=warning_hex).pixmap(8, 8))
             self.connection_status.setText(" Checking...")
-            self.connection_status.setStyleSheet("""
-                QLabel {
+            self.connection_status.setStyleSheet(f"""
+                QLabel {{
                     font-size: 12px;
-                    color: #f59e0b;
+                    color: {warning_hex};
                     padding: 4px 6px;
                     background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 rgba(245, 158, 11, 0.1), stop:1 rgba(245, 158, 11, 0.05));
-                    border: 1px solid rgba(245, 158, 11, 0.3);
+                        stop:0 {warn_top}, stop:1 {warn_bot});
+                    border: 1px solid {warn_border};
                     border-radius: 4px;
                     font-weight: 500;
-                }
+                }}
             """)
-            
+
             # Check if server actually exists
             server_config = get_selectable_server(server_name=self.server_selected)
             if server_config:
                 is_offline = server_config.get("server_type") == "offline_cloud"
-                status_color = '#10b981'
+                success_hex = t.get("success", "#10b981")
+                status_color = success_hex
                 status_text = " Offline Server Ready" if is_offline else " Server Ready"
                 if is_offline and not Path(str(server_config.get("folder_path") or "")).expanduser().exists():
-                    status_color = '#f59e0b'
+                    status_color = warning_hex
                     status_text = " Offline Folder Missing"
+                glow_top, glow_bot, glow_border = _rgba_glow(status_color)
                 self.connection_status.setPixmap(qta.icon('fa5s.check-circle', color=status_color).pixmap(10, 10))
                 self.connection_status.setText(status_text)
-                self.connection_status.setStyleSheet("""
-                    QLabel {
+                self.connection_status.setStyleSheet(f"""
+                    QLabel {{
                         font-size: 14px;
-                        color: """ + status_color + """;
+                        color: {status_color};
                         padding: 4px 6px;
                         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                            stop:0 rgba(16, 185, 129, 0.1), stop:1 rgba(16, 185, 129, 0.05));
-                        border: 1px solid rgba(16, 185, 129, 0.3);
+                            stop:0 {glow_top}, stop:1 {glow_bot});
+                        border: 1px solid {glow_border};
                         border-radius: 4px;
                         font-weight: 500;
-                    }
+                    }}
                 """)
             else:
-                self.connection_status.setPixmap(qta.icon('fa5s.times-circle', color='#ef4444').pixmap(8, 8))
+                danger_hex = t.get("danger", "#ef4444")
+                d_top, d_bot, d_border = _rgba_glow(danger_hex)
+                self.connection_status.setPixmap(qta.icon('fa5s.times-circle', color=danger_hex).pixmap(8, 8))
                 self.connection_status.setText(" Server Not Found")
-                self.connection_status.setStyleSheet("""
-                    QLabel {
+                self.connection_status.setStyleSheet(f"""
+                    QLabel {{
                         font-size: 12px;
-                        color: #ef4444;
+                        color: {danger_hex};
                         padding: 4px 6px;
                         background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                            stop:0 rgba(239, 68, 68, 0.1), stop:1 rgba(239, 68, 68, 0.05));
-                        border: 1px solid rgba(239, 68, 68, 0.3);
+                            stop:0 {d_top}, stop:1 {d_bot});
+                        border: 1px solid {d_border};
                         border-radius: 4px;
                         font-weight: 500;
-                    }
+                    }}
                 """)
                 self.server_selected = None
         else:

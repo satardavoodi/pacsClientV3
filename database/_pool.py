@@ -210,6 +210,27 @@ def _get_pooled_connection() -> sqlite3.Connection:
     return conn
 
 
+def _evict_dead_thread_connections_locked() -> int:
+    """Close & drop pooled connections whose owning thread has exited.
+
+    Caller MUST already hold _pool_lock. Returns the number of thread-slots
+    evicted. Thread ids are OS-recycled integers with no exit hook, so without
+    this a long session that spawns many short-lived daemon threads (per patient
+    open / enrich / series load) leaks one pool slot — up to _max_pool_size open
+    sqlite connections plus their file descriptors and WAL read locks — for every
+    dead thread id. The current thread is always alive, so its slot is preserved.
+    """
+    live = {t.ident for t in threading.enumerate()}
+    dead = [tid for tid in list(_connection_pool.keys()) if tid not in live]
+    for tid in dead:
+        for conn in _connection_pool.pop(tid, []):
+            try:
+                conn.close()
+            except Exception:
+                pass
+    return len(dead)
+
+
 def _return_to_pool(conn: sqlite3.Connection) -> None:
     """Return connection to pool for reuse (or close if pool is full)."""
     thread_id = threading.current_thread().ident
@@ -231,6 +252,12 @@ def _return_to_pool(conn: sqlite3.Connection) -> None:
                 conn.close()
             except Exception:
                 pass
+
+        # Reclaim slots from threads that have since exited, so the pool dict
+        # cannot grow unbounded over a long session (one slot per dead thread id).
+        # Cheap: only walks the thread table once the dict exceeds a sane bound.
+        if len(_connection_pool) > 16:
+            _evict_dead_thread_connections_locked()
 
 
 def _create_sqlite_connection() -> sqlite3.Connection:
@@ -266,7 +293,11 @@ def _create_sqlite_connection() -> sqlite3.Connection:
             return conn
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
-                wait_time = (2 ** attempt) + random.uniform(0, 3)
+                # Cap the Python-level backoff. SQLite's own busy_timeout
+                # (120s, set above) already handles lock waiting; without this
+                # cap, attempt 14 would sleep 2**14 ≈ 4.5 hours and freeze the
+                # caller (and the UI thread, if it acquired here) indefinitely.
+                wait_time = min((2 ** attempt) + random.uniform(0, 3), 10.0)
                 logger.warning(
                     "Database locked, retrying in %.1fs (attempt %d/%d)",
                     wait_time,

@@ -13,9 +13,36 @@ from PacsClient.utils.data_paths import USER_DATA_ROOT
 THEME_STORAGE_DIR = USER_DATA_ROOT / "config"
 THEME_STORAGE_PATH = THEME_STORAGE_DIR / "theme_settings.json"
 
-DEFAULT_THEME_ORDER = ["Blue", "Gray", "Green", "Turquoise", "Dark Red", "Yellow", "Custom"]
+DEFAULT_THEME_ORDER = ["Default", "Blue", "Gray", "Green", "Turquoise", "Dark Red", "Yellow", "Custom"]
 
 DEFAULT_THEMES = {
+    # "Default" — the canonical baseline a clinical workstation should ship with.
+    # Cool neutral slate backgrounds + a calm cobalt accent. Distinct from the
+    # named "Blue" theme (which leans saturated and reads as a *color* choice);
+    # Default is the safe, professional fallback the user can return to at any
+    # time. Use the same semantic palette as Blue so anything reading `info` /
+    # `success` / `warning` / `danger` keeps its meaning regardless of which
+    # baseline is active.
+    "Default": {
+        "accent": "#2563eb",            # cobalt-600 — calm, neutral professional
+        "accent_secondary": "#1d4ed8",
+        "window_bg": "#1a1f2a",         # slightly cooler than Blue's #18212f
+        "menu_bg": "#252b38",
+        "panel_bg": "#141923",
+        "info": "#06b6d4",
+        "info_subtle": "#164e63",
+        "success": "#10b981",
+        "success_subtle": "#064e3b",
+        "warning": "#f59e0b",
+        "warning_subtle": "#78350f",
+        "danger": "#ef4444",
+        "danger_subtle": "#7f1d1d",
+        "badge_blue": "#1e40af",
+        "badge_cyan": "#0369a1",
+        "status_online": "#10b981",
+        "status_offline": "#6b7280",
+        "status_busy": "#ef4444",
+    },
     "Blue": {
         "accent": "#3182ce",
         "accent_secondary": "#0284c7",
@@ -97,6 +124,11 @@ DEFAULT_THEMES = {
         "status_busy": "#f87171",
     },
     "Dark Red": {
+        # Pink-rose `accent` drives primary chrome; `danger` is split off to
+        # a punchier crimson so destructive actions (Cancel / Delete) stay
+        # visually distinct from primary CTAs. Previously both were #b63c57,
+        # which made the Delete button look identical to a primary CTA on
+        # this theme.
         "accent": "#b63c57",
         "accent_secondary": "#a4151c",
         "window_bg": "#191015",
@@ -108,31 +140,40 @@ DEFAULT_THEMES = {
         "success_subtle": "#500724",
         "warning": "#f97316",
         "warning_subtle": "#7c2d12",
-        "danger": "#b63c57",
-        "danger_subtle": "#6b1b28",
+        "danger": "#dc2626",            # crimson — clearly different from accent
+        "danger_subtle": "#7f1d1d",
         "badge_blue": "#881337",
         "badge_cyan": "#b63c57",
         "status_online": "#ec4899",
         "status_offline": "#6b7280",
-        "status_busy": "#b63c57",
+        "status_busy": "#dc2626",
     },
     "Yellow": {
+        # Yellow theme palette rebalance — previously info/success/warning
+        # all clustered around amber (#f59e0b / #eab308 / #c99512), which
+        # collapsed the semantic differentiation between "ready", "info",
+        # and "warning" indicators. We split them out:
+        #   info    → cyan-blue (#0ea5e9) — clear "informational" signal
+        #   success → olive-green (#84cc16) — readable as "ready/OK"
+        #   warning → amber (#f59e0b) — keeps the canonical caution colour
+        #   status_online uses the new success so the connection pill
+        #   doesn't bleed into the warm-yellow chrome.
         "accent": "#c99512",
         "accent_secondary": "#d97706",
         "window_bg": "#1f1b10",
         "menu_bg": "#3b3016",
         "panel_bg": "#171106",
-        "info": "#f59e0b",
-        "info_subtle": "#78350f",
-        "success": "#eab308",
-        "success_subtle": "#713f12",
-        "warning": "#c99512",
+        "info": "#0ea5e9",
+        "info_subtle": "#0c4a6e",
+        "success": "#84cc16",
+        "success_subtle": "#365314",
+        "warning": "#f59e0b",
         "warning_subtle": "#78350f",
         "danger": "#ea580c",
         "danger_subtle": "#7c2d12",
         "badge_blue": "#b45309",
-        "badge_cyan": "#c99512",
-        "status_online": "#eab308",
+        "badge_cyan": "#0ea5e9",
+        "status_online": "#84cc16",
         "status_offline": "#6b7280",
         "status_busy": "#ea580c",
     },
@@ -325,8 +366,15 @@ class ThemeManager(QObject):
         return theme
 
     def reset_custom_theme(self) -> dict[str, str]:
-        self._settings["custom_theme"] = deepcopy(DEFAULT_THEMES["Blue"])
-        self._settings["active_theme"] = "Blue"
+        """Reset to the canonical "Default" baseline.
+
+        Restores the Custom palette to Default's tokens (so the user can
+        re-customize from a clean state) AND flips the active theme to
+        Default, giving the user a single-click way back to the safe
+        professional appearance.
+        """
+        self._settings["custom_theme"] = deepcopy(DEFAULT_THEMES["Default"])
+        self._settings["active_theme"] = "Default"
         self._save()
         theme = self.current_theme()
         self.themeChanged.emit(theme)

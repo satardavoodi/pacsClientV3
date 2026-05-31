@@ -27,3 +27,9 @@ psutil
 
 # Unified Command Layer (2026-05-27) — typed envelopes for EchoMind
 pydantic>=2.0
+
+# ── External Identity module (Google OAuth + secure token storage) ──
+google-auth>=2.29.0
+google-auth-oauthlib>=1.2.0
+keyring>=24.0.0
+cryptography>=42.0.0
