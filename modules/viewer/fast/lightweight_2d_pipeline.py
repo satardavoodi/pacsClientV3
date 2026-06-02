@@ -55,7 +55,11 @@ from modules.viewer.fast.object_cache import get_object_cache
 from modules.viewer.fast.stack_cache_profile import build_stack_cache_profile
 from modules.viewer.fast.stack_interaction_scheduler import FastWorkPriority
 from modules.viewer.fast.system_load_controller import WorkClass
-from modules.viewer.fast.dicom_header_scan import DicomHeaderEntry, scan_series_header_entries
+from modules.viewer.fast.dicom_header_scan import (
+    DicomHeaderEntry,
+    resolve_measurement_pixel_spacing,
+    scan_series_header_entries,
+)
 from modules.viewer.fast.ui_throttle import (
     cap_prefetch_radius,
     is_heavy_download_active,
@@ -3440,7 +3444,18 @@ class Lightweight2DPipeline(QObject):
             cols = int(inst.get("columns", 0) or 0)
             iop = _as_float_tuple(inst.get("image_orientation_patient"), 6, (1, 0, 0, 0, 1, 0))
             ipp = _as_float_tuple(inst.get("image_position_patient"), 3, (0, 0, 0))
-            ps = _as_float_tuple(inst.get("pixel_spacing"), 2, (1, 1))
+            _ps_meta = inst.get("pixel_spacing")
+            if _ps_meta is None:
+                # DB / socket metadata only carries PixelSpacing (0028,0030),
+                # which projection radiography (CR/DX/MG) omits. Recover the
+                # detector-plane pitch (ImagerPixelSpacing, etc.) from the header
+                # so measurements aren't silently uncalibrated at 1.0 mm/px.
+                try:
+                    _hdr = pydicom.dcmread(path, stop_before_pixels=True, force=True)
+                    _ps_meta = resolve_measurement_pixel_spacing(_hdr)
+                except Exception:
+                    _ps_meta = None
+            ps = _as_float_tuple(_ps_meta, 2, (1, 1))
             is_rgb = bool(inst.get("is_rgb", False))
             photometric = str(
                 inst.get("photometric_interpretation")
