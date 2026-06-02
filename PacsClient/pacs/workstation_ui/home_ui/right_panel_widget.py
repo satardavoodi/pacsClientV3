@@ -115,6 +115,9 @@ class RightPanelWidget(QWidget):
         self.current_thumbnail_index = 0
         self.thumbnails_to_display = []
         self._display_generation = 0
+        # Signature of the thumbnail set currently shown/rendering; used to skip a
+        # redundant identical rebuild (anti-flicker). None = nothing rendered yet.
+        self._last_render_signature = None
         self._active_progressive_generation = 0
         self._reserved_thumbnail_count = 0
         
@@ -396,6 +399,10 @@ class RightPanelWidget(QWidget):
         self._cancel_thumbnail_timer()
         self.current_thumbnail_index = 0
         self.thumbnails_to_display = []
+        # An explicit clear invalidates the anti-flicker signature so the next
+        # display always rebuilds (e.g. switching to a patient whose set happens to
+        # match the previous one, or a forced "Loading…" reset).
+        self._last_render_signature = None
         self._reset_reserved_content_height()
         # New content is about to be built - show it from the top.
         self._anchor_scroll_top()
@@ -423,14 +430,47 @@ class RightPanelWidget(QWidget):
         except Exception as e:
             print(f"Error in display_series_info: {str(e)}")
     
+    @staticmethod
+    def _thumbnail_render_signature(thumbnails):
+        """A cheap VISUAL signature of a thumbnail set, used to skip a redundant
+        rebuild when the panel is asked to display exactly what it already shows.
+        Keyed on per-series identity (study_uid + series_number + thumbnail file
+        path) — the thumbnail files fully determine what is drawn, so this matches
+        whether the set came from the socket fetch or the local cache. Any genuine
+        change — new/changed series, a grown study, a different patient, multi-study
+        regrouping — yields a different signature and still renders."""
+        try:
+            return tuple(
+                (
+                    str((t or {}).get('study_uid', '')),
+                    str((t or {}).get('series_number', '')),
+                    str((t or {}).get('file_path', '') or (t or {}).get('thumbnail_path', '')),
+                )
+                for t in (thumbnails or [])
+            )
+        except Exception:
+            return None
+
     def display_thumbnails(self, thumbnails, progressive: bool = True):
         """Display thumbnail images with series info in single boxes."""
         try:
+            # Skip a redundant rebuild when asked to display exactly what is already
+            # shown (or currently rendering). The main-page open flow legitimately
+            # triggers the right panel twice per click — once on the fast open path
+            # and again after series-info loads — and without this guard the panel
+            # clear_content()s and rebuilds the identical set ~0.8 s apart, which the
+            # user sees as a flicker / jumpy reload. A genuine content change has a
+            # different signature and still renders.
+            new_sig = self._thumbnail_render_signature(thumbnails)
+            if new_sig is not None and new_sig == getattr(self, '_last_render_signature', None):
+                return
             # Invalidate any previous render pipeline and cleanup old widgets.
             self._display_generation += 1
             generation = self._display_generation
             self._cancel_thumbnail_timer()
             self.clear_content()
+            # Remember what we are now rendering (clear_content() reset this to None).
+            self._last_render_signature = new_sig
             self._set_reserved_content_height(len(thumbnails))
 
             self.count_label.setText(f"Loading {len(thumbnails)} series...")

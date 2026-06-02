@@ -1,0 +1,53 @@
+{
+    // ─────────────────────────────────────────────────────────────────────────
+    // MCP servers for GitHub Copilot Agent Mode (VS Code).
+    // Open the Chat view → "Agent" → tools (wrench) to enable/disable, or press
+    // the "Start" lens above each server below.
+    //
+    // FIRST RUN: `npx` downloads each package on first launch (one-time, needs
+    // network). Warm them up once while online, e.g.:
+    //     npx -y @modelcontextprotocol/server-filesystem --help
+    // If VS Code reports `npx` not found, replace "npx" with the full path:
+    //     "C:\\Program Files\\nodejs\\npx.cmd"
+    // (Node.js is installed at C:\Program Files\nodejs on this workstation.)
+    // ─────────────────────────────────────────────────────────────────────────
+    "servers": {
+        // Project-scoped file access for the agent (read/list/search/edit within
+        // the repo root only). Complements Copilot's built-in file tools.
+        "filesystem": {
+            "type": "stdio",
+            "command": "npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-filesystem",
+                "${workspaceFolder}"
+            ]
+        },
+
+        // Structured step-by-step reasoning aid — useful for the project's
+        // mandated "understand → inspect → root cause → minimal fix" workflow.
+        "sequential-thinking": {
+            "type": "stdio",
+            "command": "npx",
+            "args": [
+                "-y",
+                "@modelcontextprotocol/server-sequential-thinking"
+            ]
+        }
+
+        // ── OPTIONAL: query the clinical SQLite DB while debugging ──────────────
+        // The CLAUDE.md DB-isolation rules exist because tests once polluted the
+        // live dicom.db. DO NOT point an MCP server at the live database — make a
+        // COPY first and query the copy. Requires `uv` (https://astral.sh/uv):
+        //
+        // ,"sqlite-dicom-copy": {
+        //     "type": "stdio",
+        //     "command": "uvx",
+        //     "args": [
+        //         "mcp-server-sqlite",
+        //         "--db-path",
+        //         "${workspaceFolder}/user_data/database/_debug_copy_dicom.db"
+        //     ]
+        // }
+    }
+}

@@ -1,9 +1,28 @@
 ﻿# AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.1.7 (2026-06-02)
-**Previous Stable:** v3.1.6 (2026-06-01)
+**Current Stable Version:** v3.1.8 (2026-06-02)
+**Previous Stable:** v3.1.7 (2026-06-02)
 **Release Date:** 2026-06-02
 **Branch:** beta-version
+
+---
+
+## v3.1.8 (2026-06-02) - Minor release: v3.1.8 production updates
+
+### Summary
+
+Minor release consolidating the v3.1.7 codebase with production stability improvements
+and final v3.1.8 production installer (698 MB, Inno Setup 6). All v3.1.7 and v3.0.9
+features carried forward.
+
+### Included
+
+- Final v3.1.8 production installer (698 MB, Inno Setup 6)
+- All v3.1.7 features (production stability improvements)
+- All v3.1.6 features (production stability improvements)
+- All v3.1.5 features (test infrastructure, command bus, KPI system)
+- All v3.0.9+ codebase (responsive UI, crash hardening, EULA, multi-study viewer)
+- Production stability enhancements
 
 ---
 

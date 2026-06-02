@@ -1,0 +1,25 @@
+{
+    // Recommended extensions for the AI-PACS Beta Viewer (Python / PySide6 DICOM
+    // workstation). VS Code prompts to install these when the workspace opens.
+    // GitHub Copilot / Copilot Chat ship built-in with current VS Code; they are
+    // listed so older installs are nudged to add them.
+    "recommendations": [
+        "github.copilot",
+        "github.copilot-chat",
+
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.debugpy",
+
+        "charliermarsh.ruff",
+
+        "tamasfe.even-better-toml",
+        "redhat.vscode-yaml",
+
+        "ms-vscode.powershell",
+        "njpwerner.autodocstring",
+
+        "seanwu.vscode-qt-for-python"
+    ],
+    "unwantedRecommendations": []
+}

@@ -244,6 +244,139 @@ class _HPPatientOpenMixin:
         except Exception:
             return None
 
+    @staticmethod
+    def _row_modalities(base_row):
+        """Robustly derive the modality set from a patient row, tolerating server
+        key/shape variation: a ``modalities`` list, or a ``modality`` string that may
+        be multi-valued (``MR\\DX``, ``MR,DX``, ``MR/DX``...)."""
+        mods = []
+        raw = (base_row or {}).get('modalities')
+        if isinstance(raw, (list, tuple, set)):
+            for m in raw:
+                m = str(m or '').strip().upper()
+                if m and m not in mods:
+                    mods.append(m)
+        single = str((base_row or {}).get('modality') or '').strip().upper()
+        if single:
+            import re as _re
+            for m in _re.split(r"[\\,/;|\s]+", single):
+                m = m.strip()
+                if m and m not in mods:
+                    mods.append(m)
+        return mods
+
+    @staticmethod
+    def _row_total_studies(base_row):
+        """Robustly derive the patient's total study count from a row, tolerating
+        server key variation. Returns 0 when unknown."""
+        for k in ('total_studies', 'study_count', 'studies_count', 'num_studies', 'count_of_studies'):
+            try:
+                v = (base_row or {}).get(k)
+                if v is not None and int(v) > 0:
+                    return int(v)
+            except Exception:
+                continue
+        return 0
+
+    async def _resolve_patient_study_uids_async(self, patient_id, fallback_study_uid):
+        """Async resolve = the sync table/DB/fallback resolution PLUS a server
+        enumeration of studies the patient-list hid.
+
+        The server's ``GetPatientList`` returns only ONE study UID per patient (the
+        latest) even when the patient has several studies — it discriminates studies
+        by modality. So a *same-patient* study of a different modality (e.g. an MRI
+        when the latest study is an X-ray) is otherwise never surfaced and the patient
+        appears to have only one study. Used by the double-click open path so all of
+        a patient's studies are opened/downloaded (the single-click reconcile feeds
+        its already-fetched server row into ``_enumerate_studies_for_row`` directly).
+
+        Zero extra server query for the common single-study / single-modality patient:
+        the decision uses the compact per-patient meta stashed at list-load time by
+        ``_add_socket_patient_to_table`` (``_server_patient_meta_by_pid``).
+        """
+        resolved = self._resolve_patient_study_uids(patient_id, fallback_study_uid)
+        try:
+            pid = str(patient_id or '').strip()
+            meta = (getattr(self, '_server_patient_meta_by_pid', None) or {}).get(pid)
+            if meta:
+                extra = await self._enumerate_studies_for_row(pid, meta, already_have=resolved)
+                for u in extra:
+                    if u and u not in resolved:
+                        resolved.append(u)
+        except Exception as e:
+            try:
+                _logger.warning("[multi-study] modality enumeration failed for %s: %s", patient_id, e)
+            except Exception:
+                pass
+        return resolved
+
+    async def _enumerate_studies_for_row(self, patient_id, base_row, already_have=None):
+        """Discover same-patient studies that a ``GetPatientList`` row omitted.
+
+        ``GetPatientList`` returns only ONE study UID per patient (the latest) — it
+        discriminates studies by modality. So when a patient spans MORE THAN ONE
+        modality, the non-latest modality's study is missing from the row. Given the
+        patient's row, query the patient list once PER modality and return the
+        ADDITIONAL study UIDs found. Every UID is verified to belong to ``patient_id``
+        (the server filters by it), so cross-patient isolation is preserved.
+
+        No queries (returns ``[]``) when the patient has a single modality, or when we
+        already hold at least as many studies as the server reports for them. The
+        multi-modality count IS the discriminator: 2+ modalities ⇒ 2+ studies, and
+        only the latest came back, so the rest must be fetched per modality.
+        """
+        import asyncio as _aio
+        pid = str(patient_id or '').strip()
+        extra = []
+        if not pid or not base_row:
+            return extra
+        modalities = self._row_modalities(base_row)
+        if len(modalities) <= 1:
+            return extra  # single modality ⇒ nothing cross-modality to discover
+        # Skip the per-modality queries if we already hold every study the server
+        # knows about for this patient (avoids redundant queries on re-open).
+        total = self._row_total_studies(base_row)
+        have = [str(u or '').strip() for u in (already_have or []) if str(u or '').strip()]
+        known = list(have)
+        for u in list((base_row or {}).get('study_uids') or []) + [(base_row or {}).get('latest_study_uid')]:
+            u = str(u or '').strip()
+            if u and u not in known:
+                known.append(u)
+        if total > 0 and len(known) >= total:
+            return extra
+        try:
+            from modules.network.socket_patient_service import get_socket_patient_service
+            svc = get_socket_patient_service()
+        except Exception:
+            return extra
+
+        def _row_for(params):
+            rows = svc.search_patients_sync(params) or []
+            for r in rows:
+                if str((r or {}).get('patient_id') or '').strip() == pid:
+                    return r
+            return None
+
+        for mod in modalities:
+            try:
+                mrow = await _aio.to_thread(_row_for, {
+                    'patient_id': pid, 'modality': mod, 'limit': 50, 'offset': 0,
+                    'include_study_count': True, 'include_latest_study': True})
+                if not mrow:
+                    continue
+                for u in list(mrow.get('study_uids') or []) + [mrow.get('latest_study_uid')]:
+                    u = str(u or '').strip()
+                    if u and u not in known and u not in extra:
+                        extra.append(u)
+                        try:
+                            self._log_open_trace(u, 'study_enumerated_by_modality',
+                                                 patient_id=pid, modality=mod)
+                        except Exception:
+                            pass
+            except Exception:
+                continue
+        return extra
+
     def _defer_patient_studies_refresh(self, patient_info: dict) -> None:
         pending = getattr(self, '_deferred_patient_studies_refresh', None)
         if pending is None:
@@ -420,7 +553,7 @@ class _HPPatientOpenMixin:
 
         _t0_double_click = _time.perf_counter()
         _logger.info("[FAST-UX] double_click_t0 study=%s patient=%s", study_uid, patient_id)
-        all_study_uids = self._resolve_patient_study_uids(patient_id, study_uid)
+        all_study_uids = await self._resolve_patient_study_uids_async(patient_id, study_uid)
         if not all_study_uids:
             all_study_uids = [str(study_uid or '').strip()]
         self._ensure_open_trace_context(
@@ -645,6 +778,30 @@ class _HPPatientOpenMixin:
                             except Exception as e:
                                 study_info = None
                                 _logger.warning("Could not fetch series info for %s: %s", current_study_uid, e)
+
+                            # ── Cross-patient safety guard (clinical data isolation) ──
+                            # The server's study-info carries the study's TRUE owner.
+                            # NEVER queue/download or surface a study under a patient it
+                            # does not belong to. A study leaked into all_study_uids via
+                            # a stale fallback (e.g. the previous patient's study still in
+                            # the right panel) was otherwise downloaded + PERSISTED under
+                            # the wrong PID (44533's shoulder study under 44504). The
+                            # clicked study is always this patient's, so only the EXTRA
+                            # resolved studies are verified; `continue` drops the study
+                            # from BOTH the download queue and the viewer series map.
+                            if str(current_study_uid).strip() != str(study_uid or '').strip():
+                                _srv_owner = str((study_info or {}).get('patient_id') or '').strip()
+                                if _srv_owner and _srv_owner != str(patient_id or '').strip():
+                                    try:
+                                        self._log_open_trace(
+                                            current_study_uid, 'download_queue_cross_patient_skip',
+                                            level='warning', patient_id=str(patient_id),
+                                            owner_patient_id=_srv_owner,
+                                        )
+                                    except Exception:
+                                        pass
+                                    continue
+
                             if study_info and (study_info.get('series') or []):
                                 series_list = study_info.get('series', [])
                                 series_count = study_info.get('count_of_series', len(series_list))

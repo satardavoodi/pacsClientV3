@@ -1,4 +1,112 @@
 {
+    // ───────────────────────────────────────────────────────────────────────
+    // AI-PACS agent / workspace optimizations (added 2026-06-02).
+    // Original file backed up at .vscode/_backup_2026-06-02/settings.json
+    // ───────────────────────────────────────────────────────────────────────
+
+    // ── Performance: keep VS Code indexing, search, file-watcher and Pylance
+    //    out of the heavy/generated trees. This repo has ~188k files in
+    //    user_data, ~132k in backups, ~34k across .venv/.venv_build and ~40k
+    //    in .claude/worktrees. Indexing them makes search + Copilot slow.
+    "search.exclude": {
+        "**/.venv": true,
+        "**/.venv_build": true,
+        "**/.claude/worktrees": true,
+        "**/backups": true,
+        "**/user_data": true,
+        "**/generated-files": true,
+        "**/external": true,
+        "**/builder": true,
+        "**/builder nuitka": true,
+        "**/_recovery": true,
+        "**/.tmp_backup_extract": true,
+        "**/crash-diagnostics": true,
+        "**/log": true,
+        "**/__pycache__": true,
+        "**/.pytest_cache": true,
+        "**/Fonts": true,
+        "**/graphics_runtime": true,
+        "**/*.patch": true
+    },
+    "files.watcherExclude": {
+        "**/.venv/**": true,
+        "**/.venv_build/**": true,
+        "**/.claude/worktrees/**": true,
+        "**/backups/**": true,
+        "**/user_data/**": true,
+        "**/generated-files/**": true,
+        "**/builder/**": true,
+        "**/builder nuitka/**": true,
+        "**/_recovery/**": true,
+        "**/__pycache__/**": true,
+        "**/.pytest_cache/**": true,
+        "**/log/**": true,
+        "**/.git/**": true
+    },
+    "files.exclude": {
+        "**/__pycache__": true,
+        "**/*.pyc": true,
+        "**/.pytest_cache": true,
+        "**/.mypy_cache": true
+    },
+
+    // ── Python / Pylance (analysis scoped to open files for responsiveness) ──
+    "python.languageServer": "Pylance",
+    "python.analysis.diagnosticMode": "openFilesOnly",
+    "python.analysis.typeCheckingMode": "basic",
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.indexing": true,
+    "python.analysis.exclude": [
+        "**/.venv/**",
+        "**/.venv_build/**",
+        "**/.claude/**",
+        "**/backups/**",
+        "**/user_data/**",
+        "**/generated-files/**",
+        "**/builder/**",
+        "**/builder nuitka/**",
+        "**/_recovery/**"
+    ],
+
+    // ── Testing: pytest (suite config + the required `-p no:debugging`
+    //    addopts live in pyproject.toml). Auto-discovery on save is OFF
+    //    because the tree is large. ──
+    "python.testing.pytestEnabled": true,
+    "python.testing.unittestEnabled": false,
+    "python.testing.pytestArgs": ["tests"],
+    "python.testing.autoTestDiscoverOnSaveEnabled": false,
+
+    // ── Ruff (lint/format config in pyproject.toml: rules E/F/I, line 100).
+    //    formatOnSave is intentionally OFF to avoid noisy diffs on clinical
+    //    code — format explicitly via the Ruff command when you want to. ──
+    "[python]": {
+        "editor.defaultFormatter": "charliermarsh.ruff",
+        "editor.formatOnSave": false
+    },
+    "ruff.importStrategy": "useBundled",
+
+    // ── Copilot Agent Mode wiring ──
+    "chat.agent.enabled": true,
+    "chat.promptFiles": true,
+    "github.copilot.chat.codeGeneration.useInstructionFiles": true,
+
+    // ── Git / Explorer ergonomics (don't scan the many .claude worktrees) ──
+    "git.autoRepositoryDetection": "openEditors",
+    "git.openRepositoryInParentFolders": "never",
+    "terminal.integrated.cwd": "${workspaceFolder}",
+    "files.associations": {
+        "*.qss": "css",
+        "*.prompt.md": "markdown",
+        "*.instructions.md": "markdown"
+    },
+    "explorer.fileNesting.enabled": true,
+    "explorer.fileNesting.patterns": {
+        "requirements.txt": "requirements-*.txt",
+        ".gitignore": ".gitattributes, .gitmodules, .editorconfig",
+        "pyproject.toml": "AIPacs.spec, setup_env.ps1, setup_build_env.ps1"
+    },
+
+    // ── Original settings (unchanged) ──
     "github.copilot.advanced": {},
     "github.gitProtocol": "https",
     "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",

@@ -848,6 +848,9 @@ class PatientTableWidget(QWidget):
         self.click_timer.setSingleShot(True)
         self.click_timer.timeout.connect(self._on_single_click_timeout)
         self.pending_click_item = None
+        # Row whose single-click selection is queued behind the double-click window;
+        # -1 = none. A double-click resets it so only genuine single clicks emit.
+        self._pending_selection_row = -1
         
         # Table settings
         self.results_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -1681,7 +1684,39 @@ class PatientTableWidget(QWidget):
             print(f"Error refreshing table anti-aliasing: {str(e)}")
 
     def _emit_patient_selection(self, row: int):
-        """Emit patient selection signals once per short interval for the same row."""
+        """Queue the single-click patient selection (thumbnail / series load) behind
+        the system double-click interval.
+
+        Double-click reliability: Qt delivers the FIRST click of a double-click as a
+        normal click, so emitting the selection immediately starts thumbnail loading
+        on every double-click and races / blocks the patient-open — and the heavy
+        single-click work can push the second press past ``doubleClickInterval`` so Qt
+        reports two single clicks instead of a double (the "double-click doesn't open /
+        must single-click first" symptom). Instead we arm ``click_timer``: a genuine
+        single click flushes after the interval, while a double-click cancels it in
+        ``_on_patient_double_clicked`` (``click_timer.stop()``) and opens independently.
+        The row highlight is handled natively by Qt on press, so selection feedback
+        stays instant — only the thumbnail load waits out the double-click window.
+        """
+        try:
+            if row < 0:
+                return
+            self._pending_selection_row = int(row)
+            try:
+                interval = int(QApplication.doubleClickInterval() or 0)
+            except Exception:
+                interval = 0
+            # Match Qt's own double-click window; floor it so an oddly-small platform
+            # value cannot reintroduce the race.
+            if interval < 200:
+                interval = 250
+            self.click_timer.start(interval)
+        except Exception as e:
+            print(f"Error queueing patient selection: {str(e)}")
+
+    def _emit_patient_selection_now(self, row: int):
+        """Emit the queued patient-selection signals — runs on the ``click_timer``
+        timeout for a genuine single click. Deduped per-row within a short interval."""
         try:
             if row < 0:
                 return
@@ -1745,9 +1780,10 @@ class PatientTableWidget(QWidget):
             ctrl_pressed = modifiers & Qt.ControlModifier
 
             self.pending_click_item = item
-            self.click_timer.start(300)
 
-            # Emit immediately so sidebar refresh is not blocked by timer edge-cases.
+            # Queue the selection behind the double-click interval (see
+            # _emit_patient_selection). A double-click cancels it and opens instead,
+            # so the first click of a double never starts thumbnail loading.
             self._emit_patient_selection(item.row())
 
             # Handle multi-selection with Ctrl key
@@ -1839,11 +1875,14 @@ class PatientTableWidget(QWidget):
 
     def _on_single_click_timeout(self):
         try:
-            if self.pending_click_item is None:
-                return
-            # Selection was already emitted immediately in _on_patient_clicked.
-            # The timer only guards against treating a double-click as a single click.
+            # The double-click window elapsed with no second click, so this was a
+            # genuine single click: emit the selection now (start thumbnail loading).
+            # A double-click would have cancelled this via click_timer.stop().
+            row = int(getattr(self, '_pending_selection_row', -1))
             self.pending_click_item = None
+            self._pending_selection_row = -1
+            if row >= 0:
+                self._emit_patient_selection_now(row)
         except Exception as e:
             print(f"Error in single-click timeout: {str(e)}")
 
@@ -1860,8 +1899,11 @@ class PatientTableWidget(QWidget):
         try:
             if item.column() == COL['select']:
                 return
+            # Cancel any pending single-click selection so a double-click NEVER starts
+            # thumbnail loading — the patient-open proceeds independently and at once.
             self.click_timer.stop()
             self.pending_click_item = None
+            self._pending_selection_row = -1
 
             selected_row = item.row()
             patient_id_item = self.results_table.item(selected_row, COL['patient_id'])

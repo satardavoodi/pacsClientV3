@@ -1287,7 +1287,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.1.7")
+    app.setApplicationVersion("3.1.8")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1471,6 +1471,26 @@ if __name__ == "__main__":
     # Store lock on app for cleanup on exit
     app._instance_lock = instance_lock
 
+    # Single-instance: when a SECOND launch happens, the new process sends an
+    # ACTIVATE message over the QLocalServer (then exits); this callback raises +
+    # focuses THIS already-running window instead of starting a duplicate.
+    def _raise_existing_window():
+        try:
+            if window.isMinimized():
+                window.showNormal()
+            else:
+                window.show()
+            window.raise_()
+            window.activateWindow()
+        except Exception as _raise_exc:
+            logging.getLogger(__name__).debug(
+                "[single-instance] raise existing window failed: %s", _raise_exc
+            )
+    try:
+        instance_lock.set_activate_callback(_raise_existing_window)
+    except Exception:
+        pass
+
     # sys.exit(app.exec())
     try:
         with loop:
@@ -1538,5 +1558,28 @@ if __name__ == "__main__":
         try:
             from PacsClient.utils.diagnostic_logging import shutdown_diagnostic_logging
             shutdown_diagnostic_logging()
+        except Exception:
+            pass
+
+        # ── Clean-termination guarantee ──────────────────────────────────
+        # Force-terminate any download subprocess still registered so a download
+        # in flight at close cannot leave an orphaned python.exe in Task Manager.
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
+                terminate_all_download_subprocesses as _term_dl_subs,
+            )
+            _term_dl_subs()
+        except Exception:
+            pass
+        # Hard-exit AFTER all cleanup (instance lock released, DB WAL checkpointed,
+        # logs flushed, subprocesses terminated). This guarantees the main process
+        # actually leaves Task Manager even if a non-daemon worker/socket thread is
+        # still alive — Python would otherwise block at interpreter exit waiting on
+        # it, which is the "app stays in Task Manager after the window closes"
+        # symptom. Data integrity is safe: DICOM/thumbnail writes are atomic and the
+        # DB WAL was checkpointed above. Escape hatch: AIPACS_NO_HARD_EXIT=1.
+        try:
+            if os.environ.get("AIPACS_NO_HARD_EXIT") != "1":
+                os._exit(0)
         except Exception:
             pass

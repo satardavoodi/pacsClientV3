@@ -90,6 +90,72 @@
 			"label": "Verify DM Tests",
 			"type": "shell",
 			"command": "python tests/download_manager/run_dm_test.py"
+		},
+		{
+			"label": "AIPacs: Run App (logged)",
+			"detail": "Launch the source build via run_app.ps1 (tees terminal output to log/).",
+			"type": "process",
+			"command": "powershell",
+			"args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/run_app.ps1"],
+			"options": { "cwd": "${workspaceFolder}" },
+			"problemMatcher": [],
+			"presentation": { "reveal": "always", "panel": "dedicated", "clear": true }
+		},
+		{
+			"label": "AIPacs: Run Tests (run_test.ps1, default smoke)",
+			"detail": "Blessed test path: python main.py --run-tests. No args = pydicom geometry smoke test.",
+			"type": "process",
+			"command": "powershell",
+			"args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "${workspaceFolder}/run_test.ps1"],
+			"options": { "cwd": "${workspaceFolder}" },
+			"group": { "kind": "test", "isDefault": true },
+			"problemMatcher": []
+		},
+		{
+			"label": "Pytest: Collect only (sanity)",
+			"detail": "Imports the whole test tree without running it (catches collection errors).",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": ["-m", "pytest", "--co", "-q"],
+			"options": { "cwd": "${workspaceFolder}" },
+			"group": "test",
+			"problemMatcher": []
+		},
+		{
+			"label": "Pytest: Run tests/code (fast unit)",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": ["-m", "pytest", "tests/code", "-q"],
+			"options": { "cwd": "${workspaceFolder}" },
+			"group": "test",
+			"problemMatcher": []
+		},
+		{
+			"label": "Lint: Ruff check (if installed)",
+			"detail": "Runs ruff from the venv. If ruff isn't installed, use the Ruff extension instead.",
+			"type": "process",
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": ["-m", "ruff", "check", "."],
+			"options": { "cwd": "${workspaceFolder}" },
+			"problemMatcher": []
+		},
+		{
+			"label": "Logs: Tail download_diagnostics.log",
+			"type": "process",
+			"command": "powershell",
+			"args": ["-NoProfile", "-Command", "Get-Content -Path '${workspaceFolder}/user_data/logs/download_diagnostics.log' -Wait -Tail 40"],
+			"isBackground": true,
+			"problemMatcher": [],
+			"presentation": { "reveal": "always", "panel": "dedicated" }
+		},
+		{
+			"label": "Logs: Tail app.log",
+			"type": "process",
+			"command": "powershell",
+			"args": ["-NoProfile", "-Command", "Get-Content -Path '${workspaceFolder}/user_data/logs/app.log' -Wait -Tail 40"],
+			"isBackground": true,
+			"problemMatcher": [],
+			"presentation": { "reveal": "always", "panel": "dedicated" }
 		}
 	]
 }

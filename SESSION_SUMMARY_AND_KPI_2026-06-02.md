@@ -7,17 +7,23 @@ as-built reports are referenced inline.
 
 ## 1. What was done (overview)
 
-Three threads, in order:
+Five threads, in order:
 
 1. **Patient 44113 — stale series/thumbnails fix** (clinical-correctness bug).
 2. **Thumbnail + Zeta download pipeline audit** (obsessive correctness/optimization review).
 3. **Completed the optimization plan** — every outstanding download-pipeline finding that
    was safe to fix, including the drag-deferral *smoothness* feature, then a full live
    evaluation.
+4. **Single-instance application guard + clean-termination** (robust QLocalServer +
+   PID-file; no lingering processes in Task Manager).
+5. **Cross-patient study mixing (44504/44533)** — root-caused a shoulder study persisted
+   under the wrong patient; added server-authoritative isolation guards + corrected the data.
 
 Net result: **clinical image integrity verified sound**, **download-manager test suite
-21 failing → 0 (198/198)**, **9 fixes applied + verified with zero regressions**, and a
-**live evaluation confirming the app is optimized and stable**.
+21 failing → 0 (198/198)**, **12 fixes applied + verified with zero regressions**, a
+**live evaluation confirming the app is optimized and stable**, a **robust single-instance
+guard + clean-termination path**, and a **cross-patient study-mixing (44504) root-cause fix
+with data correction**.
 
 ---
 
@@ -34,6 +40,9 @@ Net result: **clinical image integrity verified sound**, **download-manager test
 | 7 | **`state_store.update_batch()`** — atomic multi-field update, one batched event | correctness | closes part of the observer torn-read window |
 | 8 | **Drag/visibility-deferral feature (P2.3)** — the smoothness win | **smoothness** | eliminates ~320–570 ms DM-table stalls during a drag |
 | 9 | Lightweight **`showEvent`** (deferred refresh-on-show) | lifecycle | completes the hidden-gate loop |
+| 10 | **Single-instance guard** rewritten to QLocalServer + PID-file (atomic, crash-safe, cross-process bring-to-front IPC) | lifecycle | only one AIPacs runs; re-launch raises the existing window; a crash leaves no stale lock |
+| 11 | **Clean termination** — kill download subprocesses on exit (+`atexit`) + guarded `os._exit(0)` | lifecycle | no lingering process in Task Manager after the window closes |
+| 12 | **Cross-patient study isolation** — server-authoritative ownership guards at STEP 3.5 / reconcile / grouped display + re-attribution of 44533's study off 44504 | **clinical safety** | a patient never shows/downloads another patient's study (44504 brain ≠ 44533 shoulder) |
 
 Detail of #8 (the feature): `_refresh_table_order` now gates `is_protected_drag_active()`
 and `not isVisible()` **before** the per-row Qt `cellWidget()/setValue()` work; new
@@ -43,7 +52,10 @@ skips the heavy series-breakdown recreation during a drag. Applied to canonical 
 plugin-package mirror.
 
 **As-built detail:** `ROOTCAUSE_44113_SINGLE_CLICK_PIPELINE_2026-06-01.md`,
-`AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`, `LIVE_EVALUATION_2026-06-02.md`.
+`AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`, `LIVE_EVALUATION_2026-06-02.md`,
+`SINGLE_INSTANCE_GUARD_2026-06-02.md`, `CROSS_PATIENT_STUDY_MIXING_44504_2026-06-02.md`.
+Regression guards for all of the above are recorded in `CLAUDE.md` → "Subsystem
+regression guards".
 
 ---
 

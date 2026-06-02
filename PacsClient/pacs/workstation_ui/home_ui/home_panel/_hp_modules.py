@@ -546,6 +546,19 @@ Study UID: {study_uid}
                 seen_studies.append(uid_str)
 
         for index, study_uid in enumerate(seen_studies, start=1):
+            # ── Cross-patient safety (clinical data isolation) ────────────────
+            # Defense-in-depth for the grouped thumbnails: never render a study the
+            # local DB attributes to a DIFFERENT patient (the study-UID-keyed
+            # thumbnail folder is patient-blind, so a leaked UID could otherwise
+            # surface another patient's images). The first (clicked) study is always
+            # kept; only the extra resolved studies are verified.
+            if index > 1:
+                try:
+                    _owner = self._study_owner_patient_id(study_uid)
+                except Exception:
+                    _owner = None
+                if _owner and str(_owner).strip() != str(patient_id or '').strip():
+                    continue
             study_label = f"Study {index}"
             study_thumbs = []
 
@@ -646,7 +659,11 @@ Study UID: {study_uid}
                 return str(value)
 
         combined_thumbnails.sort(key=lambda t: (int(t.get('_study_order', 0) or 0), _series_sort_value(t)))
-        self.display_thumbnails(combined_thumbnails)
+        # progressive=False: render the grouped multi-study set all-at-once into its
+        # final state. Progressive mode pops thumbnails in one-by-one (120 ms each),
+        # which reads as a jumpy/rushed reload — and the two-study flicker the
+        # MULTI_STUDY_SINGLE_TAB_PLAN guard warns about. Keep this immediate.
+        self.display_thumbnails(combined_thumbnails, progressive=False)
 
     def _on_zeta_download_requested(self, selected_studies, set_current_tab=True):
         """

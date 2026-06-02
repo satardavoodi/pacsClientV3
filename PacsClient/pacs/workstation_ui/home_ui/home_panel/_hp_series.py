@@ -294,6 +294,25 @@ class _HPSeriesMixin:
                     if latest_uid and latest_uid not in server_uids:
                         server_uids.append(latest_uid)
 
+                    # Multi-modality completeness: GetPatientList returns only the
+                    # LATEST study UID per patient, so a same-patient study of another
+                    # modality (e.g. an MRI when the latest is an X-ray) is omitted.
+                    # Enumerate per-modality and union the missing UIDs in. Reuses the
+                    # server_row we already fetched (no extra default query); no-op for
+                    # single-study / single-modality patients. The enumerated UIDs all
+                    # belong to `pid` (server filters by patient_id) and still pass the
+                    # cross-patient guard in the missing-download loop below.
+                    if hasattr(self, '_enumerate_studies_for_row'):
+                        try:
+                            extra_uids = await self._enumerate_studies_for_row(
+                                pid, server_row, already_have=list(local_uids) + list(server_uids))
+                            for _eu in (extra_uids or []):
+                                _eu = str(_eu or '').strip()
+                                if _eu and _eu not in server_uids:
+                                    server_uids.append(_eu)
+                        except Exception:
+                            pass
+
                 if server_uids:
                     patient_study_map[pid] = list(server_uids)
                     # Bugfix 44113: stash the server's series count for a single-study
@@ -307,7 +326,12 @@ class _HPSeriesMixin:
                         if not hasattr(self, '_server_series_count_by_study'):
                             self._server_series_count_by_study = {}
                         _srv_cnt = int((server_row or {}).get('count_of_series') or 0)
-                        if _srv_cnt > 0 and len(server_uids) == 1:
+                        # Only attribute the patient-level series total to the single
+                        # study when the patient is genuinely single-study; otherwise
+                        # count_of_series aggregates several studies (multi-study) and
+                        # would feed a false "grew" signal to the cache gate.
+                        _srv_total = int((server_row or {}).get('total_studies') or 0)
+                        if _srv_cnt > 0 and len(server_uids) == 1 and _srv_total <= 1:
                             self._server_series_count_by_study[server_uids[0]] = _srv_cnt
                     except Exception:
                         pass
@@ -334,6 +358,24 @@ class _HPSeriesMixin:
                                 timeout=45.0,
                             )
                             if not study_info:
+                                continue
+
+                            # ── Cross-patient safety guard (clinical data isolation) ──
+                            # Never save/download a "missing" study under THIS patient if
+                            # the server's study-info says it belongs to a DIFFERENT
+                            # patient (a study can leak into `merged` via a stale
+                            # fallback). Single-click counterpart of the double-click
+                            # STEP 3.5 guard — both block another patient's study (e.g.
+                            # 44533's shoulder study) from being persisted under 44504.
+                            _srv_owner = str((study_info or {}).get('patient_id') or '').strip()
+                            if _srv_owner and _srv_owner != str(pid).strip():
+                                try:
+                                    if hasattr(self, '_log_open_trace'):
+                                        self._log_open_trace(
+                                            missing_uid, 'reconcile_cross_patient_skip', level='warning',
+                                            requested_patient_id=pid, owner_patient_id=_srv_owner)
+                                except Exception:
+                                    pass
                                 continue
 
                             self.save_complete_study_info(missing_uid, pid, study_info=study_info)
@@ -593,8 +635,14 @@ class _HPSeriesMixin:
                     return
                 # Use await to yield control and prevent blocking
                 await asyncio.sleep(0)
-                # Stream cached thumbnails too to avoid a full synchronous rebuild.
-                self.right_panel_widget.display_thumbnails(thumbnails, progressive=True)
+                # progressive=False: render all-at-once into the final state. The
+                # main-page right panel must load calmly and consistently; progressive
+                # mode pops series in one-by-one (120 ms each), which the cache-gate
+                # path (also progressive=False) does not — that mismatch is what made
+                # single-click thumbnails feel smooth sometimes and jumpy other times
+                # (whichever render path won first locked in its style via the
+                # display_thumbnails skip-identical guard).
+                self.right_panel_widget.display_thumbnails(thumbnails, progressive=False)
                 print(f"[OK] Displayed {len(thumbnails)} cached thumbnails for study {study_uid}")
                 print(f"[PROFILE] thumbnails cache display: {study_uid} in {(time.perf_counter() - _t0)*1000:.1f}ms")
                 return True

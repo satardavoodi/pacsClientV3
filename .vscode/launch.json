@@ -2,6 +2,38 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "Python: Debug Current File (.venv)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "name": "Python: Debug Tests (pytest)",
+            "type": "debugpy",
+            "request": "launch",
+            "purpose": ["debug-test"],
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "justMyCode": false
+        },
+        {
+            "name": "Run AIPacs (legacy V1 UI)",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/main.py",
+            "cwd": "${workspaceFolder}",
+            "python": "${workspaceFolder}/.venv/Scripts/python.exe",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "preLaunchTask": "Setup Python Environment",
+            "env": { "AIPACS_UI_VARIANT": "v1" }
+        },
+        {
             "name": "Run AIPacs (main.py, .venv)",
             "type": "debugpy",
             "request": "launch",

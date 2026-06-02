@@ -156,6 +156,50 @@ def _nt_resume_download_subprocesses() -> None:
         except Exception:
             pass
 
+
+def terminate_all_download_subprocesses() -> None:
+    """Force-terminate every registered download subprocess.
+
+    Called on app shutdown (and via ``atexit`` below) so a download still in flight
+    when the user closes the app cannot leave an orphaned ``python.exe`` lingering in
+    Task Manager. Idempotent + best-effort; never raises. DICOM/thumbnail writes are
+    atomic (``*.part`` → ``os.replace``), so terminating a writer mid-flight can only
+    leave a re-fetchable ``*.part``, never a corrupt slice.
+    """
+    pids = list(_active_download_pids)
+    for pid in pids:
+        try:
+            try:
+                import psutil
+                proc = psutil.Process(pid)
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except Exception:
+                    proc.kill()
+            except Exception:
+                if sys.platform == 'win32':
+                    handle = ctypes.windll.kernel32.OpenProcess(0x0001, False, pid)  # PROCESS_TERMINATE
+                    if handle:
+                        ctypes.windll.kernel32.TerminateProcess(handle, 0)
+                        ctypes.windll.kernel32.CloseHandle(handle)
+                else:
+                    import signal as _sig
+                    os.kill(pid, _sig.SIGTERM)
+        except Exception:
+            pass
+        finally:
+            _active_download_pids.discard(pid)
+
+
+# Belt-and-suspenders: also run on normal interpreter exit (covers shutdown paths
+# that bypass the explicit call in main.py's shutdown handler).
+try:
+    import atexit as _atexit
+    _atexit.register(terminate_all_download_subprocesses)
+except Exception:
+    pass
+
 _RENDER_THROTTLE_MS = 16  # ~60fps max render rate
 _SPINNER_HIDE_DELAY_MS = 180  # Delay before hiding spinner to allow the loading GIF to be perceived
 _SYNC_MOVE_THROTTLE_MS = 16  # min interval between sync mouse move processing (~60fps)

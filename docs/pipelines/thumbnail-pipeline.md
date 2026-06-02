@@ -147,3 +147,147 @@ disk read — never to a blank thumbnail.
   carries risk); do not wire new code to it.
 * The print module's Tier-2 DICOM-decode fallback still runs on the UI thread.
   It is now rarely reached; moving it to a worker is optional polish.
+
+---
+
+## 8. Right-panel refresh / server-grew gate (2026-06-01 → 2026-06-02)
+
+The main-page right-panel thumbnails for a clicked patient are rendered by
+**`show_patient_studies` in `_hp_search.py`** (~:1230). It is a *fast-cache-first*
+path: it builds a payload from the local disk cache
+(`_build_cached_thumbnail_payload` → canonical PNGs) and displays it **without a
+server call** whenever possible. A server thumbnail fetch
+(`get_study_thumbnails(include_base64=True)`, which pulls every series and warms the
+disk cache) only runs when the cache is judged stale/incomplete.
+
+The staleness decision is the **server-grew gate** (~:1240–1266). Because the local
+completeness checks are all local-only (`check_study_complete` makes no server call),
+a study that gained series on the server would otherwise pin its stale partial cache
+forever. The gate compares a **server series count** against the **local thumbnail
+count** and, when the server has more, skips the cache once and falls through to the
+server fetch.
+
+Inputs to the gate:
+
+* **`self._server_series_count_by_study[study_uid] = count_of_series`** — the server's
+  series count, stashed as the patient list loads (`_add_socket_patient_to_table`,
+  `_hp_search.py`) and on single-click reconcile (`_reconcile_patient_studies_on_click`,
+  `_hp_series.py`), so it is ready before the gate runs.
+* **`_local_thumbs`** — `len(_build_cached_thumbnail_payload(...).thumbnails)`.
+* **`self._thumbs_server_refreshed_uids`** — a per-session set that records studies
+  already refreshed, so the gate refreshes **once** rather than looping on a benign
+  `count_of_series`-vs-fetchable-thumbnails off-by-one.
+
+Diagnostic traces (in `download_diagnostics.log`): `right_panel_cache_gate`
+(`local_thumbs` / `server_series` / `grew`), `right_panel_cache_hit`
+(`thumbnail_count`), `right_panel_socket_start` / `right_panel_socket_done`.
+
+### History — read before changing the gate
+1. **44113 (2026-06-01):** introduced the stash + gate so a study that grew on the
+   server (1→9 series) re-fetches on single-click. See
+   `ROOTCAUSE_44113_SINGLE_CLICK_PIPELINE_2026-06-01.md`.
+2. **44323 / 44534 (2026-06-02):** two gate defects found via live DB/disk/log ground
+   truth (44323 MRI 20 series/20 PNGs = complete; 44534 DX 3/3 = complete):
+   - **B1 — patient-aggregate count mis-attributed to one study.** `count_of_series`
+     is the *patient* series total. The stash fired on `len(study_uids)==1`, but a
+     **multi-study** patient still returns only the latest UID (so that is true), and
+     then `count_of_series` aggregates all the patient's studies (44534 DX got
+     `server_series=10` = DX 3 + MRI 7; DX really has 3) → a false "grew". **Fixed:**
+     stash only when `total_studies <= 1`.
+   - **B2 — "refresh once" never recovered on a later server growth.**
+     `_thumbs_server_refreshed_uids` was keyed by **UID only**, so after the first
+     refresh a genuine later growth was never re-fetched on re-click — the stale
+     partial cache was pinned. **Fixed:** key the marker by the server series **count**
+     (`f"{uid}@{server_series}"`). An unchanged count still hits the fast cache (same
+     key → skip, so the benign off-by-one does not loop); a changed count gets a fresh
+     key → exactly one re-fetch. See `MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`.
+
+Note the *missing MRI study* on 44534 is **not** a thumbnail bug — it is study
+discovery: the server's `GetPatientList` returns only the latest study UID per patient,
+so the MRI study is enumerated per-modality elsewhere (see the multi-study completeness
+guard in `CLAUDE.md` and `MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`). The gate only
+governs thumbnails *within* a study that is already known.
+
+### Refresh-gate guardrails (read before touching the gate)
+1. **`count_of_series` is patient-level, not study-level.** Only attribute it to a
+   single study when `total_studies <= 1`. For multi-study patients use the per-study
+   series count, never the patient aggregate.
+2. **Keep the refresh marker keyed by the server count** (`uid@count`), not the bare
+   UID — that is what lets a genuine server growth re-fetch while an unchanged study
+   stays on the fast cache and a benign count/thumbnail off-by-one does not loop.
+3. **The fast cache must stay the default.** Only fall through to the server fetch when
+   the gate says the study grew; do not make every click hit the network (that is the
+   responsiveness regression 44113's design avoided).
+4. **Disk remains the authority** (§6). The gate decides *whether to fetch*; it never
+   changes where thumbnails are read from.
+5. **Re-validate with the traces.** A correct gate logs `grew=1` exactly once per
+   server-count value, then `grew=0` + `right_panel_cache_hit` on subsequent clicks.
+   Persistent `grew=0` while `server_series > local_thumbs` across *different* counts
+   is the bug class B1/B2 fixed.
+
+## 9. Right-panel render smoothness (2026-06-02)
+
+Two render-layer fixes make the main-page right panel load calmly and consistently.
+
+**(a) Skip-identical coalescing (anti-flicker).** A single click triggers the right
+panel twice (fast open path ~450 ms + post series-info ~1.2 s). `display_thumbnails`
+(`right_panel_widget.py`) always `clear_content()`s then rebuilds, so two identical calls
+clear+rebuilt the same set ~0.8 s apart = a flicker/reload. Fix: `display_thumbnails`
+computes a visual signature (`_thumbnail_render_signature` = ordered
+`(study_uid, series_number, file_path)` per thumb) and returns early when it equals
+`self._last_render_signature` (already shown/rendering). Reset in `clear_content()`;
+`None` at init. A genuine change (grown study, different patient, multi-study regroup)
+yields a different signature and still renders.
+
+**(b) `progressive=False` on every main-page path (calm, not jumpy).**
+`progressive=True` → `display_thumbnails_progressively` pops series in one-by-one on a
+120 ms timer (jumpy/rushed). `progressive=False` → `display_thumbnails_immediately`
+builds all widgets in one pass under `content_widget.setUpdatesEnabled(False)`→`(True)`,
+so the set paints **once, together** (no per-widget flicker). Because the skip-identical
+guard lets whichever path renders **first** win, a single mixed `progressive=True` path
+made single-click thumbnails feel smooth sometimes and jumpy other times (timing race).
+All main-page callers are now `progressive=False`: `_hp_search.py` cache/socket/offline
+(already), `_hp_modules._show_grouped_patient_studies` (had regressed to default `True`;
+restored), `_hp_series.py` series-info cached display (was `True`; changed).
+
+Guardrails:
+- Keep `display_thumbnails` **idempotent for identical content** (don't remove the
+  signature short-circuit; don't make it unconditionally clear+rebuild every call); don't
+  add volatile fields (timestamps/counters) to the signature.
+- **Never** pass `progressive=True` — or omit the arg (defaults to `True`) — for a
+  main-page right-panel render. Progressive mode is only for very large viewer-tab
+  sidebars, not the home page.
+- No extra render delay is needed: the repaint-suppressed immediate path already yields a
+  clean "appear together" final state.
+
+### Render coalescing — anti-flicker (2026-06-02)
+
+A single patient click legitimately triggers the right panel **twice**: once on the
+fast open path (`plus_entry → right_panel_begin`, ~450 ms) and again after series-info
+loads (`series_info_entry → right_panel_begin`, ~1.2 s). Each call to
+`RightPanelWidget.display_thumbnails` does `clear_content()` then rebuilds, so two
+identical calls cleared and re-rendered the same set ~0.8 s apart — a visible
+**flicker / jumpy reload**.
+
+**Fix:** `display_thumbnails` now computes a **visual signature** of the requested set
+(`_thumbnail_render_signature` = ordered `(study_uid, series_number, file_path)` per
+thumbnail) and **returns early — no clear, no rebuild — when it equals the set already
+shown/rendering** (`self._last_render_signature`). The signature is reset in
+`clear_content()` (and `None` at init), so an explicit clear always allows the next
+render. This is the single choke point for *all* render paths — single-study, the
+socket-fetch render, the cache render, and the multi-study grouped main-page render
+(`_hp_modules._show_grouped_patient_studies → display_thumbnails(combined_thumbnails)`)
+all pass through it.
+
+Guardrails:
+- **Keep `display_thumbnails` idempotent for identical content.** Don't remove the
+  signature short-circuit; don't make the panel unconditionally `clear_content()` +
+  rebuild on every call.
+- **The signature is the visual identity** (`study_uid` + `series_number` + thumbnail
+  path). It must change whenever the drawn set changes — a grown study (new series), a
+  different patient, or multi-study regrouping all change it and still render. Do not
+  add volatile fields (timestamps, counters) that would make every call mismatch and
+  re-introduce the flicker.
+- **The two triggers are intentionally left in place** (each covers a different
+  open-completion path); the coalescing is at the render layer, so neither correctness
+  path is removed. Reducing to one trigger is a deeper change and not required.

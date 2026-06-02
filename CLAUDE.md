@@ -126,6 +126,59 @@ Key invariants that must not be broken:
   `series.thumbnail_path` column is a hint only — never the sole source.
 - `make_pixmap_from_bytes` is Qt-main-thread only.
 
+### Right-panel refresh / server-grew gate (44113 → 44323/44534, 2026-06-01→02)
+The main-page right-panel thumbnails render via the **fast-cache-first gate in
+`show_patient_studies` (`_hp_search.py` ~:1230)** — it shows the local PNG cache without
+a server call unless the study is judged stale. Before editing that gate, the
+`_server_series_count_by_study` stash (`_hp_search.py::_add_socket_patient_to_table`,
+`_hp_series.py::_reconcile_patient_studies_on_click`), or the series-list gate in
+`_load_and_display_series_info`, **read `docs/pipelines/thumbnail-pipeline.md` §8** and
+the [[stale-series-44113-fix]] history.
+- **`count_of_series` is the PATIENT series total, not a study's.** Only stash it
+  against a study when `total_studies <= 1`. A multi-study patient still returns one
+  (latest) UID, so `len(study_uids)==1` is NOT sufficient — without the `total_studies`
+  guard the aggregate (44534: DX 3 + MRI 7 = 10) mis-attributes to one study and feeds a
+  false "grew" signal (B1).
+- **Keep the refresh marker keyed by the server count** — `_thumbs_server_refreshed_uids`
+  holds `f"{uid}@{server_series}"`, not the bare UID. Same key (unchanged count) → fast
+  cache + no loop on a benign count/thumbnail off-by-one; new count (genuine server
+  growth) → exactly one re-fetch. Reverting to a UID-only marker pins stale thumbnails
+  forever after the first refresh (B2).
+- **Fast cache stays the default.** Fall through to `get_study_thumbnails(...)` only when
+  the gate says the study grew; never make every click hit the network (the 44113
+  responsiveness contract). Disk stays the read authority — the gate decides *whether to
+  fetch*, not *where to read*.
+- The *missing MRI study* on a multi-modality patient is study **discovery**, not this
+  gate — see the multi-study completeness guard above ([[multistudy-multimodality-enumeration]]).
+- Verify via `download_diagnostics.log`: `right_panel_cache_gate` should log `grew=1`
+  once per server-count value, then `grew=0` + `right_panel_cache_hit`.
+- **Render coalescing (anti-flicker, 2026-06-02):** a click triggers the right panel
+  twice (fast open path + post series-info). `RightPanelWidget.display_thumbnails` now
+  short-circuits when the requested set's visual signature (`_thumbnail_render_signature`
+  = `(study_uid, series_number, file_path)` per thumb) equals what's already shown, so it
+  does NOT `clear_content()`+rebuild the identical set (that was the flicker). Reset in
+  `clear_content()`. Keep it idempotent; don't add volatile fields to the signature. See
+  `docs/pipelines/thumbnail-pipeline.md` §8 "Render coalescing".
+
+### Main-page patient click handling — single vs double (2026-06-02)
+Before editing `patient_table_widget.py` click handlers (`_on_patient_clicked`,
+`_on_patient_double_clicked`, `_emit_patient_selection*`, `_on_single_click_timeout`,
+`_on_current_row_changed`) read the [[single-double-click-disambiguation]] memory.
+- Single-click = load thumbnails; double-click = open the patient. The single-click
+  selection emit (`patientClicked` + `thumbnailRequested`) is **debounced behind
+  `QApplication.doubleClickInterval()`** via `click_timer` — it must NOT fire
+  immediately. Qt delivers the first click of a double-click as a normal click, so an
+  immediate emit starts thumbnail loading on every double-click and races/blocks the
+  open (and can push the 2nd press past the interval → Qt sees two singles → "double-
+  click won't open / must single-click first"). Do not restore an immediate emit.
+- A double-click MUST cancel the pending single-click (`click_timer.stop()` +
+  `_pending_selection_row=-1`) and open independently — the open resolves study UIDs from
+  the table row, never from the single-click reconcile, so it must not depend on the
+  single-click having run.
+- The debounce interval must be **≥ `doubleClickInterval`** (floor 250 ms); a smaller
+  value re-breaks slow double-clicks. Row highlight is Qt-native on press (stays instant);
+  only the thumbnail load waits the window.
+
 ### Database test isolation (tests must never write to the live `dicom.db`)
 Before editing `tests/database/test_database.py`, any other DB-touching test, or
 the connection layer (`database/_pool.py`, `database/core.py`), know that the live
@@ -226,3 +279,117 @@ Before editing the FAST stack-drag path in `modules/viewer/fast/qt_viewer_bridge
   synchronously on the main thread in the stack-drag or wheel-scroll hot path.
 - The sampler's `phase` is telemetry-only — it must never drive rendering, reference lines,
   geometry overlays, or WL/filters.
+
+### Cross-patient study isolation (persist-layer guards — 2026-06-02)
+Clinical data isolation is the **highest-severity** invariant: a patient must only ever
+show / download studies that belong to that exact `patient_id`. Before editing
+`_hp_patient_open.py` (`_resolve_patient_study_uids`, open STEP 3.5), `_hp_series.py`
+(`_reconcile_patient_studies_on_click`), or `_hp_modules.py`
+(`_show_grouped_patient_studies`), **read `CROSS_PATIENT_STUDY_MIXING_44504_2026-06-02.md`**
+and the [[cross-patient-study-mixing]] history.
+- The 2026-05-31 `_resolve_patient_study_uids` pid-scope guard is a SAFETY NET only and has
+  a hole: it KEEPS studies whose owner is unknown in the local DB, so a *fresh* leaked study
+  (another patient's, not yet downloaded) could be persisted under the wrong patient (e.g.
+  44533's shoulder study `…152` under 44504, self-confirming once downloaded).
+- **The authority for study ownership is the SERVER's study-info `patient_id`** (from
+  `_get_or_fetch_series_info` / `GetStudyThumbnails`). The persist/display guards now skip a
+  non-clicked study whose server `patient_id` ≠ the target patient: STEP 3.5 (download queue +
+  viewer series map), the single-click reconcile (before `save_complete_study_info` +
+  `add_downloads`), and the grouped thumbnails (DB-owner check). **Keep all three** — they log
+  `*_cross_patient_skip`. Never attribute a study to a patient from the *caller/current*
+  context; always verify against the study's own server/DICOM `patient_id`.
+- Disk/thumbnail folders are keyed by `study_uid` (patient-blind), so a leaked UID can surface
+  another patient's images — the guards, not the folder layout, enforce isolation.
+
+### Multi-study completeness across modalities (per-modality enumeration — 2026-06-02)
+The *complement* of the isolation guard above: a patient with several studies of their **own**
+must show ALL of them. Before editing `_hp_patient_open.py`
+(`_resolve_patient_study_uids_async`, `_enumerate_studies_for_row`, `_row_modalities`,
+`_row_total_studies`, the double-click open), `_hp_series.py`
+(`_reconcile_patient_studies_on_click` server-side enumeration), or
+`_hp_search.py::_add_socket_patient_to_table` (the `_server_patient_meta_by_pid` stash),
+**read `MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`** and the
+[[multistudy-multimodality-enumeration]] memory.
+- **Server limitation:** `GetPatientList` returns only ONE study UID per patient (the latest)
+  even when it reports `total_studies>1` + multiple `modalities`. It splits a patient's studies
+  **by modality**, so a same-patient study of a non-latest modality (44534's MRI behind its
+  latest DX) is otherwise invisible. The fix queries the patient list **once per modality** and
+  unions the UIDs (`study_enumerated_by_modality` trace).
+- **Keep it zero-cost for the common case.** Single-modality / single-study patients must do
+  **zero** extra server queries and add **no** open latency — the decision reads the modality
+  set from the list row / the `_server_patient_meta_by_pid` stash, NOT a fresh query. Don't
+  reintroduce an unconditional per-open patient-list query.
+- **Isolation is preserved, not weakened.** Every enumerated UID is fetched with the server's
+  `patient_id` filter AND re-checked locally (`_row_for` matches `patient_id`); the cross-patient
+  persist/display guards still run on top. Enumeration ADDS the patient's own studies; the guards
+  REMOVE any foreign one. Never union a UID without confirming it is this `patient_id`'s.
+- Same-modality multiple studies are NOT discoverable this way (the server returns only the
+  latest even under a modality filter) — a separate, rarer server limitation; do not assume the
+  enumeration closes it.
+
+### Single-instance application guard + clean termination (2026-06-02)
+Before editing `PacsClient/utils/single_instance_lock.py`, the lock acquire/release in
+`main.py`, or the shutdown `finally`, **read `SINGLE_INSTANCE_GUARD_2026-06-02.md`** and the
+[[single-instance-guard]] memory.
+- Primary mechanism is a Qt **`QLocalServer`/`QLocalSocket`** (atomic, OS-released on crash,
+  cross-process ACTIVATE→raise-window IPC); the PID lock file is a diagnostic/fallback layer.
+  Per-user, build-independent server name. Keep `try_acquire(show_dialog)` / `release()` /
+  `set_activate_callback(cb)`.
+- In the ping path use a **graceful** `disconnectFromServer()` + `waitForDisconnected()` —
+  **never `abort()`** (it discards the in-flight ACTIVATE so the existing window never raises).
+- Shutdown guarantees no lingering process: the run-loop `finally` calls
+  `terminate_all_download_subprocesses()` (`_vw_globals.py`, also `atexit`) then a guarded
+  `os._exit(0)` (escape hatch `AIPACS_NO_HARD_EXIT=1`). Keep cleanup (lock release, DB WAL
+  checkpoint, log flush, subprocess kill) BEFORE the `os._exit`.
+
+### Download-manager reliability + smoothness (2026-06-02)
+See `AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical image integrity verified sound
+(atomic `.part`→`os.replace`, resume rejects partials, DB-lock retry). Applied + test-verified:
+- **DM-H4** `DownloadProcessWorker.ensure_subprocess_dead()` called from
+  `WorkerPool._remove_worker` — `QThread.terminate()` bypasses `run()`'s `finally:_cleanup()`,
+  which would orphan the child (sockets + `dicom.db` writes). Keep it.
+- **DM-L7** `_DMWorkersMixin._bound_tasks()` caps `_tasks` (FIFO 400, never evicts the active
+  study). **DM-H3** viewer-drag preempts a *different* study holding the single slot.
+- **P2.3 drag/visibility-deferral** in `_dm_details.py` (`_refresh_table_order` gates
+  `is_protected_drag_active()` / `not isVisible()` before `_try_inplace_table_update`; deferred
+  callbacks re-arm at a 1500 ms backoff). Mirror any change to the plugin-package copy.
+- KNOWN pre-existing latent circular import: `modules.download_manager.__init__` (coordinator /
+  executor) reaches `home_panel.widget → zeta_adapter` mid-init, so some test files fail to
+  *collect* when a home-panel suite is collected before `download_manager`. Order-only, **no
+  production impact**; to verify home-panel changes, collect `tests/code/download_manager` first.
+
+
+## VS Code Agent Mode environment (configured 2026-06-02)
+
+The VS Code workspace is tuned so both **Copilot Agent Mode** (in VS Code) and
+**Claude Desktop** work from the same project knowledge. `CLAUDE.md` (this file) is the
+shared brief; `.github/copilot-instructions.md` is the in-editor instruction file Copilot
+auto-loads (`github.copilot.chat.codeGeneration.useInstructionFiles` is on).
+
+**Reusable agent prompts** (`.github/prompts/`, invoke with `/<name>` in Copilot Chat):
+- `/root-cause-fix` — the understand → inspect logs → root cause → minimal fix → retest loop.
+- `/debug-thumbnails` — patient/thumbnail sidebar socket-download debugging.
+- `/inspect-logs` — where the `user_data/logs/` files are and what to scan for.
+- `/run-tests` — the blessed `run_test.ps1` path + direct pytest, and the `-p no:debugging` rule.
+- `/regression-guard` — pre-edit invariant check for the guarded subsystems above.
+
+**VS Code tasks** (Terminal → Run Task): `AIPacs: Run App (logged)`, `AIPacs: Run Tests
+(run_test.ps1)`, `Pytest: Collect only`, `Pytest: Run tests/code`, `Lint: Ruff check`,
+`Logs: Tail download_diagnostics.log`, `Logs: Tail app.log`.
+
+**Debug configs** (`launch.json`): Run AIPacs (.venv / no-terminal / legacy V1 UI),
+Debug Current File, Debug Tests (pytest).
+
+**Performance:** `settings.json` excludes the heavy trees (`user_data`, `backups`, `.venv*`,
+`.claude/worktrees`, `generated-files`, `builder*`) from search, file-watcher, and Pylance
+indexing — so logs/clinical data are reached by opening files or the `Logs:` tasks, not by
+workspace search.
+
+**MCP servers** (`.vscode/mcp.json`, Copilot Agent Mode): `filesystem` and
+`sequential-thinking` (npx — one-time online warm-up). An optional read-only SQLite server
+over a **copy** of `dicom.db` is documented but disabled (never point MCP at the live DB).
+
+**Recommended extension to add:** `charliermarsh.ruff` (ruff is configured in
+`pyproject.toml` but the extension isn't installed yet).
+
+Original `.vscode/*.json` files are backed up at `.vscode/_backup_2026-06-02/`.

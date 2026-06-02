@@ -2233,8 +2233,24 @@ class _VCProgressiveMixin:
         # best-effort count, stop safety-net loop, exit progressive mode.
         # The done-guard completion one-shot will recover when DM sends the
         # final signal (after the OS has certainly flushed).
+        # MAX counts CONSECUTIVE NO-PROGRESS ticks, not total ticks. The counter is
+        # reset below whenever a tick advances the slice count, so a large series that
+        # is still steadily flushing in from disk keeps climbing all the way to the
+        # full count instead of being abandoned after a fixed number of ticks. Without
+        # this, the per-tick grow (bounded by the ≤16-header background scan, ~6/tick
+        # live) hits the cap long before a big series finishes — the observed
+        # "STALE-EXHAUSTED stuck at 68/241" after download already completed, which the
+        # done-guard one-shot could not recover (it re-entered this same capped loop).
+        # Only a genuinely stuck series — no new slices for MAX consecutive ticks —
+        # exhausts. Each tick is bounded/non-freezing and the loop self-terminates once
+        # new_count >= target_visible_count.
         _STALE_RETRY_MAX = 5
         if new_count < target_visible_count:
+            _prev_stale_count = int(info.get("_stale_last_count", -1))
+            info["_stale_last_count"] = int(new_count)
+            if int(new_count) > _prev_stale_count:
+                # Progress this tick — series is still arriving, so keep going.
+                info["_stale_retry_count"] = 0
             _stale_retry = info.get("_stale_retry_count", 0)
             if _stale_retry < _STALE_RETRY_MAX:
                 info["_stale_retry_count"] = _stale_retry + 1

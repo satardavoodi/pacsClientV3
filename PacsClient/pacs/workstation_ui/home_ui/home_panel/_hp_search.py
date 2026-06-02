@@ -599,12 +599,44 @@ class _HPSearchMixin:
             # maps to that one study; multi-study patients render via the grouped path.
             try:
                 _srv_cnt = int(patient.get('count_of_series') or 0)
-                if _srv_cnt > 0 and len(study_uids) == 1:
+                # `count_of_series` is the PATIENT-level series total. It equals the
+                # single study's series count ONLY when the patient truly has one
+                # study. For a multi-study patient the server still returns just the
+                # latest study UID (so len(study_uids)==1), but count_of_series then
+                # aggregates ALL the patient's studies (e.g. 44534: DX 3 + MRI 7 = 10)
+                # and must NOT be stashed against the one returned study — that feeds a
+                # false "grew" signal into the right-panel cache gate. Require the
+                # patient to be genuinely single-study.
+                _total_studies = int(patient.get('total_studies') or 0)
+                if _srv_cnt > 0 and len(study_uids) == 1 and _total_studies <= 1:
                     if not hasattr(self, '_server_series_count_by_study'):
                         self._server_series_count_by_study = {}
                     _k = str(study_uids[0] or '').strip()
                     if _k:
                         self._server_series_count_by_study[_k] = _srv_cnt
+            except Exception:
+                pass
+
+            # 44534 multi-modality completeness: stash a compact per-patient meta
+            # (modality set + study count + known UIDs) as the list loads, so the
+            # OPEN path can decide — with NO extra server query — whether to enumerate
+            # the per-modality study UIDs the patient-list hid. GetPatientList returns
+            # only the latest study UID per patient, so a same-patient study of a
+            # different modality (e.g. an MRI when the latest is an X-ray) is otherwise
+            # invisible. Zero cost: the data is already in this row. Read back in
+            # _resolve_patient_study_uids_async via _server_patient_meta_by_pid.
+            try:
+                if not hasattr(self, '_server_patient_meta_by_pid'):
+                    self._server_patient_meta_by_pid = {}
+                _pid_meta_key = str(patient_id or '').strip()
+                if _pid_meta_key:
+                    self._server_patient_meta_by_pid[_pid_meta_key] = {
+                        'total_studies': patient.get('total_studies', patient.get('study_count')),
+                        'modalities': patient.get('modalities'),
+                        'modality': patient.get('modality'),
+                        'study_uids': list(study_uids),
+                        'latest_study_uid': str(study_uid or '').strip(),
+                    }
             except Exception:
                 pass
 
@@ -1220,10 +1252,18 @@ class _HPSearchMixin:
                 _server_series = int(getattr(self, '_server_series_count_by_study', {}).get(study_uid_str, 0) or 0)
                 if not hasattr(self, '_thumbs_server_refreshed_uids'):
                     self._thumbs_server_refreshed_uids = set()
-                if study_uid_str and study_uid_str not in self._thumbs_server_refreshed_uids:
+                # Key the "already refreshed once" marker by the server's series COUNT,
+                # not just the study UID. Otherwise the first refresh pins the study
+                # forever and a later server-side growth (more series added) is never
+                # picked up on re-click — the stale partial cache is served indefinitely
+                # (the exact "thumbnails don't refresh when the server changed" symptom).
+                # With the count in the key, an unchanged study still hits the fast cache
+                # (same key → skip), but a grown study gets a fresh key → one refetch.
+                _refresh_key = f"{study_uid_str}@{_server_series}"
+                if study_uid_str and _refresh_key not in self._thumbs_server_refreshed_uids:
                     if _server_series > 0 and _server_series > _local_thumbs:
                         _thumbs_grew = True
-                        self._thumbs_server_refreshed_uids.add(study_uid_str)
+                        self._thumbs_server_refreshed_uids.add(_refresh_key)
             except Exception:
                 _thumbs_grew = False
             if hasattr(self, '_log_open_trace'):
