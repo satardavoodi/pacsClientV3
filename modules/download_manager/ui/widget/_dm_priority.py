@@ -401,8 +401,31 @@ class _DMPriorityMixin:
 
         This is the preferred public API for FAST/ADV viewer interactions.
         It atomically applies CRITICAL intent and starts series retry.
+
+        Preempt-on-drag (DM-H3): with MAX_CONCURRENT_STUDIES=1, if a *different*
+        study currently holds the single download slot, gracefully preempt it
+        (auto-pause-for-resume) so the dragged series' study can take the slot and
+        load now — otherwise the CRITICAL series just waits out the priority-handoff
+        retry chain behind the slot-holder. Do NOT preempt when this study is
+        already the active worker or the slot is idle (avoid needless churn).
         """
         try:
+            try:
+                active_workers = list(self.worker_pool.get_all_workers() or [])
+            except Exception:
+                active_workers = []
+            other_holds_slot = any(
+                str((w[0] if isinstance(w, (list, tuple)) else w) or '').strip()
+                not in ('', str(study_uid or '').strip())
+                for w in active_workers
+            )
+            if other_holds_slot:
+                logger.info(
+                    "🚀 [VIEWED-SERIES] A different study holds the download slot — "
+                    "preempting so dragged series of %s can load", str(study_uid)[:40]
+                )
+                self._pause_all_active_downloads()
+
             self.intent_coordinator.request_critical_series(study_uid, str(series_number))
             self._on_series_retry(study_uid, series_number, series_uid)
         except Exception as e:

@@ -369,6 +369,48 @@ class DownloadProcessWorker(QThread):
         )
         return cfg
 
+    def ensure_subprocess_dead(self) -> None:
+        """DM-H4: guarantee the child download process is terminated.
+
+        ``run()``'s ``finally: self._cleanup()`` tears the child down on a normal
+        or cancelled exit, but ``WorkerPool._remove_worker`` may call
+        ``QThread.terminate()`` when the bridge does not stop in time — and that
+        bypasses the ``finally`` block, orphaning the child (it keeps holding
+        sockets and writing into ``dicom.db`` after the UI considers the download
+        gone, and never frees the pool slot). The pool calls this AFTER terminate()
+        so the child cannot be orphaned. Idempotent + best-effort; safe to call
+        from the pool thread.
+        """
+        proc = getattr(self, "_process", None)
+        pid = getattr(proc, "pid", None) if proc is not None else None
+        try:
+            if proc is not None and proc.is_alive():
+                try:
+                    self._cancel_event.set()
+                except Exception:
+                    pass
+                logger.warning(
+                    "[ProcessWorker] DM-H4 force-terminating orphaned subprocess pid=%s",
+                    pid,
+                )
+                proc.terminate()
+                proc.join(timeout=2.0)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1.0)
+        except Exception as exc:
+            logger.warning(
+                "[ProcessWorker] DM-H4 ensure_subprocess_dead warning: %s", exc
+            )
+        if pid is not None:
+            try:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import (
+                    unregister_download_subprocess,
+                )
+                unregister_download_subprocess(pid)
+            except Exception:
+                pass
+
     def _cleanup(self) -> None:
         """Terminate the download subprocess and close the IPC queue."""
         pid = getattr(self._process, "pid", None)

@@ -158,7 +158,21 @@ class WorkerPool:
                             logger.error(f"❌ Force termination failed: {e}")
                     else:
                         logger.debug(f"✅ Worker {worker_id[:8]}... stopped gracefully")
-            
+
+                # DM-H4: guarantee the child download subprocess is gone before we
+                # drop the worker reference. QThread.terminate() above bypasses
+                # run()'s finally:_cleanup() (the child-teardown), which would
+                # orphan the subprocess — it keeps holding sockets and writing into
+                # dicom.db after the UI considers the download gone, and the pool
+                # slot is never truly freed. Idempotent + guarded (the in-process
+                # DownloadWorker has no subprocess and does not expose this).
+                try:
+                    _ensure_dead = getattr(worker, 'ensure_subprocess_dead', None)
+                    if callable(_ensure_dead):
+                        _ensure_dead()
+                except Exception as _e_dmh4:
+                    logger.error(f"❌ DM-H4 subprocess ensure-dead failed: {_e_dmh4}")
+
             except Exception as e:
                 logger.error(f"❌ Error during worker cleanup: {e}")
             

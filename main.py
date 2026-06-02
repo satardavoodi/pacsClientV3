@@ -69,6 +69,19 @@ try:
 except Exception:
     pass
 
+# --- COM-fault tracer (env-gated, READ-ONLY) --------------------------------
+# Pin the 0x8001010d (RPC_E_WRONGTHREAD) first-chance fault: set AIPACS_COM_TRACE=1
+# to log every Python COM call's thread / apartment / stack to
+# user_data/logs/com_trace.log. No-op (zero behaviour change) unless the env var
+# is set; fully guarded so it can never affect startup.
+try:
+    import os as _os_comtrace
+    if _os_comtrace.getenv("AIPACS_COM_TRACE", "").strip() in ("1", "true", "True", "yes", "on"):
+        from tools.diagnostics.com_fault_tracer import install as _install_com_trace
+        _install_com_trace()
+except Exception:
+    pass
+
 
 # --- Stale temp-file sweep (additive, best-effort) --------------------------
 # The FAST lazy-volume backend writes aipacs_lazy_*.bin mmap temp files and only
@@ -1274,7 +1287,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.1.6")
+    app.setApplicationVersion("3.1.7")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

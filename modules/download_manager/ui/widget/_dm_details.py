@@ -412,7 +412,18 @@ class _DMDetailsMixin:
 
         # Update series breakdown
         if task:
-            self._update_series_breakdown_from_task(task, state)
+            # Fix B (P2.3): skip the heavy series-breakdown widget recreation during
+            # a protected drag. _update_series_breakdown_from_task tears down and
+            # rebuilds QFrame/QLayout/QProgressBar + 2 QLabels per series (each with
+            # setStyleSheet) on every full rebuild (~100 ms timer), which stalls drag
+            # event processing. The breakdown re-renders on the next non-drag refresh.
+            try:
+                from modules.viewer.fast.ui_throttle import is_protected_drag_active as _is_drag_breakdown
+                _skip_breakdown = bool(_is_drag_breakdown())
+            except Exception:
+                _skip_breakdown = False
+            if not _skip_breakdown:
+                self._update_series_breakdown_from_task(task, state)
 
         # Sync button states with current download status
         self._update_button_states(state)
@@ -855,6 +866,38 @@ class _DMDetailsMixin:
         self._last_inplace_update_reason = "inplace_success"
         return True
 
+    def _fire_deferred_rebuild_after_drag(self):
+        """P2.3 — deferred DM-table rebuild scheduled while a protected drag was
+        active. Re-check the drag state FIRST: if the drag is still active, re-arm
+        at the 1500 ms keepalive interval WITHOUT clearing ``_rebuild_defer_pending``
+        (so concurrent callers can't stack more timers — this is what prevents the
+        observed 4 Hz self-perpetuating rebuild storm during a long drag). Only once
+        the drag has ended do we clear the flag and run the real refresh.
+        """
+        try:
+            from modules.viewer.fast.ui_throttle import is_protected_drag_active
+            _still_dragging = bool(is_protected_drag_active())
+        except Exception:
+            _still_dragging = False
+        if _still_dragging:
+            QTimer.singleShot(1500, self._fire_deferred_rebuild_after_drag)
+            return
+        self._rebuild_defer_pending = False
+        self._refresh_table_order()
+
+    def _fire_deferred_rebuild_after_hidden(self):
+        """P2.3 — deferred DM-table rebuild scheduled while the tab was hidden.
+        Re-check visibility FIRST: while still hidden, re-arm at the 1500 ms backoff
+        WITHOUT clearing ``_rebuild_hidden_pending``. Only once the tab is visible do
+        we clear the flag and run the real refresh (no point rebuilding a hidden
+        table).
+        """
+        if not self.isVisible():
+            QTimer.singleShot(1500, self._fire_deferred_rebuild_after_hidden)
+            return
+        self._rebuild_hidden_pending = False
+        self._refresh_table_order()
+
     def _refresh_table_order(self):
         """Refresh table with priority grouping - shows all 4 priority groups.
 
@@ -886,6 +929,30 @@ class _DMDetailsMixin:
                 )
             except Exception:
                 pass
+            return
+
+        # ── P2.3: drag / hidden gating BEFORE any in-place widget work ───────
+        # _try_inplace_table_update (below) does per-row cellWidget()/setValue()
+        # Qt calls. During a protected viewer drag those compete with drag-event
+        # processing (the observed ~320-570 ms event_p95 stalls); while the tab is
+        # hidden they are pure wasted control-plane cost. In both cases skip the
+        # refresh now and schedule ONE deferred rebuild that re-checks the
+        # condition. This runs BEFORE _refresh_table_order_in_progress is set, so
+        # the early return needs no flag teardown.
+        try:
+            from modules.viewer.fast.ui_throttle import is_protected_drag_active
+            _drag_active = bool(is_protected_drag_active())
+        except Exception:
+            _drag_active = False
+        if _drag_active:
+            if not getattr(self, "_rebuild_defer_pending", False):
+                self._rebuild_defer_pending = True
+                QTimer.singleShot(250, self._fire_deferred_rebuild_after_drag)
+            return
+        if not self.isVisible():
+            if not getattr(self, "_rebuild_hidden_pending", False):
+                self._rebuild_hidden_pending = True
+                QTimer.singleShot(250, self._fire_deferred_rebuild_after_hidden)
             return
 
         self._refresh_table_order_in_progress = True

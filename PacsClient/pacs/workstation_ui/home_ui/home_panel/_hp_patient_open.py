@@ -631,27 +631,28 @@ class _HPPatientOpenMixin:
                             images_count = 0
 
                             db_series = current_study_data.get('series') if isinstance(current_study_data, dict) else None
-                            if isinstance(db_series, list) and db_series:
+                            # Bugfix (44113 — stale series after a server update): always re-query the
+                            # server on an explicit open so a study that gained images on the server after
+                            # a partial download shows its full, current series structure. The fetch also
+                            # refreshes the local DB (number_of_series), which corrects check_study_complete
+                            # for later clicks. The local-DB series (db_series) is used only as an offline
+                            # fallback when the server fetch is unavailable.
+                            try:
+                                import asyncio as _aio
+                                study_info = await _aio.to_thread(
+                                    self._get_or_fetch_series_info, current_study_uid, patient_id, True
+                                )
+                            except Exception as e:
+                                study_info = None
+                                _logger.warning("Could not fetch series info for %s: %s", current_study_uid, e)
+                            if study_info and (study_info.get('series') or []):
+                                series_list = study_info.get('series', [])
+                                series_count = study_info.get('count_of_series', len(series_list))
+                                images_count = sum(s.get('image_count', 0) for s in series_list)
+                            elif isinstance(db_series, list) and db_series:
                                 series_list = db_series
                                 series_count = len(series_list)
                                 images_count = sum(s.get('image_count', 0) for s in series_list)
-                            else:
-                                try:
-                                    import asyncio as _aio
-                                    study_info = await _aio.to_thread(self._get_or_fetch_series_info, current_study_uid, patient_id)
-                                    if (not study_info) or (not (study_info.get('series') or [])):
-                                        study_info = await _aio.to_thread(
-                                            self._get_or_fetch_series_info,
-                                            current_study_uid,
-                                            patient_id,
-                                            True,
-                                        )
-                                    if study_info:
-                                        series_list = study_info.get('series', [])
-                                        series_count = study_info.get('count_of_series', len(series_list))
-                                        images_count = sum(s.get('image_count', 0) for s in series_list)
-                                except Exception as e:
-                                    _logger.warning("Could not fetch series info for %s: %s", current_study_uid, e)
 
                             for series_info in series_list:
                                 if isinstance(series_info, dict) and 'study_uid' not in series_info:

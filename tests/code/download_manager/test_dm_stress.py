@@ -41,8 +41,8 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, List, Optional, Tuple
 from unittest.mock import MagicMock, patch
 
-# ── project root on sys.path ──
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# ── project root on sys.path ── (tests/code/download_manager/ → repo root needs 4 parents after the 2026-05-27 reorg)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 

@@ -296,6 +296,21 @@ class _HPSeriesMixin:
 
                 if server_uids:
                     patient_study_map[pid] = list(server_uids)
+                    # Bugfix 44113: stash the server's series count for a single-study
+                    # patient so the single-click completeness gate can detect a study
+                    # that GREW on the server (check_study_complete is local-only and
+                    # cannot see new server series). Single-study only — the patient-
+                    # level count_of_series equals that study's series count when there
+                    # is exactly one study; multi-study patients take the grouped branch
+                    # and never reach the gate.
+                    try:
+                        if not hasattr(self, '_server_series_count_by_study'):
+                            self._server_series_count_by_study = {}
+                        _srv_cnt = int((server_row or {}).get('count_of_series') or 0)
+                        if _srv_cnt > 0 and len(server_uids) == 1:
+                            self._server_series_count_by_study[server_uids[0]] = _srv_cnt
+                    except Exception:
+                        pass
 
                 merged = []
                 for uid in [fallback_uid, *local_uids, *server_uids]:
@@ -379,8 +394,32 @@ class _HPSeriesMixin:
                 print(f"[PROFILE] single-click: grouped studies displayed ({len(study_uids)}) for {patient_id} in {(time.perf_counter() - _t0)*1000:.1f}ms")
                 return
 
+            # Bugfix 44113 — a study that GREW on the server is invisible to
+            # check_study_complete() (it is local-only, "FAST - no server calls"). If
+            # the server now reports more series than we hold locally, force ONE
+            # refresh this session: skip the local-DB shortcut and fall through to the
+            # server-fetch branch below (which re-renders the full series list, fetches
+            # thumbnails, enqueues the new series, and saves them to the DB). Marked
+            # once-per-session so the normal fast local path resumes on the next click
+            # and a benign server/series count mismatch can't loop.
+            _server_grew = False
+            try:
+                if not hasattr(self, '_series_refreshed_uids'):
+                    self._series_refreshed_uids = set()
+                if study_uid not in self._series_refreshed_uids:
+                    _srv_cnt = int(getattr(self, '_server_series_count_by_study', {}).get(study_uid, 0) or 0)
+                    if _srv_cnt > 0:
+                        from PacsClient.utils.db_manager import find_study_pk_with_study_uid, get_series_by_study_pk
+                        _pk = find_study_pk_with_study_uid(study_uid)
+                        _local_cnt = len(get_series_by_study_pk(_pk) or []) if _pk else 0
+                        if _srv_cnt > _local_cnt:
+                            _server_grew = True
+                            self._series_refreshed_uids.add(study_uid)
+            except Exception:
+                _server_grew = False
+
             # First check if we have complete series info in database
-            if check_study_complete(study_uid) or self.source_of_patient_load == SourceOfPatientLoad.DB:
+            if (check_study_complete(study_uid) or self.source_of_patient_load == SourceOfPatientLoad.DB) and not _server_grew:
                 _t_db = time.perf_counter()
 
                 # Get series info from database

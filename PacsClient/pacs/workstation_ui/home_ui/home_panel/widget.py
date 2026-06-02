@@ -32,9 +32,10 @@ from pynetdicom.sop_class import (
     StudyRootQueryRetrieveInformationModelFind,
     Verification
 )
-# # واردکردن کلاینت gRPC
-from PacsClient.components import DicomGrpcClient
-from modules.network import dicom_service_pb2, dicom_service_pb2_grpc
+# gRPC retired — transport is socket-only (ZETA §15). Dead imports removed
+# 2026-06-01: DicomGrpcClient + dicom_service_pb2* were unused here and pulled
+# the heavy grpcio library into every app launch. The retired gRPC modules
+# remain on disk but are off the active path; do not re-wire them.
 # Zeta Download Manager - Primary download system
 from modules.network.zeta_adapter import (
     get_zeta_download_manager_widget, get_zeta_executor, get_zeta_worker_pool,

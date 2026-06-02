@@ -248,7 +248,9 @@ def test_worker_completed_ignores_auto_paused_failure(monkeypatch):
 
     dummy = SimpleNamespace(
         state_store=store,
-        _refresh_table_order=lambda: calls.__setitem__("refresh", calls["refresh"] + 1),
+        # _on_worker_completed calls the PUBLIC throttled refresh_table_order
+        # (modules/.../_dm_queue.py), same as every other handler — mock that name.
+        refresh_table_order=lambda: calls.__setitem__("refresh", calls["refresh"] + 1),
         _check_auto_resume=lambda: calls.__setitem__("resume", calls["resume"] + 1),
         _start_next_pending=lambda: calls.__setitem__("start_next", calls["start_next"] + 1),
         log_message=lambda *_args, **_kwargs: None,

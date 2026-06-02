@@ -591,6 +591,23 @@ class _HPSearchMixin:
             else:
                 study_uids = list(raw_study_uids) if isinstance(raw_study_uids, list) else []
 
+            # Bugfix 44113: remember the server's series count per study so the
+            # single-click thumbnail/series gates can detect a study that GREW on the
+            # server (the local thumbnail/completeness caches are local-only and can't
+            # see new server series). This runs for every patient as the list loads, so
+            # the count is ready before any click. Single-study only — count_of_series
+            # maps to that one study; multi-study patients render via the grouped path.
+            try:
+                _srv_cnt = int(patient.get('count_of_series') or 0)
+                if _srv_cnt > 0 and len(study_uids) == 1:
+                    if not hasattr(self, '_server_series_count_by_study'):
+                        self._server_series_count_by_study = {}
+                    _k = str(study_uids[0] or '').strip()
+                    if _k:
+                        self._server_series_count_by_study[_k] = _srv_cnt
+            except Exception:
+                pass
+
             studies = patient.get('studies') or patient.get('study_list') or []
             study_rows = []
             if isinstance(studies, list):
@@ -1190,7 +1207,33 @@ class _HPSearchMixin:
             # Fast path: if local thumbnails exist, always show them immediately.
             # This keeps main-page thumbnails stable even when socket fetch is delayed or fails.
             local_payload = self._build_cached_thumbnail_payload(study_uid)
-            if local_payload.get('thumbnails'):
+            _local_thumbs = len(local_payload.get('thumbnails', []) or [])
+            # Bugfix 44113 — when the server now reports MORE series than the local
+            # thumbnail cache holds, the fast-cache path would pin the stale (partial)
+            # thumbnails forever. Skip it ONCE this session and fall through to the
+            # server thumbnail fetch below (which pulls every series). The once-per-
+            # session marker lets the study settle back onto the fast cache afterwards
+            # and tolerates a benign server/series count mismatch.
+            _server_series = 0
+            _thumbs_grew = False
+            try:
+                _server_series = int(getattr(self, '_server_series_count_by_study', {}).get(study_uid_str, 0) or 0)
+                if not hasattr(self, '_thumbs_server_refreshed_uids'):
+                    self._thumbs_server_refreshed_uids = set()
+                if study_uid_str and study_uid_str not in self._thumbs_server_refreshed_uids:
+                    if _server_series > 0 and _server_series > _local_thumbs:
+                        _thumbs_grew = True
+                        self._thumbs_server_refreshed_uids.add(study_uid_str)
+            except Exception:
+                _thumbs_grew = False
+            if hasattr(self, '_log_open_trace'):
+                try:
+                    self._log_open_trace(study_uid, 'right_panel_cache_gate',
+                                         local_thumbs=_local_thumbs, server_series=_server_series,
+                                         grew=int(_thumbs_grew))
+                except Exception:
+                    pass
+            if local_payload.get('thumbnails') and not _thumbs_grew:
                 if hasattr(self, '_is_active_patient_selection') and not self._is_active_patient_selection(patient_id, study_uid):
                     return
                 self.display_thumbnails(local_payload.get('thumbnails', []), progressive=False)

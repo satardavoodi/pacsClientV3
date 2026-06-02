@@ -412,7 +412,7 @@ class AudioAttachmentsPanel(QWidget):
             self._timer.timeout.connect(self._tick)
 
             self._build_ui()   # build first
-            self._load_audio() # then load audio
+            self._load_audio_meta()  # cheap header read for duration; full samples load lazily on first play (avoids UI stall)
 
         def _build_ui(self):
             self.setFixedHeight(140)
@@ -598,6 +598,29 @@ class AudioAttachmentsPanel(QWidget):
             root.addLayout(acts)
 
         # ---- audio logic ----
+        def _load_audio_meta(self):
+            """Header-only read: fills the duration label without decoding the
+            whole file on the UI thread. Full samples load lazily on first use
+            (_ensure_audio_loaded), removing a multi-second main-thread stall."""
+            try:
+                import soundfile as sf
+                info = sf.info(self._file_path)
+                self._sr = int(info.samplerate)
+                duration = float(info.duration)
+                if self._tot_lbl is not None:
+                    self._tot_lbl.setText(self._fmt_time(duration))
+                else:
+                    self._pending_duration = duration
+            except Exception as e:
+                print(f"[Audio] Error reading header: {e}")
+
+        def _ensure_audio_loaded(self):
+            """Decode full samples on demand (first play/seek). True if ready."""
+            if self._audio_data is not None:
+                return True
+            self._load_audio()
+            return self._audio_data is not None
+
         def _load_audio(self):
             try:
                 import soundfile as sf
@@ -616,6 +639,8 @@ class AudioAttachmentsPanel(QWidget):
                 self._audio_data, self._sr = None, None
 
         def _toggle(self):
+            if not self._is_playing and not self._ensure_audio_loaded():
+                return
             if self._audio_data is None or not self._sr:
                 return
             try:
@@ -678,6 +703,7 @@ class AudioAttachmentsPanel(QWidget):
 
         def _on_release(self):
             self._seeking = False
+            self._ensure_audio_loaded()
             if self._audio_data is None or not self._sr:
                 return
             seek_ratio = self._slider.value() / 1000.0

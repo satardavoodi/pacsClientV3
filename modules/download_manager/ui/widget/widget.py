@@ -335,6 +335,23 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         logger.info("✅ DownloadManagerWidget initialized (v1.0.6 UI style)")
         logger.info("=" * 80)
 
+    def showEvent(self, event):
+        """Lightweight show hook — all heavy initialization stays in ``__init__``
+        (worker progress signals can arrive before the widget is ever shown, so the
+        state they touch must already exist). When the DM tab becomes visible we
+        only schedule a deferred table refresh: this pairs with the P2.3 hidden
+        gating in ``_refresh_table_order`` (rebuilds are deferred while hidden, then
+        applied once the tab is shown).
+        """
+        try:
+            super().showEvent(event)
+        except Exception:
+            pass
+        try:
+            QTimer.singleShot(0, self.refresh_table_order)
+        except Exception:
+            pass
+
     # ────────────────────────────────────────────────────────────────────
     # F3.5.3 — Priority-handoff failure UX guardrail
     # ────────────────────────────────────────────────────────────────────

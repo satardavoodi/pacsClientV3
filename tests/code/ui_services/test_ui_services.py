@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import MagicMock, patch, PropertyMock
 
 # ── project root ──
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 

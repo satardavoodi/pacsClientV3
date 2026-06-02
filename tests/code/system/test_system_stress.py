@@ -35,8 +35,8 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-# ── project root ──
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# ── project root ── (tests/code/system/ → repo root needs 4 parents after the 2026-05-27 reorg)
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 

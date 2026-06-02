@@ -37,7 +37,7 @@ def _extract_warmup_targets():
     import re
     import pathlib
 
-    src = (pathlib.Path(__file__).parent.parent.parent / "main.py").read_text(encoding="utf-8")
+    src = (pathlib.Path(__file__).parent.parent.parent.parent / "main.py").read_text(encoding="utf-8")
     # Find all quoted strings inside the _targets / _warmup list block
     # Pattern: strings between triple-check comments and the warmup thread start
     section_m = re.search(
@@ -61,7 +61,7 @@ class TestImportWarmupContract(unittest.TestCase):
     def test_warmup_block_present_in_main(self):
         """[Fix I] comment block must exist in main.py."""
         import pathlib
-        src = (pathlib.Path(__file__).parent.parent.parent / "main.py").read_text(encoding="utf-8")
+        src = (pathlib.Path(__file__).parent.parent.parent.parent / "main.py").read_text(encoding="utf-8")
         self.assertIn("[Fix I]", src, "Fix I warmup block not found in main.py")
         self.assertIn("_background_import_warmup", src, "_background_import_warmup function missing")
         self.assertIn("IMPORT_WARMUP", src, "[IMPORT_WARMUP] log tag missing")
@@ -69,7 +69,7 @@ class TestImportWarmupContract(unittest.TestCase):
     def test_warmup_runs_as_daemon_thread(self):
         """Warmup thread must be a daemon thread (must not block shutdown)."""
         import pathlib
-        src = (pathlib.Path(__file__).parent.parent.parent / "main.py").read_text(encoding="utf-8")
+        src = (pathlib.Path(__file__).parent.parent.parent.parent / "main.py").read_text(encoding="utf-8")
         # Must contain daemon=True after _background_import_warmup function definition
         section_idx = src.find("_background_import_warmup")
         self.assertGreater(section_idx, 0)

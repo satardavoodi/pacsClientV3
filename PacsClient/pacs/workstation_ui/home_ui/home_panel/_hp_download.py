@@ -113,6 +113,7 @@ class _HPDownloadMixin:
                         info = self._get_or_fetch_series_info(
                             study_ref.get('study_uid'),
                             study_ref.get('patient_id'),
+                            force_refresh=True,  # bugfix 44113: re-query current server series, not stale cache
                         )
                         return (study_ref, info, None)
                     except Exception as exc:

@@ -670,9 +670,60 @@ class _DMWorkersMixin:
                 logger.debug(f"🗑️ Cleaned up _last_series_number_by_study for {study_uid[:40]}...")
             
             logger.info(f"✅ Task state cleanup complete for {study_uid[:40]}... (preserved task for retry, cleaned intermediate caches)")
-            
+
+            # DM-L7: _tasks is intentionally retained for retry, so it grows by one
+            # entry per distinct study viewed — an unbounded slow leak over a long
+            # clinical session. Bound it here (the per-completion chokepoint),
+            # evicting only the oldest NON-active studies. Retry stays available for
+            # the most recent studies; an evicted old study can still be re-triggered
+            # by re-selecting it.
+            self._bound_tasks()
+
         except Exception as e:
             logger.warning(f"⚠️ Error during task state cleanup: {e}")
+
+    def _bound_tasks(self) -> None:
+        """DM-L7: cap the retained-for-retry ``_tasks`` dict so it cannot grow
+        without bound across a long session (one entry per distinct study viewed).
+
+        Plain dicts are insertion-ordered, so eviction is oldest-first (FIFO). The
+        actively-downloading study is always the most-recently-started (single
+        slot, MAX_CONCURRENT_STUDIES=1) and is additionally protected by the live
+        ``worker_by_study`` set, so this can never evict an in-flight download.
+        Best-effort; never raises.
+        """
+        _RETAIN_CAP = 400
+        try:
+            tasks = getattr(self, '_tasks', None)
+            if not isinstance(tasks, dict) or len(tasks) <= _RETAIN_CAP:
+                return
+            protected = set()
+            wp = getattr(self, 'worker_pool', None)
+            if wp is not None and hasattr(wp, 'worker_by_study'):
+                try:
+                    protected = set(wp.worker_by_study.keys())
+                except Exception:
+                    protected = set()
+            evicted = 0
+            for suid in list(tasks.keys()):
+                if len(tasks) <= _RETAIN_CAP:
+                    break
+                if suid in protected:
+                    continue
+                tasks.pop(suid, None)
+                try:
+                    self._additional_task_info.pop(suid, None)
+                    self._series_image_count_cache.pop(suid, None)
+                except Exception:
+                    pass
+                evicted += 1
+            if evicted:
+                logger.info(
+                    "🧹 DM-L7: evicted %d oldest retained task(s); _tasks now holds %d",
+                    evicted, len(tasks),
+                )
+        except Exception as exc:
+            logger.debug("DM-L7 _bound_tasks warning: %s", exc)
 
     def _on_worker_error(self, study_uid: str, error_message: str) -> None:
         """

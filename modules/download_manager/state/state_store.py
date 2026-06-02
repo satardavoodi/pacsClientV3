@@ -267,6 +267,61 @@ class DownloadStateStore:
             return False
         return True
 
+    def update_batch(self, study_uid: str, **changes) -> None:
+        """Apply several field changes atomically and emit a SINGLE
+        ``updated_batch`` notification carrying ``(changes, old_values)`` — instead
+        of the per-field ``updated`` events that :meth:`update` fires.
+
+        This lets an observer persist/render a coherent multi-field change in one
+        step (addressing the torn-read window where a multi-call ``update`` lets an
+        observer see a half-applied combination). Additive: :meth:`update` is
+        unchanged, and observers that do not handle ``updated_batch`` simply ignore
+        it (notifications are dispatched best-effort, per observer).
+
+        Terminal-state guard matches :meth:`update`: a ``status`` change on a
+        terminal state is ignored, but the other fields still apply.
+        """
+        if not changes:
+            return
+
+        with self._lock:
+            state = self._states.get(study_uid)
+            if not state:
+                raise StateError(f"Unknown study_uid: {study_uid}")
+
+            # R9: terminal-state guard — drop a status change, keep other fields.
+            if DownloadStateMachine.is_terminal_state(state.status):
+                attempted = changes.get('status')
+                if 'status' in changes and attempted is not None and attempted != state.status:
+                    logger.warning(
+                        f"⚠️ Cannot change terminal state {state.status.value} - "
+                        f"ignoring status change to {getattr(attempted, 'value', attempted)}"
+                    )
+                changes = {k: v for k, v in changes.items() if k != 'status'}
+                if not changes:
+                    return
+
+            # Snapshot old values, then apply every change under the one lock.
+            old_values = {k: getattr(state, k) for k in changes.keys() if hasattr(state, k)}
+            for key, value in changes.items():
+                if hasattr(state, key):
+                    setattr(state, key, value)
+                else:
+                    logger.warning(f"⚠️ Unknown state field: {key}")
+
+            state.last_update = datetime.now()
+            self._history.append(StateChange(
+                study_uid=study_uid,
+                timestamp=datetime.now(),
+                changes=dict(changes),
+                old_values=dict(old_values),
+            ))
+            batch_changes = dict(changes)
+            batch_old = dict(old_values)
+
+        # ── ONE batched notification, fired OUTSIDE the lock ──────────────
+        self._notify_observers('updated_batch', study_uid, state, batch_changes, batch_old)
+
     def get(self, study_uid: str) -> Optional[DownloadState]:
         """
         Get current state (thread-safe)

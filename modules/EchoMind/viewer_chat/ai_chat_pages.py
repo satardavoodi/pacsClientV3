@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import typing as t
 import os, json, tempfile, time
+import base64
+import hashlib
 import requests
 import uuid
 from datetime import datetime
@@ -10,12 +12,13 @@ from PySide6.QtGui import QIcon, QAction, QPixmap, QPainter, QFont, QTextCursor,
 from PySide6.QtWidgets import (
     QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QListWidget, QListWidgetItem,
     QInputDialog, QLineEdit, QMessageBox, QMenu, QToolButton, QLabel, QSlider, QSizePolicy, QStyle,
-    QDialog
+    QDialog, QTreeWidget, QTreeWidgetItem, QProgressDialog, QHeaderView
 )
 from PacsClient import utils as U
 from PacsClient.utils.database import (
     load_token_usage,
     save_token_usage,
+    get_db_connection,
     add_token_usage_delta,
     add_api_token_usage_delta,
     add_transcript_usage_delta,
@@ -182,6 +185,345 @@ class _ReceptionIdDialog(QDialog):
             )
             return
         self._choose(other_id, "other")
+
+
+class _ImageSourceDialog(QDialog):
+    """Select source for image attachments."""
+
+    def __init__(self, parent=None, current_patient_id: str | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Attach Image Source")
+        self.setMinimumWidth(460)
+        self.selected_source: str | None = None
+
+        layout = QVBoxLayout(self)
+        title = QLabel("Choose image source:")
+        title.setWordWrap(True)
+        layout.addWidget(title)
+
+        btn_local = QPushButton("From this system")
+        btn_local.clicked.connect(lambda: self._select("local"))
+        layout.addWidget(btn_local)
+
+        if current_patient_id:
+            btn_current = QPushButton(f"From current patient ({current_patient_id})")
+            btn_current.clicked.connect(lambda: self._select("current"))
+            layout.addWidget(btn_current)
+
+        btn_other = QPushButton("From another patient (enter patient id)")
+        btn_other.clicked.connect(lambda: self._select("other"))
+        layout.addWidget(btn_other)
+
+        btn_cancel = QPushButton("Cancel")
+        btn_cancel.clicked.connect(self.reject)
+        layout.addWidget(btn_cancel)
+
+    def _select(self, source: str) -> None:
+        self.selected_source = source
+        self.accept()
+
+
+class _PatientSeriesImagePickerDialog(QDialog):
+    """Series selector + image preview selector for patient images."""
+
+    def __init__(self, parent=None, patient_id: str | None = None, records: list[dict] | None = None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Patient Images")
+        self.resize(980, 640)
+        self.patient_id = (patient_id or "").strip()
+        self.records = records or []
+        self.selected_paths: list[str] = []
+
+        self.setStyleSheet(
+            """
+            QDialog {
+                background-color: #e9eef4;
+                color: #162536;
+            }
+            QLabel {
+                color: #0f2235;
+                font-weight: 600;
+            }
+            QPushButton {
+                background-color: #2f80c9;
+                color: #ffffff;
+                border: 1px solid #1f5f98;
+                border-radius: 7px;
+                padding: 6px 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background-color: #246fae;
+            }
+            QTreeWidget {
+                background: #f8fbff;
+                color: #102132;
+                border: 1px solid #b7c7d7;
+                border-radius: 8px;
+                alternate-background-color: #edf4fb;
+                selection-background-color: #b8dcff;
+                selection-color: #081521;
+                outline: 0;
+            }
+            QTreeWidget::item {
+                min-height: 26px;
+                border-bottom: 1px solid #dce6f0;
+                padding: 2px 3px;
+            }
+            QTreeWidget::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QTreeWidget::indicator:unchecked {
+                border: 1px solid #486581;
+                background: #ffffff;
+            }
+            QTreeWidget::indicator:checked {
+                border: 1px solid #1d5f98;
+                background: #2f80c9;
+            }
+            QHeaderView::section {
+                background: #d7e6f4;
+                color: #0f2235;
+                font-weight: 700;
+                border: 1px solid #b7c7d7;
+                padding: 6px;
+            }
+            QListWidget {
+                background: #f8fbff;
+                color: #102132;
+                border: 1px solid #b7c7d7;
+                border-radius: 8px;
+                selection-background-color: #b8dcff;
+                selection-color: #081521;
+                outline: 0;
+            }
+            QListWidget::item {
+                border: 1px solid #d0deec;
+                border-radius: 8px;
+                margin: 5px;
+                padding: 6px;
+                background: #ffffff;
+            }
+            QListWidget::item:selected {
+                border: 2px solid #2f80c9;
+                background: #dff0ff;
+            }
+            QListWidget::indicator {
+                width: 16px;
+                height: 16px;
+            }
+            QListWidget::indicator:unchecked {
+                border: 1px solid #486581;
+                background: #ffffff;
+            }
+            QListWidget::indicator:checked {
+                border: 1px solid #1d5f98;
+                background: #2f80c9;
+            }
+            """
+        )
+
+        root = QVBoxLayout(self)
+        lbl = QLabel(f"Patient ID: {self.patient_id}")
+        root.addWidget(lbl)
+
+        split = QHBoxLayout()
+        root.addLayout(split, 1)
+
+        self.tree = QTreeWidget(self)
+        self.tree.setHeaderLabels(["Study / Series", "Count"])
+        self.tree.setMinimumWidth(360)
+        self.tree.setAlternatingRowColors(True)
+        self.tree.setIndentation(22)
+        self.tree.setRootIsDecorated(True)
+        self.tree.header().setStretchLastSection(False)
+        self.tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.tree.header().setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
+        split.addWidget(self.tree, 0)
+
+        right = QVBoxLayout()
+        split.addLayout(right, 1)
+
+        self.preview = QListWidget(self)
+        self.preview.setViewMode(QListWidget.IconMode)
+        self.preview.setIconSize(QSize(128, 128))
+        self.preview.setGridSize(QSize(164, 176))
+        self.preview.setSpacing(8)
+        self.preview.setUniformItemSizes(True)
+        self.preview.setResizeMode(QListWidget.Adjust)
+        self.preview.setSelectionMode(QListWidget.MultiSelection)
+        right.addWidget(self.preview, 1)
+
+        actions = QHBoxLayout()
+        right.addLayout(actions)
+        self.btn_load_preview = QPushButton("Load Preview")
+        self.btn_select_all = QPushButton("Select All Visible")
+        self.btn_clear_sel = QPushButton("Clear Selection")
+        actions.addWidget(self.btn_load_preview)
+        actions.addWidget(self.btn_select_all)
+        actions.addWidget(self.btn_clear_sel)
+        actions.addStretch(1)
+
+        footer = QHBoxLayout()
+        root.addLayout(footer)
+        self.btn_attach = QPushButton("Attach Selected")
+        self.btn_cancel = QPushButton("Cancel")
+        footer.addStretch(1)
+        footer.addWidget(self.btn_attach)
+        footer.addWidget(self.btn_cancel)
+
+        self.btn_load_preview.clicked.connect(self._load_preview_from_checked_series)
+        self.btn_select_all.clicked.connect(self._select_all_visible)
+        self.btn_clear_sel.clicked.connect(self.preview.clearSelection)
+        self.btn_attach.clicked.connect(self._accept_selection)
+        self.btn_cancel.clicked.connect(self.reject)
+
+        self._populate_tree()
+
+    def _populate_tree(self) -> None:
+        self.tree.clear()
+        for rec in self.records:
+            study_uid = rec.get("study_uid") or ""
+            study_desc = rec.get("study_description") or ""
+            study_label = f"Study {study_uid}" if not study_desc else f"{study_desc} ({study_uid})"
+            parent = QTreeWidgetItem([study_label, str(len(rec.get("series", [])))])
+            parent.setFlags(parent.flags() | Qt.ItemFlag.ItemIsAutoTristate | Qt.ItemFlag.ItemIsUserCheckable)
+            parent.setCheckState(0, Qt.Unchecked)
+            parent_font = parent.font(0)
+            parent_font.setBold(True)
+            parent.setFont(0, parent_font)
+            parent.setData(0, Qt.UserRole, {"kind": "study", "study_uid": study_uid})
+
+            for ser in rec.get("series", []):
+                series_number = str(ser.get("series_number") or "?")
+                series_desc = ser.get("series_description") or ""
+                count = len(ser.get("images", []))
+                txt = f"Series {series_number}" if not series_desc else f"Series {series_number}: {series_desc}"
+                child = QTreeWidgetItem([txt, str(count)])
+                child.setFlags(child.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                child.setCheckState(0, Qt.Unchecked)
+                child.setToolTip(0, txt)
+                child.setData(
+                    0,
+                    Qt.UserRole,
+                    {
+                        "kind": "series",
+                        "study_uid": study_uid,
+                        "series_pk": ser.get("series_pk"),
+                        "series_number": series_number,
+                        "images": ser.get("images", []),
+                    },
+                )
+                parent.addChild(child)
+            self.tree.addTopLevelItem(parent)
+        self.tree.expandAll()
+
+    def _checked_series_images(self) -> list[str]:
+        paths: list[str] = []
+        for i in range(self.tree.topLevelItemCount()):
+            parent = self.tree.topLevelItem(i)
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                if child.checkState(0) == Qt.Checked:
+                    data = child.data(0, Qt.UserRole) or {}
+                    if data.get("kind") == "series":
+                        paths.extend(data.get("images", []))
+        seen = set()
+        uniq = []
+        for p in paths:
+            if p and p not in seen:
+                seen.add(p)
+                uniq.append(p)
+        return uniq
+
+    def _load_preview_from_checked_series(self) -> None:
+        self.preview.clear()
+        paths = self._checked_series_images()
+        if not paths:
+            QMessageBox.information(self, "No Series Selected", "Please check at least one series.")
+            return
+
+        max_preview = 300
+        if len(paths) > max_preview:
+            paths = paths[:max_preview]
+
+        for p in paths:
+            item = QListWidgetItem(os.path.basename(p) or p)
+            item.setData(Qt.UserRole, p)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.Unchecked)
+            item.setToolTip(p)
+
+            pix = self._build_preview_pixmap(p)
+            if not pix.isNull():
+                item.setIcon(QIcon(pix))
+            self.preview.addItem(item)
+
+        if self.preview.count() == 0:
+            QMessageBox.warning(self, "No Preview", "No readable image could be previewed.")
+
+    def _build_preview_pixmap(self, path: str) -> QPixmap:
+        try:
+            ext = os.path.splitext(path)[1].lower()
+            if ext == ".dcm":
+                import numpy as _np
+                import pydicom
+                from PIL import Image
+
+                ds = pydicom.dcmread(path, force=True)
+                arr = _np.asarray(ds.pixel_array)
+                if arr.ndim > 2:
+                    if arr.shape[0] in (3, 4) and arr.shape[-1] not in (3, 4):
+                        arr = _np.moveaxis(arr, 0, -1)
+                    else:
+                        arr = arr[..., 0]
+                arr = arr.astype(_np.float32)
+                lo, hi = float(_np.min(arr)), float(_np.max(arr))
+                if hi <= lo:
+                    hi = lo + 1.0
+                arr = _np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+                arr8 = (arr * 255.0).astype(_np.uint8)
+
+                pil = Image.fromarray(arr8)
+                if pil.mode != "RGB":
+                    pil = pil.convert("RGB")
+
+                import io as _io
+
+                bio = _io.BytesIO()
+                pil.save(bio, format="PNG")
+                qpix = QPixmap()
+                qpix.loadFromData(bio.getvalue(), "PNG")
+                return qpix.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+            qpix = QPixmap(path)
+            if qpix.isNull():
+                return QPixmap()
+            return qpix.scaled(128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        except Exception:
+            return QPixmap()
+
+    def _select_all_visible(self) -> None:
+        for i in range(self.preview.count()):
+            it = self.preview.item(i)
+            it.setCheckState(Qt.Checked)
+
+    def _accept_selection(self) -> None:
+        out: list[str] = []
+        for i in range(self.preview.count()):
+            it = self.preview.item(i)
+            if it.checkState() == Qt.Checked:
+                p = it.data(Qt.UserRole)
+                if p:
+                    out.append(p)
+
+        if not out:
+            QMessageBox.information(self, "No Images Selected", "Please select at least one image.")
+            return
+
+        self.selected_paths = out
+        self.accept()
 
 
 class ModePickerPage(QWidget):
@@ -751,8 +1093,13 @@ class OneChatPage(QWidget):
         self.btn_back = QPushButton(" ← Back")
         self.btn_back.setCursor(Qt.PointingHandCursor)
         self.btn_back.setStyleSheet(
-            f"QPushButton{{background:{CLR_BG_PANEL};color:{CLR_TEXT};border:1px solid {CLR_BORDER};border-radius:10px;padding:10px 14px;margin:6px}}"
-            f"QPushButton:hover{{border-color:{CLR_ACCENT}}}"
+            "QPushButton{"
+            f"background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(236,243,252,0.14),stop:1 rgba(183,196,214,0.08));"
+            f"color:{CLR_TEXT};"
+            "border:1px solid rgba(143,152,164,0.45);"
+            "border-radius:12px;padding:10px 14px;margin:6px;font-weight:600;}"
+            "QPushButton:hover{border-color:rgba(114,190,255,0.95);background:rgba(99,179,237,0.20);}"
+            "QPushButton:pressed{background:rgba(99,179,237,0.30);}"
         )
 
         self.btn_new = QPushButton()
@@ -760,15 +1107,25 @@ class OneChatPage(QWidget):
         self.btn_new.setText(" New Chat")
         self.btn_new.setCursor(Qt.PointingHandCursor)
         self.btn_new.setStyleSheet(
-            f"QPushButton{{background:{CLR_BG_PANEL};color:{CLR_TEXT};border:1px solid {CLR_BORDER};border-radius:10px;padding:10px 14px;margin:6px}}"
-            f"QPushButton:hover{{border-color:{CLR_ACCENT}}}"
+            "QPushButton{"
+            f"background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 rgba(46,139,87,0.65),stop:1 rgba(36,121,162,0.62));"
+            "color:#ffffff;"
+            "border:1px solid rgba(140,208,228,0.65);"
+            "border-radius:12px;padding:10px 14px;margin:6px;font-weight:700;}"
+            "QPushButton:hover{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,stop:0 rgba(52,158,99,0.78),stop:1 rgba(42,137,184,0.74));}"
+            "QPushButton:pressed{background:rgba(38,126,167,0.82);}"
         )
 
         self.list = QListWidget()
         self.list.setStyleSheet(
-            f"QListWidget{{background:{CLR_BG_PANEL};color:{CLR_TEXT};border:1px solid {CLR_BORDER};border-radius:10px;margin:6px}}"
-            "QListWidget::item{padding:10px;border-bottom:1px solid #2a2a2a}"
-            "QListWidget::item:selected{background:#2b2b2b}"
+            "QListWidget{"
+            "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 rgba(31,35,42,0.95),stop:1 rgba(24,27,33,0.95));"
+            f"color:{CLR_TEXT};"
+            "border:1px solid rgba(143,152,164,0.34);"
+            "border-radius:12px;margin:6px;padding:4px;}"
+            "QListWidget::item{padding:11px 10px;border-bottom:1px solid rgba(255,255,255,0.08);border-radius:8px;}"
+            "QListWidget::item:hover{background:rgba(99,179,237,0.16);}"
+            "QListWidget::item:selected{background:rgba(99,179,237,0.24);color:#ffffff;border:1px solid rgba(114,190,255,0.85);}"
             f"{PATIENT_SCROLLBAR_QSS}"
         )
         self.left.addWidget(self.btn_back)
@@ -777,7 +1134,11 @@ class OneChatPage(QWidget):
 
         left_wrap = QWidget(); left_wrap.setLayout(self.left)
         left_wrap.setFixedWidth(260)
-        left_wrap.setStyleSheet(f"background:{CLR_BG_PANEL};border-right:1px solid {CLR_BORDER}")
+        left_wrap.setStyleSheet(
+            "background:qlineargradient(x1:0,y1:0,x2:0,y2:1,"
+            "stop:0 rgba(33,37,44,0.98),stop:1 rgba(22,25,31,0.98));"
+            "border-right:1px solid rgba(143,152,164,0.35);"
+        )
 
         # ----- RIGHT -----
         self.history = ChatHistory()
@@ -793,6 +1154,13 @@ class OneChatPage(QWidget):
         self.composer.transcribeRequested.connect(self._transcribe_now)
         self.composer.standardizeClicked.connect(self._standardize_now)
         self.composer.apply_side_padding(16, 16)
+
+        # Route attach button to source-selection flow (system/current patient/other patient).
+        try:
+            self.composer.btn_plus.clicked.disconnect()
+        except Exception:
+            pass
+        self.composer.btn_plus.clicked.connect(self._on_attach_plus_clicked)
 
         self.composer.btn_modality.clicked.connect(self._show_modality_menu)
 
@@ -865,6 +1233,273 @@ class OneChatPage(QWidget):
         # Position menu under the Send button
         btn = self.composer.btn_send
         menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+
+    def _on_attach_plus_clicked(self) -> None:
+        """Attach flow with source selection and patient-series image picking."""
+        current_patient_id = self._get_current_patient_id()
+        dlg = _ImageSourceDialog(self, current_patient_id=current_patient_id)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        source = dlg.selected_source
+        if source == "local":
+            # Preserve legacy local attach behavior (audio/image from system).
+            self.composer._choose_file()
+            return
+
+        if source == "current":
+            if not current_patient_id:
+                QMessageBox.warning(self, "Patient Not Found", "Current patient id is not available.")
+                return
+            patient_id = current_patient_id
+        else:
+            patient_id, ok = QInputDialog.getText(
+                self,
+                "Other Patient",
+                "Enter patient id:",
+                QLineEdit.Normal,
+                "",
+            )
+            if not ok:
+                return
+            patient_id = (patient_id or "").strip()
+            if not patient_id:
+                QMessageBox.warning(self, "Invalid Patient ID", "Patient id cannot be empty.")
+                return
+
+        records = self._fetch_patient_image_records(patient_id)
+        if not records:
+            QMessageBox.information(self, "No Images", f"No image series found for patient id: {patient_id}")
+            return
+
+        picker = _PatientSeriesImagePickerDialog(self, patient_id=patient_id, records=records)
+        if picker.exec() != QDialog.Accepted:
+            return
+
+        selected_paths = picker.selected_paths or []
+        if not selected_paths:
+            return
+
+        png_paths = self._convert_selected_images_to_png(selected_paths)
+        if not png_paths:
+            QMessageBox.warning(self, "Attach Failed", "No image could be converted and attached.")
+            return
+
+        for p in png_paths:
+            try:
+                self.composer.add_image_attachment(p)
+            except Exception:
+                pass
+
+        self.controller.bubble(
+            "AI ChatBot",
+            f"Attached {len(png_paths)} image(s) from patient source.",
+        )
+
+    def _get_current_patient_id(self) -> str | None:
+        if not self.study_uid:
+            return None
+        try:
+            from PacsClient.utils import db_manager as db
+
+            st = db.get_study_by_study_uid(self.study_uid)
+            if not st:
+                return None
+            patient_fk = st.get("patient_fk")
+            if not patient_fk:
+                return None
+            p = db.get_patient_by_patient_pk(patient_fk)
+            if not p:
+                return None
+            return (p.get("patient_id") or "").strip() or None
+        except Exception:
+            return None
+
+    def _fetch_patient_image_records(self, patient_id: str) -> list[dict]:
+        """Return study/series/image paths for a patient id."""
+        patient_id = (patient_id or "").strip()
+        if not patient_id:
+            return []
+
+        rows: list[tuple] = []
+        try:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    """
+                    SELECT st.study_uid, st.study_description
+                    FROM studies AS st
+                    JOIN patients AS p ON p.patient_pk = st.patient_fk
+                    WHERE p.patient_id = ?
+                    ORDER BY st.study_date DESC, st.study_time DESC
+                    """,
+                    (patient_id,),
+                )
+                rows = cur.fetchall() or []
+        except Exception:
+            return []
+
+        try:
+            from PacsClient.utils import db_manager as db
+        except Exception:
+            return []
+
+        out: list[dict] = []
+        for study_uid, study_description in rows:
+            series_items = []
+            series_rows = db.get_series_by_study_uid(study_uid) or []
+            for se in series_rows:
+                series_pk = se.get("series_pk")
+                if not series_pk:
+                    continue
+
+                img_paths = []
+                try:
+                    with get_db_connection() as conn:
+                        cur = conn.cursor()
+                        cur.execute(
+                            """
+                            SELECT instance_path
+                            FROM instances
+                            WHERE series_fk = ?
+                            ORDER BY instance_number, instance_pk
+                            """,
+                            (series_pk,),
+                        )
+                        for (p,) in (cur.fetchall() or []):
+                            if p and os.path.exists(p):
+                                img_paths.append(p)
+                except Exception:
+                    continue
+
+                if not img_paths:
+                    continue
+
+                series_items.append(
+                    {
+                        "series_pk": series_pk,
+                        "series_number": se.get("series_number") or "",
+                        "series_description": se.get("series_description") or "",
+                        "images": img_paths,
+                    }
+                )
+
+            if series_items:
+                out.append(
+                    {
+                        "study_uid": study_uid,
+                        "study_description": study_description or "",
+                        "series": series_items,
+                    }
+                )
+        return out
+
+    def _convert_selected_images_to_png(self, paths: list[str]) -> list[str]:
+        """Convert selected images to PNG and return output paths."""
+        if not paths:
+            return []
+
+        out_dir = os.path.join(self._ai_chat_dir(), "attached_png")
+        os.makedirs(out_dir, exist_ok=True)
+
+        progress = QProgressDialog("Converting selected images to PNG...", "Cancel", 0, len(paths), self)
+        progress.setWindowTitle("Image Conversion")
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setValue(0)
+        progress.setStyleSheet(
+            """
+            QProgressDialog { background-color: #2b2f33; color: #f0f3f6; }
+            QProgressBar {
+                border: 1px solid #1f2226;
+                border-radius: 6px;
+                background: #1b1f24;
+                color: #f0f3f6;
+                text-align: center;
+                min-height: 18px;
+            }
+            QProgressBar::chunk {
+                background-color: #4a90e2;
+                border-radius: 6px;
+            }
+            QPushButton {
+                background-color: #3a4148;
+                color: #f7f9fb;
+                border: 1px solid #1f2226;
+                border-radius: 6px;
+                padding: 5px 12px;
+            }
+            """
+        )
+
+        ok_paths: list[str] = []
+        for idx, src in enumerate(paths, start=1):
+            if progress.wasCanceled():
+                break
+            png = self._convert_image_to_png(src, out_dir)
+            if png:
+                ok_paths.append(png)
+            progress.setValue(idx)
+            QGuiApplication.processEvents()
+
+        progress.close()
+        return ok_paths
+
+    def _convert_image_to_png(self, src_path: str, out_dir: str) -> str | None:
+        """Convert a single image (including DICOM) to PNG path."""
+        try:
+            ext = os.path.splitext(src_path)[1].lower()
+            src_norm = os.path.normpath(src_path)
+            base_hash = hashlib.sha1(src_norm.encode("utf-8", errors="ignore")).hexdigest()[:16]
+            out_path = os.path.join(out_dir, f"img_{base_hash}.png")
+            if os.path.exists(out_path):
+                return out_path
+
+            if ext == ".dcm":
+                import numpy as _np
+                import pydicom
+                from PIL import Image
+
+                ds = pydicom.dcmread(src_path, force=True)
+                arr = _np.asarray(ds.pixel_array)
+
+                if arr.ndim > 2:
+                    if arr.shape[0] in (3, 4) and arr.shape[-1] not in (3, 4):
+                        arr = _np.moveaxis(arr, 0, -1)
+                    else:
+                        arr = arr[..., 0]
+
+                arr = arr.astype(_np.float32)
+                slope = float(getattr(ds, "RescaleSlope", 1.0) or 1.0)
+                intercept = float(getattr(ds, "RescaleIntercept", 0.0) or 0.0)
+                arr = arr * slope + intercept
+
+                lo = float(_np.percentile(arr, 1))
+                hi = float(_np.percentile(arr, 99))
+                if hi <= lo:
+                    lo = float(_np.min(arr))
+                    hi = float(_np.max(arr))
+                if hi <= lo:
+                    hi = lo + 1.0
+
+                arr = _np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
+                arr8 = (arr * 255.0).astype(_np.uint8)
+                pil = Image.fromarray(arr8)
+                if pil.mode != "RGB":
+                    pil = pil.convert("RGB")
+                pil.save(out_path, format="PNG")
+                return out_path
+
+            from PIL import Image
+
+            with Image.open(src_path) as im:
+                if im.mode != "RGB":
+                    im = im.convert("RGB")
+                im.save(out_path, format="PNG")
+            return out_path
+        except Exception:
+            return None
+
     def _read_json_file(self, path: str) -> dict:
         """خواندن امن JSON؛ در خطا خروجی خالی می‌دهد."""
         try:
@@ -2718,6 +3353,42 @@ class OneChatPage(QWidget):
             import re
             return re.sub(r"<[^>]+>", "", s).strip()
 
+    def _encode_image_file_to_base64(self, path: str) -> str | None:
+        """Encode an image file to base64 for backend multimodal endpoints."""
+        try:
+            if not path:
+                return None
+            ext = os.path.splitext(path)[1].lower()
+            # Backend image parser expects standard raster formats.
+            allowed_exts = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}
+            if ext not in allowed_exts:
+                self.controller.bubble(
+                    "AI ChatBot",
+                    f"⚠️ Unsupported image format for backend multimodal API: {os.path.basename(path)}"
+                )
+                return None
+            with open(path, "rb") as f:
+                return base64.b64encode(f.read()).decode("utf-8")
+        except Exception as e:
+            self.controller.bubble("AI ChatBot", f"⚠️ Failed to read image attachment: {e}")
+            return None
+
+    def _collect_request_images_base64(self) -> list[str]:
+        """Collect and encode currently attached images from composer."""
+        try:
+            if not hasattr(self.composer, "get_all_image_attachments"):
+                return []
+            paths = self.composer.get_all_image_attachments() or []
+        except Exception:
+            return []
+
+        encoded: list[str] = []
+        for path in paths:
+            b64 = self._encode_image_file_to_base64(path)
+            if b64:
+                encoded.append(b64)
+        return encoded
+
 
     def _retry_last_send(self):
         """Re-send the last failed user message with its original mode."""
@@ -2726,12 +3397,13 @@ class OneChatPage(QWidget):
                 return
             mode = self._pending_retry.get("mode")
             text = self._pending_retry.get("text", "")
+            images = self._pending_retry.get("images") or []
             bub = self._pending_retry.get("bubble")
             if bub:
                 bub.clear_retry()
             # reset so در _append_bubble دوباره bubble نگه‌داری شود
-            self._pending_retry = {"mode": mode, "text": text, "bubble": None}
-            self._send_with_mode(text, mode)
+            self._pending_retry = {"mode": mode, "text": text, "images": images, "bubble": None}
+            self._send_with_mode(text, mode, retry_images=images)
         except Exception:
             pass
 
@@ -4581,7 +5253,13 @@ class OneChatPage(QWidget):
 
         self.composer.cancelClicked.connect(on_cancel)
 
-    def _send_with_mode(self, text: str, mode: str, modality: str = None):
+    def _send_with_mode(
+        self,
+        text: str,
+        mode: str,
+        modality: str = None,
+        retry_images: list[str] | None = None,
+    ):
         """
         ارسال بر اساس مود انتخاب شده.
         - اگر درخواست fail شود، روی آخرین حباب کاربر دکمه Retry ظاهر می‌شود.
@@ -4594,11 +5272,16 @@ class OneChatPage(QWidget):
             if not is_active_backend_configured():
                 self.controller.bubble("AI ChatBot", "❌ AI backend is not configured. Access denied.")
                 return
-        if not text and mode in ("Chat", "Search"):
+        images_b64 = list(retry_images or []) if retry_images is not None else self._collect_request_images_base64()
+        has_images = bool(images_b64)
+
+        if not text and mode == "Chat" and not has_images:
+            return
+        if not text and mode == "Search":
             return
 
         sent_text = (text or "").strip()
-        self._pending_retry = {"mode": mode, "text": sent_text, "bubble": None}
+        self._pending_retry = {"mode": mode, "text": sent_text, "images": images_b64, "bubble": None}
 
         print(f"\n[MODE] {mode} | session_id={self.controller.session_id!r}")
         if sent_text:
@@ -4638,13 +5321,18 @@ class OneChatPage(QWidget):
             print("[CHAT] Parsed JSON:", json.dumps(resp, ensure_ascii=False, indent=2))
             self._log_irannobat_usage_from_resp(resp)   # ✅ NEW
             _clear_retry_if("Chat")
+            if has_images and hasattr(self.composer, "clear_image_attachments"):
+                self.composer.clear_image_attachments()
             self.controller.handle_chat_response(resp)
 
 
         if mode == "Chat":
-            if not sent_text:
+            if not sent_text and not has_images:
                 return
-            self.controller.bubble("You", sent_text)
+            user_line = sent_text if sent_text else "(image only)"
+            if has_images:
+                user_line = f"{user_line}\n🖼️ Attached image(s): {len(images_b64)}"
+            self.controller.bubble("You", user_line)
             # پاک‌کردن جعبه در Chat
             self.composer.box.clear()
 
@@ -4653,6 +5341,8 @@ class OneChatPage(QWidget):
                     payload = {"session_id": self.controller.session_id, "user_message": sent_text}
                 else:
                     payload = {"user_message": sent_text}
+                if has_images:
+                    payload["images"] = images_b64
                 print(f"[CHAT] POST {URL_CHAT}\n[CHAT] Payload:", json.dumps(payload, ensure_ascii=False))
                 r = requests.post(URL_CHAT, json=payload, timeout=300)
                 print(f"[CHAT] Status={r.status_code}\n[CHAT] Response text:\n{r.text}")
@@ -4667,6 +5357,8 @@ class OneChatPage(QWidget):
             print("[REPORT] Parsed JSON:", json.dumps(resp, ensure_ascii=False, indent=2))
             self._log_irannobat_usage_from_resp(resp)   # ✅ NEW
             _clear_retry_if("Report")
+            if has_images and hasattr(self.composer, "clear_image_attachments"):
+                self.composer.clear_image_attachments()
 
             sid_new = resp.get("session_id")
             if sid_new:
@@ -4689,7 +5381,10 @@ class OneChatPage(QWidget):
 
 
         if mode == "Report":
-            self.controller.bubble("You (Report)", sent_text or "(session-based)")
+            report_user_line = sent_text or "(session-based)"
+            if has_images:
+                report_user_line = f"{report_user_line}\n🖼️ Attached image(s): {len(images_b64)}"
+            self.controller.bubble("You (Report)", report_user_line)
 
 
             # Inside the if mode == "Report": section of _send_with_mode
@@ -4716,6 +5411,8 @@ class OneChatPage(QWidget):
                         pass
                 if self.controller.session_id:
                     payload["session_id"] = self.controller.session_id
+                if has_images:
+                    payload["images"] = images_b64
                 try:
                     gpu_id = int(os.environ.get("PACS_AI_GPU", "").strip() or 0)
                     payload["gpu_id"] = gpu_id
