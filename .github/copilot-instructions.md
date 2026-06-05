@@ -1,10 +1,10 @@
 ﻿# AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.2.0 (2026-06-02) — Major release: v3.2.0 production milestone. See `docs/releases/VERSION_3.2.0_RELEASE.md`.
+**Current Stable Version:** v3.2.1 (2026-06-05) — Minor release: v3.2.1 production updates. See `docs/releases/VERSION_3.2.1_RELEASE.md`.
+
+**Previous Stable:** v3.2.0 (2026-06-02) — Major release: v3.2.0 production milestone. See `docs/releases/VERSION_3.2.0_RELEASE.md`.
 
 **Previous Stable:** v3.1.9 (2026-06-02) — Minor release: v3.1.9 production updates. See `docs/releases/VERSION_3.1.9_RELEASE.md`.
-
-**Previous Stable:** v3.1.8 (2026-06-02) — Minor release: v3.1.8 production updates. See `docs/releases/VERSION_3.1.8_RELEASE.md`.
 
 **Previous Stable:** v3.0.7 (2026-05-19) — Stable backup release checkpoint for the current validated beta branch state. See `docs/releases/VERSION_3.0.7_RELEASE.md`.
 

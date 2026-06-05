@@ -1,0 +1,2417 @@
+[
+ {
+  "t": 1780649401.942706,
+  "rel_ms": 589.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=open_request t_ms=0.7 all_studies=1 patient_id=44429 report_status=pending source=server"
+ },
+ {
+  "t": 1780649401.94288,
+  "rel_ms": 589.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=open_request t_ms=0.800 patient_id=44429 source=server report_status=pending all_studies=1"
+ },
+ {
+  "t": 1780649401.944368,
+  "rel_ms": 591.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=study_path_ready t_ms=2.3 is_local=False is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\user_data"
+ },
+ {
+  "t": 1780649401.944543,
+  "rel_ms": 591.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=study_path_ready t_ms=2.500 patient_id=44429 is_local=False source=server is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs cod"
+ },
+ {
+  "t": 1780649402.472676,
+  "rel_ms": 1119.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=tab_created t_ms=530.7 is_local=False patient_id=44429 source=server"
+ },
+ {
+  "t": 1780649402.47277,
+  "rel_ms": 1119.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=tab_created t_ms=530.700 patient_id=44429 is_local=False source=server"
+ },
+ {
+  "t": 1780649402.472946,
+  "rel_ms": 1119.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=waiting_for_first_series_signal t_ms=530.9 is_local=False patient_id=44429 source=server"
+ },
+ {
+  "t": 1780649402.473033,
+  "rel_ms": 1119.7,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=waiting_for_first_series_signal t_ms=531.000 patient_id=44429 is_local=False source=server"
+ },
+ {
+  "t": 1780649402.711396,
+  "rel_ms": 1358.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=first_series_visible t_ms=769.4 is_local=False patient_id=44429 pending_attachments=0 pending_right_panel=0 pending_series_info=0 "
+ },
+ {
+  "t": 1780649402.711583,
+  "rel_ms": 1358.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=first_series_visible t_ms=769.500 patient_id=44429 is_local=False source=server pending_right_panel=0 pending_series_info=0 pendin"
+ },
+ {
+  "t": 1780649405.826231,
+  "rel_ms": 4472.9,
+  "log": "app",
+  "tag": "queue",
+  "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780303331018.86238 series_count=10 priority=High"
+ },
+ {
+  "t": 1780649405.831213,
+  "rel_ms": 4477.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=thumbnail_stubs_scheduled t_ms=3889.2 all_studies=1 is_local=False patient_id=44429 series_count=10 source=server"
+ },
+ {
+  "t": 1780649405.831326,
+  "rel_ms": 4478.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=thumbnail_stubs_scheduled t_ms=3889.300 patient_id=44429 is_local=False source=server series_count=10 all_studies=1"
+ },
+ {
+  "t": 1780649405.832357,
+  "rel_ms": 4479.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=download_manager_wired t_ms=3890.3 is_local=False patient_id=44429 series_count=10 source=server"
+ },
+ {
+  "t": 1780649405.83246,
+  "rel_ms": 4479.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=download_manager_wired t_ms=3890.400 patient_id=44429 is_local=False source=server series_count=10"
+ },
+ {
+  "t": 1780649405.83264,
+  "rel_ms": 4479.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=ui_tasks_scheduled t_ms=3890.6 is_local=False patient_id=44429 right_panel_requested=True series_info_requested=True source=server"
+ },
+ {
+  "t": 1780649405.832731,
+  "rel_ms": 4479.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=ui_tasks_scheduled t_ms=3890.700 patient_id=44429 is_local=False source=server right_panel_requested=True series_info_requested=Tr"
+ },
+ {
+  "t": 1780649405.833335,
+  "rel_ms": 4480.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=background_setup_started t_ms=3891.3 is_local=False patient_id=44429 source=server"
+ },
+ {
+  "t": 1780649405.833445,
+  "rel_ms": 4480.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=background_setup_started t_ms=3891.400 patient_id=44429 is_local=False source=server"
+ },
+ {
+  "t": 1780649405.834326,
+  "rel_ms": 4481.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=open_hot_path_complete t_ms=3892.3 is_local=False patient_id=44429 source=server"
+ },
+ {
+  "t": 1780649405.834433,
+  "rel_ms": 4481.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=open_hot_path_complete t_ms=3892.400 patient_id=44429 is_local=False source=server"
+ },
+ {
+  "t": 1780649405.834702,
+  "rel_ms": 4481.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=attachments_start t_ms=3892.7 is_local=False patient_id=44429 source=server trigger=immediate"
+ },
+ {
+  "t": 1780649405.834816,
+  "rel_ms": 4481.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=attachments_start t_ms=3892.800 patient_id=44429 is_local=False source=server trigger=immediate"
+ },
+ {
+  "t": 1780649405.835654,
+  "rel_ms": 4482.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=background_series_info_pushed t_ms=3893.6 is_local=False patient_id=44429 series_count=10 source=server"
+ },
+ {
+  "t": 1780649405.835763,
+  "rel_ms": 4482.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=background_series_info_pushed t_ms=3893.700 patient_id=44429 is_local=False source=server series_count=10"
+ },
+ {
+  "t": 1780649405.837992,
+  "rel_ms": 4484.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=series_info_entry t_ms=3896.0 is_local=False patient_id=44429 source=server"
+ },
+ {
+  "t": 1780649405.83812,
+  "rel_ms": 4484.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=series_info_entry t_ms=3896.100 patient_id=44429 is_local=False source=server"
+ },
+ {
+  "t": 1780649405.839468,
+  "rel_ms": 4486.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_begin t_ms=3897.4 is_local=False patient_id=44429 source=server"
+ },
+ {
+  "t": 1780649405.839598,
+  "rel_ms": 4486.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_begin t_ms=3897.500 patient_id=44429 is_local=False source=server"
+ },
+ {
+  "t": 1780649405.843443,
+  "rel_ms": 4490.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_cache_gate t_ms=3901.4 grew=1 is_local=False local_thumbs=0 patient_id=44429 server_series=10 source=server"
+ },
+ {
+  "t": 1780649405.843549,
+  "rel_ms": 4490.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_cache_gate t_ms=3901.500 patient_id=44429 is_local=False source=server local_thumbs=0 server_series=10 grew=1"
+ },
+ {
+  "t": 1780649405.844129,
+  "rel_ms": 4490.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_socket_start t_ms=3902.1 host=192.168.2.222 is_local=False patient_id=44429 source=server"
+ },
+ {
+  "t": 1780649405.844235,
+  "rel_ms": 4490.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_socket_start t_ms=3902.200 patient_id=44429 is_local=False source=server host=192.168.2.222"
+ },
+ {
+  "t": 1780649405.953269,
+  "rel_ms": 4599.9,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "\ud83d\ude80 Download subprocess started (pid=128792) for JUKAR  ALI"
+ },
+ {
+  "t": 1780649406.121879,
+  "rel_ms": 4768.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_socket_done t_ms=4179.9 is_local=False patient_id=44429 source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649406.121984,
+  "rel_ms": 4768.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_socket_done t_ms=4179.900 patient_id=44429 is_local=False source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649406.122157,
+  "rel_ms": 4768.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_display_input t_ms=4180.1 is_local=False patient_id=44429 source=server thumbnail_count=10 with_file_path=10 with_inli"
+ },
+ {
+  "t": 1780649406.122248,
+  "rel_ms": 4768.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_display_input t_ms=4180.200 patient_id=44429 is_local=False source=server thumbnail_count=10 with_file_path=10 with_in"
+ },
+ {
+  "t": 1780649406.122471,
+  "rel_ms": 4769.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_display_done t_ms=4180.4 is_local=False patient_id=44429 source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649406.122614,
+  "rel_ms": 4769.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_display_done t_ms=4180.600 patient_id=44429 is_local=False source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649409.337117,
+  "rel_ms": 7983.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=attachments_done t_ms=7395.1 is_local=False patient_id=44429 source=server trigger=immediate worker_ms=3502.4"
+ },
+ {
+  "t": 1780649409.337344,
+  "rel_ms": 7984.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=attachments_done t_ms=7395.300 patient_id=44429 is_local=False source=server trigger=immediate worker_ms=3502.400"
+ },
+ {
+  "t": 1780649409.604171,
+  "rel_ms": 8250.8,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "cwd=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version"
+ },
+ {
+  "t": 1780649409.605709,
+  "rel_ms": 8252.4,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Imports OK (0.002s)"
+ },
+ {
+  "t": 1780649409.611138,
+  "rel_ms": 8257.8,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] DatabaseManager ready (0.007s)"
+ },
+ {
+  "t": 1780649409.613239,
+  "rel_ms": 8259.9,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Starting asyncio event loop (0.009s since process start)"
+ },
+ {
+  "t": 1780649409.730637,
+  "rel_ms": 8377.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649409.968981,
+  "rel_ms": 8615.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_begin t_ms=8026.9 is_local=False patient_id=44429 source=server"
+ },
+ {
+  "t": 1780649409.969161,
+  "rel_ms": 8615.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_begin t_ms=8027.100 patient_id=44429 is_local=False source=server"
+ },
+ {
+  "t": 1780649409.971074,
+  "rel_ms": 8617.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_cache_gate t_ms=8029.0 grew=0 is_local=False local_thumbs=10 patient_id=44429 server_series=10 source=server"
+ },
+ {
+  "t": 1780649409.971322,
+  "rel_ms": 8618.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_cache_gate t_ms=8029.300 patient_id=44429 is_local=False source=server local_thumbs=10 server_series=10 grew=0"
+ },
+ {
+  "t": 1780649409.971669,
+  "rel_ms": 8618.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_cache_hit t_ms=8029.6 is_local=False patient_id=44429 source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649409.9718,
+  "rel_ms": 8618.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780303331018.86238 phase=right_panel_cache_hit t_ms=8029.800 patient_id=44429 is_local=False source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649410.163875,
+  "rel_ms": 8810.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.55 query_type=download_write inserted=5 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780649410.164366,
+  "rel_ms": 8811.0,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=61.91 query_type=download_write inserted=5 chunk_count=1"
+ },
+ {
+  "t": 1780649410.168008,
+  "rel_ms": 8814.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649410.1964,
+  "rel_ms": 8843.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=101 downloaded=5 total=5 corr_session=sess-0a0edbda6143 corr_mono_ms=412341760.207"
+ },
+ {
+  "t": 1780649410.592452,
+  "rel_ms": 9239.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649410.854483,
+  "rel_ms": 9501.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=1 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412342418.277"
+ },
+ {
+  "t": 1780649410.948321,
+  "rel_ms": 9595.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649411.200286,
+  "rel_ms": 9846.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=11 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412342764.074"
+ },
+ {
+  "t": 1780649411.354872,
+  "rel_ms": 10001.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649411.603949,
+  "rel_ms": 10250.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=21 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412343167.781"
+ },
+ {
+  "t": 1780649411.727368,
+  "rel_ms": 10374.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649411.977302,
+  "rel_ms": 10623.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=31 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412343541.131"
+ },
+ {
+  "t": 1780649412.115796,
+  "rel_ms": 10762.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649412.364346,
+  "rel_ms": 11011.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=41 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412343928.169"
+ },
+ {
+  "t": 1780649412.547505,
+  "rel_ms": 11194.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649412.795991,
+  "rel_ms": 11442.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=51 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412344359.770"
+ },
+ {
+  "t": 1780649412.951284,
+  "rel_ms": 11597.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649413.1995,
+  "rel_ms": 11846.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=61 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412344763.318"
+ },
+ {
+  "t": 1780649413.36757,
+  "rel_ms": 12014.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649413.613162,
+  "rel_ms": 12259.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=71 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412345176.969"
+ },
+ {
+  "t": 1780649413.780063,
+  "rel_ms": 12426.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649413.964426,
+  "rel_ms": 12611.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=91 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412345528.242"
+ },
+ {
+  "t": 1780649414.184844,
+  "rel_ms": 12831.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=17.08 query_type=download_write inserted=91 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780649414.184958,
+  "rel_ms": 12831.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=337.47 query_type=download_write inserted=91 chunk_count=1"
+ },
+ {
+  "t": 1780649414.186848,
+  "rel_ms": 12833.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649414.569716,
+  "rel_ms": 13216.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649414.818469,
+  "rel_ms": 13465.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=1 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412346382.280"
+ },
+ {
+  "t": 1780649414.973496,
+  "rel_ms": 13620.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649415.234678,
+  "rel_ms": 13881.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=11 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412346798.498"
+ },
+ {
+  "t": 1780649415.421608,
+  "rel_ms": 14068.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649415.68454,
+  "rel_ms": 14331.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=21 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412347248.345"
+ },
+ {
+  "t": 1780649415.853858,
+  "rel_ms": 14500.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649416.105264,
+  "rel_ms": 14751.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=31 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412347669.087"
+ },
+ {
+  "t": 1780649416.259683,
+  "rel_ms": 14906.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649416.510841,
+  "rel_ms": 15157.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=41 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412348074.636"
+ },
+ {
+  "t": 1780649416.648946,
+  "rel_ms": 15295.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649416.897288,
+  "rel_ms": 15543.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=51 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412348461.059"
+ },
+ {
+  "t": 1780649417.051485,
+  "rel_ms": 15698.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649417.314456,
+  "rel_ms": 15961.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=61 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412348878.267"
+ },
+ {
+  "t": 1780649417.439703,
+  "rel_ms": 16086.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649417.690522,
+  "rel_ms": 16337.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=71 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412349254.344"
+ },
+ {
+  "t": 1780649417.846796,
+  "rel_ms": 16493.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649418.11063,
+  "rel_ms": 16757.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=81 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412349674.453"
+ },
+ {
+  "t": 1780649418.203739,
+  "rel_ms": 16850.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649418.465061,
+  "rel_ms": 17111.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=91 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412350028.873"
+ },
+ {
+  "t": 1780649418.563181,
+  "rel_ms": 17209.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649418.826555,
+  "rel_ms": 17473.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=101 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412350390.390"
+ },
+ {
+  "t": 1780649418.904077,
+  "rel_ms": 17550.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649419.154492,
+  "rel_ms": 17801.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=111 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412350718.311"
+ },
+ {
+  "t": 1780649419.260892,
+  "rel_ms": 17907.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649419.511033,
+  "rel_ms": 18157.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=121 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412351074.865"
+ },
+ {
+  "t": 1780649419.617119,
+  "rel_ms": 18263.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649419.864831,
+  "rel_ms": 18511.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=131 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412351428.652"
+ },
+ {
+  "t": 1780649420.019745,
+  "rel_ms": 18666.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649420.254349,
+  "rel_ms": 18901.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=141 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412351818.168"
+ },
+ {
+  "t": 1780649420.378972,
+  "rel_ms": 19025.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649420.644406,
+  "rel_ms": 19291.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=151 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412352208.239"
+ },
+ {
+  "t": 1780649420.736993,
+  "rel_ms": 19383.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649420.999897,
+  "rel_ms": 19646.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=161 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412352563.721"
+ },
+ {
+  "t": 1780649421.075076,
+  "rel_ms": 19721.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649421.276918,
+  "rel_ms": 19923.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=182 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412352840.744"
+ },
+ {
+  "t": 1780649421.81124,
+  "rel_ms": 20457.9,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=21.66 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780649421.822674,
+  "rel_ms": 20469.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.87 query_type=download_write inserted=62 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780649421.822813,
+  "rel_ms": 20469.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=589.33 query_type=download_write inserted=182 chunk_count=2"
+ },
+ {
+  "t": 1780649421.825353,
+  "rel_ms": 20472.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649422.163148,
+  "rel_ms": 20809.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649422.412453,
+  "rel_ms": 21059.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=1 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412353976.275"
+ },
+ {
+  "t": 1780649422.505621,
+  "rel_ms": 21152.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649422.755284,
+  "rel_ms": 21401.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=11 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412354319.089"
+ },
+ {
+  "t": 1780649422.909566,
+  "rel_ms": 21556.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649423.164804,
+  "rel_ms": 21811.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=21 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412354728.620"
+ },
+ {
+  "t": 1780649423.292934,
+  "rel_ms": 21939.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649423.539113,
+  "rel_ms": 22185.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=31 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412355102.933"
+ },
+ {
+  "t": 1780649423.694052,
+  "rel_ms": 22340.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649423.942965,
+  "rel_ms": 22589.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=41 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412355506.780"
+ },
+ {
+  "t": 1780649424.095764,
+  "rel_ms": 22742.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649424.342565,
+  "rel_ms": 22989.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=51 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412355906.373"
+ },
+ {
+  "t": 1780649424.511559,
+  "rel_ms": 23158.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649424.77473,
+  "rel_ms": 23421.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=61 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412356338.487"
+ },
+ {
+  "t": 1780649424.898446,
+  "rel_ms": 23545.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649425.148932,
+  "rel_ms": 23795.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=71 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412356712.725"
+ },
+ {
+  "t": 1780649425.303217,
+  "rel_ms": 23949.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649425.487796,
+  "rel_ms": 24134.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=91 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412357051.507"
+ },
+ {
+  "t": 1780649425.690165,
+  "rel_ms": 24336.8,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.58 query_type=download_write inserted=91 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780649425.690355,
+  "rel_ms": 24337.0,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=320.39 query_type=download_write inserted=91 chunk_count=1"
+ },
+ {
+  "t": 1780649425.702024,
+  "rel_ms": 24348.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649426.075703,
+  "rel_ms": 24722.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649426.342429,
+  "rel_ms": 24989.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=1 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412357906.249"
+ },
+ {
+  "t": 1780649426.418659,
+  "rel_ms": 25065.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649426.664583,
+  "rel_ms": 25311.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=11 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412358228.411"
+ },
+ {
+  "t": 1780649426.790534,
+  "rel_ms": 25437.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649427.038961,
+  "rel_ms": 25685.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=21 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412358602.768"
+ },
+ {
+  "t": 1780649427.208468,
+  "rel_ms": 25855.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649427.440261,
+  "rel_ms": 26086.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=31 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412359004.079"
+ },
+ {
+  "t": 1780649427.579601,
+  "rel_ms": 26226.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649427.829411,
+  "rel_ms": 26476.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=41 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412359393.223"
+ },
+ {
+  "t": 1780649427.939516,
+  "rel_ms": 26586.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649428.203566,
+  "rel_ms": 26850.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=51 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412359767.389"
+ },
+ {
+  "t": 1780649428.313631,
+  "rel_ms": 26960.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649428.577488,
+  "rel_ms": 27224.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=61 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412360141.297"
+ },
+ {
+  "t": 1780649428.668457,
+  "rel_ms": 27315.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649428.914812,
+  "rel_ms": 27561.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=71 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412360478.639"
+ },
+ {
+  "t": 1780649429.010421,
+  "rel_ms": 27657.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649429.257201,
+  "rel_ms": 27903.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=81 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412360821.012"
+ },
+ {
+  "t": 1780649429.413218,
+  "rel_ms": 28059.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649429.664011,
+  "rel_ms": 28310.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=91 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412361227.811"
+ },
+ {
+  "t": 1780649429.803131,
+  "rel_ms": 28449.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649430.051756,
+  "rel_ms": 28698.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=101 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412361615.581"
+ },
+ {
+  "t": 1780649430.175123,
+  "rel_ms": 28821.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649430.439933,
+  "rel_ms": 29086.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=111 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412362003.756"
+ },
+ {
+  "t": 1780649430.533109,
+  "rel_ms": 29179.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649430.798944,
+  "rel_ms": 29445.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=121 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412362362.760"
+ },
+ {
+  "t": 1780649430.876694,
+  "rel_ms": 29523.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649431.138222,
+  "rel_ms": 29784.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=131 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412362702.052"
+ },
+ {
+  "t": 1780649431.230129,
+  "rel_ms": 29876.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649431.478848,
+  "rel_ms": 30125.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=141 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412363042.651"
+ },
+ {
+  "t": 1780649431.602838,
+  "rel_ms": 30249.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649431.833489,
+  "rel_ms": 30480.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=151 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412363397.307"
+ },
+ {
+  "t": 1780649432.004663,
+  "rel_ms": 30651.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649432.242643,
+  "rel_ms": 30889.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=161 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412363806.439"
+ },
+ {
+  "t": 1780649432.38211,
+  "rel_ms": 31028.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649432.632339,
+  "rel_ms": 31279.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=182 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412364196.133"
+ },
+ {
+  "t": 1780649433.116044,
+  "rel_ms": 31762.7,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.68 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780649433.131515,
+  "rel_ms": 31778.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.40 query_type=download_write inserted=62 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780649433.131626,
+  "rel_ms": 31778.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=576.65 query_type=download_write inserted=182 chunk_count=2"
+ },
+ {
+  "t": 1780649433.134151,
+  "rel_ms": 31780.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649433.48189,
+  "rel_ms": 32128.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649433.746436,
+  "rel_ms": 32393.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=1 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412365310.257"
+ },
+ {
+  "t": 1780649433.852767,
+  "rel_ms": 32499.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649434.098623,
+  "rel_ms": 32745.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=11 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412365662.432"
+ },
+ {
+  "t": 1780649434.220386,
+  "rel_ms": 32867.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649434.46258,
+  "rel_ms": 33109.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=21 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412366026.401"
+ },
+ {
+  "t": 1780649434.608958,
+  "rel_ms": 33255.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649434.864532,
+  "rel_ms": 33511.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=31 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412366428.340"
+ },
+ {
+  "t": 1780649434.997419,
+  "rel_ms": 33644.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649435.247406,
+  "rel_ms": 33894.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=41 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412366811.201"
+ },
+ {
+  "t": 1780649435.370975,
+  "rel_ms": 34017.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649435.624766,
+  "rel_ms": 34271.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=51 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412367188.605"
+ },
+ {
+  "t": 1780649435.821998,
+  "rel_ms": 34468.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649436.040257,
+  "rel_ms": 34686.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=61 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412367604.076"
+ },
+ {
+  "t": 1780649436.197445,
+  "rel_ms": 34844.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649436.446625,
+  "rel_ms": 35093.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=71 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412368010.441"
+ },
+ {
+  "t": 1780649436.569474,
+  "rel_ms": 35216.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649436.742966,
+  "rel_ms": 35389.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=91 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412368306.794"
+ },
+ {
+  "t": 1780649436.945881,
+  "rel_ms": 35592.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.04 query_type=download_write inserted=91 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780649436.94599,
+  "rel_ms": 35592.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=307.04 query_type=download_write inserted=91 chunk_count=1"
+ },
+ {
+  "t": 1780649436.948359,
+  "rel_ms": 35595.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649437.332014,
+  "rel_ms": 35978.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649437.593344,
+  "rel_ms": 36240.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=1 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412369157.176"
+ },
+ {
+  "t": 1780649437.71561,
+  "rel_ms": 36362.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649437.963514,
+  "rel_ms": 36610.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=11 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412369527.339"
+ },
+ {
+  "t": 1780649438.087363,
+  "rel_ms": 36734.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649438.33817,
+  "rel_ms": 36984.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=21 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412369901.952"
+ },
+ {
+  "t": 1780649438.459874,
+  "rel_ms": 37106.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649438.71067,
+  "rel_ms": 37357.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=31 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412370274.481"
+ },
+ {
+  "t": 1780649438.835222,
+  "rel_ms": 37481.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649439.083885,
+  "rel_ms": 37730.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=41 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412370647.675"
+ },
+ {
+  "t": 1780649439.20698,
+  "rel_ms": 37853.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649439.464765,
+  "rel_ms": 38111.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=51 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412371028.598"
+ },
+ {
+  "t": 1780649439.627026,
+  "rel_ms": 38273.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649439.880217,
+  "rel_ms": 38526.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=61 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412371444.047"
+ },
+ {
+  "t": 1780649440.034549,
+  "rel_ms": 38681.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649440.315798,
+  "rel_ms": 38962.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=71 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412371879.615"
+ },
+ {
+  "t": 1780649440.422422,
+  "rel_ms": 39069.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649440.703111,
+  "rel_ms": 39349.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=81 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412372266.935"
+ },
+ {
+  "t": 1780649440.825835,
+  "rel_ms": 39472.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649441.059942,
+  "rel_ms": 39706.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=91 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412372623.771"
+ },
+ {
+  "t": 1780649441.185138,
+  "rel_ms": 39831.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649441.431462,
+  "rel_ms": 40078.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=101 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412372995.290"
+ },
+ {
+  "t": 1780649441.573462,
+  "rel_ms": 40220.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649441.820262,
+  "rel_ms": 40466.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=111 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412373384.080"
+ },
+ {
+  "t": 1780649441.944641,
+  "rel_ms": 40591.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649442.194174,
+  "rel_ms": 40840.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=121 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412373757.978"
+ },
+ {
+  "t": 1780649442.333456,
+  "rel_ms": 40980.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649442.582162,
+  "rel_ms": 41228.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=131 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412374145.987"
+ },
+ {
+  "t": 1780649442.7214,
+  "rel_ms": 41368.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649442.983876,
+  "rel_ms": 41630.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=141 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412374547.698"
+ },
+ {
+  "t": 1780649443.124799,
+  "rel_ms": 41771.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649443.364382,
+  "rel_ms": 42011.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=151 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412374928.209"
+ },
+ {
+  "t": 1780649443.524772,
+  "rel_ms": 42171.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649443.771976,
+  "rel_ms": 42418.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=161 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412375335.800"
+ },
+ {
+  "t": 1780649444.205144,
+  "rel_ms": 42851.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649444.252565,
+  "rel_ms": 42899.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=175 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412375816.392"
+ },
+ {
+  "t": 1780649444.457908,
+  "rel_ms": 43104.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=402 downloaded=182 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412376021.737"
+ },
+ {
+  "t": 1780649444.958303,
+  "rel_ms": 43604.9,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.50 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780649444.973825,
+  "rel_ms": 43620.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.09 query_type=download_write inserted=62 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780649444.973966,
+  "rel_ms": 43620.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=591.80 query_type=download_write inserted=182 chunk_count=2"
+ },
+ {
+  "t": 1780649445.02716,
+  "rel_ms": 43673.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649445.404231,
+  "rel_ms": 44050.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649445.665236,
+  "rel_ms": 44311.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=1 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412377229.068"
+ },
+ {
+  "t": 1780649445.779343,
+  "rel_ms": 44426.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649446.045951,
+  "rel_ms": 44692.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=11 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412377609.646"
+ },
+ {
+  "t": 1780649446.154524,
+  "rel_ms": 44801.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649446.415775,
+  "rel_ms": 45062.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=21 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412377979.539"
+ },
+ {
+  "t": 1780649446.527584,
+  "rel_ms": 45174.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.02 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649446.776789,
+  "rel_ms": 45423.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=31 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412378340.566"
+ },
+ {
+  "t": 1780649446.899976,
+  "rel_ms": 45546.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649447.146782,
+  "rel_ms": 45793.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=41 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412378710.598"
+ },
+ {
+  "t": 1780649447.267186,
+  "rel_ms": 45913.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649447.533716,
+  "rel_ms": 46180.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=51 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412379097.549"
+ },
+ {
+  "t": 1780649447.673381,
+  "rel_ms": 46320.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649447.907934,
+  "rel_ms": 46554.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=61 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412379471.719"
+ },
+ {
+  "t": 1780649448.075446,
+  "rel_ms": 46722.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649448.33954,
+  "rel_ms": 46986.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=71 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412379903.373"
+ },
+ {
+  "t": 1780649448.463181,
+  "rel_ms": 47109.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649448.633435,
+  "rel_ms": 47280.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=501 downloaded=91 total=91 corr_session=sess-0a0edbda6143 corr_mono_ms=412380197.230"
+ },
+ {
+  "t": 1780649448.808481,
+  "rel_ms": 47455.1,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.88 query_type=download_write inserted=91 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780649448.808589,
+  "rel_ms": 47455.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=279.48 query_type=download_write inserted=91 chunk_count=1"
+ },
+ {
+  "t": 1780649448.810814,
+  "rel_ms": 47457.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649449.178699,
+  "rel_ms": 47825.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649449.429077,
+  "rel_ms": 48075.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=1 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412380992.882"
+ },
+ {
+  "t": 1780649449.582734,
+  "rel_ms": 48229.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649449.799001,
+  "rel_ms": 48445.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=11 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412381362.807"
+ },
+ {
+  "t": 1780649450.523261,
+  "rel_ms": 49169.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649450.740726,
+  "rel_ms": 49387.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=21 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412382304.557"
+ },
+ {
+  "t": 1780649450.895035,
+  "rel_ms": 49541.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649451.158062,
+  "rel_ms": 49804.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=31 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412382721.878"
+ },
+ {
+  "t": 1780649451.264498,
+  "rel_ms": 49911.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649451.528711,
+  "rel_ms": 50175.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=41 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412383092.500"
+ },
+ {
+  "t": 1780649451.652036,
+  "rel_ms": 50298.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649451.901398,
+  "rel_ms": 50548.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=51 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412383465.223"
+ },
+ {
+  "t": 1780649452.073013,
+  "rel_ms": 50719.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649452.321679,
+  "rel_ms": 50968.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=61 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412383885.482"
+ },
+ {
+  "t": 1780649452.447788,
+  "rel_ms": 51094.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649452.695289,
+  "rel_ms": 51341.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=71 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412384259.097"
+ },
+ {
+  "t": 1780649452.835778,
+  "rel_ms": 51482.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649453.084091,
+  "rel_ms": 51730.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=81 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412384647.900"
+ },
+ {
+  "t": 1780649453.207501,
+  "rel_ms": 51854.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649453.456245,
+  "rel_ms": 52102.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=91 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412385020.058"
+ },
+ {
+  "t": 1780649453.595506,
+  "rel_ms": 52242.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649453.857161,
+  "rel_ms": 52503.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=101 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412385420.981"
+ },
+ {
+  "t": 1780649453.980575,
+  "rel_ms": 52627.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649454.210683,
+  "rel_ms": 52857.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=111 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412385774.503"
+ },
+ {
+  "t": 1780649454.380462,
+  "rel_ms": 53027.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649454.642846,
+  "rel_ms": 53289.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=121 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412386206.668"
+ },
+ {
+  "t": 1780649454.73634,
+  "rel_ms": 53383.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649455.002103,
+  "rel_ms": 53648.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=131 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412386565.897"
+ },
+ {
+  "t": 1780649455.127632,
+  "rel_ms": 53774.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649455.363208,
+  "rel_ms": 54009.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=141 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412386927.039"
+ },
+ {
+  "t": 1780649455.486214,
+  "rel_ms": 54132.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649455.746963,
+  "rel_ms": 54393.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=151 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412387310.781"
+ },
+ {
+  "t": 1780649455.873742,
+  "rel_ms": 54520.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649456.106449,
+  "rel_ms": 54753.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=161 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412387670.203"
+ },
+ {
+  "t": 1780649456.246114,
+  "rel_ms": 54892.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649456.463739,
+  "rel_ms": 55110.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=502 downloaded=182 total=182 corr_session=sess-0a0edbda6143 corr_mono_ms=412388027.569"
+ },
+ {
+  "t": 1780649456.966631,
+  "rel_ms": 55613.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=3.89 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780649456.979837,
+  "rel_ms": 55626.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.90 query_type=download_write inserted=62 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780649456.979972,
+  "rel_ms": 55626.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=562.82 query_type=download_write inserted=182 chunk_count=2"
+ },
+ {
+  "t": 1780649456.982246,
+  "rel_ms": 55628.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649457.075143,
+  "rel_ms": 55721.8,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.54 query_type=download_write inserted=1 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780649457.075277,
+  "rel_ms": 55721.9,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=28.78 query_type=download_write inserted=1 chunk_count=1"
+ },
+ {
+  "t": 1780649457.26962,
+  "rel_ms": 55916.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=9001 downloaded=1 total=1 corr_session=sess-0a0edbda6143 corr_mono_ms=412388833.464"
+ },
+ {
+  "t": 1780649465.452402,
+  "rel_ms": 64099.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=open_request t_ms=0.4 all_studies=1 patient_id=44648 report_status=pending source=server"
+ },
+ {
+  "t": 1780649465.452519,
+  "rel_ms": 64099.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=open_request t_ms=0.500 patient_id=44648 source=server report_status=pending all_studies=1"
+ },
+ {
+  "t": 1780649465.453657,
+  "rel_ms": 64100.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=study_path_ready t_ms=1.7 is_local=False is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\user_data"
+ },
+ {
+  "t": 1780649465.453762,
+  "rel_ms": 64100.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=study_path_ready t_ms=1.800 patient_id=44648 is_local=False source=server is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs cod"
+ },
+ {
+  "t": 1780649465.788449,
+  "rel_ms": 64435.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=tab_created t_ms=336.5 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.788539,
+  "rel_ms": 64435.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=tab_created t_ms=336.600 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.788775,
+  "rel_ms": 64435.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=waiting_for_first_series_signal t_ms=336.8 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.788865,
+  "rel_ms": 64435.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=waiting_for_first_series_signal t_ms=336.900 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.912738,
+  "rel_ms": 64559.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=first_series_visible t_ms=460.7 is_local=False patient_id=44648 pending_attachments=0 pending_right_panel=0 pending_series_info=0 "
+ },
+ {
+  "t": 1780649465.91295,
+  "rel_ms": 64559.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=first_series_visible t_ms=461.000 patient_id=44648 is_local=False source=server pending_right_panel=0 pending_series_info=0 pendin"
+ },
+ {
+  "t": 1780649465.978103,
+  "rel_ms": 64624.7,
+  "log": "app",
+  "tag": "queue",
+  "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780384620318.86257 series_count=10 priority=High"
+ },
+ {
+  "t": 1780649465.98171,
+  "rel_ms": 64628.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=thumbnail_stubs_scheduled t_ms=529.7 all_studies=1 is_local=False patient_id=44648 series_count=10 source=server"
+ },
+ {
+  "t": 1780649465.981828,
+  "rel_ms": 64628.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=thumbnail_stubs_scheduled t_ms=529.800 patient_id=44648 is_local=False source=server series_count=10 all_studies=1"
+ },
+ {
+  "t": 1780649465.982809,
+  "rel_ms": 64629.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=download_manager_wired t_ms=530.8 is_local=False patient_id=44648 series_count=10 source=server"
+ },
+ {
+  "t": 1780649465.982896,
+  "rel_ms": 64629.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=download_manager_wired t_ms=530.900 patient_id=44648 is_local=False source=server series_count=10"
+ },
+ {
+  "t": 1780649465.983077,
+  "rel_ms": 64629.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=ui_tasks_scheduled t_ms=531.1 is_local=False patient_id=44648 right_panel_requested=True series_info_requested=True source=server"
+ },
+ {
+  "t": 1780649465.983167,
+  "rel_ms": 64629.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=ui_tasks_scheduled t_ms=531.200 patient_id=44648 is_local=False source=server right_panel_requested=True series_info_requested=Tru"
+ },
+ {
+  "t": 1780649465.983965,
+  "rel_ms": 64630.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=background_setup_started t_ms=532.0 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.984069,
+  "rel_ms": 64630.7,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=background_setup_started t_ms=532.100 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.984635,
+  "rel_ms": 64631.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=attachments_start t_ms=532.7 is_local=False patient_id=44648 source=server trigger=immediate"
+ },
+ {
+  "t": 1780649465.984733,
+  "rel_ms": 64631.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=attachments_start t_ms=532.700 patient_id=44648 is_local=False source=server trigger=immediate"
+ },
+ {
+  "t": 1780649465.984975,
+  "rel_ms": 64631.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=background_series_info_pushed t_ms=533.0 is_local=False patient_id=44648 series_count=10 source=server"
+ },
+ {
+  "t": 1780649465.985078,
+  "rel_ms": 64631.7,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=background_series_info_pushed t_ms=533.100 patient_id=44648 is_local=False source=server series_count=10"
+ },
+ {
+  "t": 1780649465.985303,
+  "rel_ms": 64631.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=open_hot_path_complete t_ms=533.3 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.985415,
+  "rel_ms": 64632.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=open_hot_path_complete t_ms=533.400 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.987293,
+  "rel_ms": 64633.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=series_info_entry t_ms=535.3 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.987406,
+  "rel_ms": 64634.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=series_info_entry t_ms=535.400 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.989604,
+  "rel_ms": 64636.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_begin t_ms=537.6 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.989727,
+  "rel_ms": 64636.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_begin t_ms=537.700 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.990421,
+  "rel_ms": 64637.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_cache_gate t_ms=538.4 grew=1 is_local=False local_thumbs=0 patient_id=44648 server_series=10 source=server"
+ },
+ {
+  "t": 1780649465.990523,
+  "rel_ms": 64637.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_cache_gate t_ms=538.500 patient_id=44648 is_local=False source=server local_thumbs=0 server_series=10 grew=1"
+ },
+ {
+  "t": 1780649465.992219,
+  "rel_ms": 64638.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_socket_start t_ms=540.2 host=192.168.2.222 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.99234,
+  "rel_ms": 64639.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_socket_start t_ms=540.300 patient_id=44648 is_local=False source=server host=192.168.2.222"
+ },
+ {
+  "t": 1780649466.095047,
+  "rel_ms": 64741.7,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "\ud83d\ude80 Download subprocess started (pid=236316) for ZIBA TALEBI"
+ },
+ {
+  "t": 1780649466.22937,
+  "rel_ms": 64876.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_socket_done t_ms=777.4 is_local=False patient_id=44648 source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649466.229573,
+  "rel_ms": 64876.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_socket_done t_ms=777.600 patient_id=44648 is_local=False source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649466.229783,
+  "rel_ms": 64876.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_display_input t_ms=777.8 is_local=False patient_id=44648 source=server thumbnail_count=10 with_file_path=10 with_inlin"
+ },
+ {
+  "t": 1780649466.229898,
+  "rel_ms": 64876.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_display_input t_ms=777.900 patient_id=44648 is_local=False source=server thumbnail_count=10 with_file_path=10 with_inl"
+ },
+ {
+  "t": 1780649466.230128,
+  "rel_ms": 64876.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_display_done t_ms=778.2 is_local=False patient_id=44648 source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649466.230235,
+  "rel_ms": 64876.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_display_done t_ms=778.200 patient_id=44648 is_local=False source=server thumbnail_count=10"
+ }
+]

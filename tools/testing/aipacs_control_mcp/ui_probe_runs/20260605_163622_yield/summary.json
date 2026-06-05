@@ -1,0 +1,5 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260605_163622_yield",
+ "restart": "skipped (YIELD_TEST_SKIP_RESTART=1)",
+ "exception": "Traceback (most recent call last):\n  File \"E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\same_study_yield_test.py\", line 234, in <module>\n    main()\n    ~~~~^^\n  File \"E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\same_study_yield_test.py\", line 118, in main\n    c = AipacsControlClient()\n  File \"E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\client.py\", line 48, in __init__\n    raise ConnectionError(\n    ...<3 lines>...\n    )\nConnectionError: cannot reach AI-PACS test server 'AIPACS_TEST_Dr_Alizadeh' (QLocalSocket::connectToServer: Invalid name). Is the app running with AIPACS_TEST_SERVER=1 ?\n"
+}

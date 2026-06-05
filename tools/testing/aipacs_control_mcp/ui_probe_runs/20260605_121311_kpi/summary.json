@@ -1,0 +1,13 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260605_121311_kpi",
+ "runs": {},
+ "restart": {
+  "stop": {
+   "ok": true,
+   "message": "closed gracefully"
+  },
+  "launch_ok": true
+ },
+ "fresh": [],
+ "error": "not enough fresh patients"
+}

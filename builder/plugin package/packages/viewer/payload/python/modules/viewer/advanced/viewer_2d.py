@@ -51,6 +51,36 @@ class ViewerType(enum.Enum):
     CORONAL = "Coronal"
 
 
+def _vtk_image_scalars_valid(img) -> bool:
+    """True when *img* is a vtkImageData with real, allocated scalars.
+
+    Production-crash guard (other-PC frozen build, 2026-06-05 evaluation):
+    4× native access violations at ``SetInputData(self.image_reslice.
+    GetOutput())`` during Eagle-Eye/mammography series switches. When the
+    reslice's ``Update()`` cannot allocate its (large, cubic-interpolated)
+    output — e.g. a 4000×5000 MG frame on a low-RAM machine — VTK logs an
+    allocation error but continues with an EMPTY output image; feeding that
+    null-scalar image into vtkResliceImageViewer.SetInputData dereferences
+    the missing scalar array natively and kills the whole process. Validate
+    BEFORE the native call instead.
+    """
+    try:
+        if img is None:
+            return False
+        dims = img.GetDimensions()
+        if not dims or int(dims[0]) <= 0 or int(dims[1]) <= 0:
+            return False
+        pd = img.GetPointData()
+        if pd is None:
+            return False
+        scalars = pd.GetScalars()
+        if scalars is None:
+            return False
+        return int(scalars.GetNumberOfTuples()) > 0
+    except Exception:
+        return False
+
+
 class ImageReslice(vtk.vtkImageReslice):  # for set orientation and return image as 2D or 3D
     def __init__(self, vtk_image_data: vtk.vtkImageData, metadata):
         super().__init__()
@@ -273,8 +303,35 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self.SetInputData(_raw_lazy_vtk)
             self.vtk_image_data = _raw_lazy_vtk
         else:
-            self.SetInputData(self.image_reslice.GetOutput())  # without color map (window level)
-            self.vtk_image_data = self.image_reslice.GetOutput()
+            # ── Production-crash guard (2026-06-05, other-PC frozen build) ──
+            # 4× native access violations landed exactly on the SetInputData
+            # below during Eagle-Eye mammography series switches: when the
+            # reslice's Update() fails to allocate its large interpolated
+            # output (big MG frames on a low-RAM machine), VTK continues with
+            # an EMPTY image and the native SetInputData dereferences the
+            # missing scalars → whole-app crash. Validate first; fall back to
+            # wiring the RAW input (reslice features degrade, display works);
+            # if even the raw input is invalid, raise a normal Python error
+            # that the series-switch path reports instead of dying natively.
+            _reslice_out = self.image_reslice.GetOutput()
+            if _vtk_image_scalars_valid(_reslice_out):
+                self.SetInputData(_reslice_out)  # without color map (window level)
+                self.vtk_image_data = _reslice_out
+            elif _vtk_image_scalars_valid(self.vtk_image_data):
+                logger.error(
+                    "[VTK-GUARD] image_reslice output has no scalars "
+                    "(allocation failure on large frame? dims=%s) — falling "
+                    "back to direct input wiring for series=%s",
+                    str(_reslice_out.GetDimensions() if _reslice_out is not None else None),
+                    str((self.metadata or {}).get('series', {}).get('series_number', '?')
+                        if isinstance(self.metadata, dict) else '?'),
+                )
+                self.SetInputData(self.vtk_image_data)
+            else:
+                raise RuntimeError(
+                    "viewer_2d: neither reslice output nor raw input has valid "
+                    "scalars — refusing native SetInputData (would crash)"
+                )
         # v2.2.3.1.7: Track which VTK output object the viewer pipeline is connected to.
         # reset_image_viewer compares against this to skip the expensive SetInputData when
         # the same image_reslice object is updated in-place (saves ~1.4s per series switch).

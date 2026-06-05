@@ -253,6 +253,35 @@ class SeriesIntentCoordinator:
         self.negotiate_priority_change(study_uid, priority)
         return True
 
+    @staticmethod
+    def _write_critical_intent_file(study_uid: str, series_number) -> bool:
+        """Atomically write the same-study critical-intent file.
+
+        Read by the RUNNING SeriesDownloader between instance batches
+        (batch-boundary yield, 2026-06-05). Best-effort: returns False on
+        any error so the caller can fall back to the legacy interrupt.
+        """
+        try:
+            import json
+            import os
+            import time as _time
+            from pathlib import Path
+            from PacsClient.utils.config import SOURCE_PATH
+
+            study_dir = Path(SOURCE_PATH) / str(study_uid)
+            study_dir.mkdir(parents=True, exist_ok=True)
+            path = study_dir / ".critical_intent.json"
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps({"series_number": str(series_number), "ts": _time.time()}),
+                encoding="utf-8",
+            )
+            os.replace(tmp, path)
+            return True
+        except Exception as exc:
+            logger.warning("[INTENT] Could not write critical-intent file: %s", exc)
+            return False
+
     def request_critical_series(self, study_uid: str, series_number: str) -> bool:
         state = self.state_store.get(study_uid)
         if not state:
@@ -305,19 +334,41 @@ class SeriesIntentCoordinator:
             and str(effective_current) != str(series_number)
             and not _requested_done
         ):
-            logger.info(
-                "[INTENT] Series interrupt: study=%s %s series %s "
-                "but viewer requested series %s — cancelling worker",
-                study_uid[:40], state.status.value, effective_current, series_number,
-            )
-            self._pause_downloads_for_preemption([study_uid])
-            # Override PAUSED→PENDING so _start_next_pending picks it up
-            self.state_store.update(
-                study_uid,
-                status=DownloadStatus.PENDING,
-                is_auto_paused=False,
-                error_message=None,
-            )
+            # ── Batch-boundary yield (2026-06-05, drag-drop priority) ──────
+            # OLD behaviour: cancel the study's own worker mid-batch and
+            # restart it with the viewed series first (~5-27 s of teardown,
+            # respawn, re-auth and resume scans before the dragged series'
+            # first byte). NEW: signal the RUNNING worker through a tiny
+            # intent file in the study output directory —
+            #   {SOURCE_PATH}/{study_uid}/.critical_intent.json
+            # The SeriesDownloader polls it BETWEEN instance batches: the
+            # in-flight batch finishes, no further batch of the current
+            # series starts, the dragged series goes next, and the
+            # interrupted series resumes right after (R19 keeps its files).
+            # No process churn, same socket session, no new normal-priority
+            # batches ahead of the critical series. Fallback: if the file
+            # cannot be written, the legacy cancel-and-restart still runs.
+            if self._write_critical_intent_file(study_uid, series_number):
+                logger.warning(
+                    "[INTENT] Series yield: study=%s %s series %s, viewer requested "
+                    "series %s — running worker signalled via intent file "
+                    "(batch-boundary yield, no teardown)",
+                    study_uid[:40], state.status.value, effective_current, series_number,
+                )
+            else:
+                logger.info(
+                    "[INTENT] Series interrupt (intent-file fallback): study=%s %s series %s "
+                    "but viewer requested series %s — cancelling worker",
+                    study_uid[:40], state.status.value, effective_current, series_number,
+                )
+                self._pause_downloads_for_preemption([study_uid])
+                # Override PAUSED→PENDING so _start_next_pending picks it up
+                self.state_store.update(
+                    study_uid,
+                    status=DownloadStatus.PENDING,
+                    is_auto_paused=False,
+                    error_message=None,
+                )
 
         self.negotiate_priority_change(study_uid, DownloadPriority.CRITICAL)
         # NOTE: Do NOT call _refresh_table_order() here. The state_store.update(priority=CRITICAL)

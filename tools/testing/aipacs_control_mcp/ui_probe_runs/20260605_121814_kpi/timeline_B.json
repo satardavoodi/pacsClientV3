@@ -1,0 +1,2151 @@
+[
+ {
+  "t": 1780649465.452402,
+  "rel_ms": 501.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=open_request t_ms=0.4 all_studies=1 patient_id=44648 report_status=pending source=server"
+ },
+ {
+  "t": 1780649465.452519,
+  "rel_ms": 501.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=open_request t_ms=0.500 patient_id=44648 source=server report_status=pending all_studies=1"
+ },
+ {
+  "t": 1780649465.453657,
+  "rel_ms": 502.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=study_path_ready t_ms=1.7 is_local=False is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\user_data"
+ },
+ {
+  "t": 1780649465.453762,
+  "rel_ms": 502.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=study_path_ready t_ms=1.800 patient_id=44648 is_local=False source=server is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs cod"
+ },
+ {
+  "t": 1780649465.788449,
+  "rel_ms": 837.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=tab_created t_ms=336.5 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.788539,
+  "rel_ms": 837.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=tab_created t_ms=336.600 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.788775,
+  "rel_ms": 837.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=waiting_for_first_series_signal t_ms=336.8 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.788865,
+  "rel_ms": 837.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=waiting_for_first_series_signal t_ms=336.900 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.912738,
+  "rel_ms": 961.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=first_series_visible t_ms=460.7 is_local=False patient_id=44648 pending_attachments=0 pending_right_panel=0 pending_series_info=0 "
+ },
+ {
+  "t": 1780649465.91295,
+  "rel_ms": 961.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=first_series_visible t_ms=461.000 patient_id=44648 is_local=False source=server pending_right_panel=0 pending_series_info=0 pendin"
+ },
+ {
+  "t": 1780649465.978103,
+  "rel_ms": 1026.7,
+  "log": "app",
+  "tag": "queue",
+  "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780384620318.86257 series_count=10 priority=High"
+ },
+ {
+  "t": 1780649465.98171,
+  "rel_ms": 1030.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=thumbnail_stubs_scheduled t_ms=529.7 all_studies=1 is_local=False patient_id=44648 series_count=10 source=server"
+ },
+ {
+  "t": 1780649465.981828,
+  "rel_ms": 1030.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=thumbnail_stubs_scheduled t_ms=529.800 patient_id=44648 is_local=False source=server series_count=10 all_studies=1"
+ },
+ {
+  "t": 1780649465.982809,
+  "rel_ms": 1031.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=download_manager_wired t_ms=530.8 is_local=False patient_id=44648 series_count=10 source=server"
+ },
+ {
+  "t": 1780649465.982896,
+  "rel_ms": 1031.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=download_manager_wired t_ms=530.900 patient_id=44648 is_local=False source=server series_count=10"
+ },
+ {
+  "t": 1780649465.983077,
+  "rel_ms": 1031.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=ui_tasks_scheduled t_ms=531.1 is_local=False patient_id=44648 right_panel_requested=True series_info_requested=True source=server"
+ },
+ {
+  "t": 1780649465.983167,
+  "rel_ms": 1031.7,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=ui_tasks_scheduled t_ms=531.200 patient_id=44648 is_local=False source=server right_panel_requested=True series_info_requested=Tru"
+ },
+ {
+  "t": 1780649465.983965,
+  "rel_ms": 1032.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=background_setup_started t_ms=532.0 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.984069,
+  "rel_ms": 1032.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=background_setup_started t_ms=532.100 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.984635,
+  "rel_ms": 1033.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=attachments_start t_ms=532.7 is_local=False patient_id=44648 source=server trigger=immediate"
+ },
+ {
+  "t": 1780649465.984733,
+  "rel_ms": 1033.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=attachments_start t_ms=532.700 patient_id=44648 is_local=False source=server trigger=immediate"
+ },
+ {
+  "t": 1780649465.984975,
+  "rel_ms": 1033.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=background_series_info_pushed t_ms=533.0 is_local=False patient_id=44648 series_count=10 source=server"
+ },
+ {
+  "t": 1780649465.985078,
+  "rel_ms": 1033.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=background_series_info_pushed t_ms=533.100 patient_id=44648 is_local=False source=server series_count=10"
+ },
+ {
+  "t": 1780649465.985303,
+  "rel_ms": 1033.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=open_hot_path_complete t_ms=533.3 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.985415,
+  "rel_ms": 1034.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=open_hot_path_complete t_ms=533.400 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.987293,
+  "rel_ms": 1035.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=series_info_entry t_ms=535.3 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.987406,
+  "rel_ms": 1036.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=series_info_entry t_ms=535.400 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.989604,
+  "rel_ms": 1038.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_begin t_ms=537.6 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.989727,
+  "rel_ms": 1038.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_begin t_ms=537.700 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649465.990421,
+  "rel_ms": 1039.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_cache_gate t_ms=538.4 grew=1 is_local=False local_thumbs=0 patient_id=44648 server_series=10 source=server"
+ },
+ {
+  "t": 1780649465.990523,
+  "rel_ms": 1039.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_cache_gate t_ms=538.500 patient_id=44648 is_local=False source=server local_thumbs=0 server_series=10 grew=1"
+ },
+ {
+  "t": 1780649465.992219,
+  "rel_ms": 1040.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_socket_start t_ms=540.2 host=192.168.2.222 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649465.99234,
+  "rel_ms": 1040.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_socket_start t_ms=540.300 patient_id=44648 is_local=False source=server host=192.168.2.222"
+ },
+ {
+  "t": 1780649466.095047,
+  "rel_ms": 1143.6,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "\ud83d\ude80 Download subprocess started (pid=236316) for ZIBA TALEBI"
+ },
+ {
+  "t": 1780649466.22937,
+  "rel_ms": 1277.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_socket_done t_ms=777.4 is_local=False patient_id=44648 source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649466.229573,
+  "rel_ms": 1278.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_socket_done t_ms=777.600 patient_id=44648 is_local=False source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649466.229783,
+  "rel_ms": 1278.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_display_input t_ms=777.8 is_local=False patient_id=44648 source=server thumbnail_count=10 with_file_path=10 with_inlin"
+ },
+ {
+  "t": 1780649466.229898,
+  "rel_ms": 1278.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_display_input t_ms=777.900 patient_id=44648 is_local=False source=server thumbnail_count=10 with_file_path=10 with_inl"
+ },
+ {
+  "t": 1780649466.230128,
+  "rel_ms": 1278.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_display_done t_ms=778.2 is_local=False patient_id=44648 source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649466.230235,
+  "rel_ms": 1278.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_display_done t_ms=778.200 patient_id=44648 is_local=False source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649467.802089,
+  "rel_ms": 2850.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=attachments_done t_ms=2350.1 is_local=False patient_id=44648 source=server trigger=immediate worker_ms=1817.4"
+ },
+ {
+  "t": 1780649467.80231,
+  "rel_ms": 2850.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=attachments_done t_ms=2350.300 patient_id=44648 is_local=False source=server trigger=immediate worker_ms=1817.400"
+ },
+ {
+  "t": 1780649468.307823,
+  "rel_ms": 3356.4,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "viewer-event start change_series_on_viewer series=9001"
+ },
+ {
+  "t": 1780649468.308436,
+  "rel_ms": 3357.0,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "FAST:series_selected series=9001 event_id=view-4fa9a60acb46 t+0ms fast_mode=True study_uid=1.2.840.1.99.1.47.1.1780384620318.86257"
+ },
+ {
+  "t": 1780649468.308523,
+  "rel_ms": 3357.1,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "FAST:zetaboost_snapshot series=9001 active=True study_dl_complete=True global_dl_count=1 q(i/w/b)=0/0/0 inflight=0"
+ },
+ {
+  "t": 1780649468.308595,
+  "rel_ms": 3357.2,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "FAST:zetaboost_verdict series=9001 status=inactive reason=global_download_active(1)(intentional) intentional=True"
+ },
+ {
+  "t": 1780649468.309443,
+  "rel_ms": 3358.0,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "viewer-backend stage=route series=9001 viewer=0 requested_backend=pydicom_qt"
+ },
+ {
+  "t": 1780649468.309632,
+  "rel_ms": 3358.2,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "stage-timing duration_ms=1.92 cache_hit=False"
+ },
+ {
+  "t": 1780649468.311641,
+  "rel_ms": 3360.2,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "stage-timing duration_ms=3.92 series=9001"
+ },
+ {
+  "t": 1780649468.313683,
+  "rel_ms": 3362.2,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=begin study=1.2.840.1.99.1.47.1.1780384620318.86257 series=9001 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Downloading auto_paused=False elapsed_ms=0 tok"
+ },
+ {
+  "t": 1780649468.320301,
+  "rel_ms": 3368.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_begin t_ms=2868.3 is_local=False patient_id=44648 source=server"
+ },
+ {
+  "t": 1780649468.320481,
+  "rel_ms": 3369.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_begin t_ms=2868.500 patient_id=44648 is_local=False source=server"
+ },
+ {
+  "t": 1780649468.322572,
+  "rel_ms": 3371.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_cache_gate t_ms=2870.6 grew=0 is_local=False local_thumbs=10 patient_id=44648 server_series=10 source=server"
+ },
+ {
+  "t": 1780649468.322728,
+  "rel_ms": 3371.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_cache_gate t_ms=2870.700 patient_id=44648 is_local=False source=server local_thumbs=10 server_series=10 grew=0"
+ },
+ {
+  "t": 1780649468.322968,
+  "rel_ms": 3371.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_cache_hit t_ms=2871.0 is_local=False patient_id=44648 source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649468.323061,
+  "rel_ms": 3371.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780384620318.86257 phase=right_panel_cache_hit t_ms=2871.100 patient_id=44648 is_local=False source=server thumbnail_count=10"
+ },
+ {
+  "t": 1780649468.330622,
+  "rel_ms": 3379.2,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=begin study=1.2.840.1.99.1.47.1.1780384620318.86257 series=9001 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Downloading auto_paused=False elapsed_ms=0 tok"
+ },
+ {
+  "t": 1780649468.332234,
+  "rel_ms": 3380.8,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=begin study=1.2.840.1.99.1.47.1.1780384620318.86257 series=9001 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Pending auto_paused=False elapsed_ms=0 token=3"
+ },
+ {
+  "t": 1780649468.332353,
+  "rel_ms": 3380.9,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=started study=1.2.840.1.99.1.47.1.1780384620318.86257 series=9001 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Pending auto_paused=False elapsed_ms=0 token"
+ },
+ {
+  "t": 1780649468.333215,
+  "rel_ms": 3381.8,
+  "log": "app",
+  "tag": "drop",
+  "detail": "[PROFILE] change_series_on_viewer: async load-on-demand FAILED for series 9001 in 22.0ms"
+ },
+ {
+  "t": 1780649469.522037,
+  "rel_ms": 4570.6,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "cwd=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version"
+ },
+ {
+  "t": 1780649469.522557,
+  "rel_ms": 4571.1,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Imports OK (0.001s)"
+ },
+ {
+  "t": 1780649469.533508,
+  "rel_ms": 4582.1,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] DatabaseManager ready (0.011s)"
+ },
+ {
+  "t": 1780649469.534625,
+  "rel_ms": 4583.2,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Starting asyncio event loop (0.013s since process start)"
+ },
+ {
+  "t": 1780649469.758354,
+  "rel_ms": 4806.9,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "\ud83d\ude80 Download subprocess started (pid=250892) for ZIBA TALEBI"
+ },
+ {
+  "t": 1780649472.723022,
+  "rel_ms": 7771.6,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "cwd=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version"
+ },
+ {
+  "t": 1780649472.723557,
+  "rel_ms": 7772.1,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Imports OK (0.001s)"
+ },
+ {
+  "t": 1780649472.732383,
+  "rel_ms": 7780.9,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] DatabaseManager ready (0.009s)"
+ },
+ {
+  "t": 1780649472.733601,
+  "rel_ms": 7782.2,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Starting asyncio event loop (0.011s since process start)"
+ },
+ {
+  "t": 1780649472.80404,
+  "rel_ms": 7852.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649472.899629,
+  "rel_ms": 7948.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=9001 downloaded=1 total=1 corr_session=sess-0a0edbda6143 corr_mono_ms=412404463.464"
+ },
+ {
+  "t": 1780649472.990819,
+  "rel_ms": 8039.4,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.93 query_type=download_write inserted=1 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780649472.991001,
+  "rel_ms": 8039.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=29.31 query_type=download_write inserted=1 chunk_count=1"
+ },
+ {
+  "t": 1780649472.993621,
+  "rel_ms": 8042.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649473.222655,
+  "rel_ms": 8271.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.82 query_type=download_write inserted=4 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780649473.222813,
+  "rel_ms": 8271.4,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=30.92 query_type=download_write inserted=4 chunk_count=1"
+ },
+ {
+  "t": 1780649473.224964,
+  "rel_ms": 8273.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649473.298322,
+  "rel_ms": 8346.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=101 downloaded=4 total=4 corr_session=sess-0a0edbda6143 corr_mono_ms=412404862.146"
+ },
+ {
+  "t": 1780649473.603211,
+  "rel_ms": 8651.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649473.97573,
+  "rel_ms": 9024.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649474.239889,
+  "rel_ms": 9288.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=11 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412405803.712"
+ },
+ {
+  "t": 1780649474.318041,
+  "rel_ms": 9366.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649474.692039,
+  "rel_ms": 9740.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649474.964506,
+  "rel_ms": 10013.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=31 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412406528.338"
+ },
+ {
+  "t": 1780649475.048811,
+  "rel_ms": 10097.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649475.420832,
+  "rel_ms": 10469.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649475.700453,
+  "rel_ms": 10749.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=51 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412407264.280"
+ },
+ {
+  "t": 1780649475.793472,
+  "rel_ms": 10842.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649476.153952,
+  "rel_ms": 11202.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649476.435804,
+  "rel_ms": 11484.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=71 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412407999.627"
+ },
+ {
+  "t": 1780649476.559368,
+  "rel_ms": 11607.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649476.929636,
+  "rel_ms": 11978.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649477.178625,
+  "rel_ms": 12227.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=91 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412408742.430"
+ },
+ {
+  "t": 1780649477.269924,
+  "rel_ms": 12318.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649477.674839,
+  "rel_ms": 12723.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649478.010113,
+  "rel_ms": 13058.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=127 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412409573.933"
+ },
+ {
+  "t": 1780649478.411659,
+  "rel_ms": 13460.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=3.44 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780649478.424518,
+  "rel_ms": 13473.1,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.91 query_type=download_write inserted=7 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780649478.424759,
+  "rel_ms": 13473.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=408.38 query_type=download_write inserted=127 chunk_count=2"
+ },
+ {
+  "t": 1780649478.426978,
+  "rel_ms": 13475.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649478.779848,
+  "rel_ms": 13828.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649479.1398,
+  "rel_ms": 14188.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649479.338339,
+  "rel_ms": 14386.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=11 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412410902.171"
+ },
+ {
+  "t": 1780649479.495745,
+  "rel_ms": 14544.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649479.851332,
+  "rel_ms": 14899.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649479.974249,
+  "rel_ms": 15022.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=21 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412411538.075"
+ },
+ {
+  "t": 1780649480.208146,
+  "rel_ms": 15256.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649480.502284,
+  "rel_ms": 15550.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=41 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412412066.108"
+ },
+ {
+  "t": 1780649480.596832,
+  "rel_ms": 15645.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649481.005132,
+  "rel_ms": 16053.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649481.250974,
+  "rel_ms": 16299.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=61 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412412814.780"
+ },
+ {
+  "t": 1780649481.407043,
+  "rel_ms": 16455.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649481.780941,
+  "rel_ms": 16829.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649482.059748,
+  "rel_ms": 17108.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=81 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412413623.577"
+ },
+ {
+  "t": 1780649482.168854,
+  "rel_ms": 17217.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649482.524707,
+  "rel_ms": 17573.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649482.802764,
+  "rel_ms": 17851.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=101 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412414366.596"
+ },
+ {
+  "t": 1780649482.879175,
+  "rel_ms": 17927.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649483.251237,
+  "rel_ms": 18299.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649483.548455,
+  "rel_ms": 18597.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=121 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412415112.267"
+ },
+ {
+  "t": 1780649483.610294,
+  "rel_ms": 18658.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649483.953962,
+  "rel_ms": 19002.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649484.265124,
+  "rel_ms": 19313.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=141 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412415828.939"
+ },
+ {
+  "t": 1780649484.389448,
+  "rel_ms": 19438.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649484.733663,
+  "rel_ms": 19782.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649485.026872,
+  "rel_ms": 20075.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=161 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412416590.704"
+ },
+ {
+  "t": 1780649485.089714,
+  "rel_ms": 20138.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649485.457108,
+  "rel_ms": 20505.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649485.736268,
+  "rel_ms": 20784.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=181 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412417300.093"
+ },
+ {
+  "t": 1780649485.86016,
+  "rel_ms": 20908.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649486.220192,
+  "rel_ms": 21268.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649486.464713,
+  "rel_ms": 21513.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=201 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412418028.461"
+ },
+ {
+  "t": 1780649486.591264,
+  "rel_ms": 21639.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649486.948864,
+  "rel_ms": 21997.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649487.240659,
+  "rel_ms": 22289.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=221 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412418804.491"
+ },
+ {
+  "t": 1780649487.30258,
+  "rel_ms": 22351.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649487.661132,
+  "rel_ms": 22709.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649487.942297,
+  "rel_ms": 22990.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=241 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412419506.122"
+ },
+ {
+  "t": 1780649488.00472,
+  "rel_ms": 23053.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649488.360215,
+  "rel_ms": 23408.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649488.645771,
+  "rel_ms": 23694.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=261 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412420209.612"
+ },
+ {
+  "t": 1780649488.703997,
+  "rel_ms": 23752.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649489.061069,
+  "rel_ms": 24109.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649489.358062,
+  "rel_ms": 24406.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=281 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412420921.886"
+ },
+ {
+  "t": 1780649489.403793,
+  "rel_ms": 24452.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649489.758422,
+  "rel_ms": 24807.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649490.040105,
+  "rel_ms": 25088.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=301 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412421603.939"
+ },
+ {
+  "t": 1780649490.115894,
+  "rel_ms": 25164.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649490.471176,
+  "rel_ms": 25519.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649490.755585,
+  "rel_ms": 25804.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=321 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412422319.421"
+ },
+ {
+  "t": 1780649490.824926,
+  "rel_ms": 25873.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649491.199801,
+  "rel_ms": 26248.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649491.464517,
+  "rel_ms": 26513.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=341 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412423028.347"
+ },
+ {
+  "t": 1780649491.606643,
+  "rel_ms": 26655.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.02 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649492.026058,
+  "rel_ms": 27074.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649492.260017,
+  "rel_ms": 27308.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=361 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412423823.826"
+ },
+ {
+  "t": 1780649492.400192,
+  "rel_ms": 27448.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649492.867695,
+  "rel_ms": 27916.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649493.038003,
+  "rel_ms": 28086.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=388 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412424601.823"
+ },
+ {
+  "t": 1780649493.287525,
+  "rel_ms": 28336.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649493.70961,
+  "rel_ms": 28758.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649493.927824,
+  "rel_ms": 28976.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=401 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412425491.626"
+ },
+ {
+  "t": 1780649494.097506,
+  "rel_ms": 29146.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649494.472605,
+  "rel_ms": 29521.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649494.564898,
+  "rel_ms": 29613.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=411 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412426128.724"
+ },
+ {
+  "t": 1780649494.87721,
+  "rel_ms": 29925.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649495.115384,
+  "rel_ms": 30163.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=431 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412426679.202"
+ },
+ {
+  "t": 1780649495.264211,
+  "rel_ms": 30312.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649495.637294,
+  "rel_ms": 30685.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649495.914537,
+  "rel_ms": 30963.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=451 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412427478.372"
+ },
+ {
+  "t": 1780649496.041749,
+  "rel_ms": 31090.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649496.445089,
+  "rel_ms": 31493.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649496.693287,
+  "rel_ms": 31741.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=471 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412428257.057"
+ },
+ {
+  "t": 1780649496.831581,
+  "rel_ms": 31880.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649497.25063,
+  "rel_ms": 32299.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649497.297546,
+  "rel_ms": 32346.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=481 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412428861.363"
+ },
+ {
+  "t": 1780649497.680546,
+  "rel_ms": 32729.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=508 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412429244.347"
+ },
+ {
+  "t": 1780649499.316279,
+  "rel_ms": 34364.8,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.47 query_type=download_write inserted=120 chunk_index=1 chunk_count=5"
+ },
+ {
+  "t": 1780649499.331756,
+  "rel_ms": 34380.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.80 query_type=download_write inserted=120 chunk_index=2 chunk_count=5"
+ },
+ {
+  "t": 1780649499.346974,
+  "rel_ms": 34395.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.27 query_type=download_write inserted=120 chunk_index=3 chunk_count=5"
+ },
+ {
+  "t": 1780649499.363782,
+  "rel_ms": 34412.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=3.54 query_type=download_write inserted=120 chunk_index=4 chunk_count=5"
+ },
+ {
+  "t": 1780649499.377029,
+  "rel_ms": 34425.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.19 query_type=download_write inserted=28 chunk_index=5 chunk_count=5"
+ },
+ {
+  "t": 1780649499.377215,
+  "rel_ms": 34425.8,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1744.32 query_type=download_write inserted=508 chunk_count=5"
+ },
+ {
+  "t": 1780649499.380082,
+  "rel_ms": 34428.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649499.761011,
+  "rel_ms": 34809.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649500.181802,
+  "rel_ms": 35230.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649500.291415,
+  "rel_ms": 35340.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=1 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412431855.241"
+ },
+ {
+  "t": 1780649500.588619,
+  "rel_ms": 35637.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649500.823359,
+  "rel_ms": 35871.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=21 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412432387.183"
+ },
+ {
+  "t": 1780649501.009587,
+  "rel_ms": 36058.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649501.397913,
+  "rel_ms": 36446.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649501.646479,
+  "rel_ms": 36695.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=41 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412433210.220"
+ },
+ {
+  "t": 1780649501.786532,
+  "rel_ms": 36835.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.02 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649502.310753,
+  "rel_ms": 37359.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649502.435543,
+  "rel_ms": 37484.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=67 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412433999.371"
+ },
+ {
+  "t": 1780649502.734108,
+  "rel_ms": 37782.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649503.154671,
+  "rel_ms": 38203.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649503.340024,
+  "rel_ms": 38388.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=81 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412434903.851"
+ },
+ {
+  "t": 1780649503.541968,
+  "rel_ms": 38590.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649503.933837,
+  "rel_ms": 38982.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649503.996559,
+  "rel_ms": 39045.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=91 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412435560.393"
+ },
+ {
+  "t": 1780649504.305911,
+  "rel_ms": 39354.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649504.650421,
+  "rel_ms": 39699.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=127 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412436214.155"
+ },
+ {
+  "t": 1780649505.023904,
+  "rel_ms": 40072.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.33 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780649505.037931,
+  "rel_ms": 40086.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.77 query_type=download_write inserted=7 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780649505.038103,
+  "rel_ms": 40086.7,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=396.10 query_type=download_write inserted=127 chunk_count=2"
+ },
+ {
+  "t": 1780649505.040274,
+  "rel_ms": 40088.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649505.426381,
+  "rel_ms": 40474.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649505.799888,
+  "rel_ms": 40848.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649505.943055,
+  "rel_ms": 40991.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=11 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412437506.892"
+ },
+ {
+  "t": 1780649506.188067,
+  "rel_ms": 41236.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649506.605625,
+  "rel_ms": 41654.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649506.65272,
+  "rel_ms": 41701.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=21 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412438216.486"
+ },
+ {
+  "t": 1780649506.981335,
+  "rel_ms": 42029.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649507.230263,
+  "rel_ms": 42278.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=41 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412438794.086"
+ },
+ {
+  "t": 1780649507.369748,
+  "rel_ms": 42418.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649507.760609,
+  "rel_ms": 42809.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649508.011092,
+  "rel_ms": 43059.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=61 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412439574.899"
+ },
+ {
+  "t": 1780649508.166086,
+  "rel_ms": 43214.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649508.583873,
+  "rel_ms": 43632.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649508.802607,
+  "rel_ms": 43851.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=81 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412440366.409"
+ },
+ {
+  "t": 1780649508.973353,
+  "rel_ms": 44021.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649509.454503,
+  "rel_ms": 44503.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649509.607326,
+  "rel_ms": 44655.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=101 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412441171.103"
+ },
+ {
+  "t": 1780649509.824611,
+  "rel_ms": 44873.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649510.165181,
+  "rel_ms": 45213.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=127 total=127 corr_session=sess-0a0edbda6143 corr_mono_ms=412441729.012"
+ },
+ {
+  "t": 1780649510.528749,
+  "rel_ms": 45577.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=3.19 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780649510.541923,
+  "rel_ms": 45590.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.42 query_type=download_write inserted=7 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780649510.542108,
+  "rel_ms": 45590.7,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=399.98 query_type=download_write inserted=127 chunk_count=2"
+ },
+ {
+  "t": 1780649510.545079,
+  "rel_ms": 45593.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649510.932146,
+  "rel_ms": 45980.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649511.316974,
+  "rel_ms": 46365.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649511.457965,
+  "rel_ms": 46506.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=11 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412443021.793"
+ },
+ {
+  "t": 1780649511.797005,
+  "rel_ms": 46845.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649512.165119,
+  "rel_ms": 47213.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=30 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412443728.948"
+ },
+ {
+  "t": 1780649512.198146,
+  "rel_ms": 47246.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649512.591488,
+  "rel_ms": 47640.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649512.84124,
+  "rel_ms": 47889.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=41 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412444405.027"
+ },
+ {
+  "t": 1780649512.994079,
+  "rel_ms": 48042.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649513.395585,
+  "rel_ms": 48444.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649513.61483,
+  "rel_ms": 48663.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=61 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412445178.638"
+ },
+ {
+  "t": 1780649513.801249,
+  "rel_ms": 48849.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649514.190506,
+  "rel_ms": 49239.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649514.442103,
+  "rel_ms": 49490.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=81 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412446005.902"
+ },
+ {
+  "t": 1780649514.627435,
+  "rel_ms": 49676.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649515.081093,
+  "rel_ms": 50129.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649515.284185,
+  "rel_ms": 50332.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=101 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412446848.013"
+ },
+ {
+  "t": 1780649515.485201,
+  "rel_ms": 50533.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649515.906067,
+  "rel_ms": 50954.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649516.138638,
+  "rel_ms": 51187.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=121 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412447702.466"
+ },
+ {
+  "t": 1780649516.261754,
+  "rel_ms": 51310.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649516.651473,
+  "rel_ms": 51700.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649516.899835,
+  "rel_ms": 51948.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=141 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412448463.642"
+ },
+ {
+  "t": 1780649517.054291,
+  "rel_ms": 52102.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649517.491475,
+  "rel_ms": 52540.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649517.67889,
+  "rel_ms": 52727.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=161 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412449242.695"
+ },
+ {
+  "t": 1780649517.881696,
+  "rel_ms": 52930.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649518.269598,
+  "rel_ms": 53318.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649518.534039,
+  "rel_ms": 53582.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=181 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412450097.834"
+ },
+ {
+  "t": 1780649518.706465,
+  "rel_ms": 53755.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649519.109034,
+  "rel_ms": 54157.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649519.3104,
+  "rel_ms": 54359.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=201 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412450874.214"
+ },
+ {
+  "t": 1780649519.529007,
+  "rel_ms": 54577.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649519.93497,
+  "rel_ms": 54983.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649519.964508,
+  "rel_ms": 55013.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=211 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412451528.342"
+ },
+ {
+  "t": 1780649520.302024,
+  "rel_ms": 55350.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.02 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649520.537217,
+  "rel_ms": 55585.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=231 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412452101.009"
+ },
+ {
+  "t": 1780649520.675825,
+  "rel_ms": 55724.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649521.026103,
+  "rel_ms": 56074.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649521.160107,
+  "rel_ms": 56208.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=241 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412452723.941"
+ },
+ {
+  "t": 1780649521.391879,
+  "rel_ms": 56440.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649521.664615,
+  "rel_ms": 56713.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=261 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412453228.434"
+ },
+ {
+  "t": 1780649521.762808,
+  "rel_ms": 56811.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649522.152303,
+  "rel_ms": 57200.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649522.399965,
+  "rel_ms": 57448.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=281 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412453963.762"
+ },
+ {
+  "t": 1780649522.539347,
+  "rel_ms": 57587.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649522.896406,
+  "rel_ms": 57945.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649523.177369,
+  "rel_ms": 58225.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=301 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412454741.182"
+ },
+ {
+  "t": 1780649523.269719,
+  "rel_ms": 58318.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649523.638241,
+  "rel_ms": 58686.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649523.914364,
+  "rel_ms": 58962.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=321 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412455478.201"
+ },
+ {
+  "t": 1780649524.137497,
+  "rel_ms": 59186.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649524.495464,
+  "rel_ms": 59544.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649524.652884,
+  "rel_ms": 59701.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=341 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412456216.718"
+ },
+ {
+  "t": 1780649524.872633,
+  "rel_ms": 59921.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649525.230883,
+  "rel_ms": 60279.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649525.356358,
+  "rel_ms": 60404.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=351 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412456920.177"
+ },
+ {
+  "t": 1780649525.589458,
+  "rel_ms": 60638.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649525.86514,
+  "rel_ms": 60913.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=371 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412457428.959"
+ },
+ {
+  "t": 1780649525.961365,
+  "rel_ms": 61009.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649526.36453,
+  "rel_ms": 61413.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649526.613289,
+  "rel_ms": 61661.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=391 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412458177.111"
+ },
+ {
+  "t": 1780649526.784074,
+  "rel_ms": 61832.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649527.173186,
+  "rel_ms": 62221.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649527.214565,
+  "rel_ms": 62263.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=401 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412458778.398"
+ },
+ {
+  "t": 1780649527.574519,
+  "rel_ms": 62623.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649527.823488,
+  "rel_ms": 62872.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=421 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412459387.302"
+ },
+ {
+  "t": 1780649527.961101,
+  "rel_ms": 63009.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649528.332723,
+  "rel_ms": 63381.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649528.599102,
+  "rel_ms": 63647.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=441 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412460162.930"
+ },
+ {
+  "t": 1780649528.693866,
+  "rel_ms": 63742.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649529.051775,
+  "rel_ms": 64100.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649529.334175,
+  "rel_ms": 64382.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=461 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412460898.004"
+ },
+ {
+  "t": 1780649529.395462,
+  "rel_ms": 64444.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649529.767994,
+  "rel_ms": 64816.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780649530.048206,
+  "rel_ms": 65096.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=481 total=508 corr_session=sess-0a0edbda6143 corr_mono_ms=412461612.022"
+ },
+ {
+  "t": 1780649530.157665,
+  "rel_ms": 65206.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ }
+]

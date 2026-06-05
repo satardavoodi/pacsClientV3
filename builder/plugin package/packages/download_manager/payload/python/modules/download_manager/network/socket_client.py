@@ -50,6 +50,12 @@ from modules.network.socket_token_manager import get_socket_token_manager
 logger = logging.getLogger(__name__)
 _download_progress_aggregator = DownloadProgressAggregator(logger, interval_seconds=2.0)
 
+# Distinct non-failure marker for the same-study critical yield (2026-06-05):
+# a SeriesDownloadResult carrying this error_message means "stopped cleanly at
+# a batch boundary so a dragged CRITICAL series can go first" — the series is
+# NOT failed; SeriesDownloader re-queues it right after the critical one.
+YIELDED_TO_CRITICAL = "Yielded to critical series (batch boundary)"
+
 
 def _cancelled_response(message: str = "Download cancelled (preemption)") -> Dict[str, Any]:
     """Build a normalized response for expected cancellation/preemption."""
@@ -88,14 +94,25 @@ def _is_transient_connection_drop(exc_or_message: Any) -> bool:
 
 _SERIES_FORCE_BATCH_ONE_MODALITIES = {
     "CR",  # Computed radiography
+    "DR",  # Digital radiography (vendor variant code)
     "DX",  # Digital radiography
     "MG",  # Mammography
     "PX",  # Panoramic X-Ray
     "RADIOLOGY",
+    "RF",  # Radiofluoroscopy (multi-frame, very large)
+    "XA",  # X-Ray angiography (multi-frame, very large)
     "XR",
     "X-RAY",
     "XRAY",
 }
+
+# Soft byte budget per batch response (2026-06-05, large-radiology stalls):
+# when a successful batch's payload exceeds this, the NEXT batches of the
+# same series halve their instance count. Catches huge-frame series that the
+# modality list above does not enumerate (e.g. multi-frame SC/OT, oversized
+# alignment/view images) without slowing normal CT/MR batches. Per-series
+# only — never persisted to the global adaptive batch size.
+_BATCH_BYTES_SOFT_CAP = 64 * 1024 * 1024
 
 _SERIES_FORCE_BATCH_ONE_DESC_KEYWORDS = (
     "PANORAM",
@@ -195,6 +212,11 @@ class SocketDicomClient:
         self._cancel_check = cancel_check  # External callback (from worker)
         self._cancelled = False  # Internal flag
         self._cancel_lock = threading.Lock()
+
+        # Same-study critical yield hook (2026-06-05): optional callable set
+        # by SeriesDownloader before each series; returns the series_number
+        # that should go FIRST (or None). Consulted only BETWEEN batches.
+        self.yield_check = None
 
         # Adaptive batch size (persists across series to avoid repeated oversized requests)
         self._adaptive_batch_size = SocketDicomClient._global_adaptive_batch_size
@@ -757,9 +779,14 @@ class SocketDicomClient:
                         extra={"component": "download"},
                     )
 
-                    # Receive response data
+                    # Receive response data.
+                    # bytearray + extend is amortized O(n); the previous
+                    # ``bytes += chunk`` was O(n²) — for a 300 MB radiology
+                    # batch in 64 KB chunks that is terabytes of memcpy and
+                    # minutes of CPU, which presented as a "stuck" download
+                    # (large-batch stall, 2026-06-05).
                     t_body_recv = now_ms()
-                    response_data = b''
+                    response_data = bytearray()
                     summary_key = (
                         f"{endpoint}:{str(params.get('series_uid', 'na'))[:24]}:"
                         f"{params.get('batch_index', 'na')}"
@@ -781,7 +808,7 @@ class SocketDicomClient:
                         chunk = self._safe_recv(chunk_size)
                         if not chunk:
                             raise NetworkError("Connection lost while receiving data")
-                        response_data += chunk
+                        response_data.extend(chunk)
                         if response_length > 100000:
                             _download_progress_aggregator.update(
                                 key=summary_key,
@@ -886,6 +913,17 @@ class SocketDicomClient:
                 logger.error(f"❌ Request error for {endpoint}: {e}")
                 import traceback
                 logger.error(f"❌ Traceback: {traceback.format_exc()}")
+                # U1 (other-PC production logs, 2026-06-05): surface
+                # "Response too large" to the batch-download caller instead of
+                # collapsing it to None. The socket has already been dropped at
+                # the raise site (clean reconnect on the next request);
+                # returning None here made download_series see only
+                # 'No response', so its adaptive batch-halving branch never
+                # fired and the series failed outright (16 production
+                # failures). Scoped to GetSeriesImages so every other
+                # endpoint's None-on-error contract is unchanged.
+                if endpoint == 'GetSeriesImages' and "Response too large" in str(e):
+                    return {'status': 'error', 'error': str(e), 'message': str(e)}
                 # Handle other socket errors that indicate connection problems
                 if (
                     isinstance(e, (socket.error, OSError, NetworkError))
@@ -1055,6 +1093,14 @@ class SocketDicomClient:
                 f"(series={series_number}, modality={series_info.modality or 'N/A'})"
             )
         min_batch_size = 1
+        # U1: bounded same-size retries once the batch can't shrink further.
+        # An implausible declared length (>500MB) usually means the socket
+        # stream desynchronized, not real payload size — the socket has been
+        # dropped, so retrying the same batch on a fresh connection is the
+        # correct recovery. Reset on every successful batch.
+        _TOO_LARGE_MIN_BATCH_RETRIES = 2
+        too_large_retries = 0
+        _batch_payload_bytes = 0  # set per successful batch (byte-budget cap)
         total_batches = (expected_count + batch_size - 1) // batch_size
         downloaded_count = 0
         # DL-9: file names written by this run. Together with existing_files_set
@@ -1137,6 +1183,36 @@ class SocketDicomClient:
                     elapsed_seconds=time.time() - start_time,
                     error_message="Download cancelled (preemption)"
                 )
+
+            # Same-study critical yield (2026-06-05, drag-drop priority):
+            # between batches — never mid-batch — ask the owner whether a
+            # DIFFERENT series of this study has been promoted to CRITICAL
+            # (viewer drag-drop). If so, stop cleanly AFTER the just-finished
+            # batch with a distinct, non-failure marker. Files already on
+            # disk are kept (R19 resume skips them when this series gets its
+            # turn again). The current batch always completes; no new batch
+            # for this series is requested past this point. The hook is
+            # best-effort: any exception keeps the normal flow.
+            if getattr(self, "yield_check", None) is not None:
+                try:
+                    _yield_target = self.yield_check()
+                except Exception:
+                    _yield_target = None
+                if _yield_target and str(_yield_target) != str(series_number):
+                    logger.info(
+                        f"⚡ Yielding after batch {batch_idx}/{total_batches} of series "
+                        f"{series_number} — critical series {_yield_target} is waiting"
+                    )
+                    return SeriesDownloadResult(
+                        success=False,
+                        series_uid=series_uid,
+                        series_number=series_number,
+                        downloaded=downloaded_count,
+                        skipped=skipped_count,
+                        total=expected_count,
+                        elapsed_seconds=time.time() - start_time,
+                        error_message=YIELDED_TO_CRITICAL,
+                    )
             
             logger.debug(
                 f"📦 Starting batch {batch_idx + 1}/{total_batches} (start: {batch_start}, size: {batch_size})",
@@ -1185,15 +1261,29 @@ class SocketDicomClient:
                     error_msg = 'No response'
                     logger.error(f"❌ Batch {batch_idx + 1} failed: {error_msg}")
 
-                if "Response too large" in str(error_msg) and batch_size > min_batch_size:
-                    batch_size = max(min_batch_size, batch_size // 2)
-                    self._adaptive_batch_size = batch_size
-                    SocketDicomClient._global_adaptive_batch_size = batch_size
-                    total_batches = (expected_count + batch_size - 1) // batch_size
-                    logger.warning(
-                        f"⚠️ Response too large - reducing batch size to {batch_size} and retrying batch"
-                    )
-                    continue
+                if "Response too large" in str(error_msg):
+                    if batch_size > min_batch_size:
+                        batch_size = max(min_batch_size, batch_size // 2)
+                        self._adaptive_batch_size = batch_size
+                        SocketDicomClient._global_adaptive_batch_size = batch_size
+                        total_batches = (expected_count + batch_size - 1) // batch_size
+                        logger.warning(
+                            f"⚠️ Response too large - reducing batch size to {batch_size} and retrying batch"
+                        )
+                        continue
+                    if too_large_retries < _TOO_LARGE_MIN_BATCH_RETRIES:
+                        too_large_retries += 1
+                        logger.warning(
+                            f"⚠️ Response too large at minimum batch size — retrying "
+                            f"batch {batch_idx + 1} on a fresh socket "
+                            f"({too_large_retries}/{_TOO_LARGE_MIN_BATCH_RETRIES}, "
+                            f"stream-desync recovery)"
+                        )
+                        continue
+                    # Exhausted: fall through to the failure result below —
+                    # error_msg now carries the real reason ("Response too
+                    # large: N bytes"), which surfaces in the DM badge
+                    # instead of the former opaque 'No response'.
 
                 return SeriesDownloadResult(
                     success=False,
@@ -1206,9 +1296,18 @@ class SocketDicomClient:
                     error_message=error_msg
                 )
             
+            # Successful batch → reset the U1 desync-retry budget so it is
+            # per-incident, not per-series.
+            too_large_retries = 0
+
             # Process instances in batch (using GetSeriesImages response format)
             data = response.get('data', {})
             instances = data.get('instances', [])
+            # Payload estimate (base64 chars ≈ bytes) for the byte-budget
+            # soft cap applied after this batch's advance.
+            _batch_payload_bytes = sum(
+                len(inst.get('dicom_data') or '') for inst in instances
+            )
             
             logger.debug(
                 f"📦 Batch {batch_idx + 1}: Got {len(instances)} instances",
@@ -1370,6 +1469,24 @@ class SocketDicomClient:
 
             batch_idx += 1
             batch_start += batch_size
+
+            # Byte-budget soft cap: halve the NEXT batches when this one's
+            # payload was oversized. Applied AFTER the advance so the just-
+            # received window is never re-requested; halving keeps
+            # batch_start aligned to the new size (start = k*old = 2k*new),
+            # so the server's batch_index mapping stays exact.
+            if (
+                _batch_payload_bytes > _BATCH_BYTES_SOFT_CAP
+                and batch_size > min_batch_size
+            ):
+                batch_size = max(min_batch_size, batch_size // 2)
+                total_batches = (expected_count + batch_size - 1) // batch_size
+                logger.warning(
+                    f"📉 Batch payload {_batch_payload_bytes / (1024*1024):.0f} MB "
+                    f"exceeds {_BATCH_BYTES_SOFT_CAP // (1024*1024)} MB soft cap — "
+                    f"halving subsequent batches of series {series_number} to "
+                    f"{batch_size} instance(s)"
+                )
 
         # Download diagnostics default to WARNING threshold. Emit one summary
         # write-stage sample per series at WARNING so KPI parsers can

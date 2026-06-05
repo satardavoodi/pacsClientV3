@@ -7,32 +7,60 @@ signature. No real subprocess is spawned here.
 """
 import inspect
 
+import pytest
+
 from modules.download_manager.workers import prewarm
 from modules.download_manager.workers.download_process_entry import (
     _prewarmed_download_worker_main,
 )
 
 
-def test_prewarm_disabled_by_default(monkeypatch):
+@pytest.fixture
+def _no_user_config(monkeypatch, tmp_path):
+    """Isolate from the LIVE user config (2026-06-05: prewarm_enabled gained a
+    `<USER_DATA_ROOT>/config/download_manager.json` fallback, and this
+    workstation intentionally runs with {"prewarm": true} — these guard tests
+    must assert the BUILD default, not user state)."""
+    import PacsClient.utils.data_paths as _dp
+    monkeypatch.setattr(_dp, "USER_DATA_ROOT", str(tmp_path), raising=False)
+
+
+def test_prewarm_disabled_by_default(monkeypatch, _no_user_config):
     monkeypatch.delenv("AIPACS_DM_PREWARM", raising=False)
     assert prewarm.prewarm_enabled() is False
 
 
-def test_prewarm_flag_parsing(monkeypatch):
+def test_prewarm_flag_parsing(monkeypatch, _no_user_config):
+    # "" now means "no explicit env" → falls through to config (absent → False).
     for val, expected in [("1", True), ("true", True), ("YES", True),
                           ("0", False), ("", False), ("off", False)]:
         monkeypatch.setenv("AIPACS_DM_PREWARM", val)
         assert prewarm.prewarm_enabled() is expected, val
 
 
-def test_acquire_returns_none_when_disabled(monkeypatch):
+def test_prewarm_config_file_fallback(monkeypatch, tmp_path):
+    """The config fallback enables the pool; explicit env OFF beats it."""
+    import json
+    import PacsClient.utils.data_paths as _dp
+    monkeypatch.setattr(_dp, "USER_DATA_ROOT", str(tmp_path), raising=False)
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "download_manager.json").write_text(
+        json.dumps({"prewarm": True}), encoding="utf-8")
+    monkeypatch.delenv("AIPACS_DM_PREWARM", raising=False)
+    assert prewarm.prewarm_enabled() is True
+    monkeypatch.setenv("AIPACS_DM_PREWARM", "0")
+    assert prewarm.prewarm_enabled() is False
+
+
+def test_acquire_returns_none_when_disabled(monkeypatch, _no_user_config):
     monkeypatch.delenv("AIPACS_DM_PREWARM", raising=False)
     pool = prewarm.DownloadPrewarmPool()
     assert pool.acquire(task=object(), config_dict={}) is None
     assert pool._spare is None  # disabled => nothing spawned
 
 
-def test_ensure_warm_noop_when_disabled(monkeypatch):
+def test_ensure_warm_noop_when_disabled(monkeypatch, _no_user_config):
     monkeypatch.delenv("AIPACS_DM_PREWARM", raising=False)
     pool = prewarm.DownloadPrewarmPool()
     pool.ensure_warm()

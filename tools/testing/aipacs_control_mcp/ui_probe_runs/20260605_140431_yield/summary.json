@@ -1,0 +1,55 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260605_140431_yield",
+ "pre_dl": {
+  "total": 1,
+  "active": 0,
+  "downloading": 0,
+  "by_status": {
+   "Completed": 1
+  },
+  "by_priority": {
+   "High": 1
+  }
+ },
+ "open_t0": 1780655674.953071,
+ "n_series": 7,
+ "dropped": 120146618,
+ "drop_rel_s": 3.59,
+ "viewport": {
+  "viewport": 0,
+  "alive": true,
+  "series_number": "120146618",
+  "preview_only": false,
+  "awaiting_series": null,
+  "progressive_mode": true,
+  "progressive_series": "120146618",
+  "slice_count": 20,
+  "spinner_visible": null
+ },
+ "drop_first_file_s": 27.32,
+ "drop_render_s": 31.19,
+ "intent_signalled": [],
+ "yield_lines": [],
+ "teardown_lines": [
+  {
+   "t": 0.56,
+   "line": "\u23f8\ufe0f download_batch cancelled: Download cancelled (preemption)"
+  }
+ ],
+ "series_order_after_drop": [
+  "\ud83d\udce5 Downloading series 120146618 (36 images)"
+ ],
+ "intent_file_exists_now": "check-failed: No module named 'PacsClient'",
+ "final_dl": {
+  "total": 2,
+  "active": 1,
+  "downloading": 1,
+  "by_status": {
+   "Completed": 1,
+   "Downloading": 1
+  },
+  "by_priority": {
+   "High": 2
+  }
+ }
+}

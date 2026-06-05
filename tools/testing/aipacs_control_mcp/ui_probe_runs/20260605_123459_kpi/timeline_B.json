@@ -1,0 +1,800 @@
+[
+ {
+  "t": 1780650463.950089,
+  "rel_ms": 501.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=open_request t_ms=0.5 all_studies=1 patient_id=44514 report_status=pending source=server"
+ },
+ {
+  "t": 1780650463.950203,
+  "rel_ms": 501.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=open_request t_ms=0.600 patient_id=44514 source=server report_status=pending all_studies=1"
+ },
+ {
+  "t": 1780650463.951322,
+  "rel_ms": 502.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=study_path_ready t_ms=1.7 is_local=False is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\user_data"
+ },
+ {
+  "t": 1780650463.951428,
+  "rel_ms": 502.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=study_path_ready t_ms=1.800 patient_id=44514 is_local=False source=server is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs cod"
+ },
+ {
+  "t": 1780650464.30142,
+  "rel_ms": 852.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=tab_created t_ms=351.8 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.301512,
+  "rel_ms": 852.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=tab_created t_ms=351.900 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.301683,
+  "rel_ms": 852.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=waiting_for_first_series_signal t_ms=352.1 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.30177,
+  "rel_ms": 852.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=waiting_for_first_series_signal t_ms=352.200 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.451109,
+  "rel_ms": 1002.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=first_series_visible t_ms=501.5 is_local=False patient_id=44514 pending_attachments=0 pending_right_panel=0 pending_series_info=0 "
+ },
+ {
+  "t": 1780650464.451293,
+  "rel_ms": 1002.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=first_series_visible t_ms=501.700 patient_id=44514 is_local=False source=server pending_right_panel=0 pending_series_info=0 pendin"
+ },
+ {
+  "t": 1780650464.535609,
+  "rel_ms": 1086.6,
+  "log": "app",
+  "tag": "queue",
+  "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780309875224.86246 series_count=8 priority=High"
+ },
+ {
+  "t": 1780650464.538685,
+  "rel_ms": 1089.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=thumbnail_stubs_scheduled t_ms=589.1 all_studies=1 is_local=False patient_id=44514 series_count=8 source=server"
+ },
+ {
+  "t": 1780650464.538787,
+  "rel_ms": 1089.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=thumbnail_stubs_scheduled t_ms=589.200 patient_id=44514 is_local=False source=server series_count=8 all_studies=1"
+ },
+ {
+  "t": 1780650464.539431,
+  "rel_ms": 1090.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=download_manager_wired t_ms=589.9 is_local=False patient_id=44514 series_count=8 source=server"
+ },
+ {
+  "t": 1780650464.539519,
+  "rel_ms": 1090.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=download_manager_wired t_ms=589.900 patient_id=44514 is_local=False source=server series_count=8"
+ },
+ {
+  "t": 1780650464.539668,
+  "rel_ms": 1090.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=ui_tasks_scheduled t_ms=590.1 is_local=False patient_id=44514 right_panel_requested=True series_info_requested=True source=server"
+ },
+ {
+  "t": 1780650464.539754,
+  "rel_ms": 1090.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=ui_tasks_scheduled t_ms=590.200 patient_id=44514 is_local=False source=server right_panel_requested=True series_info_requested=Tru"
+ },
+ {
+  "t": 1780650464.540303,
+  "rel_ms": 1091.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=background_setup_started t_ms=590.7 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.540407,
+  "rel_ms": 1091.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=background_setup_started t_ms=590.800 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.54084,
+  "rel_ms": 1091.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=open_hot_path_complete t_ms=591.3 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.540942,
+  "rel_ms": 1092.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=open_hot_path_complete t_ms=591.400 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.54168,
+  "rel_ms": 1092.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=attachments_start t_ms=592.1 is_local=False patient_id=44514 source=server trigger=immediate"
+ },
+ {
+  "t": 1780650464.541787,
+  "rel_ms": 1092.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=attachments_start t_ms=592.200 patient_id=44514 is_local=False source=server trigger=immediate"
+ },
+ {
+  "t": 1780650464.542049,
+  "rel_ms": 1093.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=background_series_info_pushed t_ms=592.5 is_local=False patient_id=44514 series_count=8 source=server"
+ },
+ {
+  "t": 1780650464.542153,
+  "rel_ms": 1093.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=background_series_info_pushed t_ms=592.600 patient_id=44514 is_local=False source=server series_count=8"
+ },
+ {
+  "t": 1780650464.543688,
+  "rel_ms": 1094.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=series_info_entry t_ms=594.1 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.54383,
+  "rel_ms": 1094.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=series_info_entry t_ms=594.200 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.547673,
+  "rel_ms": 1098.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_begin t_ms=598.1 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.547791,
+  "rel_ms": 1098.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_begin t_ms=598.200 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.549309,
+  "rel_ms": 1100.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_gate t_ms=599.7 grew=1 is_local=False local_thumbs=0 patient_id=44514 server_series=8 source=server"
+ },
+ {
+  "t": 1780650464.54943,
+  "rel_ms": 1100.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_gate t_ms=599.800 patient_id=44514 is_local=False source=server local_thumbs=0 server_series=8 grew=1"
+ },
+ {
+  "t": 1780650464.550436,
+  "rel_ms": 1101.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_socket_start t_ms=600.9 host=192.168.2.222 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.550543,
+  "rel_ms": 1101.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_socket_start t_ms=601.000 patient_id=44514 is_local=False source=server host=192.168.2.222"
+ },
+ {
+  "t": 1780650464.56208,
+  "rel_ms": 1113.1,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "\ud83d\ude80 Download subprocess started (pid=270436) for BAKHTIYARI  TOORAN"
+ },
+ {
+  "t": 1780650464.562099,
+  "rel_ms": 1113.1,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "cwd=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version"
+ },
+ {
+  "t": 1780650464.562689,
+  "rel_ms": 1113.7,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Imports OK (0.001s)"
+ },
+ {
+  "t": 1780650464.56551,
+  "rel_ms": 1116.5,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] DatabaseManager ready (0.003s)"
+ },
+ {
+  "t": 1780650464.566354,
+  "rel_ms": 1117.4,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Starting asyncio event loop (0.004s since process start)"
+ },
+ {
+  "t": 1780650464.679545,
+  "rel_ms": 1230.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650464.717913,
+  "rel_ms": 1268.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_socket_done t_ms=768.3 is_local=False patient_id=44514 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650464.718067,
+  "rel_ms": 1269.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_socket_done t_ms=768.500 patient_id=44514 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650464.718233,
+  "rel_ms": 1269.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_display_input t_ms=768.7 is_local=False patient_id=44514 source=server thumbnail_count=8 with_file_path=8 with_inline_"
+ },
+ {
+  "t": 1780650464.718324,
+  "rel_ms": 1269.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_display_input t_ms=768.700 patient_id=44514 is_local=False source=server thumbnail_count=8 with_file_path=8 with_inlin"
+ },
+ {
+  "t": 1780650464.718519,
+  "rel_ms": 1269.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_display_done t_ms=768.9 is_local=False patient_id=44514 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650464.718609,
+  "rel_ms": 1269.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_display_done t_ms=769.000 patient_id=44514 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650464.735225,
+  "rel_ms": 1286.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=attachments_done t_ms=785.6 is_local=False patient_id=44514 source=server trigger=immediate worker_ms=193.5"
+ },
+ {
+  "t": 1780650464.735375,
+  "rel_ms": 1286.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=attachments_done t_ms=785.800 patient_id=44514 is_local=False source=server trigger=immediate worker_ms=193.500"
+ },
+ {
+  "t": 1780650464.864897,
+  "rel_ms": 1415.9,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.83 query_type=download_write inserted=1 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650464.865064,
+  "rel_ms": 1416.1,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=31.76 query_type=download_write inserted=1 chunk_count=1"
+ },
+ {
+  "t": 1780650464.867302,
+  "rel_ms": 1418.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650464.958369,
+  "rel_ms": 1509.4,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.83 query_type=download_write inserted=2 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650464.958566,
+  "rel_ms": 1509.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=25.70 query_type=download_write inserted=2 chunk_count=1"
+ },
+ {
+  "t": 1780650464.960834,
+  "rel_ms": 1511.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650465.018641,
+  "rel_ms": 1569.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=1 total=1 corr_session=sess-c1d6d630bd31 corr_mono_ms=413396582.484"
+ },
+ {
+  "t": 1780650465.132565,
+  "rel_ms": 1683.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_begin t_ms=1182.9 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650465.133535,
+  "rel_ms": 1684.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_begin t_ms=1183.800 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650465.135135,
+  "rel_ms": 1686.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_gate t_ms=1185.6 grew=0 is_local=False local_thumbs=8 patient_id=44514 server_series=8 source=server"
+ },
+ {
+  "t": 1780650465.13525,
+  "rel_ms": 1686.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_gate t_ms=1185.700 patient_id=44514 is_local=False source=server local_thumbs=8 server_series=8 grew=0"
+ },
+ {
+  "t": 1780650465.135478,
+  "rel_ms": 1686.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_hit t_ms=1185.9 is_local=False patient_id=44514 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650465.135587,
+  "rel_ms": 1686.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_hit t_ms=1186.000 patient_id=44514 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650465.258712,
+  "rel_ms": 1809.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=2 total=2 corr_session=sess-c1d6d630bd31 corr_mono_ms=413396822.529"
+ },
+ {
+  "t": 1780650465.329255,
+  "rel_ms": 1880.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650465.700421,
+  "rel_ms": 2251.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650465.937272,
+  "rel_ms": 2488.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=11 total=37 corr_session=sess-c1d6d630bd31 corr_mono_ms=413397501.091"
+ },
+ {
+  "t": 1780650466.061131,
+  "rel_ms": 2612.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650466.417287,
+  "rel_ms": 2968.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=37 total=37 corr_session=sess-c1d6d630bd31 corr_mono_ms=413397981.072"
+ },
+ {
+  "t": 1780650466.449118,
+  "rel_ms": 3000.1,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.47 query_type=download_write inserted=37 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650466.449357,
+  "rel_ms": 3000.4,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=138.11 query_type=download_write inserted=37 chunk_count=1"
+ },
+ {
+  "t": 1780650466.451492,
+  "rel_ms": 3002.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650466.475532,
+  "rel_ms": 3026.6,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "viewer-event start change_series_on_viewer series=151421235"
+ },
+ {
+  "t": 1780650466.476197,
+  "rel_ms": 3027.2,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "FAST:series_selected series=151421235 event_id=view-4d8970abf58a t+0ms fast_mode=True study_uid=1.2.840.1.99.1.47.1.1780309875224.86246"
+ },
+ {
+  "t": 1780650466.476286,
+  "rel_ms": 3027.3,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "FAST:zetaboost_snapshot series=151421235 active=True study_dl_complete=False global_dl_count=1 q(i/w/b)=0/0/0 inflight=0"
+ },
+ {
+  "t": 1780650466.476361,
+  "rel_ms": 3027.4,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "FAST:zetaboost_verdict series=151421235 status=inactive reason=study_download_pending(intentional) intentional=True"
+ },
+ {
+  "t": 1780650466.477329,
+  "rel_ms": 3028.4,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "viewer-backend stage=route series=151421235 viewer=0 requested_backend=pydicom_qt"
+ },
+ {
+  "t": 1780650466.477534,
+  "rel_ms": 3028.6,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "stage-timing duration_ms=2.09 cache_hit=False"
+ },
+ {
+  "t": 1780650466.479574,
+  "rel_ms": 3030.6,
+  "log": "vie",
+  "tag": "drop",
+  "detail": "stage-timing duration_ms=4.12 series=151421235"
+ },
+ {
+  "t": 1780650466.483918,
+  "rel_ms": 3034.9,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=begin study=1.2.840.1.99.1.47.1.1780309875224.86246 series=151421235 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Pending auto_paused=False elapsed_ms=0 to"
+ },
+ {
+  "t": 1780650466.484047,
+  "rel_ms": 3035.1,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=started study=1.2.840.1.99.1.47.1.1780309875224.86246 series=151421235 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Pending auto_paused=False elapsed_ms=0 "
+ },
+ {
+  "t": 1780650466.498334,
+  "rel_ms": 3049.4,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=begin study=1.2.840.1.99.1.47.1.1780309875224.86246 series=151421235 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Pending auto_paused=False elapsed_ms=0 to"
+ },
+ {
+  "t": 1780650466.498458,
+  "rel_ms": 3049.5,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=started study=1.2.840.1.99.1.47.1.1780309875224.86246 series=151421235 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Pending auto_paused=False elapsed_ms=0 "
+ },
+ {
+  "t": 1780650466.499542,
+  "rel_ms": 3050.6,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=begin study=1.2.840.1.99.1.47.1.1780309875224.86246 series=151421235 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Pending auto_paused=False elapsed_ms=0 to"
+ },
+ {
+  "t": 1780650466.499635,
+  "rel_ms": 3050.7,
+  "log": "dow",
+  "tag": "intent",
+  "detail": "[INTENT_PRIORITY] tag=started study=1.2.840.1.99.1.47.1.1780309875224.86246 series=151421235 attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state=Pending auto_paused=False elapsed_ms=0 "
+ },
+ {
+  "t": 1780650466.500276,
+  "rel_ms": 3051.3,
+  "log": "app",
+  "tag": "drop",
+  "detail": "[PROFILE] change_series_on_viewer: async load-on-demand FAILED for series 151421235 in 20.8ms"
+ },
+ {
+  "t": 1780650466.744216,
+  "rel_ms": 3295.2,
+  "log": "dow",
+  "tag": "dl_preempt",
+  "detail": "\u23f8\ufe0f download_batch cancelled: Download cancelled (preemption)"
+ },
+ {
+  "t": 1780650466.759775,
+  "rel_ms": 3310.8,
+  "log": "dow",
+  "tag": "dl_preempt",
+  "detail": "    \u274c FAILED: Download cancelled (preemption)"
+ },
+ {
+  "t": 1780650466.760345,
+  "rel_ms": 3311.4,
+  "log": "dow",
+  "tag": "dl_preempt",
+  "detail": "\u23f8\ufe0f Download preempted: BAKHTIYARI  TOORAN - Paused for higher priority download (preemption)"
+ },
+ {
+  "t": 1780650466.92625,
+  "rel_ms": 3477.3,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "\ud83d\ude80 Download subprocess started (pid=261536) for BAKHTIYARI  TOORAN"
+ },
+ {
+  "t": 1780650469.818177,
+  "rel_ms": 6369.2,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "cwd=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version"
+ },
+ {
+  "t": 1780650469.818696,
+  "rel_ms": 6369.7,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Imports OK (0.001s)"
+ },
+ {
+  "t": 1780650469.827655,
+  "rel_ms": 6378.7,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] DatabaseManager ready (0.009s)"
+ },
+ {
+  "t": 1780650469.828496,
+  "rel_ms": 6379.5,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Starting asyncio event loop (0.010s since process start)"
+ },
+ {
+  "t": 1780650469.933319,
+  "rel_ms": 6484.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650471.189767,
+  "rel_ms": 7740.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.02 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650471.795243,
+  "rel_ms": 8346.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=151421235 downloaded=1 total=38 corr_session=sess-c1d6d630bd31 corr_mono_ms=413403359.069"
+ },
+ {
+  "t": 1780650472.512428,
+  "rel_ms": 9063.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650473.132674,
+  "rel_ms": 9683.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=151421235 downloaded=11 total=38 corr_session=sess-c1d6d630bd31 corr_mono_ms=413404696.384"
+ },
+ {
+  "t": 1780650473.656626,
+  "rel_ms": 10207.7,
+  "log": "vie",
+  "tag": "first_img",
+  "detail": "[UX_FIRST_IMAGE_VISIBLE] series=151421235 slice=10 decode_ms=8.2 total_ms=48.9"
+ },
+ {
+  "t": 1780650473.664997,
+  "rel_ms": 10216.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=first_series_visible t_ms=9715.4 is_local=False patient_id=44514 pending_attachments=0 pending_right_panel=0 pending_series_info=0"
+ },
+ {
+  "t": 1780650473.665122,
+  "rel_ms": 10216.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=first_series_visible t_ms=9715.500 patient_id=44514 is_local=False source=server pending_right_panel=0 pending_series_info=0 pendi"
+ },
+ {
+  "t": 1780650473.846949,
+  "rel_ms": 10398.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650474.451687,
+  "rel_ms": 11002.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=151421235 downloaded=21 total=38 corr_session=sess-c1d6d630bd31 corr_mono_ms=413406015.523"
+ },
+ {
+  "t": 1780650474.894894,
+  "rel_ms": 11445.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=151421235 downloaded=38 total=38 corr_session=sess-c1d6d630bd31 corr_mono_ms=413406458.737"
+ },
+ {
+  "t": 1780650474.945885,
+  "rel_ms": 11496.9,
+  "log": "app",
+  "tag": "prog_grow",
+  "detail": "[PROGRESSIVE_GROW] phase=start series=151421235 pending=38 visible_target=38 terminal=True grow_admission_ms=0.001 grow_retry_count=0 grow_overlap_with_drag=False corr_session=sess-c1d6d630bd31 corr_m"
+ },
+ {
+  "t": 1780650474.993243,
+  "rel_ms": 11544.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=10.54 query_type=download_write inserted=37 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650474.993356,
+  "rel_ms": 11544.4,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=132.49 query_type=download_write inserted=37 chunk_count=1"
+ },
+ {
+  "t": 1780650475.014431,
+  "rel_ms": 11565.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.59 query_type=download_write inserted=1 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650475.014568,
+  "rel_ms": 11565.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=19.09 query_type=download_write inserted=1 chunk_count=1"
+ },
+ {
+  "t": 1780650475.029762,
+  "rel_ms": 11580.8,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.53 query_type=download_write inserted=2 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650475.029904,
+  "rel_ms": 11580.9,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=13.42 query_type=download_write inserted=2 chunk_count=1"
+ },
+ {
+  "t": 1780650475.139588,
+  "rel_ms": 11690.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.22 query_type=download_write inserted=37 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650475.139947,
+  "rel_ms": 11691.0,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=108.04 query_type=download_write inserted=37 chunk_count=1"
+ },
+ {
+  "t": 1780650475.142271,
+  "rel_ms": 11693.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650475.445536,
+  "rel_ms": 11996.6,
+  "log": "app",
+  "tag": "prog_grow",
+  "detail": "[PROGRESSIVE_GROW] phase=start series=151421235 pending=38 visible_target=38 terminal=True grow_admission_ms=0.002 grow_retry_count=1 grow_overlap_with_drag=False corr_session=sess-c1d6d630bd31 corr_m"
+ },
+ {
+  "t": 1780650475.945792,
+  "rel_ms": 12496.8,
+  "log": "app",
+  "tag": "prog_grow",
+  "detail": "[PROGRESSIVE_GROW] phase=start series=151421235 pending=38 visible_target=38 terminal=True grow_admission_ms=0.001 grow_retry_count=1 grow_overlap_with_drag=False corr_session=sess-c1d6d630bd31 corr_m"
+ }
+]

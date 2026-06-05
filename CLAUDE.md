@@ -327,7 +327,7 @@ must show ALL of them. Before editing `_hp_patient_open.py`
   latest even under a modality filter) — a separate, rarer server limitation; do not assume the
   enumeration closes it.
 
-### Single-instance application guard + clean termination (2026-06-02)
+### Single-instance application guard + clean termination (2026-06-02, takeover 2026-06-05)
 Before editing `PacsClient/utils/single_instance_lock.py`, the lock acquire/release in
 `main.py`, or the shutdown `finally`, **read `SINGLE_INSTANCE_GUARD_2026-06-02.md`** and the
 [[single-instance-guard]] memory.
@@ -335,12 +335,22 @@ Before editing `PacsClient/utils/single_instance_lock.py`, the lock acquire/rele
   cross-process ACTIVATE→raise-window IPC); the PID lock file is a diagnostic/fallback layer.
   Per-user, build-independent server name. Keep `try_acquire(show_dialog)` / `release()` /
   `set_activate_callback(cb)`.
+- **TAKEOVER is the default (2026-06-05): new launch wins.** A new launch sends
+  `AIPACS_SHUTDOWN` over the local socket (clean close), waits ~6 s, then force-kills
+  remaining AIPacs process TREES via psutil (`_force_close_other_instances` — top-level
+  candidates only; never self/ancestors/descendants; covers frozen exes, source runs, and
+  orphaned workers/spares that re-exec a relative `main.py`). No dialog, no question. A
+  failed `listen()` after takeover re-pings and DEFERS to a racing newer launch (no kill
+  loops). Legacy raise-window behavior: `AIPACS_NO_TAKEOVER=1`; under pytest
+  (`PYTEST_CURRENT_TEST`) takeover is ALWAYS off so tests can't kill the runner or a live
+  session. Guard tests: `tests/code/test_single_instance_takeover.py`.
 - In the ping path use a **graceful** `disconnectFromServer()` + `waitForDisconnected()` —
-  **never `abort()`** (it discards the in-flight ACTIVATE so the existing window never raises).
+  **never `abort()`** (it discards the in-flight ACTIVATE/SHUTDOWN so the message is lost).
 - Shutdown guarantees no lingering process: the run-loop `finally` calls
   `terminate_all_download_subprocesses()` (`_vw_globals.py`, also `atexit`) then a guarded
   `os._exit(0)` (escape hatch `AIPACS_NO_HARD_EXIT=1`). Keep cleanup (lock release, DB WAL
-  checkpoint, log flush, subprocess kill) BEFORE the `os._exit`.
+  checkpoint, log flush, subprocess kill) BEFORE the `os._exit`. The SHUTDOWN handler quits
+  via the event loop (so that `finally` runs) with an 8 s hard-exit failsafe.
 
 ### Download-manager reliability + smoothness (2026-06-02)
 See `AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical image integrity verified sound
@@ -357,6 +367,16 @@ See `AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical image integrity 
   executor) reaches `home_panel.widget → zeta_adapter` mid-init, so some test files fail to
   *collect* when a home-panel suite is collected before `download_manager`. Order-only, **no
   production impact**; to verify home-panel changes, collect `tests/code/download_manager` first.
+- **Large-batch stability (2026-06-05,** see `STABILITY_FIXES_TAKEOVER_AND_LARGE_BATCH_2026-06-05.md`**):**
+  the response-body recv loop accumulates into a **`bytearray`** (`extend`) — never revert to
+  `bytes +=` (O(n²): minutes of CPU on a 300 MB radiology batch = the "stuck download"). A
+  per-series **byte-budget soft cap** (`_BATCH_BYTES_SOFT_CAP`, 64 MB) halves subsequent
+  batches AFTER the `batch_start` advance (alignment-safe) and must never write the global
+  adaptive batch size. `XA`/`RF`/`DR` belong in `_SERIES_FORCE_BATCH_ONE_MODALITIES`. On
+  "Response too large" (usually stream desync) `send_request` returns a structured error for
+  `GetSeriesImages` only; `download_series` halves, then does 2 bounded same-size retries at
+  min batch on a fresh socket. Guards: `tests/code/download_manager/test_large_batch_stability.py`
+  + `test_response_too_large_u1.py`.
 
 
 ## VS Code Agent Mode environment (configured 2026-06-02)

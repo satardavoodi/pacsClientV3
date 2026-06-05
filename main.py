@@ -1271,8 +1271,11 @@ if __name__ == "__main__":
     # ========================================================================
     instance_lock = SingleInstanceLock()
     if not instance_lock.try_acquire(show_dialog=True):
-        # Another instance is running, user was prompted with dialog
-        # Lock.try_acquire() handles the user interaction and graceful exit
+        # TAKEOVER policy (default, 2026-06-05): an existing instance is
+        # closed automatically (graceful SHUTDOWN → force-kill) and this
+        # launch proceeds — so reaching here normally means we raced an even
+        # NEWER launch (defer to it) or legacy mode (AIPACS_NO_TAKEOVER=1)
+        # found a live instance and raised its window.
         logging.getLogger(__name__).info("Application initialization canceled - another instance running")
         sys.exit(0)
 
@@ -1287,7 +1290,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.2.0")
+    app.setApplicationVersion("3.2.1")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

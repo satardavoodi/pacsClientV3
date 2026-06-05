@@ -50,6 +50,77 @@ from modules.offline_cloud_server.service import export_studies_to_offline_cloud
 _GETSTUDYINFO_UNSUPPORTED = set()
 _GETSTUDYINFO_PROBE_LOCK = threading.Lock()
 
+# ── Pipeline-speed fix (2026-06-05, KPI run 20260605_121814_kpi) ─────────
+# The FIRST patient open of every session paid the full dead-probe timeout
+# before the download queue could even be created (open KPI: queue at
+# t=3.9 s, of which ~3.0 s was this probe). Two changes, both fail-safe:
+#   * _GETSTUDYINFO_PROBE_TIMEOUT_S shrinks the single-attempt probe 3 s →
+#     1.2 s. The probe is best-effort; the reliable GetStudyThumbnails
+#     fallback follows immediately, so a faster failure only reaches the
+#     working endpoint sooner.
+#   * The unsupported-server cache is PERSISTED (with a TTL) under
+#     <USER_DATA_ROOT>/config/server_capabilities.json so even the first
+#     open of a NEW session skips a probe that timed out in a previous
+#     session. TTL keeps it honest: if the server gains GetStudyInfo
+#     support later, the probe re-runs after expiry.
+_GETSTUDYINFO_PROBE_TIMEOUT_S = 1.2
+_GETSTUDYINFO_CACHE_TTL_S = 7 * 24 * 3600  # re-probe weekly
+_GETSTUDYINFO_CACHE_LOADED = False
+
+
+def _getstudyinfo_cache_file():
+    from pathlib import Path
+    from PacsClient.utils.data_paths import USER_DATA_ROOT
+    return Path(str(USER_DATA_ROOT)) / "config" / "server_capabilities.json"
+
+
+def _load_getstudyinfo_unsupported() -> None:
+    """Merge persisted unsupported servers (within TTL) into the live set."""
+    global _GETSTUDYINFO_CACHE_LOADED
+    if _GETSTUDYINFO_CACHE_LOADED:
+        return
+    _GETSTUDYINFO_CACHE_LOADED = True
+    try:
+        import json
+        path = _getstudyinfo_cache_file()
+        if not path.exists():
+            return
+        data = json.loads(path.read_text(encoding="utf-8")) or {}
+        now = time.time()
+        for key, stamp in (data.get("getstudyinfo_unsupported") or {}).items():
+            try:
+                if now - float(stamp) > _GETSTUDYINFO_CACHE_TTL_S:
+                    continue
+                host, _, port = str(key).rpartition(":")
+                if host:
+                    _GETSTUDYINFO_UNSUPPORTED.add((host, int(port)))
+            except Exception:
+                continue
+    except Exception:
+        pass  # never let the capability cache break an open
+
+
+def _persist_getstudyinfo_unsupported(host, port) -> None:
+    """Record an unresponsive GetStudyInfo endpoint across sessions."""
+    try:
+        import json
+        path = _getstudyinfo_cache_file()
+        data = {}
+        if path.exists():
+            try:
+                data = json.loads(path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                data = {}
+        entry = data.setdefault("getstudyinfo_unsupported", {})
+        entry[f"{host}:{int(port)}"] = time.time()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=1), encoding="utf-8")
+        import os as _os
+        _os.replace(tmp, path)
+    except Exception:
+        pass  # best-effort only
+
 
 class _HPStudySaveMixin:
     """Study/series save: save complete study info, series info DB/server"""
@@ -123,20 +194,23 @@ class _HPStudySaveMixin:
             host = server.get('host') or server.get('socket_host')
             from modules.network.socket_config import get_socket_server_settings
             port = int((get_socket_server_settings() or {}).get('port') or server.get('socket_port') or 50052)
+            _load_getstudyinfo_unsupported()  # merge persisted skip-cache (TTL'd)
             if host and (host, port) not in _GETSTUDYINFO_UNSUPPORTED:
-                # Keep this probe SHORT (3s): the GetStudyInfo endpoint is unsupported
+                # Keep this probe SHORT: the GetStudyInfo endpoint is unsupported
                 # on some PACS deployments and never responds — a long timeout stalls
                 # the whole patient-open -> Download Manager path. Fail fast here, then
                 # fall back to the reliable GetStudyThumbnails endpoint below.
                 # If it times out, the server is added to _GETSTUDYINFO_UNSUPPORTED
-                # so later studies skip this dead 3s probe entirely.
+                # (and persisted with a TTL) so later studies/sessions skip the
+                # dead probe entirely.
                 #
                 # REGRESSION GUARD (ZETA §14): use raw send_request("GetStudyInfo")
-                # — a SINGLE attempt with the 3s timeout. NEVER call
+                # — a SINGLE attempt with the short timeout. NEVER call
                 # client.get_study_info(study_uid); that helper retries twice
                 # (~6.2s on a dead endpoint) and re-introduces a ~6.8s download-
                 # start stall. See module docstring above for full context.
-                client = PatientListSocketClient(host=host, port=port, timeout=3)
+                client = PatientListSocketClient(
+                    host=host, port=port, timeout=_GETSTUDYINFO_PROBE_TIMEOUT_S)
                 _probe_started = time.monotonic()
                 info_data = None
                 response = None
@@ -229,15 +303,19 @@ class _HPStudySaveMixin:
                 # GetStudyInfo yielded no usable series. If the call was slow
                 # OR the server returned nothing at all, record this server so
                 # subsequent studies skip the dead probe and go straight to the
-                # GetStudyThumbnails fallback below.
-                if _probe_elapsed >= 2.5 or not _had_response:
+                # GetStudyThumbnails fallback below. Threshold scales with the
+                # probe timeout (was a hard-coded 2.5 against the old 3 s).
+                if (_probe_elapsed >= _GETSTUDYINFO_PROBE_TIMEOUT_S * 0.8
+                        or not _had_response):
                     if (host, port) not in _GETSTUDYINFO_UNSUPPORTED:
                         _GETSTUDYINFO_UNSUPPORTED.add((host, port))
+                        _persist_getstudyinfo_unsupported(host, port)
                         _print_logger.info(
                             "[series-info] GetStudyInfo unresponsive on %s:%s "
                             "(%.1fs, had_response=%s) — skipping that probe for "
-                            "the rest of this session",
+                            "this session and persisting (TTL %dd)",
                             host, port, _probe_elapsed, _had_response,
+                            _GETSTUDYINFO_CACHE_TTL_S // 86400,
                         )
 
             response = self._fetch_study_thumbnails_from_socket(

@@ -4,11 +4,22 @@ Single-instance application lock — robust QLocalServer + PID-lock-file guard.
 PRIMARY mechanism — Qt ``QLocalServer`` (a named local socket; a *named pipe* on
 Windows). Only one process can ``listen()`` on a given name, so this is an ATOMIC
 single-instance guard with **no read-then-write race**: two simultaneous launches
-both fail to connect, then both try to listen — the OS lets exactly one win, and the
-loser becomes a secondary that exits. When the owning process dies (normal exit OR
-crash) the OS releases the pipe, so there is **never a permanently-stale lock**. A
-second launch connects to the running instance and sends an ACTIVATE message, which
-raises the existing window to the foreground; the second process then exits cleanly.
+both fail to connect, then both try to listen — the OS lets exactly one win. When
+the owning process dies (normal exit OR crash) the OS releases the pipe, so there
+is **never a permanently-stale lock**.
+
+TAKEOVER policy (DEFAULT since 2026-06-05 — "new launch wins"): when a new launch
+finds an existing instance, it does NOT ask the user and does NOT exit. It first
+sends the running instance a SHUTDOWN message over the local socket (clean close:
+DB checkpoint, subprocess termination, lock release), waits briefly, and if the
+old instance is still alive (hung after hibernate / crash-leftover / an old build
+that doesn't understand SHUTDOWN) it force-kills the old AIPacs process tree(s)
+via psutil — including orphaned download workers/spares that re-exec ``main.py``.
+Then the new launch acquires the lock and continues normally. Exactly one active
+instance, always the newest one. Escape hatch: ``AIPACS_NO_TAKEOVER=1`` restores
+the legacy behavior (raise the existing window via ACTIVATE and exit quietly).
+Under pytest (``PYTEST_CURRENT_TEST`` set) takeover is disabled automatically so
+tests can never kill the test runner or a developer's live session.
 
 SECONDARY mechanism — a PID lock file (records the owner PID + server name for
 diagnostics, and serves as a liveness fallback if QLocalServer is unavailable, e.g.
@@ -23,7 +34,7 @@ Usage:
 
     lock = SingleInstanceLock()
     if not lock.try_acquire():
-        sys.exit(0)                      # another instance is running — it was raised
+        sys.exit(0)                      # takeover failed/raced — other instance kept
     lock.set_activate_callback(raise_main_window)   # after the window exists
     ...
     lock.release()                       # on shutdown
@@ -31,6 +42,7 @@ Usage:
 
 import os
 import sys
+import time
 import hashlib
 import getpass
 import tempfile
@@ -42,6 +54,24 @@ logger = logging.getLogger(__name__)
 
 # Message a second launch sends to the running instance to ask it to come forward.
 _ACTIVATE_MSG = b"AIPACS_ACTIVATE"
+# Message a new (takeover) launch sends to ask the running instance to close
+# cleanly so the new launch can replace it. Old builds ignore unknown messages —
+# they are covered by the force-kill fallback.
+_SHUTDOWN_MSG = b"AIPACS_SHUTDOWN"
+
+# How long a takeover waits for the old instance to exit cleanly before
+# force-killing, and after force-kill for the pipe to be released.
+_TAKEOVER_GRACEFUL_WAIT_S = 6.0
+_TAKEOVER_POSTKILL_WAIT_S = 3.0
+
+
+def _takeover_enabled() -> bool:
+    """New-launch-wins takeover is the build default; env/pytest can disable."""
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return False
+    return os.environ.get("AIPACS_NO_TAKEOVER", "").strip().lower() not in (
+        "1", "true", "yes",
+    )
 
 
 def _server_name() -> str:
@@ -81,18 +111,54 @@ class SingleInstanceLock:
     def try_acquire(self, show_dialog: bool = True) -> bool:
         """Acquire single-instance ownership.
 
-        Returns True if THIS process becomes the one running instance. Returns False
-        if another instance is already running — in which case the existing window
-        has been asked to come to the foreground and the caller should exit.
+        Takeover mode (default): an existing instance is asked to shut down
+        cleanly, force-killed if it does not, and THIS process becomes the one
+        running instance — no dialog, no question. Returns False only if the
+        takeover raced with an even newer launch (exit quietly) or every
+        mechanism failed.
+
+        Legacy mode (``AIPACS_NO_TAKEOVER=1`` or under pytest): returns False
+        when another instance is running — the existing window has been asked
+        to come to the foreground and the caller should exit.
         """
+        takeover = _takeover_enabled()
+
         # 1) Is another instance already listening (i.e. actually alive)?
-        if self._ping_existing_instance():
+        if self._ping_existing_instance(message=None if takeover else _ACTIVATE_MSG):
+            if not takeover:
+                logger.warning(
+                    "Another AIPacs instance is already running — raised it; this launch will exit."
+                )
+                if show_dialog:
+                    self._show_already_running_message()
+                return False
+            # Takeover: new launch wins. Ask for a clean close first so the
+            # old instance checkpoints the DB and terminates its download
+            # subprocesses; escalate to force-kill if it lingers (hung after
+            # hibernate, crashed half-dead, or an old build without the
+            # SHUTDOWN handler).
             logger.warning(
-                "Another AIPacs instance is already running — raised it; this launch will exit."
+                "Another AIPacs instance is running — taking over (new launch wins)."
             )
-            if show_dialog:
-                self._show_already_running_message()
-            return False
+            self._request_existing_shutdown()
+            if not self._wait_existing_gone(_TAKEOVER_GRACEFUL_WAIT_S):
+                killed = self._force_close_other_instances()
+                logger.warning(
+                    "Old instance did not close gracefully — force-closed %d "
+                    "AIPacs process tree(s).", killed,
+                )
+                self._wait_existing_gone(_TAKEOVER_POSTKILL_WAIT_S)
+        elif takeover:
+            # Nobody is listening, but hidden leftovers may still be running
+            # (orphaned download workers / pre-warm spares whose parent died,
+            # an instance hung before its server came up). Sweep them so they
+            # cannot hold dicom.db, sockets, or ports against the new run.
+            killed = self._force_close_other_instances()
+            if killed:
+                logger.warning(
+                    "Startup sweep force-closed %d orphaned AIPacs process tree(s).",
+                    killed,
+                )
 
         # 2) Become the primary by listening on the server name (atomic).
         if self._start_server():
@@ -104,10 +170,19 @@ class SingleInstanceLock:
             )
             return True
 
-        # 3) QLocalServer unavailable/failed — fall back to the PID-file guard so a
+        # 3) Could not listen. In takeover mode the usual cause is a racing
+        #    twin launch that won the pipe a moment ago — defer to it (it IS
+        #    the newest instance) instead of starting a kill loop.
+        if takeover and self._ping_existing_instance(message=_ACTIVATE_MSG):
+            logger.warning(
+                "Another launch won the single-instance race — exiting quietly."
+            )
+            return False
+
+        # 4) QLocalServer unavailable/failed — fall back to the PID-file guard so a
         #    transient Qt error can neither hard-block startup nor allow a duplicate.
         logger.warning("QLocalServer unavailable; using PID-lock-file fallback guard.")
-        return self._fallback_pid_guard(show_dialog)
+        return self._fallback_pid_guard(show_dialog and not takeover)
 
     def set_activate_callback(self, cb: Callable[[], None]) -> None:
         """Register the action (e.g. raise + focus the main window) to run when a
@@ -135,8 +210,13 @@ class SingleInstanceLock:
             self._lock_acquired = False
 
     # ── QLocalServer / QLocalSocket (primary mechanism) ──────────────────────
-    def _ping_existing_instance(self) -> bool:
-        """True if a live instance is listening (and was asked to activate)."""
+    def _ping_existing_instance(self, message: Optional[bytes] = _ACTIVATE_MSG) -> bool:
+        """True if a live instance is listening.
+
+        ``message=_ACTIVATE_MSG`` (default) also asks it to come forward;
+        ``message=None`` is a quiet liveness probe (connect only) used by the
+        takeover flow so the doomed old window is not raised first.
+        """
         try:
             from PySide6.QtNetwork import QLocalSocket
         except Exception:
@@ -147,13 +227,14 @@ class SingleInstanceLock:
             if not sock.waitForConnected(400):
                 return False
             try:
-                sock.write(_ACTIVATE_MSG)
-                sock.flush()
-                sock.waitForBytesWritten(400)
-                # Graceful close so the buffered ACTIVATE is actually delivered to
+                if message:
+                    sock.write(message)
+                    sock.flush()
+                    sock.waitForBytesWritten(400)
+                # Graceful close so any buffered message is actually delivered to
                 # the running instance before the socket tears down. Do NOT abort()
                 # here — a hard reset discards the in-flight message and the existing
-                # window would never come to the foreground.
+                # instance would never receive it.
                 sock.disconnectFromServer()
                 try:
                     if sock.state() != QLocalSocket.LocalSocketState.UnconnectedState:
@@ -165,6 +246,143 @@ class SingleInstanceLock:
             return True
         except Exception:
             return False
+
+    # ── takeover machinery (new launch wins) ────────────────────────────────
+    def _request_existing_shutdown(self) -> bool:
+        """Ask the running instance to close cleanly. Best-effort."""
+        return self._ping_existing_instance(message=_SHUTDOWN_MSG)
+
+    def _wait_existing_gone(self, timeout_s: float) -> bool:
+        """Poll (quietly) until no instance is listening. True when gone."""
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        while time.monotonic() < deadline:
+            if not self._ping_existing_instance(message=None):
+                return True
+            time.sleep(0.25)
+        return not self._ping_existing_instance(message=None)
+
+    @staticmethod
+    def _proc_is_aipacs(name: str, exe: str, cmdline: list, cwd: str = "") -> bool:
+        """Match AIPacs processes: frozen exes and python source/worker runs.
+
+        Pure-function matching rules (unit-testable without psutil):
+        - frozen: image name contains "aipacs" once spaces are squashed
+          (covers ``aipacs.exe`` and ``AI PACS Viewer.exe``);
+        - source/worker: a python process whose cmdline runs ``main.py`` AND
+          whose script path / interpreter path / cwd points into an AIPacs
+          tree ("ai-pacs"/"aipacs"). Workers re-exec a *relative* ``main.py``,
+          so the venv interpreter path or cwd is the discriminator there.
+          Plain ``python -m pytest`` or unrelated main.py projects never match.
+        """
+        n = (name or "").lower().replace(" ", "")
+        if n.endswith(".exe") and "aipacs" in n:
+            return True
+        if "python" not in n:
+            return False
+        parts = [str(p) for p in (cmdline or [])]
+        runs_main = any(p.lower().rstrip('"').endswith("main.py") for p in parts)
+        if not runs_main:
+            return False
+        haystack = " ".join(parts).lower() + " " + (exe or "").lower() + " " + (cwd or "").lower()
+        squashed = haystack.replace(" ", "")
+        return ("ai-pacs" in squashed) or ("aipacs" in squashed)
+
+    def _force_close_other_instances(self) -> int:
+        """Force-kill every other AIPacs process tree. Returns trees killed.
+
+        Kills only TOP-LEVEL candidates (a candidate whose parent is also a
+        candidate dies with its parent's tree), never this process, never our
+        ancestors or descendants. Other-user processes raise AccessDenied and
+        are skipped silently.
+        """
+        try:
+            import psutil
+        except Exception:
+            logger.warning("psutil unavailable — cannot sweep old instances.")
+            return 0
+        self_pid = os.getpid()
+        protected = {self_pid}
+        try:
+            me = psutil.Process(self_pid)
+            protected.update(a.pid for a in me.parents())
+            protected.update(c.pid for c in me.children(recursive=True))
+        except Exception:
+            pass
+
+        candidates = {}
+        for proc in psutil.process_iter(["pid", "ppid", "name", "exe", "cmdline"]):
+            try:
+                if proc.pid in protected:
+                    continue
+                info = proc.info
+                cwd = ""
+                cmdline = info.get("cmdline") or []
+                # cwd lookup only when needed (relative "main.py" worker case)
+                if any(str(p).lower().endswith("main.py") for p in cmdline):
+                    try:
+                        cwd = proc.cwd()
+                    except Exception:
+                        cwd = ""
+                if self._proc_is_aipacs(
+                    info.get("name") or "", info.get("exe") or "", cmdline, cwd
+                ):
+                    candidates[proc.pid] = proc
+            except Exception:
+                continue
+
+        killed = 0
+        for pid, proc in candidates.items():
+            try:
+                if (proc.ppid() in candidates):
+                    continue  # not top-level; dies with its parent's tree
+                tree = [proc]
+                try:
+                    tree += proc.children(recursive=True)
+                except Exception:
+                    pass
+                desc = f"PID {pid} ({(proc.name() or '?')})"
+                for t in tree:
+                    try:
+                        t.terminate()
+                    except Exception:
+                        pass
+                _, alive = psutil.wait_procs(tree, timeout=2.0)
+                for t in alive:
+                    try:
+                        t.kill()
+                    except Exception:
+                        pass
+                killed += 1
+                logger.warning("Force-closed stale AIPacs instance %s "
+                               "(+%d child process(es)).", desc, len(tree) - 1)
+            except Exception as e:
+                logger.debug("Could not close candidate PID %s: %s", pid, e)
+        return killed
+
+    def _initiate_shutdown(self) -> None:
+        """Run on the OLD instance when a newer launch requests takeover."""
+        logger.warning(
+            "Received SHUTDOWN from a newer AIPacs launch — closing this instance."
+        )
+        try:
+            from PySide6.QtCore import QTimer
+            from PySide6.QtWidgets import QApplication
+            app = QApplication.instance()
+            if app is not None:
+                # Quit via the event loop so main.py's run-loop `finally`
+                # performs the full clean shutdown (DB checkpoint, download-
+                # subprocess termination, lock release, guarded hard-exit).
+                QTimer.singleShot(0, app.quit)
+                if os.environ.get("AIPACS_NO_HARD_EXIT", "") != "1":
+                    # Failsafe: a modal dialog or stuck teardown must not
+                    # block the takeover forever.
+                    QTimer.singleShot(8000, lambda: os._exit(0))
+                return
+        except Exception:
+            pass
+        # Headless/no-QApplication context (cannot be a real user instance —
+        # main.py creates QApplication before the lock): just release.
+        self.release()
 
     def _start_server(self) -> bool:
         """Listen on the server name. Returns False if another process owns it."""
@@ -203,6 +421,13 @@ class SingleInstanceLock:
                 data = bytes(conn.readAll())
             except Exception:
                 data = b""
+            if _SHUTDOWN_MSG in data:
+                try:
+                    conn.disconnectFromServer()
+                except Exception:
+                    pass
+                self._initiate_shutdown()
+                return
             if _ACTIVATE_MSG in data:
                 cb = self._activate_callback
                 if cb is not None:

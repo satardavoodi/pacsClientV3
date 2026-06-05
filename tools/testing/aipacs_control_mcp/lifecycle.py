@@ -102,20 +102,33 @@ def build_launch_env() -> dict:
 
 # ── process discovery ────────────────────────────────────────────────
 def find_app_processes() -> list[dict]:
+    """Top-level source-build app processes (NOT mp worker children).
+
+    2026-06-05: with the DM pre-warm pool enabled, multiprocessing spawn
+    children on this setup re-exec with the same ``main.py`` argv, so a
+    naive cmdline match counts the idle download spare as a second app
+    instance — breaking stop/launch/readiness (false ALREADY_RUNNING /
+    launch_ok=False) and tempting kills of healthy workers. A process only
+    counts as THE app when its parent is not itself a main.py process.
+    """
     import psutil
-    out = []
-    for p in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+    candidates = {}
+    for p in psutil.process_iter(["pid", "ppid", "name", "cmdline", "create_time"]):
         try:
             if not (p.info["name"] or "").lower().startswith("python"):
                 continue
             cmd = " ".join(p.info["cmdline"] or [])
             if "main.py" in cmd and "ai-pacs" in cmd.lower() or (
                     "main.py" in cmd and str(REPO).lower() in cmd.lower()):
-                out.append({"pid": p.info["pid"], "cmdline": cmd[:160],
-                            "create_time": p.info["create_time"]})
+                candidates[p.info["pid"]] = {
+                    "pid": p.info["pid"], "ppid": p.info.get("ppid"),
+                    "cmdline": cmd[:160],
+                    "create_time": p.info["create_time"],
+                }
         except Exception:
             continue
-    return out
+    return [info for pid, info in candidates.items()
+            if info.get("ppid") not in candidates]
 
 
 def _ping_test_server(timeout_ms: int = 1500) -> bool:

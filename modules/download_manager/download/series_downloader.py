@@ -12,6 +12,7 @@ Coordinates downloading all series for a study with:
 import logging
 import asyncio
 import os
+import time
 from typing import List, Optional, Callable
 from pathlib import Path
 from datetime import datetime
@@ -21,7 +22,7 @@ from ..core.enums import DownloadStatus
 from ..core.constants import MAX_CONCURRENT_STUDIES, MAX_SERIES_RETRIES, SERIES_RETRY_BASE_DELAY
 from ..state.state_store import DownloadStateStore
 from ..rules.rule_engine import DownloadRuleEngine
-from ..network.socket_client import SocketDicomClient
+from ..network.socket_client import SocketDicomClient, YIELDED_TO_CRITICAL
 from .progress_tracker import ProgressTracker
 
 # Import token manager for authentication
@@ -78,8 +79,70 @@ class SeriesDownloader:
         
         # R35: Progress update throttling (10 Hz max)
         self.progress_tracker = ProgressTracker(callback=progress_callback)
-        
+
+        # Same-study critical-intent file polling state (2026-06-05).
+        self._intent_mtime: float = 0.0
+        self._intent_value: Optional[str] = None
+
         logger.info("✅ SeriesDownloader initialized")
+
+    # ── Same-study critical yield (drag-drop priority, 2026-06-05) ──────
+    # The GUI cannot reach this (sub)process's state store mid-flight, so a
+    # viewer drag-drop of an undownloaded series is signalled through a tiny
+    # intent FILE in the study output directory:
+    #   {base_output_dir}/{study_uid}/.critical_intent.json
+    #   {"series_number": "<n>", "ts": <epoch seconds>}
+    # written atomically by the Download Manager UI. It is polled here (cheap
+    # mtime stat) at series boundaries and BETWEEN instance batches via the
+    # socket client's yield_check hook. Rules honoured:
+    #   * the in-flight batch always finishes (the hook runs between batches);
+    #   * no further batch of the current series starts while the critical
+    #     series waits — the current series stops with YIELDED_TO_CRITICAL,
+    #     keeps its files, and is re-queued immediately AFTER the critical
+    #     one (R19 resume skips what it already has);
+    #   * stale intents (>15 min) are ignored; the file is consumed (deleted)
+    #     once the critical series completes or is found already done.
+
+    _INTENT_FILENAME = ".critical_intent.json"
+    _INTENT_TTL_S = 15 * 60
+
+    def _intent_file(self, study_uid: str) -> Path:
+        return self.base_output_dir / str(study_uid) / self._INTENT_FILENAME
+
+    def _read_critical_intent(self, study_uid: str) -> Optional[str]:
+        """Return the requested critical series_number, or None. Never raises."""
+        try:
+            path = self._intent_file(study_uid)
+            st = path.stat()
+        except Exception:
+            self._intent_mtime = 0.0
+            self._intent_value = None
+            return None
+        try:
+            if st.st_mtime == self._intent_mtime:
+                return self._intent_value
+            import json
+            data = json.loads(path.read_text(encoding="utf-8")) or {}
+            ts = float(data.get("ts") or 0.0)
+            value = str(data.get("series_number") or "").strip() or None
+            if ts and (time.time() - ts) > self._INTENT_TTL_S:
+                value = None  # stale request — ignore
+            self._intent_mtime = st.st_mtime
+            self._intent_value = value
+            return value
+        except Exception:
+            return None
+
+    def _consume_critical_intent(self, study_uid: str, series_number) -> None:
+        """Delete the intent file once it points at *series_number* (serviced)."""
+        try:
+            current = self._read_critical_intent(study_uid)
+            if current is not None and str(current) == str(series_number):
+                self._intent_file(study_uid).unlink(missing_ok=True)
+                self._intent_mtime = 0.0
+                self._intent_value = None
+        except Exception:
+            pass
 
     def _build_preempted_result(
         self,
@@ -193,6 +256,9 @@ class SeriesDownloader:
         # This avoids the disconnect/reconnect overhead when downloading multiple series
         logger.info(f"🔌 Creating persistent socket connection for study download...")
         socket_client = SocketDicomClient(cancel_check=self.cancel_check)
+        # Same-study critical yield hook (2026-06-05): consulted BETWEEN
+        # instance batches; returns the drag-dropped series_number (or None).
+        socket_client.yield_check = lambda: self._read_critical_intent(study_uid)
         try:
         
             # Verify authentication before starting series download
@@ -249,6 +315,16 @@ class SeriesDownloader:
                 # ── Re-check viewed series: if the user clicked a different
                 #    series thumbnail since we started, reorder the remaining
                 #    series so the newly-viewed one is next. ──────────────────
+                # 2026-06-05: the GUI's mid-flight drag-drop intent arrives via
+                # the .critical_intent.json file (this process's state store is
+                # otherwise isolated from the GUI). Merge it into local state so
+                # ONE ordering path below handles both sources.
+                _intent_sn = self._read_critical_intent(study_uid)
+                if _intent_sn:
+                    try:
+                        self.state.update(study_uid, viewed_series_number=str(_intent_sn))
+                    except Exception:
+                        pass
                 current_state = self.state.get(study_uid)
                 new_viewed = getattr(current_state, 'viewed_series_number', None) if current_state else None
                 if new_viewed and str(new_viewed) != str(series_info.series_number):
@@ -293,6 +369,9 @@ class SeriesDownloader:
                     # Series complete - skip download but ensure instances in database
                     skipped_series.append(series_info.series_uid)
                     total_skipped += existing_count
+                    # A critical intent pointing at an already-complete series
+                    # is satisfied by definition — consume it.
+                    self._consume_critical_intent(study_uid, series_number)
 
                     # Track skipped series in state for accurate overall progress
                     if state:
@@ -372,6 +451,9 @@ class SeriesDownloader:
                     completed_series.append(series_info.series_uid)
                     total_downloaded += series_result.downloaded
                     total_skipped += series_result.skipped
+                    # Critical intent serviced → consume the file so later
+                    # batches/series stop seeing a satisfied request.
+                    self._consume_critical_intent(study_uid, series_number)
 
                     # Update completed series list
                     if state:
@@ -403,6 +485,34 @@ class SeriesDownloader:
                         except Exception as e:
                             logger.warning(f"    ⚠️ Failed to save instances for series {series_number}: {e}")
                             # Don't fail the entire download if instance saving fails
+                elif str(getattr(series_result, "error_message", "") or "") == YIELDED_TO_CRITICAL:
+                    # ── Same-study critical yield (2026-06-05) ──────────────
+                    # NOT a failure: the series stopped cleanly at a batch
+                    # boundary so the drag-dropped CRITICAL series can go
+                    # first. Re-queue: [critical, this partial series, rest].
+                    # Files already on disk are kept; R19/R20 resume skips
+                    # them when this series gets its turn again. Note: the
+                    # re-queued entry briefly duplicates this series in
+                    # series_list, which slightly inflates the progress
+                    # denominator until its second (resumed) pass — cosmetic
+                    # only; completion is judged from disk/DB counts.
+                    _target = self._read_critical_intent(study_uid)
+                    _tail = series_list[idx + 1:]
+                    _crit = [s for s in _tail
+                             if _target and str(s.series_number) == str(_target)]
+                    _rest = [s for s in _tail
+                             if not (_target and str(s.series_number) == str(_target))]
+                    _already_requeued = any(
+                        str(s.series_uid) == str(series_info.series_uid) for s in _tail
+                    )
+                    _self_entry = [] if _already_requeued else [series_info]
+                    series_list[idx + 1:] = _crit + _self_entry + _rest
+                    total_downloaded += series_result.downloaded
+                    logger.info(
+                        f"    ⚡ YIELDED: series {series_number} paused at a batch "
+                        f"boundary ({series_result.downloaded} fetched, kept on disk) — "
+                        f"critical series {_target} is next; this series resumes after"
+                    )
                 else:
                     failed_series.append(series_info.series_uid)
                     if state:
@@ -410,12 +520,12 @@ class SeriesDownloader:
                         if series_info.series_uid not in updated_failed:
                             updated_failed.append(series_info.series_uid)
                             self.state.update(study_uid, failed_series=updated_failed)
-                
+
                     logger.error(f"    ❌ FAILED: {series_result.error_message}")
-            
+
                 # Update progress
                 self._update_progress(study_uid, series_list, idx + 1, total_downloaded, total_skipped)
-            
+
                 logger.info(f"═══ Completed Series {idx + 1}/{len(series_list)}: {series_number} ═══")
         
             # ── Retry failed series with exponential backoff ────────────────

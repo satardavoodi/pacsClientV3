@@ -437,17 +437,34 @@ class AiPacsLoadingOverlay(QWidget):
             return
 
         def _start_fade():
-            # Animate windowOpacity from 1.0 → 0.0
-            anim = QPropertyAnimation(overlay, b"windowOpacity")
-            anim.setDuration(fade_ms)
-            anim.setStartValue(overlay.windowOpacity())
-            anim.setEndValue(0.0)
-            anim.setEasingCurve(QEasingCurve.InOutQuad)
-            # Once the animation finishes, actually remove the overlay
-            anim.finished.connect(lambda: _cleanup(overlay))
-            # Store a reference so it isn't garbage-collected mid-animation
-            overlay._fade_anim = anim
-            anim.start()
+            # Production-crash guard (other-PC frozen build, 2026-06-05
+            # evaluation): 1× native access violation HERE — the overlay's
+            # C++ object was already destroyed (series-switch teardown raced
+            # the fade), so QPropertyAnimation(overlay,…)/windowOpacity()
+            # dereferenced a deleted QWidget. Check liveness first; a dying
+            # overlay must never take the whole process down.
+            try:
+                import shiboken6
+                if not shiboken6.isValid(overlay):
+                    return
+            except ImportError:
+                pass
+            try:
+                # Animate windowOpacity from 1.0 → 0.0
+                anim = QPropertyAnimation(overlay, b"windowOpacity")
+                anim.setDuration(fade_ms)
+                anim.setStartValue(overlay.windowOpacity())
+                anim.setEndValue(0.0)
+                anim.setEasingCurve(QEasingCurve.InOutQuad)
+                # Once the animation finishes, actually remove the overlay
+                anim.finished.connect(lambda: _cleanup(overlay))
+                # Store a reference so it isn't garbage-collected mid-animation
+                overlay._fade_anim = anim
+                anim.start()
+            except RuntimeError:
+                # Qt wrapper died between the liveness check and use —
+                # nothing left to fade; best-effort cleanup only.
+                _cleanup(overlay)
 
         def _cleanup(ov):
             try:

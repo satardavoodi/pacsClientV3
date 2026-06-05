@@ -566,6 +566,22 @@ class _HPPatientOpenMixin:
         )
         self._log_open_trace(study_uid, 'open_request', report_status=report_status, all_studies=len(all_study_uids))
 
+        # The OPENED patient is, by definition, the user's latest selection.
+        # Without this, the stale-response guard (_is_active_patient_selection,
+        # added 2026-06-01 for the thumbnail-click race) still points at the
+        # LAST SINGLE-CLICKED row: double-clicking patient B after having
+        # clicked patient A made B's background series-info / right-panel leg
+        # bail with `series_info_inactive_skip` — leaving the viewer sidebar
+        # permanently at "0 series" for a fresh study (no thumbnails, nothing
+        # to drag). Observed live 2026-06-05 18:31 on 40351 after working on
+        # 40292. Marking here re-aims the guard at the open itself while
+        # keeping its protection against genuinely stale earlier responses.
+        try:
+            if hasattr(self, '_mark_active_patient_selection'):
+                self._mark_active_patient_selection(patient_id, study_uid)
+        except Exception:
+            pass
+
         try:
             # Prevent duplicate open requests for the same study (double-trigger / re-entrancy)
             if study_uid in self._opening_studies:

@@ -1,0 +1,1857 @@
+[
+ {
+  "t": 1780650403.145662,
+  "rel_ms": 544.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=open_request t_ms=0.4 all_studies=1 patient_id=44499 report_status=pending source=server"
+ },
+ {
+  "t": 1780650403.145776,
+  "rel_ms": 544.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=open_request t_ms=0.500 patient_id=44499 source=server report_status=pending all_studies=1"
+ },
+ {
+  "t": 1780650403.147072,
+  "rel_ms": 545.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=study_path_ready t_ms=1.8 is_local=False is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\user_data"
+ },
+ {
+  "t": 1780650403.147205,
+  "rel_ms": 545.7,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=study_path_ready t_ms=1.900 patient_id=44499 is_local=False source=server is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs cod"
+ },
+ {
+  "t": 1780650403.576515,
+  "rel_ms": 975.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=tab_created t_ms=431.3 is_local=False patient_id=44499 source=server"
+ },
+ {
+  "t": 1780650403.576607,
+  "rel_ms": 975.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=tab_created t_ms=431.300 patient_id=44499 is_local=False source=server"
+ },
+ {
+  "t": 1780650403.57678,
+  "rel_ms": 975.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=waiting_for_first_series_signal t_ms=431.5 is_local=False patient_id=44499 source=server"
+ },
+ {
+  "t": 1780650403.576865,
+  "rel_ms": 975.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=waiting_for_first_series_signal t_ms=431.600 patient_id=44499 is_local=False source=server"
+ },
+ {
+  "t": 1780650403.746793,
+  "rel_ms": 1145.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=first_series_visible t_ms=601.5 is_local=False patient_id=44499 pending_attachments=0 pending_right_panel=0 pending_series_info=0 "
+ },
+ {
+  "t": 1780650403.747021,
+  "rel_ms": 1145.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=first_series_visible t_ms=601.700 patient_id=44499 is_local=False source=server pending_right_panel=0 pending_series_info=0 pendin"
+ },
+ {
+  "t": 1780650405.013416,
+  "rel_ms": 2411.9,
+  "log": "app",
+  "tag": "queue",
+  "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780306982154.86243 series_count=8 priority=High"
+ },
+ {
+  "t": 1780650405.018472,
+  "rel_ms": 2417.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=thumbnail_stubs_scheduled t_ms=1873.2 all_studies=1 is_local=False patient_id=44499 series_count=8 source=server"
+ },
+ {
+  "t": 1780650405.018604,
+  "rel_ms": 2417.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=thumbnail_stubs_scheduled t_ms=1873.300 patient_id=44499 is_local=False source=server series_count=8 all_studies=1"
+ },
+ {
+  "t": 1780650405.020499,
+  "rel_ms": 2419.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=download_manager_wired t_ms=1875.2 is_local=False patient_id=44499 series_count=8 source=server"
+ },
+ {
+  "t": 1780650405.020632,
+  "rel_ms": 2419.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=download_manager_wired t_ms=1875.400 patient_id=44499 is_local=False source=server series_count=8"
+ },
+ {
+  "t": 1780650405.02083,
+  "rel_ms": 2419.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=ui_tasks_scheduled t_ms=1875.6 is_local=False patient_id=44499 right_panel_requested=True series_info_requested=True source=server"
+ },
+ {
+  "t": 1780650405.020935,
+  "rel_ms": 2419.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=ui_tasks_scheduled t_ms=1875.700 patient_id=44499 is_local=False source=server right_panel_requested=True series_info_requested=Tr"
+ },
+ {
+  "t": 1780650405.021759,
+  "rel_ms": 2420.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=background_setup_started t_ms=1876.5 is_local=False patient_id=44499 source=server"
+ },
+ {
+  "t": 1780650405.02189,
+  "rel_ms": 2420.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=background_setup_started t_ms=1876.600 patient_id=44499 is_local=False source=server"
+ },
+ {
+  "t": 1780650405.022399,
+  "rel_ms": 2420.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=attachments_start t_ms=1877.1 is_local=False patient_id=44499 source=server trigger=immediate"
+ },
+ {
+  "t": 1780650405.02252,
+  "rel_ms": 2421.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=attachments_start t_ms=1877.200 patient_id=44499 is_local=False source=server trigger=immediate"
+ },
+ {
+  "t": 1780650405.022822,
+  "rel_ms": 2421.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=background_series_info_pushed t_ms=1877.6 is_local=False patient_id=44499 series_count=8 source=server"
+ },
+ {
+  "t": 1780650405.022948,
+  "rel_ms": 2421.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=background_series_info_pushed t_ms=1877.700 patient_id=44499 is_local=False source=server series_count=8"
+ },
+ {
+  "t": 1780650405.023262,
+  "rel_ms": 2421.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=open_hot_path_complete t_ms=1878.0 is_local=False patient_id=44499 source=server"
+ },
+ {
+  "t": 1780650405.02338,
+  "rel_ms": 2421.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=open_hot_path_complete t_ms=1878.100 patient_id=44499 is_local=False source=server"
+ },
+ {
+  "t": 1780650405.025535,
+  "rel_ms": 2424.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=series_info_entry t_ms=1880.3 is_local=False patient_id=44499 source=server"
+ },
+ {
+  "t": 1780650405.025655,
+  "rel_ms": 2424.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=series_info_entry t_ms=1880.400 patient_id=44499 is_local=False source=server"
+ },
+ {
+  "t": 1780650405.02744,
+  "rel_ms": 2425.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_begin t_ms=1882.2 is_local=False patient_id=44499 source=server"
+ },
+ {
+  "t": 1780650405.027568,
+  "rel_ms": 2426.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_begin t_ms=1882.300 patient_id=44499 is_local=False source=server"
+ },
+ {
+  "t": 1780650405.030839,
+  "rel_ms": 2429.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_cache_gate t_ms=1885.6 grew=1 is_local=False local_thumbs=0 patient_id=44499 server_series=8 source=server"
+ },
+ {
+  "t": 1780650405.030941,
+  "rel_ms": 2429.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_cache_gate t_ms=1885.700 patient_id=44499 is_local=False source=server local_thumbs=0 server_series=8 grew=1"
+ },
+ {
+  "t": 1780650405.031883,
+  "rel_ms": 2430.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_socket_start t_ms=1886.6 host=192.168.2.222 is_local=False patient_id=44499 source=server"
+ },
+ {
+  "t": 1780650405.031993,
+  "rel_ms": 2430.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_socket_start t_ms=1886.700 patient_id=44499 is_local=False source=server host=192.168.2.222"
+ },
+ {
+  "t": 1780650405.039304,
+  "rel_ms": 2437.8,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "\ud83d\ude80 Download subprocess started (pid=259912) for TAHERI  FATAH"
+ },
+ {
+  "t": 1780650405.03987,
+  "rel_ms": 2438.4,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "cwd=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version"
+ },
+ {
+  "t": 1780650405.040667,
+  "rel_ms": 2439.2,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Imports OK (0.001s)"
+ },
+ {
+  "t": 1780650405.043305,
+  "rel_ms": 2441.8,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] DatabaseManager ready (0.003s)"
+ },
+ {
+  "t": 1780650405.044102,
+  "rel_ms": 2442.6,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Starting asyncio event loop (0.004s since process start)"
+ },
+ {
+  "t": 1780650405.345214,
+  "rel_ms": 2743.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650405.382987,
+  "rel_ms": 2781.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_socket_done t_ms=2237.7 is_local=False patient_id=44499 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650405.383097,
+  "rel_ms": 2781.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_socket_done t_ms=2237.800 patient_id=44499 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650405.383266,
+  "rel_ms": 2781.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_display_input t_ms=2238.0 is_local=False patient_id=44499 source=server thumbnail_count=8 with_file_path=8 with_inline"
+ },
+ {
+  "t": 1780650405.383357,
+  "rel_ms": 2781.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_display_input t_ms=2238.100 patient_id=44499 is_local=False source=server thumbnail_count=8 with_file_path=8 with_inli"
+ },
+ {
+  "t": 1780650405.383577,
+  "rel_ms": 2782.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_display_done t_ms=2238.3 is_local=False patient_id=44499 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650405.383718,
+  "rel_ms": 2782.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_display_done t_ms=2238.400 patient_id=44499 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650405.576859,
+  "rel_ms": 2975.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.97 query_type=download_write inserted=3 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650405.577007,
+  "rel_ms": 2975.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=28.90 query_type=download_write inserted=3 chunk_count=1"
+ },
+ {
+  "t": 1780650405.57934,
+  "rel_ms": 2977.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650406.056737,
+  "rel_ms": 3455.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650406.49391,
+  "rel_ms": 3892.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650406.541817,
+  "rel_ms": 3940.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=attachments_done t_ms=3396.5 is_local=False patient_id=44499 source=server trigger=immediate worker_ms=1519.4"
+ },
+ {
+  "t": 1780650406.542007,
+  "rel_ms": 3940.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=attachments_done t_ms=3396.700 patient_id=44499 is_local=False source=server trigger=immediate worker_ms=1519.400"
+ },
+ {
+  "t": 1780650406.773989,
+  "rel_ms": 4172.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=101 downloaded=3 total=3 corr_session=sess-c1d6d630bd31 corr_mono_ms=413338337.804"
+ },
+ {
+  "t": 1780650406.864374,
+  "rel_ms": 4262.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650406.958082,
+  "rel_ms": 4356.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_begin t_ms=3812.8 is_local=False patient_id=44499 source=server"
+ },
+ {
+  "t": 1780650406.958272,
+  "rel_ms": 4356.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_begin t_ms=3813.000 patient_id=44499 is_local=False source=server"
+ },
+ {
+  "t": 1780650406.95988,
+  "rel_ms": 4358.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_cache_gate t_ms=3814.6 grew=0 is_local=False local_thumbs=8 patient_id=44499 server_series=8 source=server"
+ },
+ {
+  "t": 1780650406.960021,
+  "rel_ms": 4358.5,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_cache_gate t_ms=3814.700 patient_id=44499 is_local=False source=server local_thumbs=8 server_series=8 grew=0"
+ },
+ {
+  "t": 1780650406.960286,
+  "rel_ms": 4358.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_cache_hit t_ms=3815.0 is_local=False patient_id=44499 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650406.960401,
+  "rel_ms": 4358.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780306982154.86243 phase=right_panel_cache_hit t_ms=3815.100 patient_id=44499 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650407.089053,
+  "rel_ms": 4487.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=21 total=45 corr_session=sess-c1d6d630bd31 corr_mono_ms=413338652.889"
+ },
+ {
+  "t": 1780650407.330697,
+  "rel_ms": 4729.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650407.602581,
+  "rel_ms": 5001.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=45 total=45 corr_session=sess-c1d6d630bd31 corr_mono_ms=413339166.407"
+ },
+ {
+  "t": 1780650407.656572,
+  "rel_ms": 5055.1,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.94 query_type=download_write inserted=45 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650407.656711,
+  "rel_ms": 5055.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=166.19 query_type=download_write inserted=45 chunk_count=1"
+ },
+ {
+  "t": 1780650407.658978,
+  "rel_ms": 5057.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650408.026394,
+  "rel_ms": 5424.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650408.276605,
+  "rel_ms": 5675.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=1 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413339840.412"
+ },
+ {
+  "t": 1780650408.415511,
+  "rel_ms": 5814.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650408.665917,
+  "rel_ms": 6064.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=11 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413340229.747"
+ },
+ {
+  "t": 1780650408.773947,
+  "rel_ms": 6172.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650409.023465,
+  "rel_ms": 6422.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=21 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413340587.264"
+ },
+ {
+  "t": 1780650409.13179,
+  "rel_ms": 6530.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650409.381373,
+  "rel_ms": 6779.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=31 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413340945.202"
+ },
+ {
+  "t": 1780650409.472989,
+  "rel_ms": 6871.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650409.744535,
+  "rel_ms": 7143.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=41 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413341308.366"
+ },
+ {
+  "t": 1780650409.828876,
+  "rel_ms": 7227.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650410.093472,
+  "rel_ms": 7492.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=51 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413341657.304"
+ },
+ {
+  "t": 1780650410.186444,
+  "rel_ms": 7584.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650410.445061,
+  "rel_ms": 7843.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=61 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413342008.885"
+ },
+ {
+  "t": 1780650410.545283,
+  "rel_ms": 7943.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650410.793615,
+  "rel_ms": 8192.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=71 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413342357.430"
+ },
+ {
+  "t": 1780650410.887764,
+  "rel_ms": 8286.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650411.131684,
+  "rel_ms": 8530.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=81 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413342695.517"
+ },
+ {
+  "t": 1780650411.254822,
+  "rel_ms": 8653.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650411.517712,
+  "rel_ms": 8916.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=91 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413343081.541"
+ },
+ {
+  "t": 1780650411.610518,
+  "rel_ms": 9009.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650411.872982,
+  "rel_ms": 9271.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=101 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413343436.798"
+ },
+ {
+  "t": 1780650411.982296,
+  "rel_ms": 9380.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650412.230585,
+  "rel_ms": 9629.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=111 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413343794.404"
+ },
+ {
+  "t": 1780650412.356437,
+  "rel_ms": 9754.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650412.684361,
+  "rel_ms": 10082.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=135 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413344248.189"
+ },
+ {
+  "t": 1780650412.998682,
+  "rel_ms": 10397.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.15 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780650413.013211,
+  "rel_ms": 10411.7,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.84 query_type=download_write inserted=15 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780650413.013382,
+  "rel_ms": 10411.9,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=413.06 query_type=download_write inserted=135 chunk_count=2"
+ },
+ {
+  "t": 1780650413.015387,
+  "rel_ms": 10413.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650413.371218,
+  "rel_ms": 10769.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650413.633529,
+  "rel_ms": 11032.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=1 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413345197.356"
+ },
+ {
+  "t": 1780650413.725587,
+  "rel_ms": 11124.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650413.974282,
+  "rel_ms": 11372.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=11 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413345538.085"
+ },
+ {
+  "t": 1780650414.098951,
+  "rel_ms": 11497.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650414.348539,
+  "rel_ms": 11747.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=21 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413345912.343"
+ },
+ {
+  "t": 1780650414.455795,
+  "rel_ms": 11854.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650414.719722,
+  "rel_ms": 12118.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=31 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413346283.547"
+ },
+ {
+  "t": 1780650414.827612,
+  "rel_ms": 12226.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650415.090944,
+  "rel_ms": 12489.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=41 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413346654.758"
+ },
+ {
+  "t": 1780650415.19861,
+  "rel_ms": 12597.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650415.445326,
+  "rel_ms": 12843.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=51 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413347009.146"
+ },
+ {
+  "t": 1780650415.555939,
+  "rel_ms": 12954.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650415.808088,
+  "rel_ms": 13206.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=61 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413347371.909"
+ },
+ {
+  "t": 1780650415.914755,
+  "rel_ms": 13313.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650416.166368,
+  "rel_ms": 13564.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=71 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413347730.201"
+ },
+ {
+  "t": 1780650416.272953,
+  "rel_ms": 13671.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650416.523035,
+  "rel_ms": 13921.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=81 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413348086.855"
+ },
+ {
+  "t": 1780650416.661828,
+  "rel_ms": 14060.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650416.896715,
+  "rel_ms": 14295.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=91 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413348460.501"
+ },
+ {
+  "t": 1780650417.035836,
+  "rel_ms": 14434.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650417.26978,
+  "rel_ms": 14668.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=101 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413348833.604"
+ },
+ {
+  "t": 1780650417.39464,
+  "rel_ms": 14793.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650417.646153,
+  "rel_ms": 15044.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=111 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413349209.963"
+ },
+ {
+  "t": 1780650417.75084,
+  "rel_ms": 15149.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650418.061161,
+  "rel_ms": 15459.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=135 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413349624.979"
+ },
+ {
+  "t": 1780650418.420704,
+  "rel_ms": 15819.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.48 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780650418.43453,
+  "rel_ms": 15833.0,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.11 query_type=download_write inserted=15 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780650418.434706,
+  "rel_ms": 15833.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=424.93 query_type=download_write inserted=135 chunk_count=2"
+ },
+ {
+  "t": 1780650418.43724,
+  "rel_ms": 15835.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650418.789365,
+  "rel_ms": 16187.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650419.037973,
+  "rel_ms": 16436.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=1 total=45 corr_session=sess-c1d6d630bd31 corr_mono_ms=413350601.799"
+ },
+ {
+  "t": 1780650419.159775,
+  "rel_ms": 16558.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650419.394592,
+  "rel_ms": 16793.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=11 total=45 corr_session=sess-c1d6d630bd31 corr_mono_ms=413350958.424"
+ },
+ {
+  "t": 1780650419.501915,
+  "rel_ms": 16900.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650419.766492,
+  "rel_ms": 17165.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=21 total=45 corr_session=sess-c1d6d630bd31 corr_mono_ms=413351330.316"
+ },
+ {
+  "t": 1780650419.858485,
+  "rel_ms": 17257.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650420.145077,
+  "rel_ms": 17543.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=45 total=45 corr_session=sess-c1d6d630bd31 corr_mono_ms=413351708.909"
+ },
+ {
+  "t": 1780650420.217612,
+  "rel_ms": 17616.1,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.18 query_type=download_write inserted=45 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650420.217736,
+  "rel_ms": 17616.2,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=169.47 query_type=download_write inserted=45 chunk_count=1"
+ },
+ {
+  "t": 1780650420.219855,
+  "rel_ms": 17618.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650420.572641,
+  "rel_ms": 17971.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650420.825297,
+  "rel_ms": 18223.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=1 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413352389.114"
+ },
+ {
+  "t": 1780650420.946959,
+  "rel_ms": 18345.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650421.180694,
+  "rel_ms": 18579.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=11 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413352744.515"
+ },
+ {
+  "t": 1780650421.320419,
+  "rel_ms": 18718.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650421.568712,
+  "rel_ms": 18967.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=21 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413353132.529"
+ },
+ {
+  "t": 1780650421.674993,
+  "rel_ms": 19073.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650421.929029,
+  "rel_ms": 19327.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=31 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413353492.858"
+ },
+ {
+  "t": 1780650422.017757,
+  "rel_ms": 19416.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650422.283118,
+  "rel_ms": 19681.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=41 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413353846.923"
+ },
+ {
+  "t": 1780650422.374652,
+  "rel_ms": 19773.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650422.630464,
+  "rel_ms": 20028.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=51 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413354194.288"
+ },
+ {
+  "t": 1780650422.730282,
+  "rel_ms": 20128.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650422.98226,
+  "rel_ms": 20380.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=61 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413354546.093"
+ },
+ {
+  "t": 1780650423.074133,
+  "rel_ms": 20472.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650423.323421,
+  "rel_ms": 20721.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=71 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413354887.248"
+ },
+ {
+  "t": 1780650423.418096,
+  "rel_ms": 20816.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650423.671664,
+  "rel_ms": 21070.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=81 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413355235.454"
+ },
+ {
+  "t": 1780650423.794883,
+  "rel_ms": 21193.4,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650424.058451,
+  "rel_ms": 21456.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=91 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413355622.278"
+ },
+ {
+  "t": 1780650424.151547,
+  "rel_ms": 21550.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650424.394911,
+  "rel_ms": 21793.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=101 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413355958.738"
+ },
+ {
+  "t": 1780650424.508137,
+  "rel_ms": 21906.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650424.758804,
+  "rel_ms": 22157.3,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=111 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413356322.626"
+ },
+ {
+  "t": 1780650424.86774,
+  "rel_ms": 22266.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650425.223135,
+  "rel_ms": 22621.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=302 downloaded=135 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413356786.951"
+ },
+ {
+  "t": 1780650425.579281,
+  "rel_ms": 22977.8,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.43 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780650425.592806,
+  "rel_ms": 22991.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=1.08 query_type=download_write inserted=15 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780650425.593106,
+  "rel_ms": 22991.6,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=423.22 query_type=download_write inserted=135 chunk_count=2"
+ },
+ {
+  "t": 1780650425.595689,
+  "rel_ms": 22994.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650425.982442,
+  "rel_ms": 23380.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650426.245021,
+  "rel_ms": 23643.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=1 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413357808.846"
+ },
+ {
+  "t": 1780650426.389004,
+  "rel_ms": 23787.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650426.594192,
+  "rel_ms": 23992.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=11 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413358157.936"
+ },
+ {
+  "t": 1780650426.748554,
+  "rel_ms": 24147.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650427.012372,
+  "rel_ms": 24410.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=21 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413358576.194"
+ },
+ {
+  "t": 1780650427.119049,
+  "rel_ms": 24517.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650427.367135,
+  "rel_ms": 24765.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=31 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413358930.960"
+ },
+ {
+  "t": 1780650427.461442,
+  "rel_ms": 24859.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650427.714425,
+  "rel_ms": 25112.9,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=41 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413359278.253"
+ },
+ {
+  "t": 1780650427.881737,
+  "rel_ms": 25280.2,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650428.144357,
+  "rel_ms": 25542.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=51 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413359708.159"
+ },
+ {
+  "t": 1780650428.238292,
+  "rel_ms": 25636.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650428.495219,
+  "rel_ms": 25893.7,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=61 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413360059.049"
+ },
+ {
+  "t": 1780650428.580318,
+  "rel_ms": 25978.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650428.844959,
+  "rel_ms": 26243.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=71 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413360408.782"
+ },
+ {
+  "t": 1780650428.94013,
+  "rel_ms": 26338.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650429.19463,
+  "rel_ms": 26593.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=81 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413360758.460"
+ },
+ {
+  "t": 1780650429.330062,
+  "rel_ms": 26728.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650429.586577,
+  "rel_ms": 26985.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=91 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413361150.401"
+ },
+ {
+  "t": 1780650429.683107,
+  "rel_ms": 27081.6,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650429.932616,
+  "rel_ms": 27331.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=101 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413361496.441"
+ },
+ {
+  "t": 1780650430.040024,
+  "rel_ms": 27438.5,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650430.291002,
+  "rel_ms": 27689.5,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=111 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413361854.806"
+ },
+ {
+  "t": 1780650430.399646,
+  "rel_ms": 27798.1,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650430.645129,
+  "rel_ms": 28043.6,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=131 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413362208.932"
+ },
+ {
+  "t": 1780650430.760885,
+  "rel_ms": 28159.4,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=303 downloaded=135 total=135 corr_session=sess-c1d6d630bd31 corr_mono_ms=413362324.653"
+ },
+ {
+  "t": 1780650431.072008,
+  "rel_ms": 28470.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=2.30 query_type=download_write inserted=120 chunk_index=1 chunk_count=2"
+ },
+ {
+  "t": 1780650431.085773,
+  "rel_ms": 28484.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.94 query_type=download_write inserted=15 chunk_index=2 chunk_count=2"
+ },
+ {
+  "t": 1780650431.085934,
+  "rel_ms": 28484.4,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=413.38 query_type=download_write inserted=135 chunk_count=2"
+ },
+ {
+  "t": 1780650431.088182,
+  "rel_ms": 28486.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650431.179563,
+  "rel_ms": 28578.0,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.81 query_type=download_write inserted=1 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650431.179772,
+  "rel_ms": 28578.3,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=28.33 query_type=download_write inserted=1 chunk_count=1"
+ },
+ {
+  "t": 1780650431.352563,
+  "rel_ms": 28751.0,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=9001 downloaded=1 total=1 corr_session=sess-c1d6d630bd31 corr_mono_ms=413362916.408"
+ },
+ {
+  "t": 1780650463.950089,
+  "rel_ms": 61348.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=open_request t_ms=0.5 all_studies=1 patient_id=44514 report_status=pending source=server"
+ },
+ {
+  "t": 1780650463.950203,
+  "rel_ms": 61348.7,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=open_request t_ms=0.600 patient_id=44514 source=server report_status=pending all_studies=1"
+ },
+ {
+  "t": 1780650463.951322,
+  "rel_ms": 61349.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=study_path_ready t_ms=1.7 is_local=False is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\user_data"
+ },
+ {
+  "t": 1780650463.951428,
+  "rel_ms": 61349.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=study_path_ready t_ms=1.800 patient_id=44514 is_local=False source=server is_offline_cloud=False output_dir=E:\\ai-pacs\\ai-pacs cod"
+ },
+ {
+  "t": 1780650464.30142,
+  "rel_ms": 61699.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=tab_created t_ms=351.8 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.301512,
+  "rel_ms": 61700.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=tab_created t_ms=351.900 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.301683,
+  "rel_ms": 61700.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=waiting_for_first_series_signal t_ms=352.1 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.30177,
+  "rel_ms": 61700.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=waiting_for_first_series_signal t_ms=352.200 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.451109,
+  "rel_ms": 61849.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=first_series_visible t_ms=501.5 is_local=False patient_id=44514 pending_attachments=0 pending_right_panel=0 pending_series_info=0 "
+ },
+ {
+  "t": 1780650464.451293,
+  "rel_ms": 61849.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=first_series_visible t_ms=501.700 patient_id=44514 is_local=False source=server pending_right_panel=0 pending_series_info=0 pendin"
+ },
+ {
+  "t": 1780650464.535609,
+  "rel_ms": 61934.1,
+  "log": "app",
+  "tag": "queue",
+  "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780309875224.86246 series_count=8 priority=High"
+ },
+ {
+  "t": 1780650464.538685,
+  "rel_ms": 61937.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=thumbnail_stubs_scheduled t_ms=589.1 all_studies=1 is_local=False patient_id=44514 series_count=8 source=server"
+ },
+ {
+  "t": 1780650464.538787,
+  "rel_ms": 61937.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=thumbnail_stubs_scheduled t_ms=589.200 patient_id=44514 is_local=False source=server series_count=8 all_studies=1"
+ },
+ {
+  "t": 1780650464.539431,
+  "rel_ms": 61937.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=download_manager_wired t_ms=589.9 is_local=False patient_id=44514 series_count=8 source=server"
+ },
+ {
+  "t": 1780650464.539519,
+  "rel_ms": 61938.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=download_manager_wired t_ms=589.900 patient_id=44514 is_local=False source=server series_count=8"
+ },
+ {
+  "t": 1780650464.539668,
+  "rel_ms": 61938.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=ui_tasks_scheduled t_ms=590.1 is_local=False patient_id=44514 right_panel_requested=True series_info_requested=True source=server"
+ },
+ {
+  "t": 1780650464.539754,
+  "rel_ms": 61938.2,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=ui_tasks_scheduled t_ms=590.200 patient_id=44514 is_local=False source=server right_panel_requested=True series_info_requested=Tru"
+ },
+ {
+  "t": 1780650464.540303,
+  "rel_ms": 61938.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=background_setup_started t_ms=590.7 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.540407,
+  "rel_ms": 61938.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=background_setup_started t_ms=590.800 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.54084,
+  "rel_ms": 61939.3,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=open_hot_path_complete t_ms=591.3 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.540942,
+  "rel_ms": 61939.4,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=open_hot_path_complete t_ms=591.400 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.54168,
+  "rel_ms": 61940.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=attachments_start t_ms=592.1 is_local=False patient_id=44514 source=server trigger=immediate"
+ },
+ {
+  "t": 1780650464.541787,
+  "rel_ms": 61940.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=attachments_start t_ms=592.200 patient_id=44514 is_local=False source=server trigger=immediate"
+ },
+ {
+  "t": 1780650464.542049,
+  "rel_ms": 61940.5,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=background_series_info_pushed t_ms=592.5 is_local=False patient_id=44514 series_count=8 source=server"
+ },
+ {
+  "t": 1780650464.542153,
+  "rel_ms": 61940.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=background_series_info_pushed t_ms=592.600 patient_id=44514 is_local=False source=server series_count=8"
+ },
+ {
+  "t": 1780650464.543688,
+  "rel_ms": 61942.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=series_info_entry t_ms=594.1 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.54383,
+  "rel_ms": 61942.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=series_info_entry t_ms=594.200 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.547673,
+  "rel_ms": 61946.2,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_begin t_ms=598.1 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.547791,
+  "rel_ms": 61946.3,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_begin t_ms=598.200 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650464.549309,
+  "rel_ms": 61947.8,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_gate t_ms=599.7 grew=1 is_local=False local_thumbs=0 patient_id=44514 server_series=8 source=server"
+ },
+ {
+  "t": 1780650464.54943,
+  "rel_ms": 61947.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_gate t_ms=599.800 patient_id=44514 is_local=False source=server local_thumbs=0 server_series=8 grew=1"
+ },
+ {
+  "t": 1780650464.550436,
+  "rel_ms": 61948.9,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_socket_start t_ms=600.9 host=192.168.2.222 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650464.550543,
+  "rel_ms": 61949.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_socket_start t_ms=601.000 patient_id=44514 is_local=False source=server host=192.168.2.222"
+ },
+ {
+  "t": 1780650464.56208,
+  "rel_ms": 61960.6,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "\ud83d\ude80 Download subprocess started (pid=270436) for BAKHTIYARI  TOORAN"
+ },
+ {
+  "t": 1780650464.562099,
+  "rel_ms": 61960.6,
+  "log": "app",
+  "tag": "spawn",
+  "detail": "cwd=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version"
+ },
+ {
+  "t": 1780650464.562689,
+  "rel_ms": 61961.2,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Imports OK (0.001s)"
+ },
+ {
+  "t": 1780650464.56551,
+  "rel_ms": 61964.0,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] DatabaseManager ready (0.003s)"
+ },
+ {
+  "t": 1780650464.566354,
+  "rel_ms": 61964.8,
+  "log": "dow",
+  "tag": "spawn",
+  "detail": "  [SPAWN-TIMING] Starting asyncio event loop (0.004s since process start)"
+ },
+ {
+  "t": 1780650464.679545,
+  "rel_ms": 62078.0,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650464.717913,
+  "rel_ms": 62116.4,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_socket_done t_ms=768.3 is_local=False patient_id=44514 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650464.718067,
+  "rel_ms": 62116.6,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_socket_done t_ms=768.500 patient_id=44514 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650464.718233,
+  "rel_ms": 62116.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_display_input t_ms=768.7 is_local=False patient_id=44514 source=server thumbnail_count=8 with_file_path=8 with_inline_"
+ },
+ {
+  "t": 1780650464.718324,
+  "rel_ms": 62116.8,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_display_input t_ms=768.700 patient_id=44514 is_local=False source=server thumbnail_count=8 with_file_path=8 with_inlin"
+ },
+ {
+  "t": 1780650464.718519,
+  "rel_ms": 62117.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_display_done t_ms=768.9 is_local=False patient_id=44514 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650464.718609,
+  "rel_ms": 62117.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_display_done t_ms=769.000 patient_id=44514 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650464.735225,
+  "rel_ms": 62133.7,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=attachments_done t_ms=785.6 is_local=False patient_id=44514 source=server trigger=immediate worker_ms=193.5"
+ },
+ {
+  "t": 1780650464.735375,
+  "rel_ms": 62133.9,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=attachments_done t_ms=785.800 patient_id=44514 is_local=False source=server trigger=immediate worker_ms=193.500"
+ },
+ {
+  "t": 1780650464.864897,
+  "rel_ms": 62263.4,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.83 query_type=download_write inserted=1 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650464.865064,
+  "rel_ms": 62263.5,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=31.76 query_type=download_write inserted=1 chunk_count=1"
+ },
+ {
+  "t": 1780650464.867302,
+  "rel_ms": 62265.8,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650464.958369,
+  "rel_ms": 62356.9,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=0.83 query_type=download_write inserted=2 chunk_index=1 chunk_count=1"
+ },
+ {
+  "t": 1780650464.958566,
+  "rel_ms": 62357.1,
+  "log": "db_",
+  "tag": "db_ins",
+  "detail": "stage-timing duration_ms=25.70 query_type=download_write inserted=2 chunk_count=1"
+ },
+ {
+  "t": 1780650464.960834,
+  "rel_ms": 62359.3,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650465.018641,
+  "rel_ms": 62417.1,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=1 total=1 corr_session=sess-c1d6d630bd31 corr_mono_ms=413396582.484"
+ },
+ {
+  "t": 1780650465.132565,
+  "rel_ms": 62531.1,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_begin t_ms=1182.9 is_local=False patient_id=44514 source=server"
+ },
+ {
+  "t": 1780650465.133535,
+  "rel_ms": 62532.0,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_begin t_ms=1183.800 patient_id=44514 is_local=False source=server"
+ },
+ {
+  "t": 1780650465.135135,
+  "rel_ms": 62533.6,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_gate t_ms=1185.6 grew=0 is_local=False local_thumbs=8 patient_id=44514 server_series=8 source=server"
+ },
+ {
+  "t": 1780650465.13525,
+  "rel_ms": 62533.7,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_gate t_ms=1185.700 patient_id=44514 is_local=False source=server local_thumbs=8 server_series=8 grew=0"
+ },
+ {
+  "t": 1780650465.135478,
+  "rel_ms": 62534.0,
+  "log": "app",
+  "tag": "open_trace",
+  "detail": "[FAST-OPEN-TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_hit t_ms=1185.9 is_local=False patient_id=44514 source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650465.135587,
+  "rel_ms": 62534.1,
+  "log": "dow",
+  "tag": "open_trace",
+  "detail": "[FAST_OPEN_TRACE] study=1.2.840.1.99.1.47.1.1780309875224.86246 phase=right_panel_cache_hit t_ms=1186.000 patient_id=44514 is_local=False source=server thumbnail_count=8"
+ },
+ {
+  "t": 1780650465.258712,
+  "rel_ms": 62657.2,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=301 downloaded=2 total=2 corr_session=sess-c1d6d630bd31 corr_mono_ms=413396822.529"
+ },
+ {
+  "t": 1780650465.329255,
+  "rel_ms": 62727.7,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.01 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650465.700421,
+  "rel_ms": 63098.9,
+  "log": "app",
+  "tag": "sock_stage",
+  "detail": "stage-timing duration_ms=0.00 endpoint=GetSeriesImages"
+ },
+ {
+  "t": 1780650465.937272,
+  "rel_ms": 63335.8,
+  "log": "app",
+  "tag": "img_prog",
+  "detail": "[SIGNAL_FANOUT] source=series_images_progress series=401 downloaded=11 total=37 corr_session=sess-c1d6d630bd31 corr_mono_ms=413397501.091"
+ }
+]

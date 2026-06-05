@@ -1,0 +1,70 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260605_123459_kpi",
+ "runs": {
+  "A": {
+   "patient": "44499",
+   "study_uid": "1.2.840.1.99.1.47.1.1780306982154.86243",
+   "t0": 1780650403.1015143,
+   "bus_ok": true,
+   "first_render_poll_s": null,
+   "t1": 1780650463.9484491,
+   "timeline_rows": 265
+  },
+  "B": {
+   "patient": "44514",
+   "study_uid": "1.2.840.1.99.1.47.1.1780309875224.86246",
+   "t0": 1780650463.948973,
+   "n_series": 8,
+   "dropped": 151421235,
+   "drop_t0": 1780650466.4507127,
+   "viewport": {
+    "viewport": 0,
+    "alive": true,
+    "series_number": "151421235",
+    "preview_only": false,
+    "awaiting_series": null,
+    "progressive_mode": true,
+    "progressive_series": "151421235",
+    "slice_count": 20,
+    "spinner_visible": null
+   },
+   "drop_first_render_poll_s": 7.54,
+   "t1": 1780650473.9924078,
+   "timeline_rows": 114
+  }
+ },
+ "restart": {
+  "stop": {
+   "ok": true,
+   "message": "closed gracefully"
+  },
+  "launch_ok": true
+ },
+ "local_study_count": 632,
+ "fresh": [
+  [
+   "44499",
+   8
+  ],
+  [
+   "44514",
+   8
+  ],
+  [
+   "44558",
+   8
+  ],
+  [
+   "44592",
+   8
+  ],
+  [
+   "44987",
+   8
+  ],
+  [
+   "44452",
+   7
+  ]
+ ]
+}

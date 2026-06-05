@@ -1,0 +1,125 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260605_135452_soak",
+ "cycles": {
+  "c1": {
+   "launch_ok": true,
+   "fresh": [
+    [
+     "44558",
+     8
+    ],
+    [
+     "44592",
+     8
+    ],
+    [
+     "44987",
+     8
+    ],
+    [
+     "44452",
+     7
+    ]
+   ],
+   "p1": {
+    "pid": "44558",
+    "t0": 1780655192.7446158,
+    "probe_lines": [],
+    "prewarm": [
+     {
+      "t": 0.7,
+      "line": "\ud83d\udd25 [PREWARM] spawned idle download subprocess pid=249460"
+     },
+     {
+      "t": 0.7,
+      "line": "\ud83d\udd25 Reused pre-warmed download subprocess (pid=283356) for GHAYURI  MARYAM"
+     }
+    ],
+    "queue_ms": 670.0,
+    "first_file_ms": 1870.0
+   },
+   "p2": {
+    "pid": "44592",
+    "t0": 1780655202.5231454,
+    "n_series": 8,
+    "dropped": 195345620,
+    "drop_t0": 1780655205.0259154,
+    "viewport": {
+     "viewport": 0,
+     "alive": true,
+     "series_number": "195345620",
+     "preview_only": false,
+     "awaiting_series": null,
+     "progressive_mode": true,
+     "progressive_series": "195345620",
+     "slice_count": 20,
+     "spinner_visible": null
+    },
+    "drop_render_s": 7.53,
+    "yield_log": [],
+    "intent_writes": [],
+    "teardown_preempts": [
+     {
+      "t": 0.53,
+      "line": "\u23f8\ufe0f download_batch cancelled: Download cancelled (preemption)"
+     }
+    ],
+    "drop_first_file": {
+     "t": 4.82,
+     "line": "[SIGNAL_FANOUT] source=series_images_progress series=195345620 downloaded=1 total=38 corr_session=sess-8afd99622f57 corr_mono_ms=418141409.298"
+    },
+    "post_yield_series": [
+     "\ud83d\udce5 Downloading series 195345620 (38 images)"
+    ]
+   },
+   "final_downloads": {
+    "total": 2,
+    "active": 2,
+    "downloading": 1,
+    "by_status": {
+     "Pending": 1,
+     "Downloading": 1
+    },
+    "by_priority": {
+     "High": 2
+    }
+   },
+   "per_tab": [
+    {
+     "tab": 2,
+     "uid": "4050.86249",
+     "n_series": 8
+    },
+    {
+     "tab": 3,
+     "uid": "1159.86253",
+     "n_series": 8
+    }
+   ],
+   "no_mixing": true
+  },
+  "c2": {
+   "launch_ok": true,
+   "p3": {
+    "pid": "44558",
+    "probe_lines": [],
+    "prewarm": [],
+    "queue_ms": 1910.0,
+    "first_file_ms": null,
+    "thumbnail_fetches": 0
+   },
+   "final_downloads": {
+    "total": 1,
+    "active": 1,
+    "downloading": 1,
+    "by_status": {
+     "Downloading": 1
+    },
+    "by_priority": {
+     "High": 1
+    }
+   }
+  }
+ },
+ "local_studies": 634
+}

@@ -267,6 +267,11 @@ MIXIN_PUBLIC_METHODS: Mapping[str, Sequence[str]] = {
         "_on_per_patient_resume",
         "_on_per_patient_retry",
         "_on_series_retry",
+        # 2026-06-05 batch-boundary yield (drag-drop priority): same-study
+        # critical requests signal the RUNNING worker via an intent file
+        # instead of mid-batch teardown + respawn.
+        "_worker_is_active_for_study",
+        "_write_critical_intent_file",
     ),
     "_dm_priority": (
         "_find_object_request_context",

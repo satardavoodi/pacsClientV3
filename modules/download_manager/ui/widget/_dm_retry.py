@@ -198,6 +198,46 @@ class _DMRetryMixin:
         except Exception as e:
             logger.exception(f"❌ [CANCEL] Failed for study=%s: %s", study_uid[:40] if study_uid else 'None', e)
 
+    def _worker_is_active_for_study(self, study_uid: str) -> bool:
+        """True when the live download worker holding the slot is THIS study's."""
+        try:
+            for entry in (self.worker_pool.get_all_workers() or []):
+                wid = entry[0] if isinstance(entry, (list, tuple)) else entry
+                if str(wid or "").strip() == str(study_uid or "").strip():
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def _write_critical_intent_file(self, study_uid: str, series_number) -> bool:
+        """Atomically write the same-study critical-intent file.
+
+        Read by the RUNNING SeriesDownloader (between instance batches) at
+        ``{SOURCE_PATH}/{study_uid}/.critical_intent.json``. Best-effort:
+        returns False on any error so the caller falls back to the original
+        preempt-and-restart path.
+        """
+        try:
+            import json
+            import os
+            import time as _time
+            from pathlib import Path
+            from PacsClient.utils.config import SOURCE_PATH
+
+            study_dir = Path(SOURCE_PATH) / str(study_uid)
+            study_dir.mkdir(parents=True, exist_ok=True)
+            path = study_dir / ".critical_intent.json"
+            tmp = path.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps({"series_number": str(series_number), "ts": _time.time()}),
+                encoding="utf-8",
+            )
+            os.replace(tmp, path)
+            return True
+        except Exception as exc:
+            logger.warning(f"⚠️ [SERIES RETRY] Could not write critical-intent file: {exc}")
+            return False
+
     def _on_series_retry(self, study_uid: str, series_number: str = None, series_uid: str = None) -> None:
         """
         Per-series Retry - Retry download for a specific series only.
@@ -337,6 +377,31 @@ class _DMRetryMixin:
                             f"the active downloading series (pool={_active_count}). Skipping retry."
                         )
                         return
+
+                    # ── Batch-boundary yield instead of worker teardown ──────
+                    # (2026-06-05, drag-drop priority): when THIS study's own
+                    # worker holds the slot, do NOT cancel it mid-batch and
+                    # rebuild (old behaviour: ~5.8 s of teardown + respawn +
+                    # re-auth + resume scans). Write a tiny critical-intent
+                    # file into the study's output directory instead; the
+                    # running SeriesDownloader polls it BETWEEN instance
+                    # batches, lets the in-flight batch finish, then services
+                    # the dragged series before any new lower-priority batch.
+                    # The coordinator latch below still updates GUI state/
+                    # badges. Fallback safety: if the worker never reads the
+                    # file (legacy subprocess image), the study simply
+                    # completes in normal order — no hang, no lost state.
+                    if target_num and self._worker_is_active_for_study(study_uid):
+                        if self._write_critical_intent_file(study_uid, target_num):
+                            self.intent_coordinator.request_critical_series(
+                                study_uid, str(target_num))
+                            self.refresh_table_order()
+                            logger.info(
+                                f"⚡ [SERIES RETRY] Critical series {target_num} signalled to the "
+                                f"RUNNING worker via intent file (batch-boundary yield) — "
+                                f"no worker teardown."
+                            )
+                            return
 
                     logger.info(
                         f"⚡ [SERIES RETRY] Critical request for series {target_num or series_number} "

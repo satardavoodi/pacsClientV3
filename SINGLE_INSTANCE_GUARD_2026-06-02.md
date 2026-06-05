@@ -73,3 +73,42 @@ clinical app); recycled-PID risk.
 Takes effect on the **next app launch** (the currently-running instance still has the old
 guard). Transition is clean: the old instance releases its PID file on close; the new
 guard is QLocalServer-authoritative and simply overwrites any leftover PID file.
+
+---
+
+## Addendum 2026-06-05 — TAKEOVER policy (new launch wins) is now the DEFAULT
+
+User requirement: old instances left behind by hibernate / power failure / crash /
+improper close must never block or destabilize a fresh launch — close them
+automatically, never ask.
+
+Behavior of `try_acquire` now:
+1. Quiet liveness probe (connect-only — does NOT raise the doomed old window).
+2. If an instance is listening: send `AIPACS_SHUTDOWN` (new IPC verb; the server
+   side quits via the event loop so main.py's run-loop `finally` performs the full
+   clean shutdown — DB checkpoint, download-subprocess termination, lock release —
+   with an 8 s `os._exit` failsafe honoring `AIPACS_NO_HARD_EXIT`).
+3. Wait up to 6 s; if still alive (hung, or an old build without the handler):
+   `_force_close_other_instances()` — psutil sweep that terminates+kills every
+   TOP-LEVEL AIPacs process tree except self/ancestors/descendants. Matching rules
+   (`_proc_is_aipacs`, pure function, unit-tested): frozen exes whose
+   space-squashed name contains "aipacs" (covers `AI PACS Viewer.exe`); python
+   processes running `main.py` whose script/interpreter/cwd path is an AIPacs
+   tree — which also catches ORPHANED download workers and pre-warm spares that
+   re-exec a relative `main.py`.
+4. The same sweep runs when NOBODY is listening (crash leftovers that never owned
+   the pipe), then the new instance listens and proceeds.
+5. If `listen()` still fails, re-ping and DEFER to the (newer) winner — bounded,
+   no kill loops, no dialog.
+
+Escape hatches: `AIPACS_NO_TAKEOVER=1` restores the legacy
+activate-and-exit behavior; under pytest (`PYTEST_CURRENT_TEST`) takeover is
+always disabled so a test can never kill the runner or a developer's session.
+
+Invariants kept: graceful `disconnectFromServer` (never `abort()`) so the
+in-flight SHUTDOWN/ACTIVATE is delivered; ACTIVATE handling unchanged for legacy
+mode; PID-file fallback unchanged (dialog suppressed in takeover mode).
+
+Guard tests: `tests/code/test_single_instance_takeover.py` (11 tests — matching
+rules, env gating, SHUTDOWN-before-ACTIVATE, graceful-then-force ordering,
+race-deferral, no-dialog).

@@ -1,0 +1,44 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260605_141547_yield",
+ "restart": {
+  "stop": true,
+  "launch_ok": true
+ },
+ "pre_dl": null,
+ "patient": "44987",
+ "open_t0": 1780656599.979191,
+ "n_series": 8,
+ "dropped": 212718270,
+ "drop_rel_s": 3.57,
+ "viewport": {
+  "viewport": 0,
+  "alive": true,
+  "series_number": "212718270",
+  "preview_only": false,
+  "awaiting_series": null,
+  "progressive_mode": true,
+  "progressive_series": "212718270",
+  "slice_count": 10,
+  "spinner_visible": null
+ },
+ "drop_first_file_s": 29.97,
+ "drop_render_s": 31.87,
+ "intent_signalled": [],
+ "yield_lines": [],
+ "teardown_lines": [],
+ "series_order_after_drop": [
+  "\ud83d\udce5 Downloading series 212718270 (35 images)"
+ ],
+ "intent_file_exists_now": "check-failed: No module named 'PacsClient'",
+ "final_dl": {
+  "total": 1,
+  "active": 1,
+  "downloading": 1,
+  "by_status": {
+   "Downloading": 1
+  },
+  "by_priority": {
+   "High": 1
+  }
+ }
+}
