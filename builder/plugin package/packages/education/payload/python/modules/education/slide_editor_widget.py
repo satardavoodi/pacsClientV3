@@ -473,10 +473,34 @@ class SlideEditorWidget(QWidget):
     
     def move_content_up(self, content_pk):
         """Move content item up in order."""
-        # TODO: Implement reordering logic
-        QMessageBox.information(self, "Not Implemented", "Content reordering will be implemented soon.")
-    
+        self._reorder_content(content_pk, direction=-1)
+
     def move_content_down(self, content_pk):
         """Move content item down in order."""
-        # TODO: Implement reordering logic
-        QMessageBox.information(self, "Not Implemented", "Content reordering will be implemented soon.")
+        self._reorder_content(content_pk, direction=1)
+
+    def _reorder_content(self, content_pk, direction: int):
+        """Swap a content item with its neighbor and persist the new order.
+
+        Used by both Move Up (direction=-1) and Move Down (direction=1).
+        """
+        try:
+            items = list(get_content_for_slide(self.slide_pk))
+            current_index = next(
+                (i for i, item in enumerate(items) if item.get('content_pk') == content_pk),
+                -1,
+            )
+            if current_index < 0:
+                return
+            target_index = current_index + direction
+            if target_index < 0 or target_index >= len(items):
+                return
+
+            items[current_index], items[target_index] = items[target_index], items[current_index]
+            for order, item in enumerate(items, start=1):
+                update_slide_content(content_pk=item['content_pk'], content_order=order)
+
+            self.load_content()
+            self.content_changed.emit()
+        except Exception as exc:
+            QMessageBox.critical(self, "Error", f"Failed to reorder content: {exc}")

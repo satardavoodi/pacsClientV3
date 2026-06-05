@@ -5,7 +5,7 @@ import json
 from tools.performance.clearcanvas_aipacs_kpi_harness import REPO_ROOT
 
 
-MODEL_PATH = REPO_ROOT / "tests" / "performance" / "pipeline_job_block_model.json"
+MODEL_PATH = REPO_ROOT / "tests" / "code" / "performance" / "pipeline_job_block_model.json"
 
 
 def _load_model() -> dict:

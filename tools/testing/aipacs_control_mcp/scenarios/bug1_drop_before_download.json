@@ -1,0 +1,18 @@
+{
+  "name": "bug1_drop_before_download",
+  "comment": "Regression guard for BUG-1 (stress test 2026-06-04): open patient A, open patient B while A downloads, drop two not-yet-downloaded series in B, hands off. PASS = both viewports populate (query_viewport_state shows series bound, no awaiting leftover). Edit patient ids to two fresh (not locally downloaded) patients before running.",
+  "seed": 1337,
+  "loop": 1,
+  "steps": [
+    { "action": "select_patient",       "entities": { "patient_id": "44704" }, "timeout_ms": 60000 },
+    { "action": "open_patient",         "entities": { "patient_id": "44704" }, "after_ms": 400, "timeout_ms": 60000 },
+    { "action": "open_patient",         "entities": { "patient_id": "44866" }, "after_ms": 2500, "timeout_ms": 60000 },
+    { "action": "change_series",        "entities": { "series_number": 201, "viewport": 0 }, "after_ms": 2000 },
+    { "action": "change_series",        "entities": { "series_number": 202, "viewport": 1 }, "after_ms": 400 },
+    { "action": "query_viewport_state", "entities": {}, "after_ms": 1000 },
+    { "action": "wait_ms",              "entities": { "ms": 45000 } },
+    { "action": "query_viewport_state", "entities": {} },
+    { "action": "snapshot_resources",   "entities": {} },
+    { "action": "count_native_faults_since", "entities": { "minutes": 5 } }
+  ]
+}

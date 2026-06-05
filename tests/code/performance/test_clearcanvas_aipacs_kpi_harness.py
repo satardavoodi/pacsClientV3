@@ -179,7 +179,7 @@ def test_compare_payloads_flags_aipacs_overhead():
 
 
 def test_load_scenarios_contains_expected_ids():
-    scenario_file = REPO_ROOT / "tests" / "performance" / "clearcanvas_aipacs_scenarios.json"
+    scenario_file = REPO_ROOT / "tests" / "code" / "performance" / "clearcanvas_aipacs_scenarios.json"
     scenarios = load_scenarios(scenario_file)
 
     assert "common_local_viewing" in scenarios
@@ -276,8 +276,8 @@ def test_run_pattern_step_stack_drag_uses_qt_viewer_policy(monkeypatch):
 
 
 def test_build_execution_pack_writes_templates(tmp_path):
-    scenario_file = REPO_ROOT / "tests" / "performance" / "clearcanvas_aipacs_scenarios.json"
-    model_file = REPO_ROOT / "tests" / "performance" / "clearcanvas_aipacs_benchmark_model.json"
+    scenario_file = REPO_ROOT / "tests" / "code" / "performance" / "clearcanvas_aipacs_scenarios.json"
+    model_file = REPO_ROOT / "tests" / "code" / "performance" / "clearcanvas_aipacs_benchmark_model.json"
     scenarios = load_scenarios(scenario_file)
     model = load_benchmark_model(model_file)
 

@@ -77,11 +77,19 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         return coord_converter.GetComputedDisplayValue(self.renderer)
 
     def _get_axis_index(self):
-        if self.view_name == 'axial':
-            return 2
-        if self.view_name == 'sagittal':
-            return 0
-        return 1  # coronal
+        # This pane's through-plane (look) VOLUME-world axis — used by _change_stack for the
+        # slice spacing and slice count. Via _view_axes() it tracks the routed look-axis, so a
+        # non-axial native series steps by ITS slice spacing (e.g. 5 mm) over exactly N slices
+        # instead of the tiny in-plane spacing (which produced many interpolated intermediates).
+        # For axial-native this returns the legacy 2/0/1, so behaviour is unchanged.
+        try:
+            return int(self.parent._view_axes(self.view_name)[0])
+        except Exception:
+            if self.view_name == 'axial':
+                return 2
+            if self.view_name == 'sagittal':
+                return 0
+            return 1  # coronal
 
     def _get_basic_slice_change(self, max_slice):
         if max_slice <= 25:
@@ -113,10 +121,9 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         self.parent.current_position[2] += scroll_dir[2] * delta_mm
 
         self.parent._clamp_current_position()
-        self.parent._update_all_crosshairs()
-        self.parent._update_slice_positions()
-        self.parent._synchronize_oblique_views()
-        self.parent._update_slice_info_texts()
+        # Throttled to frame cadence for smooth stack-drag on large series (the final state
+        # lands on mouse release via _finalize_interaction_update). See _request_interaction_update.
+        self.parent._request_interaction_update('move')
         self.parent._update_coordinates_label()
         self.parent._render_immediately(self.view_name)
 
@@ -455,14 +462,12 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
             picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
             picked_pos = picker.GetPickPosition()
 
-            cx, cy, cz = self.parent.current_position
-
-            if self.view_name == 'axial':
-                angle = math.atan2(picked_pos[1] - cy, picked_pos[0] - cx)
-            elif self.view_name == 'sagittal':
-                angle = math.atan2(picked_pos[2] - cz, picked_pos[1] - cy)
-            elif self.view_name == 'coronal':
-                angle = math.atan2(picked_pos[2] - cz, picked_pos[0] - cx)
+            # Measure the rotation angle in this pane's ACTUAL in-plane axes (h, v) from
+            # _view_axes(), so handle rotation tracks the cursor for any native orientation.
+            # Axial-native returns the legacy axes → identical to the previous per-view code.
+            _, h_ax, v_ax = self.parent._view_axes(self.view_name)
+            c = self.parent.current_position
+            angle = math.atan2(picked_pos[v_ax] - c[v_ax], picked_pos[h_ax] - c[h_ax])
 
             if self.current_handle in ('h2', 'v2'):
                 angle += math.pi
@@ -480,8 +485,9 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
             )
 
             self.parent.crosshair_angles[self.view_name] = angle
-            self.parent._update_all_crosshairs()
-            self.parent._synchronize_oblique_views()
+            # Throttled to frame cadence for smooth crosshair rotation (esp. large stacks);
+            # final orientation lands on release. See _request_interaction_update.
+            self.parent._request_interaction_update('rotate')
             return
 
         # Drag from line (with offset)
@@ -496,26 +502,18 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
                 picked_pos[2] - self.drag_offset[2]
             ]
 
-            if self.view_name == 'axial':
-                if self.drag_axis == 'h':
-                    self.parent.current_position[1] = new_center[1]
-                elif self.drag_axis == 'v':
-                    self.parent.current_position[0] = new_center[0]
-            elif self.view_name == 'sagittal':
-                if self.drag_axis == 'h':
-                    self.parent.current_position[2] = new_center[2]
-                elif self.drag_axis == 'v':
-                    self.parent.current_position[1] = new_center[1]
-            elif self.view_name == 'coronal':
-                if self.drag_axis == 'h':
-                    self.parent.current_position[2] = new_center[2]
-                elif self.drag_axis == 'v':
-                    self.parent.current_position[0] = new_center[0]
+            # Dragging the Horizontal line moves the crosshair along the pane's vertical (v) axis;
+            # dragging the Vertical line moves it along the horizontal (h) axis — using this pane's
+            # ACTUAL in-plane axes from _view_axes() (axial-native = legacy axes, unchanged).
+            _, h_ax, v_ax = self.parent._view_axes(self.view_name)
+            if self.drag_axis == 'h':
+                self.parent.current_position[v_ax] = new_center[v_ax]
+            elif self.drag_axis == 'v':
+                self.parent.current_position[h_ax] = new_center[h_ax]
 
-            self.parent._update_all_crosshairs()
-            self.parent._update_slice_positions()
-            self.parent._synchronize_oblique_views()
-            self.parent._update_slice_info_texts()
+            # Throttled to frame cadence (smooth line-drag on large stacks); see
+            # _request_interaction_update. Final position lands on mouse release.
+            self.parent._request_interaction_update('move')
             return
 
         # Drag from center
@@ -524,20 +522,15 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
             picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
             picked_pos = picker.GetPickPosition()
 
-            if self.view_name == 'axial':
-                self.parent.current_position[0] = picked_pos[0]
-                self.parent.current_position[1] = picked_pos[1]
-            elif self.view_name == 'sagittal':
-                self.parent.current_position[1] = picked_pos[1]
-                self.parent.current_position[2] = picked_pos[2]
-            elif self.view_name == 'coronal':
-                self.parent.current_position[0] = picked_pos[0]
-                self.parent.current_position[2] = picked_pos[2]
+            # Center drag moves the crosshair within the pane's plane → set BOTH in-plane axes
+            # (h, v) from _view_axes() to the picked point (axial-native = legacy axes, unchanged).
+            _, h_ax, v_ax = self.parent._view_axes(self.view_name)
+            self.parent.current_position[h_ax] = picked_pos[h_ax]
+            self.parent.current_position[v_ax] = picked_pos[v_ax]
 
-            self.parent._update_all_crosshairs()
-            self.parent._update_slice_positions()
-            self.parent._synchronize_oblique_views()
-            self.parent._update_slice_info_texts()
+            # Throttled to frame cadence (smooth center-drag on large stacks); see
+            # _request_interaction_update. Final position lands on mouse release.
+            self.parent._request_interaction_update('move')
             return
 
         if self.stack_dragging and self.left_button_down:
@@ -552,6 +545,12 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
 
     def on_left_button_release(self, obj, event):
         """Handle mouse button release"""
+        # If a throttled drag/rotate gesture was active, land the EXACT final state below
+        # (cancels any pending trailing frame so the crosshair/slices match the cursor release).
+        _was_interacting = (
+            self.dragging_handle or self.dragging_line
+            or getattr(self.parent, 'dragging_center', False) or self.stack_dragging
+        )
         self.left_button_down = False
         self.stack_dragging = False
         if self.dragging_handle:
@@ -576,6 +575,8 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
             self.last_pos = self.GetInteractor().GetEventPosition()
         if not self.right_button_down and not self.middle_button_down:
             self.last_pos = None
+        if _was_interacting:
+            self.parent._finalize_interaction_update()
         self.OnLeftButtonUp()
 
     def on_right_button_press(self, obj, event):
@@ -625,7 +626,14 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         pos = list(camera.GetPosition())
 
         scroll_dir = self.parent._get_scroll_direction(self.view_name)
-        step = 2.0
+        # One wheel notch = one slice along this pane's through-plane: use the spacing of the
+        # look-axis (slice thickness for the native pane → lands exactly on each acquired slice;
+        # voxel size for reconstructions). Falls back to 2 mm if spacing is unavailable.
+        try:
+            _look = int(self.parent._view_axes(self.view_name)[0])
+            step = abs(float(self.parent.spacing[_look])) or 2.0
+        except Exception:
+            step = 2.0
 
         focal[0] += scroll_dir[0] * step
         focal[1] += scroll_dir[1] * step
@@ -655,7 +663,14 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         pos = list(camera.GetPosition())
 
         scroll_dir = self.parent._get_scroll_direction(self.view_name)
-        step = 2.0
+        # One wheel notch = one slice along this pane's through-plane: use the spacing of the
+        # look-axis (slice thickness for the native pane → lands exactly on each acquired slice;
+        # voxel size for reconstructions). Falls back to 2 mm if spacing is unavailable.
+        try:
+            _look = int(self.parent._view_axes(self.view_name)[0])
+            step = abs(float(self.parent.spacing[_look])) or 2.0
+        except Exception:
+            step = 2.0
 
         focal[0] -= scroll_dir[0] * step
         focal[1] -= scroll_dir[1] * step

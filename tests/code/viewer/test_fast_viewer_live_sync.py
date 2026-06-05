@@ -172,7 +172,7 @@ def _build_controller() -> controller_mod.ViewerController:
         active_series=None,
         update_paths=lambda sn, paths: None,
     )
-    c._refresh_stored_metadata_instances = lambda sn, count: None
+    c._refresh_stored_metadata_instances = lambda sn, count, **kw: None  # **kw: max_new_entries added 2026-06 (batch cap)
     c._invalidate_series_caches = lambda sn: None
     return c
 
@@ -1037,7 +1037,7 @@ def test_refresh_stored_metadata_called_each_grow():
     c._progressive_series = {sn: {"total": 30, "last_grow_count": 10, "last_signal_ms": 0}}
 
     refresh_calls: List[Any] = []
-    c._refresh_stored_metadata_instances = lambda s, count: refresh_calls.append((s, count))
+    c._refresh_stored_metadata_instances = lambda s, count, **kw: refresh_calls.append((s, count))
 
     loader = _make_mock_loader(initial_count=10, grow_to=20)
     reslice, _ = _make_mock_reslice(vtk_image_data=loader.vtk_image_data)

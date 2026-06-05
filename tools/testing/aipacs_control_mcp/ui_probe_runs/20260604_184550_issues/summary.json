@@ -1,0 +1,1347 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260604_184550_issues",
+ "steps": [
+  {
+   "label": "i2_open_fresh_44942",
+   "ok": true,
+   "err": null,
+   "bus_ms": 0.17600000137463212,
+   "resp_ms": 1354.0,
+   "stable_ms": 1639.2,
+   "flickers": [],
+   "dips": 0,
+   "tab_std": 25.9
+  },
+  {
+   "label": "i1_close_patient_tab",
+   "ok": true,
+   "err": null,
+   "bus_ms": 321.72050001099706,
+   "resp_ms": null,
+   "stable_ms": null,
+   "flickers": [],
+   "dips": 0,
+   "tab_std": 25.9
+  },
+  {
+   "label": "i1_return_main_page",
+   "ok": true,
+   "err": null,
+   "bus_ms": 107.44220000924543,
+   "resp_ms": null,
+   "stable_ms": null,
+   "flickers": [],
+   "dips": 0,
+   "tab_std": 25.9
+  },
+  {
+   "label": "i3_open_44976",
+   "ok": true,
+   "err": null,
+   "bus_ms": 0.15390000771731138,
+   "resp_ms": 860.2,
+   "stable_ms": 1059.8,
+   "flickers": [],
+   "dips": 1,
+   "tab_std": 25.9
+  },
+  {
+   "label": "i3_open_44974",
+   "ok": true,
+   "err": null,
+   "bus_ms": 0.18830003682523966,
+   "resp_ms": 1146.7,
+   "stable_ms": 1349.6,
+   "flickers": [],
+   "dips": 1,
+   "tab_std": 25.9
+  },
+  {
+   "label": "i3_open_44987",
+   "ok": true,
+   "err": null,
+   "bus_ms": 0.1824999926611781,
+   "resp_ms": 706.6,
+   "stable_ms": 765.7,
+   "flickers": [],
+   "dips": 4,
+   "tab_std": 41.5
+  },
+  {
+   "label": "i5_drop_late_series_205102986",
+   "ok": true,
+   "err": null,
+   "bus_ms": 109.40389998722821,
+   "resp_ms": 133.2,
+   "stable_ms": 187.4,
+   "flickers": [],
+   "dips": 0,
+   "tab_std": 41.8
+  },
+  {
+   "label": "i6_burst_settle",
+   "ok": true,
+   "err": null,
+   "bus_ms": 0.10520004434511065,
+   "resp_ms": null,
+   "stable_ms": null,
+   "flickers": [],
+   "dips": 0,
+   "tab_std": 41.8
+  }
+ ],
+ "checks": {
+  "i2_series_bound": [
+   {
+    "series_number": 101,
+    "image_count": 2,
+    "description": "Scout"
+   },
+   {
+    "series_number": 201,
+    "image_count": 46,
+    "description": "Bone"
+   },
+   {
+    "series_number": 202,
+    "image_count": 276,
+    "description": "Bone"
+   },
+   {
+    "series_number": 203,
+    "image_count": 138,
+    "description": "Tissue"
+   },
+   {
+    "series_number": 9001,
+    "image_count": 1,
+    "description": "Dose Info"
+   },
+   {
+    "series_number": 100000,
+    "image_count": 1,
+    "description": "Documents"
+   }
+  ],
+  "i2_uid_match": true,
+  "i2_downloads": {
+   "total": 3,
+   "active": 1,
+   "downloading": 1,
+   "by_status": {
+    "Completed": 2,
+    "Downloading": 1
+   },
+   "by_priority": {
+    "High": 2,
+    "Critical": 1
+   }
+  },
+  "i3_open_tabs": {
+   "tabs": [
+    {
+     "index": 0,
+     "title": "AIPacs"
+    },
+    {
+     "index": 1,
+     "title": ""
+    },
+    {
+     "index": 2,
+     "title": ""
+    },
+    {
+     "index": 3,
+     "title": ""
+    },
+    {
+     "index": 4,
+     "title": ""
+    },
+    {
+     "index": 5,
+     "title": ""
+    }
+   ],
+   "current_index": 5,
+   "count": 6
+  },
+  "i3_per_tab": [
+   {
+    "tab": 2,
+    "study_uid": "1.2.840.1.99.1.47.1.1780490345791.86290",
+    "n_series": 8
+   },
+   {
+    "tab": 3,
+    "study_uid": "1.2.826.0.1.3680043.2.876.14581.1.5.1.20260603092733.0.50",
+    "n_series": 8
+   },
+   {
+    "tab": 4,
+    "study_uid": "1.2.840.1.99.1.47.1.1780502823973.86297",
+    "n_series": 8
+   }
+  ],
+  "i3_expected_uids": {
+   "44976": "1.2.840.1.99.1.47.1.1780502823973.86297",
+   "44974": "1.2.840.1.99.1.47.1.1780503436004.86299",
+   "44987": "1.2.840.1.99.1.47.1.1780505443058.86302"
+  },
+  "i3_no_mixing": false,
+  "i3_downloads": {
+   "total": 5,
+   "active": 2,
+   "downloading": 1,
+   "by_status": {
+    "Completed": 3,
+    "Pending": 1,
+    "Downloading": 1
+   },
+   "by_priority": {
+    "High": 4,
+    "Critical": 1
+   }
+  },
+  "i5_series_list": [
+   {
+    "series_number": 101,
+    "image_count": 2,
+    "description": "Scout"
+   },
+   {
+    "series_number": 201,
+    "image_count": 42,
+    "description": "Bone"
+   },
+   {
+    "series_number": 202,
+    "image_count": 252,
+    "description": "Bone"
+   },
+   {
+    "series_number": 203,
+    "image_count": 126,
+    "description": "Tissue"
+   },
+   {
+    "series_number": 9001,
+    "image_count": 1,
+    "description": "Dose Info"
+   },
+   {
+    "series_number": 100000,
+    "image_count": 1,
+    "description": "Documents"
+   },
+   {
+    "series_number": 205031069,
+    "image_count": 35,
+    "description": "Bone"
+   },
+   {
+    "series_number": 205102986,
+    "image_count": 35,
+    "description": "Bone"
+   }
+  ],
+  "i5_viewport_after": {
+   "study_uid": "1.2.840.1.99.1.47.1.1780502823973.86297",
+   "viewports": [
+    {
+     "viewport": 0,
+     "alive": true,
+     "series_number": "",
+     "preview_only": false,
+     "awaiting_series": "205102986",
+     "progressive_mode": false,
+     "progressive_series": null,
+     "slice_count": 0,
+     "spinner_visible": null
+    },
+    {
+     "viewport": 1,
+     "alive": true,
+     "series_number": "",
+     "preview_only": false,
+     "awaiting_series": null,
+     "progressive_mode": false,
+     "progressive_series": null,
+     "slice_count": 0,
+     "spinner_visible": null
+    }
+   ]
+  },
+  "i6_burst_wall": [
+   1780586398.6672142,
+   1780586424.5144398
+  ],
+  "final_downloads": {
+   "total": 5,
+   "active": 2,
+   "downloading": 1,
+   "by_status": {
+    "Completed": 3,
+    "Downloading": 1,
+    "Pending": 1
+   },
+   "by_priority": {
+    "High": 4,
+    "Critical": 1
+   }
+  },
+  "final_viewports": {
+   "study_uid": "1.2.840.1.99.1.47.1.1780502823973.86297",
+   "viewports": [
+    {
+     "viewport": 0,
+     "alive": true,
+     "series_number": "",
+     "preview_only": false,
+     "awaiting_series": "205102986",
+     "progressive_mode": false,
+     "progressive_series": null,
+     "slice_count": 0,
+     "spinner_visible": null
+    },
+    {
+     "viewport": 1,
+     "alive": true,
+     "series_number": "",
+     "preview_only": false,
+     "awaiting_series": null,
+     "progressive_mode": false,
+     "progressive_series": null,
+     "slice_count": 0,
+     "spinner_visible": null
+    }
+   ]
+  }
+ },
+ "events": [
+  {
+   "wall": 1780586266.7668812,
+   "t": 115.92,
+   "label": "i2_open_fresh_44942",
+   "ok": true
+  },
+  {
+   "wall": 1780586286.959752,
+   "t": 136.12,
+   "label": "i1_close_patient_tab",
+   "ok": true
+  },
+  {
+   "wall": 1780586310.068597,
+   "t": 159.22,
+   "label": "i1_return_main_page",
+   "ok": true
+  },
+  {
+   "wall": 1780586320.083099,
+   "t": 169.24,
+   "label": "i3_open_44976",
+   "ok": true
+  },
+  {
+   "wall": 1780586329.3409302,
+   "t": 178.5,
+   "label": "i3_open_44974",
+   "ok": true
+  },
+  {
+   "wall": 1780586337.688946,
+   "t": 186.84,
+   "label": "i3_open_44987",
+   "ok": true
+  },
+  {
+   "wall": 1780586342.0374186,
+   "t": 191.19,
+   "label": "i5_drop_wall",
+   "series": 205102986
+  },
+  {
+   "wall": 1780586398.64566,
+   "t": 247.8,
+   "label": "i5_drop_late_series_205102986",
+   "ok": true
+  },
+  {
+   "wall": 1780586398.6672163,
+   "t": 247.82,
+   "label": "i6_burst_begin"
+  },
+  {
+   "wall": 1780586424.5133655,
+   "t": 273.67,
+   "label": "i6_burst_settle",
+   "ok": true
+  }
+ ],
+ "fresh_targets": [
+  [
+   "44942",
+   8
+  ],
+  [
+   "44976",
+   8
+  ],
+  [
+   "44974",
+   8
+  ],
+  [
+   "44987",
+   8
+  ],
+  [
+   "44920",
+   7
+  ],
+  [
+   "44972",
+   7
+  ]
+ ],
+ "log_timeline": [
+  {
+   "t": "18:47:14.898",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349166359.427 stall_duration_ms=102.9 gap_ms=102.9 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:15.093",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349166521.878 stall_duration_ms=134.8 gap_ms=134.8 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:16.011",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349167164.671 stall_duration_ms=410.8 gap_ms=410.8 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:16.274",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349167575.494 stall_duration_ms=262.3 gap_ms=262.3 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:17.620",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349168234.249 stall_duration_ms=949.9 gap_ms=949.9 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:17.838",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349169184.110 stall_duration_ms=218.1 gap_ms=218.1 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:17.979",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349169402.189 stall_duration_ms=140.5 gap_ms=140.5 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:18.016",
+   "kind": "queue",
+   "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780495526857.86292 series_count=8 priority=High"
+  },
+  {
+   "t": "18:47:18.268",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349169726.033 stall_duration_ms=106.3 gap_ms=106.3 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:40.363",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 101 (2 images)"
+  },
+  {
+   "t": "18:47:40.475",
+   "kind": "dl_series",
+   "detail": "series-summary series=101 downloaded=2 skipped=0 total=2 throughput_items=17.99/s queue=0 active=1 disk_write_ms=9.72 decode_ms=1.90 decompress_ms=0.0"
+  },
+  {
+   "t": "18:47:40.477",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=9.72 files=2 bytes=597044 disk_write_ms=9.72 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:47:40.485",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=101 downloaded=2 total=2 corr_session=sess-e028c45b4444 corr_mono_ms=349192049.067"
+  },
+  {
+   "t": "18:47:40.639",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=0.03 process_rss_mb=273.37 available_ram_mb=31390.30 subprocess_count=0 thread_count=32 viewer_mode=Shared query_type=resourc"
+  },
+  {
+   "t": "18:47:40.640",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 101 complete: 2 downloaded, 0 skipped (0.3s)"
+  },
+  {
+   "t": "18:47:40.640",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=101 elapsed_s=0.28 disk_write_ms=9.72 decode_ms=1.90 decompress_ms=0.00"
+  },
+  {
+   "t": "18:47:40.727",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 201 (46 images)"
+  },
+  {
+   "t": "18:47:41.885",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=8 total=46 corr_session=sess-e028c45b4444 corr_mono_ms=349193449.416"
+  },
+  {
+   "t": "18:47:42.428",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=11 total=46 corr_session=sess-e028c45b4444 corr_mono_ms=349193992.675"
+  },
+  {
+   "t": "18:47:42.903",
+   "kind": "dl_series",
+   "detail": "series-summary series=201 downloaded=31 skipped=0 total=46 throughput_items=14.26/s queue=1 active=1 disk_write_ms=63.23 decode_ms=87.24 decompress_ms"
+  },
+  {
+   "t": "18:47:43.036",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=21 total=46 corr_session=sess-e028c45b4444 corr_mono_ms=349194600.610"
+  },
+  {
+   "t": "18:47:43.308",
+   "kind": "dl_series",
+   "detail": "series-summary series=201 downloaded=46 skipped=0 total=46 throughput_items=36.96/s queue=0 active=1 disk_write_ms=105.20 decode_ms=124.85 decompress_"
+  },
+  {
+   "t": "18:47:43.309",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=105.21 files=46 bytes=24236940 disk_write_ms=105.20 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:47:43.309",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 201 complete: 46 downloaded, 0 skipped (2.6s)"
+  },
+  {
+   "t": "18:47:43.309",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=201 elapsed_s=2.58 disk_write_ms=105.20 decode_ms=124.85 decompress_ms=0.00"
+  },
+  {
+   "t": "18:47:43.410",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=46 total=46 corr_session=sess-e028c45b4444 corr_mono_ms=349194974.454"
+  },
+  {
+   "t": "18:47:43.805",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 202 (276 images)"
+  },
+  {
+   "t": "18:47:45.021",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=11 total=276 corr_session=sess-e028c45b4444 corr_mono_ms=349196585.480"
+  },
+  {
+   "t": "18:47:45.829",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=40 skipped=0 total=276 throughput_items=19.77/s queue=24 active=1 disk_write_ms=79.13 decode_ms=88.51 decompress_"
+  },
+  {
+   "t": "18:47:45.931",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=21 total=276 corr_session=sess-e028c45b4444 corr_mono_ms=349197495.369"
+  },
+  {
+   "t": "18:47:46.458",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=41 total=276 corr_session=sess-e028c45b4444 corr_mono_ms=349198022.770"
+  },
+  {
+   "t": "18:47:47.099",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349198323.881 stall_duration_ms=338.6 gap_ms=338.6 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:48.002",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349198662.479 stall_duration_ms=904.0 gap_ms=904.0 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:48.031",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=71 skipped=0 total=276 throughput_items=14.07/s queue=20 active=1 disk_write_ms=175.32 decode_ms=155.15 decompres"
+  },
+  {
+   "t": "18:47:48.110",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349199566.487 stall_duration_ms=107.9 gap_ms=107.9 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:47:50.264",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=111 skipped=0 total=276 throughput_items=17.92/s queue=16 active=1 disk_write_ms=227.08 decode_ms=274.46 decompre"
+  },
+  {
+   "t": "18:47:52.287",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=151 skipped=0 total=276 throughput_items=19.77/s queue=12 active=1 disk_write_ms=364.77 decode_ms=351.89 decompre"
+  },
+  {
+   "t": "18:47:54.365",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=191 skipped=0 total=276 throughput_items=19.25/s queue=8 active=1 disk_write_ms=459.38 decode_ms=436.24 decompres"
+  },
+  {
+   "t": "18:47:56.533",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=231 skipped=0 total=276 throughput_items=18.45/s queue=4 active=1 disk_write_ms=512.28 decode_ms=546.07 decompres"
+  },
+  {
+   "t": "18:47:58.537",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=271 skipped=0 total=276 throughput_items=19.96/s queue=0 active=1 disk_write_ms=663.90 decode_ms=665.66 decompres"
+  },
+  {
+   "t": "18:47:58.570",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=276 skipped=0 total=276 throughput_items=151.41/s queue=0 active=1 disk_write_ms=670.38 decode_ms=675.16 decompre"
+  },
+  {
+   "t": "18:47:58.571",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=670.38 files=276 bytes=145420890 disk_write_ms=670.38 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:47:58.739",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=0.01 process_rss_mb=278.00 available_ram_mb=30786.04 subprocess_count=0 thread_count=32 viewer_mode=Shared query_type=resourc"
+  },
+  {
+   "t": "18:47:58.740",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 202 complete: 276 downloaded, 0 skipped (14.9s)"
+  },
+  {
+   "t": "18:47:58.740",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=202 elapsed_s=14.93 disk_write_ms=670.38 decode_ms=675.16 decompress_ms=0.00"
+  },
+  {
+   "t": "18:47:59.890",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 203 (138 images)"
+  },
+  {
+   "t": "18:48:01.912",
+   "kind": "dl_series",
+   "detail": "series-summary series=203 downloaded=31 skipped=0 total=138 throughput_items=15.34/s queue=10 active=1 disk_write_ms=49.68 decode_ms=66.40 decompress_"
+  },
+  {
+   "t": "18:48:04.128",
+   "kind": "dl_series",
+   "detail": "series-summary series=203 downloaded=71 skipped=0 total=138 throughput_items=18.06/s queue=6 active=1 disk_write_ms=176.45 decode_ms=159.49 decompress"
+  },
+  {
+   "t": "18:48:06.256",
+   "kind": "dl_series",
+   "detail": "series-summary series=203 downloaded=111 skipped=0 total=138 throughput_items=18.79/s queue=2 active=1 disk_write_ms=227.53 decode_ms=257.95 decompres"
+  },
+  {
+   "t": "18:48:07.080",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349218524.312 stall_duration_ms=119.5 gap_ms=119.5 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:07.202",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349218643.783 stall_duration_ms=122.2 gap_ms=122.2 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:07.345",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349218765.977 stall_duration_ms=143.1 gap_ms=143.1 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:07.372",
+   "kind": "dl_series",
+   "detail": "series-summary series=203 downloaded=138 skipped=0 total=138 throughput_items=24.19/s queue=0 active=1 disk_write_ms=299.43 decode_ms=315.11 decompres"
+  },
+  {
+   "t": "18:48:07.377",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=299.44 files=138 bytes=72710070 disk_write_ms=299.43 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:48:07.461",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349218909.101 stall_duration_ms=116.1 gap_ms=116.1 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:07.560",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=0.02 process_rss_mb=280.59 available_ram_mb=31217.55 subprocess_count=0 thread_count=32 viewer_mode=Shared query_type=resourc"
+  },
+  {
+   "t": "18:48:07.561",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 203 complete: 138 downloaded, 0 skipped (7.7s)"
+  },
+  {
+   "t": "18:48:07.561",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=203 elapsed_s=7.67 disk_write_ms=299.43 decode_ms=315.11 decompress_ms=0.00"
+  },
+  {
+   "t": "18:48:08.279",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 9001 (1 images)"
+  },
+  {
+   "t": "18:48:08.354",
+   "kind": "dl_series",
+   "detail": "series-summary series=9001 downloaded=1 skipped=0 total=1 throughput_items=13.54/s queue=0 active=1 disk_write_ms=1.29 decode_ms=1.47 decompress_ms=0."
+  },
+  {
+   "t": "18:48:08.355",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=1.29 files=1 bytes=525952 disk_write_ms=1.29 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:48:08.355",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 9001 complete: 1 downloaded, 0 skipped (0.1s)"
+  },
+  {
+   "t": "18:48:08.355",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=9001 elapsed_s=0.07 disk_write_ms=1.29 decode_ms=1.47 decompress_ms=0.00"
+  },
+  {
+   "t": "18:48:08.432",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 100000 (1 images)"
+  },
+  {
+   "t": "18:48:09.819",
+   "kind": "dl_series",
+   "detail": "series-summary series=100000 downloaded=1 skipped=0 total=1 throughput_items=0.72/s queue=0 active=1 disk_write_ms=4.02 decode_ms=70.19 decompress_ms="
+  },
+  {
+   "t": "18:48:09.820",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=4.03 files=1 bytes=10547678 disk_write_ms=4.02 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:48:09.822",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 100000 complete: 1 downloaded, 0 skipped (1.4s)"
+  },
+  {
+   "t": "18:48:09.822",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=100000 elapsed_s=1.39 disk_write_ms=4.02 decode_ms=70.19 decompress_ms=0.00"
+  },
+  {
+   "t": "18:48:09.936",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 184621665 (35 images)"
+  },
+  {
+   "t": "18:48:11.958",
+   "kind": "dl_series",
+   "detail": "series-summary series=184621665 downloaded=8 skipped=0 total=35 throughput_items=3.96/s queue=3 active=1 disk_write_ms=41.82 decode_ms=60.73 decompres"
+  },
+  {
+   "t": "18:48:14.395",
+   "kind": "dl_series",
+   "detail": "series-summary series=184621665 downloaded=11 skipped=0 total=35 throughput_items=1.23/s queue=2 active=1 disk_write_ms=69.20 decode_ms=79.84 decompre"
+  },
+  {
+   "t": "18:48:17.064",
+   "kind": "dl_series",
+   "detail": "series-summary series=184621665 downloaded=21 skipped=0 total=35 throughput_items=3.75/s queue=1 active=1 disk_write_ms=147.28 decode_ms=144.75 decomp"
+  },
+  {
+   "t": "18:48:18.108",
+   "kind": "dl_series",
+   "detail": "series-summary series=184621665 downloaded=35 skipped=0 total=35 throughput_items=13.40/s queue=0 active=1 disk_write_ms=192.48 decode_ms=283.75 decom"
+  },
+  {
+   "t": "18:48:18.109",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=192.48 files=35 bytes=49107740 disk_write_ms=192.48 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:48:18.326",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=0.02 process_rss_mb=289.86 available_ram_mb=30592.46 subprocess_count=0 thread_count=29 viewer_mode=Shared query_type=resourc"
+  },
+  {
+   "t": "18:48:18.326",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 184621665 complete: 35 downloaded, 0 skipped (8.4s)"
+  },
+  {
+   "t": "18:48:18.326",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=184621665 elapsed_s=8.39 disk_write_ms=192.48 decode_ms=283.75 decompress_ms=0.00"
+  },
+  {
+   "t": "18:48:18.620",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 184711242 (35 images)"
+  },
+  {
+   "t": "18:48:20.950",
+   "kind": "dl_series",
+   "detail": "series-summary series=184711242 downloaded=1 skipped=0 total=35 throughput_items=0.43/s queue=3 active=1 disk_write_ms=30.88 decode_ms=28.13 decompres"
+  },
+  {
+   "t": "18:48:23.588",
+   "kind": "dl_series",
+   "detail": "series-summary series=184711242 downloaded=11 skipped=0 total=35 throughput_items=3.79/s queue=2 active=1 disk_write_ms=49.56 decode_ms=88.60 decompre"
+  },
+  {
+   "t": "18:48:26.234",
+   "kind": "dl_series",
+   "detail": "series-summary series=184711242 downloaded=21 skipped=0 total=35 throughput_items=3.78/s queue=1 active=1 disk_write_ms=79.17 decode_ms=194.14 decompr"
+  },
+  {
+   "t": "18:48:27.214",
+   "kind": "dl_series",
+   "detail": "series-summary series=184711242 downloaded=35 skipped=0 total=35 throughput_items=14.28/s queue=0 active=1 disk_write_ms=126.18 decode_ms=330.74 decom"
+  },
+  {
+   "t": "18:48:27.215",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=126.19 files=35 bytes=49107352 disk_write_ms=126.18 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:48:27.388",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=0.01 process_rss_mb=289.96 available_ram_mb=31151.88 subprocess_count=0 thread_count=29 viewer_mode=Shared query_type=resourc"
+  },
+  {
+   "t": "18:48:27.388",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 184711242 complete: 35 downloaded, 0 skipped (8.8s)"
+  },
+  {
+   "t": "18:48:27.388",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=184711242 elapsed_s=8.77 disk_write_ms=126.18 decode_ms=330.74 decompress_ms=0.00"
+  },
+  {
+   "t": "18:48:30.778",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349241624.191 stall_duration_ms=717.8 gap_ms=717.8 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:30.944",
+   "kind": "queue",
+   "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780502823973.86297 series_count=8 priority=High"
+  },
+  {
+   "t": "18:48:31.057",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349242485.903 stall_duration_ms=134.6 gap_ms=134.6 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:41.048",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349251624.199 stall_duration_ms=988.2 gap_ms=988.2 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:41.227",
+   "kind": "queue",
+   "detail": "[FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780503436004.86299 series_count=8 priority=High"
+  },
+  {
+   "t": "18:48:41.230",
+   "kind": "intent",
+   "detail": "[INTENT_PRIORITY] tag=begin study=1.2.840.1.99.1.47.1.1780503436004.86299 series= attempt=0/90 recovery=False pool_busy=False pool_capacity=1/1 state="
+  },
+  {
+   "t": "18:48:42.512",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349253974.582 stall_duration_ms=101.3 gap_ms=101.3 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:50.023",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349260874.553 stall_duration_ms=711.9 gap_ms=711.9 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:57.912",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349269224.904 stall_duration_ms=250.9 gap_ms=250.9 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:48:59.373",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349270674.477 stall_duration_ms=262.2 gap_ms=262.2 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:49:00.784",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349272124.263 stall_duration_ms=224.2 gap_ms=224.2 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:49:02.151",
+   "kind": "intent",
+   "detail": "[INTENT_PRIORITY] tag=begin study=1.2.840.1.99.1.47.1.1780502823973.86297 series=205102986 attempt=0/90 recovery=False pool_busy=False pool_capacity=1"
+  },
+  {
+   "t": "18:49:02.170",
+   "kind": "fail",
+   "detail": "[PROFILE] change_series_on_viewer: async load-on-demand FAILED for series 205102986 in 23.5ms"
+  },
+  {
+   "t": "18:49:45.487",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 205102986 (35 images)"
+  },
+  {
+   "t": "18:49:48.109",
+   "kind": "dl_series",
+   "detail": "series-summary series=205102986 downloaded=1 skipped=0 total=35 throughput_items=0.38/s queue=3 active=1 disk_write_ms=1.44 decode_ms=4.43 decompress_"
+  },
+  {
+   "t": "18:49:48.810",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=205102986 downloaded=6 total=35 corr_session=sess-e028c45b4444 corr_mono_ms=349320374.776"
+  },
+  {
+   "t": "18:49:50.768",
+   "kind": "dl_series",
+   "detail": "series-summary series=205102986 downloaded=11 skipped=0 total=35 throughput_items=3.76/s queue=2 active=1 disk_write_ms=76.95 decode_ms=67.34 decompre"
+  },
+  {
+   "t": "18:49:51.485",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=205102986 downloaded=19 total=35 corr_session=sess-e028c45b4444 corr_mono_ms=349323049.196"
+  },
+  {
+   "t": "18:49:53.812",
+   "kind": "dl_series",
+   "detail": "series-summary series=205102986 downloaded=21 skipped=0 total=35 throughput_items=3.29/s queue=1 active=1 disk_write_ms=95.92 decode_ms=140.94 decompr"
+  },
+  {
+   "t": "18:49:54.525",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=205102986 downloaded=28 total=35 corr_session=sess-e028c45b4444 corr_mono_ms=349326089.686"
+  },
+  {
+   "t": "18:49:54.921",
+   "kind": "dl_series",
+   "detail": "series-summary series=205102986 downloaded=35 skipped=0 total=35 throughput_items=12.62/s queue=0 active=1 disk_write_ms=212.00 decode_ms=256.65 decom"
+  },
+  {
+   "t": "18:49:54.922",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=212.01 files=35 bytes=49107808 disk_write_ms=212.00 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:49:54.924",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=205102986 downloaded=35 total=35 corr_session=sess-e028c45b4444 corr_mono_ms=349326488.396"
+  },
+  {
+   "t": "18:49:55.135",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=0.02 process_rss_mb=284.07 available_ram_mb=30837.84 subprocess_count=0 thread_count=32 viewer_mode=Shared query_type=resourc"
+  },
+  {
+   "t": "18:49:55.135",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 205102986 complete: 35 downloaded, 0 skipped (9.6s)"
+  },
+  {
+   "t": "18:49:55.136",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=205102986 elapsed_s=9.65 disk_write_ms=212.00 decode_ms=256.65 decompress_ms=0.00"
+  },
+  {
+   "t": "18:49:55.519",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 101 (2 images)"
+  },
+  {
+   "t": "18:49:55.597",
+   "kind": "dl_series",
+   "detail": "series-summary series=101 downloaded=2 skipped=0 total=2 throughput_items=25.98/s queue=0 active=1 disk_write_ms=1.45 decode_ms=2.10 decompress_ms=0.0"
+  },
+  {
+   "t": "18:49:55.598",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=1.45 files=2 bytes=597056 disk_write_ms=1.45 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:49:55.599",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 101 complete: 2 downloaded, 0 skipped (0.1s)"
+  },
+  {
+   "t": "18:49:55.599",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=101 elapsed_s=0.08 disk_write_ms=1.45 decode_ms=2.10 decompress_ms=0.00"
+  },
+  {
+   "t": "18:49:55.658",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 201 (42 images)"
+  },
+  {
+   "t": "18:49:55.711",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=101 downloaded=2 total=2 corr_session=sess-e028c45b4444 corr_mono_ms=349327274.960"
+  },
+  {
+   "t": "18:49:56.838",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=1 total=42 corr_session=sess-e028c45b4444 corr_mono_ms=349328401.873"
+  },
+  {
+   "t": "18:49:57.385",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=11 total=42 corr_session=sess-e028c45b4444 corr_mono_ms=349328949.702"
+  },
+  {
+   "t": "18:49:57.877",
+   "kind": "dl_series",
+   "detail": "series-summary series=201 downloaded=31 skipped=0 total=42 throughput_items=13.98/s queue=1 active=1 disk_write_ms=52.58 decode_ms=91.20 decompress_ms"
+  },
+  {
+   "t": "18:49:57.986",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=21 total=42 corr_session=sess-e028c45b4444 corr_mono_ms=349329550.531"
+  },
+  {
+   "t": "18:49:58.037",
+   "kind": "dl_series",
+   "detail": "series-summary series=201 downloaded=42 skipped=0 total=42 throughput_items=68.91/s queue=0 active=1 disk_write_ms=66.39 decode_ms=114.10 decompress_m"
+  },
+  {
+   "t": "18:49:58.037",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=66.39 files=42 bytes=22129632 disk_write_ms=66.39 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:49:58.037",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 201 complete: 42 downloaded, 0 skipped (2.4s)"
+  },
+  {
+   "t": "18:49:58.038",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=201 elapsed_s=2.38 disk_write_ms=66.39 decode_ms=114.10 decompress_ms=0.00"
+  },
+  {
+   "t": "18:49:58.154",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=201 downloaded=42 total=42 corr_session=sess-e028c45b4444 corr_mono_ms=349329717.985"
+  },
+  {
+   "t": "18:49:58.428",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 202 (252 images)"
+  },
+  {
+   "t": "18:49:59.339",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=1 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349330903.205"
+  },
+  {
+   "t": "18:49:59.844",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349331024.429 stall_duration_ms=383.2 gap_ms=383.2 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:50:00.322",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349331584.445 stall_duration_ms=301.6 gap_ms=301.6 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:50:00.347",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=21 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349331911.009"
+  },
+  {
+   "t": "18:50:00.745",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=41 skipped=0 total=252 throughput_items=17.70/s queue=21 active=1 disk_write_ms=45.03 decode_ms=118.52 decompress"
+  },
+  {
+   "t": "18:50:00.745",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349332074.788 stall_duration_ms=234.4 gap_ms=234.4 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:50:01.109",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=41 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349332673.394"
+  },
+  {
+   "t": "18:50:01.118",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349332475.344 stall_duration_ms=206.3 gap_ms=206.3 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:50:01.602",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349332874.814 stall_duration_ms=291.2 gap_ms=291.2 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:50:01.999",
+   "kind": "stall",
+   "detail": "[MAIN_THREAD_STALL] stall_start_ms=349333374.722 stall_duration_ms=188.2 gap_ms=188.2 threshold_ms=100.0 interaction_active=False active_viewer_state="
+  },
+  {
+   "t": "18:50:02.089",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=51 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349333653.064"
+  },
+  {
+   "t": "18:50:02.695",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=71 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349334259.699"
+  },
+  {
+   "t": "18:50:02.840",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=81 skipped=0 total=252 throughput_items=19.10/s queue=17 active=1 disk_write_ms=194.34 decode_ms=204.20 decompres"
+  },
+  {
+   "t": "18:50:03.537",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=81 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349335101.213"
+  },
+  {
+   "t": "18:50:04.055",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=101 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349335619.097"
+  },
+  {
+   "t": "18:50:04.842",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=127 skipped=0 total=252 throughput_items=22.98/s queue=13 active=1 disk_write_ms=296.48 decode_ms=293.22 decompre"
+  },
+  {
+   "t": "18:50:05.034",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=121 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349336598.560"
+  },
+  {
+   "t": "18:50:05.986",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=131 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349337550.395"
+  },
+  {
+   "t": "18:50:06.502",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=141 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349338066.446"
+  },
+  {
+   "t": "18:50:07.047",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=159 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349338611.728"
+  },
+  {
+   "t": "18:50:07.068",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=161 skipped=0 total=252 throughput_items=15.27/s queue=9 active=1 disk_write_ms=512.27 decode_ms=375.58 decompres"
+  },
+  {
+   "t": "18:50:07.793",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=171 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349339357.379"
+  },
+  {
+   "t": "18:50:08.811",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=181 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349340375.581"
+  },
+  {
+   "t": "18:50:09.289",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=201 skipped=0 total=252 throughput_items=18.00/s queue=5 active=1 disk_write_ms=677.95 decode_ms=461.68 decompres"
+  },
+  {
+   "t": "18:50:09.381",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=191 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349340945.764"
+  },
+  {
+   "t": "18:50:09.992",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=201 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349341555.860"
+  },
+  {
+   "t": "18:50:10.611",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=221 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349342174.956"
+  },
+  {
+   "t": "18:50:11.579",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=241 skipped=0 total=252 throughput_items=17.47/s queue=1 active=1 disk_write_ms=775.79 decode_ms=550.80 decompres"
+  },
+  {
+   "t": "18:50:11.653",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=231 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349343217.670"
+  },
+  {
+   "t": "18:50:11.740",
+   "kind": "dl_series",
+   "detail": "series-summary series=202 downloaded=252 skipped=0 total=252 throughput_items=68.30/s queue=0 active=1 disk_write_ms=795.62 decode_ms=572.95 decompres"
+  },
+  {
+   "t": "18:50:11.740",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=795.63 files=252 bytes=132777090 disk_write_ms=795.62 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:50:11.857",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=202 downloaded=252 total=252 corr_session=sess-e028c45b4444 corr_mono_ms=349343421.238"
+  },
+  {
+   "t": "18:50:11.903",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=0.01 process_rss_mb=278.45 available_ram_mb=30744.75 subprocess_count=0 thread_count=32 viewer_mode=Shared query_type=resourc"
+  },
+  {
+   "t": "18:50:11.905",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 202 complete: 252 downloaded, 0 skipped (13.5s)"
+  },
+  {
+   "t": "18:50:11.905",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=202 elapsed_s=13.47 disk_write_ms=795.62 decode_ms=572.95 decompress_ms=0.00"
+  },
+  {
+   "t": "18:50:12.961",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 203 (126 images)"
+  },
+  {
+   "t": "18:50:14.125",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=1 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349345689.814"
+  },
+  {
+   "t": "18:50:14.689",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=11 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349346253.565"
+  },
+  {
+   "t": "18:50:15.036",
+   "kind": "dl_series",
+   "detail": "series-summary series=203 downloaded=31 skipped=0 total=126 throughput_items=14.95/s queue=9 active=1 disk_write_ms=66.87 decode_ms=64.90 decompress_m"
+  },
+  {
+   "t": "18:50:15.261",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=31 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349346825.261"
+  },
+  {
+   "t": "18:50:16.277",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=41 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349347841.170"
+  },
+  {
+   "t": "18:50:16.825",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=51 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349348389.310"
+  },
+  {
+   "t": "18:50:17.154",
+   "kind": "dl_series",
+   "detail": "series-summary series=203 downloaded=71 skipped=0 total=126 throughput_items=18.88/s queue=5 active=1 disk_write_ms=149.39 decode_ms=183.35 decompress"
+  },
+  {
+   "t": "18:50:17.353",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=71 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349348917.512"
+  },
+  {
+   "t": "18:50:18.473",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=85 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349350037.469"
+  },
+  {
+   "t": "18:50:19.210",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=101 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349350774.370"
+  },
+  {
+   "t": "18:50:19.547",
+   "kind": "dl_series",
+   "detail": "series-summary series=203 downloaded=111 skipped=0 total=126 throughput_items=16.71/s queue=1 active=1 disk_write_ms=299.08 decode_ms=273.29 decompres"
+  },
+  {
+   "t": "18:50:19.958",
+   "kind": "dl_series",
+   "detail": "series-summary series=203 downloaded=126 skipped=0 total=126 throughput_items=36.53/s queue=0 active=1 disk_write_ms=321.10 decode_ms=359.72 decompres"
+  },
+  {
+   "t": "18:50:19.959",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=321.11 files=126 bytes=66388194 disk_write_ms=321.10 query_type=disk_write viewer_mode=Shared"
+  },
+  {
+   "t": "18:50:20.078",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=203 downloaded=126 total=126 corr_session=sess-e028c45b4444 corr_mono_ms=349351642.507"
+  },
+  {
+   "t": "18:50:20.451",
+   "kind": "dl_series",
+   "detail": "stage-timing duration_ms=0.02 process_rss_mb=279.56 available_ram_mb=31321.93 subprocess_count=0 thread_count=29 viewer_mode=Shared query_type=resourc"
+  },
+  {
+   "t": "18:50:20.451",
+   "kind": "dl_series",
+   "detail": "\u2705 Series 203 complete: 126 downloaded, 0 skipped (7.5s)"
+  },
+  {
+   "t": "18:50:20.451",
+   "kind": "dl_series",
+   "detail": "download-pipeline-summary series=203 elapsed_s=7.49 disk_write_ms=321.10 decode_ms=359.72 decompress_ms=0.00"
+  },
+  {
+   "t": "18:50:21.068",
+   "kind": "dl_series",
+   "detail": "\ud83d\udce5 Downloading series 205031069 (35 images)"
+  },
+  {
+   "t": "18:50:23.394",
+   "kind": "dl_series",
+   "detail": "series-summary series=205031069 downloaded=1 skipped=0 total=35 throughput_items=0.43/s queue=3 active=1 disk_write_ms=1.89 decode_ms=4.07 decompress_"
+  },
+  {
+   "t": "18:50:24.105",
+   "kind": "sig_prog",
+   "detail": "[SIGNAL_FANOUT] source=series_images_progress series=205031069 downloaded=8 total=35 corr_session=sess-e028c45b4444 corr_mono_ms=349355669.215"
+  }
+ ],
+ "counts": {
+  "intent": 2,
+  "queue": 3,
+  "dl_series": 105,
+  "first_img": 0,
+  "grow": 0,
+  "stall": 29,
+  "preempt": 0,
+  "fail": 1,
+  "sig_prog": 45
+ }
+}

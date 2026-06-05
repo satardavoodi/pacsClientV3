@@ -362,24 +362,47 @@ class ImageSliceBooster:
             )
 
     def clear(self) -> None:
-        """Deactivate boosting and discard all cached pixel data immediately."""
+        """Deactivate boosting and discard all cached pixel data.
+
+        Issue-6 GUI-stall fix (2026-06-04): this runs on the main thread on
+        every POST_DOWNLOAD transition and stalled ~300-400 ms (live stall
+        trace via `_vc_load._on_pipeline_state_changed`): a blocking
+        `join(timeout=0.3)` — which was ALREADY best-effort (H12-2 accepts
+        `alive_after_join=True`) — plus in-place deallocation of every cached
+        pixel buffer under the lock. Now the join is non-blocking (cancel is
+        set; the worker exits on its next check exactly as before) and the
+        cache is swapped out O(1) under the lock then deallocated on a daemon
+        thread. Race-safe: the worker re-reads `self._pixel_cache` under the
+        lock and double-checks `_active_series` (nulled here under the same
+        lock) before writing, so a late write cannot land in the fresh cache;
+        a write into the orphaned dict is harmless.
+        """
         self._cancel.set()
         if self._worker is not None:
             old_tid = self._worker.ident
             try:
-                self._worker.join(timeout=0.3)
+                self._worker.join(timeout=0.0)  # non-blocking — same best-effort semantics
             except Exception:
                 pass
             _h12_log.info(
                 "[H12-2] JOIN_RESULT caller=clear old_tid=%s alive_after_join=%s",
                 old_tid, self._worker.is_alive(),
             )
+        _old_cache = None
         with self._lock:
             self._active_series = None
             self._instance_paths = []
-            self._pixel_cache.clear()
+            _old_cache = self._pixel_cache
+            self._pixel_cache = type(_old_cache)()  # O(1) swap; dealloc off-thread
             self._center_slice = 0
             self._total_slices = 0
+        if _old_cache:
+            try:
+                import threading as _thr
+                _thr.Thread(target=_old_cache.clear, name="isb-cache-dealloc",
+                            daemon=True).start()
+            except Exception:
+                _old_cache.clear()
         self._cancel.clear()
         self._log("CLEARED")
 

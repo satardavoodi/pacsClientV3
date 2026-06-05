@@ -53,9 +53,16 @@ class GrpcMetadataClient:
 
     def _get_socket_client(self) -> PatientListSocketClient:
         if self._socket_client is None:
+            # GrpcMetadataClient is socket-backed: the socket client must use the
+            # socket-protocol port from socket_config (e.g. 50052), never the legacy
+            # gRPC port (50051) that call sites still pass for historical compatibility.
+            from modules.network.socket_config import get_socket_server_settings
+            _cfg = get_socket_server_settings() or {}
+            _socket_host = self.host or _cfg.get('host') or DEFAULT_SOCKET_HOST
+            _socket_port = int(_cfg.get('port') or 50052)
             self._socket_client = PatientListSocketClient(
-                host=self.host,
-                port=self.port,
+                host=_socket_host,
+                port=_socket_port,
                 timeout=self.timeout,
             )
         return self._socket_client

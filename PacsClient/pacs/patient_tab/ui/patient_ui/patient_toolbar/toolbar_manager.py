@@ -3252,23 +3252,103 @@ class ToolbarManager:
             new_curve_mpr_btn.clicked.connect(partial(self._on_new_curve_mpr_dropdown_clicked, dropdown=dropdown))
             layout.addWidget(new_curve_mpr_btn)
             
-            # MIP button
-            mip_btn = create_dropdown_tool('MIP - Maximum Intensity', 'fa5s.layer-group', '#60a5fa')
-            mip_btn.clicked.connect(partial(self._on_mip_dropdown_clicked, dropdown=dropdown))
-            layout.addWidget(mip_btn)
-            self.tools_button[self.tool_access.MIP] = mip_btn
+            # ── Projection reconstruction (Standard / MIP / MinIP / Thick Slab) ──────────────
+            # Reuses the VTK MPR reconstruction but opens ONLY the selected view(s) with the chosen
+            # slab applied — never the full 4-panel (see open_projection_views()). Default mode is
+            # Standard = normal average reconstruction at 1 mm; selecting MIP/MinIP/Thick Slab
+            # auto-sets the clinical default 10 mm. Pick view(s) + thickness, then Open.
+            from PySide6.QtWidgets import (
+                QSlider, QRadioButton, QCheckBox, QButtonGroup, QPushButton, QHBoxLayout,
+                QGridLayout
+            )
+            from PySide6.QtCore import Qt as _Qt
 
-            # MinIP button
-            minip_btn = create_dropdown_tool('MinIP - Minimum Intensity', 'fa5s.layer-group', '#34d399')
-            minip_btn.clicked.connect(partial(self._on_minip_dropdown_clicked, dropdown=dropdown))
-            layout.addWidget(minip_btn)
-            self.tools_button[self.tool_access.MINIP] = minip_btn
+            _proj_sep = QLabel("")
+            _proj_sep.setFixedHeight(1)
+            _proj_sep.setStyleSheet("background:#374151; border:none;")
+            layout.addWidget(_proj_sep)
 
-            # Thick Slab button
-            thick_btn = create_dropdown_tool('Thick Slab MIP', 'fa5s.layer-group', '#f59e0b')
-            thick_btn.clicked.connect(partial(self._on_thick_slab_dropdown_clicked, dropdown=dropdown))
-            layout.addWidget(thick_btn)
-            self.tools_button[self.tool_access.THICK_SLAB] = thick_btn
+            _cap_css = "color:#e5e7eb; font-size:12px; font-weight:600; background:transparent; border:none; padding:2px 2px;"
+            _opt_css = "color:#e5e7eb; font-size:12px; background:transparent; border:none; padding:1px 4px;"
+
+            # Slab thickness slider (mm)
+            _thick_row = QWidget(); _thick_row.setStyleSheet("background:transparent; border:none;")
+            _thick_l = QHBoxLayout(_thick_row); _thick_l.setContentsMargins(4, 2, 4, 2); _thick_l.setSpacing(6)
+            _thick_cap = QLabel("Slab thickness"); _thick_cap.setStyleSheet(_cap_css)
+            _thick_val = QLabel("1 mm"); _thick_val.setStyleSheet("color:#93c5fd; font-size:12px; font-weight:700; background:transparent; border:none;")
+            _thick_slider = QSlider(_Qt.Horizontal)
+            _thick_slider.setMinimum(1); _thick_slider.setMaximum(50); _thick_slider.setValue(1)
+            _thick_slider.valueChanged.connect(lambda v: _thick_val.setText(f"{v} mm"))
+            _thick_l.addWidget(_thick_cap); _thick_l.addWidget(_thick_slider, 1); _thick_l.addWidget(_thick_val)
+            layout.addWidget(_thick_row)
+
+            # Projection mode (single choice). Default = Standard: normal average/standard
+            # reconstruction at 1 mm (no MIP/MinIP/Thick Slab selected). Selecting MIP, MinIP or
+            # Thick Slab auto-sets thickness to the clinical default 10 mm; returning to Standard
+            # sets it back to 1 mm. The slider stays user-adjustable after the auto-set.
+            _mode_cap = QLabel("Mode"); _mode_cap.setStyleSheet(_cap_css); layout.addWidget(_mode_cap)
+            _mode_row = QWidget(); _mode_row.setStyleSheet("background:transparent; border:none;")
+            _mode_l = QGridLayout(_mode_row); _mode_l.setContentsMargins(4, 0, 4, 2)
+            _mode_l.setHorizontalSpacing(8); _mode_l.setVerticalSpacing(2)
+            _mode_group = QButtonGroup(dropdown)
+            _rb_std = QRadioButton("Standard")
+            _rb_mip = QRadioButton("MIP"); _rb_minip = QRadioButton("MinIP"); _rb_avg = QRadioButton("Thick Slab")
+            _rb_std.setChecked(True)
+            for _pos, _rb in enumerate((_rb_std, _rb_mip, _rb_minip, _rb_avg)):
+                _rb.setStyleSheet(_opt_css); _mode_group.addButton(_rb)
+                _mode_l.addWidget(_rb, _pos // 2, _pos % 2)
+            _rb_std.toggled.connect(lambda on: _thick_slider.setValue(1) if on else None)
+            for _rb in (_rb_mip, _rb_minip, _rb_avg):
+                _rb.toggled.connect(lambda on: _thick_slider.setValue(10) if on else None)
+            layout.addWidget(_mode_row)
+
+            # View(s) — multi-select → 1-3 side-by-side viewports
+            _view_cap = QLabel("View"); _view_cap.setStyleSheet(_cap_css); layout.addWidget(_view_cap)
+            _view_row = QWidget(); _view_row.setStyleSheet("background:transparent; border:none;")
+            _view_l = QHBoxLayout(_view_row); _view_l.setContentsMargins(4, 0, 4, 2); _view_l.setSpacing(8)
+            _cb_ax = QCheckBox("Axial"); _cb_sag = QCheckBox("Sagittal"); _cb_cor = QCheckBox("Coronal")
+            _cb_ax.setChecked(True)
+            for _cb in (_cb_ax, _cb_sag, _cb_cor):
+                _cb.setStyleSheet(_opt_css); _view_l.addWidget(_cb)
+            layout.addWidget(_view_row)
+
+            # Open projection
+            _open_btn = QPushButton("Open projection")
+            _open_btn.setCursor(Qt.PointingHandCursor)
+            _open_btn.setStyleSheet("""
+                QPushButton {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #059669, stop:1 #047857);
+                    color: #ffffff; border: 1px solid #10b981; border-radius: 6px; padding: 7px;
+                    font-size: 13px; font-weight: 600; font-family: 'Roboto', sans-serif; margin-top: 4px;
+                }
+                QPushButton:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #10b981, stop:1 #059669);
+                }
+            """)
+
+            def _on_open_projection(_checked=False):
+                _dirs = []
+                if _cb_ax.isChecked():
+                    _dirs.append('axial')
+                if _cb_sag.isChecked():
+                    _dirs.append('sagittal')
+                if _cb_cor.isChecked():
+                    _dirs.append('coronal')
+                if not _dirs:
+                    _dirs = ['axial']
+                # Standard AND Thick Slab both reconstruct with a mean (average) slab — the
+                # difference is thickness: Standard = thin (default 1 mm) normal reconstruction,
+                # Thick Slab = thick average (default 10 mm). MIP=max, MinIP=min.
+                _mode = 'max' if _rb_mip.isChecked() else ('min' if _rb_minip.isChecked() else 'mean')
+                _thk = float(_thick_slider.value())
+                try:
+                    dropdown.close()
+                except Exception:
+                    pass
+                self.open_projection_views(_dirs, _mode, _thk)
+
+            _open_btn.clicked.connect(_on_open_projection)
+            layout.addWidget(_open_btn)
 
             # Note: Zeta MPR removed from dropdown - now the main MPR button
 
@@ -4343,6 +4423,52 @@ class ToolbarManager:
                 f"Error launching Advanced MPR Slicer:\n{str(e)}"
             )
 
+    def open_projection_views(self, directions, mode, thickness_mm=10.0):
+        """Open a VTK reconstruction with ONLY the requested view(s) + a slab projection.
+
+        Reuses the full Zeta-MPR VTK pipeline (volume load + canonicalize + StandardMPRViewer via
+        toggle_zeta_mpr), but the viewer is built with a SUBSET layout (1-3 panes, no 3D) and the
+        slab type set: mode 'max'=MIP, 'min'=MinIP, 'mean'=Thick Slab. Never opens the full
+        4-panel MPR; the FAST viewer is untouched (this just switches the focused viewport to the
+        VTK reconstruction, exactly like the MPR button does).
+
+        directions: any of ['axial','sagittal','coronal'] (1-3 → that many side-by-side panes).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        directions = [d for d in ('axial', 'sagittal', 'coronal')
+                      if d in {str(x).lower() for x in (directions or [])}]
+        if not directions or mode not in ('max', 'min', 'mean'):
+            logger.warning("[MPR PROJ] invalid request directions=%r mode=%r", directions, mode)
+            return
+        try:
+            thickness_mm = float(thickness_mm)
+        except Exception:
+            thickness_mm = 10.0
+        # One-shot request consumed by the StandardMPRViewer construction inside toggle_zeta_mpr.
+        self._mpr_projection_request = {
+            'layout_views': directions,
+            'slab_mode': mode,
+            'slab_thickness_mm': thickness_mm,
+        }
+        logger.info("[MPR PROJ] open_projection_views directions=%s mode=%s thickness=%.1fmm",
+                    directions, mode, thickness_mm)
+        try:
+            # If a Zeta MPR / projection viewer is already open, close it first so we open fresh.
+            # The close pass returns before the StandardMPRViewer construction, so the projection
+            # request stays intact for the subsequent open.
+            already_open = False
+            try:
+                already_open = bool(self._is_any_mpr_open())
+            except Exception:
+                already_open = False
+            if already_open:
+                self.toggle_zeta_mpr()
+            self.toggle_zeta_mpr()
+        except Exception as exc:
+            logger.error("[MPR PROJ] failed to open projection views: %r", exc, exc_info=True)
+            self._mpr_projection_request = None
+
     def toggle_zeta_mpr(self):
         """
         Toggle Zeta MPR viewer ON/OFF for the selected viewport.
@@ -4652,13 +4778,54 @@ class ToolbarManager:
                 except Exception as wl_err:
                     logger.warning(f"Could not read window/level from main viewer: {wl_err}")
 
+                # --- Zeta MPR canonicalization pre-filter (flag-gated, fail-safe) ---
+                # Resample oblique / non-axial volumes to a true LPS-axial volume (and
+                # mark near-axial volumes) so the proven radiological camera path renders
+                # MR/oblique correctly. No-op unless enabled; returns input on any error.
+                try:
+                    from modules.mpr.zeta_mpr._mpr_canonicalize import (
+                        canonicalize_enabled,
+                        canonicalize_volume,
+                        probe as _canon_probe,
+                    )
+                    if canonicalize_enabled():
+                        _meta = series_data.get('metadata', {}) if isinstance(series_data, dict) else {}
+                        _series_meta = _meta.get('series', {}) if isinstance(_meta, dict) else {}
+                        _dicom_dir = _series_meta.get('series_path')
+                        if not _dicom_dir:
+                            _instances = _meta.get('instances', []) if isinstance(_meta, dict) else []
+                            if _instances:
+                                _ip = _instances[0].get('instance_path')
+                                if _ip:
+                                    import os as _os
+                                    _dicom_dir = _os.path.dirname(_ip)
+                        _canon_probe(
+                            f"toggle_zeta_mpr ORTHOGONAL reached: enabled=True "
+                            f"series={series_number} dicom_dir={_dicom_dir}"
+                        )
+                        vtk_image_data = canonicalize_volume(vtk_image_data, _dicom_dir)
+                except Exception as _canon_err:
+                    try:
+                        from modules.mpr.zeta_mpr._mpr_canonicalize import probe as _canon_probe2
+                        _canon_probe2(f"toggle_zeta_mpr ORTHOGONAL EXCEPTION: {_canon_err!r}")
+                    except Exception:
+                        pass
+
+                # One-shot projection request (set by open_projection_views): open ONLY the
+                # requested view(s) with a slab (MIP/MinIP/Thick Slab) instead of the 4-panel.
+                # None for a normal MPR open → StandardMPRViewer builds the full 4-panel as before.
+                _proj = getattr(self, '_mpr_projection_request', None) or {}
                 zeta_widget = StandardMPRViewer(
                     vtk_image_data=vtk_image_data,
                     parent=parent_widget,
                     window_width=window_width,
-                    window_center=window_center
+                    window_center=window_center,
+                    layout_views=_proj.get('layout_views'),
+                    slab_mode=_proj.get('slab_mode'),
+                    slab_thickness_mm=_proj.get('slab_thickness_mm'),
                 )
-                
+                self._mpr_projection_request = None  # consume (one-shot)
+
                 # Add to layout at the same position
                 if parent_layout and grid_position:
                     from PySide6.QtWidgets import QGridLayout
@@ -5844,7 +6011,7 @@ class ToolbarManager:
                                 f"[MPR VTK LOAD] Using preferred series path from metadata: {pref_path} "
                                 f"({len(pref_dcm_files)} files)"
                             )
-                            vtk_data = load_vtk_from_dicom_paths(pref_dcm_files)
+                            vtk_data = self._load_vtk_paths_responsive(pref_dcm_files)
                             if vtk_data is not None and vtk_data.GetPointData().GetScalars() is not None:
                                 logger.info(f"[MPR VTK LOAD] ✓ dims={vtk_data.GetDimensions()} (preferred path)")
                                 return vtk_data
@@ -5909,7 +6076,7 @@ class ToolbarManager:
             QApplication.setOverrideCursor(_Qt.CursorShape.WaitCursor)
             QApplication.processEvents()
             try:
-                vtk_data = load_vtk_from_dicom_paths(dcm_files)
+                vtk_data = self._load_vtk_paths_responsive(dcm_files)
             finally:
                 QApplication.restoreOverrideCursor()
 
@@ -5923,6 +6090,84 @@ class ToolbarManager:
         except Exception as e:
             logger.error(f"[MPR VTK LOAD] Exception: {e}", exc_info=True)
             return None
+
+    def _load_vtk_paths_responsive(self, dcm_files, label="Loading MPR volume…"):
+        """Build the VTK volume from DICOM paths, keeping the UI responsive for large series.
+
+        For SMALL series (below the threshold) or when the kill-switch is set, this is a plain
+        synchronous ``load_vtk_from_dicom_paths`` — byte-identical to the legacy path, which
+        protects the validated small-series behaviour. For LARGE series it runs that same call in
+        a worker thread behind a MODAL progress dialog: the modal blocks stray input (so there is
+        no re-entrancy) while a local event loop keeps the window painting — a big CT no longer
+        freezes the UI on MPR open. The data assembly (pydicom read + vtkImageData build) touches
+        no VTK render window, so it is safe off the main thread. Any failure falls back to a
+        synchronous load.
+
+        Env controls:
+          AIPACS_ZETA_MPR_SYNC_LOAD=1         -> always synchronous (kill-switch / instant revert)
+          AIPACS_ZETA_MPR_ASYNC_MIN_SLICES=N  -> off-thread threshold in file count (default 80)
+        """
+        from PacsClient.pacs.patient_tab.utils.image_io import load_vtk_from_dicom_paths
+        import os as _os
+        try:
+            n_files = len(dcm_files)
+        except Exception:
+            n_files = 0
+        sync_only = _os.environ.get("AIPACS_ZETA_MPR_SYNC_LOAD", "0") == "1"
+        try:
+            threshold = int(_os.environ.get("AIPACS_ZETA_MPR_ASYNC_MIN_SLICES", "80"))
+        except Exception:
+            threshold = 80
+        if sync_only or n_files < threshold:
+            return load_vtk_from_dicom_paths(dcm_files)
+
+        # ---- large series: off-main-thread load + modal progress (responsive, no freeze) ----
+        try:
+            from PySide6.QtCore import QThread, QEventLoop, Qt as _Qt
+            from PySide6.QtWidgets import QProgressDialog
+
+            box = {"data": None, "error": None}
+
+            class _VtkLoadWorker(QThread):
+                def run(_self):
+                    try:
+                        box["data"] = load_vtk_from_dicom_paths(dcm_files)
+                    except Exception as _e:  # noqa: BLE001 - reported to caller, sync fallback
+                        box["error"] = _e
+
+            worker = _VtkLoadWorker()
+            loop = QEventLoop()
+            worker.finished.connect(loop.quit)
+
+            dlg = QProgressDialog(label, None, 0, 0, self.patient_widget)
+            dlg.setWindowTitle("MPR")
+            dlg.setWindowModality(_Qt.WindowModality.ApplicationModal)
+            dlg.setCancelButton(None)         # the load must complete to build the viewer
+            dlg.setMinimumDuration(0)
+            dlg.setAutoClose(False)
+            dlg.setAutoReset(False)
+            dlg.show()
+
+            logger.info(f"[MPR VTK LOAD] async off-thread load started ({n_files} files, threshold={threshold})")
+            worker.start()
+            if not worker.isFinished():
+                loop.exec()                   # pumps paints; modal blocks input => no re-entrancy
+            worker.wait()
+
+            try:
+                dlg.close()
+                dlg.deleteLater()
+            except Exception:
+                pass
+
+            if box["error"] is not None:
+                logger.warning(f"[MPR VTK LOAD] async load failed ({box['error']!r}); synchronous retry")
+                return load_vtk_from_dicom_paths(dcm_files)
+            logger.info("[MPR VTK LOAD] async off-thread load complete")
+            return box["data"]
+        except Exception as _e:
+            logger.warning(f"[MPR VTK LOAD] async machinery unavailable ({_e!r}); synchronous load")
+            return load_vtk_from_dicom_paths(dcm_files)
 
 
     def handle_buttons_checked(self):

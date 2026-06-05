@@ -41,7 +41,7 @@ from PySide6.QtCore import QTimer
 # Ensure QApplication exists
 _app = QApplication.instance() or QApplication(sys.argv)
 
-from tests.performance.perf_helpers import make_dicom_series_on_disk
+from tests.code.performance.perf_helpers import make_dicom_series_on_disk
 
 
 @pytest.fixture(scope="module")

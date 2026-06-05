@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -15,6 +17,73 @@ from PySide6.QtGui import QImage, QPixmap
 
 from modules.printing.core.models import ViewportState
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import reference_line
+
+
+# ---------------------------------------------------------------------------
+# Bounded LRU cache for decoded DICOM pixmaps.
+#
+# A single film preview can call ``load_dicom_as_pixmap`` once per cell when
+# tiles are built, once per cell when the user pans through pages, once for
+# the high-DPI print export, and once again from the sidebar thumbnail path.
+# Each call would otherwise do a fresh ``pydicom.dcmread`` (full pixel data),
+# WL math, and an ``ascontiguousarray``. The cache below memoizes results
+# keyed by ``(path, mtime, viewport_signature)`` so the same image is decoded
+# once until it falls out of the LRU window or the file changes.
+#
+# Cache size is intentionally small — 24 entries covers a typical 4×5 layout
+# plus the scout and a page-nav buffer without bloating memory. Each entry
+# is a QPixmap of ~tile size (sub-MB).
+# ---------------------------------------------------------------------------
+_RENDER_CACHE_MAX = 24
+_render_cache: "OrderedDict[tuple, RenderedImage]" = OrderedDict()
+_render_cache_lock = threading.Lock()
+
+
+def _viewport_signature(viewport: Optional[ViewportState]) -> tuple:
+    if viewport is None:
+        return ()
+    return (
+        viewport.window_width,
+        viewport.window_level,
+        round(float(viewport.zoom), 4),
+        (round(float(viewport.pan[0]), 4), round(float(viewport.pan[1]), 4))
+        if viewport.pan else (0.0, 0.0),
+    )
+
+
+def _cache_key(path: str, viewport: Optional[ViewportState]) -> Optional[tuple]:
+    if not path:
+        return None
+    try:
+        import os
+        mtime = os.path.getmtime(path)
+    except Exception:
+        return None
+    return (path, mtime, _viewport_signature(viewport))
+
+
+def _cache_get(key: tuple):
+    with _render_cache_lock:
+        value = _render_cache.get(key)
+        if value is not None:
+            # Move to MRU end.
+            _render_cache.move_to_end(key)
+        return value
+
+
+def _cache_put(key: tuple, value) -> None:
+    with _render_cache_lock:
+        _render_cache[key] = value
+        _render_cache.move_to_end(key)
+        while len(_render_cache) > _RENDER_CACHE_MAX:
+            _render_cache.popitem(last=False)
+
+
+def invalidate_render_cache() -> None:
+    """Clear all cached pixmaps. Call when the underlying DICOM files may
+    have changed (e.g. after a new download)."""
+    with _render_cache_lock:
+        _render_cache.clear()
 
 
 def _safe_dcmread(path: str):
@@ -236,6 +305,14 @@ class RenderedImage:
 
 
 def load_dicom_as_pixmap(path: str, viewport: Optional[ViewportState] = None) -> RenderedImage | None:
+    # Memoize by (path, mtime, viewport signature). Drag interactions hit
+    # the same (path, viewport) tuple many times; the cache turns redundant
+    # decodes into O(1) dict lookups.
+    cache_key = _cache_key(path, viewport)
+    if cache_key is not None:
+        cached = _cache_get(cache_key)
+        if cached is not None:
+            return cached
     try:
         dcm = _safe_dcmread(path)
         pixel_array = dcm.pixel_array
@@ -272,7 +349,10 @@ def load_dicom_as_pixmap(path: str, viewport: Optional[ViewportState] = None) ->
             qimage = QImage(image_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
             pixmap = QPixmap.fromImage(qimage.copy())
             aspect = width / height if height else 1.0
-            return RenderedImage(pixmap=pixmap, rows=height, columns=width, aspect=aspect)
+            rendered_rgb = RenderedImage(pixmap=pixmap, rows=height, columns=width, aspect=aspect)
+            if cache_key is not None:
+                _cache_put(cache_key, rendered_rgb)
+            return rendered_rgb
 
         if not is_rgb:
             if use_manual_window:
@@ -292,7 +372,10 @@ def load_dicom_as_pixmap(path: str, viewport: Optional[ViewportState] = None) ->
         qimage = QImage(image_8bit.data, width, height, bytes_per_line, QImage.Format_Grayscale8)
         pixmap = QPixmap.fromImage(qimage.copy())
         aspect = width / height if height else 1.0
-        return RenderedImage(pixmap=pixmap, rows=height, columns=width, aspect=aspect)
+        rendered = RenderedImage(pixmap=pixmap, rows=height, columns=width, aspect=aspect)
+        if cache_key is not None:
+            _cache_put(cache_key, rendered)
+        return rendered
     except Exception:
         return None
 

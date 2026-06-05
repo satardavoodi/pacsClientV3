@@ -397,6 +397,15 @@ class _HPDownloadMixin:
                     dm._home_signals_connected = True
             except Exception:
                 pass
+            # CommandBus: late-bind the DownloadAdapter for EVERY DM creation
+            # path (fix 2026-06-04: it previously attached only from the
+            # download-button click, so a DM created by a patient OPEN left
+            # download.* bus actions unregistered). Idempotent + fail-safe.
+            try:
+                if hasattr(self, "_attach_download_adapter_lazy"):
+                    self._attach_download_adapter_lazy(dm)
+            except Exception:
+                pass
         return dm
 
     def _connect_download_manager_to_widget(self, download_manager, widget, study_uid: str):

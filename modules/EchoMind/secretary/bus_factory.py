@@ -94,6 +94,7 @@ def build_command_bus(
             reg.register("home", home_adapter, actions={
                 "list_patients":    "list_patients",
                 "open_patient":     "open_patient",
+                "select_patient":   "select_patient",
                 "download_patient": "download_patient",
             })
         except Exception:

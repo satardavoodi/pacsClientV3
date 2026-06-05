@@ -111,39 +111,29 @@ class _MprObliqueMixin:
             cos_a2 = math.cos(angle + math.pi / 2)
             sin_a2 = math.sin(angle + math.pi / 2)
 
-            if source_view == 'axial':
-                # Horizontal line — outer (quarter)
-                h_q1 = [cx + dist_quarter * cos_a,  cy + dist_quarter * sin_a,  cz]
-                h_q2 = [cx - dist_quarter * cos_a,  cy - dist_quarter * sin_a,  cz]
-                # Horizontal line — inner (sixth)
-                h_s1 = [cx + dist_sixth * cos_a,    cy + dist_sixth * sin_a,    cz]
-                h_s2 = [cx - dist_sixth * cos_a,    cy - dist_sixth * sin_a,    cz]
-                # Vertical line — outer (quarter)
-                v_q1 = [cx + dist_quarter * cos_a2, cy + dist_quarter * sin_a2, cz]
-                v_q2 = [cx - dist_quarter * cos_a2, cy - dist_quarter * sin_a2, cz]
-                # Vertical line — inner (sixth)
-                v_s1 = [cx + dist_sixth * cos_a2,   cy + dist_sixth * sin_a2,   cz]
-                v_s2 = [cx - dist_sixth * cos_a2,   cy - dist_sixth * sin_a2,   cz]
+            # Sample points along this SOURCE pane's ACTUAL in-plane axes (h, v) from
+            # _view_axes(): the horizontal crosshair line varies along h_axis (×cos) and v_axis
+            # (×sin); the vertical line uses the +90° angle. For an axial-native volume this
+            # reproduces the legacy (X,Y)/(Y,Z)/(X,Z) points exactly (identical oblique normals,
+            # no regression); for a routed non-axial-native series the directions are correct, so
+            # crosshair ROTATION reslices the right oblique plane instead of a wrong/empty one.
+            _, h_axis, v_axis = self._view_axes(source_view)
+            center_pt = [cx, cy, cz]
 
-            elif source_view == 'sagittal':
-                h_q1 = [cx, cy + dist_quarter * cos_a,  cz + dist_quarter * sin_a]
-                h_q2 = [cx, cy - dist_quarter * cos_a,  cz - dist_quarter * sin_a]
-                h_s1 = [cx, cy + dist_sixth * cos_a,    cz + dist_sixth * sin_a]
-                h_s2 = [cx, cy - dist_sixth * cos_a,    cz - dist_sixth * sin_a]
-                v_q1 = [cx, cy + dist_quarter * cos_a2, cz + dist_quarter * sin_a2]
-                v_q2 = [cx, cy - dist_quarter * cos_a2, cz - dist_quarter * sin_a2]
-                v_s1 = [cx, cy + dist_sixth * cos_a2,   cz + dist_sixth * sin_a2]
-                v_s2 = [cx, cy - dist_sixth * cos_a2,   cz - dist_sixth * sin_a2]
+            def _samp(d_h, d_v, _c=center_pt, _h=h_axis, _v=v_axis):
+                p = list(_c)
+                p[_h] += d_h
+                p[_v] += d_v
+                return p
 
-            elif source_view == 'coronal':
-                h_q1 = [cx + dist_quarter * cos_a,  cy, cz + dist_quarter * sin_a]
-                h_q2 = [cx - dist_quarter * cos_a,  cy, cz - dist_quarter * sin_a]
-                h_s1 = [cx + dist_sixth * cos_a,    cy, cz + dist_sixth * sin_a]
-                h_s2 = [cx - dist_sixth * cos_a,    cy, cz - dist_sixth * sin_a]
-                v_q1 = [cx + dist_quarter * cos_a2, cy, cz + dist_quarter * sin_a2]
-                v_q2 = [cx - dist_quarter * cos_a2, cy, cz - dist_quarter * sin_a2]
-                v_s1 = [cx + dist_sixth * cos_a2,   cy, cz + dist_sixth * sin_a2]
-                v_s2 = [cx - dist_sixth * cos_a2,   cy, cz - dist_sixth * sin_a2]
+            h_q1 = _samp(dist_quarter * cos_a,   dist_quarter * sin_a)
+            h_q2 = _samp(-dist_quarter * cos_a,  -dist_quarter * sin_a)
+            h_s1 = _samp(dist_sixth * cos_a,     dist_sixth * sin_a)
+            h_s2 = _samp(-dist_sixth * cos_a,    -dist_sixth * sin_a)
+            v_q1 = _samp(dist_quarter * cos_a2,  dist_quarter * sin_a2)
+            v_q2 = _samp(-dist_quarter * cos_a2, -dist_quarter * sin_a2)
+            v_s1 = _samp(dist_sixth * cos_a2,    dist_sixth * sin_a2)
+            v_s2 = _samp(-dist_sixth * cos_a2,   -dist_sixth * sin_a2)
 
             # Best direction from outermost valid pair (fallback to inner)
             h_dir = self._best_line_direction(h_q1, h_q2, h_s1, h_s2, bounds)
@@ -384,7 +374,7 @@ class _MprObliqueMixin:
             camera.SetViewUp(view_up)
 
             # CT-specific display corrections
-            if self.detected_modality == "CT":
+            if self._needs_radiological_correction():
                 if view_name == 'sagittal':
                     camera.Roll(180)
                 elif view_name == 'coronal':

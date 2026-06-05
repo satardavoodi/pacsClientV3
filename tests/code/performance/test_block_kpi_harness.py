@@ -11,7 +11,7 @@ from tools.performance.clearcanvas_aipacs_kpi_harness import (
 
 
 def test_load_block_kpi_model_contains_three_unified_blocks():
-    model = load_block_kpi_model(REPO_ROOT / "tests" / "performance" / "block_kpi_model.json")
+    model = load_block_kpi_model(REPO_ROOT / "tests" / "code" / "performance" / "block_kpi_model.json")
 
     assert model["version"] == "2026-04-27"
     assert [block["id"] for block in model["blocks"]] == [
@@ -23,7 +23,7 @@ def test_load_block_kpi_model_contains_three_unified_blocks():
 
 
 def test_summarize_payload_by_block_groups_existing_metrics_and_flags_missing():
-    model = load_block_kpi_model(REPO_ROOT / "tests" / "performance" / "block_kpi_model.json")
+    model = load_block_kpi_model(REPO_ROOT / "tests" / "code" / "performance" / "block_kpi_model.json")
     payload = {
         "viewer": "AI-PACS",
         "mode": "headless-aipacs-fast",
@@ -84,7 +84,7 @@ def test_summarize_payload_by_block_groups_existing_metrics_and_flags_missing():
 
 
 def test_block_summary_to_markdown_lists_present_and_missing_metrics():
-    model = load_block_kpi_model(REPO_ROOT / "tests" / "performance" / "block_kpi_model.json")
+    model = load_block_kpi_model(REPO_ROOT / "tests" / "code" / "performance" / "block_kpi_model.json")
     payload = {
         "viewer": "AI-PACS",
         "mode": "log-parse",

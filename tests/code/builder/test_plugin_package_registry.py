@@ -37,12 +37,23 @@ def test_installer_optional_components_match_optional_plugin_modules():
     definitions = plugin_package_definition_map(optional_only=True)
     expected_optional_modules = sorted(definitions.keys())
 
-    iss_path = Path("builder/installer/AIPacs_Setup.iss")
+    # Anchored to the repo root (2026-06-04): the CWD-relative path made this
+    # FileNotFoundError under any pytest invocation not started from the root.
+    _repo_root = Path(__file__).resolve().parents[3]
+    iss_path = _repo_root / "builder" / "installer" / "AIPacs_Setup.iss"
     iss_text = iss_path.read_text(encoding="utf-8")
 
     component_pattern = re.compile(r'^Name:\s+"optional\\([^\"]+)";', re.MULTILINE)
+    # DestDir refresh 2026-06-04: module packages install to
+    # {commonappdata}\AIPacs\module_packages (machine-wide, v2.4.x layout) —
+    # the old pattern expected the pre-relocation {app}\module_packages and
+    # silently matched nothing (latent until the component-list assert above
+    # it was fixed). Accept the current root; keep the rest of the shape.
     file_line_pattern = re.compile(
-        r'^Source:\s+"\{#StageDir\}\\plugin_packages\\[^\"]+";\s+DestDir:\s+"\{app\}\\module_packages\\[^\"]+";\s+Components:\s+optional\\[^\s\"]+',
+        r'^Source:\s+"\{#StageDir\}\\plugin_packages\\[^\"]+";\s+'
+        r'DestDir:\s+"\{commonappdata\}\\AIPacs\\module_packages\\[^\"]+";\s+'
+        r'(?:Excludes:\s+"[^\"]*";\s+)?'
+        r'Components:\s+optional\\[^\s\"]+',
         re.MULTILINE,
     )
     source_module_pattern = re.compile(r'plugin_packages\\([^\\]+)\\\*')

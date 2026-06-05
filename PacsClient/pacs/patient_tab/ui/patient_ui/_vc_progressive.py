@@ -1415,9 +1415,25 @@ class _VCProgressiveMixin:
                                 # If a specific viewer was awaiting this series (drag-drop
                                 # before data existed), switch that viewer directly.
                                 if _target_vw is not None:
-                                    self._apply_progressive_to_target_viewer(
+                                    _applied = self._apply_progressive_to_target_viewer(
                                         _sn_local, _total_local, _target_vw, _target_nd,
                                     )
+                                    if _applied is False:
+                                        # BUG-1 fix (2026-06-04): the apply failed
+                                        # (cache miss) and re-armed the awaiting
+                                        # marker. Do NOT mark the done-guard or
+                                        # activate progressive mode — that latched
+                                        # every later signal into the done-guard
+                                        # branch and orphaned the awaiting viewer.
+                                        # Inflight is cleared in the loader's
+                                        # finally, so the next progress/terminal
+                                        # signal retries the full first display.
+                                        self.logger.info(
+                                            "progressive: first-display apply failed "
+                                            "series=%s — done-guard withheld for retry",
+                                            _sn_local,
+                                        )
+                                        return
                                 else:
                                     self._display_series_after_load(
                                         _sn_local, progressive_total=_total_local,
@@ -1904,6 +1920,16 @@ class _VCProgressiveMixin:
         # so the series stays stuck partial (observed live: "_grow_progressive_fast
         # failed series=203: cannot access local variable 'new_count'" → stuck 66/156).
         new_count = int(pending_count)
+        # Bind admitted_count BEFORE the loop for the same reason as new_count
+        # above: the budget_exhausted_pre_loop `break` (and an empty `viewers`)
+        # exits before the in-loop binding at
+        # `admitted_count = min(new_count, target_visible_count)`, yet
+        # admitted_count is referenced after the loop (last_grow_count +
+        # telemetry). Observed live 2026-06-04: "cannot access local variable
+        # 'admitted_count'" on every tick under load → grow retries exhausted
+        # ("stopping timer re-arm") → viewport pinned at a partial stack
+        # (220/424). Value mirrors the in-loop fallback computation.
+        admitted_count = min(int(pending_count), int(target_visible_count))
         for vtk_w, node in viewers:
             if grow_budget_ms is not None:
                 elapsed_pre_ms = float(now_ms() - _t_grow)
@@ -3131,11 +3157,40 @@ class _VCProgressiveMixin:
                 str(series_number)
             )
             if metadata is None or vtk_image_data is None:
+                # BUG-1 fix (2026-06-04): this cache-miss used to clear the
+                # awaiting marker (above), hide the spinner and give up — the
+                # viewer was orphaned: every later progress signal became
+                # "untargeted background progress deferred … loader-only" and
+                # the terminal completion hit the FAST background-skip because
+                # no viewer showed interest any more (stress test 2026-06-04:
+                # series 202 @01:21:49, 301 @01:24:03, 203 @01:25:09 — drops
+                # died silently; only close+reopen recovered). RE-ARM the
+                # awaiting marker (bounded) and keep the spinner: the next
+                # progress/terminal signal re-finds this viewer, viewer
+                # interest routes load_series_on_demand into a real load
+                # instead of the background skip, and the retried apply
+                # succeeds. The caller gates the done-guard on our return
+                # value so the retry stays reachable (the start-task inflight
+                # flag is cleared in the threaded loader's finally).
+                _retries = int(getattr(vtk_widget, "_awaiting_apply_retries", 0) or 0)
+                if str(getattr(vtk_widget, "_awaiting_apply_series", "") or "") != str(series_number):
+                    _retries = 0
+                if _retries < 40:
+                    vtk_widget._awaiting_apply_retries = _retries + 1
+                    vtk_widget._awaiting_apply_series = str(series_number)
+                    vtk_widget._awaiting_series_number = str(series_number)
+                    self.logger.warning(
+                        "progressive-target: series=%s not in cache after load — "
+                        "re-armed awaiting viewer (retry %d/40, spinner kept)",
+                        series_number, _retries + 1,
+                    )
+                    return False
                 self.logger.warning(
-                    "progressive-target: series=%s not in cache after load", series_number
+                    "progressive-target: series=%s not in cache after load — "
+                    "retries exhausted, giving up", series_number
                 )
                 self._hide_spinner_for_widget(vtk_widget)
-                return
+                return False
 
             slider = getattr(node, "slider", None) if node else None
 
@@ -3191,8 +3246,15 @@ class _VCProgressiveMixin:
                 "progressive-target: displayed series=%s on awaiting viewer avail=%d total=%d",
                 series_number, avail, total,
             )
+            # BUG-1 fix: success — reset the re-arm budget for this widget.
+            try:
+                vtk_widget._awaiting_apply_retries = 0
+            except Exception:
+                pass
+            return True
         except Exception as exc:
             self.logger.warning("progressive-target: failed series=%s: %s", series_number, exc)
             self._hide_spinner_for_widget(vtk_widget)
+            return False
 
 

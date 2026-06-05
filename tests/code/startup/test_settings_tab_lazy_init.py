@@ -9,8 +9,12 @@ This locks the startup optimization contract:
 from pathlib import Path
 
 
-_SETTINGS_PATH = Path("PacsClient/pacs/workstation_ui/settings_ui/settings_ui.py")
-_AIPACS_UI_PATH = Path("PacsClient/pacs/workstation_ui/AIPacs_ui.py")
+# Anchored to the repo root (2026-06-04): the previous CWD-relative paths made
+# these tests FileNotFoundError under any pytest invocation not started from
+# the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SETTINGS_PATH = _REPO_ROOT / "PacsClient/pacs/workstation_ui/settings_ui/settings_ui.py"
+_AIPACS_UI_PATH = _REPO_ROOT / "PacsClient/pacs/workstation_ui/AIPacs_ui.py"
 
 
 def _src() -> str:

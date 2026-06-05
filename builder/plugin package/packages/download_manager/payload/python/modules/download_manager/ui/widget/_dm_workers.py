@@ -177,20 +177,30 @@ class _DMWorkersMixin:
             task = self._tasks.get(study_uid)
 
             if not task:
-                logger.warning(f"🚀 [WORKER-START] ⚠️ Task not in memory, attempting to reconstruct from database...")
+                logger.warning("🚀 [WORKER-START] ⚠️ Task not in memory; reconstructing OFF the UI thread...")
                 logger.warning(f"🚀 [WORKER-START] Available tasks in memory: {list(self._tasks.keys())}")
-                
-                # Try to reconstruct task from database
-                task = self._reconstruct_task_from_database(study_uid)
-                
-                if task:
-                    logger.info(f"🚀 [WORKER-START] ✅ Task reconstructed from database with {len(task.series_list)} series")
-                    # Store it for future use
-                    self._tasks[study_uid] = task
-                else:
-                    logger.error(f"🚀 [WORKER-START] ❌ Failed to reconstruct task from database")
-                    logger.error(f"🚀 [WORKER-START] Cannot start download without task information")
-                    return False
+
+                # Do NOT call _reconstruct_task_from_database here: it performs a
+                # synchronous server metadata fetch (fetch_study_metadata_sync) with
+                # up to ~16 s of blocking retries, freezing the Qt UI thread. Offload
+                # it and resume the worker start on the UI thread when it completes.
+                import threading as _thr
+                from PySide6.QtCore import QTimer as _QTimer
+
+                def _reconstruct_then_resume(_suid=study_uid):
+                    _t = self._reconstruct_task_from_database(_suid)
+
+                    def _resume():
+                        if _t:
+                            self._tasks[_suid] = _t
+                            self._start_download_worker(_suid)
+                        else:
+                            logger.error("🚀 [WORKER-START] ❌ reconstruct failed; cannot start %s", _suid[:40])
+                    _QTimer.singleShot(0, _resume)
+
+                _thr.Thread(target=_reconstruct_then_resume, daemon=True,
+                            name=f"TaskReconstruct-{study_uid[:8]}").start()
+                return False
 
             logger.info(f"🚀 [WORKER-START] Found task with {len(task.series_list)} series")
 
@@ -230,6 +240,16 @@ class _DMWorkersMixin:
                 logger.debug(f"🚀 [WORKER-START] Starting worker thread...")
                 worker.start()
                 logger.debug(f"🚀 [WORKER-START] Worker thread started")
+
+                # Issue B fix: reflect the active download in the MAIN-process
+                # state store. The PENDING->DOWNLOADING transition otherwise only
+                # happens inside the download subprocess's own (silent) state
+                # store and never reaches the UI, leaving the queue row stuck on
+                # "PENDING" until it jumps straight to "COMPLETED".
+                try:
+                    self.state_store.update(study_uid, status=DownloadStatus.DOWNLOADING)
+                except Exception as _status_exc:
+                    logger.warning(f"⚠️ [WORKER-START] Could not set DOWNLOADING status: {_status_exc}")
                 logger.warning(
                     "download-impact-window marker=download_start_after_worker_start delta_ms=%.2f",
                     now_ms() - t_download_start_marker,
@@ -650,9 +670,60 @@ class _DMWorkersMixin:
                 logger.debug(f"🗑️ Cleaned up _last_series_number_by_study for {study_uid[:40]}...")
             
             logger.info(f"✅ Task state cleanup complete for {study_uid[:40]}... (preserved task for retry, cleaned intermediate caches)")
-            
+
+            # DM-L7: _tasks is intentionally retained for retry, so it grows by one
+            # entry per distinct study viewed — an unbounded slow leak over a long
+            # clinical session. Bound it here (the per-completion chokepoint),
+            # evicting only the oldest NON-active studies. Retry stays available for
+            # the most recent studies; an evicted old study can still be re-triggered
+            # by re-selecting it.
+            self._bound_tasks()
+
         except Exception as e:
             logger.warning(f"⚠️ Error during task state cleanup: {e}")
+
+    def _bound_tasks(self) -> None:
+        """DM-L7: cap the retained-for-retry ``_tasks`` dict so it cannot grow
+        without bound across a long session (one entry per distinct study viewed).
+
+        Plain dicts are insertion-ordered, so eviction is oldest-first (FIFO). The
+        actively-downloading study is always the most-recently-started (single
+        slot, MAX_CONCURRENT_STUDIES=1) and is additionally protected by the live
+        ``worker_by_study`` set, so this can never evict an in-flight download.
+        Best-effort; never raises.
+        """
+        _RETAIN_CAP = 400
+        try:
+            tasks = getattr(self, '_tasks', None)
+            if not isinstance(tasks, dict) or len(tasks) <= _RETAIN_CAP:
+                return
+            protected = set()
+            wp = getattr(self, 'worker_pool', None)
+            if wp is not None and hasattr(wp, 'worker_by_study'):
+                try:
+                    protected = set(wp.worker_by_study.keys())
+                except Exception:
+                    protected = set()
+            evicted = 0
+            for suid in list(tasks.keys()):
+                if len(tasks) <= _RETAIN_CAP:
+                    break
+                if suid in protected:
+                    continue
+                tasks.pop(suid, None)
+                try:
+                    self._additional_task_info.pop(suid, None)
+                    self._series_image_count_cache.pop(suid, None)
+                except Exception:
+                    pass
+                evicted += 1
+            if evicted:
+                logger.info(
+                    "🧹 DM-L7: evicted %d oldest retained task(s); _tasks now holds %d",
+                    evicted, len(tasks),
+                )
+        except Exception as exc:
+            logger.debug("DM-L7 _bound_tasks warning: %s", exc)
 
     def _on_worker_error(self, study_uid: str, error_message: str) -> None:
         """
@@ -828,13 +899,24 @@ class _DMWorkersMixin:
                         f"(retry {state.retry_count + 1}/{MAX_RETRIES})"
                     )
                     
-                    # Increment retry count and move to PENDING for re-queue
-                    self.state_store.update(
-                        state.study_uid,
-                        status=DownloadStatus.PENDING,
-                        retry_count=state.retry_count + 1,
-                        error_message=None  # Clear error for fresh attempt
-                    )
+                    # Defer the re-queue with an exponential, capped backoff so a
+                    # persistently failing server cannot hot-loop worker respawns.
+                    from PySide6.QtCore import QTimer as _QTimer
+                    _delay_ms = min(30000, 3000 * (state.retry_count + 1))
+                    _suid = state.study_uid
+                    _rc = state.retry_count + 1
+
+                    def _requeue(suid=_suid, rc=_rc):
+                        try:
+                            self.state_store.update(
+                                suid,
+                                status=DownloadStatus.PENDING,
+                                retry_count=rc,
+                                error_message=None,
+                            )
+                        except Exception:
+                            logger.exception("auto-retry deferred re-queue failed for %s", suid[:40])
+                    _QTimer.singleShot(_delay_ms, _requeue)
                 else:
                     logger.warning(
                         f"⚠️ {state.patient_name} exceeded max retries ({MAX_RETRIES}), "

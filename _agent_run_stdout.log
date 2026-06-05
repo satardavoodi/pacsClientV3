@@ -1,0 +1,21 @@
+[GRAPHICS] Build: DEVELOPMENT
+[GRAPHICS] Mode: SOFTWARE_OPENGL
+[GRAPHICS] Execution mode: cpu_software_opengl
+[GRAPHICS] QT_OPENGL: software
+[GRAPHICS] ANGLE_DEFAULT_PLATFORM: warp
+[GRAPHICS] GPU requested: False
+[GRAPHICS] GPU detected: False
+[GRAPHICS] Software renderer status: ready
+[GRAPHICS] Qt software OpenGL DLL: E:\ai-pacs\ai-pacs codes\ai-pacs beta version\graphics_runtime\opengl32sw.dll
+[GRAPHICS] VTK OSMesa DLL: E:\ai-pacs\ai-pacs codes\ai-pacs beta version\graphics_runtime\osmesa.dll
+[GRAPHICS] Build: DEVELOPMENT
+[GRAPHICS] Mode: SOFTWARE_OPENGL
+[GRAPHICS] Execution mode: cpu_software_opengl
+[GRAPHICS] QT_OPENGL: software
+[GRAPHICS] ANGLE_DEFAULT_PLATFORM: warp
+[GRAPHICS] GPU requested: False
+[GRAPHICS] GPU detected: False
+[GRAPHICS] Software renderer status: ready
+[GRAPHICS] Qt software OpenGL DLL: E:\ai-pacs\ai-pacs codes\ai-pacs beta version\graphics_runtime\opengl32sw.dll
+[GRAPHICS] VTK OSMesa DLL: E:\ai-pacs\ai-pacs codes\ai-pacs beta version\graphics_runtime\osmesa.dll
+[A/B] VTKWidget: MIXIN refactored (current)

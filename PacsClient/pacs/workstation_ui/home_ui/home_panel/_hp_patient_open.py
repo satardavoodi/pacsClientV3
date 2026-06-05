@@ -753,12 +753,34 @@ class _HPPatientOpenMixin:
                 try:
                     download_manager = self._get_or_create_download_manager_tab(activate_tab=False)
                     if download_manager:
-                        # Get server info
-                        server = self.data_access_panel_widget.get_server_selected()
+                        import asyncio as _aio_s35
+
+                        # Get server info — OFF the GUI thread (Issue-6 stall fix
+                        # 2026-06-04): get_selectable_server() opens and parses
+                        # servers.json synchronously; on a nearly-full disk this
+                        # blocked the main thread 400ms+ per open (stall trace
+                        # 19:57:05 → utils.get_server:222 open(...)). The widget
+                        # attribute is read on the GUI thread; only the file I/O
+                        # moves to a worker.
+                        _server_name_s35 = getattr(
+                            self.data_access_panel_widget, "server_selected", None)
+                        if _server_name_s35:
+                            from PacsClient.utils.utils import get_selectable_server as _gss_s35
+                            server = await _aio_s35.to_thread(
+                                _gss_s35, server_name=_server_name_s35)
+                        else:
+                            server = None
 
                         aggregated_series = []
                         for current_study_uid in all_study_uids:
-                            current_study_data = get_study_by_study_uid(study_uid=current_study_uid) or {}
+                            # DB read off the GUI thread too (same stall family —
+                            # sqlite read in the open coroutine's sync stretch).
+                            try:
+                                current_study_data = (await _aio_s35.to_thread(
+                                    get_study_by_study_uid, study_uid=current_study_uid)) or {}
+                            except Exception:
+                                current_study_data = get_study_by_study_uid(
+                                    study_uid=current_study_uid) or {}
                             series_list = []
                             series_count = 0
                             images_count = 0

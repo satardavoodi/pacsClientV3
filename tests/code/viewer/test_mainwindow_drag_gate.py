@@ -14,6 +14,21 @@ import importlib
 import unittest
 from unittest.mock import MagicMock, patch, call
 
+import pytest
+
+# Feature removed (2026-06-05 triage, RELIABILITY_STABILITY_REVIEW §13): the
+# "Fix G" mainwindow eventFilter drag gate (`_is_fast_drag_active` /
+# `_ui_throttle_drag_check`) no longer exists anywhere in the live tree — it
+# was superseded by the FAST-bridge interaction-aware policy / protected-drag
+# machinery (B3.x). These are contract tests for the deleted implementation;
+# keep them skipped until a decision: port the contracts to the FAST-bridge
+# drag gate or delete this module.
+pytest.skip(
+    "stale spec: the Fix-G mainwindow drag gate was removed from "
+    "mainwindow_ui (superseded by the FAST-bridge protected-drag policy).",
+    allow_module_level=True,
+)
+
 
 class TestIsFastDragActiveHelper(unittest.TestCase):
     """Test the module-level lazy-bound helper function."""

@@ -33,7 +33,7 @@ from modules.viewer.fast.lightweight_2d_pipeline import (
     PipelineConfig,
 )
 from modules.viewer.fast.perf_metrics import PerfMetrics
-from tests.performance.perf_helpers import make_dicom_series_on_disk
+from tests.code.performance.perf_helpers import make_dicom_series_on_disk
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
@@ -123,29 +123,66 @@ class TestAdaptiveRadius:
         r = pipeline._compute_adaptive_radius(0.0)
         assert r >= 20, f"Small series should cache all, got radius={r}"
 
+    # Spec refresh 2026-06-04 (RELIABILITY_STABILITY_REVIEW §13): the radii
+    # are no longer fixed constants (3/8/15) — _compute_adaptive_radius now
+    # routes through build_stack_cache_profile(n), which sizes the radii per
+    # series. These tests assert the velocity→tier ROUTING against the
+    # profile, instead of baking in tuning constants that drift.
+
+    @staticmethod
+    def _profile(n: int):
+        from modules.viewer.fast.stack_cache_profile import build_stack_cache_profile
+        return build_stack_cache_profile(n)
+
+    @pytest.fixture(autouse=True)
+    def _download_inactive(self, monkeypatch):
+        """Isolate from other tests in the same process: a prior test that
+        simulated downloads can leave the heavy-download throttle latched,
+        which caps the radii (observed when run after the overlap/harness
+        tests). The tier mapping under download pressure is covered
+        separately; here we pin the no-download baseline."""
+        import modules.viewer.fast.lightweight_2d_pipeline as _l2d
+        monkeypatch.setattr(_l2d, "is_heavy_download_active", lambda: False)
+        # cap_prefetch_radius consults its own ui_throttle globals (observed
+        # returning 3 after the harness/overlap tests ran in-process) —
+        # neutralize it the same way for this baseline-mapping spec.
+        monkeypatch.setattr(_l2d, "cap_prefetch_radius",
+                            lambda r, **_kw: r)
+
     def test_fast_scroll_narrow_radius(self, pipeline):
-        """Fast scroll → radius 3."""
+        """Fast scroll → the profile's fast (narrow) radius."""
         pipeline._slices = [None] * 200
+        expected = self._profile(200).fast_prefetch_radius
         r = pipeline._compute_adaptive_radius(30.0)
-        assert r == 3, f"Expected radius=3 for fast scroll, got {r}"
+        assert r == expected, f"Expected fast radius={expected}, got {r}"
 
     def test_medium_scroll_medium_radius(self, pipeline):
-        """Medium scroll → radius 8."""
+        """Medium scroll → the profile's medium radius."""
         pipeline._slices = [None] * 200
+        expected = self._profile(200).medium_prefetch_radius
         r = pipeline._compute_adaptive_radius(12.0)
-        assert r == 8, f"Expected radius=8 for medium scroll, got {r}"
+        assert r == expected, f"Expected medium radius={expected}, got {r}"
 
     def test_slow_scroll_wide_radius(self, pipeline):
-        """Slow scroll → radius 15."""
+        """Slow scroll → the profile's idle (wide) radius."""
         pipeline._slices = [None] * 200
+        expected = self._profile(200).idle_prefetch_radius
         r = pipeline._compute_adaptive_radius(3.0)
-        assert r == 15, f"Expected radius=15 for slow scroll, got {r}"
+        assert r == expected, f"Expected slow/idle radius={expected}, got {r}"
 
     def test_idle_wide_radius(self, pipeline):
-        """Idle → radius 15."""
+        """Idle → the profile's idle (wide) radius."""
         pipeline._slices = [None] * 200
+        expected = self._profile(200).idle_prefetch_radius
         r = pipeline._compute_adaptive_radius(0.0)
-        assert r == 15, f"Expected radius=15 for idle, got {r}"
+        assert r == expected, f"Expected idle radius={expected}, got {r}"
+
+    # NOTE: no tier-ordering invariant here on purpose. The current profile
+    # (n=200: fast=18 > idle=12 > medium=8) deliberately widens the
+    # fast-scroll radius — direction-ahead prefetch during stack drags —
+    # unlike the original B3.2 policy (fast=3 narrow). The tier→profile
+    # routing above is the stable contract; the relative magnitudes are
+    # tuning that may change.
 
 
 # ── 3. Generation gating ────────────────────────────────────────────────

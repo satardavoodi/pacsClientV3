@@ -636,6 +636,11 @@ class _HPSearchMixin:
                         'modality': patient.get('modality'),
                         'study_uids': list(study_uids),
                         'latest_study_uid': str(study_uid or '').strip(),
+                        # Additive (2026-06-04, fidelity audit §4.2): carry the row's
+                        # display fields so bus-driven open/select use production-
+                        # identical arguments (real tab titles, real report_status).
+                        'patient_name': str(patient_name or '').strip(),
+                        'report_status': str(patient.get('report_status') or 'pending'),
                     }
             except Exception:
                 pass

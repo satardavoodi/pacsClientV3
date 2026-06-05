@@ -132,20 +132,48 @@ class DownloadProcessWorker(QThread):
             # that the subprocess target is evaluated inside the subprocess.
             from .download_process_entry import _run_download_in_process
 
-            ctx = mp.get_context("spawn")
-            self._process = ctx.Process(  # type: ignore[assignment]
-                target=_run_download_in_process,
-                args=(
-                    self.task,
-                    config_dict,
-                    self._result_queue,
-                    self._cancel_event,
-                    os.getcwd(),
-                ),
-                name=f"DL-{study_uid[:20]}",
-                daemon=True,   # dies automatically if the main process exits
-            )
-            self._process.start()
+            # ── Optional pre-warm reuse (AIPACS_DM_PREWARM, OFF by default) ──
+            # If enabled and an idle pre-warmed subprocess is ready, hand it the
+            # job instead of spawning a fresh one — the ~2.3 s Windows spawn boot
+            # was already paid off the user-visible path. Any failure falls back
+            # to the normal spawn below; pre-warm must never break a download.
+            _warm = None
+            try:
+                from .prewarm import get_download_prewarm_pool, prewarm_enabled
+                if prewarm_enabled():
+                    _warm = get_download_prewarm_pool().acquire(self.task, config_dict)
+            except Exception:
+                _warm = None
+
+            if _warm is not None:
+                # Adopt the already-booted spare and its IPC primitives.
+                self._process, self._result_queue, self._cancel_event = _warm
+                logger.info(
+                    "🔥 Reused pre-warmed download subprocess (pid=%s) for %s",
+                    self._process.pid,
+                    self.task.patient_name,
+                    extra={
+                        "component": "ipc",
+                        "study_uid": study_uid,
+                        "download_job_id": self.download_job_id,
+                        "action_session_id": self.action_session_id,
+                    },
+                )
+            else:
+                ctx = mp.get_context("spawn")
+                self._process = ctx.Process(  # type: ignore[assignment]
+                    target=_run_download_in_process,
+                    args=(
+                        self.task,
+                        config_dict,
+                        self._result_queue,
+                        self._cancel_event,
+                        os.getcwd(),
+                    ),
+                    name=f"DL-{study_uid[:20]}",
+                    daemon=True,   # dies automatically if the main process exits
+                )
+                self._process.start()
             logger.info(
                 "🚀 Download subprocess started (pid=%s) for %s",
                 self._process.pid,
@@ -340,6 +368,48 @@ class DownloadProcessWorker(QThread):
             {k: v for k, v in cfg.items() if k != "auth_token"},
         )
         return cfg
+
+    def ensure_subprocess_dead(self) -> None:
+        """DM-H4: guarantee the child download process is terminated.
+
+        ``run()``'s ``finally: self._cleanup()`` tears the child down on a normal
+        or cancelled exit, but ``WorkerPool._remove_worker`` may call
+        ``QThread.terminate()`` when the bridge does not stop in time — and that
+        bypasses the ``finally`` block, orphaning the child (it keeps holding
+        sockets and writing into ``dicom.db`` after the UI considers the download
+        gone, and never frees the pool slot). The pool calls this AFTER terminate()
+        so the child cannot be orphaned. Idempotent + best-effort; safe to call
+        from the pool thread.
+        """
+        proc = getattr(self, "_process", None)
+        pid = getattr(proc, "pid", None) if proc is not None else None
+        try:
+            if proc is not None and proc.is_alive():
+                try:
+                    self._cancel_event.set()
+                except Exception:
+                    pass
+                logger.warning(
+                    "[ProcessWorker] DM-H4 force-terminating orphaned subprocess pid=%s",
+                    pid,
+                )
+                proc.terminate()
+                proc.join(timeout=2.0)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1.0)
+        except Exception as exc:
+            logger.warning(
+                "[ProcessWorker] DM-H4 ensure_subprocess_dead warning: %s", exc
+            )
+        if pid is not None:
+            try:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import (
+                    unregister_download_subprocess,
+                )
+                unregister_download_subprocess(pid)
+            except Exception:
+                pass
 
     def _cleanup(self) -> None:
         """Terminate the download subprocess and close the IPC queue."""

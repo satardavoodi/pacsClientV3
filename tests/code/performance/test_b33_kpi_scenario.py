@@ -28,7 +28,7 @@ sys.path.insert(0, str(_ROOT))
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from modules.viewer.fast.perf_metrics import PerfMetrics
-from tests.performance.perf_helpers import (
+from tests.code.performance.perf_helpers import (
     make_dicom_series_on_disk,
     scroll_stack_drag,
     GILContentionSimulator,

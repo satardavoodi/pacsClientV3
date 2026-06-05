@@ -575,6 +575,20 @@ def main() -> int:
     return 0 if _kpi.failed_count == 0 else 1
 
 
+import os as _os
+import pytest as _pytest
+
+
+@_pytest.mark.skipif(
+    _os.environ.get("AIPACS_GUI_TESTS", "") != "1",
+    reason=(
+        "GUI-tier KPI walkthrough — hangs indefinitely under headless pytest "
+        "(observed 2026-06-04, RELIABILITY_STABILITY_REVIEW §13: the suite "
+        "never completes and masks subsequent results). The scenarios create "
+        "real service/widget stacks; run with AIPACS_GUI_TESTS=1 in a display "
+        "session, or via `python test_ui_services.py` (main())."
+    ),
+)
 def test_ui_service_kpis():
     scenario_is_widget_alive()
     scenario_tab_service()

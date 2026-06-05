@@ -1783,7 +1783,7 @@ def _run_stack_drag_step(
 
 def _run_pattern_step(pipeline, step: Dict[str, Any], *, stack_drag_policy: str = "") -> None:
     from modules.viewer.fast.perf_metrics import PerfMetrics
-    from tests.performance.perf_helpers import (
+    from tests.code.performance.perf_helpers import (
         scroll_direction_reversal,
         scroll_forward,
         scroll_random,
@@ -1842,7 +1842,7 @@ def run_aipacs_headless(
     stack_drag_policy: str = "",
 ) -> Dict[str, Any]:
     from modules.viewer.fast.perf_metrics import PerfMetrics
-    from tests.performance.perf_helpers import GILContentionSimulator
+    from tests.code.performance.perf_helpers import GILContentionSimulator
 
     pipeline = _make_pipeline(str(dataset), scenario)
     pm = PerfMetrics.get()
@@ -2448,7 +2448,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_headless.add_argument("--dataset", required=True, help="Path to a local DICOM series directory")
     p_headless.add_argument(
         "--scenario-file",
-        default=str(REPO_ROOT / "tests" / "performance" / "clearcanvas_aipacs_scenarios.json"),
+        default=str(REPO_ROOT / "tests" / "code" / "performance" / "clearcanvas_aipacs_scenarios.json"),
     )
     p_headless.add_argument("--scenario", required=True)
     p_headless.add_argument("--label", default="AI-PACS FAST")
@@ -2463,7 +2463,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_monitor = sub.add_parser("monitor-process", help="Sample an external viewer process during a scenario")
     p_monitor.add_argument(
         "--scenario-file",
-        default=str(REPO_ROOT / "tests" / "performance" / "clearcanvas_aipacs_scenarios.json"),
+        default=str(REPO_ROOT / "tests" / "code" / "performance" / "clearcanvas_aipacs_scenarios.json"),
     )
     p_monitor.add_argument("--scenario", required=True)
     p_monitor.add_argument("--process-name")
@@ -2514,11 +2514,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_pack = sub.add_parser("emit-execution-pack", help="Generate operator instructions and manual result templates")
     p_pack.add_argument(
         "--scenario-file",
-        default=str(REPO_ROOT / "tests" / "performance" / "clearcanvas_aipacs_scenarios.json"),
+        default=str(REPO_ROOT / "tests" / "code" / "performance" / "clearcanvas_aipacs_scenarios.json"),
     )
     p_pack.add_argument(
         "--model-file",
-        default=str(REPO_ROOT / "tests" / "performance" / "clearcanvas_aipacs_benchmark_model.json"),
+        default=str(REPO_ROOT / "tests" / "code" / "performance" / "clearcanvas_aipacs_benchmark_model.json"),
     )
     p_pack.add_argument("--scenario", action="append", required=True)
     p_pack.add_argument("--viewer", choices=["both", "aipacs", "clearcanvas"], default="both")
@@ -2538,7 +2538,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_blocks.add_argument("--payload", required=True)
     p_blocks.add_argument(
         "--block-model",
-        default=str(REPO_ROOT / "tests" / "performance" / "block_kpi_model.json"),
+        default=str(REPO_ROOT / "tests" / "code" / "performance" / "block_kpi_model.json"),
     )
     p_blocks.add_argument("--output")
     p_blocks.add_argument("--markdown-output")

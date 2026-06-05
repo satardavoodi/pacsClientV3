@@ -61,7 +61,16 @@ def test_get_capability_client_builds_drive(monkeypatch):
 
     built = {}
     discovery = types.ModuleType("googleapiclient.discovery")
-    discovery.build = lambda *a, **k: built.setdefault("args", (a, k)) or "DRIVE_SERVICE"
+
+    def _fake_build(*a, **k):
+        # Test bug fixed 2026-06-04: the old one-liner used
+        # `built.setdefault("args", (a, k)) or "DRIVE_SERVICE"` — setdefault
+        # returns the (truthy) args tuple, so the sentinel was never returned
+        # and the assertion below could never pass.
+        built["args"] = (a, k)
+        return "DRIVE_SERVICE"
+
+    discovery.build = _fake_build
     monkeypatch.setitem(sys.modules, "googleapiclient", types.ModuleType("googleapiclient"))
     monkeypatch.setitem(sys.modules, "googleapiclient.discovery", discovery)
 

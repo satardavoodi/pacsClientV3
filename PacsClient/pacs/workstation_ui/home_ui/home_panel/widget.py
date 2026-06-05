@@ -246,6 +246,18 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
                 },
             )
             print(f"[CommandBus] wired with {len(self.command_bus.actions())} action(s)")
+            # Test Control Server — env-gated external transport for the bus
+            # (AIPACS_TEST_SERVER=1, source build only). No-op in production.
+            # See TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md §4.
+            try:
+                from modules.EchoMind.secretary.test_server import maybe_start_test_server
+                self._test_control_server = maybe_start_test_server(
+                    get_bus=lambda: self.command_bus,
+                    get_active_patient_tab=self._get_active_patient_tab_for_bus,
+                    get_main_tab_widget=lambda: self.tab_widget,
+                )
+            except Exception as _ts_err:  # noqa: BLE001
+                print(f"[TestServer] init skipped (non-fatal): {_ts_err}")
         except Exception as _cmd_bus_err:  # noqa: BLE001
             print(f"[CommandBus] init failed (non-fatal): {_cmd_bus_err}")
 

@@ -592,3 +592,21 @@ class SecretaryOrchestrator:
                 latency_ms=int((time.perf_counter() - t0) * 1000),
             )
             return result
+
+
+    # ── unified Command Layer bridge (2026-05-27, phase 3) ───────────────
+    def to_command_bus(self, registry=None):
+        """Wrap this orchestrator in the new CommandBus façade.
+
+        Pass a pre-built AdapterRegistry (with adapters already
+        registered) or get an empty one (parse-only, no execute).
+        Used by tests + the AI-agent integration; production code
+        wires the registry at HomeWidget construction time.
+
+        See docs/plans/architecture/UNIFIED_COMMAND_LAYER_2026-05-27.md.
+        """
+        from .command_bus import CommandBus
+        from .registry import AdapterRegistry
+        if registry is None:
+            registry = AdapterRegistry()
+        return CommandBus(registry=registry, orchestrator=self)

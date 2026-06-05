@@ -36,7 +36,7 @@ def test_flag_config_file(monkeypatch, tmp_path):
     assert feature_flags.identity_module_enabled() is True
 
 
-def test_flag_disabled_creates_no_directories(monkeypatch):
+def test_flag_disabled_creates_no_directories(monkeypatch, tmp_path):
     """A disabled flag check must never call the dir-creating identity_config_dir()."""
     monkeypatch.delenv("AIPACS_IDENTITY_MODULE", raising=False)
     import modules.Identity.config as cfg
@@ -45,5 +45,10 @@ def test_flag_disabled_creates_no_directories(monkeypatch):
         raise AssertionError("identity_config_dir() must not be called when disabled")
 
     monkeypatch.setattr(cfg, "identity_config_dir", _boom)
+    # Isolate from the LIVE flag file (this workstation runs with
+    # <repo>/config/identity/identity.json {"enabled": true} — 2026-06-04
+    # triage): point the non-creating resolver at a missing temp file.
+    monkeypatch.setattr(cfg, "identity_flag_file_path",
+                        lambda: tmp_path / "identity.json")
     # Uses the non-creating path resolver internally; returns False with no mkdir.
     assert feature_flags.identity_module_enabled() is False

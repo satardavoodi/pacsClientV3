@@ -3016,7 +3016,7 @@ def test_completion_verify_grows_stale_viewer(tmp_path):
 
     # Stub _count_series_files_on_disk to return 135
     controller._count_series_files_on_disk = lambda sn: 135
-    controller._refresh_stored_metadata_instances = lambda sn, c: None
+    controller._refresh_stored_metadata_instances = lambda sn, c, **kw: None
 
     controller._completion_verify_series("10", expected_total=135)
 
@@ -3039,7 +3039,7 @@ def test_completion_verify_skips_up_to_date_viewer():
     controller.lst_nodes_viewer = [node]
 
     controller._count_series_files_on_disk = lambda sn: 135
-    controller._refresh_stored_metadata_instances = lambda sn, c: None
+    controller._refresh_stored_metadata_instances = lambda sn, c, **kw: None
 
     controller._completion_verify_series("10", expected_total=135)
 

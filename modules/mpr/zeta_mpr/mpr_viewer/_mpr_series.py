@@ -283,7 +283,7 @@ class _MprSeriesMixin:
                 renderer.ResetCamera()
 
                 # Apply CT-specific camera adjustments if needed
-                if self.detected_modality == "CT":
+                if self._needs_radiological_correction():
                     if view_name == 'sagittal':
                         camera.Roll(180)
                     elif view_name == 'coronal':

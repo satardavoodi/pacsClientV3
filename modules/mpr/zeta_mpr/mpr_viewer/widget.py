@@ -97,7 +97,8 @@ class StandardMPRViewer(
       _MprOrientationMixin     — camera vectors, direction matrix, orientation
     """
 
-    def __init__(self, vtk_image_data, parent=None, window_width=None, window_center=None):
+    def __init__(self, vtk_image_data, parent=None, window_width=None, window_center=None,
+                 layout_views=None, slab_mode=None, slab_thickness_mm=None):
         super().__init__(parent)
 
         _emit_geometry_contract_missing_guard(
@@ -105,6 +106,21 @@ class StandardMPRViewer(
             reason="local_mpr_geometry_owner_without_advanced_contract_adapter",
             fallback_behavior="continue_legacy_mpr_geometry_path",
         )
+
+        # Projection / subset-layout mode (MIP / MinIP / Thick Slab opened from the dropdown).
+        # layout_views = ordered subset of {'axial','sagittal','coronal'} → build ONLY those panes
+        # (1×N, no 3D pane) instead of the full 4-panel MPR. slab_mode ∈ {'max','min','mean'} with
+        # slab_thickness_mm applies the corresponding vtkImageResliceMapper slab projection after
+        # the views are built. Both default to None → unchanged full 4-panel MPR (no regression).
+        self._layout_views = (
+            [v for v in ('axial', 'sagittal', 'coronal') if v in set(layout_views)]
+            if layout_views else None
+        )
+        self._slab_mode = slab_mode
+        try:
+            self._slab_thickness_mm = float(slab_thickness_mm) if slab_thickness_mm else None
+        except Exception:
+            self._slab_thickness_mm = None
 
         logger.info("=" * 80)
         logger.info("STANDARD MPR VIEWER INITIALIZATION STARTED")
@@ -309,6 +325,42 @@ class StandardMPRViewer(
         # Detect modality and anatomy
         self.detected_modality, self.detected_anatomy = self._detect_series_type()
         logger.info(f"Detected: {self.detected_modality} - {self.detected_anatomy}")
+
+        # Canonicalization marker (flag-gated pre-filter). When present, the proven
+        # radiological corrections in _create_*_view apply regardless of modality.
+        # Default False => legacy path byte-identical when the pre-filter is OFF.
+        self._mpr_canonicalized = False
+        try:
+            from .._mpr_canonicalize import is_canonical_marker
+            self._mpr_canonicalized = bool(is_canonical_marker(self.image_data))
+        except Exception:
+            self._mpr_canonicalized = False
+        if self._mpr_canonicalized:
+            logger.info("[ZETA_MPR_CANONICALIZE] canonical marker present -> "
+                        "radiological corrections enabled for this volume")
+
+        # Anatomical-camera axes (flag-gated, 2026-06-03). When the canonicalizer attached
+        # "ZetaAnatA" (a 3x3 world->patient transform A = [-row,-col,slice_axis_lps]), the
+        # viewer sets each reconstructed camera AND its orientation markers directly from the
+        # radiological canonical triad via A (see _mpr_orientation), and SKIPS the legacy
+        # Roll/Azimuth + the hardcoded labels. Default None => legacy path byte-identical when
+        # the pre-filter is OFF.
+        self._anat_A = None
+        self._mpr_use_anatomical = False
+        try:
+            import numpy as _np
+            _fd = self.image_data.GetFieldData()
+            _arr = _fd.GetArray("ZetaAnatA") if _fd is not None else None
+            if _arr is not None and _arr.GetNumberOfTuples() == 9:
+                self._anat_A = _np.array([_arr.GetValue(i) for i in range(9)],
+                                         dtype=_np.float64).reshape(3, 3)
+                self._mpr_use_anatomical = True
+                logger.info("[ZETA_MPR_CANONICALIZE] ZetaAnatA present -> anatomical cameras "
+                            "enabled; A=%s", self._anat_A.round(3).tolist())
+        except Exception as _anat_err:
+            self._anat_A = None
+            self._mpr_use_anatomical = False
+            logger.warning("[ZETA_MPR_CANONICALIZE] ZetaAnatA read failed: %r", _anat_err)
 
         logger.info("Calling _setup_ui()...")
         self._setup_ui()

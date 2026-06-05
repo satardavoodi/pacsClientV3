@@ -12,6 +12,22 @@ import sys
 import unittest
 from unittest.mock import patch, MagicMock
 
+import pytest
+
+# Feature removed (2026-06-04 triage, RELIABILITY_STABILITY_REVIEW §13): the
+# "[Fix I]" background import-warmup block no longer exists anywhere in the
+# live tree — main.py was reworked (Nuitka bootstrap, single-instance guard,
+# shutdown hardening) and the warmup block did not survive. These are
+# contract tests for a deleted feature; keep them skipped until a decision:
+# either reintroduce an import warmup (then update the parser below to its
+# new shape) or delete this module.
+pytest.skip(
+    "stale spec: the [Fix I] import-warmup block was removed from main.py "
+    "(no implementation remains in the repo). See "
+    "RELIABILITY_STABILITY_REVIEW_2026-06-04.md §13.",
+    allow_module_level=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Reference list — must match exactly what main.py ships

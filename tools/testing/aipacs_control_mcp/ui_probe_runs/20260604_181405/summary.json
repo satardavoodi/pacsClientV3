@@ -1,0 +1,278 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260604_181405",
+ "steps": [
+  {
+   "label": "04_thumb_click_0_44915",
+   "ok": true,
+   "bus_ms": 1.1887999717146158,
+   "first_response_ms": 219.1,
+   "stable_ms": 773.8,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 16.7
+  },
+  {
+   "label": "04_thumb_click_1_44868",
+   "ok": true,
+   "bus_ms": 0.9874999523162842,
+   "first_response_ms": 580.1,
+   "stable_ms": 630.8,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 17.8
+  },
+  {
+   "label": "04_thumb_click_2_44734",
+   "ok": true,
+   "bus_ms": 1.1681999894790351,
+   "first_response_ms": 3496.8,
+   "stable_ms": null,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 17.3
+  },
+  {
+   "label": "04_thumb_click_3_44942",
+   "ok": true,
+   "bus_ms": 1.0077999904751778,
+   "first_response_ms": 593.9,
+   "stable_ms": 649.0,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 18.1
+  },
+  {
+   "label": "04_thumb_click_repeat_44915",
+   "ok": true,
+   "bus_ms": 1.052499981597066,
+   "first_response_ms": 493.5,
+   "stable_ms": 561.3,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 17.2
+  },
+  {
+   "label": "05_open_44734",
+   "ok": true,
+   "bus_ms": 0.7743000169284642,
+   "first_response_ms": 967.6,
+   "stable_ms": 2121.5,
+   "flickers": 0,
+   "dips": 4,
+   "fps": 16.3
+  },
+  {
+   "label": "06_ct_drop_vp0",
+   "ok": true,
+   "bus_ms": 46.88499995972961,
+   "first_response_ms": 70.4,
+   "stable_ms": 124.7,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 17.7
+  },
+  {
+   "label": "06_ct_drop_vp1",
+   "ok": true,
+   "bus_ms": 54.92570000933483,
+   "first_response_ms": null,
+   "stable_ms": null,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 15.2
+  },
+  {
+   "label": "08_progressive_watch",
+   "ok": true,
+   "bus_ms": 0.08650001836940646,
+   "first_response_ms": 1400.7,
+   "stable_ms": 1449.0,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 16.5
+  },
+  {
+   "label": "05_open_dx_44829",
+   "ok": true,
+   "bus_ms": 0.20860001677647233,
+   "first_response_ms": 785.1,
+   "stable_ms": 841.9,
+   "flickers": 0,
+   "dips": 4,
+   "fps": 17.3
+  },
+  {
+   "label": "06_dx_drop_vp0",
+   "ok": true,
+   "bus_ms": 82.94930000556633,
+   "first_response_ms": 101.9,
+   "stable_ms": 545.7,
+   "flickers": 0,
+   "dips": 0,
+   "fps": 17.2
+  }
+ ],
+ "targets": {
+  "ct_n": 18,
+  "dx_n": 21,
+  "fresh_ct": [
+   "44734",
+   "44942",
+   "44976",
+   "44974"
+  ]
+ },
+ "ct_series": [
+  {
+   "series_number": 101,
+   "image_count": 2,
+   "description": "Scout"
+  },
+  {
+   "series_number": 201,
+   "image_count": 49,
+   "description": "Bone"
+  },
+  {
+   "series_number": 202,
+   "image_count": 294,
+   "description": "Bone"
+  },
+  {
+   "series_number": 203,
+   "image_count": 147,
+   "description": "Tissue"
+  },
+  {
+   "series_number": 9001,
+   "image_count": 1,
+   "description": "Dose Info"
+  },
+  {
+   "series_number": 100000,
+   "image_count": 1,
+   "description": "Documents"
+  },
+  {
+   "series_number": 171639048,
+   "image_count": 35,
+   "description": "Bone"
+  },
+  {
+   "series_number": 171704600,
+   "image_count": 35,
+   "description": "Bone"
+  }
+ ],
+ "dx_series": [
+  {
+   "series_number": 2,
+   "image_count": 1,
+   "description": "Abdomen supine AP"
+  },
+  {
+   "series_number": 4,
+   "image_count": 1,
+   "description": "Abdomen supine AP"
+  },
+  {
+   "series_number": 6,
+   "image_count": 1,
+   "description": "Abdomen supine AP"
+  },
+  {
+   "series_number": 7,
+   "image_count": 1,
+   "description": "Abdomen supine AP"
+  },
+  {
+   "series_number": 8,
+   "image_count": 1,
+   "description": "Abdomen supine AP"
+  },
+  {
+   "series_number": 9,
+   "image_count": 1,
+   "description": "Abdomen standing PA"
+  }
+ ],
+ "final_viewports": {
+  "study_uid": "1.2.826.0.1.3680043.2.876.14581.1.5.1.20260603092733.0.50",
+  "viewports": [
+   {
+    "viewport": 0,
+    "alive": true,
+    "series_number": "2",
+    "preview_only": false,
+    "awaiting_series": null,
+    "progressive_mode": false,
+    "progressive_series": null,
+    "slice_count": 1,
+    "spinner_visible": null
+   },
+   {
+    "viewport": 1,
+    "alive": true,
+    "series_number": "",
+    "preview_only": false,
+    "awaiting_series": null,
+    "progressive_mode": false,
+    "progressive_series": null,
+    "slice_count": 0,
+    "spinner_visible": null
+   }
+  ]
+ },
+ "final_downloads": {
+  "total": 2,
+  "active": 0,
+  "downloading": 0,
+  "by_status": {
+   "Completed": 2
+  },
+  "by_priority": {
+   "High": 1,
+   "Critical": 1
+  }
+ },
+ "log_marks": {
+  "INTENT_PRIORITY": [
+   "18:19:04 [INTENT_PRIORITY] tag=begin study=1.2.826.0.1.3680043.2.876.14581.1.5.1.20 series=2 attempt=0/90 recovery=False pool_busy=False po"
+  ],
+  "UX_FIRST_IMAGE_VISIBLE": [
+   "18:18:02 [UX_FIRST_IMAGE_VISIBLE] series=202 slice=12 decode_ms=12.2 total_ms=161.1",
+   "18:18:18 [UX_FIRST_IMAGE_VISIBLE] series=201 slice=10 decode_ms=7.5 total_ms=65.4",
+   "18:19:04 [UX_FIRST_IMAGE_VISIBLE] series=2 slice=0 decode_ms=0.0 total_ms=93.9"
+  ],
+  "PROGRESSIVE_GROW] phase=start": [
+   "18:18:03 [PROGRESSIVE_GROW] phase=start series=202 pending=71 visible_target=8 terminal=False grow_admission_ms=0.001 grow_retry_count=0 gr",
+   "18:18:04 [PROGRESSIVE_GROW] phase=start series=202 pending=91 visible_target=16 terminal=False grow_admission_ms=0.001 grow_retry_count=0 g",
+   "18:18:05 [PROGRESSIVE_GROW] phase=start series=202 pending=101 visible_target=24 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:06 [PROGRESSIVE_GROW] phase=start series=202 pending=121 visible_target=32 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:07 [PROGRESSIVE_GROW] phase=start series=202 pending=141 visible_target=40 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:07 [PROGRESSIVE_GROW] phase=start series=202 pending=167 visible_target=48 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:08 [PROGRESSIVE_GROW] phase=start series=202 pending=171 visible_target=56 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:09 [PROGRESSIVE_GROW] phase=start series=202 pending=191 visible_target=64 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:10 [PROGRESSIVE_GROW] phase=start series=202 pending=211 visible_target=72 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:11 [PROGRESSIVE_GROW] phase=start series=202 pending=231 visible_target=80 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:12 [PROGRESSIVE_GROW] phase=start series=202 pending=241 visible_target=88 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:13 [PROGRESSIVE_GROW] phase=start series=202 pending=261 visible_target=96 terminal=False grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:14 [PROGRESSIVE_GROW] phase=start series=202 pending=271 visible_target=104 terminal=False grow_admission_ms=0.001 grow_retry_count=0",
+   "18:18:15 [PROGRESSIVE_GROW] phase=start series=202 pending=294 visible_target=294 terminal=True grow_admission_ms=0.001 grow_retry_count=0 ",
+   "18:18:15 [PROGRESSIVE_GROW] phase=start series=202 pending=294 visible_target=294 terminal=True grow_admission_ms=0.001 grow_retry_count=1 ",
+   "18:18:15 [PROGRESSIVE_GROW] phase=start series=202 pending=294 visible_target=294 terminal=True grow_admission_ms=0.001 grow_retry_count=1 ",
+   "18:18:16 [PROGRESSIVE_GROW] phase=start series=202 pending=294 visible_target=294 terminal=True grow_admission_ms=0.002 grow_retry_count=1 ",
+   "18:18:19 [PROGRESSIVE_GROW] phase=start series=201 pending=49 visible_target=49 terminal=True grow_admission_ms=0.001 grow_retry_count=0 gr",
+   "18:18:19 [PROGRESSIVE_GROW] phase=start series=201 pending=49 visible_target=49 terminal=True grow_admission_ms=0.001 grow_retry_count=1 gr"
+  ],
+  "preempt": [],
+  "load-on-demand FAILED": [
+   "18:16:56 [PROFILE] change_series_on_viewer: async load-on-demand FAILED for series 201 in 152.3ms",
+   "18:17:32 [PROFILE] change_series_on_viewer: async load-on-demand FAILED for series 202 in 215.1ms"
+  ]
+ },
+ "run_window": [
+  "2026-06-04 18:14",
+  "2026-06-04 18:19:32"
+ ]
+}

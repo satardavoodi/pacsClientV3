@@ -1,6 +1,11 @@
 ﻿# Zeta MPR Rotation (ITK/VTK) Status and Forward Plan
 
-Module: `PacsClient/pacs/patient_tab/zeta mpr/`
+> **As-built pointer (2026-06-03):** for the current orientation / canonical-reconstruction /
+> **plane-aware viewport routing** behaviour, see `docs/pipelines/mpr-geometry-pipeline.md`
+> §10b + §10c (live-validated 2026-06-03). This doc tracks the separate crosshair-rotation path.
+> The live module is `modules/mpr/zeta_mpr/` (the path below is stale).
+
+Module: `modules/mpr/zeta_mpr/`  (was `PacsClient/pacs/patient_tab/zeta mpr/`)
 Primary reference: `docs/IMAGE_PIPELINE_REFERENCE.md`
 Secondary reference: `PacsClient/pacs/patient_tab/zeta mpr/ZETA_MPR_PIPELINE_REFERENCE.md`
 Engineering journal: `PacsClient/pacs/patient_tab/zeta mpr/ZETA_MPR_ENGINEERING_JOURNAL.md`

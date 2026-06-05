@@ -32,7 +32,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-_PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
+# tests/ → tests/code/ reorg (2026-05-27): repo root is 4 parents up, and the
+# plugin-payload path must be anchored to it (was CWD-relative → these specs
+# failed under any pytest invocation not started from the repo root).
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_PROJECT_ROOT = str(_REPO_ROOT)
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
@@ -42,7 +46,7 @@ from modules.download_manager.ui.widget import _dm_details
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 _CANONICAL = Path(_dm_details.__file__)
-_PLUGIN = Path(
+_PLUGIN = _REPO_ROOT / (
     "builder/plugin package/packages/download_manager/payload/python/"
     "modules/download_manager/ui/widget/_dm_details.py"
 )
@@ -237,7 +241,7 @@ def test_inplace_not_called_when_hidden():
 # Fix B: skip _update_series_breakdown_from_task while drag is active.
 
 _DETAILS_CANONICAL = Path(_dm_details.__file__)
-_DETAILS_PLUGIN = Path(
+_DETAILS_PLUGIN = _REPO_ROOT / (
     "builder/plugin package/packages/download_manager/payload/python/"
     "modules/download_manager/ui/widget/_dm_details.py"
 )

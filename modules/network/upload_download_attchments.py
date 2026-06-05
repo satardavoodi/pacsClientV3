@@ -17,67 +17,114 @@ logger = logging.getLogger(__name__)
 
 _UPLOAD_REQUEST_MAX_ATTEMPTS = 2
 
+# Crash-B hardening (task #61, 2026-06-04): bound every socket wait so a
+# stalled server can never hang a background worker forever (cancel flags are
+# only checked *between* calls, so an unbounded recv was un-cancellable).
+# Timeout applies per recv/send call — an actively streaming transfer renews
+# it with every chunk, so large attachments are unaffected.
+_SOCKET_OP_TIMEOUT_S = 30.0
+
 
 class SocketClient:
+    """Attachments/reception socket client.
+
+    Crash-B hardening (2026-06-04, mirrors the already-hardened DM
+    ``socket_client.py``): per-op timeouts, a request lock so a shared
+    instance cannot interleave send/recv pairs across threads, a
+    ``shutdown()``-then-``close()`` disconnect that cleanly unblocks an
+    in-flight ``recv`` from another thread (previously ``close()`` could free
+    the handle under a concurrent ``recv`` — the access-violation window in
+    `CRASH_STABILITY_INVESTIGATION_2026-06-03.md` §3), and a None-guard in
+    ``_recvall`` so a teardown race surfaces as a catchable ConnectionError
+    instead of an AttributeError/native fault.
+    """
+
     def __init__(self):
         config = get_socket_config()
         self.host = config.get_socket_host()
         self.port = config.get_socket_port()
         self.socket = None
+        import threading as _threading
+        self._request_lock = _threading.RLock()
 
     def connect(self):
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((self.host, self.port))
+        # create_connection honors the timeout during connect() as well —
+        # the bare socket()+connect() it replaces could hang indefinitely.
+        self.socket = socket.create_connection(
+            (self.host, self.port), timeout=_SOCKET_OP_TIMEOUT_S)
+        self.socket.settimeout(_SOCKET_OP_TIMEOUT_S)
 
     def send_request(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
         # Create request with token
         request = {"endpoint": endpoint, "params": params}
         token_manager = get_socket_token_manager()
         request = token_manager.add_token_to_request(request)
-        
+
         payload = json.dumps(request, ensure_ascii=False).encode("utf-8")
-        self.socket.sendall(len(payload).to_bytes(4, byteorder="big"))
-        self.socket.sendall(payload)
-        
-        # Read response - skip broadcast messages and get actual response
-        max_attempts = 10  # Maximum attempts to get a non-broadcast response
-        for attempt in range(max_attempts):
-            length_buf = self._recvall(4)
-            if not length_buf:
-                raise RuntimeError("No response length")
-            resp_len = int.from_bytes(length_buf, "big")
-            data = self._recvall(resp_len)
-            if not data:
-                raise RuntimeError("No response data")
-            
-            response = json.loads(data.decode("utf-8"))
-            
-            # Check if this is a broadcast message (not the actual response)
-            if response.get("type") == "broadcast":
-                # Skip broadcast messages and read next message
-                continue
-            
-            # This is the actual response
-            return response
-        
+        # Hold the lock across the full send+recv pair: a SocketClient passed
+        # via the `client=` parameter may be shared across worker threads, and
+        # interleaved frames corrupt the length-prefixed protocol.
+        with self._request_lock:
+            sock = self.socket
+            if sock is None:
+                raise ConnectionError("attachment socket is closed")
+            sock.sendall(len(payload).to_bytes(4, byteorder="big"))
+            sock.sendall(payload)
+
+            # Read response - skip broadcast messages and get actual response
+            max_attempts = 10  # Maximum attempts to get a non-broadcast response
+            for attempt in range(max_attempts):
+                length_buf = self._recvall(4)
+                if not length_buf:
+                    raise RuntimeError("No response length")
+                resp_len = int.from_bytes(length_buf, "big")
+                data = self._recvall(resp_len)
+                if not data:
+                    raise RuntimeError("No response data")
+
+                response = json.loads(data.decode("utf-8"))
+
+                # Check if this is a broadcast message (not the actual response)
+                if response.get("type") == "broadcast":
+                    # Skip broadcast messages and read next message
+                    continue
+
+                # This is the actual response
+                return response
+
         # If we got here, all messages were broadcasts - return the last one as fallback
         raise RuntimeError("Only broadcast messages received, no actual response")
 
     def _recvall(self, n: int) -> bytes:
         buf = b""
         while len(buf) < n:
-            chunk = self.socket.recv(min(8192, n - len(buf)))
+            sock = self.socket
+            if sock is None:
+                # disconnect() raced this recv loop (e.g. tab close) — fail
+                # as a normal exception, never touch a freed handle.
+                raise ConnectionError("attachment socket closed during recv")
+            chunk = sock.recv(min(8192, n - len(buf)))
             if not chunk:
                 break
             buf += chunk
         return buf
 
     def disconnect(self):
-        if self.socket:
+        # Deliberately does NOT take _request_lock: disconnect must be able to
+        # interrupt a hung request. shutdown() unblocks any in-flight recv on
+        # another thread cleanly (recv returns 0/raises OSError) BEFORE the
+        # handle is freed by close() — closing without shutdown is the
+        # close-during-recv access-violation window.
+        sock, self.socket = self.socket, None
+        if sock is not None:
             try:
-                self.socket.close()
-            finally:
-                self.socket = None
+                sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass  # already closed/never connected
+            try:
+                sock.close()
+            except OSError:
+                pass
 
 
 # upload attachments

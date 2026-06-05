@@ -87,6 +87,13 @@ def test_real_thumbnail_manager_progress_is_deferred_until_admitted(monkeypatch)
         _progress_update_timer_active=False,
         _progress_update_interval_ms=lambda: 500.0,
         _schedule_progress_flush=lambda delay_ms: scheduled.append(delay_ms),
+        # Spec refresh 2026-06-04: update_series_progress grew a stale-update
+        # guard (completed/ready series must not resurrect the downloading
+        # matte). The fake needs the attributes that guard reads — without
+        # them the method's broad try/except swallowed an AttributeError and
+        # the deferral silently never happened.
+        _get_series_projection_state=lambda key: "",
+        ready_series=set(),
     )
 
     monkeypatch.setattr(_tm_mod, "_ui_should_admit", lambda *a, **kw: False)

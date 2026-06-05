@@ -11,7 +11,11 @@ from uuid import uuid4
 
 from ..core.models import DownloadTask
 from ..core.constants import MAX_CONCURRENT_STUDIES
-from .download_worker import DownloadWorker
+# WorkerPool stores whatever worker the caller hands to add_worker(). The live
+# worker is DownloadProcessWorker; all workers are QThread subclasses that also
+# expose request_cancel(). Typed as QThread (the real common base) rather than a
+# specific worker class to avoid a stale, misleading import.
+from PySide6.QtCore import QThread
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +41,7 @@ class WorkerPool:
                 is removed from the pool (pool slot freed).
         """
         self.max_workers = max_workers or MAX_CONCURRENT_STUDIES
-        self.active_workers: Dict[str, DownloadWorker] = {}  # worker_id -> worker
+        self.active_workers: Dict[str, QThread] = {}  # worker_id -> worker
         self.worker_by_study: Dict[str, str] = {}  # study_uid -> worker_id
         self.lock = threading.RLock()  # Reentrant lock to prevent deadlock
         self._on_worker_removed = on_worker_removed
@@ -56,7 +60,7 @@ class WorkerPool:
     
     def add_worker(
         self,
-        worker: DownloadWorker,
+        worker: QThread,
         study_uid: str
     ) -> bool:
         """
@@ -154,7 +158,21 @@ class WorkerPool:
                             logger.error(f"❌ Force termination failed: {e}")
                     else:
                         logger.debug(f"✅ Worker {worker_id[:8]}... stopped gracefully")
-            
+
+                # DM-H4: guarantee the child download subprocess is gone before we
+                # drop the worker reference. QThread.terminate() above bypasses
+                # run()'s finally:_cleanup() (the child-teardown), which would
+                # orphan the subprocess — it keeps holding sockets and writing into
+                # dicom.db after the UI considers the download gone, and the pool
+                # slot is never truly freed. Idempotent + guarded (the in-process
+                # DownloadWorker has no subprocess and does not expose this).
+                try:
+                    _ensure_dead = getattr(worker, 'ensure_subprocess_dead', None)
+                    if callable(_ensure_dead):
+                        _ensure_dead()
+                except Exception as _e_dmh4:
+                    logger.error(f"❌ DM-H4 subprocess ensure-dead failed: {_e_dmh4}")
+
             except Exception as e:
                 logger.error(f"❌ Error during worker cleanup: {e}")
             
@@ -191,7 +209,7 @@ class WorkerPool:
         with self.lock:
             return len(self.active_workers)
     
-    def get_worker(self, study_uid: str) -> Optional[DownloadWorker]:
+    def get_worker(self, study_uid: str) -> Optional[QThread]:
         """
         Get worker for a specific study
         
@@ -199,7 +217,7 @@ class WorkerPool:
             study_uid: Study UID
             
         Returns:
-            DownloadWorker or None if not found
+            QThread or None if not found
         """
         with self.lock:
             worker_id = self.worker_by_study.get(study_uid)

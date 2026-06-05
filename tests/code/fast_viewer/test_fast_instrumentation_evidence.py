@@ -207,7 +207,10 @@ class TestPhaseIPrefix:
     def test_meta_cache_hit_on_second_call(self, caplog):
         from PacsClient.pacs.patient_tab.utils.image_io import _series_metadata_cache, _get_cached_metadata
         test_pk = 999901
-        cache_key = f"series_{test_pk}"
+        # Spec refresh 2026-06-04: the cache key gained an instance-count
+        # suffix (`_n{len(instances)}`) — the partial/mixed-size series
+        # staleness fix. Seed the key the lookup actually uses.
+        cache_key = f"series_{test_pk}_n0"
         _series_metadata_cache[cache_key] = {"patient": {}, "study": {}, "series": {}, "instances": []}
 
         with caplog.at_level(logging.INFO, logger=_IO_LOGGER):

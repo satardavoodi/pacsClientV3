@@ -10,15 +10,15 @@ from .ai_chat_helpers import _set_icon, extract_plain_text_from_html
 from dataclasses import dataclass
 from html import escape
 
-from PySide6.QtCore import QObject, Signal, Slot, QThread,Qt,QSize, QUrl,QTimer, QMimeData, QEvent
+from PySide6.QtCore import QObject, Signal, Slot, QThread,Qt,QSize, QUrl,QTimer, QMimeData, QEvent, Property, QPropertyAnimation
 from PySide6.QtWidgets import (
     QListWidget, QListWidgetItem, QPushButton,
     QPlainTextEdit, QScrollArea, QMenu, QFileDialog, QSpacerItem,QFrame,QSizePolicy,
-    QDialog, QDialogButtonBox, QTextEdit,QComboBox, QMenu,QGraphicsOpacityEffect,QWidget, QHBoxLayout, QVBoxLayout, QToolButton, QLabel, QSlider, QSizePolicy, QStyle
+    QDialog, QDialogButtonBox, QTextEdit,QComboBox, QMenu,QGraphicsOpacityEffect,QWidget, QHBoxLayout, QVBoxLayout, QToolButton, QLabel, QSlider, QSizePolicy, QStyle, QTabBar
 
 )
 from PySide6.QtGui import (
-    QMouseEvent, QPainter,QAction,QTextCursor, QTextOption, QColor, QPen, QTextDocument, QFontMetrics, QGuiApplication
+    QMouseEvent, QPainter,QAction,QTextCursor, QTextOption, QColor, QPen, QTextDocument, QFontMetrics, QGuiApplication, QConicalGradient, QBrush
 )
 
 from PySide6.QtMultimedia import QMediaPlayer, QAudioOutput
@@ -68,6 +68,52 @@ PATIENT_SCROLLBAR_QSS = """
 """
 # Qt (same symbol as old file)
 QWIDGETSIZE_MAX = 16777215
+
+
+class AnimatedShellFrame(QFrame):
+    """Composer shell with subtle moving glow around the border."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._glow_angle = 0.0
+        self._glow_anim = QPropertyAnimation(self, b"glowAngle", self)
+        self._glow_anim.setStartValue(0.0)
+        self._glow_anim.setEndValue(360.0)
+        self._glow_anim.setDuration(3200)
+        self._glow_anim.setLoopCount(-1)
+        self._glow_anim.start()
+
+    def getGlowAngle(self) -> float:
+        return float(self._glow_angle)
+
+    def setGlowAngle(self, value: float) -> None:
+        self._glow_angle = float(value)
+        self.update()
+
+    glowAngle = Property(float, getGlowAngle, setGlowAngle)
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        p = QPainter(self)
+        p.setRenderHint(QPainter.Antialiasing, True)
+
+        r = self.rect().adjusted(1, 1, -2, -2)
+        grad = QConicalGradient(r.center(), -self._glow_angle)
+        grad.setColorAt(0.00, QColor(88, 188, 255, 30))
+        grad.setColorAt(0.12, QColor(88, 188, 255, 170))
+        grad.setColorAt(0.20, QColor(88, 188, 255, 35))
+        grad.setColorAt(0.50, QColor(88, 188, 255, 20))
+        grad.setColorAt(0.72, QColor(88, 188, 255, 150))
+        grad.setColorAt(0.84, QColor(88, 188, 255, 30))
+        grad.setColorAt(1.00, QColor(88, 188, 255, 30))
+
+        pen = QPen(QBrush(grad), 1.6)
+        p.setPen(pen)
+        p.setBrush(Qt.NoBrush)
+        p.drawRoundedRect(r, 14, 14)
+        p.end()
+
+
 class ClickToSeekSlider(QSlider):
     def mousePressEvent(self, e: QMouseEvent):
         if e.button() == Qt.LeftButton:
@@ -264,6 +310,48 @@ class MessageBubble(QWidget):
         footer.setSpacing(6)
         footer.addStretch(1)
 
+        # Feedback (AI responses only): thumbs up/down with fill-on-select state.
+        self.btnLike: QToolButton | None = None
+        self.btnDislike: QToolButton | None = None
+        if not self._is_user:
+            feedback_css = """
+                QToolButton {
+                    color: #dcdcdc;
+                    padding: 2px 7px;
+                    border: 1px solid #3a3a3a;
+                    border-radius: 8px;
+                    background: rgba(255,255,255,0.03);
+                    font-size: 14px;
+                }
+                QToolButton:hover {
+                    background: rgba(255,255,255,0.10);
+                    border-color: #5b6f85;
+                }
+                QToolButton:checked {
+                    color: #ffffff;
+                    border-color: #63b3ed;
+                    background: rgba(99,179,237,0.40);
+                }
+            """
+            self.btnLike = QToolButton(box)
+            self.btnLike.setText("👍")
+            self.btnLike.setToolTip("Like response")
+            self.btnLike.setCursor(Qt.PointingHandCursor)
+            self.btnLike.setCheckable(True)
+            self.btnLike.setAutoRaise(True)
+            self.btnLike.setStyleSheet(feedback_css)
+
+            self.btnDislike = QToolButton(box)
+            self.btnDislike.setText("👎")
+            self.btnDislike.setToolTip("Dislike response")
+            self.btnDislike.setCursor(Qt.PointingHandCursor)
+            self.btnDislike.setCheckable(True)
+            self.btnDislike.setAutoRaise(True)
+            self.btnDislike.setStyleSheet(feedback_css)
+
+            footer.addWidget(self.btnLike, 0, Qt.AlignRight)
+            footer.addWidget(self.btnDislike, 0, Qt.AlignRight)
+
         # Copy
         self.btnCopy = QToolButton(box)
         self.btnCopy.setText("Copy")
@@ -369,6 +457,11 @@ class MessageBubble(QWidget):
         
         if self.btnSendReception is not None:
             self.btnSendReception.clicked.connect(lambda: self._on_send_reception_cb(self))
+
+        if self.btnLike is not None:
+            self.btnLike.clicked.connect(self._on_like_clicked)
+        if self.btnDislike is not None:
+            self.btnDislike.clicked.connect(self._on_dislike_clicked)
 
         # Font size controls
         self.btnFontInc.clicked.connect(self.increase_font_size)
@@ -806,6 +899,18 @@ class MessageBubble(QWidget):
         
         QTimer.singleShot(900, reset_copy_button)
 
+    def _on_like_clicked(self):
+        if self.btnLike is None:
+            return
+        if self.btnLike.isChecked() and self.btnDislike is not None:
+            self.btnDislike.setChecked(False)
+
+    def _on_dislike_clicked(self):
+        if self.btnDislike is None:
+            return
+        if self.btnDislike.isChecked() and self.btnLike is not None:
+            self.btnLike.setChecked(False)
+
     # =============== RECEPTION STATUS UPDATE ===============
     def update_reception_status(self, status: str, icon: str = "⏳", color: str = "#ffb366"):
         """
@@ -1226,10 +1331,18 @@ class UnifiedComposer(QWidget):
         except Exception:
             pass
         # ---------- شِل (textbox + controls) ----------
-        self.input_shell = QFrame(self)
+        self.input_shell = AnimatedShellFrame(self)
         self.input_shell.setObjectName("shell")
         self.input_shell.setStyleSheet(f"""
-            QFrame#shell {{ background:{CLR_BG}; border:1px solid {CLR_BORDER}; border-radius:12px; }}
+            QFrame#shell {{
+                background:qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(28,31,36,0.98),
+                    stop:1 rgba(20,23,28,0.98)
+                );
+                border:1px solid rgba(143, 152, 164, 0.28);
+                border-radius:14px;
+            }}
             QTextEdit#composerEdit {{ background:transparent; border:none; color:#ddd; }}
             {PATIENT_SCROLLBAR_QSS}
         """)
@@ -1237,141 +1350,112 @@ class UnifiedComposer(QWidget):
         shell.setContentsMargins(12, 12, 12, 12)
         shell.setSpacing(0)
         # Tabs
-        tabs_bar = QFrame(self.input_shell)
+        tabs_bar = QFrame(self)
         tabs_bar.setObjectName("tabsbar")
         tabs_bar.setStyleSheet(f"""
-            QFrame#tabsbar {{ border: none; }}
-
-            /* unified tab style (match tool buttons) */
-            QToolButton[role="tab"] {{
-                background:#3a3a3a;
-                color:{CLR_TEXT};
-                border:1px solid {CLR_BORDER};
-                border-radius:12px;
-                min-height:30px;
-                min-width:40px;
-                padding:0 10px;
-                font-size:13px;
-                font-weight:600;
-                margin-right: 10px;
-            }}
-            QToolButton[role="tab"]:hover {{
-                border-color:{CLR_ACCENT};
-                background:#4a4a4a;
-            }}
-            QToolButton[role="tab"]:pressed {{ background:#2d2d2d; }}
-            QToolButton[role="tab"][active="true"] {{
-                background:#4a4a4a;
-                color:#fff;
-                font-weight:700;
-                border-color:#666;
+            QFrame#tabsbar {{
+                border: none;
+                background: transparent;
+                padding-bottom: 0px;
             }}
 
-            /* ------------------------------
-               Standard + Retry = segmented tab (same height/shape)
-               ------------------------------ */
-            QFrame#stdTabGroup {{ background: transparent; border: none; margin-right: 10px; }}
-
-            /* left part (Standard) */
-            QToolButton[role="tab"][group="std"][side="left"] {{
-                margin-right: 0px;
-                border-top-right-radius: 0px;
-                border-bottom-right-radius: 0px;
-                border-right: none;
+            QTabBar#composerModeTabs {{
+                background: transparent;
+                border: none;
+            }}
+            QTabBar#composerModeTabs::tab {{
+                color: rgba(231, 234, 239, 0.88);
+                background: rgba(255,255,255,0.04);
+                border: 1px solid rgba(139, 148, 160, 0.42);
+                border-bottom: 1px solid rgba(255,255,255,0.10);
+                border-top-left-radius: 13px;
+                border-top-right-radius: 13px;
+                min-height: 34px;
+                padding: 0 16px;
+                margin-right: 7px;
+                font-size: 13px;
+                font-weight: 600;
+            }}
+            QTabBar#composerModeTabs::tab:hover {{
+                color: #ffffff;
+                border-color: rgba(99, 179, 237, 0.90);
+                background: rgba(99, 179, 237, 0.20);
+            }}
+            QTabBar#composerModeTabs::tab:selected {{
+                color: #ffffff;
+                font-weight: 700;
+                border-color: rgba(114, 190, 255, 0.95);
+                border-bottom-color: rgba(22, 26, 32, 0.96);
+                background: qlineargradient(
+                    x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(89, 169, 230, 0.34),
+                    stop:1 rgba(65, 135, 196, 0.24)
+                );
             }}
 
-            /* right part (Retry) */
-            QToolButton[role="tab_retry"][group="std"][side="right"] {{
-                background:#3a3a3a;
-                color:{CLR_TEXT};
-                border:1px solid {CLR_BORDER};
-                border-left: none;
-                border-top-left-radius: 0px;
-                border-bottom-left-radius: 0px;
-                border-top-right-radius: 12px;
-                border-bottom-right-radius: 12px;
-                min-height:30px;
-                min-width:30px;
-                padding:0;
+            QToolButton#stdRetryTabBtn {{
+                background: rgba(255,255,255,0.06);
+                color: {CLR_TEXT};
+                border: 1px solid rgba(139, 148, 160, 0.42);
+                border-radius: 10px;
+                min-height: 34px;
+                min-width: 32px;
+                padding: 0;
+                margin-left: 4px;
             }}
-            QToolButton[role="tab_retry"][group="std"][side="right"]:hover {{
-                border-color:{CLR_ACCENT};
-                background:#4a4a4a;
+            QToolButton#stdRetryTabBtn:hover {{
+                border-color: rgba(114, 190, 255, 0.95);
+                background: rgba(99, 179, 237, 0.20);
             }}
-            QToolButton[role="tab_retry"][group="std"][side="right"]:pressed {{ background:#2d2d2d; }}
+            QToolButton#stdRetryTabBtn:pressed {{
+                background: rgba(99, 179, 237, 0.30);
+            }}
         """)
         tabs_lay = QHBoxLayout(tabs_bar)
-        tabs_lay.setContentsMargins(0, 0, 0, 0)
-        tabs_lay.setSpacing(8)
+        tabs_lay.setContentsMargins(2, 0, 2, 0)
+        tabs_lay.setSpacing(6)
 
-        # ✅ Define tab buttons ONCE
-        self.btn_tab_trans = QToolButton(tabs_bar)
-        self.btn_tab_trans.setText("Transcribe")
-        self.btn_tab_trans.setProperty("role", "tab")
-        self.btn_tab_trans.setFixedHeight(30)
-        self.btn_tab_trans.setMinimumWidth(132)
-        self.btn_tab_trans.setCursor(Qt.PointingHandCursor)
-        self.btn_tab_trans.clicked.connect(lambda: self.switch_tab("transcribe"))
+        self.mode_tabs = QTabBar(tabs_bar)
+        self.mode_tabs.setObjectName("composerModeTabs")
+        self.mode_tabs.setCursor(Qt.PointingHandCursor)
+        self.mode_tabs.setMovable(False)
+        self.mode_tabs.setExpanding(False)
+        self.mode_tabs.setUsesScrollButtons(False)
+        self.mode_tabs.setElideMode(Qt.ElideNone)
+        self.mode_tabs.setDocumentMode(True)
+        self.mode_tabs.setDrawBase(False)
 
-        self.btn_tab_normal = QToolButton(tabs_bar)
-        self.btn_tab_normal.setText("Normal Template")
-        self.btn_tab_normal.setProperty("role", "tab")
-        self.btn_tab_normal.setFixedHeight(30)
-        self.btn_tab_normal.setMinimumWidth(132)
-        self.btn_tab_normal.setCursor(Qt.PointingHandCursor)
-        self.btn_tab_normal.clicked.connect(lambda: self.switch_tab("normal_template"))
+        self._tab_index_by_key: dict[str, int] = {}
+        self._tab_key_by_index: dict[int, str] = {}
 
+        for key, label in (
+            ("transcribe", "Transcribe"),
+            ("normal_template", "Normal Template"),
+            ("correction", "Correction"),
+            ("standard", "Standard"),
+        ):
+            idx = self.mode_tabs.addTab(label)
+            self._tab_index_by_key[key] = idx
+            self._tab_key_by_index[idx] = key
 
-        # --- Standard + Retry as a visually grouped control ---
-        self.std_tab_group = QFrame(tabs_bar)
-        self.std_tab_group.setObjectName("stdTabGroup")
-        _std_lay = QHBoxLayout(self.std_tab_group)
-        _std_lay.setContentsMargins(0, 0, 0, 0)
-        _std_lay.setSpacing(0)
+        self.mode_tabs.currentChanged.connect(self._on_mode_tab_changed)
 
-        self.btn_tab_standard = QToolButton(self.std_tab_group)
-        self.btn_tab_standard.setText("Standard")
-        self.btn_tab_standard.setProperty("role", "tab")
-        self.btn_tab_standard.setProperty("group", "std")
-        self.btn_tab_standard.setProperty("side", "left")
-        self.btn_tab_standard.setFixedHeight(30)
-        self.btn_tab_standard.setMinimumWidth(60)
-        self.btn_tab_standard.setCursor(Qt.PointingHandCursor)
-        self.btn_tab_standard.clicked.connect(self._handle_standard_tab_click)
-
-        # 🔁 Retry (do NOT auto-regenerate on tab switching; only on explicit retry)
-        self.btn_tab_standard_retry = QToolButton(self.std_tab_group)
-        self.btn_tab_standard_retry.setProperty("role", "tab_retry")
-        self.btn_tab_standard_retry.setProperty("group", "std")
-        self.btn_tab_standard_retry.setProperty("side", "right")
+        # Retry remains explicit and separate, but now adjacent to real tabs.
+        self.btn_tab_standard_retry = QToolButton(tabs_bar)
+        self.btn_tab_standard_retry.setObjectName("stdRetryTabBtn")
         self.btn_tab_standard_retry.setCursor(Qt.PointingHandCursor)
         self.btn_tab_standard_retry.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.btn_tab_standard_retry.setToolTip("Retry standardization")
         try:
             self.btn_tab_standard_retry.setIcon(self.style().standardIcon(QStyle.SP_BrowserReload))
         except Exception:
-            self.btn_tab_standard_retry.setText("⟳")
+            self.btn_tab_standard_retry.setText("R")
         self.btn_tab_standard_retry.setIconSize(QSize(18, 18))
-        self.btn_tab_standard_retry.setFixedSize(30, 30)
+        self.btn_tab_standard_retry.setFixedSize(34, 34)
         self.btn_tab_standard_retry.clicked.connect(self._handle_standard_retry_click)
 
-        _std_lay.addWidget(self.btn_tab_standard)
-        _std_lay.addWidget(self.btn_tab_standard_retry)
-
-        self.btn_tab_correction = QToolButton(tabs_bar)
-        self.btn_tab_correction.setText("✅ Correction")
-        self.btn_tab_correction.setProperty("role", "tab")
-        self.btn_tab_correction.setFixedHeight(30)
-        self.btn_tab_correction.setMinimumWidth(132)
-        self.btn_tab_correction.setCursor(Qt.PointingHandCursor)
-        self.btn_tab_correction.clicked.connect(lambda: self.switch_tab("correction"))
-
-
-        # ✅ Add each button ONLY ONCE, in correct order, aligned left
-        tabs_lay.addWidget(self.btn_tab_trans, 0, Qt.AlignLeft)
-        tabs_lay.addWidget(self.btn_tab_normal, 0, Qt.AlignLeft)
-        tabs_lay.addWidget(self.std_tab_group, 0, Qt.AlignLeft)
-        tabs_lay.addWidget(self.btn_tab_correction, 0, Qt.AlignLeft)
+        tabs_lay.addWidget(self.mode_tabs, 0, Qt.AlignLeft)
+        tabs_lay.addWidget(self.btn_tab_standard_retry, 0, Qt.AlignLeft)
 
         tabs_lay.addStretch(1)
         tabs_bar.setLayoutDirection(Qt.LeftToRight)
@@ -1570,22 +1654,24 @@ class UnifiedComposer(QWidget):
 
             /* unified tool buttons (send/+ and all text tools) */
             QToolButton[role="tool"] {{
-                background:#3a3a3a;
+                background:qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 rgba(248,251,255,0.12),
+                    stop:1 rgba(182,196,214,0.08));
                 color:{CLR_TEXT};
-                border:1px solid {CLR_BORDER};
+                border:1px solid rgba(143, 152, 164, 0.45);
                 border-radius:12px;
-                min-width:40px;
-                min-height:40px;
-                padding:0;
+                min-width:42px;
+                min-height:42px;
+                padding:0 2px;
                 font-size:13px;
                 font-weight:600;
             }}
 
             /* wide text tools (Voice Quality / Modalities / Turbo) */
             QToolButton[role="tool"][kind="text"] {{
-                min-width:80px;
-                min-height:40px;
-                padding: 0 10px;
+                min-width:86px;
+                min-height:42px;
+                padding: 0 12px;
             }}
             QToolButton[role="tool"][kind="text"]::menu-indicator {{
                 subcontrol-position: right center;
@@ -1593,8 +1679,13 @@ class UnifiedComposer(QWidget):
                 left: -4px;
             }}
 
-            QToolButton[role="tool"]:hover  {{ border-color:{CLR_ACCENT}; background:#4a4a4a; }}
-            QToolButton[role="tool"]:pressed{{ background:#2d2d2d; }}
+            QToolButton[role="tool"]:hover  {{
+                border-color: rgba(114, 190, 255, 0.95);
+                background: rgba(99, 179, 237, 0.22);
+            }}
+            QToolButton[role="tool"]:pressed{{
+                background: rgba(99, 179, 237, 0.32);
+            }}
         """)
         ctl = QHBoxLayout(controls)
         ctl.setContentsMargins(12, 6, 12, 6)
@@ -1620,7 +1711,7 @@ class UnifiedComposer(QWidget):
         self.btn_plus.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.btn_plus.setCursor(Qt.PointingHandCursor)
         self.btn_plus.setIconSize(icon_sz)
-        self.btn_plus.setFixedSize(30, 40)
+        self.btn_plus.setFixedSize(42, 42)
         _set_icon(self.btn_plus, "plus.png", icon_sz.width(), "Add voice/file")
         self.btn_plus.clicked.connect(self._choose_file)
 
@@ -1630,7 +1721,7 @@ class UnifiedComposer(QWidget):
         self.btn_mic.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.btn_mic.setCursor(Qt.PointingHandCursor)
         self.btn_mic.setIconSize(icon_sz)
-        self.btn_mic.setFixedSize(30, 40)
+        self.btn_mic.setFixedSize(42, 42)
         self.btn_mic.clicked.connect(self._on_mic_clicked)
 
         # 🔽 دکمه Dropdown کیفیت ترنسکریپت
@@ -1730,7 +1821,7 @@ class UnifiedComposer(QWidget):
         self.btn_send.setToolButtonStyle(Qt.ToolButtonIconOnly)
         self.btn_send.setCursor(Qt.PointingHandCursor)
         self.btn_send.setIconSize(icon_sz)
-        self.btn_send.setFixedSize(30, 40)
+        self.btn_send.setFixedSize(42, 42)
         _set_icon(self.btn_send, "send.png", icon_sz.width(), "Send")
         self.btn_send.clicked.connect(self._emit_send)
 
@@ -1746,7 +1837,7 @@ class UnifiedComposer(QWidget):
         self.btn_assist_send.setVisible(False)
         self.btn_assist_send.setStyleSheet("""
             QToolButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #6c5ce7, stop:1 #a29bfe);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0f9d7a, stop:1 #39c7a5);
                 color: #ffffff;
                 border: none;
                 border-radius: 10px;
@@ -1754,8 +1845,8 @@ class UnifiedComposer(QWidget):
                 font-size: 13px;
                 font-weight: 600;
             }
-            QToolButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #5b4cdb, stop:1 #918af5); }
-            QToolButton:pressed { background: #4a3fcf; }
+            QToolButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #0d8d6d, stop:1 #31b796); }
+            QToolButton:pressed { background: #0c7a60; }
             QToolButton:disabled { background: #555; color: #888; }
         """)
         self.btn_assist_send.clicked.connect(self._emit_assist)
@@ -1772,7 +1863,7 @@ class UnifiedComposer(QWidget):
         self.btn_search_send.setVisible(False)
         self.btn_search_send.setStyleSheet("""
             QToolButton {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00b894, stop:1 #55efc4);
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #d86b2e, stop:1 #ef9953);
                 color: #ffffff;
                 border: none;
                 border-radius: 10px;
@@ -1780,8 +1871,8 @@ class UnifiedComposer(QWidget):
                 font-size: 13px;
                 font-weight: 600;
             }
-            QToolButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #00a381, stop:1 #45ddb4); }
-            QToolButton:pressed { background: #009070; }
+            QToolButton:hover { background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #c66028, stop:1 #df8e49); }
+            QToolButton:pressed { background: #b45623; }
             QToolButton:disabled { background: #555; color: #888; }
         """)
         self.btn_search_send.clicked.connect(self._emit_search)
@@ -1804,7 +1895,6 @@ class UnifiedComposer(QWidget):
         ctl.addWidget(self.btn_search_send, 0, Qt.AlignVCenter)
         ctl.addWidget(self.btn_send, 0, Qt.AlignVCenter)
 
-        shell.addWidget(tabs_bar, 0)
         shell.addWidget(self.nt_bar, 0) 
         shell.addWidget(self.corr_bar, 0)
         shell.addWidget(self.box, 1)
@@ -1813,7 +1903,8 @@ class UnifiedComposer(QWidget):
         # ---------- بیرونی ----------
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(6)
+        outer.setSpacing(0)
+        outer.addWidget(tabs_bar, 0)
         outer.addWidget(self.input_shell, 0)
         self._apply_tab_styles()
         self.box.setPlainText(self._buf_standard)
@@ -2670,6 +2761,7 @@ class UnifiedComposer(QWidget):
     def switch_tab(self, tab: str):
         if tab not in ("standard", "transcribe", "normal_template", "correction") or tab == self._active_tab:
             self._update_lang_buttons_visibility()
+            self._apply_tab_styles()
             return
 
         # -----------------------------
@@ -2770,6 +2862,7 @@ class UnifiedComposer(QWidget):
             pass
 
         self._update_lang_buttons_visibility()
+        self._apply_tab_styles()
 
         # ✅ FIX: entering Correction must refresh dropdown once (if empty)
         if tab == "correction":
@@ -2919,12 +3012,16 @@ class UnifiedComposer(QWidget):
             self.box.setTextCursor(cursor)
                     
     def _apply_lang_button_styles(self):
+        if not hasattr(self, "btn_lang_en"):
+            return
         self.btn_lang_en.setProperty("active", "true" if self._std_lang == "en" else "false")
         self.btn_lang_pa.setProperty("active", "true" if self._std_lang == "pa" else "false")
         self.btn_lang_en.style().polish(self.btn_lang_en)
         self.btn_lang_pa.style().polish(self.btn_lang_pa)
 
     def _update_lang_buttons_visibility(self):
+        if not hasattr(self, "btn_lang_en"):
+            return
         show = (self._active_tab == "standard")
         self.btn_lang_en.setVisible(show)
         self.btn_lang_pa.setVisible(show)
@@ -3046,25 +3143,38 @@ class UnifiedComposer(QWidget):
 
 
     def _apply_tab_styles(self):
-        """Visual on/off for tabs (attribute 'active' used in stylesheet)."""
-        self.btn_tab_standard.setProperty("active", str(self._active_tab == "standard").lower())
-        self.btn_tab_trans.setProperty("active", str(self._active_tab == "transcribe").lower())
+        """Sync current tab state to the real QTabBar and retry affordance."""
+        self._set_tabbar_index_for(self._active_tab)
         try:
-            self.btn_tab_normal.setProperty("active", str(self._active_tab == "normal_template").lower())
+            self.btn_tab_standard_retry.setEnabled(True)
+            self.btn_tab_standard_retry.setToolTip("Retry standardization")
         except Exception:
             pass
 
+    def _set_tabbar_index_for(self, key: str) -> None:
         try:
-            self.btn_tab_correction.setProperty("active", str(self._active_tab == "correction").lower())
+            idx = self._tab_index_by_key.get(key)
+            if idx is None:
+                return
+            if self.mode_tabs.currentIndex() == idx:
+                return
+            self.mode_tabs.blockSignals(True)
+            self.mode_tabs.setCurrentIndex(idx)
+            self.mode_tabs.blockSignals(False)
         except Exception:
-            pass
+            try:
+                self.mode_tabs.blockSignals(False)
+            except Exception:
+                pass
 
-        # ریفرش استایل
-        for b in (self.btn_tab_standard, self.btn_tab_trans, getattr(self, "btn_tab_normal", None), getattr(self, "btn_tab_correction", None)):
-            if not b:
-                continue
-            b.style().unpolish(b)
-            b.style().polish(b)
+    def _on_mode_tab_changed(self, index: int) -> None:
+        key = self._tab_key_by_index.get(index)
+        if not key:
+            return
+        if key == "standard":
+            self._handle_standard_tab_click()
+            return
+        self.switch_tab(key)
 
 
     def _sync_composer_heights_for_tab(self, tab: str | None = None) -> None:

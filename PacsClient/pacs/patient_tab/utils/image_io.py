@@ -1945,9 +1945,11 @@ def read_series_instances_metadata(series_pk, instances):
         'instances': [],
     }
 
-    # add series info to metadata
+    # add series info to metadata (guard 2026-06-04: an unknown series_pk
+    # returns None from the DB — don't crash the metadata path with
+    # `update(None)`; an empty series dict degrades gracefully downstream)
     series_data = get_series_by_series_pk(series_pk)
-    metadata['series'].update(series_data)
+    metadata['series'].update(series_data or {})
 
     # add instances to metadata
     for instance in instances:  # for each-dicom in series

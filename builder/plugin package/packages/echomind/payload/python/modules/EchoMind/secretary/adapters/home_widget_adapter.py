@@ -154,6 +154,40 @@ class HomeWidgetAdapter:
         except Exception:
             return None
 
+    def read_patient_rows(self) -> list[dict[str, Any]]:
+        """Rows from the last patient search (consumed by list_patients).
+
+        Sources the per-row stashes the search path already maintains
+        (`_server_patient_meta_by_pid`, `_server_series_count_by_study` — see
+        _hp_search._add_socket_patient_to_table). Read-only. Added 2026-06-04:
+        list_patients probed read_patient_rows()/get_patient_rows()/
+        patient_rows() and none existed, so it always returned zero rows.
+        NOTE: the meta stash accumulates across searches — callers filter by
+        `modalities` when they need the latest search only.
+        """
+        home = self.home
+        if not home:
+            return []
+        meta = getattr(home, "_server_patient_meta_by_pid", {}) or {}
+        counts = getattr(home, "_server_series_count_by_study", {}) or {}
+        rows: list[dict[str, Any]] = []
+        for pid, m in list(meta.items()):
+            try:
+                uid = str((m or {}).get("latest_study_uid") or "")
+                rows.append({
+                    "patient_id": str(pid),
+                    "study_uid": uid,
+                    "study_uids": list((m or {}).get("study_uids") or []),
+                    "modalities": (m or {}).get("modalities") or (m or {}).get("modality"),
+                    "total_studies": (m or {}).get("total_studies"),
+                    "series_count": int(counts.get(uid, 0) or 0),
+                    "patient_name": str((m or {}).get("patient_name") or ""),
+                    "report_status": str((m or {}).get("report_status") or "pending"),
+                })
+            except Exception:
+                continue
+        return rows
+
     def open_patient(
         self,
         patient_id: str,
@@ -164,6 +198,21 @@ class HomeWidgetAdapter:
         if not self.home:
             raise RuntimeError("Home widget is unavailable")
         self.home._on_patient_double_clicked(patient_id, patient_name, study_uid, report_status)
+
+    def select_patient(
+        self,
+        patient_id: str,
+        patient_name: str,
+        study_uid: str,
+    ) -> None:
+        """Single-click selection — the SAME handler a real row click reaches
+        (debounced emit → `_on_patient_single_clicked`): marks the active
+        selection, runs the reconcile, and drives the right-panel thumbnail
+        fast-cache gate. Added 2026-06-04 (fidelity audit §4.1 — was the
+        largest untestable real workflow)."""
+        if not self.home:
+            raise RuntimeError("Home widget is unavailable")
+        self.home._on_patient_single_clicked(patient_id, patient_name, study_uid)
 
     def download_studies(self, studies: list[dict[str, Any]], set_current_tab: bool = False) -> None:
         if not self.home:

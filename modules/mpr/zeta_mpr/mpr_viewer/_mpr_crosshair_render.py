@@ -16,6 +16,30 @@ logger = logging.getLogger(__name__)
 class _MprCrosshairRenderMixin:
     """Mixin: crosshair lines, handles, slice info text, orientation labels."""
 
+    @staticmethod
+    def _force_crosshair_on_top(mapper):
+        """Make a crosshair line / handle mapper ALWAYS render on top of the MPR image slice.
+
+        The crosshair actors live in the same renderer as the image and sit in (or near) the slice
+        plane, so by default they z-fight with the slice and — once the crosshair is rotated and the
+        reconstructed views show a tilted oblique plane — parts of the lines fall at/behind the image
+        and get clipped/disappear. Biasing the mapper's depth toward the camera (coincident-topology
+        polygon/line/point offset, large negative units) makes its fragments win the depth test
+        against the coplanar/tilted image so the crosshair is drawn on top in every view. The bias
+        only shifts the depth-buffer value used for the test, NOT the on-screen position — so the
+        crosshair stays geometrically exact (correct for measurements/orientation).
+        """
+        try:
+            mapper.SetResolveCoincidentTopologyToPolygonOffset()
+            if hasattr(mapper, 'SetRelativeCoincidentTopologyPolygonOffsetParameters'):
+                mapper.SetRelativeCoincidentTopologyPolygonOffsetParameters(-1.0, -66000.0)
+            if hasattr(mapper, 'SetRelativeCoincidentTopologyLineOffsetParameters'):
+                mapper.SetRelativeCoincidentTopologyLineOffsetParameters(-1.0, -66000.0)
+            if hasattr(mapper, 'SetRelativeCoincidentTopologyPointOffsetParameter'):
+                mapper.SetRelativeCoincidentTopologyPointOffsetParameter(-66000.0)
+        except Exception as exc:
+            logger.debug("[ZETA_MPR] crosshair depth-bias (on-top) failed: %r", exc)
+
     def _create_crosshairs(self, renderer, view_name):
         """Create crosshair lines with interactive handles for a view"""
         bounds = self.image_data.GetBounds()
@@ -43,6 +67,10 @@ class _MprCrosshairRenderMixin:
         v_line_actor.GetProperty().SetColor(*self.crosshair_color)
         v_line_actor.GetProperty().SetLineWidth(self.crosshair_width)
 
+        # Keep the crosshair lines on top of the image in every view (incl. rotated/oblique).
+        self._force_crosshair_on_top(h_line_mapper)
+        self._force_crosshair_on_top(v_line_mapper)
+
         renderer.AddActor(h_line_actor)
         renderer.AddActor(v_line_actor)
 
@@ -58,33 +86,33 @@ class _MprCrosshairRenderMixin:
         logger.info(f"Crosshairs with handles created for {view_name} view")
 
     def _calculate_crosshair_endpoints(self, view_name, bounds):
-        """Calculate crosshair line endpoints with rotation support."""
-        cx, cy, cz = self.current_position
+        """Calculate crosshair line endpoints with rotation support.
+
+        Builds the two lines in this pane's ACTUAL in-plane axes (h_axis, v_axis) from
+        _view_axes(): the horizontal line spans h_axis, the vertical line spans v_axis, both held
+        at the crosshair's through-plane (look-axis) coordinate. For an axial-native volume the
+        axes are the legacy (X,Y)/(Y,Z)/(X,Z) triples, so the result is byte-identical; for a
+        routed non-axial-native series the lines correctly lie in the displayed plane.
+        """
+        look_axis, h_axis, v_axis = self._view_axes(view_name)
+        center = list(self.current_position)
         angle = self.crosshair_angles.get(view_name, 0.0)
         extend = 0.4
+        len_h = (bounds[2 * h_axis + 1] - bounds[2 * h_axis]) * extend
+        len_v = (bounds[2 * v_axis + 1] - bounds[2 * v_axis]) * extend
 
-        if view_name == 'axial':
-            len_h = (bounds[1] - bounds[0]) * extend
-            len_v = (bounds[3] - bounds[2]) * extend
-            h_p1 = [cx + len_h * math.cos(angle), cy + len_h * math.sin(angle), cz]
-            h_p2 = [cx - len_h * math.cos(angle), cy - len_h * math.sin(angle), cz]
-            v_p1 = [cx + len_v * math.cos(angle + math.pi/2), cy + len_v * math.sin(angle + math.pi/2), cz]
-            v_p2 = [cx - len_v * math.cos(angle + math.pi/2), cy - len_v * math.sin(angle + math.pi/2), cz]
-        elif view_name == 'sagittal':
-            len_h = (bounds[3] - bounds[2]) * extend
-            len_v = (bounds[5] - bounds[4]) * extend
-            h_p1 = [cx, cy + len_h * math.cos(angle), cz + len_h * math.sin(angle)]
-            h_p2 = [cx, cy - len_h * math.cos(angle), cz - len_h * math.sin(angle)]
-            v_p1 = [cx, cy + len_v * math.cos(angle + math.pi/2), cz + len_v * math.sin(angle + math.pi/2)]
-            v_p2 = [cx, cy - len_v * math.cos(angle + math.pi/2), cz - len_v * math.sin(angle + math.pi/2)]
-        elif view_name == 'coronal':
-            len_h = (bounds[1] - bounds[0]) * extend
-            len_v = (bounds[5] - bounds[4]) * extend
-            h_p1 = [cx + len_h * math.cos(angle), cy, cz + len_h * math.sin(angle)]
-            h_p2 = [cx - len_h * math.cos(angle), cy, cz - len_h * math.sin(angle)]
-            v_p1 = [cx + len_v * math.cos(angle + math.pi/2), cy, cz + len_v * math.sin(angle + math.pi/2)]
-            v_p2 = [cx - len_v * math.cos(angle + math.pi/2), cy, cz - len_v * math.sin(angle + math.pi/2)]
+        def _pt(d_h, d_v):
+            p = list(center)
+            p[h_axis] += d_h
+            p[v_axis] += d_v
+            return p
 
+        ca, sa = math.cos(angle), math.sin(angle)
+        ca2, sa2 = math.cos(angle + math.pi / 2), math.sin(angle + math.pi / 2)
+        h_p1 = _pt(len_h * ca,  len_h * sa)
+        h_p2 = _pt(-len_h * ca, -len_h * sa)
+        v_p1 = _pt(len_v * ca2,  len_v * sa2)
+        v_p2 = _pt(-len_v * ca2, -len_v * sa2)
         return h_p1, h_p2, v_p1, v_p2
 
     def _create_crosshair_handles(self, renderer, h_p1, h_p2, v_p1, v_p2, view_name):
@@ -102,6 +130,8 @@ class _MprCrosshairRenderMixin:
 
             mapper = vtk.vtkPolyDataMapper()
             mapper.SetInputConnection(sphere.GetOutputPort())
+            # Keep the handles on top of the image too (same depth-bias as the lines).
+            self._force_crosshair_on_top(mapper)
 
             actor = vtk.vtkActor()
             actor.SetMapper(mapper)
@@ -190,14 +220,22 @@ class _MprCrosshairRenderMixin:
             logger.warning(f"Could not add orientation labels to {view_name}: {e}")
 
     def _get_slice_info_text(self, view_name):
-        """Get slice information text for a view"""
-        if view_name == 'axial':
-            slice_num = int((self.current_position[2] - self.origin[2]) / self.spacing[2])
-            return f"Axial - Slice: {slice_num}/{self.dims[2]}"
-        elif view_name == 'sagittal':
-            slice_num = int((self.current_position[0] - self.origin[0]) / self.spacing[0])
-            return f"Sagittal - Slice: {slice_num}/{self.dims[0]}"
-        elif view_name == 'coronal':
-            slice_num = int((self.current_position[1] - self.origin[1]) / self.spacing[1])
-            return f"Coronal - Slice: {slice_num}/{self.dims[1]}"
-        return ""
+        """Get slice information text for a view.
+
+        Uses the pane's ACTUAL look-axis when the plane-aware anatomical cameras are active
+        (``self._anat_look_axis``), so the slice count matches the displayed plane even when
+        the native acquisition plane was routed to a different pane (e.g. a sagittal-acquired
+        series). Falls back to the legacy fixed axis map otherwise."""
+        axis_map = {'axial': 2, 'sagittal': 0, 'coronal': 1}
+        axis = axis_map.get(view_name, 2)
+        if getattr(self, '_mpr_use_anatomical', False):
+            la = getattr(self, '_anat_look_axis', None)
+            if isinstance(la, dict) and view_name in la:
+                axis = int(la[view_name])
+        try:
+            slice_num = int((self.current_position[axis] - self.origin[axis]) / self.spacing[axis])
+            total = int(self.dims[axis])
+        except Exception:
+            slice_num, total = 0, 0
+        label = view_name.capitalize() if view_name else ""
+        return f"{label} - Slice: {slice_num}/{total}"

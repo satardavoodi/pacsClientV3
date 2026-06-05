@@ -1,5 +1,32 @@
 # Zeta MPR — Engineering Journal
 
+> **2026-06-03 — Geometry/orientation work landed & LIVE-VALIDATED. Authoritative as-built:**
+> **`docs/pipelines/mpr-geometry-pipeline.md`** §10b + §10c (read it before touching MPR geometry).
+> FINAL design (the interim `Roll/Azimuth` rule was **retired**):
+> - `_mpr_canonicalize.py` is **orientation-only — never resamples** (resampling distorted the
+>   native input plane). It attaches field-data **`ZetaAnatA`** = world→patient
+>   `A = [-IOP_row, -IOP_col, slice_axis_lps]` (cols, patient LPS; `slice_axis_lps` from the IPP
+>   stacking order, not the bare IOP normal).
+> - **Anatomical grid-aligned cameras** (`_mpr_orientation._anatomical_camera`): each 2D camera is
+>   built from the volume's own world grid axes (clean upright rectangles — no oblique tilt),
+>   choosing only the **sign** from `A` so orientation is canonical. No `Roll/Azimuth`
+>   (`_needs_radiological_correction()` returns False on this path).
+> - **Plane-aware viewport routing (§10c):** each pane's look-axis = `argmax_k |A[:,k]·plane_normal|`,
+>   so the **native acquisition plane lands in its matching pane** (sagittal acq → Sagittal pane,
+>   etc.); axial-acq reduces to the old look=Z/X/Y (no regression). `_get_slice_info_text` +
+>   `_get_scroll_direction` follow the per-pane `_anat_look_axis`.
+> - **Markers are camera-derived** (`_anatomical_labels`) — the old hardcoded `_get_orientation_labels`
+>   open item is **RESOLVED**; letters always match the rendered image. The yellow "duplicate"
+>   markers were the `mpr_diagnostic_validator` overlay (`ZETA_MPR_DIAG=1`) — keep it OFF in prod.
+> - Flag `AIPACS_ZETA_MPR_CANONICALIZE` (default OFF; env or `zeta_mpr.json`). **Live path =
+>   `…/patient_toolbar/toolbar_manager.py::toggle_zeta_mpr`** (creates `StandardMPRViewer`);
+>   `modules/mpr/zeta_mpr/toolbar_integration.py` is **dead/legacy**.
+> **Live-validated 2026-06-03 (44608 brain MRI):** sagittal Series 7 → Sagittal pane (S-top,
+> face viewer-LEFT, 9/20); axial Series 5 → Axial pane (A-top, R-left, 11/24, no regression);
+> single marker set, no tilt, no 90° rotation. The §6 "open questions" (MR path untested; oblique
+> scroll; viewport routing) are now **answered/closed** by this design. NOTE: the module lives at
+> `modules/mpr/zeta_mpr/` (the old `PacsClient/pacs/patient_tab/zeta mpr/` path in this header is stale).
+
 **Module:** `PacsClient/pacs/patient_tab/zeta mpr/`  
 **Created:** 2026-02-17  
 **Last Updated:** 2026-02-17  

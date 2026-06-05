@@ -12,7 +12,10 @@ from typing import Any, Dict, List, Optional
 from unittest.mock import patch
 
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# tests/ was reorganized into tests/code/ on 2026-05-27 — this file moved one
+# level deeper, so the repo root is 4 parents up (was 3). parents[3] keeps it
+# robust to counting mistakes.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 

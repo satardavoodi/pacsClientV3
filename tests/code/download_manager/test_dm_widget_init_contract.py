@@ -16,8 +16,12 @@ import re
 from pathlib import Path
 
 
-_CANONICAL = Path("modules/download_manager/ui/widget/widget.py")
-_PLUGIN = Path(
+# Anchored to the repo root (2026-06-04): CWD-relative paths made these
+# contracts FileNotFoundError under any pytest invocation not started from
+# the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_CANONICAL = _REPO_ROOT / "modules/download_manager/ui/widget/widget.py"
+_PLUGIN = _REPO_ROOT / (
     "builder/plugin package/packages/download_manager/payload/python/"
     "modules/download_manager/ui/widget/widget.py"
 )

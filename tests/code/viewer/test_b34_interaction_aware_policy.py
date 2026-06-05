@@ -63,6 +63,18 @@ def _build_bridge_stub(slice_count: int = 100):
     """Build a minimal bridge-like stub with B3.4 methods bound."""
     bridge = SimpleNamespace()
 
+    # Spec refresh 2026-06-05 (RELIABILITY_STABILITY_REVIEW §13 follow-up):
+    # inert stand-ins for attributes the REAL bound methods now touch —
+    # production grew these after the stub was written.
+    bridge._emit_fast_advanced_geometry_leak_guard = lambda *a, **kw: None
+    bridge._mark_interaction_event = lambda *a, **kw: None
+    bridge._bind_tool_store_for_series = lambda *a, **kw: None
+    bridge._present_trace_register_request = lambda *a, **kw: 0
+    bridge._present_trace_mark_terminal = lambda *a, **kw: None
+    bridge._fast_clock_enabled = lambda: False  # called as a method
+    bridge._grow_future = None
+    bridge._sample_drag_pressure = lambda *a, **kw: "normal"  # sampler off → cached phase
+
     # State
     bridge._current_slice = 0
     bridge._slice_count = slice_count
@@ -281,6 +293,14 @@ class _FakePipeline:
 
     def _compute_adaptive_radius(self, velocity):
         return 3  # Default
+
+    def _get_protected_drag_ahead_radius(self):
+        # Spec refresh 2026-06-05: production's _prefetch_around now consults
+        # the protected-drag ahead/behind radii; mirror the plain config radius.
+        return int(self._config.prefetch_radius)
+
+    def _get_protected_drag_behind_radius(self, *a, **kw):
+        return int(self._config.prefetch_radius)
 
     def _submit_prefetch(self, idx, gen, *, request_epoch=0):
         self._submitted_prefetch.append(idx)

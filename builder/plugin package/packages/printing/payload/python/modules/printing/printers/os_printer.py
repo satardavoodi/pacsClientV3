@@ -30,11 +30,25 @@ class OSPrinterHandler:
 
         painter = QPainter(printer)
         if not painter.isActive():
+            # Painter never started → nothing to end. Returning False signals
+            # an actionable failure to the UI without raising.
             return False
 
-        rect = painter.viewport()
-        pixmap = film_pixmap
-        scaled = pixmap.scaled(rect.size(), aspectMode=Qt.KeepAspectRatio)
-        painter.drawPixmap(0, 0, scaled)
-        painter.end()
-        return True
+        try:
+            rect = painter.viewport()
+            pixmap = film_pixmap
+            # Use positional args + KeepAspectRatio + SmoothTransformation so
+            # the printed image is anti-aliased and not pixelated at the
+            # printer's native (usually 300 DPI) resolution. The previous
+            # ``aspectMode=`` kwarg was a name typo that worked only by
+            # coincidence on some PySide6 builds.
+            scaled = pixmap.scaled(
+                rect.size(), Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            # Centre on the page so KeepAspectRatio gutters are symmetric.
+            x = max(0, (rect.width() - scaled.width()) // 2)
+            y = max(0, (rect.height() - scaled.height()) // 2)
+            painter.drawPixmap(x, y, scaled)
+            return True
+        finally:
+            painter.end()

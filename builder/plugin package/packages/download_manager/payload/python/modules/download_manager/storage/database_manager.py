@@ -76,8 +76,41 @@ class DatabaseManager:
         metadata: StudyMetadata
     ) -> Dict[str, int]:
         """
+        Initialize DB records for a study, with retry-on-DB-lock (DM-H5).
+
+        The download subprocess shares the live dicom.db with the main app, so
+        a transient SQLite "database is locked" here is expected under write
+        contention. Retrying with exponential backoff yields the lock to the
+        other writer instead of hard-failing the whole study init — keeping the
+        download manager in resource harmony with the rest of the app.
+        """
+        import asyncio as _asyncio
+        last_exc = None
+        for _attempt in range(5):
+            try:
+                return await self._initialize_study_once(task, metadata)
+            except DatabaseError as e:
+                if 'database is locked' in str(e).lower() and _attempt < 4:
+                    _delay = 0.5 * (2 ** _attempt)
+                    logger.warning(
+                        f"⚠️ DB locked during initialize_study — retry in "
+                        f"{_delay:.1f}s ({_attempt + 1}/5)"
+                    )
+                    await _asyncio.sleep(_delay)
+                    last_exc = e
+                    continue
+                raise
+        if last_exc:
+            raise last_exc
+
+    async def _initialize_study_once(
+        self,
+        task: DownloadTask,
+        metadata: StudyMetadata
+    ) -> Dict[str, int]:
+        """
         Initialize database records for study
-        
+
         Args:
             task: Download task (contains complete patient information)
             metadata: Study metadata from server
@@ -362,15 +395,29 @@ class DatabaseManager:
         Returns:
             Number of instances inserted
         """
-        try:
-            # Add series_pk to each instance
-            for inst in instances:
-                inst['series_fk'] = series_pk
-            
-            count = insert_instances_batch(instances)
-            logger.debug(f"💾 Batch inserted {count} instances")
-            return count
-        
-        except Exception as e:
-            logger.error(f"❌ Batch insert failed: {e}")
-            return 0
+        import time as _time
+        # Add series_pk to each instance
+        for inst in instances:
+            inst['series_fk'] = series_pk
+
+        # DM-H5: retry on transient SQLite "database is locked". The download
+        # subprocess shares the live dicom.db with the main app; backing off
+        # lets the other writer through instead of silently dropping instance
+        # rows (which would leave files on disk with no DB record).
+        for _attempt in range(5):
+            try:
+                count = insert_instances_batch(instances)
+                logger.debug(f"💾 Batch inserted {count} instances")
+                return count
+            except Exception as e:
+                if 'database is locked' in str(e).lower() and _attempt < 4:
+                    _delay = 0.5 * (2 ** _attempt)
+                    logger.warning(
+                        f"⚠️ DB locked during batch_insert_instances — retry in "
+                        f"{_delay:.1f}s ({_attempt + 1}/5)"
+                    )
+                    _time.sleep(_delay)
+                    continue
+                logger.error(f"❌ Batch insert failed: {e}")
+                return 0
+        return 0

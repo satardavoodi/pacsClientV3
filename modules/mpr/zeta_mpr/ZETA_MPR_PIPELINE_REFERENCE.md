@@ -3,7 +3,13 @@
 **Version:** 1.08.9.8.3  
 **Last Updated:** 2026‑02‑17
 
-**Location**: `PacsClient/pacs/patient_tab/zeta mpr/`
+> **As-built pointer (2026-06-03):** for the orientation / world→patient model / canonical
+> reconstruction / **plane-aware viewport routing** as-built, see
+> `docs/pipelines/mpr-geometry-pipeline.md` §10b + §10c (live-validated 2026-06-03 on 44608:
+> native sagittal→Sagittal pane, native axial→Axial pane, no regression). Live MPR entry point =
+> `…/patient_toolbar/toolbar_manager.py::toggle_zeta_mpr`.
+
+**Location**: `modules/mpr/zeta_mpr/`  (header path below is stale)
 **Scope**: Standard MPR (orthogonal + oblique), cross‑lines, tools/measurements, and input orientation handling  
 **Sister docs:**  
 - `ZETA_MPR_ENGINEERING_JOURNAL.md` — learning diary, research log, open questions, wrong assumptions  

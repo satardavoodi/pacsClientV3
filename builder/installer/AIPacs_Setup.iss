@@ -59,6 +59,11 @@ Name: "optional"; Description: "Optional modules — copied now, activated on fi
 #if AdvancedMprAvailable
 Name: "optional\advanced_mpr"; Description: "Advanced MPR — 3D reconstruction with bundled Slicer runtime (large download)"; Types: custom
 #endif
+; data_analysis added 2026-06-04: it is tier=optional in the runtime module
+; catalog / plugin registry but was staged under Components: core — the only
+; optional module the installer did not expose (parity test
+; tests/code/builder/test_plugin_package_registry.py caught it once unblocked).
+Name: "optional\data_analysis"; Description: "Data Analysis — statistics and reporting dashboards"; Types: custom
 Name: "optional\printing"; Description: "Printing — medical film printing and DICOM export workflows"; Types: custom
 Name: "optional\run_cd"; Description: "Run CD — portable DICOM media export and delivery"; Types: custom
 Name: "optional\web_browser"; Description: "Web Browser — embedded browser access inside the workstation"; Types: custom
@@ -81,7 +86,7 @@ Name: "{commonappdata}\AIPacs\module_packages"; Permissions: users-modify
 [Files]
 Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{commonappdata}\AIPacs\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
-Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{commonappdata}\AIPacs\module_packages\data_analysis"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{commonappdata}\AIPacs\module_packages\data_analysis"; Components: optional\data_analysis; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 #if AdvancedMprAvailable
 Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Excludes: "*.pyc,*.pyo,*.pyd.orig,*\__pycache__\*,*\.pytest_cache\*,*\.mypy_cache\*,*\tests\*,*\docs\*,*\examples\*"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 #endif

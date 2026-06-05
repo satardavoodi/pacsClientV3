@@ -231,10 +231,15 @@ class TestTextStateMachine:
         assert ctrl._state == ToolState.IDLE
 
     def test_multiple_text_clicks(self):
+        # Spec refresh 2026-06-04: the controller now prefers EDITING an
+        # existing annotation over creating a new one when the press lands
+        # within the hit threshold (~8.4 px body) — an intentional UX change.
+        # The second click must land clearly outside the first text's grab
+        # zone to create a second annotation.
         ctrl, store = _make_controller()
         ctrl.activate(ToolType.TEXT)
         ctrl.on_mouse_press(0.0, 0.0, 0)
-        ctrl.on_mouse_press(5.0, 5.0, 0)
+        ctrl.on_mouse_press(50.0, 50.0, 0)
         assert store.count() == 2
 
 
@@ -269,17 +274,27 @@ class TestEraserTool:
         assert store.count() == 1
 
     def test_eraser_only_removes_closest(self):
-        """Two rulers on top of each other — eraser removes only one."""
+        """Eraser removes only the nearest annotation, not all in range.
+
+        Spec refresh 2026-06-04: identical overlapping rulers can no longer
+        be click-placed (the controller's edit-preference grabs the existing
+        one — intentional UX). Two well-separated rulers still verify the
+        eraser's single-closest-target semantics: one click removes exactly
+        the near ruler and leaves the far one.
+        """
         ctrl, store = _make_controller()
         ctrl.activate(ToolType.RULER)
         ctrl.on_mouse_press(0.0, 0.0, 0)
         ctrl.on_mouse_press(10.0, 0.0, 0)
-        ctrl.on_mouse_press(0.0, 0.0, 0)
-        ctrl.on_mouse_press(10.0, 0.0, 0)
+        ctrl.on_mouse_press(100.0, 0.0, 0)
+        ctrl.on_mouse_press(110.0, 0.0, 0)
         assert store.count() == 2
         ctrl.activate(ToolType.ERASER)
         ctrl.on_mouse_press(5.0, 0.0, 0)
         assert store.count() == 1
+        # The survivor must be the FAR ruler.
+        remaining = store.get_for_slice(0)
+        assert remaining and remaining[0].points_image[0][0] >= 100.0
 
     def test_eraser_wrong_slice_does_not_remove(self):
         """Annotation on slice 0, eraser click on slice 5 → no removal."""

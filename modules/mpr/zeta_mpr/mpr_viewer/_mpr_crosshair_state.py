@@ -79,18 +79,16 @@ class _MprCrosshairStateMixin:
             current_focal = list(camera.GetFocalPoint())
             current_pos = list(camera.GetPosition())
 
-            if view_name == 'axial':
-                delta = self.current_position[2] - current_focal[2]
-                current_focal[2] = self.current_position[2]
-                current_pos[2] += delta
-            elif view_name == 'sagittal':
-                delta = self.current_position[0] - current_focal[0]
-                current_focal[0] = self.current_position[0]
-                current_pos[0] += delta
-            elif view_name == 'coronal':
-                delta = self.current_position[1] - current_focal[1]
-                current_focal[1] = self.current_position[1]
-                current_pos[1] += delta
+            # Move the camera ONLY along this pane's through-plane (look) axis to follow the
+            # crosshair, keeping focal+position together so the viewing direction & distance are
+            # preserved (image stays put; the slice advances). The look axis comes from
+            # _view_axes() so a routed non-axial-native series uses its ACTUAL through-plane axis
+            # instead of the hardcoded axial=Z/sag=X/cor=Y (which slid the slice out of the
+            # volume → black image). Axial-native returns the legacy axis → unchanged.
+            look_axis = self._view_axes(view_name)[0]
+            delta = self.current_position[look_axis] - current_focal[look_axis]
+            current_focal[look_axis] = self.current_position[look_axis]
+            current_pos[look_axis] += delta
 
             camera.SetFocalPoint(current_focal)
             camera.SetPosition(current_pos)

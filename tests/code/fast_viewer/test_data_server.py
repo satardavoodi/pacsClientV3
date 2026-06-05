@@ -110,7 +110,12 @@ class TestRecvExact:
 
         client = PatientListSocketClient.__new__(PatientListSocketClient)
         mock_sock = MagicMock()
-        mock_sock.recv.return_value = b""  # immediate EOF
+        # Spec refresh 2026-06-04: _recv_exact switched from recv() to
+        # zero-copy recv_into(memoryview, nbytes) — mock the new API
+        # (returning a bare MagicMock from recv_into made `pos += nbytes`
+        # blow up with a MagicMock/int TypeError).
+        mock_sock.recv_into.return_value = 0  # immediate EOF
+        mock_sock.recv.return_value = b""
 
         try:
             # _recv_exact reads from self.socket and returns partial bytes on EOF (no raise)
@@ -131,14 +136,17 @@ class TestRecvExact:
         client = PatientListSocketClient.__new__(PatientListSocketClient)
         chunks = [b"\x00\x00", b"\x00", b"\x0A"]  # 4 bytes total = 10
 
-        def _recv(n):
+        # Spec refresh 2026-06-04: _recv_exact now uses zero-copy
+        # recv_into(memoryview, nbytes) — emulate split delivery through it.
+        def _recv_into(buf, nbytes):
             if not chunks:
-                return b""
-            c = chunks.pop(0)
-            return c
+                return 0
+            c = chunks.pop(0)[:nbytes]
+            buf[: len(c)] = c
+            return len(c)
 
         mock_sock = MagicMock()
-        mock_sock.recv.side_effect = _recv
+        mock_sock.recv_into.side_effect = _recv_into
 
         try:
             client.socket = mock_sock

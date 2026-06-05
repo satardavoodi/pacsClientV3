@@ -311,12 +311,17 @@ class TestMultipleRulers:
     """Multiple rulers on same and different slices."""
 
     def test_two_rulers_same_slice(self):
+        # Spec refresh 2026-06-04: the controller now prefers EDITING an
+        # existing annotation when a press lands within its grab threshold
+        # (~8.4 px body) — intentional UX. The second ruler must start
+        # clearly outside the first ruler's grab zone (the old start point
+        # at x=10 was only 5 px from the first ruler's end at x=5).
         ctrl, store = _make_controller()
         ctrl.activate(ToolType.RULER)
         ctrl.on_mouse_press(0.0, 0.0, 0)
         ctrl.on_mouse_press(5.0, 0.0, 0)
-        ctrl.on_mouse_press(10.0, 0.0, 0)
-        ctrl.on_mouse_press(20.0, 0.0, 0)
+        ctrl.on_mouse_press(40.0, 0.0, 0)
+        ctrl.on_mouse_press(60.0, 0.0, 0)
         assert store.count() == 2
         assert len(store.get_for_slice(0)) == 2
 

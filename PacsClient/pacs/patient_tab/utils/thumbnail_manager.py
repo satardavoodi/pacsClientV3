@@ -617,7 +617,32 @@ class DraggableButton(QPushButton):
                             max(0, min(int(hot_spot.y()), max_y)),
                         )
                         drag.setHotSpot(hot_spot)
-                    drag.exec(Qt.CopyAction)
+                    # Crash-A fix (2026-06-04, CRASH_STABILITY_INVESTIGATION §9):
+                    # drag.exec() spins the native OLE DoDragDrop nested modal loop
+                    # on the main thread. Without the protected-drag latch, queued
+                    # timers and worker→main signals (FAST grow/prefetch, viewport
+                    # rebuilds, DM table refresh, thumbnail create/destroy) keep
+                    # dispatching INSIDE that loop and re-enter native window/COM
+                    # operations in the drag's OLE apartment → 0x8001010d
+                    # (RPC_E_WRONGTHREAD). The FAST stack-drag already arms this
+                    # latch (qt_slice_viewer.py:893/940); arm it for the
+                    # thumbnail→viewport drag too so the existing
+                    # is_protected_drag_active() gates defer that re-entrant work.
+                    # The 250 ms tail covers the deferred series-switch QTimer(0).
+                    _ui_throttle = None
+                    try:
+                        from modules.viewer.fast import ui_throttle as _ui_throttle
+                        _ui_throttle.record_protected_drag(True, grace_ms=1500.0)
+                    except Exception:
+                        _ui_throttle = None
+                    try:
+                        drag.exec(Qt.CopyAction)
+                    finally:
+                        if _ui_throttle is not None:
+                            try:
+                                _ui_throttle.record_protected_drag(False, grace_ms=250.0)
+                            except Exception:
+                                pass
                     self._drag_start_pos = None
         super().mouseMoveEvent(event)
 

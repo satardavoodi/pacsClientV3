@@ -53,7 +53,7 @@ if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
 # Reuse the Case matrix and synthetic-series factory from F1.1.
-from tests.viewer.test_overlap_pixel_quality import (  # type: ignore
+from tests.code.viewer.test_overlap_pixel_quality import (  # type: ignore
     CASES,
     Case,
     GOLDEN_DIR,

@@ -22,8 +22,14 @@ def _method_body(src: str, method: str) -> str:
     return m.group(0)
 
 
+# Anchored to the repo root (2026-06-04): CWD-relative paths made the
+# canonical check FileNotFoundError under any pytest invocation not started
+# from the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+
+
 def test_grpc_connect_has_no_sleep_calls_canonical() -> None:
-    src = Path("modules/download_manager/network/grpc_client.py").read_text(encoding="utf-8")
+    src = (_REPO_ROOT / "modules/download_manager/network/grpc_client.py").read_text(encoding="utf-8")
     body = _method_body(src, "_connect")
     assert "time.sleep(" not in body, (
         "Found time.sleep() inside GrpcMetadataClient._connect in canonical file. "
@@ -32,7 +38,7 @@ def test_grpc_connect_has_no_sleep_calls_canonical() -> None:
 
 
 def test_grpc_connect_has_no_sleep_calls_plugin() -> None:
-    plugin = Path(
+    plugin = _REPO_ROOT / (
         "builder/plugin package/packages/download_manager/payload/python/"
         "modules/download_manager/network/grpc_client.py"
     )

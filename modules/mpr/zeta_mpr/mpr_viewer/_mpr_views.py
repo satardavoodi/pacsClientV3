@@ -76,10 +76,48 @@ class _MprViewsMixin:
         views_layout.setSpacing(2)
         self._views_layout = views_layout
 
-        self._create_axial_view(views_layout, 0, 0)
-        self._create_3d_view(views_layout, 0, 1)
-        self._create_sagittal_view(views_layout, 1, 0)
-        self._create_coronal_view(views_layout, 1, 1)
+        layout_views = getattr(self, '_layout_views', None)
+        if layout_views:
+            # Projection / subset mode (MIP / MinIP / Thick Slab from the dropdown): build ONLY the
+            # requested 1–3 view(s) in a single row — no 3D pane, never the full 4-panel.
+            _creators = {
+                'axial': self._create_axial_view,
+                'sagittal': self._create_sagittal_view,
+                'coronal': self._create_coronal_view,
+            }
+            for _col, _vname in enumerate(layout_views):
+                _creator = _creators.get(_vname)
+                if _creator is not None:
+                    _creator(views_layout, 0, _col)
+            logger.info("[ZETA_MPR] subset layout built: %s (slab=%s)", layout_views,
+                        getattr(self, '_slab_mode', None))
+        else:
+            self._create_axial_view(views_layout, 0, 0)
+            self._create_3d_view(views_layout, 0, 1)
+            self._create_sagittal_view(views_layout, 1, 0)
+            self._create_coronal_view(views_layout, 1, 1)
+
+        # The NATIVE-plane pane (the one looking down the acquired-slice axis) must show the
+        # ORIGINAL acquired slices (nearest-neighbour, no blending); the other two panes are MPR
+        # reconstructions (linear). Hardcoding interpolation per pane name made a routed
+        # sagittal/coronal-native series interpolate its native plane — this re-assigns by role.
+        # Runs AFTER all cameras/routing are set so _view_axes() is populated for every view.
+        self._apply_native_plane_interpolation()
+
+        # Projection mode: apply the requested slab (max=MIP / min=MinIP / mean=Thick Slab) to the
+        # built view(s). Reuses the existing _apply_slab_projection (sets vtkImageResliceMapper
+        # SetSlabThickness + SetSlabTypeToMax/Min/Mean); it iterates only views present in
+        # self.viewers, so in subset mode it touches exactly the requested pane(s). No-op when
+        # slab_mode is None (full 4-panel MPR unchanged).
+        _slab_mode = getattr(self, '_slab_mode', None)
+        if _slab_mode and hasattr(self, '_apply_slab_projection'):
+            try:
+                _thk = getattr(self, '_slab_thickness_mm', None)
+                if not _thk or _thk <= 0:
+                    _thk = 10.0
+                self._apply_slab_projection(_slab_mode, float(_thk))
+            except Exception as exc:
+                logger.warning("[ZETA_MPR] slab projection apply failed: %r", exc)
 
         content_layout.addWidget(views_container, stretch=1)
         main_layout.addWidget(content_container)
@@ -219,6 +257,48 @@ class _MprViewsMixin:
     # View creation
     # ------------------------------------------------------------------
 
+    def _apply_native_plane_interpolation(self):
+        """Set each 2D pane's image interpolation by ROLE (native vs reconstructed), not pane name.
+
+        The NATIVE plane is the pane whose through-plane (look) axis is the volume's acquired-slice
+        axis — world axis 2 (= A's ``slice_axis_lps``; for a legacy axial-native volume this is the
+        axial stacking axis). That pane shows the ORIGINAL acquired slices, so it uses NEAREST
+        interpolation (no blending across acquired slices). The other two panes are MPR
+        reconstructions and use LINEAR (smooth reslice). For axial-native input this reproduces the
+        original per-pane setup (axial=nearest, sagittal/coronal=linear) → no change; for a routed
+        sagittal/coronal-native series it moves NEAREST onto the ACTUAL native pane so its native
+        plane is no longer interpolated, and makes the (now reconstructed) axial pane linear.
+        """
+        NATIVE_SLICE_AXIS = 2  # vtkImageData 3rd dim / A[:,2] = acquired-slice direction
+        for view in ('axial', 'sagittal', 'coronal'):
+            info = self.viewers.get(view)
+            if not info:
+                continue
+            actor = info.get('actor')
+            if actor is None:
+                continue
+            try:
+                look_axis = int(self._view_axes(view)[0])
+                prop = actor.GetProperty()
+                mapper = info.get('mapper')
+                if look_axis == NATIVE_SLICE_AXIS:
+                    # Native plane: original acquired slices — nearest + native-resolution sampling
+                    # (matches how the axial pane was treated when axial was always native).
+                    prop.SetInterpolationTypeToNearest()
+                    if mapper is not None and hasattr(mapper, 'SetResampleToScreenPixels'):
+                        mapper.SetResampleToScreenPixels(False)
+                    role = "native(nearest)"
+                else:
+                    # Reconstructed plane: smooth MPR — linear + screen-pixel resample (the
+                    # original sagittal/coronal default).
+                    prop.SetInterpolationTypeToLinear()
+                    if mapper is not None and hasattr(mapper, 'SetResampleToScreenPixels'):
+                        mapper.SetResampleToScreenPixels(True)
+                    role = "reconstructed(linear)"
+                logger.info("[ZETA_MPR] %s pane interpolation -> %s (look_axis=%d)", view, role, look_axis)
+            except Exception as exc:
+                logger.debug("[ZETA_MPR] native-plane interpolation set failed for %s: %r", view, exc)
+
     def _create_axial_view(self, layout, row, col):
         """Create axial view (XY plane) - Original slices, NO interpolation between slices"""
         emit_viewer_event(
@@ -345,7 +425,7 @@ class _MprViewsMixin:
         camera.ParallelProjectionOn()
 
         # CT-specific camera correction
-        if self.detected_modality == "CT":
+        if self._needs_radiological_correction():
             camera.Roll(180)
 
         renderer.ResetCamera()
@@ -419,7 +499,7 @@ class _MprViewsMixin:
         camera.ParallelProjectionOn()
 
         # CT-specific camera corrections
-        if self.detected_modality == "CT":
+        if self._needs_radiological_correction():
             camera.Azimuth(180)
             camera.Roll(180)
 
@@ -505,7 +585,7 @@ class _MprViewsMixin:
         )
         camera.SetFocalPoint(self.center[0], self.center[1], self.center[2])
 
-        if self.detected_modality == "CT":
+        if self._needs_radiological_correction():
             camera.Elevation(15)
             camera.Roll(180)
             camera.Zoom(1.3)
@@ -605,15 +685,30 @@ class _MprViewsMixin:
     # ------------------------------------------------------------------
 
     def setup_auto_rotation(self):
-        """Setup auto-rotation timer for 3D view"""
+        """Setup auto-rotation for the 3D view.
+
+        Auto-rotation is **OFF by default** (performance + stability). When on, a 30 ms QTimer
+        (~33 fps) continuously volume-renders the 3D pane until the first user interaction —
+        that drains CPU/GPU at idle, makes the 2D panes choppy while it spins, and widens the
+        teardown race (a rotation tick can fire into a finalizing VTK render window → the
+        0x8001010d crash family). Opt back in with env ``AIPACS_ZETA_MPR_AUTOROTATE=1``.
+
+        The timer object is still created (so ``stop_auto_rotation`` / ``cleanup`` and any future
+        UI toggle stay valid); it is only **started** when explicitly enabled.
+        """
         if '3d' not in self.viewers:
             return
         self.auto_rotation_timer = QTimer(self)
         self.auto_rotation_timer.timeout.connect(self.auto_rotate_step)
         self.auto_rotation_timer.setInterval(30)
-        self.auto_rotation_active = True
-        self.auto_rotation_timer.start()
-        logger.info("Auto-rotation enabled for 3D view - will stop on user interaction")
+        import os as _os
+        enabled = _os.environ.get("AIPACS_ZETA_MPR_AUTOROTATE", "0") == "1"
+        self.auto_rotation_active = enabled
+        if enabled:
+            self.auto_rotation_timer.start()
+            logger.info("Auto-rotation enabled for 3D view (AIPACS_ZETA_MPR_AUTOROTATE=1) - stops on user interaction")
+        else:
+            logger.info("Auto-rotation disabled by default (set AIPACS_ZETA_MPR_AUTOROTATE=1 to enable)")
 
     def auto_rotate_step(self):
         """Perform one step of automatic rotation"""

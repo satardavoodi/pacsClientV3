@@ -79,6 +79,15 @@ logger = logging.getLogger(__name__)
 
 _SET_SLICE_STAGE_LOG_THRESHOLD_MS = 16.0
 _FAST_STACK_PRESSURE_SAMPLE_MIN_INTERVAL_MS = 125.0
+# The stack-drag "pressure" sampler runs a battery of synchronous psutil /
+# system-stat calls (virtual_memory, process+system io_counters, cpu_times,
+# memory_info) plus telemetry snapshots on the MAIN thread every ~125ms during a
+# drag. On Windows those calls intermittently stall the UI thread 300-500ms
+# mid-drag, making stack scrolling choppy (worse on high-slice-count series).
+# It is PURE telemetry — the phase it returns only labels KPI metrics and never
+# affects rendering, reference lines, geometry overlays, or filters — so it is
+# OFF by default and opt-in via AIPACS_FAST_STACK_PRESSURE=1.
+_FAST_STACK_PRESSURE_ENABLED = str(os.getenv('AIPACS_FAST_STACK_PRESSURE', '') or '').strip() == '1'
 _FAST_RENDER_CLOCK_BASE_INTERVAL_MS = 33
 _FAST_RENDER_CLOCK_FAST_INTERVAL_MS = 16
 _FAST_RENDER_CLOCK_IDLE_STOP_MS = 260.0
@@ -1985,6 +1994,12 @@ class QtViewerBridge:
 
     def _sample_drag_pressure(self, *, force: bool = False, reason: str = '') -> str:
         metrics = self._drag_metrics or {}
+        # Perf guard (default ON): skip the main-thread psutil/system-stat battery
+        # unless the operator explicitly opts in. This removes the per-drag UI-thread
+        # stalls without changing any stacking behaviour — the returned phase is
+        # telemetry-only. See _FAST_STACK_PRESSURE_ENABLED above.
+        if not _FAST_STACK_PRESSURE_ENABLED:
+            return str(metrics.get('last_pressure_phase', 'baseline') or 'baseline')
         sampler = metrics.get('pressure_sampler')
         if sampler is None:
             return str(metrics.get('last_pressure_phase', 'baseline') or 'baseline')

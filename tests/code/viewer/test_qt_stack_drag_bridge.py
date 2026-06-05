@@ -14,8 +14,29 @@ from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_series import _VWS
 from modules.viewer.fast.qt_slice_viewer import QtSliceViewer
 
 
+def _stub_new_bridge_attrs(bridge):
+    """Inert stand-ins for attributes the REAL bound methods now touch.
+
+    Spec refresh 2026-06-05 (RELIABILITY_STABILITY_REVIEW §13 follow-up):
+    these stubs bind real QtViewerBridge methods onto SimpleNamespace, so
+    every new self-attribute production code grows breaks them. Centralised
+    here so the next addition is a one-line fix.
+    """
+    bridge._emit_fast_advanced_geometry_leak_guard = lambda *a, **kw: None
+    bridge._bind_tool_store_for_series = lambda *a, **kw: None
+    bridge._present_trace_register_request = lambda *a, **kw: 0  # returns a request id (int)
+    bridge._present_trace_mark_terminal = lambda *a, **kw: None
+    bridge._mark_interaction_event = getattr(
+        bridge, "_mark_interaction_event", lambda *a, **kw: None)
+    bridge._current_window_level = getattr(
+        bridge, "_current_window_level", lambda *a, **kw: (400.0, 40.0))
+    bridge._fast_clock_enabled = getattr(bridge, "_fast_clock_enabled", False)
+    bridge._grow_future = getattr(bridge, "_grow_future", None)
+    return bridge
+
+
 def _build_reset_bridge_stub(slice_count: int, current_slice: int = 0):
-    bridge = SimpleNamespace()
+    bridge = _stub_new_bridge_attrs(SimpleNamespace())
     bridge.metadata = {}
     bridge._slice_count = slice_count
     bridge._current_slice = current_slice
@@ -66,7 +87,7 @@ class _FakeSignal:
 
 
 def _build_bridge_stub(slice_count: int = 200):
-    bridge = SimpleNamespace()
+    bridge = _stub_new_bridge_attrs(SimpleNamespace())
     bridge._current_slice = 0
     bridge._slice_count = slice_count
     bridge._stack_drag_active = True
@@ -105,7 +126,7 @@ def _build_bridge_stub(slice_count: int = 200):
 
 
 def _build_cleanup_bridge_stub():
-    bridge = SimpleNamespace()
+    bridge = _stub_new_bridge_attrs(SimpleNamespace())
     bridge.qt_viewer = SimpleNamespace(
         window_level_changed=_FakeSignal(),
         slice_scroll_requested=_FakeSignal(),
@@ -140,7 +161,7 @@ def _build_cleanup_bridge_stub():
 
 
 def _build_end_fast_bridge_stub():
-    bridge = SimpleNamespace()
+    bridge = _stub_new_bridge_attrs(SimpleNamespace())
     bridge._current_slice = 42
     bridge._last_settle_reason = 'stack_drag_stop'
     bridge._last_stack_direction = -1
@@ -176,7 +197,7 @@ def _build_end_fast_bridge_stub():
 
 
 def _build_window_level_bridge_stub():
-    bridge = SimpleNamespace()
+    bridge = _stub_new_bridge_attrs(SimpleNamespace())
     bridge.metadata = {}
     bridge._current_slice = 3
     bridge._slice_count = 12
@@ -210,7 +231,7 @@ def _build_window_level_bridge_stub():
 
 
 def _build_mock_vtk_bridge_stub():
-    bridge = SimpleNamespace()
+    bridge = _stub_new_bridge_attrs(SimpleNamespace())
     bridge._slice_count = 0
     bridge.qt_viewer = SimpleNamespace(set_pixel_spacing=lambda _spacing: None)
     bridge.renderer = SimpleNamespace(_camera=SimpleNamespace(_parallel_scale=0.0))

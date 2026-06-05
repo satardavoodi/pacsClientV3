@@ -249,6 +249,31 @@ def replace_selected_viewport_with_new_mpr_zeta(toolbar_manager, selected_widget
     # Don't delete - keep reference for restoration later
     print("[NEW MPR ZETA] Original widget removed from layout and hidden", file=sys.stderr, flush=True)
 
+    # Phase 1 orientation fix (DEFAULT OFF, fail-safe). When enabled via env
+    # AIPACS_ZETA_MPR_CANONICALIZE, oblique / non-axial input is resampled to a
+    # true axis-aligned LPS volume so the CT-tuned MPR path renders MR / oblique
+    # series with correct radiological orientation. No-op for axis-aligned input
+    # (e.g. true-axial CT) and when the flag is off. Any error -> input unchanged.
+    # See modules/mpr/zeta_mpr/_mpr_canonicalize.py and
+    # ZETA_MPR_ORIENTATION_INVESTIGATION_2026-06-02.md.
+    try:
+        from modules.mpr.zeta_mpr._mpr_canonicalize import (
+            canonicalize_enabled,
+            canonicalize_volume,
+            probe as _canon_probe,
+        )
+        _enabled = canonicalize_enabled()
+        _canon_probe(f"toolbar reached: canonicalize_enabled()={_enabled} series_idx={series_index}")
+        if _enabled:
+            vtk_image_data = canonicalize_volume(vtk_image_data, dicom_directory)
+    except Exception as _canon_err:  # never block MPR launch
+        try:
+            from modules.mpr.zeta_mpr._mpr_canonicalize import probe as _canon_probe2
+            _canon_probe2(f"toolbar EXCEPTION: {_canon_err!r}")
+        except Exception:
+            pass
+        print(f"[ZETA_MPR_CANONICALIZE] skipped due to error: {_canon_err}", file=sys.stderr, flush=True)
+
     print("Creating StandardMPRViewer...", file=sys.stderr, flush=True)
     try:
         new_mpr_zeta_widget = StandardMPRViewer(

@@ -241,7 +241,7 @@ class SocketDicomClient:
                 if self.socket:
                     try:
                         self.socket.close()
-                    except:
+                    except Exception:
                         pass
                     self.socket = None
                 return False
@@ -732,9 +732,24 @@ class SocketDicomClient:
                     )
 
                     response_length = int.from_bytes(response_length_bytes, byteorder='big')
-                    
-                    # Validate response length to prevent extremely large allocations
+
+                    # Validate response length to prevent extremely large allocations.
+                    # An implausibly large length means the socket stream has
+                    # desynchronized — the 4 "length" bytes are really payload
+                    # bytes. The generic except handler below does NOT treat
+                    # "Response too large" as a transient drop, so without this
+                    # the corrupt socket would be reused and keep mis-reading
+                    # garbage lengths on every subsequent request. Drop the
+                    # socket here so the next request reconnects on a clean
+                    # stream instead of cascading the same error.
                     if response_length > 500 * 1024 * 1024:  # 500MB limit
+                        try:
+                            if self.socket:
+                                self.socket.close()
+                        except Exception:
+                            pass
+                        self.socket = None
+                        self.connected = False
                         raise NetworkError(f"Response too large: {response_length} bytes")
 
                     logger.debug(
@@ -839,7 +854,7 @@ class SocketDicomClient:
                     if self.socket:
                         try:
                             self.socket.close()
-                        except:
+                        except Exception:
                             pass
                         self.socket = None
                     return _cancelled_response()
@@ -851,7 +866,7 @@ class SocketDicomClient:
                 if self.socket:
                     try:
                         self.socket.close()
-                    except:
+                    except Exception:
                         pass
                     self.socket = None
                 # R30: Record failure for health monitoring
@@ -864,7 +879,7 @@ class SocketDicomClient:
                     if self.socket:
                         try:
                             self.socket.close()
-                        except:
+                        except Exception:
                             pass
                         self.socket = None
                     return _cancelled_response()
@@ -880,7 +895,7 @@ class SocketDicomClient:
                     if self.socket:
                         try:
                             self.socket.close()
-                        except:
+                        except Exception:
                             pass
                         self.socket = None
                     # R30: Record failure for health monitoring
@@ -910,7 +925,7 @@ class SocketDicomClient:
             if self.socket:
                 try:
                     self.socket.close()
-                except:
+                except Exception:
                     pass
                 self.socket = None
             return b""
@@ -924,7 +939,7 @@ class SocketDicomClient:
                 if self.socket:
                     try:
                         self.socket.close()
-                    except:
+                    except Exception:
                         pass
                     self.socket = None
                 return b""
@@ -1042,7 +1057,11 @@ class SocketDicomClient:
         min_batch_size = 1
         total_batches = (expected_count + batch_size - 1) // batch_size
         downloaded_count = 0
-        
+        # DL-9: file names written by this run. Together with existing_files_set
+        # (the pre-download os.listdir snapshot) this resolves file presence in
+        # memory, removing one stat() syscall per instance in the loop below.
+        written_this_run = set()
+
         logger.info(f"📦 Will download in {total_batches} batches (batch size: {batch_size})")
         
         start_time = time.time()
@@ -1215,12 +1234,16 @@ class SocketDicomClient:
                 file_name = f"Instance_{instance_num_int:04d}.dcm"
                 file_path = output_dir / file_name
                 
-                # Skip if exists (R19: file-level resume)
-                if file_path.exists():
-                    # Only count as newly skipped if not already in initial scan
-                    # (avoids double-counting pre-existing files in skipped_count)
-                    if file_name not in existing_files_set:
-                        skipped_count += 1
+                # Skip if exists (R19: file-level resume).
+                # DL-9: resolved in memory instead of a per-instance exists()
+                # syscall. existing_files_set is the authoritative pre-download
+                # snapshot; written_this_run tracks files saved by this run.
+                if file_name in existing_files_set:
+                    continue  # pre-existing file, already counted in skipped_count
+                if file_name in written_this_run:
+                    # Duplicate instance within this run — not in the initial
+                    # scan, so count it as newly skipped (matches prior behavior).
+                    skipped_count += 1
                     continue
                 
                 if not dicom_data_b64:
@@ -1242,13 +1265,21 @@ class SocketDicomClient:
                     # Ensure directory exists (defensive check for preemption recovery)
                     file_path.parent.mkdir(parents=True, exist_ok=True)
                     
-                    # Save file
+                    # Save file ATOMICALLY (DM-H2): write to a .part temp then
+                    # os.replace() onto the final name. os.replace is atomic on
+                    # the same volume, so a crash/preemption mid-write can only
+                    # ever leave a *.dcm.part file — never a truncated
+                    # Instance_NNNN.dcm that the name-based resume scan would
+                    # wrongly treat as a complete instance.
                     t_write = time.monotonic()
-                    with open(file_path, 'wb') as f:
+                    tmp_path = file_path.with_name(file_path.name + '.part')
+                    with open(tmp_path, 'wb') as f:
                         f.write(dicom_bytes)
+                    os.replace(tmp_path, file_path)
                     write_elapsed_ms = (time.monotonic() - t_write) * 1000.0
                     
                     downloaded_count += 1
+                    written_this_run.add(file_name)  # DL-9: track for in-memory skip
                     total_disk_write_ms += write_elapsed_ms
                     batch_disk_write_ms += write_elapsed_ms
                     batch_write_bytes += len(dicom_bytes)
@@ -1260,6 +1291,14 @@ class SocketDicomClient:
                     # Log the full path for debugging
                     logger.error(f"   File path: {file_path}")
                     logger.error(f"   Directory exists: {file_path.parent.exists()}")
+                    # DM-H2: drop any partial .part temp so it cannot linger and
+                    # so the next attempt starts clean.
+                    try:
+                        _tmp = file_path.with_name(file_path.name + '.part')
+                        if _tmp.exists():
+                            _tmp.unlink()
+                    except Exception:
+                        pass
                     continue
                 
                 # Progress callback
@@ -1392,9 +1431,26 @@ class SocketDicomClient:
         """
         if not output_dir.exists():
             return []
-        
+
         try:
-            return [f for f in os.listdir(output_dir) if f.endswith('.dcm')]
+            valid = []
+            for name in os.listdir(output_dir):
+                # endswith('.dcm') also excludes leftover *.dcm.part temp files
+                # written by the atomic-write path (DM-H2).
+                if not name.endswith('.dcm'):
+                    continue
+                try:
+                    # DM-H2: a file shorter than the 128-byte DICOM preamble
+                    # cannot be a complete instance — treat it as a partial
+                    # write and leave it out so the downloader re-fetches it
+                    # instead of skipping it as "already present".
+                    if os.path.getsize(os.path.join(output_dir, name)) < 128:
+                        logger.warning(f"⚠️ Ignoring incomplete DICOM on resume: {name}")
+                        continue
+                except OSError:
+                    continue
+                valid.append(name)
+            return valid
         except Exception as e:
             logger.warning(f"⚠️ Could not scan directory: {e}")
             return []
@@ -1528,6 +1584,6 @@ class SocketDicomClient:
         """Destructor to ensure socket cleanup"""
         try:
             self.disconnect()
-        except:
+        except Exception:
             # Don't raise exceptions in destructor
             pass

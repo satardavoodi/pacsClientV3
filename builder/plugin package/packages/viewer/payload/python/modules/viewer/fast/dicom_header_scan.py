@@ -35,6 +35,45 @@ def _as_float_tuple(value: Any, n: int, default: Sequence[float]) -> tuple[float
         return tuple(float(x) for x in default[:n])
 
 
+def resolve_measurement_pixel_spacing(ds: Any) -> Optional[tuple[float, float]]:
+    """Return (row_mm, col_mm) for physical measurement, or None if uncalibrated.
+
+    DICOM precedence per CP-586 / PS3.3 §10.7 (Basic Pixel Spacing Calibration):
+        PixelSpacing (0028,0030)
+          -> ImagerPixelSpacing (0018,1164)
+          -> NominalScannedPixelSpacing (0018,2010)
+
+    CT / MR / PET always carry PixelSpacing, so they resolve at tier 1 and are
+    unaffected. Projection radiography (CR / DX / MG / XA / XRF) omits
+    PixelSpacing by design (diverging beam = no in-patient spacing) and instead
+    carries ImagerPixelSpacing, the detector-plane pixel pitch. Without this
+    fallback such images silently default to 1.0 mm/px — a ~10x measurement
+    error on a 0.1 mm detector.
+
+    ImagerPixelSpacing is measured at the detector and is not corrected for
+    geometric magnification (that needs SOD = DistanceSourceToPatient, often
+    absent); the returned value is the best calibrated length the header
+    supports and matches standard PACS behavior.
+    """
+    for tag in (0x00280030, 0x00181164, 0x00182010):
+        try:
+            el = ds.get(tag)
+        except Exception:
+            el = None
+        val = el.value if el is not None else None
+        if val is None:
+            continue
+        try:
+            seq = list(val)
+            if len(seq) >= 2:
+                r, c = float(seq[0]), float(seq[1])
+                if r > 0.0 and c > 0.0:
+                    return (r, c)
+        except Exception:
+            continue
+    return None
+
+
 @dataclass(frozen=True)
 class DicomHeaderEntry:
     path: str
@@ -60,7 +99,12 @@ class DicomHeaderEntry:
 def entry_from_dataset(path: str, ds: pydicom.Dataset) -> DicomHeaderEntry:
     iop = _as_float_tuple(getattr(ds, "ImageOrientationPatient", None), 6, (1, 0, 0, 0, 1, 0))
     ipp = _as_float_tuple(getattr(ds, "ImagePositionPatient", None), 3, (0, 0, 0))
-    ps = _as_float_tuple(getattr(ds, "PixelSpacing", None), 2, (1, 1))
+    _ps_resolved = resolve_measurement_pixel_spacing(ds)
+    ps = (
+        _ps_resolved
+        if _ps_resolved is not None
+        else _as_float_tuple(getattr(ds, "PixelSpacing", None), 2, (1, 1))
+    )
     spp = int(getattr(ds, "SamplesPerPixel", 1) or 1)
     return DicomHeaderEntry(
         path=str(path),

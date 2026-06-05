@@ -26,16 +26,35 @@ class DicomPrintHandler:
         self.settings = settings
 
     def send_print_job(self, payload: "DicomPrintJob") -> bool:
+        # pynetdicom >= 2.0 renamed the SOP class constants (dropped the
+        # ``SOPClass`` suffix). Older releases still use the *SOPClass names.
+        # Import both and bind to a stable alias so the rest of the method
+        # works against either version without an `ImportError` at runtime.
         try:
             from pynetdicom import AE
+        except Exception:
+            raise RuntimeError("pynetdicom is required for DICOM printing.")
+
+        try:
             from pynetdicom.sop_class import (
-                BasicFilmSessionSOPClass,
-                BasicFilmBoxSOPClass,
-                BasicGrayscaleImageBoxSOPClass,
-                PrinterSOPClass,
+                BasicFilmSession as BasicFilmSessionSOPClass,
+                BasicFilmBox as BasicFilmBoxSOPClass,
+                BasicGrayscaleImageBox as BasicGrayscaleImageBoxSOPClass,
+                Printer as PrinterSOPClass,
             )
         except Exception:
-            raise RuntimeError("pynetdicom is required for DICOM modules.printing.")
+            try:
+                from pynetdicom.sop_class import (  # type: ignore[no-redef]
+                    BasicFilmSessionSOPClass,
+                    BasicFilmBoxSOPClass,
+                    BasicGrayscaleImageBoxSOPClass,
+                    PrinterSOPClass,
+                )
+            except Exception as exc:
+                raise RuntimeError(
+                    f"pynetdicom SOP class symbols not found: {exc}. "
+                    f"Install pynetdicom (any version >= 1.5)."
+                )
 
         ae = AE()
         ae.add_requested_context(BasicFilmSessionSOPClass, ExplicitVRLittleEndian)

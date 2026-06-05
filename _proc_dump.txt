@@ -1,0 +1,26 @@
+=== python/pythonw === 
+
+Image Name                     PID Session Name        Session#    Mem Usage
+========================= ======== ================ =========== ============
+python.exe                  184364 Console                    1     99,256 K
+python.exe                  181480 Console                    1     99,420 K
+python.exe                  178920 Console                    1    113,996 K
+python.exe                  167216 Console                    1     99,316 K
+python.exe                  164632 Console                    1      3,024 K
+python.exe                   86512 Console                    1     83,652 K
+python.exe                    5216 Console                    1      3,024 K
+python.exe                  179036 Console                    1     86,644 K
+python.exe                  191692 Console                    1      3,468 K
+python.exe                  191940 Console                    1    853,436 K
+INFO: No tasks are running which match the specified criteria.
+=== processes whose window/title mentions PACS/Viewer/INO === 
+Window Title: AI-Pacs VPN (unsigned build, no updates)
+Image Name:   TeamViewer_Service.exe
+Image Name:   TeamViewer.exe
+Window Title: TeamViewer
+Window Title: main.py - ai-pacs beta version - Visual Studio Code - 18 problems in this file
+Window Title: Inbox (459) - ai.pacs.medical@gmail.com - Gmail - Google Chrome
+Image Name:   InoScannerAgent.exe
+Image Name:   InoScannerAgent.exe
+Window Title: AIPacs
+=== DONE === 

@@ -1,0 +1,22 @@
+{
+  "name": "impatient_full_loop",
+  "comment": "The requested high-pressure sequence: open -> immediate drops before load -> second patient mid-download -> tab churn -> MPR open -> close under load -> repeat. after_ms accepts [min,max] for seeded jitter. Edit patient ids to fresh ones before running. allow_fail on MPR/close keeps the loop running if a step is legitimately refused (e.g. empty viewport).",
+  "seed": 4242,
+  "loop": 5,
+  "steps": [
+    { "action": "select_patient",       "entities": { "patient_id": "44704" }, "timeout_ms": 60000 },
+    { "action": "open_patient",         "entities": { "patient_id": "44704" }, "after_ms": [150, 400], "timeout_ms": 60000 },
+    { "action": "change_series",        "entities": { "series_number": 201, "viewport": 0 }, "after_ms": [250, 600] },
+    { "action": "change_series",        "entities": { "series_number": 202, "viewport": 1 }, "after_ms": [60, 200] },
+    { "action": "open_patient",         "entities": { "patient_id": "44866" }, "after_ms": [150, 400], "timeout_ms": 60000 },
+    { "action": "change_series",        "entities": { "series_number": 201, "viewport": 0 }, "after_ms": [100, 300] },
+    { "action": "switch_tab",           "entities": { "index": 1 }, "after_ms": [80, 200] },
+    { "action": "switch_tab",           "entities": { "index": 2 }, "after_ms": [80, 200] },
+    { "action": "switch_tab",           "entities": { "index": 1 }, "after_ms": [80, 200] },
+    { "action": "open_mpr",             "entities": {}, "after_ms": [200, 500], "timeout_ms": 120000, "allow_fail": true },
+    { "action": "query_viewport_state", "entities": {}, "after_ms": [400, 900] },
+    { "action": "close_patient_tab",    "entities": {}, "after_ms": [150, 350], "allow_fail": true },
+    { "action": "close_patient_tab",    "entities": {}, "after_ms": [150, 350], "allow_fail": true },
+    { "action": "count_native_faults_since", "entities": { "minutes": 5 } }
+  ]
+}

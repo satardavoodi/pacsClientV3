@@ -178,7 +178,17 @@ class DiskPixelCache:
             return
 
         try:
-            self._write_queue.put_nowait((key, target_dir, target_path, study_uid, arr))
+            # B-fix (2026-06-03): copy at ENQUEUE, not in the writer thread.
+            # The queued tuple outlives this call; if we stored the raw `arr`
+            # reference, a viewer/tab teardown could free the backing buffer
+            # before the single writer thread dequeues and copies it, giving an
+            # access violation in _write_worker (use-after-free). Owning an
+            # independent contiguous copy here makes the queued payload immune to
+            # teardown. This relocates the existing worker-side copy rather than
+            # adding one (mirrors the defer=True path's _defer_write copy).
+            self._write_queue.put_nowait(
+                (key, target_dir, target_path, study_uid, np.ascontiguousarray(arr).copy())
+            )
         except queue.Full:
             logger.debug("[B3.12] Disk pixel cache write dropped: queue full key=%s", key)
 
@@ -270,7 +280,11 @@ class DiskPixelCache:
                 if item is None:
                     return
                 key, target_dir, target_path, study_uid, arr = item
-                self._write_file(key, target_dir, target_path, study_uid, arr.copy())
+                # arr is already an independent contiguous copy owned by the queue
+                # (every producer copies at enqueue: put(), _defer_write(),
+                # flush_deferred()), so the writer never references a buffer the
+                # main thread can free — no per-write copy needed here.
+                self._write_file(key, target_dir, target_path, study_uid, arr)
             except Exception:
                 logger.exception("[B3.12] Disk pixel cache writer failed")
             finally:

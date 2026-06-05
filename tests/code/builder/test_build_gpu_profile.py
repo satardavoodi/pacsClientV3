@@ -7,7 +7,12 @@ from builder.plugin_package_registry import plugin_package_definition_map
 from builder.spec import spec_utils
 
 
-def test_frozen_profile_paths_use_bundle_and_roaming_config(monkeypatch, tmp_path):
+def test_frozen_profile_paths_use_programdata_and_roaming_config(monkeypatch, tmp_path):
+    """Spec refresh 2026-06-04 (RELIABILITY_STABILITY_REVIEW §13): the frozen
+    installation profile moved from the read-only bundle (`_internal/config`)
+    to PROGRAMDATA/AIPacs — machine-wide, installer-writable
+    (`program_data_config_root()`). The old bundle-root expectation was stale.
+    """
     bundle_root = tmp_path / "_internal"
     bundle_root.mkdir(parents=True)
     exe_path = tmp_path / "AIPacs.exe"
@@ -15,13 +20,18 @@ def test_frozen_profile_paths_use_bundle_and_roaming_config(monkeypatch, tmp_pat
 
     local_appdata = tmp_path / "LocalAppData"
     roaming_appdata = tmp_path / "RoamingAppData"
+    program_data = tmp_path / "ProgramData"
     monkeypatch.setattr(runtime, "is_frozen", lambda: True)
     monkeypatch.setattr(runtime.sys, "_MEIPASS", str(bundle_root), raising=False)
     monkeypatch.setattr(runtime.sys, "executable", str(exe_path), raising=False)
     monkeypatch.setenv("LOCALAPPDATA", str(local_appdata))
     monkeypatch.setenv("APPDATA", str(roaming_appdata))
+    monkeypatch.setenv("PROGRAMDATA", str(program_data))
 
-    assert runtime.installation_profile_path() == bundle_root / "config" / runtime.INSTALLATION_PROFILE_FILENAME
+    assert runtime.installation_profile_path() == (
+        program_data / runtime.APP_NAME / runtime.USER_CONFIG_DIRNAME
+        / runtime.INSTALLATION_PROFILE_FILENAME
+    )
     assert runtime.user_runtime_profile_path() == (
         roaming_appdata / runtime.APP_NAME / runtime.USER_CONFIG_DIRNAME / runtime.USER_RUNTIME_PROFILE_FILENAME
     )

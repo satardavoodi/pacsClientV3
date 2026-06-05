@@ -182,6 +182,9 @@ MIXIN_PUBLIC_METHODS: Mapping[str, Sequence[str]] = {
         "_do_update_progress_bar",
         "_do_update_status_badge",
         "_find_row_for_study_uid",
+        # 2026-06-02 rebuild coalescing: single-shot timer target that folds
+        # bursts of refresh_table_order calls into one rebuild.
+        "_fire_coalesced_rebuild",
         "_get_series_image_count_map",
         "_get_study_uid_for_row",
         "_rebuild_row_index",
@@ -201,7 +204,13 @@ MIXIN_PUBLIC_METHODS: Mapping[str, Sequence[str]] = {
         "_add_priority_group_header",
         "_add_priority_group_spacer",
         "_clear_details_panel",
+        # 2026-06-02 P2.3 drag/visibility deferral (audit DM plan): structure
+        # key powers the in-place-vs-rebuild decision; the two _fire_* are the
+        # deferred-callback re-arms for drag-active / hidden-widget states.
+        "_compute_table_structure_key",
         "_dm_rebuild_caller_frame",
+        "_fire_deferred_rebuild_after_drag",
+        "_fire_deferred_rebuild_after_hidden",
         "_log_patient_comprehensive_info",
         "_on_group_collapsed",
         "_on_selection_changed",
@@ -210,12 +219,18 @@ MIXIN_PUBLIC_METHODS: Mapping[str, Sequence[str]] = {
         "_refresh_table_order",
         "_reset_reception_fields",
         "_select_study_row",
+        # 2026-06-02 P2.3: row-level in-place update path taken when the
+        # table structure key is unchanged (avoids full clear+rebuild).
+        "_try_inplace_table_update",
         "_update_button_states",
         "_update_details_panel",
         "_update_series_breakdown_from_task",
     ),
     "_dm_workers": (
         "_apply_throttled_progress",
+        # 2026-06-01 DM-L7: FIFO cap on _tasks (bound 400, never evicts the
+        # active study) — long-session memory guard.
+        "_bound_tasks",
         "_check_auto_resume",
         "_check_auto_retry",
         "_cleanup_task_state",

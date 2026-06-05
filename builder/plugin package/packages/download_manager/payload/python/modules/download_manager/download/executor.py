@@ -5,6 +5,7 @@ Orchestrates complete download workflow from task creation to completion.
 """
 
 import logging
+import os
 import asyncio
 from typing import Optional, Callable, Dict
 from pathlib import Path
@@ -454,8 +455,12 @@ class DownloadExecutor:
             for series_number, image_bytes in thumbnails.items():
                 # UI expects {series_number}.png in THUMBNAIL_PATH
                 thumb_path = thumb_dir / f"{series_number}.png"
-                with open(thumb_path, 'wb') as f:
+                # Atomic write (DM-H2): .part temp + os.replace so a crash
+                # mid-write never leaves a truncated thumbnail PNG on disk.
+                _thumb_tmp = thumb_path.with_name(thumb_path.name + '.part')
+                with open(_thumb_tmp, 'wb') as f:
                     f.write(image_bytes)
+                os.replace(_thumb_tmp, thumb_path)
 
                 # Populate shared in-memory thumbnail cache so both the
                 # home-page panel and the viewer panel skip the disk read.

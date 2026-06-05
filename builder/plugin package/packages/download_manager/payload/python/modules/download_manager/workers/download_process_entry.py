@@ -18,6 +18,49 @@ if TYPE_CHECKING:
     from ..core.models import DownloadTask
 
 
+# Sentinel used to unblock an idle pre-warmed worker at shutdown.
+_PREWARM_SHUTDOWN = "__PREWARM_SHUTDOWN__"
+
+
+def _prewarmed_download_worker_main(
+    task_queue,        # multiprocessing.Queue — receives (task, config_dict) or a sentinel
+    result_queue,      # multiprocessing.Queue — progress + completion (one-shot schema)
+    cancel_event,      # multiprocessing.Event
+    working_dir,       # parent cwd (db path is relative to cwd)
+    ready_event,       # multiprocessing.Event — set once the interpreter has booted
+) -> None:
+    """Pre-warmed (Phase 1) download worker — OFF by default (AIPACS_DM_PREWARM).
+
+    Spawned AHEAD of a user-triggered download so the expensive Windows ``spawn``
+    bootstrap (process creation + interpreter boot) is paid off the user-visible
+    path. Boots, signals ``ready_event``, then blocks for a single
+    ``(task, config_dict)`` and runs the normal one-shot download via
+    ``_run_download_in_process``. Holds NO database/socket resources while idle
+    (those open only once the job arrives — resource harmony), and exits after
+    one job. Reuses the existing download code verbatim.
+    """
+    import os as _os
+    try:
+        _os.chdir(working_dir)
+    except Exception:
+        pass
+    try:
+        ready_event.set()
+    except Exception:
+        pass
+    try:
+        item = task_queue.get()  # block until a job (or shutdown sentinel) arrives
+    except Exception:
+        return
+    if item is None or item == _PREWARM_SHUTDOWN:
+        return
+    try:
+        task, config_dict = item
+    except Exception:
+        return
+    _run_download_in_process(task, config_dict, result_queue, cancel_event, working_dir)
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Public subprocess entry point
 # ─────────────────────────────────────────────────────────────────────────────
@@ -71,8 +114,11 @@ def _run_download_in_process(
         download_job_id=config_dict.get("download_job_id", "-"),
     )
 
-    logger.info(
-        "▶ Process started | study=%s | patient=%s | series=%d | cwd=%s",
+    # [SPAWN-TIMING] at WARNING so it lands in download_diagnostics.log — its
+    # wall-clock timestamp vs the parent's _start_download_worker reveals the
+    # process-spawn + entry-import cost (not covered by t0, which starts here).
+    logger.warning(
+        "▶ [SPAWN-TIMING] Process started | study=%s | patient=%s | series=%d | cwd=%s",
         study_uid[:40], patient_name, series_count, working_dir,
         extra={"component": "ipc", "study_uid": study_uid, "download_job_id": config_dict.get("download_job_id", "-")},
     )
@@ -223,7 +269,7 @@ def _run_download_in_process(
         from modules.download_manager.download.executor import DownloadExecutor
         from modules.download_manager.rules.rule_engine import DownloadRuleEngine
         from modules.download_manager.state.state_store import DownloadStateStore
-        logger.info("  Imports OK (%.3fs)", time.monotonic() - t0)
+        logger.warning("  [SPAWN-TIMING] Imports OK (%.3fs)", time.monotonic() - t0)
 
         # ── 4. Construct independent clients ─────────────────────────────────
         logger.info(
@@ -238,7 +284,7 @@ def _run_download_in_process(
 
         logger.info("  Building DatabaseManager...")
         database_manager = DatabaseManager()
-        logger.info("  DatabaseManager ready")
+        logger.warning("  [SPAWN-TIMING] DatabaseManager ready (%.3fs)", time.monotonic() - t0)
 
         state_store = DownloadStateStore()
         rule_engine = DownloadRuleEngine(state_store, {})
@@ -304,8 +350,8 @@ def _run_download_in_process(
                 pass  # Queue full — drop this progress heartbeat
 
         # ── 6. Run ────────────────────────────────────────────────────────────
-        logger.info(
-            "  Starting asyncio event loop (%.3fs since process start)",
+        logger.warning(
+            "  [SPAWN-TIMING] Starting asyncio event loop (%.3fs since process start)",
             time.monotonic() - t0,
         )
         loop = asyncio.new_event_loop()

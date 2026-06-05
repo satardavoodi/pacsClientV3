@@ -1,0 +1,197 @@
+{
+ "out": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\tools\\testing\\aipacs_control_mcp\\ui_probe_runs\\20260604_202033_verify",
+ "steps": [
+  {
+   "label": "i5_open_44920",
+   "ok": true,
+   "resp_ms": 30.3,
+   "stable_ms": 70.6,
+   "flickers": 0,
+   "dips": 0,
+   "tab_std": 20.8
+  },
+  {
+   "label": "i5_drop_190109541",
+   "ok": true,
+   "resp_ms": 37.4,
+   "stable_ms": 81.0,
+   "flickers": 0,
+   "dips": 0,
+   "tab_std": 32.4
+  },
+  {
+   "label": "i1_close",
+   "ok": true,
+   "resp_ms": 72.8,
+   "stable_ms": 391.9,
+   "flickers": 0,
+   "dips": 0,
+   "tab_std": 32.0
+  },
+  {
+   "label": "i1_return_main",
+   "ok": true,
+   "resp_ms": 102.7,
+   "stable_ms": 157.8,
+   "flickers": 0,
+   "dips": 0,
+   "tab_std": 33.0
+  },
+  {
+   "label": "i3_open_44972",
+   "ok": true,
+   "resp_ms": 376.0,
+   "stable_ms": 880.1,
+   "flickers": 0,
+   "dips": 0,
+   "tab_std": 41.1
+  },
+  {
+   "label": "i3_open_44852",
+   "ok": true,
+   "resp_ms": 373.0,
+   "stable_ms": 795.6,
+   "flickers": 0,
+   "dips": 0,
+   "tab_std": 38.6
+  },
+  {
+   "label": "i3_open_44963",
+   "ok": true,
+   "resp_ms": 368.9,
+   "stable_ms": 646.1,
+   "flickers": 0,
+   "dips": 0,
+   "tab_std": 40.4
+  }
+ ],
+ "i5": {
+  "series": [
+   {
+    "series_number": 101,
+    "image_count": 2,
+    "description": "Scout"
+   },
+   {
+    "series_number": 201,
+    "image_count": 104,
+    "description": "Tissue"
+   },
+   {
+    "series_number": 202,
+    "image_count": 416,
+    "description": "Tissue"
+   },
+   {
+    "series_number": 9001,
+    "image_count": 1,
+    "description": "Dose Info"
+   },
+   {
+    "series_number": 100000,
+    "image_count": 1,
+    "description": "Documents"
+   },
+   {
+    "series_number": 190044503,
+    "image_count": 35,
+    "description": "Tissue"
+   },
+   {
+    "series_number": 190109541,
+    "image_count": 35,
+    "description": "Tissue"
+   }
+  ],
+  "dropped": 190109541,
+  "drop_wall": 1780591927.4284027,
+  "polls": [
+   {
+    "t_s": 14.2,
+    "slices": 35,
+    "awaiting": null,
+    "progressive": false,
+    "dl_status": null,
+    "dl_pct": null
+   }
+  ],
+  "first_slices_at_s": 14.2,
+  "log": [
+   "20:21:57 [FAST-SERIES-DOWNLOAD-QUEUE] [FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780496765876.86293 series_count=7 priority=High",
+   "20:22:48 [FAST-SERIES-DOWNLOAD-QUEUE] [FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780502491954.86296 series_count=7 priority=High",
+   "20:22:53 [FAST-SERIES-DOWNLOAD-QUEUE] [FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780471227315.86283 series_count=5 priority=High",
+   "20:22:59 [FAST-SERIES-DOWNLOAD-QUEUE] [FAST-SERIES-DOWNLOAD-QUEUE] study=1.2.840.1.99.1.47.1.1780498626894.86294 series_count=5 priority=High",
+   "20:22:07 [UX_FIRST_IMAGE_VISIBLE] [UX_FIRST_IMAGE_VISIBLE] series=190109541 slice=17 decode_ms=10.5 total_ms=41.0"
+  ]
+ },
+ "i3": {
+  "expected": {
+   "44972": "1.2.840.1.99.1.47.1.1780502491954.86296",
+   "44852": "1.2.840.1.99.1.47.1.1780471227315.86283",
+   "44963": "1.2.840.1.99.1.47.1.1780498626894.86294"
+  },
+  "per_tab": [
+   {
+    "tab": 2,
+    "study_uid": "1.2.840.1.99.1.47.1.1780502491954.86296",
+    "n_series": 7,
+    "tab_std": 41.2
+   },
+   {
+    "tab": 3,
+    "study_uid": "1.2.840.1.99.1.47.1.1780471227315.86283",
+    "n_series": 5,
+    "tab_std": 38.3
+   },
+   {
+    "tab": 4,
+    "study_uid": "1.2.840.1.99.1.47.1.1780498626894.86294",
+    "n_series": 5,
+    "tab_std": 40.9
+   }
+  ],
+  "no_mixing": true
+ },
+ "i1": {},
+ "restart": {
+  "stop": {
+   "ok": true,
+   "message": "not running"
+  },
+  "launch_ok": true
+ },
+ "fresh": [
+  [
+   "44920",
+   7
+  ],
+  [
+   "44972",
+   7
+  ],
+  [
+   "44852",
+   5
+  ],
+  [
+   "44963",
+   5
+  ],
+  [
+   "44977",
+   5
+  ]
+ ],
+ "final_downloads": {
+  "total": 4,
+  "active": 0,
+  "downloading": 0,
+  "by_status": {
+   "Completed": 4
+  },
+  "by_priority": {
+   "Critical": 1,
+   "High": 3
+  }
+ }
+}

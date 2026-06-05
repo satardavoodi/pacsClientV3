@@ -83,6 +83,18 @@ try:
 except ImportError:
     _SKIP_REASON = "numpy not available"
 
+# Headless quarantine (2026-06-04, RELIABILITY_STABILITY_REVIEW §13): this
+# module creates REAL VTK render widgets; under a headless/offscreen pytest
+# run the s1_rapid_switch scenario dies with a NATIVE access violation that
+# kills the entire pytest process (no summary — masks every other result).
+# It is a GUI-tier test: opt in with AIPACS_GUI_TESTS=1 when running against
+# a real display/GPU session.
+if _SKIP_REASON is None and os.environ.get("AIPACS_GUI_TESTS", "") != "1":
+    _SKIP_REASON = (
+        "GUI-tier VTK stress test (native AV under headless pytest) — "
+        "set AIPACS_GUI_TESTS=1 to run"
+    )
+
 pytestmark = pytest.mark.skipif(_SKIP_REASON is not None, reason=_SKIP_REASON or "")
 
 

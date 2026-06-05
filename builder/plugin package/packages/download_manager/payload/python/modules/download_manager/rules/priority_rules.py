@@ -19,6 +19,12 @@ from ..core.constants import (
 
 logger = logging.getLogger(__name__)
 
+# DM-H3 / S4.1: states that occupy the single MAX_CONCURRENT_STUDIES worker slot.
+# A study in ANY of these is "running" for preemption purposes — a slot-holder that
+# is not DOWNLOADING (e.g. VALIDATING) was previously invisible to preemption, so a
+# higher-priority (e.g. just-opened) study could not preempt it and waited behind it.
+_SLOT_HOLDING_STATUSES = (DownloadStatus.DOWNLOADING, DownloadStatus.VALIDATING)
+
 
 @dataclass(frozen=True)
 class PreemptionResult:
@@ -88,8 +94,8 @@ class PriorityRules:
         # R2: Critical pauses ALL other downloads
         if new_priority == DownloadPriority.CRITICAL:
             affected = [d.study_uid for d in current_downloads 
-                       if d.status == DownloadStatus.DOWNLOADING]
-            
+                       if d.status in _SLOT_HOLDING_STATUSES]
+
             return PreemptionResult(
                 action=PreemptionAction.PAUSE_ALL,
                 reason="CRITICAL priority pauses all other downloads",
@@ -100,8 +106,8 @@ class PriorityRules:
         if new_priority == DownloadPriority.HIGH:
             affected = [d.study_uid for d in current_downloads
                        if d.priority in [DownloadPriority.NORMAL, DownloadPriority.LOW]
-                       and d.status == DownloadStatus.DOWNLOADING]
-            
+                       and d.status in _SLOT_HOLDING_STATUSES]
+
             if affected:
                 return PreemptionResult(
                     action=PreemptionAction.PREEMPT_LOWER,
@@ -113,8 +119,8 @@ class PriorityRules:
         if new_priority == DownloadPriority.NORMAL:
             affected = [d.study_uid for d in current_downloads
                        if d.priority == DownloadPriority.LOW
-                       and d.status == DownloadStatus.DOWNLOADING]
-            
+                       and d.status in _SLOT_HOLDING_STATUSES]
+
             if affected:
                 return PreemptionResult(
                     action=PreemptionAction.PREEMPT_LOWER,

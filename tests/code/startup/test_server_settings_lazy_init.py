@@ -7,7 +7,11 @@ stays lightweight and initial data scans run only when the widget is shown.
 from pathlib import Path
 
 
-_SERVER_SETTINGS_PATH = Path("PacsClient/pacs/workstation_ui/settings_ui/server_settings.py")
+# Anchored to the repo root (2026-06-04): the previous CWD-relative path made
+# these tests FileNotFoundError under any pytest invocation not started from
+# the repo root.
+_REPO_ROOT = Path(__file__).resolve().parents[3]
+_SERVER_SETTINGS_PATH = _REPO_ROOT / "PacsClient/pacs/workstation_ui/settings_ui/server_settings.py"
 
 
 def _src() -> str:

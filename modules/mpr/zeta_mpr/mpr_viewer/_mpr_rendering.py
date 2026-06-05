@@ -241,7 +241,7 @@ class _MprRenderingMixin:
                     camera.SetViewUp(view_up)
 
                     # Apply CT-specific transformations (v1.01 baseline)
-                    if self.detected_modality == "CT":
+                    if self._needs_radiological_correction():
                         if view_name == 'sagittal':
                             camera.Roll(180)
                         elif view_name == 'coronal':

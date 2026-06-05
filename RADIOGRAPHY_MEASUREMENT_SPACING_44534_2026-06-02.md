@@ -2,7 +2,7 @@
 
 **Patient:** 44534 · **Study 738:** DX HAND (projection radiography) · **Date:** 2026-06-02
 **Reported by:** vahid · **Symptom:** ruler reads ~10× too large on radiography; correct on CT/MRI.
-**Status:** ✅ Fix applied · tests passing (14/14, incl. real 44534) · **live-verified correct in the running app by vahid** — 2026-06-02.
+**Status:** ✅ Fix applied · tests passing (14/14, incl. real 44534) · live-verified in the running app · **build payload mirrored** — 2026-06-02. Build-ready.
 
 ---
 
@@ -170,6 +170,11 @@ No DB schema, network, or VTK changes; CT/MR path unchanged. **Files changed (20
   `_from_metadata_instances()`, when DB/socket metadata lacks `pixel_spacing`, recover it from the
   header via the helper (metadata producer).
 - `tests/code/fast_viewer/test_pixel_spacing_resolution.py` — new unit + real-data regression tests.
+- **Build payload (mirrored for packaging, 2026-06-02):**
+  `builder/plugin package/packages/viewer/payload/python/modules/viewer/fast/dicom_header_scan.py`
+  and `…/lightweight_2d_pipeline.py` — identical helper + call-site edits, so a packaged build ships
+  the fix. (`builder/output/{dist,stage}` regenerate from source on build; the dated `builder/backups/…`
+  copy is intentionally left untouched.)
 
 **5.1 Helper** — in `modules/viewer/fast/dicom_header_scan.py`:
 
@@ -232,11 +237,14 @@ Modalities fixed by 5.1–5.3: **CR, DX, MG, XA, XRF**. Modalities untouched: **
   surfacing a "px / uncalibrated" badge rather than implying mm (optional 5.4).
 - **Out of scope on purpose:** DB schema, socket/download protocol, VTK render path, multi-study and
   cross-patient guards. No edits there.
-- **Deferred follow-ups (same root, not in this patch):** the advanced VTK viewer
-  (`modules/viewer/advanced/viewer_2d.py`) and `modules/viewer/geometry/source_geometry.py` still read
-  `PixelSpacing` only — apply the same helper if/when DX is opened there. The build payload copies under
-  `builder/plugin package/.../modules/viewer/fast/` must be re-synced at package time. Optional:
-  persist `ImagerPixelSpacing` / spacing-source through `image_io.py` + DB and badge projection
+- **Advanced VTK viewer is NOT on the projection-measurement path — confirmed, no edit needed.**
+  `source_geometry.py` returns early when `ImagePositionPatient` is absent, and DX/CR/MG carry no
+  IPP / IOP / FrameOfReferenceUID (verified on 44534's DX), so projection images never build advanced
+  geometry — they are measured only by the FAST viewer (now fixed). The `PixelSpacing`-only reads in
+  `viewer_2d.py` / `source_geometry.py` apply to CT/MR volumes, which always carry `PixelSpacing`, so
+  they are not a measurement exposure. Left unchanged to avoid needless VTK-geometry risk before a build.
+- **Optional (not required for correctness):** persist `ImagerPixelSpacing` / spacing-source through
+  `image_io.py` + DB (avoids the per-image header re-read on the metadata path) and badge projection
   measurements as *detector-plane* (see §5.4).
 - **Anisotropic spacing** (row ≠ col) is preserved as a pair throughout — no regression for it.
 
