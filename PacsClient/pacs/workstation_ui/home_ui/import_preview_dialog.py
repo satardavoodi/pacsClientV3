@@ -3,14 +3,50 @@ from __future__ import annotations
 from copy import deepcopy
 import importlib.util
 import json
+import logging
 import os
 from pathlib import Path
 import re
 import shutil
+import time
 
 import pydicom
 from pydicom.misc import is_dicom
 from pydicom.uid import UID, ExplicitVRLittleEndian
+
+logger = logging.getLogger(__name__)
+
+# Windows file-attribute flags marking CLOUD PLACEHOLDER files (Dropbox
+# online-only, OneDrive Files-On-Demand). Reading such a file forces an
+# on-demand download of its full content — a folder of them makes the
+# import scan look like it "never ends" (2026-06-06 incident: a Dropbox
+# CD-copy folder; every dcmread hydrated a file over the network).
+_ATTR_SPARSE = 0x0200
+_ATTR_REPARSE_POINT = 0x0400
+_ATTR_OFFLINE = 0x1000
+_ATTR_RECALL_ON_OPEN = 0x40000
+_ATTR_RECALL_ON_DATA_ACCESS = 0x400000
+
+
+def _is_cloud_placeholder_attrs(attrs: int) -> bool:
+    """True when Windows file attributes indicate a cloud placeholder."""
+    try:
+        a = int(attrs)
+    except Exception:
+        return False
+    if a & (_ATTR_OFFLINE | _ATTR_RECALL_ON_OPEN | _ATTR_RECALL_ON_DATA_ACCESS):
+        return True
+    # Dropbox online-only files present as SparseFile + ReparsePoint.
+    return bool(a & _ATTR_SPARSE) and bool(a & _ATTR_REPARSE_POINT)
+
+
+def _is_cloud_placeholder(file_path: Path) -> bool:
+    try:
+        return _is_cloud_placeholder_attrs(
+            getattr(file_path.stat(), "st_file_attributes", 0)
+        )
+    except Exception:
+        return False
 import qtawesome as qta
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -392,13 +428,30 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
     if not root.exists() or not root.is_dir():
         raise FileNotFoundError(f"Folder does not exist: {root}")
 
+    # The scan used to be completely silent — a slow run (e.g. cloud
+    # placeholders hydrating file-by-file) was indistinguishable from a
+    # hang in the logs (2026-06-06). Log start / progress / end.
+    _t_scan = time.monotonic()
+    logger.info("[IMPORT_SCAN] start folder=%s", root)
+
     studies: dict[str, dict] = {}
     total_dicom_files = 0
     patient_keys = set()
+    cloud_placeholder_count = 0
+    scanned_file_count = 0
 
     for file_path in root.rglob("*"):
         if not file_path.is_file():
             continue
+        scanned_file_count += 1
+        if _is_cloud_placeholder(file_path):
+            cloud_placeholder_count += 1
+        if scanned_file_count % 200 == 0:
+            logger.info(
+                "[IMPORT_SCAN] progress files_seen=%d dicom=%d placeholders=%d "
+                "elapsed_s=%.1f", scanned_file_count, total_dicom_files,
+                cloud_placeholder_count, time.monotonic() - _t_scan,
+            )
         dataset = _read_import_dicom_header(file_path)
         if dataset is None:
             continue
@@ -509,6 +562,16 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
         warnings.append(
             f"The selected folder contains {len(studies_list)} studies. All will be imported; the primary study will open first."
         )
+    if cloud_placeholder_count > 0:
+        warnings.append(
+            f"{cloud_placeholder_count} file(s) in this folder are cloud "
+            "placeholders (Dropbox/OneDrive online-only). Each one must be "
+            "downloaded before it can be imported, which can make the scan "
+            "and import VERY slow or appear stuck. For a reliable import, "
+            "right-click the folder and choose 'Make available offline' "
+            "(or copy it to a local disk) first."
+        )
+
     compatibility_report = _build_compatibility_report(studies_list)
     warnings.extend(_compatibility_warnings(compatibility_report))
 
@@ -522,6 +585,13 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
             ),
         )
 
+    logger.info(
+        "[IMPORT_SCAN] done folder=%s files_seen=%d dicom=%d studies=%d "
+        "placeholders=%d duration_s=%.1f",
+        root, scanned_file_count, total_dicom_files, len(studies_list),
+        cloud_placeholder_count, time.monotonic() - _t_scan,
+    )
+
     return {
         "folder_path": str(root),
         "dicom_file_count": total_dicom_files,
@@ -529,6 +599,7 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
         "study_count": len(studies_list),
         "series_count": sum(len(study.get("series", [])) for study in studies_list),
         "compressed_dicom_file_count": int(compatibility_report.get("compressed_dicom_file_count", 0) or 0),
+        "cloud_placeholder_count": cloud_placeholder_count,
         "compatibility_report": compatibility_report,
         "studies": studies_list,
         "primary_study_uid": primary_study.get("study_uid") if primary_study else "",
@@ -603,6 +674,14 @@ def _decompress_file_to_destination(src: Path, dest: Path) -> tuple[bool, str]:
 def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path = SOURCE_PATH) -> dict:
     output_root = Path(base_output_dir).expanduser()
     output_root.mkdir(parents=True, exist_ok=True)
+
+    _t_import = time.monotonic()
+    logger.info(
+        "[IMPORT_COPY] start studies=%d files=%d -> %s",
+        int(scan_result.get("study_count", 0) or 0),
+        int(scan_result.get("dicom_file_count", 0) or 0),
+        output_root,
+    )
 
     imported_studies = []
     copied_files = 0
@@ -686,6 +765,13 @@ def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path 
     primary_study = next(
         (study for study in imported_studies if study.get("study_uid") == primary_study_uid),
         imported_studies[0] if imported_studies else None,
+    )
+
+    logger.info(
+        "[IMPORT_COPY] done copied=%d converted=%d skipped=%d errors=%d "
+        "duration_s=%.1f",
+        copied_files, converted_files, skipped_files, len(errors),
+        time.monotonic() - _t_import,
     )
 
     return {

@@ -274,7 +274,54 @@ def test_large_series_import_ordering(tmp_path):
     assert stored[-1].name.startswith("00040_")
 
 
-# ── 5. source contracts ───────────────────────────────────────────────────
+# ── 5. cloud-placeholder hang protection (2026-06-06 Dropbox incident) ────
+def test_placeholder_attr_detection():
+    from PacsClient.pacs.workstation_ui.home_ui.import_preview_dialog import (
+        _is_cloud_placeholder_attrs,
+    )
+    assert _is_cloud_placeholder_attrs(0x0200 | 0x0400) is True      # Dropbox sparse+reparse
+    assert _is_cloud_placeholder_attrs(0x1000) is True               # OFFLINE
+    assert _is_cloud_placeholder_attrs(0x400000) is True             # RECALL_ON_DATA_ACCESS
+    assert _is_cloud_placeholder_attrs(0x40000) is True              # RECALL_ON_OPEN
+    assert _is_cloud_placeholder_attrs(0x0020) is False              # plain Archive
+    assert _is_cloud_placeholder_attrs(0x0200) is False              # sparse alone
+    assert _is_cloud_placeholder_attrs("garbage") is False           # fail-open
+
+
+@pytest.mark.skipif(_UNCOMPRESSED is None, reason="pydicom test data unavailable")
+def test_scan_warns_on_cloud_placeholders(tmp_path, monkeypatch):
+    import PacsClient.pacs.workstation_ui.home_ui.import_preview_dialog as mod
+
+    monkeypatch.setattr(mod, "_is_cloud_placeholder", lambda p: True)
+    src_dir = _make_folder(tmp_path, [_UNCOMPRESSED])
+    scan = mod.scan_dicom_import_folder(src_dir)
+    assert scan["cloud_placeholder_count"] == 1
+    assert any("placeholder" in w.lower() for w in scan["warnings"])
+    assert any("available offline" in w.lower() for w in scan["warnings"])
+
+
+def test_scan_and_import_log_start_end():
+    # the silent-pipeline gap: scan/copy must log start + done with counts
+    for marker in ("[IMPORT_SCAN] start", "[IMPORT_SCAN] done",
+                   "[IMPORT_SCAN] progress",
+                   "[IMPORT_COPY] start", "[IMPORT_COPY] done"):
+        assert marker in _SRC, marker
+
+
+def test_picker_defaults_away_from_internal_storage():
+    layout_src = (
+        _REPO_ROOT
+        / "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_layout.py"
+    ).read_text(encoding="utf-8")
+    i = layout_src.index("def select_folder")
+    block = layout_src[i:i + 1800]
+    # never default into the internal store (code usage, not the comment)
+    assert "Path(SOURCE_PATH)" not in block
+    assert "last_import_dir" in block          # remember the user's folder
+    assert "Path.home()" in block              # sane fallback
+
+
+# ── 6. source contracts ───────────────────────────────────────────────────
 def test_conversion_is_atomic_and_failsafe_in_source():
     i = _SRC.index("def _decompress_file_to_destination")
     block = _SRC[i:i + 2200]

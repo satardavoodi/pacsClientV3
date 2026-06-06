@@ -60,11 +60,37 @@ class _HPLayoutMixin:
         # panel_layout = QVBoxLayout()
 
         def select_folder():
-            # Portable default directory for import dialog (project-configured source path or user home)
-            default_dir = Path(SOURCE_PATH) if Path(SOURCE_PATH).exists() else Path.home()
+            # Default to the LAST-USED import folder (persisted), else the
+            # user's home. The old default was SOURCE_PATH — AI-PACS's own
+            # internal DICOM storage with hundreds of UID folders — which
+            # dropped users into a confusing tree that is never the import
+            # source (2026-06-06 import-hang investigation).
+            import json as _json
+            _cfg = None
+            default_dir = Path.home()
+            try:
+                from PacsClient.utils.data_paths import USER_DATA_ROOT
+                _cfg = Path(USER_DATA_ROOT) / "config" / "import_settings.json"
+                if _cfg.exists():
+                    _last = (_json.loads(_cfg.read_text(encoding="utf-8")) or {}).get(
+                        "last_import_dir", "")
+                    if _last and Path(_last).is_dir():
+                        default_dir = Path(_last)
+            except Exception:
+                pass
             folder_path = QFileDialog.getExistingDirectory(
                 self.data_access_panel_widget, "Select Folder", dir=str(default_dir))
             if folder_path:
+                try:
+                    if _cfg is not None:
+                        _cfg.parent.mkdir(parents=True, exist_ok=True)
+                        _data = {}
+                        if _cfg.exists():
+                            _data = _json.loads(_cfg.read_text(encoding="utf-8")) or {}
+                        _data["last_import_dir"] = folder_path
+                        _cfg.write_text(_json.dumps(_data, indent=2), encoding="utf-8")
+                except Exception:
+                    pass
                 self._import_folder_with_preview(folder_path)
 
         left_panel = QWidget()
