@@ -72,10 +72,23 @@ class _HPImportMixin:
 
         future = self.thread_pool.submit(task, *args, **kwargs)
         loop = QEventLoop()
-        # When the future finishes, quit the inner event loop from the Qt thread
-        future.add_done_callback(lambda _f: QTimer.singleShot(0, loop.quit))
-        if not future.done():
-            loop.exec()
+        # IMPORTANT (import-hang fix 2026-06-06): wait on the MAIN thread.
+        # The previous pattern — future.add_done_callback(lambda: QTimer.
+        # singleShot(0, loop.quit)) — is broken: the done-callback executes in
+        # the POOL WORKER thread, and a QTimer created there never fires
+        # (worker threads have no Qt event loop), so loop.quit() was never
+        # delivered and the progress dialog spun forever ("import never
+        # ends"); every further click nested another stuck QEventLoop.
+        # A poll timer owned by the main thread is immune by construction.
+        poll = QTimer(progress)
+        poll.setInterval(50)
+        poll.timeout.connect(lambda: None if not future.done() else loop.quit())
+        poll.start()
+        try:
+            if not future.done():
+                loop.exec()
+        finally:
+            poll.stop()
 
         progress.close()
         progress.deleteLater()
@@ -187,6 +200,22 @@ class _HPImportMixin:
         )
 
     def _import_folder_with_preview(self, folder_path: str):
+        # Re-entrancy guard: a second Select Folder click while an import
+        # flow is in progress must not nest another scan/import loop.
+        if getattr(self, "_import_flow_active", False):
+            QMessageBox.information(
+                self,
+                "Import In Progress",
+                "An import is already running. Please wait for it to finish.",
+            )
+            return
+        self._import_flow_active = True
+        try:
+            self._import_folder_with_preview_impl(folder_path)
+        finally:
+            self._import_flow_active = False
+
+    def _import_folder_with_preview_impl(self, folder_path: str):
         try:
             scan_result = self._run_background_job_with_progress(
                 "Scan DICOM Folder",
