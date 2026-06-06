@@ -16,6 +16,8 @@ class PatientSearchWidget(QWidget):
     searchRequested = Signal()
     # Signal emitted when cancel search button is clicked
     cancelSearchRequested = Signal()
+    # Structured advanced query from the Patient-ID filter popup (2026-06-06)
+    advancedSearchRequested = Signal(dict)
 
     def __init__(self, parent=None):
         super(PatientSearchWidget, self).__init__(parent)
@@ -250,6 +252,23 @@ class PatientSearchWidget(QWidget):
         # exactly like clicking the Search Patients button.
         self.patient_id_edit.returnPressed.connect(self._on_search_clicked)
 
+        # Advanced filter popup trigger (2026-06-06): a small filter icon
+        # INSIDE the Patient ID field (trailing position — same visual
+        # language as the date-range dropdown button). Opens the structured
+        # multi-ID / date / modality / clinical filter dialog.
+        try:
+            self._advanced_filter_action = self.patient_id_edit.addAction(
+                qta.icon('fa5s.sliders-h', color='#9ca3af'),
+                QLineEdit.ActionPosition.TrailingPosition,
+            )
+            self._advanced_filter_action.setToolTip(
+                "Advanced search…\nMultiple patient IDs, date range, modality, "
+                "body part, age, reporting doctor"
+            )
+            self._advanced_filter_action.triggered.connect(self._open_advanced_search_dialog)
+        except Exception:
+            self._advanced_filter_action = None
+
         self.patient_name_edit = QLineEdit()
         self.patient_name_edit.setPlaceholderText("Patient Name (e.g., John Doe)")
         self.patient_name_edit.setToolTip(
@@ -279,6 +298,13 @@ class PatientSearchWidget(QWidget):
         self.date_selector.addItem("Last Year", "last_year")
         self.date_selector.setToolTip("💡 Quick date selection options")
         self.date_selector.currentTextChanged.connect(self._on_date_selector_changed)
+        # Preset RE-click fix (2026-06-06): currentTextChanged does NOT fire
+        # when the user re-picks the already-selected preset, so "Yesterday"
+        # could not reset manually-edited date fields without first switching
+        # to another preset. `activated` fires on EVERY user selection —
+        # including the same item — and re-applies the preset dates.
+        # (Double apply on a *changed* selection is idempotent.)
+        self.date_selector.activated.connect(self._on_date_selector_activated)
 
         # Date From field
         self.date_from_edit = QDateEdit()
@@ -540,6 +566,11 @@ class PatientSearchWidget(QWidget):
             field.setFont(f)
             fm = QFontMetrics(f)
             min_h = max(22, int(fm.height() * 1.4))
+            # Calendar button visibility (2026-06-06): the drop-down zone was
+            # styled border-less/transparent with NO ::down-arrow rule, which
+            # rendered it invisible — users had no clue the fields open a
+            # calendar. Style it like the "Today" (date-range) combo's button:
+            # a bordered zone with a triangle arrow.
             field.setStyleSheet(f"""
                 QDateEdit {{
                     background: {t['panel_alt_bg']};
@@ -552,7 +583,27 @@ class PatientSearchWidget(QWidget):
                 }}
                 QDateEdit:hover {{ border: 1px solid {t['accent']}; background: {t['card_bg']}; }}
                 QDateEdit:focus {{ border: 2px solid {t['accent']}; background: {t['card_bg']}; }}
-                QDateEdit::drop-down {{ border: none; width: 24px; background: transparent; }}
+                QDateEdit::drop-down {{
+                    border: none;
+                    width: 30px;  /* EXACTLY the date-range combo's button width
+                                     so all three dropdown icons align vertically */
+                    background: {t['card_bg']};
+                    border-left: 1px solid {t['border']};
+                    border-top-right-radius: 5px;
+                    border-bottom-right-radius: 5px;
+                    subcontrol-origin: padding;
+                    subcontrol-position: right center;
+                }}
+                QDateEdit::down-arrow {{
+                    width: 0;
+                    height: 0;
+                    border-left: 5px solid transparent;
+                    border-right: 5px solid transparent;
+                    border-top: 6px solid {t['text_muted']};
+                }}
+                QDateEdit::down-arrow:hover {{
+                    border-top-color: {t['text_primary']};
+                }}
             """)
             field.setMinimumHeight(min_h + pad_y * 2)
 
@@ -560,6 +611,15 @@ class PatientSearchWidget(QWidget):
             if cal is None:
                 cal = QCalendarWidget()
                 field.setCalendarWidget(cal)
+
+            # Month view opens with a weekday header; the working week here
+            # starts on Saturday (Sat/Sun/Mon...), so order the columns that way.
+            try:
+                cal.setFirstDayOfWeek(Qt.DayOfWeek.Saturday)
+                cal.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.ShortDayNames)
+                cal.setGridVisible(True)
+            except Exception:
+                pass
 
             cal_f = QFont(cal.font())
             cal_f.setPointSize(calendar_pt)
@@ -711,6 +771,29 @@ class PatientSearchWidget(QWidget):
             )
         self._apply_field_styling(t)
         self._apply_date_field_styling(t)
+
+    def _on_date_selector_activated(self, _index):
+        """Re-apply the active preset on every user pick (even the same one)."""
+        self._on_date_selector_changed(self.date_selector.currentText())
+
+    def _open_advanced_search_dialog(self):
+        """Open the structured advanced-search popup; emit its query on accept."""
+        try:
+            from PacsClient.pacs.workstation_ui.home_ui.advanced_search_dialog import (
+                AdvancedSearchDialog,
+            )
+            dialog = AdvancedSearchDialog(self)
+            # Pre-fill from the simple field so a typed ID carries over.
+            simple_id = self.patient_id_edit.text().strip()
+            if simple_id:
+                dialog.ids_edit.setPlainText(simple_id)
+            if dialog.exec():
+                self.advancedSearchRequested.emit(dialog.get_query())
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).error(
+                "Advanced search dialog failed: %s", exc, exc_info=True
+            )
 
     def _on_date_selector_changed(self, text):
         """Handle date selector combo box changes"""

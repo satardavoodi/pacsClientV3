@@ -220,20 +220,65 @@ class CDBurner:
             logger.error(f"Error selecting drive: {e}")
             return False
     
+    def get_supported_write_speeds(self) -> List[Dict[str, object]]:
+        """Query the supported write speeds for the current recorder/media.
+
+        Returns a list of {'sectors_per_second': int, 'label': str}, fastest
+        first. Empty list when speeds cannot be determined (UI shows 'Auto').
+        """
+        speeds: List[Dict[str, object]] = []
+        if not IMAPI2_AVAILABLE or not self.recorder:
+            return speeds
+        try:
+            import comtypes.client
+
+            disc_format = comtypes.client.CreateObject("IMAPI2.MsftDiscFormat2Data")
+            disc_format.Recorder = self.recorder
+
+            try:
+                media_type = disc_format.CurrentPhysicalMediaType
+            except Exception:
+                media_type = 0
+            # 1x base in sectors/second by media family
+            if media_type in (1, 2, 3):            # CD
+                base = 75.0
+            elif media_type in (14, 15, 16):       # Blu-ray
+                base = 2196.0
+            else:                                   # DVD families / unknown
+                base = 676.0
+
+            raw = disc_format.SupportedWriteSpeeds
+            values = sorted({int(v) for v in raw if int(v) > 0}, reverse=True)
+            for sectors in values:
+                factor = sectors / base
+                mb_s = sectors * 2048 / 1_000_000
+                speeds.append({
+                    "sectors_per_second": sectors,
+                    "label": f"{factor:.0f}x ({mb_s:.1f} MB/s)",
+                })
+        except Exception as e:
+            logger.warning(f"Could not query write speeds: {e}")
+        return speeds
+
     def burn(
-        self, 
-        source_folder: str, 
+        self,
+        source_folder: str,
         disc_label: str = "DICOM",
-        eject_after: bool = True
+        eject_after: bool = True,
+        write_speed_sectors: Optional[int] = None,
+        finalize: bool = True,
     ) -> Tuple[bool, str]:
         """
         Burn a folder to CD/DVD
-        
+
         Args:
             source_folder: Path to folder containing files to burn
             disc_label: Label for the disc (max 32 characters)
             eject_after: Whether to eject the disc after burning
-        
+            write_speed_sectors: Requested write speed (sectors/second) or
+                None for the drive default ("Auto").
+            finalize: Close the disc after writing (no further sessions).
+
         Returns:
             Tuple of (success: bool, message: str)
         """
@@ -291,9 +336,17 @@ class CDBurner:
             cd_media_types = {1, 2, 3}
             file_system.FileSystemsToCreate = 1 if media_type in cd_media_types else 3
             try:
-                disc_format.ForceMediaToBeClosed = True
+                disc_format.ForceMediaToBeClosed = bool(finalize)
             except Exception:
                 pass
+
+            # Requested write speed (None → drive default / Auto)
+            if write_speed_sectors:
+                try:
+                    disc_format.SetWriteSpeed(int(write_speed_sectors), False)
+                    self._report_progress(4, f"Write speed set: {write_speed_sectors} sectors/s")
+                except Exception as e:
+                    logger.warning(f"Could not set write speed ({e}); using drive default")
             
             # Import existing session if not blank
             try:
@@ -440,6 +493,63 @@ class CDBurner:
         
         return info
     
+    def get_drive_letter(self) -> Optional[str]:
+        """Mounted path of the selected recorder (e.g. 'F:\\'), if any."""
+        if not self.recorder:
+            return None
+        try:
+            paths = self.recorder.VolumePathNames
+            if paths:
+                letter = str(paths[0])
+                return letter if letter.endswith("\\") else letter + "\\"
+        except Exception as e:
+            logger.warning(f"Could not read drive letter: {e}")
+        return None
+
+    def verify_disc(
+        self,
+        staging_folder: str,
+        progress_callback: Optional[Callable[[int, str], None]] = None,
+        compute_hash: bool = True,
+        mount_timeout_s: int = 90,
+    ) -> Tuple[bool, str, Dict[str, object]]:
+        """Verify the written disc against the staging folder.
+
+        Waits for the disc to remount, then compares every staged file by
+        existence, size and (optionally) SHA-256. Returns (ok, message,
+        details) where details lists any mismatches.
+        """
+        drive = self.get_drive_letter()
+        if not drive:
+            return False, "Cannot verify: no mounted drive letter for the recorder", {}
+
+        # Wait for the freshly written disc to become readable.
+        import time
+
+        deadline = time.monotonic() + mount_timeout_s
+        root = Path(drive)
+        while time.monotonic() < deadline:
+            if self._cancelled:
+                return False, "Verification cancelled", {}
+            try:
+                if root.exists() and any(root.iterdir()):
+                    break
+            except OSError:
+                pass
+            if progress_callback:
+                progress_callback(0, "Waiting for the disc to remount…")
+            time.sleep(3)
+        else:
+            return False, f"Disc did not become readable within {mount_timeout_s}s", {}
+
+        return compare_folder_trees(
+            staging_folder,
+            str(root),
+            progress_callback=progress_callback,
+            compute_hash=compute_hash,
+            cancel_check=lambda: self._cancelled,
+        )
+
     def eject(self) -> bool:
         """Eject the disc"""
         if self.recorder:
@@ -459,6 +569,96 @@ class CDBurner:
             except Exception as e:
                 logger.warning(f"Error closing tray: {e}")
         return False
+
+
+def compare_folder_trees(
+    source_root: str,
+    target_root: str,
+    progress_callback: Optional[Callable[[int, str], None]] = None,
+    compute_hash: bool = True,
+    cancel_check: Optional[Callable[[], bool]] = None,
+) -> Tuple[bool, str, Dict[str, object]]:
+    """Compare every file under ``source_root`` against ``target_root``.
+
+    Pure filesystem comparison (headless-testable): existence, size and
+    optional SHA-256 per file. Name lookup is case-insensitive to tolerate
+    ISO9660 case folding. Extra files on the target are ignored.
+    """
+    import hashlib
+
+    def _sha256(path: Path) -> str:
+        digest = hashlib.sha256()
+        with open(path, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _index_tree(root: Path) -> Dict[str, Path]:
+        index = {}
+        for item in root.rglob("*"):
+            if item.is_file():
+                index[str(item.relative_to(root)).replace("\\", "/").lower()] = item
+        return index
+
+    source = Path(source_root)
+    target = Path(target_root)
+    source_files = [p for p in source.rglob("*") if p.is_file()]
+    target_index = _index_tree(target)
+
+    missing: List[str] = []
+    size_mismatch: List[str] = []
+    hash_mismatch: List[str] = []
+    verified = 0
+    total = len(source_files)
+
+    for n, item in enumerate(source_files):
+        if cancel_check and cancel_check():
+            return False, "Verification cancelled", {}
+        rel = str(item.relative_to(source)).replace("\\", "/")
+        if progress_callback and total:
+            progress_callback(int(n * 100 / total), f"Verifying {n + 1}/{total}: {item.name}")
+
+        counterpart = target_index.get(rel.lower())
+        if counterpart is None:
+            missing.append(rel)
+            continue
+        try:
+            if counterpart.stat().st_size != item.stat().st_size:
+                size_mismatch.append(rel)
+                continue
+            if compute_hash and _sha256(item) != _sha256(counterpart):
+                hash_mismatch.append(rel)
+                continue
+        except OSError as exc:
+            size_mismatch.append(f"{rel} (read error: {exc})")
+            continue
+        verified += 1
+
+    details: Dict[str, object] = {
+        "total": total,
+        "verified": verified,
+        "missing": missing,
+        "size_mismatch": size_mismatch,
+        "hash_mismatch": hash_mismatch,
+        "hashed": compute_hash,
+    }
+    ok = not missing and not size_mismatch and not hash_mismatch and total > 0
+    if ok:
+        message = f"Verification PASSED: {verified}/{total} files match" + (
+            " (SHA-256)" if compute_hash else " (size)"
+        )
+    else:
+        problems = []
+        if missing:
+            problems.append(f"{len(missing)} missing")
+        if size_mismatch:
+            problems.append(f"{len(size_mismatch)} size mismatch")
+        if hash_mismatch:
+            problems.append(f"{len(hash_mismatch)} checksum mismatch")
+        if total == 0:
+            problems.append("no source files")
+        message = "Verification FAILED: " + ", ".join(problems)
+    return ok, message, details
 
 
 def check_imapi2_available() -> bool:

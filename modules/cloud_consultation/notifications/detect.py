@@ -53,3 +53,32 @@ def find_assigned_consultations(
         if assignee_email == me and me and cid and cid not in known:
             found.append({"remote_folder_id": entry.id, "envelope": env})
     return found
+
+
+def find_response_updates(transport, outgoing_rows, known_ids=None) -> list[dict]:
+    """Originator side: detect responses uploaded into MY sent consultations.
+
+    ``outgoing_rows`` items need ``consultation_id`` + ``remote_folder_id`` (rows from
+    ``consultation_db.list_consultations(direction="outgoing")``). Re-reads each
+    consultation's remote envelope; returns ``[{consultation_id, remote_folder_id,
+    envelope}]`` for those that now carry at least one response and are not in
+    ``known_ids``. Qt-free and transport-agnostic.
+    """
+    known = {str(k) for k in (known_ids or ())}
+    found: list[dict] = []
+    for row in outgoing_rows or []:
+        cid = str(row.get("consultation_id") or "")
+        folder_id = str(row.get("remote_folder_id") or "")
+        if not cid or not folder_id or cid in known:
+            continue
+        child = transport.find_child(folder_id, ENVELOPE_FILENAME)
+        if child is None:
+            continue
+        env = _download_and_read_envelope(transport, child.id)
+        if not env:
+            continue
+        if list(env.get("responses") or []):
+            found.append(
+                {"consultation_id": cid, "remote_folder_id": folder_id, "envelope": env}
+            )
+    return found

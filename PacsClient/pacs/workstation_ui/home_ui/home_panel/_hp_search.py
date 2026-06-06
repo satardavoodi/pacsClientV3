@@ -169,6 +169,28 @@ class _HPSearchMixin:
             self.source_of_patient_load = SourceOfPatientLoad.IMPORT
             pass
 
+    def _on_advanced_search_requested(self, query: dict):
+        """Run the structured advanced search from the Patient-ID filter popup.
+
+        Mirrors patient_list_function_identifier's task handling: cancels any
+        in-flight search task, flips the searching state, and delegates to
+        HomeSearchService.search_server_advanced (server-side id/date/modality,
+        client-side body part/age/physician refinement).
+        """
+        try:
+            if self._search_task and not self._search_task.done():
+                self._search_task.cancel()
+        except Exception:
+            pass
+
+        self.patient_search_widget.set_searching_state(True)
+        self._cancel_search_requested = False
+        self._warmup_download_manager_once()
+        self.source_of_patient_load = SourceOfPatientLoad.SERVER
+        self._search_task = asyncio.create_task(
+            self.search_service.search_server_advanced(query)
+        )
+
     def _warmup_download_manager_once(self) -> None:
         """Pre-build the Download Manager on the FIRST patient search so the first
         patient double-click doesn't pay the cold-start cost.

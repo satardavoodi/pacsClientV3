@@ -207,3 +207,47 @@ def test_active_toolbar_tool_blocks_interaction_changes_but_not_visibility():
     host.set_view_crosshair_visible('axial', False)
     assert not host._visible('axial')
     assert host.interaction_log == []  # interactor untouched while a tool owns it
+
+
+# ------------------------------------------- overlay / layering (2026-06-06) ----
+
+def test_is_near_measurement_safe_defaults():
+    """Non-destructive hit test: False on empty/unknown views, no renderer."""
+    from modules.mpr.zeta_mpr.mpr_measurement_tools import MPRMeasurementTools
+
+    class _FakeViewer:
+        viewers = {}
+
+    mt = MPRMeasurementTools(_FakeViewer())
+    assert mt.is_near_measurement('axial', (10, 10), renderer=None) is False
+    assert mt.is_near_measurement('nope', (10, 10), renderer=object()) is False
+    assert mt.is_near_measurement('axial', (10, 10), renderer=object()) is False
+
+
+def test_crosshair_style_yields_to_annotations_on_press():
+    """The style must consult is_near_measurement BEFORE any crosshair grab."""
+    from modules.mpr.zeta_mpr.mpr_viewer._mpr_crosshair_interact import (
+        CrosshairInteractorStyle,
+    )
+    src = inspect.getsource(CrosshairInteractorStyle.on_left_button_press)
+    code = '\n'.join(line.split('#', 1)[0] for line in src.splitlines())
+    assert 'is_near_measurement' in code, (
+        "annotation body clicks must not start crosshair/stack drags"
+    )
+    pos_guard = code.index('is_near_measurement')
+    for grab in ('rotation_enabled', 'dragging_center', '_distance_to_line_segment'):
+        assert grab in code and code.index(grab) > pos_guard, (
+            f"annotation guard must run before crosshair grab logic ({grab})"
+        )
+
+
+def test_crosshair_toggle_button_is_native_child_of_pane():
+    """Overlay button: native child of the GL pane, else it paints BEHIND
+    the image (native HWND covers non-native siblings on Windows)."""
+    from modules.mpr.zeta_mpr.mpr_viewer._mpr_layout import _MprLayoutMixin
+    src = inspect.getsource(_MprLayoutMixin._add_view_crosshair_toggle)
+    assert 'QPushButton("✛", pane_widget)' in src
+    assert 'WA_NativeWindow' in src
+    reg = inspect.getsource(_MprLayoutMixin._register_view)
+    code = '\n'.join(line.split('#', 1)[0] for line in reg.splitlines())
+    assert '_add_view_crosshair_toggle(view_name, vtk_widget)' in code

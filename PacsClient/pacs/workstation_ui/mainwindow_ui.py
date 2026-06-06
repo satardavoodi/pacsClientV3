@@ -5,7 +5,7 @@ from PySide6.QtWidgets import (
     QAbstractButton, QLineEdit, QTextEdit, QPlainTextEdit,
     QComboBox, QSpinBox, QAbstractSlider, QTabBar, QSizePolicy
 )
-from PySide6.QtCore import QEvent, QTimer
+from PySide6.QtCore import QEvent, QObject, QTimer
 
 from .AIPacs_ui import ControlPanelInterface
 from PacsClient.utils import IMAGES_LOGIN_PATH
@@ -23,6 +23,44 @@ logger = logging.getLogger(__name__)
 IS_WINDOWS = sys.platform == "win32"
 IS_MAC = sys.platform == "darwin"
 IS_LINUX = sys.platform == "linux"
+
+
+class _GeometryTraceFilter(QObject):
+    """Env-gated UI geometry tracer (AIPACS_UI_GEOMETRY_TRACE=1).
+
+    Logs Resize/Move/Show/Hide of the title bar / tab areas / central tab
+    widget with millisecond timestamps so transient layout jumps during
+    patient-tab open/close can be pinned from app.log
+    ([UI_GEOM_TRACE] lines). Zero overhead when the env var is unset
+    (filter never installed). Diagnostic only — no behavior change.
+    """
+
+    _EVENT_NAMES = {
+        QEvent.Resize: "Resize",
+        QEvent.Move: "Move",
+        QEvent.Show: "Show",
+        QEvent.Hide: "Hide",
+        QEvent.LayoutRequest: "LayoutRequest",
+    }
+
+    def eventFilter(self, obj, event):
+        etype = event.type()
+        name = self._EVENT_NAMES.get(etype)
+        if name is not None:
+            try:
+                geo = obj.geometry()
+                logger.warning(
+                    "[UI_GEOM_TRACE] t=%.1fms obj=%s ev=%s geo=(%d,%d %dx%d) visible=%s",
+                    time.perf_counter() * 1000.0,
+                    obj.objectName() or type(obj).__name__,
+                    name,
+                    geo.x(), geo.y(), geo.width(), geo.height(),
+                    obj.isVisible(),
+                    extra={"component": "viewer"},
+                )
+            except Exception:
+                pass
+        return False  # observe only — never consume
 
 
 class _PinnedHomeTabBar(QTabBar):
@@ -132,6 +170,94 @@ class MainWindowWidget(QWidget):
             f"[STARTUP_STAGE] stage=MainWindowWidget_total ms={(time.perf_counter() - _t_startup_begin) * 1000:.1f}",
             extra={"component": "viewer"},
         )
+
+        # Env-gated UI geometry tracer for transient layout-jump diagnosis
+        # (patient tab open/close flicker). Off by default; see
+        # _GeometryTraceFilter.
+        if os.getenv("AIPACS_UI_GEOMETRY_TRACE", "").strip() == "1":
+            self._install_geometry_trace()
+
+        # Pin the title-bar height to its natural (home-state) hint so the
+        # header cannot shift when patient tabs open/close. [UI_GEOM_TRACE]
+        # 2026-06-06 measured the title bar dropping 95 -> 84 px ~1.4 s after
+        # a patient tab became active (a restyle lowers its sizeHint to the
+        # 84 px floor) and snapping back to 95 on close — an 11 px relayout
+        # jump of the whole central area. Raising the floor to the measured
+        # natural hint freezes the geometry; the 110 px clip-protection
+        # ceiling is untouched. Re-asserted after show/maximize so late
+        # font/style polish is captured (monotonic — only ever raises).
+        self._freeze_title_bar_height()
+        QTimer.singleShot(0, self._freeze_title_bar_height)
+        QTimer.singleShot(600, self._freeze_title_bar_height)
+
+    def _freeze_title_bar_height(self):
+        """Raise the title bar's minimum height to its natural sizeHint.
+
+        Idempotent and monotonic: never lowers the floor, never exceeds the
+        existing maximumHeight ceiling. See __init__ comment for the measured
+        95↔84 px open/close jump this prevents.
+        """
+        try:
+            title_bar = getattr(self, "title_bar", None)
+            if title_bar is None:
+                return
+            natural = int(title_bar.sizeHint().height())
+            floor = int(title_bar.minimumHeight())
+            ceiling = int(title_bar.maximumHeight())
+            if natural > floor:
+                title_bar.setMinimumHeight(min(natural, ceiling))
+        except Exception:
+            pass
+
+    def _install_geometry_trace(self):
+        """Install [UI_GEOM_TRACE] event filters on the header/tab containers.
+
+        Captures Resize/Move/Show/Hide (+LayoutRequest) of every widget in
+        the title-bar/central-tab chain so a one-time reproduction of the
+        open/close flicker pins exactly which widget moves, by how much,
+        and when. Diagnostic only.
+        """
+        try:
+            self._geometry_trace_filter = _GeometryTraceFilter(self)
+            targets = [
+                getattr(self, "title_bar", None),
+                getattr(self, "tab_area", None),
+                getattr(self, "right_tab_area", None),
+                getattr(self, "user_info_container", None),
+                getattr(self, "tab_widget", None),
+            ]
+            tw = getattr(self, "tab_widget", None)
+            if tw is not None:
+                targets.append(tw.tabBar())
+
+                def _trace_tab_change(idx, _tw=tw):
+                    try:
+                        page = _tw.widget(idx)
+                        logger.warning(
+                            "[UI_GEOM_TRACE] t=%.1fms TAB_SWITCH idx=%d page=%s",
+                            time.perf_counter() * 1000.0, idx,
+                            type(page).__name__ if page is not None else None,
+                            extra={"component": "viewer"},
+                        )
+                        if page is not None:
+                            page.installEventFilter(self._geometry_trace_filter)
+                    except Exception:
+                        pass
+
+                tw.currentChanged.connect(_trace_tab_change)
+
+            installed = 0
+            for target in targets:
+                if target is not None:
+                    target.installEventFilter(self._geometry_trace_filter)
+                    installed += 1
+            logger.warning(
+                "[UI_GEOM_TRACE] tracer installed on %d widgets "
+                "(set AIPACS_UI_GEOMETRY_TRACE=0/unset to disable)",
+                installed, extra={"component": "viewer"},
+            )
+        except Exception:
+            logger.exception("[UI_GEOM_TRACE] tracer installation failed")
 
     def _schedule_startup_import_if_requested(self):
         """Schedule optional startup import if a folder was provided at launch."""

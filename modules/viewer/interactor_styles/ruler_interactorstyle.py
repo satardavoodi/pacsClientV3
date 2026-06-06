@@ -83,7 +83,13 @@ class RulerInteractorStyle(AbstractInteractorStyle):
         # Set font size for the measurement label
         axis = repr.GetAxis()
         axis.UseFontSizeFromPropertyOn()
-        axis.GetTitleTextProperty().SetFontSize(24)
+        title_tp = axis.GetTitleTextProperty()
+        title_tp.SetFontSize(24)
+        # Label readability (2026-06-06): measurement green instead of the
+        # VTK default white (white text washes out over bright anatomy) and
+        # a shadow halo for contrast.
+        title_tp.SetColor(*color)
+        title_tp.SetShadow(1)
 
     def activate(self, tool=None):
         """

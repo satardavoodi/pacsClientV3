@@ -16,6 +16,8 @@ import logging
 import os
 from pathlib import Path
 
+from modules.Identity.thread_guard import assert_off_gui_thread
+
 from .base import (
     CloudTransport,
     ProgressCb,
@@ -44,6 +46,12 @@ class GoogleDriveTransport(CloudTransport):
         self._app_folder_name = app_folder_name
 
     # ── helpers ──────────────────────────────────────────────────────────────
+    @staticmethod
+    def _guard(op: str) -> None:
+        """Every network method enters here: Drive round-trips are forbidden on
+        the GUI thread (they freeze the app for seconds, or hang offline)."""
+        assert_off_gui_thread(f"drive.{op}")
+
     def _to_entry(self, f: dict) -> RemoteEntry:
         return RemoteEntry(
             id=f.get("id", ""),
@@ -56,6 +64,7 @@ class GoogleDriveTransport(CloudTransport):
 
     # ── folder / listing ─────────────────────────────────────────────────────
     def ensure_app_folder(self) -> str:
+        self._guard("ensure_app_folder")
         q = (
             f"name = '{_q_escape(self._app_folder_name)}' "
             f"and mimeType = '{_FOLDER_MIME}' and trashed = false"
@@ -73,6 +82,7 @@ class GoogleDriveTransport(CloudTransport):
         return created["id"]
 
     def find_child(self, parent_id: str, name: str):
+        self._guard("find_child")
         q = (
             f"name = '{_q_escape(name)}' and '{parent_id}' in parents "
             f"and trashed = false"
@@ -84,6 +94,7 @@ class GoogleDriveTransport(CloudTransport):
         return self._to_entry(files[0]) if files else None
 
     def make_child_folder(self, parent_id: str, name: str) -> str:
+        self._guard("make_child_folder")
         existing = self.find_child(parent_id, name)
         if existing is not None and existing.is_folder:
             return existing.id
@@ -94,6 +105,7 @@ class GoogleDriveTransport(CloudTransport):
         return created["id"]
 
     def list_folder(self, folder_id: str) -> list[RemoteEntry]:
+        self._guard("list_folder")
         entries: list[RemoteEntry] = []
         page_token = None
         while True:
@@ -116,6 +128,7 @@ class GoogleDriveTransport(CloudTransport):
         self, local_path: str, parent_id: str, name: str | None = None, *,
         progress_cb: ProgressCb = None,
     ) -> RemoteEntry:
+        self._guard("upload_file")
         from googleapiclient.http import MediaFileUpload
 
         local_path = str(local_path)
@@ -138,6 +151,7 @@ class GoogleDriveTransport(CloudTransport):
         return self._to_entry(response)
 
     def download_file(self, file_id: str, local_path: str, *, progress_cb: ProgressCb = None) -> None:
+        self._guard("download_file")
         from googleapiclient.http import MediaIoBaseDownload
 
         target = Path(local_path)
@@ -158,9 +172,11 @@ class GoogleDriveTransport(CloudTransport):
         os.replace(str(part), str(target))  # atomic publish
 
     def delete(self, file_id: str) -> None:
+        self._guard("delete")
         self._service.files().delete(fileId=file_id).execute()
 
     def share(self, file_id: str, email: str, role: str = "reader") -> ShareInfo:
+        self._guard("share")
         perm = self._service.permissions().create(
             fileId=file_id,
             body={"type": "user", "role": role, "emailAddress": email},
@@ -171,10 +187,12 @@ class GoogleDriveTransport(CloudTransport):
 
     # ── change feed (used by the Phase-5 notification poller) ──────────────────
     def start_change_cursor(self) -> str:
+        self._guard("start_change_cursor")
         resp = self._service.changes().getStartPageToken().execute()
         return resp.get("startPageToken", "")
 
     def changes_since(self, cursor: str) -> tuple[list[RemoteChange], str]:
+        self._guard("changes_since")
         changes: list[RemoteChange] = []
         token = cursor
         while True:
@@ -199,6 +217,8 @@ class GoogleDriveTransport(CloudTransport):
 def build_google_drive_transport(aipacs_user: str, subject_id: str) -> GoogleDriveTransport:
     """Build a Drive transport for a connected Google identity via the Identity module.
 
+    Network-touching (token refresh) — forbidden on the GUI thread (guarded in
+    ``GoogleIdentityProvider.get_credentials``).
     Raises if no Google identity with ``subject_id`` is linked to ``aipacs_user`` or
     the stored token cannot be refreshed (the caller should prompt to (re)connect).
     """

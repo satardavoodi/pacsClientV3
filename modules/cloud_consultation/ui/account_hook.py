@@ -41,3 +41,15 @@ def attach_account_popup(user_container, auth_user=None, parent_window=None):
     flt = _PopupFilter(user_container)
     user_container.installEventFilter(flt)
     user_container._account_popup_filter = flt
+
+    # Start the consultation notification poller for an already-connected Google
+    # identity (idempotent; no-op when the cloud-consultation flag is off or no
+    # identity is linked yet — the Education page re-arms it after a connect).
+    try:
+        from modules.cloud_consultation.notifications.autostart import (
+            ensure_consultation_poller,
+        )
+
+        ensure_consultation_poller(auth_user)
+    except Exception as exc:  # never break the title bar
+        logger.debug("consultation poller autostart skipped: %s", exc)

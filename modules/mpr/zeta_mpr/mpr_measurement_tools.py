@@ -80,7 +80,12 @@ class MPRMeasurementTools:
         distance_rep.SetLabelFormat('%-#6.3g mm')
         axis = distance_rep.GetAxis()
         axis.UseFontSizeFromPropertyOn()
-        axis.GetTitleTextProperty().SetFontSize(24)
+        ruler_tp = axis.GetTitleTextProperty()
+        ruler_tp.SetFontSize(24)
+        # Label readability (2026-06-06): measurement green + shadow instead
+        # of the VTK default white (washes out over bright anatomy).
+        ruler_tp.SetColor(*self.tool_color)
+        ruler_tp.SetShadow(1)
         
         # Create distance widget
         distance_widget = vtk.vtkDistanceWidget()
@@ -140,6 +145,14 @@ class MPRMeasurementTools:
         try:
             angle_rep.GetArc().GetProperty().SetColor(self.tool_color)
             angle_rep.GetPoint1Representation().GetProperty().SetColor(self.tool_color)
+        except Exception:
+            pass
+        # Label readability (2026-06-06): angle value (arc title) in
+        # measurement green + shadow instead of default white.
+        try:
+            arc_tp = angle_rep.GetArc().GetTitleTextProperty()
+            arc_tp.SetColor(*self.tool_color)
+            arc_tp.SetShadow(1)
         except Exception:
             pass
         
@@ -327,6 +340,30 @@ class MPRMeasurementTools:
 
         logger.info(f"✓ Deleted {tool_type} measurement on {view_name}")
         return True
+
+    def is_near_measurement(self, view_name, display_pos, renderer, threshold=12):
+        """True when ``display_pos`` is within ``threshold`` px of any
+        measurement annotation (line body, rays or caption anchor) on a view.
+
+        Non-destructive twin of ``delete_measurement_at`` — used by the
+        crosshair interactor style to YIELD: when the cursor is on an
+        annotation, the style must not start a crosshair/stack/center drag,
+        so the annotation widgets own the interaction (the reported
+        "unstable drag" was the crosshair line-grab stealing body clicks).
+        """
+        if view_name not in self.active_tools or renderer is None:
+            return False
+        for tool_type in ['ruler', 'angle', 'caption']:
+            for widget in self.active_tools[view_name].get(tool_type, []):
+                try:
+                    distance = self._get_widget_distance(
+                        tool_type, widget, display_pos, renderer
+                    )
+                except Exception:
+                    distance = None
+                if distance is not None and distance <= float(threshold):
+                    return True
+        return False
 
     def _get_widget_distance(self, tool_type, widget, display_pos, renderer):
         if tool_type == 'ruler':

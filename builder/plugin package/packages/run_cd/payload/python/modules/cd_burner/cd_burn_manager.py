@@ -7,11 +7,13 @@ Coordinates the entire CD burning process including:
 - Burning to CD/DVD
 """
 
+import datetime
 import os
 import shutil
 import tempfile
 import logging
 import json
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Optional, Dict, Callable, Any
 from PySide6.QtCore import QObject, Signal, QThread
@@ -25,8 +27,59 @@ from .cd_writer import (
     normalize_fileset_label,
     normalize_volume_label,
 )
+from .dicom_prepare import DicomPreparer, FORMAT_ORIGINAL
 
 logger = logging.getLogger(__name__)
+
+# Disc label values treated as "build the label automatically".
+_AUTO_LABEL_VALUES = {"", "auto", "[auto label]", "[auto]", "auto label"}
+
+
+@dataclass
+class BurnOptions:
+    """Professional burn options (UI ↔ worker contract).
+
+    Defaults reproduce the legacy behavior exactly, so callers that do not
+    pass options keep the original pipeline.
+    """
+
+    anonymize: bool = False
+    anonymize_seed: int = 1
+    include_report: bool = False
+    include_images: bool = False        # captured/exported JPEG/PNG files
+    include_attachments: bool = False
+    dicom_format: str = FORMAT_ORIGINAL
+    write_speed_sectors: Optional[int] = None   # None → Auto
+    finalize_disc: bool = True
+    verify_after_burn: bool = False
+
+    def wants_extras(self) -> bool:
+        return self.include_report or self.include_images or self.include_attachments
+
+
+def is_auto_label(value: Optional[str]) -> bool:
+    return (value or "").strip().lower() in _AUTO_LABEL_VALUES
+
+
+def build_auto_label(
+    patient_name: str = "",
+    study_date: str = "",
+    anonymized: bool = False,
+    seed: int = 1,
+) -> str:
+    """Auto disc label: patient (or anonym ID) + study date + today."""
+    if anonymized:
+        subject = f"ANON{int(seed):04d}"
+    else:
+        # Family-name component only, keeps labels short and useful.
+        subject = str(patient_name or "").split("^")[0].strip() or "PATIENT"
+    today = datetime.date.today().strftime("%Y%m%d")
+    parts = [subject]
+    study_date = str(study_date or "").strip()
+    if study_date and study_date != today:
+        parts.append(study_date)
+    parts.append(today)
+    return normalize_volume_label(" ".join(parts), default="DICOM")
 
 
 def inspect_viewer_portability(viewer_path: Optional[str]) -> Dict[str, Any]:
@@ -109,7 +162,9 @@ class CDBurnWorker(QThread):
         drive_id: Optional[str] = None,
         output_folder: Optional[str] = None,
         burn_to_disc: bool = True,
-        parent=None
+        parent=None,
+        viewer_display_name: Optional[str] = None,
+        options: Optional[BurnOptions] = None,
     ):
         super().__init__(parent)
         self.studies = studies
@@ -118,18 +173,99 @@ class CDBurnWorker(QThread):
         self.drive_id = drive_id
         self.output_folder = output_folder
         self.burn_to_disc = burn_to_disc
+        self.viewer_display_name = viewer_display_name
+        self.options = options or BurnOptions()
         self._cancelled = False
+        self._preparer: Optional[DicomPreparer] = None
+        self._burner: Optional[CDBurner] = None
     
     def cancel(self):
         """Cancel the operation"""
         self._cancelled = True
-    
+        if self._preparer is not None:
+            self._preparer.cancel()
+        if self._burner is not None:
+            self._burner.cancel()
+
+    def _resolve_labels(self, study_folders: List[str]):
+        """Resolve (fileset_label, volume_label), honoring auto-label mode."""
+        label = self.disc_label
+        if is_auto_label(label):
+            patient_name, study_date = "", ""
+            try:
+                for folder in study_folders:
+                    for candidate in Path(folder).rglob("*"):
+                        if not candidate.is_file():
+                            continue
+                        try:
+                            ds = dcmread(str(candidate), stop_before_pixels=True)
+                        except Exception:
+                            continue
+                        patient_name = str(getattr(ds, "PatientName", "") or "")
+                        study_date = str(getattr(ds, "StudyDate", "") or "")
+                        raise StopIteration
+            except StopIteration:
+                pass
+            except Exception as exc:
+                logger.warning("Auto-label header read failed: %s", exc)
+            label = build_auto_label(
+                patient_name=patient_name,
+                study_date=study_date,
+                anonymized=self.options.anonymize,
+                seed=self.options.anonymize_seed,
+            )
+            self.progress.emit(4, f"Auto disc label: {label}")
+        normalized_label = normalize_fileset_label(label)
+        volume_label = normalize_volume_label(label, default=normalized_label)
+        return normalized_label, volume_label
+
+    def _collect_extras(self, staging_folder: str):
+        """Optional content: reports / captured images / attachments."""
+        opts = self.options
+        if not opts.wants_extras():
+            return
+
+        if opts.anonymize:
+            self.progress.emit(
+                57,
+                "Reports/images/attachments skipped: anonymization is enabled "
+                "(they contain identifying data).",
+            )
+            return
+
+        from . import content_collectors as collectors
+
+        jobs = []
+        if opts.include_report:
+            jobs.append(("Reports", collectors.collect_reports))
+        if opts.include_images:
+            jobs.append(("Captured images", collectors.collect_images))
+        if opts.include_attachments:
+            jobs.append(("Attachments", collectors.collect_attachments))
+
+        for name, collector in jobs:
+            if self._cancelled:
+                return
+            try:
+                result = collector(self.studies, staging_folder)
+                if result.count:
+                    self.progress.emit(58, f"{name}: {result.count} file(s) added")
+                for warning in result.warnings:
+                    self.progress.emit(58, f"{name}: {warning}")
+                    logger.info("CD extras (%s): %s", name, warning)
+            except Exception as exc:
+                logger.warning("CD extras collector %s failed: %s", name, exc)
+                self.progress.emit(58, f"{name}: failed ({exc})")
+
     def run(self):
         """Execute the CD burn process"""
         temp_dir = None
+        prep_dir = None
         cleanup_temp_dir = False
-        
+
         try:
+            opts = self.options
+
             # Create temp directory for staging
             if not self.output_folder:
                 temp_dir = tempfile.mkdtemp(prefix="pacs_cd_burn_")
@@ -138,59 +274,102 @@ class CDBurnWorker(QThread):
                 staging_folder = self.output_folder
                 Path(staging_folder).mkdir(parents=True, exist_ok=True)
 
-            normalized_label = normalize_fileset_label(self.disc_label)
-            volume_label = normalize_volume_label(self.disc_label, default=normalized_label)
-            
             self.progress.emit(0, "Starting CD preparation...")
-            
+
             # Stage 1: Collect study paths
             self.stage_changed.emit("Collecting studies")
-            self.progress.emit(5, "Collecting study information...")
-            
+            self.progress.emit(2, "Collecting study information...")
+
             study_folders = self._collect_study_folders()
-            
+
             if not study_folders:
                 self.completed.emit(False, "No downloaded studies found. Please download the studies first.")
                 return
-            
+
             if self._cancelled:
                 self.completed.emit(False, "Operation cancelled")
                 return
-            
-            # Stage 2: Create DICOMDIR
+
+            normalized_label, volume_label = self._resolve_labels(study_folders)
+
+            # Stage 2: Prepare DICOM (anonymization / format conversion)
+            dicom_source_folders = study_folders
+            self._preparer = DicomPreparer(
+                anonymize=opts.anonymize,
+                seed=opts.anonymize_seed,
+                dicom_format=opts.dicom_format,
+                progress_callback=lambda p, m: self.progress.emit(5 + int(p * 0.23), m),
+            )
+            if self._preparer.needs_processing:
+                self.stage_changed.emit("Preparing DICOM files")
+                self.progress.emit(5, "Anonymizing / converting DICOM files...")
+                prep_dir = tempfile.mkdtemp(prefix="pacs_cd_prep_")
+                prep_result = self._preparer.prepare(study_folders, prep_dir)
+
+                for warning in prep_result.warnings[:20]:
+                    self.progress.emit(28, f"Prepare: {warning}")
+                    logger.warning("CD prepare: %s", warning)
+
+                if self._cancelled:
+                    self.completed.emit(False, "Operation cancelled")
+                    return
+                if prep_result.total_files == 0:
+                    self.completed.emit(
+                        False,
+                        "DICOM preparation produced no files.\n\n- "
+                        + "\n- ".join(prep_result.warnings[:10]),
+                    )
+                    return
+                dicom_source_folders = prep_result.prepared_folders
+                summary = f"Prepared {prep_result.total_files} files"
+                if prep_result.converted_files:
+                    summary += f", converted {prep_result.converted_files}"
+                if prep_result.fallback_files:
+                    summary += f", kept original syntax for {prep_result.fallback_files}"
+                if prep_result.skipped_files:
+                    summary += f", excluded {prep_result.skipped_files}"
+                self.progress.emit(28, summary)
+
+            # Stage 3: Create DICOMDIR
             self.stage_changed.emit("Creating DICOMDIR")
-            self.progress.emit(10, "Creating DICOMDIR structure...")
-            
+            self.progress.emit(28, "Creating DICOMDIR structure...")
+
             dicomdir_builder = DicomDirBuilder()
             dicomdir_builder.set_progress_callback(
-                lambda p, m: self.progress.emit(10 + int(p * 0.4), m)
+                lambda p, m: self.progress.emit(28 + int(p * 0.22), m)
             )
-            
+
             success = dicomdir_builder.build_from_study_folders(
-                study_folders, 
-                staging_folder, 
+                dicom_source_folders,
+                staging_folder,
                 copy_files=True,
                 fileset_id=normalized_label,
             )
-            
+
             if not success:
                 self.completed.emit(False, "Failed to create DICOMDIR. Check if pydicom is installed.")
                 return
-            
+
             if self._cancelled:
                 self.completed.emit(False, "Operation cancelled")
                 return
-            
-            # Stage 3: Copy Light Viewer
+
+            # Stage 4: Copy Light Viewer
             self.stage_changed.emit("Adding Light Viewer")
             self.progress.emit(50, "Adding Light Viewer...")
-            
+
             if self.light_viewer_path and Path(self.light_viewer_path).exists():
                 self._copy_light_viewer(staging_folder)
             else:
                 self._write_portable_support_files(staging_folder, normalized_label, volume_label)
 
-            self.progress.emit(56, "Verifying portable media layout...")
+            # Stage 5: Optional content (reports / images / attachments)
+            if opts.wants_extras():
+                self.stage_changed.emit("Adding reports & attachments")
+                self.progress.emit(56, "Collecting optional content...")
+                self._collect_extras(staging_folder)
+
+            self.progress.emit(60, "Verifying portable media layout...")
             verification = self._verify_staging_output(staging_folder)
             if not verification["ok"]:
                 self.completed.emit(
@@ -202,25 +381,27 @@ class CDBurnWorker(QThread):
             if verification["warnings"]:
                 for warning in verification["warnings"]:
                     logger.warning("Portable media warning: %s", warning)
-            
+
             if self._cancelled:
                 self.completed.emit(False, "Operation cancelled")
                 return
-            
-            # Stage 4: Burn to disc (if requested)
+
+            # Stage 6: Burn to disc (if requested)
             if self.burn_to_disc:
                 self.stage_changed.emit("Burning to disc")
-                self.progress.emit(60, "Preparing to burn...")
-                
+                self.progress.emit(62, "Preparing to burn...")
+
                 if not check_imapi2_available():
                     self.completed.emit(False, "CD burning not available. comtypes library not installed.")
                     return
-                
+
                 burner = CDBurner()
+                self._burner = burner
+                burn_span = 28 if opts.verify_after_burn else 38
                 burner.set_progress_callback(
-                    lambda p, m: self.progress.emit(60 + int(p * 0.4), m)
+                    lambda p, m: self.progress.emit(62 + int(p * burn_span / 100), m)
                 )
-                
+
                 if not burner.select_drive(self.drive_id):
                     self.completed.emit(False, "No CD/DVD drive available")
                     return
@@ -232,7 +413,7 @@ class CDBurnWorker(QThread):
                     media_type = media_info.get('type', 'Unknown')
                     safety_margin_mb = 16
                     self.progress.emit(
-                        58,
+                        62,
                         f"Media detected: {media_type} | Required: {required_mb:.1f} MB | Free: {free_mb:.1f} MB",
                     )
                     if free_mb and required_mb + safety_margin_mb > free_mb:
@@ -242,33 +423,66 @@ class CDBurnWorker(QThread):
                                 f"Not enough free space on media.\n\n"
                                 f"Required: {required_mb:.1f} MB\n"
                                 f"Free: {free_mb:.1f} MB\n"
-                                f"Safety margin: {safety_margin_mb} MB"
+                                f"Safety margin: {safety_margin_mb} MB\n\n"
+                                f"Reduce the selection or use higher-capacity media."
                             ),
                         )
                         return
-                
-                success, message = burner.burn(staging_folder, volume_label)
-                
-                if success:
-                    cleanup_temp_dir = temp_dir is not None
-                    self.progress.emit(100, "CD burned successfully!")
-                    self.completed.emit(True, "CD burned successfully!")
-                else:
+
+                success, message = burner.burn(
+                    staging_folder,
+                    volume_label,
+                    eject_after=not opts.verify_after_burn,
+                    write_speed_sectors=opts.write_speed_sectors,
+                    finalize=opts.finalize_disc,
+                )
+
+                if not success:
                     self.completed.emit(False, message)
+                    return
+
+                final_message = "CD burned successfully!"
+
+                # Stage 7: Verify written disc (optional)
+                if opts.verify_after_burn:
+                    self.stage_changed.emit("Verifying disc")
+                    self.progress.emit(90, "Verifying written disc...")
+                    ok, verify_message, details = burner.verify_disc(
+                        staging_folder,
+                        progress_callback=lambda p, m: self.progress.emit(90 + int(p * 0.09), m),
+                    )
+                    try:
+                        burner.eject()
+                    except Exception:
+                        pass
+                    if not ok:
+                        mismatches = []
+                        for key in ("missing", "size_mismatch", "hash_mismatch"):
+                            mismatches.extend(details.get(key, [])[:5])
+                        detail_text = ("\n\nExamples:\n- " + "\n- ".join(mismatches)) if mismatches else ""
+                        self.completed.emit(False, f"Burn finished but {verify_message}{detail_text}")
+                        return
+                    final_message = f"CD burned and verified successfully!\n{verify_message}"
+
+                cleanup_temp_dir = temp_dir is not None
+                self.progress.emit(100, final_message)
+                self.completed.emit(True, final_message)
             else:
                 # Just create the folder structure
                 self.progress.emit(100, f"CD folder prepared at: {staging_folder}")
                 self.completed.emit(True, f"CD folder prepared successfully at:\n{staging_folder}")
-            
+
         except Exception as e:
             logger.error(f"CD burn error: {e}")
             import traceback
             traceback.print_exc()
             self.completed.emit(False, f"Error: {str(e)}")
-        
+
         finally:
-            # Clean up temp directory only if burning was successful and we used temp
-            # Keep it if user might want to use the files
+            # Prepared (anonymized/converted) intermediates are always removed.
+            if prep_dir:
+                shutil.rmtree(prep_dir, ignore_errors=True)
+            # Clean up temp staging only after a successful burn.
             if cleanup_temp_dir and temp_dir:
                 try:
                     shutil.rmtree(temp_dir, ignore_errors=True)
@@ -419,7 +633,7 @@ class CDBurnWorker(QThread):
         return study_folders
     
     def _copy_light_viewer(self, staging_folder: str):
-        """Copy a portable viewer bundle and create launch helpers."""
+        """Copy a portable viewer (bundle or single exe) and create launch helpers."""
         try:
             staging_path = Path(staging_folder)
             viewer_path = Path(self.light_viewer_path)
@@ -429,18 +643,37 @@ class CDBurnWorker(QThread):
             if viewer_bundle_dir.exists():
                 shutil.rmtree(viewer_bundle_dir, ignore_errors=True)
 
-            ignore_names = shutil.ignore_patterns(
-                "__pycache__",
-                "*.pyc",
-                "*.pyo",
-                "*.log",
-                "*.tmp",
-                "*.bak",
-                "Thumbs.db",
-                "desktop.ini",
-            )
-            shutil.copytree(viewer_dir, viewer_bundle_dir, dirs_exist_ok=True, ignore=ignore_names)
-            self.progress.emit(52, f"Copied viewer bundle: {viewer_dir.name}")
+            # Single bare exe (e.g. user-picked file in Downloads): copy ONLY the
+            # exe — copying its whole parent folder would drag unrelated files
+            # onto the disc. Portable bundles (exe + DLLs/resources, like the
+            # AI-PACS Lite Viewer dist) are copied as a tree.
+            analysis = inspect_viewer_portability(str(viewer_path))
+            bundle_mode = analysis.get("bundle_mode", "portable_bundle")
+
+            if bundle_mode == "single_exe":
+                viewer_bundle_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(viewer_path, viewer_bundle_dir / viewer_path.name)
+                self.progress.emit(52, f"Copied viewer executable: {viewer_path.name}")
+            else:
+                ignore_names = shutil.ignore_patterns(
+                    "__pycache__",
+                    "*.pyc",
+                    "*.pyo",
+                    "*.log",
+                    "*.tmp",
+                    "*.bak",
+                    # Never ship archives that may sit next to the viewer exe
+                    # (e.g. legacy lightViewer.rar) — they bloat every disc.
+                    "*.rar",
+                    "*.zip",
+                    "*.7z",
+                    "Thumbs.db",
+                    "desktop.ini",
+                )
+                shutil.copytree(viewer_dir, viewer_bundle_dir, dirs_exist_ok=True, ignore=ignore_names)
+                self.progress.emit(52, f"Copied viewer bundle: {viewer_dir.name}")
+
+            viewer_display_name = self.viewer_display_name or viewer_path.stem
 
             relative_exe = Path("VIEWER") / viewer_path.name
             self._write_portable_support_files(
@@ -448,7 +681,7 @@ class CDBurnWorker(QThread):
                 normalize_fileset_label(self.disc_label),
                 normalize_volume_label(self.disc_label, default=normalize_fileset_label(self.disc_label)),
                 viewer_launcher_relative_path=relative_exe,
-                viewer_display_name=viewer_path.stem,
+                viewer_display_name=viewer_display_name,
             )
 
             self.progress.emit(55, "Light Viewer added successfully")
@@ -606,6 +839,28 @@ class CDBurnManager(QObject):
     def get_available_drives(self) -> List[Dict[str, str]]:
         """Get list of available CD/DVD drives"""
         return get_available_drives()
+
+    def get_write_speeds(self, drive_id: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Supported write speeds for a drive (empty → UI shows Auto only)."""
+        try:
+            burner = CDBurner()
+            if not burner.select_drive(drive_id):
+                return []
+            return burner.get_supported_write_speeds()
+        except Exception as exc:
+            logger.warning("Write speed query failed: %s", exc)
+            return []
+
+    def get_media_info(self, drive_id: Optional[str] = None) -> Dict[str, Any]:
+        """Inserted media info for a drive (present/type/capacity/free)."""
+        try:
+            burner = CDBurner()
+            if not burner.select_drive(drive_id):
+                return {'present': False}
+            return burner.get_media_info()
+        except Exception as exc:
+            logger.warning("Media info query failed: %s", exc)
+            return {'present': False}
     
     def is_burning_available(self) -> bool:
         """Check if CD burning is available"""
@@ -625,7 +880,9 @@ class CDBurnManager(QObject):
         light_viewer_path: Optional[str] = None,
         disc_label: str = "DICOM_IMAGES",
         drive_id: Optional[str] = None,
-        burn_to_disc: bool = True
+        burn_to_disc: bool = True,
+        viewer_display_name: Optional[str] = None,
+        options: Optional[BurnOptions] = None,
     ):
         """
         Prepare and burn studies to CD
@@ -646,7 +903,9 @@ class CDBurnManager(QObject):
             light_viewer_path=light_viewer_path,
             disc_label=disc_label,
             drive_id=drive_id,
-            burn_to_disc=burn_to_disc
+            burn_to_disc=burn_to_disc,
+            viewer_display_name=viewer_display_name,
+            options=options,
         )
         
         # Connect signals
@@ -662,7 +921,9 @@ class CDBurnManager(QObject):
         studies: List[dict],
         output_folder: str,
         light_viewer_path: Optional[str] = None,
-        disc_label: str = "DICOM_IMAGES"
+        disc_label: str = "DICOM_IMAGES",
+        viewer_display_name: Optional[str] = None,
+        options: Optional[BurnOptions] = None,
     ):
         """
         Prepare CD folder structure without burning
@@ -682,7 +943,9 @@ class CDBurnManager(QObject):
             light_viewer_path=light_viewer_path,
             disc_label=disc_label,
             output_folder=output_folder,
-            burn_to_disc=False
+            burn_to_disc=False,
+            viewer_display_name=viewer_display_name,
+            options=options,
         )
         
         # Connect signals

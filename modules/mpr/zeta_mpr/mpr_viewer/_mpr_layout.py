@@ -83,16 +83,20 @@ class _MprLayoutMixin:
         self._vtk_widget_to_view[vtk_widget] = view_name
         vtk_widget.installEventFilter(self)
         if view_name != '3d':
-            self._add_view_crosshair_toggle(view_name, container)
+            self._add_view_crosshair_toggle(view_name, vtk_widget)
         self._update_view_highlights()
 
     # ── Per-viewport crosshair toggle (2026-06-06) ─────────────────────
 
-    def _add_view_crosshair_toggle(self, view_name, container):
+    def _add_view_crosshair_toggle(self, view_name, pane_widget):
         """Small overlay button on a 2D pane to show/hide ITS crosshair only.
 
-        Child-widget overlay over the pane (same proven pattern as the Eagle
-        Eye on-viewer boxes toggle). State semantics live in
+        Layering (fix 2026-06-06): the button must be a CHILD of the pane's
+        QVTKRenderWindowInteractor and a NATIVE window itself. As a plain
+        sibling of the native GL pane it painted BEHIND the image (a native
+        HWND always covers non-native sibling widgets on Windows); as a
+        native child window it reliably stacks above the parent GL surface
+        and stays clickable. State semantics live in
         _MprCrosshairStateMixin.set_view_crosshair_visible.
         """
         try:
@@ -101,7 +105,7 @@ class _MprLayoutMixin:
             if not hasattr(self, '_crosshair_view_buttons'):
                 self._crosshair_view_buttons = {}
 
-            btn = QPushButton("✛", container)
+            btn = QPushButton("✛", pane_widget)
             btn.setObjectName("mprViewCrosshairToggle")
             btn.setCheckable(True)
             btn.setChecked(True)
@@ -109,6 +113,10 @@ class _MprLayoutMixin:
             btn.setFocusPolicy(Qt.NoFocus)
             btn.setToolTip("Hide crosshair in this viewport")
             btn.setFixedSize(22, 22)
+            # Native child HWND: required to stack above the GL render
+            # surface; also never steal activation from the render window.
+            btn.setAttribute(Qt.WA_NativeWindow, True)
+            btn.setAttribute(Qt.WA_ShowWithoutActivating, True)
             btn.setStyleSheet(
                 "QPushButton#mprViewCrosshairToggle {"
                 " background: rgba(20, 28, 40, 170); color: #6b7785;"
@@ -133,10 +141,12 @@ class _MprLayoutMixin:
         """Keep the pane's crosshair toggle pinned to its top-right corner."""
         try:
             btn = (getattr(self, '_crosshair_view_buttons', None) or {}).get(view_name)
-            container = self._view_containers.get(view_name)
-            if btn is None or container is None:
+            if btn is None:
                 return
-            btn.move(max(0, container.width() - btn.width() - 6), 6)
+            pane = btn.parentWidget()
+            if pane is None:
+                return
+            btn.move(max(0, pane.width() - btn.width() - 6), 6)
             btn.raise_()
         except Exception:
             pass

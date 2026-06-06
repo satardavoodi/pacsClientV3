@@ -194,6 +194,9 @@ def common_app_datas() -> list[tuple[str, str]]:
         "config",
         "education_assets",
         "modules/cd_burner/assets",
+        # Default portable CD viewer bundle (built by tools/build/build_lite_viewer.py;
+        # collect_tree_datas returns [] when not built yet).
+        "modules/cd_burner/lightViewer_dist",
         "modules/EchoMind/secretary/catalog",
         "modules/EchoMind/secretary/prompts",
         "modules/EchoMind/secretary/module_map.yaml",

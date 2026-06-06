@@ -50,6 +50,18 @@ TEXT_TOOL_FONT_SIZE = 16           # text annotation tool
 LABEL_FORMAT_DISTANCE = "{:.1f} mm"
 LABEL_FORMAT_ANGLE = "{:.1f}\u00b0"
 
+# ── Measurement label placement (2026-06-06 readability) ────────────────
+# Labels sit OFF the measured line (perpendicular offset) joined by a
+# subtle dotted connector, with a 1px dark halo for contrast on bright
+# anatomy. Keeps nearby measurements distinguishable (e.g. two
+# perpendicular rulers no longer stack text onto their crossing lines).
+
+LABEL_OFFSET_PX = 34            # perpendicular distance line -> label anchor
+LABEL_CONNECTOR_ALPHA = 140     # dotted connector opacity (subtle)
+LABEL_CONNECTOR_GAP_PX = 5      # connector stops short of the text
+LABEL_SHADOW_OFFSET_PX = 1      # dark halo offset behind label text
+LABEL_DEOVERLAP_MAX_TRIES = 6   # collision-avoid steps per label per frame
+
 # ── Selection / Interaction ─────────────────────────────────────────────
 
 SELECTION_HIGHLIGHT_WIDTH = 2      # extra pixels on selected annotation

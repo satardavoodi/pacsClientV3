@@ -141,6 +141,16 @@ class AngleInteractorStyle(AbstractInteractorStyle):
         angle_rep.GetRay2().GetProperty().SetColor(self.color)  # change line 2 color
         angle_rep.GetArc().GetProperty().SetColor(self.color)  # change arc color
 
+        # Label readability (2026-06-06): the angle value is the arc actor's
+        # title — measurement green + shadow instead of default white (white
+        # washes out over bright anatomy).
+        try:
+            arc_tp = angle_rep.GetArc().GetTitleTextProperty()
+            arc_tp.SetColor(self.color)
+            arc_tp.SetShadow(1)
+        except Exception:
+            pass
+
     def __On_active_widget(self):
         self.active_widget.On()
         self.set_widget_repr(self.active_widget)

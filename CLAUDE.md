@@ -240,6 +240,70 @@ Key invariants that must not be broken:
   subprocess-spawn pre-warm — all test-gated. Run `tests/download_manager/` before
   resuming.
 
+### CD burner + portable Lite Viewer (implemented 2026-06-06)
+Before editing `modules/cd_burner/` (burn pipeline, viewer staging, `viewer_locator.py`,
+`portable_viewer/`) or `settings_ui/lightviewer_settings.py`, **read
+`docs/pipelines/cd-burner-portable-viewer.md`** — the as-built record.
+
+Key invariants that must not be broken:
+- **`portable_viewer/` is self-contained**: never import `PacsClient` or other
+  `modules.*` from it (it compiles standalone via Nuitka and runs from read-only CD).
+  PySide6/pydicom/numpy only; no VTK/MPR/AI. Keep the relative-or-plain import pattern.
+- **Default-viewer resolution** (`viewer_locator`): env override → built
+  `lightViewer_dist/AIPacsLiteViewer/AIPacsLiteViewer.exe` → legacy `lightViewer/*.exe`
+  fallback. `viewer_mode` in `lightviewer_settings.json` is back-compat normalized
+  (missing mode + configured path = custom). Don't reorder the chain.
+- **Viewer staging**: `single_exe` mode copies ONLY the exe; bundle mode copies the tree
+  but must keep excluding archives (`*.rar/*.zip/*.7z`) — the legacy folder holds a 75 MB
+  rar that must never reach a disc. `.py` changes mirror to the `run_cd` payload
+  (`tools/dev/sync_plugin_mirrors.py`, then `verify_plugin_mirrors.py`).
+- **Lite viewer build** (`tools/build/build_lite_viewer.py`): PyInstaller onedir is the
+  DEFAULT builder (~30 s; Nuitka kept via `--builder nuitka`). Each pylibjpeg plugin
+  (`rle`/`openjpeg`/`libjpeg` import names) needs BOTH its import AND its dist metadata
+  (`--hidden-import`+`--copy-metadata` / `--include-package`+`--include-distribution-metadata`)
+  or compressed DICOM silently stops decoding. `aipacs_lite_viewer.py` must NEVER import
+  `modules.cd_burner...` (freeze tools follow it statically → workstation chain in the bundle).
+- **Professional burn options (2026-06-06 evening, §9 of the pipeline doc):**
+  `BurnOptions` + `dicom_prepare.py` (anonymize/transcode) + `content_collectors.py`
+  (reports/JPEG/attachments). Invariants: anonymize failure EXCLUDES the file (never
+  leak), transcode failure FALLS BACK to previous form (never drop images), extras are
+  auto-skipped when anonymize is ON, default `BurnOptions()` must stay byte-identical to
+  the legacy pipeline, and verify burns with `eject_after=False` then compares + ejects.
+- Run `tests/code/cd_burner/` (offscreen) after any change — 50 green as of 2026-06-06.
+
+### Online Consultation — Identity + Drive + Education submodule (implemented 2026-06-06)
+Before editing `modules/Identity/`, `modules/cloud_consultation/`, or
+`modules/education/online_consultation/`, **read
+`docs/pipelines/online-consultation-education.md`** (as-built; design background in
+`docs/plans/cloud-consultation/GOOGLE_DRIVE_CONSULTATION_PLAN_2026-05-31.md`).
+
+Key invariants that must not be broken:
+- **The AI-PACS server login is untouched.** Identity links external accounts to the
+  current `auth_user`; it never writes to it. Tokens live in the OS keychain/DPAPI
+  (`secure_store`), never in the DB; consultation code never sees raw credentials —
+  it gets a Drive client via `get_capability_client(CLOUD_STORAGE)`.
+- **Double-flag gate:** Education's "Online Consultation" tab + the poller are inert
+  unless BOTH `config/identity/identity.json` AND
+  `config/cloud_consultation/cloud_consultation.json` (or env equivalents) enable
+  them — gate via `online_consultation_available()`. Flag-off Education renders
+  byte-identically (both flags are ON in this source build).
+- **Internal statuses are frozen** (`pending|uploaded|downloaded|reviewed|answered|
+  closed|conflict`, guarded by `sync/state_machine.py`); the clinical labels
+  Pending/Sent/Received/Answered/Closed are display-only (`status_labels.py`) and
+  must never be persisted. `close_consultation` keeps `assert_transition`.
+- **Reuse, don't fork, the offline package engine** — staging goes through
+  `export_studies_to_offline_cloud` (`build_export_callable` raises on `ok=False`);
+  the envelope stays a sibling `consultation.json`; integrity is verified before any
+  ingest. Drive I/O is HTTP for packages only — DICOM stays on the socket stack.
+- **No UI-thread blocking** (connect/upload/download/respond in QThread workers;
+  poller scans off-thread). The poller is an idempotent QApplication-level singleton
+  (`notifications/autostart.py`) and must never raise into the title bar.
+- `modules/education/` is plugin-mirrored: after edits run
+  `tools/dev/sync_plugin_mirrors.py` then `verify_plugin_mirrors.py`.
+- Run `python -m pytest tests/code/cloud_consultation tests/code/identity
+  tests/code/education_online_consultation -q -p no:debugging` after any change
+  (72 green as of 2026-06-06).
+
 ### Viewer/Home "V2" design layer (DEFAULT — flipped 2026-05-31)
 Before editing `PacsClient/utils/v2_style.py`, `PacsClient/utils/ui_variant.py`, the viewer
 toolbar styling (`patient_tab/.../patient_toolbar/toolbar_manager.py`), or home-page widget

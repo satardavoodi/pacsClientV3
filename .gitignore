@@ -90,6 +90,9 @@ sendTelegramNotification($submission)`
 config/echomind_settings.tmp
 builder/plugin package/packages/run_cd/payload/python/modules/cd_burner/lightViewer.rar
 builder/plugin package/packages/run_cd/payload/python/modules/cd_burner/lightViewer/
+# Built Lite Viewer bundle (output of tools/build/build_lite_viewer.py — never commit)
+modules/cd_burner/lightViewer_dist/
+builder/plugin package/packages/run_cd/payload/python/modules/cd_burner/lightViewer_dist/
 
 # ── Claude / AI agent workspace (worktrees, session state) ──
 .claude/

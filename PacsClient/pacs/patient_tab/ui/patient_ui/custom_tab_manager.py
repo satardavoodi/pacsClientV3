@@ -85,8 +85,14 @@ class CustomTabManager:
         self._apply_logo_logotype_style()
         
         self.logo_button.setStyle(self.logo_button.style())
-        
-        self.title_bar_layout.addWidget(self.logo_button)
+
+        # AlignVCenter (2026-06-06): constrained-height items in a QHBoxLayout
+        # anchor to the cell TOP by default, so the 70px logo, the 80px chip
+        # strip and the 70px chips each sat at a different height — the patient
+        # chip rendered visibly higher than the logo and the user pill. Center
+        # every fixed-height member explicitly so all title-bar elements share
+        # one visual horizontal axis.
+        self.title_bar_layout.addWidget(self.logo_button, 0, Qt.AlignVCenter)
         
         # Force immediate layout update
         self.logo_button.updateGeometry()
@@ -98,11 +104,18 @@ class CustomTabManager:
         # Dedicated container for tab buttons so the logo stays fixed on the left.
         self.title_bar_tabs_container = QWidget(self.title_bar_tab_area)
         self.title_bar_tabs_container.setObjectName("TitleBarTabsContainer")
-        # Container sizes to its content (the chips). Horizontal scroll area
-        # below handles overflow when the title bar is narrower than the
-        # chip strip's natural width — see Archetype 1 in
+        # Container sizes to its content (the chips) horizontally. Horizontal
+        # scroll area below handles overflow when the title bar is narrower
+        # than the chip strip's natural width — see Archetype 1 in
         # docs/conventions/RESPONSIVE_UI_CONVENTION.md.
-        self.title_bar_tabs_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
+        # VERTICAL is Preferred (2026-06-06, was Fixed): QScrollArea always
+        # top-anchors its inner widget and only stretches it to the viewport
+        # when the size policy allows. With Fixed, the 70px-hint container sat
+        # at the TOP of the 80px strip, so patient chips rendered ~5px higher
+        # than the logo/user pill. Preferred lets widgetResizable stretch the
+        # container to the full strip height; the chips themselves are
+        # inserted with AlignVCenter (see _add_title_bar_tab_widget).
+        self.title_bar_tabs_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
 
         self.title_bar_tabs_layout = QHBoxLayout(self.title_bar_tabs_container)
         self.title_bar_tabs_layout.setContentsMargins(0, 0, 0, 0)
@@ -135,7 +148,7 @@ class CustomTabManager:
                 self.title_bar_tabs_container,
                 max_height=80,  # 2026-05-29 user request: was 70 (matched PatientTabWidget) but gave zero buffer - patient tab bottom edge was visually clipped. 80 = 70 tab + 10 buffer.
             )
-            self.title_bar_layout.addWidget(self._title_bar_tabs_scroll, 1)
+            self.title_bar_layout.addWidget(self._title_bar_tabs_scroll, 1, Qt.AlignVCenter)
         except Exception as _scroll_exc:  # pragma: no cover — defensive
             # Fallback: original behaviour if helper import fails.
             logger.warning(
@@ -184,7 +197,7 @@ class CustomTabManager:
             insert_at_start: If True, insert at position 0 (right after logo). If False, insert before stretch.
         """
         if not hasattr(self, "title_bar_tabs_layout") or self.title_bar_tabs_layout is None:
-            self.title_bar_layout.addWidget(widget)
+            self.title_bar_layout.addWidget(widget, 0, Qt.AlignVCenter)
             return
 
         if insert_at_start:
@@ -193,13 +206,16 @@ class CustomTabManager:
         else:
             # Insert before the stretch spacer (default behavior)
             insert_index = max(0, self.title_bar_tabs_layout.count() - 1)
-        
-        self.title_bar_tabs_layout.insertWidget(insert_index, widget)
+
+        # AlignVCenter: keep the 70px chip centered inside the 80px strip
+        # (otherwise it anchors to the strip top and floats above the logo).
+        self.title_bar_tabs_layout.insertWidget(insert_index, widget, 0, Qt.AlignVCenter)
 
     def _add_title_bar_right_tab_widget(self, widget: QWidget) -> None:
         """Insert a custom tab widget into the right-side tab area (near admin/user info)."""
         if self.right_tab_layout is not None:
-            self.right_tab_layout.addWidget(widget)
+            # AlignVCenter: same one-visual-axis rule as the left chip strip.
+            self.right_tab_layout.addWidget(widget, 0, Qt.AlignVCenter)
             return
         # Fallback to the main title bar tabs area.
         self._add_title_bar_tab_widget(widget)

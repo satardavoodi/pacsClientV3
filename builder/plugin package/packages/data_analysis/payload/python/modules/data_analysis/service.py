@@ -2,6 +2,7 @@
 
 import json
 import os
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,18 @@ class DataAnalysisService:
         "Last 90 Days",
         "This Year",
     ]
+
+    # Storage stats walk the whole DICOM archive (potentially 100k+ files).
+    # They do not depend on the dashboard filters, so they are cached and
+    # only re-walked when stale or when the user explicitly hits Refresh
+    # (force_storage_refresh=True).
+    STORAGE_CACHE_TTL_SEC = 300.0
+
+    def __init__(self) -> None:
+        self._storage_stats_cache: list[dict[str, Any]] | None = None
+        self._storage_stats_cache_ts: float = 0.0
+        self._storage_cleanup_cache: dict[str, list[dict[str, Any]]] | None = None
+        self._storage_cleanup_cache_ts: float = 0.0
 
     def build_snapshot(
         self,
@@ -102,9 +115,9 @@ class DataAnalysisService:
             snapshot["filter_options"]["users"] = self._collect_user_options(cur, snapshot["account"])
 
         snapshot["servers"] = self._collect_servers()
-        snapshot["storage"] = self._collect_storage_stats()
         force_storage_refresh = bool(filters.get("force_storage_refresh", False))
-        snapshot["storage_cleanup"] = self._collect_storage_cleanup_info(force_refresh=force_storage_refresh)
+        snapshot["storage"] = self._collect_storage_stats_cached(force_refresh=force_storage_refresh)
+        snapshot["storage_cleanup"] = self._collect_storage_cleanup_info_cached(force_refresh=force_storage_refresh)
 
         server_options = ["All Servers"]
         for s in snapshot["servers"]:
@@ -476,6 +489,34 @@ class DataAnalysisService:
 
         return sorted(dedup.values(), key=lambda row: (row.get("source", ""), row.get("name", "")))
 
+    def _collect_storage_stats_cached(self, force_refresh: bool = False) -> list[dict[str, Any]]:
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and self._storage_stats_cache is not None
+            and (now - self._storage_stats_cache_ts) < self.STORAGE_CACHE_TTL_SEC
+        ):
+            return [dict(row) for row in self._storage_stats_cache]
+
+        stats = self._collect_storage_stats()
+        self._storage_stats_cache = [dict(row) for row in stats]
+        self._storage_stats_cache_ts = now
+        return stats
+
+    def _collect_storage_cleanup_info_cached(self, force_refresh: bool = False) -> dict[str, list[dict[str, Any]]]:
+        now = time.monotonic()
+        if (
+            not force_refresh
+            and self._storage_cleanup_cache is not None
+            and (now - self._storage_cleanup_cache_ts) < self.STORAGE_CACHE_TTL_SEC
+        ):
+            return {k: list(v) for k, v in self._storage_cleanup_cache.items()}
+
+        cleanup_info = self._collect_storage_cleanup_info(force_refresh=force_refresh)
+        self._storage_cleanup_cache = {k: list(v) for k, v in cleanup_info.items()}
+        self._storage_cleanup_cache_ts = now
+        return cleanup_info
+
     def _collect_storage_stats(self) -> list[dict[str, Any]]:
         entries = [
             ("Database", DATABASE_FILE),
@@ -487,10 +528,50 @@ class DataAnalysisService:
             ("User Data Root", USER_DATA_ROOT),
         ]
 
+        # Every entry above lives under USER_DATA_ROOT, and the old
+        # per-entry walks scanned the archive roughly twice (each subtree
+        # plus the full root again). Walk the root ONCE and attribute each
+        # file to every matching entry by path prefix. Entries outside the
+        # root (defensive) fall back to their own walk.
+        root = Path(USER_DATA_ROOT)
+        totals: dict[str, list[int]] = {label: [0, 0] for label, _ in entries}  # label -> [bytes, files]
+
+        def _norm(p: Path) -> str:
+            return os.path.normcase(str(p))
+
+        root_key = _norm(root)
+        prefix_matchers: list[tuple[str, str, bool]] = []  # (label, normcased path, is_file_entry)
+        fallback_entries: list[tuple[str, Path]] = []
+        for label, path in entries:
+            key = _norm(path)
+            inside_root = key == root_key or key.startswith(root_key + os.sep)
+            if not inside_root:
+                fallback_entries.append((label, path))
+                continue
+            prefix_matchers.append((label, key, path.is_file() if path.exists() else False))
+
+        if root.exists():
+            for walk_root, _dirs, files in os.walk(root):
+                for file_name in files:
+                    file_path = os.path.join(walk_root, file_name)
+                    try:
+                        size = os.path.getsize(file_path)
+                    except OSError:
+                        continue
+                    file_key = os.path.normcase(file_path)
+                    for label, key, is_file_entry in prefix_matchers:
+                        if (file_key == key) if is_file_entry else (key == root_key or file_key.startswith(key + os.sep)):
+                            totals[label][0] += size
+                            totals[label][1] += 1
+
+        for label, path in fallback_entries:
+            size_bytes, files = self._path_stats(path)
+            totals[label] = [size_bytes, files]
+
         stats: list[dict[str, Any]] = []
         for label, path in entries:
-            size_bytes, files = self._path_stats(path)
-            stats.append({"name": label, "path": str(path), "size_bytes": size_bytes, "files": files})
+            size_bytes, files = totals.get(label, [0, 0])
+            stats.append({"name": label, "path": str(path), "size_bytes": int(size_bytes), "files": int(files)})
         return stats
 
     def _collect_storage_cleanup_info(self, force_refresh: bool = False) -> dict[str, list[dict[str, Any]]]:

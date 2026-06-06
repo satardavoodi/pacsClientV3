@@ -299,6 +299,15 @@ class ToolController:
             hovered_handle_idx=self._hovered_handle_idx,
         )
 
+        # Per-pass label collision map reset (offset labels avoid each other
+        # within one paint pass — see QPainterToolRenderer.begin_frame).
+        begin_frame = getattr(self._renderer, "begin_frame", None)
+        if begin_frame is not None:
+            try:
+                begin_frame()
+            except Exception:
+                pass
+
         for model in self._store.get_for_slice(slice_index):
             self._renderer.render_tool(ctx, painter, model)
 

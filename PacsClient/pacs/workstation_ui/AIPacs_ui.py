@@ -867,10 +867,22 @@ class ControlPanelWindow(object):
         self.customizeThemeBtn.setStyleSheet(button_style)
         self.resetThemeBtn.setStyleSheet(button_style)
         self.themeStatusLabel.setStyleSheet(f"color: {t['text_muted']}; font-size: 12px;")
-        self.label_3.setStyleSheet(f"color: {t['text_primary']};")
-        self.info_body.setStyleSheet(
-            f"color: {t['text_secondary']}; font-size: 12px; line-height: 1.3; padding: 6px;"
-        )
+        # Information page (redesigned 2026-06-06): label_3/info_body exist
+        # ONLY in the fail-safe legacy branch (HomeInfoPanel init failure).
+        # Unconditional access raised AttributeError in apply_theme and
+        # aborted _open_main_window — app hung at login. Guard both, and
+        # forward the theme to the new panel when it provides a hook.
+        if hasattr(self, "label_3"):
+            self.label_3.setStyleSheet(f"color: {t['text_primary']};")
+        if hasattr(self, "info_body"):
+            self.info_body.setStyleSheet(
+                f"color: {t['text_secondary']}; font-size: 12px; line-height: 1.3; padding: 6px;"
+            )
+        if hasattr(self, "info_panel") and hasattr(self.info_panel, "apply_theme"):
+            try:
+                self.info_panel.apply_theme(t)
+            except Exception:
+                pass
         self.label_10.setStyleSheet(f"color: {t['text_primary']}; font-weight: bold;")
         self.label_17.setStyleSheet(f"color: {t['text_primary']};")
         self.label_5.setStyleSheet(f"color: {t['text_primary']};")
@@ -965,12 +977,18 @@ class ControlPanelWindow(object):
             pass
 
     def _refresh_data_analysis_async(self):
-        """Deferred refresh of the Data Analysis dashboard metrics."""
+        """Deferred refresh of the Data Analysis dashboard metrics.
+
+        force_storage_refresh=False: re-opening the module must NOT force a
+        full re-walk of the DICOM archive — the service caches storage stats
+        (TTL) and the dashboard's own Refresh button still forces a re-walk.
+        The snapshot itself is built on a background thread by the widget.
+        """
         try:
             if self.data_analysis_widget is not None and hasattr(
                 self.data_analysis_widget, "refresh_data"
             ):
-                self.data_analysis_widget.refresh_data(force_storage_refresh=True)
+                self.data_analysis_widget.refresh_data(force_storage_refresh=False)
         except Exception as e:
             logger.exception("Error refreshing data analysis dashboard: %s", e)
         

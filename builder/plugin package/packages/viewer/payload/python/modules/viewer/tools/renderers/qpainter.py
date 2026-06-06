@@ -47,6 +47,95 @@ class QPainterToolRenderer(AbstractToolRenderer):
         else:
             painter.drawEllipse(QPointF(float(x), float(y)), r, r)
 
+    def begin_frame(self) -> None:
+        """Reset per-paint-pass state (label collision map).
+
+        Called by ToolController.render before drawing the slice's
+        annotations so labels placed in THIS pass can avoid each other.
+        """
+        self._placed_label_rects = []
+
+    def _draw_offset_label(
+        self,
+        painter: Any,
+        color: Any,
+        label: str,
+        base_x: float,
+        base_y: float,
+        nx: float,
+        ny: float,
+        offset_px: float,
+    ) -> None:
+        """Measurement-label readability (2026-06-06).
+
+        Draws ``label`` OFFSET from its measurement geometry along the unit
+        direction (nx, ny), joined by a subtle dotted connector so the user
+        can tell which label belongs to which line when several measurements
+        sit close together. The text gets a 1px dark halo so the green stays
+        readable over bright/white anatomy.
+
+        Collision avoidance: labels already placed in this paint pass are
+        recorded (see begin_frame); a new label that would overlap one steps
+        FURTHER out along its own offset direction until clear (bounded) —
+        e.g. two crossing rulers no longer print "41.3/35.4 mm" on top of
+        each other at the intersection.
+
+        The font must already be set on the painter. Leaves pen/brush in
+        label state (call last in a renderer).
+        """
+        from PySide6.QtCore import QPointF, QRectF, Qt
+        from PySide6.QtGui import QColor, QPen
+
+        fm = painter.fontMetrics()
+        tw = float(fm.horizontalAdvance(label))
+        th = float(fm.height())
+        placed = getattr(self, '_placed_label_rects', None)
+        if placed is None:
+            placed = self._placed_label_rects = []
+
+        def _rect_for(offset: float) -> QRectF:
+            ax = base_x + nx * offset
+            ay = base_y + ny * offset
+            ty = ay + (fm.ascent() if ny > 0 else 0.0)
+            return QRectF(ax - tw / 2.0, ty - fm.ascent(), tw, th)
+
+        # Step outward until this label clears every label already placed
+        # in this paint pass (bounded; step = label height + breathing room).
+        offset = float(offset_px)
+        step = th + 6.0
+        for _ in range(int(styles.LABEL_DEOVERLAP_MAX_TRIES)):
+            rect = _rect_for(offset)
+            if not any(rect.intersects(r) for r in placed):
+                break
+            offset += step
+        else:
+            rect = _rect_for(offset)
+        placed.append(rect.adjusted(-4, -2, 4, 2))  # margin for the next label
+
+        # Dotted connector — stops short of the text so it stays subtle.
+        conn_len = max(0.0, offset - styles.LABEL_CONNECTOR_GAP_PX)
+        conn_color = QColor(color)
+        conn_color.setAlpha(styles.LABEL_CONNECTOR_ALPHA)
+        conn_pen = QPen(conn_color, 1, Qt.PenStyle.DotLine)
+        conn_pen.setCosmetic(True)
+        painter.setPen(conn_pen)
+        painter.drawLine(
+            QPointF(base_x, base_y),
+            QPointF(base_x + nx * conn_len, base_y + ny * conn_len),
+        )
+
+        # Text centered horizontally on the anchor; when the offset points
+        # downward the baseline shifts below the anchor so the text never
+        # backtracks onto the line.
+        tx = rect.x()
+        ty = rect.y() + fm.ascent()
+
+        sh = styles.LABEL_SHADOW_OFFSET_PX
+        painter.setPen(QPen(QColor(0, 0, 0, 220), 1))
+        painter.drawText(QPointF(tx + sh, ty + sh), label)
+        painter.setPen(QPen(QColor(color), 1))
+        painter.drawText(QPointF(tx, ty), label)
+
     @staticmethod
     def _rect_interaction_handles(p1w: Tuple[float, float], p2w: Tuple[float, float]):
         x1, y1 = p1w
@@ -161,6 +250,8 @@ class QPainterToolRenderer(AbstractToolRenderer):
 
         # ---- label ----
         if model.distance_mm is not None:
+            import math
+
             label = styles.LABEL_FORMAT_DISTANCE.format(model.distance_mm)
             font = QFont(
                 styles.LABEL_FONT_FAMILY,
@@ -168,10 +259,20 @@ class QPainterToolRenderer(AbstractToolRenderer):
             )
             font.setBold(styles.LABEL_FONT_BOLD)
             painter.setFont(font)
-            # Position label near midpoint, offset slightly upward
+            # Offset the label perpendicular to the line (upward-facing side)
+            # with a dotted connector back to the midpoint — keeps the value
+            # off the line and unambiguous when measurements sit close.
             mx = (p1w[0] + p2w[0]) / 2.0
-            my = (p1w[1] + p2w[1]) / 2.0 - 10
-            painter.drawText(QPointF(mx, my), label)
+            my = (p1w[1] + p2w[1]) / 2.0
+            dx = p2w[0] - p1w[0]
+            dy = p2w[1] - p1w[1]
+            length = math.hypot(dx, dy) or 1.0
+            nx, ny = -dy / length, dx / length
+            if ny > 0:  # prefer the side above the line
+                nx, ny = -nx, -ny
+            self._draw_offset_label(
+                painter, color, label, mx, my, nx, ny, styles.LABEL_OFFSET_PX
+            )
 
     def _render_ruler_preview(
         self,
@@ -261,16 +362,20 @@ class QPainterToolRenderer(AbstractToolRenderer):
         # QPainter.drawArc uses 1/16th of a degree
         painter.drawArc(arc_rect, int(ang1 * 16), int(span * 16))
 
-        # Label
+        # Label — offset outward along the arc bisector, with a dotted
+        # connector from the arc edge (offset logic mirrors the ruler so
+        # the value never crowds the rays when angles are small/nearby).
         label = styles.LABEL_FORMAT_ANGLE.format(model.angle_degrees)
         font = QFont(styles.LABEL_FONT_FAMILY, styles.LABEL_FONT_SIZE)
         font.setBold(styles.LABEL_FONT_BOLD)
         painter.setFont(font)
-        # Position label along the bisector of the arc
         bisect_ang = math.radians(ang1 + span / 2.0)
-        lx = vw[0] + (arc_radius + 15) * math.cos(bisect_ang)
-        ly = vw[1] - (arc_radius + 15) * math.sin(bisect_ang)
-        painter.drawText(QPointF(lx, ly), label)
+        nx, ny = math.cos(bisect_ang), -math.sin(bisect_ang)
+        base_x = vw[0] + arc_radius * nx
+        base_y = vw[1] + arc_radius * ny
+        self._draw_offset_label(
+            painter, color, label, base_x, base_y, nx, ny, styles.LABEL_OFFSET_PX
+        )
 
     # ── two-line angle (4-point) ──────────────────────────────────
 
@@ -312,7 +417,8 @@ class QPainterToolRenderer(AbstractToolRenderer):
                 hovered=(hovered_idx == idx),
             )
 
-        # Label at midpoint of the two lines' midpoints
+        # Label between the two lines' midpoints, offset upward with the
+        # shared dotted-connector treatment (same readability rules as ruler).
         label = styles.LABEL_FORMAT_ANGLE.format(model.angle_degrees)
         font = QFont(styles.LABEL_FONT_FAMILY, styles.LABEL_FONT_SIZE)
         font.setBold(styles.LABEL_FONT_BOLD)
@@ -320,8 +426,10 @@ class QPainterToolRenderer(AbstractToolRenderer):
         mid_a = ((a1w[0] + a2w[0]) / 2.0, (a1w[1] + a2w[1]) / 2.0)
         mid_b = ((b1w[0] + b2w[0]) / 2.0, (b1w[1] + b2w[1]) / 2.0)
         lx = (mid_a[0] + mid_b[0]) / 2.0
-        ly = (mid_a[1] + mid_b[1]) / 2.0 - 10
-        painter.drawText(QPointF(lx, ly), label)
+        ly = (mid_a[1] + mid_b[1]) / 2.0
+        self._draw_offset_label(
+            painter, color, label, lx, ly, 0.0, -1.0, styles.LABEL_OFFSET_PX
+        )
 
     # ── multi-point preview (shared for angle tools) ────────────────
 

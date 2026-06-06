@@ -1,4 +1,5 @@
 {
-  "light_viewer_path": "C:/AI-Pacs codes/aipacs-pydicom2d/modules/cd_burner/lightViewer/AiPacs.exe",
+  "viewer_mode": "default",
+  "light_viewer_path": "",
   "disc_label": "DICOM_IMAGES"
 }

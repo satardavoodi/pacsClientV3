@@ -315,6 +315,10 @@ class _HPLayoutMixin:
         self.patient_search_widget.searchRequested.connect(self._keep_left_sidebar_at_top)
         # Connect cancel search signal
         self.patient_search_widget.cancelSearchRequested.connect(self.cancel_search)
+        # Advanced structured search (Patient-ID filter popup, 2026-06-06)
+        self.patient_search_widget.advancedSearchRequested.connect(
+            self._on_advanced_search_requested
+        )
         left_layout.addWidget(self.patient_search_widget)
 
         # EchoMind Secretary button-only UI (main sidebar)

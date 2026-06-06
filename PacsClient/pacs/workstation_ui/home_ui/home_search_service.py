@@ -173,10 +173,17 @@ class HomeSearchService:
             # Build search criteria
             search_data = home.patient_search_widget.get_search_data()
             search_data_local = search_data.copy()
-            
+
             # For local search, always ignore date filters so all matching local studies are returned.
             search_data_local['date_from'] = None
             search_data_local['date_to'] = None
+
+            # Patient ID search is GLOBAL (2026-06-06): same contract as the
+            # server path — ignore modality checkboxes and name when an ID
+            # is given, so the ID always finds the patient.
+            if str(search_data_local.get('patient_id') or '').strip():
+                search_data_local['modality'] = []
+                search_data_local['patient_name'] = None
 
             patients = await loop.run_in_executor(self._thread_pool(), search_patients_local, search_data_local)
 
@@ -504,17 +511,225 @@ class HomeSearchService:
             home.patient_search_widget.set_searching_state(False)
 
     # ------------------------------------------------------------------
+    # Advanced (structured) server search — 2026-06-06
+    # ------------------------------------------------------------------
+
+    async def search_server_advanced(self, query: dict) -> None:
+        """Run a structured advanced query against the PACS socket server.
+
+        ``query`` (built by AdvancedSearchDialog, versioned for extension):
+            patient_ids: list[str]   — each searched server-side, results unioned
+            date_from / date_to:     — 'yyyyMMdd' or None
+            modalities: list[str]
+            body_part / physician:   — str (client-side refinement)
+            age_min / age_max:       — int or None (client-side refinement)
+
+        Server-side: patient_id, dates, modality (what GetPatientList accepts).
+        Client-side: body part / age / physician refine rows WHEN the row
+        carries that data; rows without the field are kept (the server stays
+        authoritative — refinement must never silently hide everything).
+        """
+        home = self._home
+        loop = asyncio.get_running_loop()
+        home._cancel_search_requested = False
+
+        try:
+            server = home.data_access_panel_widget.get_server_selected()
+            if not server or not all(k in server for k in ('host', 'port')):
+                QMessageBox.warning(home, "Server Not Selected",
+                                    "Advanced search runs on the PACS server — please select a server first.")
+                return
+
+            from modules.network.socket_config import update_socket_server_settings, get_socket_server_settings
+            socket_port = get_socket_server_settings()['port']
+            update_socket_server_settings(host=server['host'], port=int(socket_port))
+
+            home.show_loading("Advanced Search",
+                              f"Searching {server.get('name', server['host'])} with advanced filters...",
+                              cancellable=True)
+            home.search_progress.setVisible(True)
+            home.search_progress.setRange(0, 0)
+
+            from modules.network.socket_patient_service import get_socket_patient_service
+            socket_service = get_socket_patient_service()
+
+            is_connected = await loop.run_in_executor(self._thread_pool(), socket_service.test_connection)
+            if self._cancelled:
+                raise asyncio.CancelledError()
+            if not is_connected:
+                QMessageBox.critical(home, "Connection Failed", "Failed to connect to the PACS socket server.")
+                return
+
+            param_sets = self._advanced_query_to_param_sets(query)
+            merged: dict = {}
+            for params in param_sets:
+                if self._cancelled:
+                    raise asyncio.CancelledError()
+                batch = await loop.run_in_executor(
+                    self._thread_pool(),
+                    lambda p=params: socket_service.search_patients_sync(p),
+                )
+                for row in batch or []:
+                    key = (
+                        str(row.get('patient_id') or ''),
+                        str(row.get('study_uid') or row.get('latest_study_uid') or ''),
+                    )
+                    merged.setdefault(key, row)
+
+            rows = [r for r in merged.values()
+                    if self._row_passes_advanced_client_filters(r, query)]
+            rows = await loop.run_in_executor(
+                self._thread_pool(), self._sort_studies_by_date_time_ascending, rows,
+            )
+            if self._cancelled:
+                raise asyncio.CancelledError()
+
+            total = len(rows)
+            home.search_progress.setRange(0, max(1, total))
+            home.patient_table_widget.clear_table()
+            if rows:
+                home.patient_table_widget.begin_bulk_insert()
+                try:
+                    for i, patient in enumerate(rows, start=1):
+                        if self._cancelled:
+                            raise asyncio.CancelledError()
+                        home._add_socket_patient_to_table(patient)
+                        if (i % 10 == 0) or (i == total):
+                            home.search_progress.setValue(i)
+                            await asyncio.sleep(0)
+                finally:
+                    home.patient_table_widget.end_bulk_insert()
+                home._update_connection_indicator_by_status(
+                    'online', f'Advanced search - Found {total} result(s)')
+                try:
+                    home._sync_completed_reporting_physicians_after_search()
+                except Exception:
+                    pass
+            else:
+                home._update_connection_indicator_by_status(
+                    'busy', 'Advanced search - No results')
+
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            QMessageBox.critical(home, "Error", f"Advanced search failed: {str(e)}")
+        finally:
+            home.search_progress.setVisible(False)
+            home.hide_loading()
+            home.patient_search_widget.set_searching_state(False)
+
+    @staticmethod
+    def _advanced_query_to_param_sets(query: dict) -> list:
+        """Expand an advanced query into one socket param dict per server call.
+
+        The socket GetPatientList accepts a single patient_id per request, so
+        N patient IDs become N calls (bounded) whose results are unioned.
+        """
+        base = {
+            "limit": 100,
+            "offset": 0,
+            "include_study_count": True,
+            "include_latest_study": True,
+        }
+        if query.get('date_from'):
+            base['date_from'] = query['date_from']
+        if query.get('date_to'):
+            base['date_to'] = query['date_to']
+        if query.get('modalities'):
+            base['modality'] = list(query['modalities'])
+
+        ids = [str(p).strip() for p in (query.get('patient_ids') or []) if str(p).strip()]
+        ids = ids[:20]  # bounded fan-out
+        if not ids:
+            return [base]
+        param_sets = []
+        for pid in ids:
+            params = dict(base)
+            params['patient_id'] = pid
+            param_sets.append(params)
+        return param_sets
+
+    @staticmethod
+    def _row_passes_advanced_client_filters(row: dict, query: dict) -> bool:
+        """Client-side refinement for fields the server cannot filter.
+
+        Conservative contract: a filter only EXCLUDES a row when the row
+        actually carries the field and it does not match. Missing data keeps
+        the row (never silently hide results the server returned).
+        """
+        if not isinstance(row, dict):
+            return True
+
+        def _first_text(*keys):
+            for k in keys:
+                v = row.get(k)
+                if v not in (None, ''):
+                    return str(v)
+            return ''
+
+        body_part = str(query.get('body_part') or '').strip().lower()
+        if body_part:
+            value = _first_text('body_part', 'BodyPart', 'body_part_examined',
+                                'BodyPartExamined').strip().lower()
+            if value and body_part not in value:
+                return False
+
+        physician = str(query.get('physician') or '').strip().lower()
+        if physician:
+            value = _first_text('radiologist_name', 'reporting_physician',
+                                'reporting_physician_name', 'radiologist',
+                                'referring_physician', 'physician').strip().lower()
+            if value and physician not in value:
+                return False
+
+        age_min = query.get('age_min')
+        age_max = query.get('age_max')
+        if age_min is not None or age_max is not None:
+            raw_age = _first_text('patient_age', 'age', 'PatientAge')
+            age_years = HomeSearchService._parse_dicom_age_years(raw_age)
+            if age_years is not None:
+                if age_min is not None and age_years < int(age_min):
+                    return False
+                if age_max is not None and age_years > int(age_max):
+                    return False
+
+        return True
+
+    @staticmethod
+    def _parse_dicom_age_years(raw: str):
+        """'042Y' / '42' / '006M' → years (float) or None when unparsable."""
+        text = str(raw or '').strip().upper()
+        if not text:
+            return None
+        try:
+            if text.endswith('Y'):
+                return float(text[:-1])
+            if text.endswith('M'):
+                return float(text[:-1]) / 12.0
+            if text.endswith('W'):
+                return float(text[:-1]) / 52.0
+            if text.endswith('D'):
+                return float(text[:-1]) / 365.0
+            return float(text)
+        except (TypeError, ValueError):
+            return None
+
+    # ------------------------------------------------------------------
     # internal helpers
     # ------------------------------------------------------------------
 
     @staticmethod
     def _convert_search_data_to_socket_params(search_data: dict) -> dict:
         """Map UI search data dict to Socket API parameter dict.
-        
-        When searching by Patient ID:
+
+        When searching by Patient ID the lookup is GLOBAL (2026-06-06):
         - Use exact match (no wildcards)
-        - Ignore date filters
-        - Keep normal list limit so all studies for that patient can be returned
+        - Ignore date filters AND date presets
+        - Ignore modality checkboxes (previously still applied — the
+          reported bug: an ID search returned nothing unless the patient's
+          modality happened to be ticked)
+        - Ignore patient name (ID is authoritative)
+        - Keep normal list limit so all studies for that patient return
         """
         socket_params = {
             "limit": 100,
@@ -522,23 +737,23 @@ class HomeSearchService:
             "include_study_count": True,
             "include_latest_study": True,
         }
-        
-        # When searching by Patient ID, use exact match and ignore dates
-        if search_data.get('patient_id'):
-            socket_params['patient_id'] = search_data['patient_id']
-            # Date filters are intentionally ignored for direct Patient ID lookup.
-        else:
-            # For other searches, include date filters
-            if search_data.get('date_from'):
-                socket_params['date_from'] = search_data['date_from']
-            if search_data.get('date_to'):
-                socket_params['date_to'] = search_data['date_to']
-        
+
+        if str(search_data.get('patient_id') or '').strip():
+            socket_params['patient_id'] = str(search_data['patient_id']).strip()
+            # Global ID lookup: no dates, no modality, no name.
+            return socket_params
+
+        # Non-ID searches: include date filters
+        if search_data.get('date_from'):
+            socket_params['date_from'] = search_data['date_from']
+        if search_data.get('date_to'):
+            socket_params['date_to'] = search_data['date_to']
+
         if search_data.get('patient_name'):
             socket_params['patient_name'] = search_data['patient_name']
         if search_data.get('modality'):
             socket_params['modality'] = search_data['modality']
-        
+
         return socket_params
 
     @staticmethod

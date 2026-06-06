@@ -1,8 +1,10 @@
 ﻿from __future__ import annotations
 
+import logging
+import threading
 from typing import Any
 
-from PySide6.QtCore import QPointF, QRect, Qt, QTimer
+from PySide6.QtCore import QObject, QPointF, QRect, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -23,6 +25,40 @@ from PySide6.QtWidgets import (
 )
 
 from .service import DataAnalysisService
+
+logger = logging.getLogger(__name__)
+
+
+class _SnapshotWorker(QObject):
+    """Runs DataAnalysisService.build_snapshot on a background thread.
+
+    The heavy snapshot (full os.walk over the DICOM archive + DB aggregate
+    queries) must never run on the GUI thread — it froze the app for the
+    whole scan on every open / filter change / auto-refresh tick.
+
+    The DB pool is thread-safe (per-thread connections,
+    check_same_thread=False), so build_snapshot is safe off-thread.
+    `finished` is emitted from the worker thread; Qt delivers it queued to
+    the GUI thread. If the dashboard is destroyed mid-run, Qt drops the
+    connection automatically and the result is discarded.
+    """
+
+    finished = Signal(object)  # snapshot dict, or None on failure
+
+    def start(self, service: DataAnalysisService, auth_user: dict[str, Any], filters: dict[str, Any]) -> None:
+        def _run() -> None:
+            snapshot: dict[str, Any] | None = None
+            try:
+                snapshot = service.build_snapshot(auth_user, filters)
+            except Exception:
+                logger.exception("data_analysis: snapshot build failed")
+            try:
+                self.finished.emit(snapshot)
+            except RuntimeError:
+                # Receiver (and this QObject) already destroyed during shutdown.
+                pass
+
+        threading.Thread(target=_run, name="DataAnalysisSnapshot", daemon=True).start()
 
 
 class DonutChartWidget(QWidget):
@@ -540,9 +576,13 @@ class DataAnalysisDashboard(QWidget):
         self._service = DataAnalysisService()
         self._snapshot: dict[str, Any] = {}
         self._kpi_labels: dict[str, QLabel] = {}
+        # Async snapshot state: at most one worker in flight; extra requests
+        # coalesce into one pending re-run (keeping the strongest force flag).
+        self._refresh_in_flight = False
+        self._pending_refresh: bool | None = None  # None = no pending; bool = force flag
         self._auto_refresh_timer = QTimer(self)
         self._auto_refresh_timer.setInterval(30000)
-        self._auto_refresh_timer.timeout.connect(lambda: self.refresh_data(force_storage_refresh=False))
+        self._auto_refresh_timer.timeout.connect(self._on_auto_refresh_tick)
 
         self._build_ui()
         self.refresh_data(force_storage_refresh=False)
@@ -740,17 +780,81 @@ class DataAnalysisDashboard(QWidget):
         return table
 
     def _toggle_auto_refresh(self, enabled: bool) -> None:
-        if enabled:
+        if enabled and self.isVisible():
             self._auto_refresh_timer.start()
         else:
             self._auto_refresh_timer.stop()
 
+    def _on_auto_refresh_tick(self) -> None:
+        # Background-resource guard: the dashboard must only consume
+        # CPU/disk/DB while the user is actually looking at it. The module
+        # works on click (open path triggers refresh_data); it must never
+        # poll from a hidden page.
+        if not self.isVisible():
+            return
+        self.refresh_data(force_storage_refresh=False)
+
+    def hideEvent(self, event) -> None:  # noqa: N802
+        # Leaving the Data Analysis page: stop ALL periodic background work.
+        self._auto_refresh_timer.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event) -> None:  # noqa: N802
+        # Returning to the page: resume auto-refresh only if the user opted in.
+        if self.auto_refresh_checkbox.isChecked() and not self._auto_refresh_timer.isActive():
+            self._auto_refresh_timer.start()
+        super().showEvent(event)
+
     def refresh_data(self, force_storage_refresh: bool = False) -> None:
+        """Request a dashboard refresh (non-blocking).
+
+        The snapshot is built on a background thread and applied back on the
+        GUI thread. Overlapping requests coalesce: while one build is in
+        flight, the latest request (with the strongest force flag) is queued
+        and runs once the current build finishes.
+        """
+        if self._refresh_in_flight:
+            pending_force = bool(self._pending_refresh) or bool(force_storage_refresh)
+            self._pending_refresh = pending_force
+            return
+
+        self._refresh_in_flight = True
+        self._set_refreshing_ui(True)
+
         filters = self._current_service_filters()
         filters["force_storage_refresh"] = bool(force_storage_refresh)
-        self._snapshot = self._service.build_snapshot(self._auth_user, filters)
-        self._populate_filter_options()
-        self._apply_filters()
+
+        worker = _SnapshotWorker(self)
+        worker.finished.connect(self._on_snapshot_ready)
+        self._snapshot_worker = worker  # keep a ref while in flight
+        worker.start(self._service, self._auth_user, filters)
+
+    def _on_snapshot_ready(self, snapshot: object) -> None:
+        self._refresh_in_flight = False
+        worker = getattr(self, "_snapshot_worker", None)
+        if worker is not None:
+            self._snapshot_worker = None
+            worker.deleteLater()
+        self._set_refreshing_ui(False)
+
+        if isinstance(snapshot, dict):
+            self._snapshot = snapshot
+            self._populate_filter_options()
+            self._apply_filters()
+
+        if self._pending_refresh is not None:
+            force = bool(self._pending_refresh)
+            self._pending_refresh = None
+            self.refresh_data(force_storage_refresh=force)
+
+    def _set_refreshing_ui(self, refreshing: bool) -> None:
+        try:
+            self.refresh_btn.setEnabled(not refreshing)
+            if refreshing:
+                self.generated_at_label.setText("Updating…")
+            # On completion _apply_filters() restores the real timestamp.
+        except Exception:  # pragma: no cover — defensive during teardown
+            pass
 
     def _on_data_filter_changed(self) -> None:
         self.refresh_data(force_storage_refresh=False)

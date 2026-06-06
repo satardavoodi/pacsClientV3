@@ -79,3 +79,48 @@ def test_get_capability_client_builds_drive(monkeypatch):
     )
     assert svc == "DRIVE_SERVICE"
     assert built["args"][0][0] == "drive" and built["args"][0][1] == "v3"
+
+
+def test_drive_client_has_bounded_socket_timeout(monkeypatch):
+    """Offline hardening (2026-06-07): the Drive HTTP client must carry a
+    bounded per-socket timeout so a dead network fails fast in the worker
+    instead of hanging; discovery must be static (no network fetch)."""
+    pytest.importorskip("google_auth_httplib2")
+    prov = GoogleIdentityProvider()
+    monkeypatch.setattr(GoogleIdentityProvider, "get_credentials", lambda self, ident: object())
+
+    built = {}
+    discovery = types.ModuleType("googleapiclient.discovery")
+    discovery.build = lambda *a, **k: built.update(k) or "DRIVE_SERVICE"
+    monkeypatch.setitem(sys.modules, "googleapiclient", types.ModuleType("googleapiclient"))
+    monkeypatch.setitem(sys.modules, "googleapiclient.discovery", discovery)
+
+    prov.get_capability_client(
+        ExternalIdentity(provider="google", subject_id="x"), Capability.CLOUD_STORAGE
+    )
+    authed = built["http"]
+    assert authed.http.timeout == GoogleIdentityProvider.DRIVE_HTTP_TIMEOUT_SEC
+    assert built["static_discovery"] is True
+
+
+def test_token_refresh_request_has_bounded_timeout(monkeypatch):
+    """The OAuth refresh transport must inject a bounded timeout (google-auth
+    default is 120 s — that froze the GUI for the full hang when on-thread)."""
+    pytest.importorskip("google.auth.transport.requests")
+    captured = {}
+
+    from google.auth.transport.requests import Request
+
+    def fake_call(self, *args, **kwargs):
+        captured.update(kwargs)
+        return "RESP"
+
+    monkeypatch.setattr(Request, "__call__", fake_call)
+    req = GoogleIdentityProvider._bounded_refresh_request()
+    assert req("https://oauth2.googleapis.com/token") == "RESP"
+    assert captured["timeout"] == GoogleIdentityProvider.TOKEN_REFRESH_TIMEOUT_SEC
+
+    # An explicit caller-provided timeout must win.
+    captured.clear()
+    req("https://oauth2.googleapis.com/token", timeout=3)
+    assert captured["timeout"] == 3

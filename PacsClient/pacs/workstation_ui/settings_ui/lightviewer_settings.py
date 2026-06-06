@@ -5,7 +5,8 @@ User interface for configuring Light Viewer executable path for CD burning
 
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
                                QGroupBox, QLineEdit, QFileDialog, QFormLayout,
-                               QMessageBox, QFrame)
+                               QMessageBox, QFrame, QRadioButton, QButtonGroup,
+                               QScrollArea)
 from PySide6.QtCore import Qt, Signal
 import os
 import json
@@ -13,6 +14,11 @@ from pathlib import Path
 
 from aipacs_runtime import roaming_config_root
 from modules.cd_burner.cd_burn_manager import inspect_viewer_portability
+from modules.cd_burner.viewer_locator import default_viewer_hint, resolve_default_viewer
+
+# Viewer-mode values persisted in lightviewer_settings.json
+VIEWER_MODE_DEFAULT = "default"   # bundled AI-PACS portable viewer
+VIEWER_MODE_CUSTOM = "custom"     # user-selected portable viewer .exe
 
 class LightViewerSettingsWidget(QWidget):
     """Settings widget for Light Viewer configuration"""
@@ -103,6 +109,32 @@ class LightViewerSettingsWidget(QWidget):
             QPushButton:pressed {
                 background-color: #1e40af;
             }
+            /* Radio indicators need explicit colors — the default Qt
+               indicator renders dark-on-dark and the checked dot is
+               invisible (same family as the MPR dropdown fix). */
+            QRadioButton {
+                color: #e5e7eb;
+                font-size: 14px;
+                spacing: 8px;
+                padding: 2px 0;
+            }
+            QRadioButton::indicator {
+                width: 16px;
+                height: 16px;
+                border-radius: 9px;
+                border: 2px solid #64748b;
+                background-color: #1b2230;
+            }
+            QRadioButton::indicator:hover {
+                border-color: #93c5fd;
+            }
+            QRadioButton::indicator:checked {
+                border: 2px solid #3b82f6;
+                background-color: qradialgradient(
+                    cx: 0.5, cy: 0.5, radius: 0.55, fx: 0.5, fy: 0.5,
+                    stop: 0 #60a5fa, stop: 0.55 #3b82f6, stop: 0.62 #1b2230, stop: 1 #1b2230
+                );
+            }
         """)
         
         main_layout = QVBoxLayout()
@@ -118,9 +150,10 @@ class LightViewerSettingsWidget(QWidget):
         
         # Description
         desc_label = QLabel(
-            "Configure the DICOM Light Viewer executable that will be included\n"
-            "when burning CDs. The viewer allows patients to view their images\n"
-            "on any Windows computer without installing additional software."
+            "Configure the DICOM viewer that will be included when burning CDs.\n"
+            "AI-PACS ships its own portable Lite Viewer (recommended); alternatively\n"
+            "select your own portable viewer executable. The viewer lets patients\n"
+            "view their images on any Windows computer without installing software."
         )
         desc_label.setStyleSheet("color: #94a3b8; padding: 5px 10px; font-size: 14px;")
         desc_label.setWordWrap(True)
@@ -133,11 +166,30 @@ class LightViewerSettingsWidget(QWidget):
         separator.setStyleSheet("color: #232a33;")
         main_layout.addWidget(separator)
         
-        # Light Viewer Path Group
-        viewer_group = QGroupBox("DICOM Light Viewer Executable")
+        # Viewer selection group (default AI-PACS viewer vs custom executable)
+        viewer_group = QGroupBox("CD Viewer Selection")
         viewer_layout = QVBoxLayout()
         viewer_layout.setSpacing(12)
-        
+
+        self.mode_group = QButtonGroup(self)
+        self.default_viewer_rb = QRadioButton("Use the default AI-PACS portable viewer (recommended)")
+        self.custom_viewer_rb = QRadioButton("Use a custom portable viewer executable")
+        self.mode_group.addButton(self.default_viewer_rb)
+        self.mode_group.addButton(self.custom_viewer_rb)
+        self.default_viewer_rb.toggled.connect(self._on_mode_changed)
+        viewer_layout.addWidget(self.default_viewer_rb)
+
+        # Default-viewer availability status (resolved via viewer_locator)
+        self.default_status_label = QLabel("")
+        self.default_status_label.setWordWrap(True)
+        self.default_status_label.setStyleSheet(
+            "color: #94a3b8; font-size: 12px; padding: 0 2px 6px 22px;"
+            "background: transparent; border: none;"
+        )
+        viewer_layout.addWidget(self.default_status_label)
+
+        viewer_layout.addWidget(self.custom_viewer_rb)
+
         # Path input with browse button
         path_layout = QHBoxLayout()
         path_layout.setSpacing(8)
@@ -312,10 +364,24 @@ class LightViewerSettingsWidget(QWidget):
         self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: #10b981; padding: 5px 10px; font-weight: 700;")
         main_layout.addWidget(self.status_label)
-        
+
         main_layout.addStretch()
-        
-        self.setLayout(main_layout)
+
+        # Wrap the page in a QScrollArea (same pattern as the other settings
+        # tabs — see installation_module_settings / echomind_settings) so the
+        # full content stays reachable on short displays. Without this the
+        # page clipped its lower groups on 1280x1024 monitors.
+        content = QWidget()
+        content.setLayout(main_layout)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        scroll.setWidget(content)
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(scroll)
     
     def browse_for_viewer(self):
         """Open file dialog to select viewer executable"""
@@ -375,11 +441,42 @@ class LightViewerSettingsWidget(QWidget):
         self.path_edit.clear()
         self.viewer_status_label.setText("")
         self.viewer_details_label.setText("")
-    
+
+    def _on_mode_changed(self, _checked: bool = False):
+        """Enable/disable the custom-path row to match the selected mode."""
+        use_custom = self.custom_viewer_rb.isChecked()
+        self.path_edit.setEnabled(use_custom)
+        self.browse_btn.setEnabled(use_custom)
+        self.clear_btn.setEnabled(use_custom)
+        self._refresh_default_status()
+
+    def _refresh_default_status(self):
+        """Show whether the bundled default viewer is available."""
+        try:
+            info = resolve_default_viewer()
+            hint = default_viewer_hint()
+        except Exception as e:  # defensive — settings page must never crash
+            info, hint = None, f"Could not check default viewer: {e}"
+
+        if info is not None:
+            color = "#10b981" if info.get("kind") in ("lite", "override") else "#f59e0b"
+            self.default_status_label.setText(f"✓ {hint}")
+        else:
+            color = "#f59e0b"
+            self.default_status_label.setText(f"⚠ {hint}")
+        self.default_status_label.setStyleSheet(
+            f"color: {color}; font-size: 12px; padding: 0 2px 6px 22px;"
+            "background: transparent; border: none;"
+        )
+
     def save_settings(self):
         """Save settings to config file"""
         try:
             settings = {
+                'viewer_mode': (
+                    VIEWER_MODE_CUSTOM if self.custom_viewer_rb.isChecked()
+                    else VIEWER_MODE_DEFAULT
+                ),
                 'light_viewer_path': self.path_edit.text(),
                 'disc_label': self.disc_label_edit.text() or 'DICOM_IMAGES'
             }
@@ -410,20 +507,38 @@ class LightViewerSettingsWidget(QWidget):
             if self.config_file.exists():
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     settings = json.load(f)
-                
+
                 viewer_path = settings.get('light_viewer_path', '')
                 disc_label = settings.get('disc_label', 'DICOM_IMAGES')
-                
+                mode = self._normalize_mode(settings.get('viewer_mode'), viewer_path)
+
                 self.path_edit.setText(viewer_path)
                 self.disc_label_edit.setText(disc_label)
-                
+
+                if mode == VIEWER_MODE_CUSTOM:
+                    self.custom_viewer_rb.setChecked(True)
+                else:
+                    self.default_viewer_rb.setChecked(True)
+
                 if viewer_path:
                     self._validate_viewer_path(viewer_path)
-                
+
                 print(f"📂 Light Viewer settings loaded from: {self.config_file}")
-                
+            else:
+                self.default_viewer_rb.setChecked(True)
+
         except Exception as e:
             print(f"⚠ Error loading Light Viewer settings: {e}")
+
+        self._on_mode_changed()
+
+    @staticmethod
+    def _normalize_mode(raw_mode, viewer_path: str) -> str:
+        """Back-compat: configs predating viewer_mode keep their old meaning —
+        a configured custom path meant 'use the custom viewer'."""
+        if raw_mode in (VIEWER_MODE_DEFAULT, VIEWER_MODE_CUSTOM):
+            return raw_mode
+        return VIEWER_MODE_CUSTOM if viewer_path else VIEWER_MODE_DEFAULT
     
     @staticmethod
     def get_light_viewer_path() -> str:
@@ -439,6 +554,64 @@ class LightViewerSettingsWidget(QWidget):
             print(f"Error reading light viewer path: {e}")
         return ''
     
+    @staticmethod
+    def get_viewer_mode() -> str:
+        """Configured viewer mode ('default' or 'custom'), with back-compat."""
+        try:
+            config_file = roaming_config_root() / 'lightviewer_settings.json'
+            if config_file.exists():
+                with open(config_file, 'r', encoding='utf-8') as f:
+                    settings = json.load(f)
+                return LightViewerSettingsWidget._normalize_mode(
+                    settings.get('viewer_mode'),
+                    settings.get('light_viewer_path', ''),
+                )
+        except Exception as e:
+            print(f"Error reading viewer mode: {e}")
+        return VIEWER_MODE_DEFAULT
+
+    @staticmethod
+    def get_viewer_selection() -> dict:
+        """Resolve the viewer the CD burner should bundle.
+
+        Returns a dict:
+            mode: 'default' | 'custom'
+            path: str | None      — executable to bundle (None = no viewer available)
+            display_name: str
+            kind: 'lite' | 'legacy' | 'override' | 'custom' | 'none'
+        """
+        mode = LightViewerSettingsWidget.get_viewer_mode()
+
+        if mode == VIEWER_MODE_CUSTOM:
+            path = LightViewerSettingsWidget.get_light_viewer_path()
+            if path and os.path.isfile(path):
+                return {
+                    'mode': mode,
+                    'path': path,
+                    'display_name': Path(path).stem,
+                    'kind': 'custom',
+                }
+            return {'mode': mode, 'path': None, 'display_name': 'Custom viewer (missing)', 'kind': 'none'}
+
+        try:
+            info = resolve_default_viewer()
+        except Exception as e:
+            print(f"Error resolving default viewer: {e}")
+            info = None
+        if info is not None:
+            return {
+                'mode': VIEWER_MODE_DEFAULT,
+                'path': info['path'],
+                'display_name': info['display_name'],
+                'kind': info['kind'],
+            }
+        return {
+            'mode': VIEWER_MODE_DEFAULT,
+            'path': None,
+            'display_name': 'Default viewer (not built)',
+            'kind': 'none',
+        }
+
     @staticmethod
     def get_disc_label() -> str:
         """Static method to get the configured disc label"""

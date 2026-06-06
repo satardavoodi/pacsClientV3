@@ -212,6 +212,12 @@ class AccountPopup(QWidget):
         actions.addWidget(new_btn, 1)
         actions.addWidget(open_btn)
         v.addLayout(actions)
+
+        # The full workflow lives in Education ▸ Online Consultation.
+        goto = QPushButton("Open Online Consultation (Education)")
+        goto.setObjectName("ghost")
+        goto.clicked.connect(self._open_online_consultation)
+        v.addWidget(goto)
         return box
 
     def _footer(self) -> QWidget:
@@ -296,12 +302,28 @@ class AccountPopup(QWidget):
 
     def _new_consultation(self):
         try:
+            # Prefer the Education submodule (it provides study selection); the
+            # bare compose dialog stays as a fallback.
+            if self._open_online_consultation():
+                return
             from .compose_dialog import ConsultationComposeDialog
 
             self.close()
             ConsultationComposeDialog(auth_user=self.auth_user, parent=self.parent()).exec()
         except Exception as exc:
             logger.warning("open compose dialog failed: %s", exc)
+
+    def _open_online_consultation(self) -> bool:
+        try:
+            from modules.education.online_consultation.launcher import (
+                open_online_consultation,
+            )
+
+            self.close()
+            return bool(open_online_consultation())
+        except Exception as exc:
+            logger.warning("open online consultation failed: %s", exc)
+            return False
 
     def _open_inbox(self):
         try:

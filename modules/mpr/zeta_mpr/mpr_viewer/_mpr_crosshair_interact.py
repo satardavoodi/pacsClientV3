@@ -346,6 +346,24 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
             self._start_pan()
             return
 
+        # Annotation priority (2026-06-06): when the press lands on a
+        # measurement annotation (line body, rays or caption), the style
+        # YIELDS — no crosshair line/center grab, no stack drag. Endpoint
+        # drags are owned by the vtk measurement widgets themselves
+        # (priority 0.5 > style 0.0, they abort events they handle); this
+        # guard covers the annotation BODY, where the widgets do not abort
+        # and the crosshair line-grab used to steal the drag ("unstable /
+        # confused" annotation editing).
+        try:
+            mt = getattr(self.parent, 'measurement_tools', None)
+            if mt is not None and mt.is_near_measurement(
+                self.view_name, click_pos, self.renderer
+            ):
+                self.left_button_down = False
+                return
+        except Exception:
+            pass
+
         if self.view_name not in self.parent.crosshair_actors:
             self.stack_dragging = True
             self.last_pos = click_pos

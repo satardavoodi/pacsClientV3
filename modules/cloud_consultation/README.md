@@ -91,10 +91,23 @@ Ingesting a verified package into the local DB reuses the existing
 `validate_offline_cloud_package` / `sync_offline_cloud_study_to_local`, invoked from the
 patient list once `download_and_open` reports integrity OK.
 
-## Status
-Phases 0–6 implemented. Authoritative test run (Windows venv, no FUSE mount):
+## What ships in Phase 7 (production wiring + Education submodule, 2026-06-06)
+- The user-facing home is **`modules/education/online_consultation/`** (Education ▸
+  "Online Consultation" tab): study picker → compose → inbox/sent with clinical
+  lifecycle labels (Pending/Sent/Received/Answered/Closed) → respond → close →
+  notifications. See `docs/pipelines/online-consultation-education.md`.
+- `notifications/autostart.py` — idempotent app-level `ensure_consultation_poller`
+  (started from the account hook + after a Google connect).
+- `notifications/detect.py::find_response_updates` + poller originator-side scan —
+  "response received" notifications + auto `answered`.
+- `consultation/workflow.py` — notification hooks (sent/downloaded/answered) +
+  `close_consultation` (state-machine-guarded terminal close).
+- Flag is **ON** for this source build via `config/cloud_consultation/cloud_consultation.json`.
 
-    python -m pytest tests/code/cloud_consultation tests/code/identity -q
+## Status
+Phases 0–7 implemented. Authoritative test run (Windows venv, no FUSE mount):
+
+    python -m pytest tests/code/cloud_consultation tests/code/identity tests/code/education_online_consultation -q
 
 ## Tests
 `tests/code/cloud_consultation/` and `tests/code/identity/` (hermetic — fakes only):

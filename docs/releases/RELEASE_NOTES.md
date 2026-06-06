@@ -1,9 +1,33 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.2.2 (2026-06-06)
-**Previous Stable:** v3.2.1 (2026-06-05)
-**Release Date:** 2026-06-06
+**Current Stable Version:** v3.2.3 (2026-06-07)
+**Previous Stable:** v3.2.2 (2026-06-06)
+**Release Date:** 2026-06-07
 **Branch:** beta-version
+
+---
+
+## v3.2.3 (2026-06-07) - Minor release: v3.2.3 production updates
+
+### Summary
+
+Minor release consolidating the v3.2.2 codebase with critical input-synchronous COM crash
+fix and production stability improvements, delivered with final v3.2.3 production installer
+(698 MB, Inno Setup 6). All v3.2.2 and prior production improvements and test infrastructure,
+command bus, and KPI system features are carried forward and included in the bundled executable.
+
+### Included
+
+- Final v3.2.3 production installer (698 MB, Inno Setup 6)
+- Critical crash fix: input-synchronous COM error (0x8001010d) on patient double-click
+- Right-panel deferred rebuild with SafeGuard against user32 RPC violations
+- All v3.2.2 features (production stability improvements)
+- All v3.2.1 features (production stability improvements)
+- All v3.2.0 features (comprehensive production enhancements)
+- All v3.1.9+ features (production stability improvements)
+- All v3.1.5+ features (test infrastructure, command bus, KPI system)
+- All v3.0.9+ codebase (responsive UI, crash hardening, EULA, multi-study viewer)
+- Production stability enhancements
 
 ---
 

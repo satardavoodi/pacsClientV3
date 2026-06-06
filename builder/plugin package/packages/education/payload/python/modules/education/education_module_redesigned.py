@@ -3336,7 +3336,9 @@ class BuildCoursePage(QWidget):
 
 class EducationModuleRedesigned(QWidget):
     """Main education module widget with three tabs."""
-    
+
+    _last_instance_ref = None  # weakref to the most recently created instance
+
     def __init__(self, parent=None, host_tab_widget=None, host_custom_tab_manager=None, host_parent=None):
         super().__init__(parent)
         self.host_tab_widget = host_tab_widget
@@ -3346,6 +3348,32 @@ class EducationModuleRedesigned(QWidget):
         self._theme = self.theme_manager.current_theme()
         self.theme_manager.themeChanged.connect(self._on_theme_changed)
         self.setup_ui()
+        try:
+            import weakref
+
+            EducationModuleRedesigned._last_instance_ref = weakref.ref(self)
+        except Exception:
+            pass
+
+    @classmethod
+    def last_instance(cls):
+        """Return the live most-recent instance, or None (used by the launcher)."""
+        ref = cls._last_instance_ref
+        try:
+            inst = ref() if ref is not None else None
+        except Exception:
+            inst = None
+        return inst
+
+    def show_online_consultation(self):
+        """Switch to the Online Consultation tab when it exists (flag-gated)."""
+        page = getattr(self, "online_consultation_page", None)
+        if page is not None:
+            try:
+                self.tab_widget.setCurrentWidget(page)
+                page.refresh()
+            except Exception as exc:
+                print(f"[Education] could not switch to Online Consultation: {exc}")
 
     def _on_theme_changed(self, theme):
         self._theme = theme or self.theme_manager.current_theme()
@@ -3477,6 +3505,28 @@ class EducationModuleRedesigned(QWidget):
         self.tab_widget.addTab(self.mycourses_page, "My Courses")
         self.tab_widget.addTab(self.build_page, "Build Course")
         self.tab_widget.addTab(self.case_of_day_tab, "Case of the Day")
+
+        # Online Consultation (Drive-backed physician consultation) — additive,
+        # double-flag-gated (Identity + cloud_consultation). When either flag is
+        # off this block is a no-op and the Education module renders exactly as
+        # before. Any failure is swallowed so Education can never break.
+        self.online_consultation_page = None
+        try:
+            from modules.education.online_consultation import (
+                online_consultation_available,
+            )
+
+            if online_consultation_available():
+                from modules.education.online_consultation.consultation_page import (
+                    OnlineConsultationPage,
+                )
+
+                self.online_consultation_page = OnlineConsultationPage(parent=self)
+                self.tab_widget.addTab(
+                    self.online_consultation_page, "Online Consultation"
+                )
+        except Exception as _oc_exc:
+            print(f"[Education] Online Consultation tab unavailable: {_oc_exc}")
 
         layout.addWidget(self.tab_widget)
 

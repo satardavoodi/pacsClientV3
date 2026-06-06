@@ -15,6 +15,16 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _notify(kind, *, title: str | None = None, body: str = "", consultation_id: str = "") -> None:
+    """Best-effort local notification; a notify failure never breaks the workflow."""
+    try:
+        from ..notifications import inbox
+
+        inbox.notify(kind, title=title, body=body, consultation_id=consultation_id)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("workflow notification skipped: %s", exc)
+
+
 def create_and_upload_consultation(
     *, transport, package_root, aipacs_user: str, from_user: dict,
     case_title: str, clinical_question: str, assignee_email: str,
@@ -47,6 +57,11 @@ def create_and_upload_consultation(
     if assignee_email:
         assign(transport, cid, assignee_email,
                assigned_by=(from_user or {}).get("email", ""), remote_folder_id=remote_folder_id)
+    from ..notifications.models import NotificationKind
+
+    _notify(NotificationKind.UPLOAD_DONE, title="Consultation sent",
+            body=f"“{case_title}” sent to {assignee_email}" if assignee_email else case_title,
+            consultation_id=cid)
     return cid
 
 
@@ -79,6 +94,11 @@ def download_and_open_consultation(
             priority=envelope.priority, study_uids=envelope.study_uids,
         )
 
+    from ..notifications.models import NotificationKind
+
+    _notify(NotificationKind.DOWNLOAD_DONE, title="Consultation downloaded",
+            body=(envelope.case_title if envelope else ""),
+            consultation_id=(envelope.consultation_id if envelope else consultation_id))
     return {
         "dest": str(dest),
         "integrity": integrity,
@@ -106,4 +126,34 @@ def record_and_upload_response(
     engine = CloudSyncEngine(transport, progress_cb=progress_cb)
     engine.upload(consultation_id, package_root, root_remote_id=rfid)
     consultation_db.update_consultation_fields(consultation_id, status="answered")
+    from ..notifications.models import NotificationKind
+
+    _notify(NotificationKind.CONSULTATION_UPDATED, title="Response sent",
+            body="Your opinion was uploaded to the shared consultation folder.",
+            consultation_id=consultation_id)
     return consultation_id
+
+
+def close_consultation(consultation_id: str, *, actor_handle: str = "") -> bool:
+    """Mark a consultation closed (terminal) after the originator reviewed the answer.
+
+    Validates the transition against the state machine, records the audit event, and
+    raises a local "completed" notification. Returns True on success.
+    """
+    from database import consultation_db
+
+    from ..sync.state_machine import assert_transition
+
+    row = consultation_db.get_consultation(consultation_id)
+    if row is None:
+        raise ValueError(f"Unknown consultation: {consultation_id!r}")
+    assert_transition(str(row.get("status") or "pending"), "closed")
+    consultation_db.update_consultation_fields(consultation_id, status="closed")
+    consultation_db.add_event(
+        consultation_id, "closed", actor_handle=actor_handle, details="closed by originator"
+    )
+    from ..notifications.models import NotificationKind
+
+    _notify(NotificationKind.CONSULTATION_UPDATED, title="Consultation completed",
+            body=row.get("case_title", ""), consultation_id=consultation_id)
+    return True
