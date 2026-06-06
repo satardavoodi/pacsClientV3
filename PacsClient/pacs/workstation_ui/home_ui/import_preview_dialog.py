@@ -2,13 +2,15 @@ from __future__ import annotations
 
 from copy import deepcopy
 import importlib.util
+import json
+import os
 from pathlib import Path
 import re
 import shutil
 
 import pydicom
 from pydicom.misc import is_dicom
-from pydicom.uid import UID
+from pydicom.uid import UID, ExplicitVRLittleEndian
 import qtawesome as qta
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -117,15 +119,24 @@ def _module_available(module_name: str) -> bool:
         return False
 
 
+def _module_available_any(*module_names: str) -> bool:
+    return any(_module_available(name) for name in module_names)
+
+
 def _detect_decoder_capabilities() -> dict:
+    # NOTE (bug fixed 2026-06-06): the pylibjpeg plugin PACKAGES are named
+    # pylibjpeg-libjpeg / -openjpeg / -rle, but the MODULES they install are
+    # ``libjpeg`` / ``openjpeg`` / ``rle``. Probing only the package-style
+    # names reported every compressed syntax as unsupported even with all
+    # codecs installed. Probe both spellings.
     return {
         "pylibjpeg": _module_available("pylibjpeg"),
-        "pylibjpeg_libjpeg": _module_available("pylibjpeg_libjpeg"),
-        "pylibjpeg_openjpeg": _module_available("pylibjpeg_openjpeg"),
-        "pylibjpeg_rle": _module_available("pylibjpeg_rle"),
+        "pylibjpeg_libjpeg": _module_available_any("libjpeg", "pylibjpeg_libjpeg"),
+        "pylibjpeg_openjpeg": _module_available_any("openjpeg", "pylibjpeg_openjpeg"),
+        "pylibjpeg_rle": _module_available_any("rle", "pylibjpeg_rle"),
         "gdcm": _module_available("gdcm"),
         "PIL": _module_available("PIL"),
-        "pyjpegls": _module_available("pyjpegls"),
+        "pyjpegls": _module_available_any("pyjpegls", "jpeg_ls"),
     }
 
 
@@ -525,6 +536,70 @@ def scan_dicom_import_folder(folder_path: str | Path) -> dict:
     }
 
 
+def _import_decompression_enabled() -> bool:
+    """Decompress-on-import is ON by default (2026-06-06).
+
+    Compressed sources (JPEG 2000, JPEG lossless, RLE, …) are converted to
+    Explicit VR Little Endian while copying into AI-PACS storage, so the
+    imported study never depends on runtime codecs again — viewers, the
+    thumbnail pipeline, the pixel cache, and FROZEN builds (whose codec set
+    may differ from this machine's) all read plain uncompressed files.
+    Original metadata is untouched (same dataset, only PixelData +
+    TransferSyntaxUID change); undecodable or failing files fall back to a
+    byte-identical copy of the original.
+
+    Escape hatches: env ``AIPACS_IMPORT_DECOMPRESS=0`` (wins) or
+    ``<USER_DATA_ROOT>/config/import_settings.json``
+    ``{"decompress_on_import": false}``.
+    """
+    env = os.environ.get("AIPACS_IMPORT_DECOMPRESS", "").strip().lower()
+    if env in ("0", "false", "off"):
+        return False
+    if env in ("1", "true", "on"):
+        return True
+    try:
+        from PacsClient.utils.data_paths import USER_DATA_ROOT
+        cfg = Path(USER_DATA_ROOT) / "config" / "import_settings.json"
+        if cfg.exists():
+            data = json.loads(cfg.read_text(encoding="utf-8")) or {}
+            return bool(data.get("decompress_on_import", True))
+    except Exception:
+        pass
+    return True
+
+
+def _decompress_file_to_destination(src: Path, dest: Path) -> tuple[bool, str]:
+    """Decode *src* and write an uncompressed copy at *dest*.
+
+    Returns ``(True, "")`` on success. On ANY failure returns
+    ``(False, reason)`` and writes nothing — the caller falls back to a
+    plain copy of the original, so an import can never lose a file to a
+    codec problem. Metadata is preserved by construction: the SAME dataset
+    is re-saved; only the pixel encoding and TransferSyntaxUID change.
+    """
+    tmp = dest.with_suffix(dest.suffix + ".part")
+    try:
+        ds = pydicom.dcmread(str(src), force=True)
+        file_meta = getattr(ds, "file_meta", None)
+        ts = getattr(file_meta, "TransferSyntaxUID", None)
+        if ts is None or not bool(getattr(ts, "is_compressed", False)):
+            return False, "not compressed"
+        if "PixelData" not in ds:
+            return False, "no pixel data"
+        ds.decompress()  # uses the available pixel-data handlers
+        ds.file_meta.TransferSyntaxUID = ExplicitVRLittleEndian
+        ds.save_as(str(tmp), write_like_original=False)
+        os.replace(str(tmp), str(dest))  # atomic publish
+        return True, ""
+    except Exception as exc:  # noqa: BLE001 — typed fallback, never raises
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except Exception:
+            pass
+        return False, str(exc)
+
+
 def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path = SOURCE_PATH) -> dict:
     output_root = Path(base_output_dir).expanduser()
     output_root.mkdir(parents=True, exist_ok=True)
@@ -532,7 +607,12 @@ def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path 
     imported_studies = []
     copied_files = 0
     skipped_files = 0
+    converted_files = 0
+    conversion_warnings = []
     errors = []
+
+    decompress_enabled = _import_decompression_enabled()
+    caps = _detect_decoder_capabilities() if decompress_enabled else {}
 
     for study in deepcopy(scan_result.get("studies", []) or []):
         study_uid = _safe_text(study.get("study_uid"))
@@ -576,6 +656,27 @@ def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path 
                     skipped_files += 1
                     continue
 
+                # Decompress-on-import: decodable compressed sources are
+                # stored as Explicit VR Little Endian (metadata preserved);
+                # anything else — or any decode failure — falls back to a
+                # byte-identical copy of the original file.
+                converted = False
+                if decompress_enabled and bool(file_info.get("is_compressed")):
+                    supported, _note = _is_transfer_syntax_supported(
+                        _safe_text(file_info.get("transfer_syntax_uid")), caps
+                    )
+                    if supported:
+                        converted, reason = _decompress_file_to_destination(src, dest)
+                        if not converted and reason not in ("not compressed",):
+                            conversion_warnings.append(
+                                f"{src.name}: stored original (decode failed: {reason})"
+                            )
+
+                if converted:
+                    converted_files += 1
+                    copied_files += 1
+                    continue
+
                 shutil.copy2(src, dest)
                 copied_files += 1
 
@@ -592,6 +693,8 @@ def import_scanned_dicom_studies(scan_result: dict, base_output_dir: str | Path 
         "primary_study": primary_study,
         "copied_files": copied_files,
         "skipped_files": skipped_files,
+        "converted_files": converted_files,
+        "conversion_warnings": conversion_warnings,
         "errors": errors,
     }
 

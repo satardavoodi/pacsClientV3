@@ -12,6 +12,22 @@ block_cipher = None
 # Data files to include
 datas = []
 
+# Compressed-DICOM codec plugin discovery (2026-06-06): pylibjpeg locates its
+# decoder plugins (libjpeg/openjpeg/rle) through entry points stored in the
+# packages' dist-info METADATA. hiddenimports alone bundle the modules but
+# leave pylibjpeg reporting ZERO decoders in the frozen app — copy_metadata
+# is what makes JPEG 2000 / JPEG-lossless / RLE decode work when installed.
+try:
+    from PyInstaller.utils.hooks import copy_metadata
+    for _codec_pkg in ("pylibjpeg", "pylibjpeg-libjpeg",
+                       "pylibjpeg-openjpeg", "pylibjpeg-rle"):
+        try:
+            datas += copy_metadata(_codec_pkg)
+        except Exception as _md_err:  # codec not installed in build env
+            print(f"[spec] copy_metadata skipped for {_codec_pkg}: {_md_err}")
+except Exception as _cm_err:
+    print(f"[spec] copy_metadata unavailable: {_cm_err}")
+
 # Add main application directories
 app_data_dirs = [
     ('PacsClient', 'PacsClient'),
@@ -146,6 +162,21 @@ hiddenimports = [
     # 'pydicom.encoders.base',  # Removed - not found, may not exist in this version
     'pydicom.pixel_data_handlers',
     'pydicom.pixel_data_handlers.numpy_handler',
+    # Compressed-DICOM decode handlers (2026-06-06): without these the frozen
+    # build could only read UNCOMPRESSED pixel data — every JPEG 2000 /
+    # JPEG-lossless / RLE import or download failed to display on installed
+    # apps even though the dev venv decoded fine. Keep ALL of them.
+    'pydicom.pixel_data_handlers.pylibjpeg_handler',
+    'pydicom.pixel_data_handlers.pillow_handler',
+    'pydicom.pixel_data_handlers.rle_handler',
+    'pydicom.pixel_data_handlers.gdcm_handler',   # no-ops gracefully if absent
+    'pylibjpeg',
+    'pylibjpeg.utils',
+    'libjpeg',      # pylibjpeg-libjpeg plugin (JPEG baseline/extended/lossless)
+    'openjpeg',     # pylibjpeg-openjpeg plugin (JPEG 2000)
+    'rle',          # pylibjpeg-rle plugin (RLE Lossless)
+    'PIL',
+    'PIL.Image',
     'pydicom.fileset',  # Required for DICOMDIR creation (CD writing)
     'pydicom.uid',  # Required for UID generation
     'pydicom.dataset',  # Required for DICOM dataset handling
