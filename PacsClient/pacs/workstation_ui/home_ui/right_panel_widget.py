@@ -9,6 +9,28 @@ from PySide6.QtGui import QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QGridLayout, QSizePolicy
 from PacsClient.utils.scroll_style import get_scroll_area_style
 from PacsClient.utils.theme_manager import get_theme_manager
+
+
+def _inside_input_synchronous_dispatch() -> bool:
+    """True when this thread is currently handling an input-synchronous
+    (SendMessage) Windows call.
+
+    0x8001010d crash guard (2026-06-06, frozen-build fault on patient
+    double-click): the deferred right-panel rebuild can fire while the
+    double-click's SendMessage dispatch is still on the native stack (the
+    open path pumps events). Creating thumbnail widgets there triggers
+    outgoing UIA/COM calls, which Windows forbids inside an
+    input-synchronous call and raises as a FATAL RPC_E_WRONGTHREAD
+    (native_fault: notify → display_thumbnails_immediately →
+    ThumbnailWidget.__init__ → process death). Callers defer until the
+    input dispatch has returned. Fail-open: any error reports False.
+    """
+    try:
+        import ctypes
+        ISMEX_NOSEND = 0x00000000
+        return ctypes.windll.user32.InSendMessageEx(None) != ISMEX_NOSEND
+    except Exception:
+        return False
 try:
     import qtawesome as qta
     QTAWESOME_AVAILABLE = True
@@ -515,6 +537,16 @@ class RightPanelWidget(QWidget):
             if generation is not None and generation != self._display_generation:
                 return
 
+            # 0x8001010d guard — see display_thumbnails_immediately.
+            defers = getattr(self, '_input_sync_defer_count', 0)
+            if defers < 25 and _inside_input_synchronous_dispatch():
+                self._input_sync_defer_count = defers + 1
+                QTimer.singleShot(
+                    16, lambda g=generation: self.display_thumbnails_progressively(thumbnails, g)
+                )
+                return
+            self._input_sync_defer_count = 0
+
             self.hide_loading()
 
             self.current_thumbnail_index = 0
@@ -544,6 +576,18 @@ class RightPanelWidget(QWidget):
         try:
             if generation is not None and generation != self._display_generation:
                 return
+
+            # 0x8001010d guard: never build widgets inside an input-synchronous
+            # dispatch — re-post after the input call returns (bounded; the
+            # generation check above keeps re-posts idempotent and stale-safe).
+            defers = getattr(self, '_input_sync_defer_count', 0)
+            if defers < 25 and _inside_input_synchronous_dispatch():
+                self._input_sync_defer_count = defers + 1
+                QTimer.singleShot(
+                    16, lambda g=generation: self.display_thumbnails_immediately(thumbnails, g)
+                )
+                return
+            self._input_sync_defer_count = 0
 
             self.hide_loading()
             total = len(thumbnails)
@@ -674,6 +718,11 @@ class RightPanelWidget(QWidget):
             # Stop stale timers from previous patient selections.
             if self._active_progressive_generation != self._display_generation:
                 self._cancel_thumbnail_timer()
+                return
+
+            # 0x8001010d guard: skip this tick while inside an input-synchronous
+            # dispatch (the 120 ms timer simply retries on the next tick).
+            if _inside_input_synchronous_dispatch():
                 return
 
             if self.current_thumbnail_index >= len(getattr(self, 'thumbnail_rows_to_display', [])):
