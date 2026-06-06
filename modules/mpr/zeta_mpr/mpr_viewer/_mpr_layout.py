@@ -23,6 +23,10 @@ class _MprLayoutMixin:
         """
         view_name = self._vtk_widget_to_view.get(obj)
 
+        # ---- Keep per-pane crosshair toggles pinned on pane resize ----
+        if event.type() == event.Type.Resize and view_name:
+            self._position_view_crosshair_toggle(view_name)
+
         # ---- Double-click: expand / collapse any view ----
         if event.type() == event.Type.MouseButtonDblClick:
             if view_name:
@@ -78,7 +82,64 @@ class _MprLayoutMixin:
         self._view_positions[view_name] = (row, col, row_span, col_span)
         self._vtk_widget_to_view[vtk_widget] = view_name
         vtk_widget.installEventFilter(self)
+        if view_name != '3d':
+            self._add_view_crosshair_toggle(view_name, container)
         self._update_view_highlights()
+
+    # ── Per-viewport crosshair toggle (2026-06-06) ─────────────────────
+
+    def _add_view_crosshair_toggle(self, view_name, container):
+        """Small overlay button on a 2D pane to show/hide ITS crosshair only.
+
+        Child-widget overlay over the pane (same proven pattern as the Eagle
+        Eye on-viewer boxes toggle). State semantics live in
+        _MprCrosshairStateMixin.set_view_crosshair_visible.
+        """
+        try:
+            from PySide6.QtWidgets import QPushButton
+
+            if not hasattr(self, '_crosshair_view_buttons'):
+                self._crosshair_view_buttons = {}
+
+            btn = QPushButton("✛", container)
+            btn.setObjectName("mprViewCrosshairToggle")
+            btn.setCheckable(True)
+            btn.setChecked(True)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setFocusPolicy(Qt.NoFocus)
+            btn.setToolTip("Hide crosshair in this viewport")
+            btn.setFixedSize(22, 22)
+            btn.setStyleSheet(
+                "QPushButton#mprViewCrosshairToggle {"
+                " background: rgba(20, 28, 40, 170); color: #6b7785;"
+                " border: 1px solid #3a4a5e; border-radius: 4px;"
+                " font-size: 12px; padding: 0; }"
+                " QPushButton#mprViewCrosshairToggle:hover {"
+                " background: rgba(42, 58, 80, 220); }"
+                " QPushButton#mprViewCrosshairToggle:checked {"
+                " color: #4da3ff; border-color: #2a5a8e; }"
+            )
+            btn.clicked.connect(
+                lambda checked, vn=view_name: self.set_view_crosshair_visible(vn, checked)
+            )
+            btn.show()
+            btn.raise_()
+            self._crosshair_view_buttons[view_name] = btn
+            self._position_view_crosshair_toggle(view_name)
+        except Exception as exc:
+            logger.debug("per-view crosshair toggle setup failed for %s: %r", view_name, exc)
+
+    def _position_view_crosshair_toggle(self, view_name):
+        """Keep the pane's crosshair toggle pinned to its top-right corner."""
+        try:
+            btn = (getattr(self, '_crosshair_view_buttons', None) or {}).get(view_name)
+            container = self._view_containers.get(view_name)
+            if btn is None or container is None:
+                return
+            btn.move(max(0, container.width() - btn.width() - 6), 6)
+            btn.raise_()
+        except Exception:
+            pass
 
     def _toggle_expand_view(self, view_name):
         """Toggle expand/collapse for a specific view."""

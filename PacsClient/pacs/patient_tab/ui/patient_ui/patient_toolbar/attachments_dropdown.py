@@ -18,6 +18,116 @@ from PacsClient.utils.config import ATTACHMENT_PATH, ICON_PATH
 
 
 # ============================================================
+# V2 design-system overrides (2026-06-05, readability redesign)
+#
+# The legacy styles below stay byte-identical for V1; when the viewer is on
+# the V2 design (build default) each _build_ui re-applies the flat token
+# styles right after its legacy setStyleSheet (the "apply at the source"
+# golden rule). The card QSS also resets QLabel background/border — the
+# legacy popup's bare `QWidget {…}` selector cascaded a border onto every
+# child label (the stray frames around "#1" and the date in the old look).
+# ============================================================
+def _v2_theme():
+    """(enabled, theme) for the viewer V2 design. Never raises."""
+    try:
+        from PacsClient.utils.v2_style import viewer_is_v2
+        if not viewer_is_v2():
+            return False, {}
+        from PacsClient.utils.theme_manager import get_theme_manager
+        return True, get_theme_manager().current_theme()
+    except Exception:
+        return False, {}
+
+
+def _v2_card_css(t: dict) -> str:
+    """Flat V2 attachment card: token surface, 1px border, accent on hover;
+    kills the label frame cascade."""
+    panel_alt = t.get("panel_alt_bg", "#1a202c")
+    border = t.get("border", "#2d3748")
+    accent = t.get("accent", "#3182ce")
+    return (
+        "QWidget { background: " + panel_alt + "; border: 1px solid " + border
+        + "; border-radius: 10px; }\n"
+        "QWidget:hover { border-color: " + accent + "; }\n"
+        "QLabel { background: transparent; border: none; }\n"
+    )
+
+
+def _v2_chip_css(t: dict, color_key: str, subtle_key: str) -> str:
+    """Quiet identity chip (e.g. the mic box): subtle semantic fill + border."""
+    c = t.get(color_key, "#3182ce")
+    subtle = t.get(subtle_key, "#21314a")
+    return (
+        "QWidget { background: " + subtle + "; border: 1px solid " + c
+        + "; border-radius: 8px; }\n"
+    )
+
+
+def _v2_ghost_icon_css(t: dict, role: str) -> str:
+    """Icon-only ghost action button in the V2 mic-control language:
+    transparent rest, soft semantic tint + border on hover, solid pressed."""
+    from PacsClient.utils.v2_style import _hex_to_rgba
+    c = {
+        "success": t.get("success", "#10b981"),
+        "danger": t.get("danger", "#ef4444"),
+        "warning": t.get("warning", "#f59e0b"),
+    }.get(role, t.get("accent", "#3182ce"))
+    return (
+        "QPushButton { background: transparent; border: 1px solid "
+        + _hex_to_rgba(c, 0.45) + "; border-radius: 8px; }\n"
+        "QPushButton:hover { background: " + _hex_to_rgba(c, 0.16)
+        + "; border: 1px solid " + c + "; }\n"
+        "QPushButton:pressed { background: " + c + "; }\n"
+    )
+
+
+def _v2_slider_css(t: dict, color_key: str = "accent") -> str:
+    c = t.get(color_key, "#3182ce")
+    border = t.get("border", "#2d3748")
+    groove = t.get("panel_deep_bg", "#0d141f")
+    return (
+        "QSlider { background: transparent; border: none; }\n"
+        "QSlider::groove:horizontal { border: 1px solid " + border
+        + "; height: 4px; background: " + groove + "; border-radius: 2px; }\n"
+        "QSlider::handle:horizontal { background: " + c + "; border: 1px solid " + c
+        + "; width: 12px; height: 12px; margin: -5px 0; border-radius: 6px; }\n"
+        "QSlider::handle:horizontal:hover { background: "
+        + t.get("accent_hover", c) + "; }\n"
+        "QSlider::sub-page:horizontal { background: " + c
+        + "; border: none; height: 4px; border-radius: 2px; }\n"
+    )
+
+
+def _v2_scroll_css(t: dict) -> str:
+    panel_deep = t.get("panel_deep_bg", "#0d141f")
+    border = t.get("border", "#2d3748")
+    muted = t.get("text_muted", "#93a4b7")
+    return (
+        "QScrollArea { border: none; background: transparent; }\n"
+        "QScrollBar:vertical { background: " + panel_deep
+        + "; width: 8px; border-radius: 4px; }\n"
+        "QScrollBar::handle:vertical { background: " + border
+        + "; border-radius: 4px; min-height: 24px; }\n"
+        "QScrollBar::handle:vertical:hover { background: " + muted + "; }\n"
+        "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }\n"
+    )
+
+
+def _v2_text_css(t: dict, role: str = "muted", size_px: int = 11, weight: int = 400) -> str:
+    color = {
+        "primary": t.get("text_primary", "#f8fafc"),
+        "secondary": t.get("text_secondary", "#dbe7f3"),
+        "success": t.get("success", "#10b981"),
+        "accent": t.get("accent", "#3182ce"),
+    }.get(role, t.get("text_muted", "#93a4b7"))
+    return (
+        "QLabel { color: " + color + "; font-size: " + str(size_px)
+        + "px; font-weight: " + str(weight)
+        + "; font-family: 'Roboto', sans-serif; background: transparent; border: none; }\n"
+    )
+
+
+# ============================================================
 # Image Panel (fully self-contained)
 # ============================================================
 class ImageAttachmentsPanel(QWidget):
@@ -59,6 +169,12 @@ class ImageAttachmentsPanel(QWidget):
                 margin-bottom: 4px;
             }
         """)
+        # V2: quiet caption instead of the filled blue bar
+        try:
+            from PacsClient.utils.v2_style import apply_dropdown_header_v2
+            apply_dropdown_header_v2(header)
+        except Exception:
+            pass
         self._root.addWidget(header)
 
         self._scroll = QScrollArea()
@@ -69,6 +185,9 @@ class ImageAttachmentsPanel(QWidget):
             QScrollBar::handle:vertical { background:#4b5563; border-radius:5px; }
             QScrollBar::handle:vertical:hover { background:#6b7280; }
         """)
+        _en, _t = _v2_theme()
+        if _en:
+            self._scroll.setStyleSheet(_v2_scroll_css(_t))
         self._container = QWidget()
         self._container.setStyleSheet("QWidget { background:transparent; }")
         self._c_layout = QVBoxLayout(self._container)
@@ -118,6 +237,7 @@ class ImageAttachmentsPanel(QWidget):
             self._build_ui()
 
         def _build_ui(self):
+            _en, _t = _v2_theme()
             self.setFixedHeight(110)
             self.setStyleSheet("""
                 QWidget {
@@ -132,6 +252,8 @@ class ImageAttachmentsPanel(QWidget):
                     border-color: #60a5fa;
                 }
             """)
+            if _en:
+                self.setStyleSheet(_v2_card_css(_t))
             root = QVBoxLayout(self)
             root.setContentsMargins(8, 8, 8, 8)
             root.setSpacing(6)
@@ -156,6 +278,12 @@ class ImageAttachmentsPanel(QWidget):
                     border-radius: 6px;
                 }
             """)
+            if _en:
+                thumb.setStyleSheet(
+                    "QLabel { background: " + _t.get("panel_deep_bg", "#0d141f")
+                    + "; border: 1px solid " + _t.get("border", "#2d3748")
+                    + "; border-radius: 8px; }"
+                )
             thumb.setAlignment(Qt.AlignCenter)
             try:
                 pix = QPixmap(self._file_path)
@@ -191,8 +319,10 @@ class ImageAttachmentsPanel(QWidget):
                     font-family: 'Roboto', sans-serif;
                 }
             """)
+            if _en:
+                index_lbl.setStyleSheet(_v2_text_css(_t, "accent", 14, 700))
             info_row.addWidget(index_lbl)
-            
+
             # تاریخ
             date_lbl = QLabel(self._fmt_mtime(self._file_path))
             date_lbl.setStyleSheet("""
@@ -203,6 +333,8 @@ class ImageAttachmentsPanel(QWidget):
                     font-family: 'Roboto', sans-serif;
                 }
             """)
+            if _en:
+                date_lbl.setStyleSheet(_v2_text_css(_t, "muted", 11, 400))
             info_row.addWidget(date_lbl)
             info_row.addStretch()
             
@@ -230,6 +362,8 @@ class ImageAttachmentsPanel(QWidget):
                     border-color: #60a5fa;
                 }
             """)
+            if _en:
+                view_btn.setStyleSheet(_v2_ghost_icon_css(_t, "accent"))
             view_btn.setCursor(Qt.PointingHandCursor)
             view_btn.clicked.connect(self._open_file)
             actions.addWidget(view_btn)
@@ -251,6 +385,8 @@ class ImageAttachmentsPanel(QWidget):
                     border-color: #f87171;
                 }
             """)
+            if _en:
+                del_btn.setStyleSheet(_v2_ghost_icon_css(_t, "danger"))
             del_btn.setCursor(Qt.PointingHandCursor)
             del_btn.clicked.connect(self._delete)
             actions.addWidget(del_btn)
@@ -332,6 +468,12 @@ class AudioAttachmentsPanel(QWidget):
                 margin-bottom: 4px;
             }
         """)
+        # V2: quiet caption instead of the filled green bar
+        try:
+            from PacsClient.utils.v2_style import apply_dropdown_header_v2
+            apply_dropdown_header_v2(header)
+        except Exception:
+            pass
         self._root.addWidget(header)
 
         self._scroll = QScrollArea(); self._scroll.setWidgetResizable(True)
@@ -341,6 +483,9 @@ class AudioAttachmentsPanel(QWidget):
             QScrollBar::handle:vertical { background:#4b5563; border-radius:5px; }
             QScrollBar::handle:vertical:hover { background:#6b7280; }
         """)
+        _en, _t = _v2_theme()
+        if _en:
+            self._scroll.setStyleSheet(_v2_scroll_css(_t))
         self._container = QWidget()
         self._container.setStyleSheet("QWidget { background:transparent; }")
         self._c_layout = QVBoxLayout(self._container)
@@ -415,6 +560,7 @@ class AudioAttachmentsPanel(QWidget):
             self._load_audio_meta()  # cheap header read for duration; full samples load lazily on first play (avoids UI stall)
 
         def _build_ui(self):
+            _en, _t = _v2_theme()
             self.setFixedHeight(140)
             self.setStyleSheet("""
                 QWidget {
@@ -429,6 +575,10 @@ class AudioAttachmentsPanel(QWidget):
                     border-color: #10b981;
                 }
             """)
+            if _en:
+                # V2: flat card + accent hover; also resets the QLabel
+                # border cascade (the stray frames around #N / date).
+                self.setStyleSheet(_v2_card_css(_t))
             root = QVBoxLayout(self)
             root.setContentsMargins(8, 6, 8, 6)
             root.setSpacing(6)
@@ -445,27 +595,36 @@ class AudioAttachmentsPanel(QWidget):
                     border: 2px solid #10b981; border-radius: 6px;
                 }
             """)
+            if _en:
+                # V2: quiet success chip keeps the audio identity, no gradient
+                mic_box.setStyleSheet(_v2_chip_css(_t, "success", "success_subtle"))
             mv = QVBoxLayout(mic_box); mv.setAlignment(Qt.AlignCenter)
             mic_icon = QLabel()
             mic_icon.setPixmap(qta.icon('fa5s.microphone', color='#34d399', scale_factor=1.5).pixmap(QSize(30, 30)))
             mic_icon.setAlignment(Qt.AlignCenter)
+            if _en:
+                mic_icon.setStyleSheet("QLabel { background: transparent; border: none; }")
             mv.addWidget(mic_icon)
             top.addWidget(mic_box, 0)
 
             # Info: شماره ردیف + تاریخ
             info_col = QVBoxLayout(); info_col.setSpacing(2)
-            
+
             # شماره ردیف
             index_lbl = QLabel(f"#{self._index}")
             index_lbl.setStyleSheet("QLabel { color:#10b981; font-size:16px; font-weight:700; font-family:'Roboto', sans-serif; }")
+            if _en:
+                index_lbl.setStyleSheet(_v2_text_css(_t, "success", 14, 700))
             info_col.addWidget(index_lbl)
-            
+
             # تاریخ
             date_lbl = QLabel(self._fmt_mtime(self._file_path))
             date_lbl.setStyleSheet("QLabel { color:#9ca3af; font-size:11px; font-weight:400; font-family:'Roboto', sans-serif; }")
+            if _en:
+                date_lbl.setStyleSheet(_v2_text_css(_t, "muted", 11, 400))
             info_col.addWidget(date_lbl)
             info_col.addStretch()
-            
+
             top.addLayout(info_col, 1)
             root.addLayout(top)
 
@@ -476,12 +635,17 @@ class AudioAttachmentsPanel(QWidget):
             times = QHBoxLayout()
             self._cur_lbl = QLabel("00:00"); self._cur_lbl.setStyleSheet(self._time_css("#10b981"))
             self._tot_lbl = QLabel("00:00"); self._tot_lbl.setStyleSheet(self._time_css("#9ca3af"))
+            if _en:
+                self._cur_lbl.setStyleSheet(self._time_css(_t.get("success", "#10b981")))
+                self._tot_lbl.setStyleSheet(self._time_css(_t.get("text_muted", "#93a4b7")))
             times.addWidget(self._cur_lbl); times.addStretch(); times.addWidget(self._tot_lbl)
             pv.addLayout(times)
 
             self._slider = QSlider(Qt.Horizontal); self._slider.setRange(0, 1000); self._slider.setValue(0)
             self._slider.setCursor(Qt.PointingHandCursor)
             self._slider.setStyleSheet(self._slider_css())
+            if _en:
+                self._slider.setStyleSheet(_v2_slider_css(_t, "success"))
             self._slider.sliderPressed.connect(self._on_press)
             self._slider.sliderReleased.connect(self._on_release)
             pv.addWidget(self._slider)
@@ -516,6 +680,8 @@ class AudioAttachmentsPanel(QWidget):
                     background: #059669;
                 }
             """)
+            if _en:
+                self._play_btn.setStyleSheet(_v2_ghost_icon_css(_t, "success"))
             self._play_btn.setCursor(Qt.PointingHandCursor)
             self._play_btn.clicked.connect(self._toggle)
             acts.addWidget(self._play_btn)
@@ -541,6 +707,10 @@ class AudioAttachmentsPanel(QWidget):
                     background: #dc2626;
                 }
             """)
+            if _en:
+                # V2: stop is a transport control, not destructive — amber,
+                # so red stays reserved for Delete alone.
+                stop_btn.setStyleSheet(_v2_ghost_icon_css(_t, "warning"))
             stop_btn.setCursor(Qt.PointingHandCursor)
             stop_btn.clicked.connect(self._stop)
             acts.addWidget(stop_btn)
@@ -566,6 +736,8 @@ class AudioAttachmentsPanel(QWidget):
                     background: #7c3aed;
                 }
             """)
+            if _en:
+                report_btn.setStyleSheet(_v2_ghost_icon_css(_t, "accent"))
             report_btn.setCursor(Qt.PointingHandCursor)
             report_btn.clicked.connect(self._open_report)
             acts.addWidget(report_btn)
@@ -591,6 +763,8 @@ class AudioAttachmentsPanel(QWidget):
                     background: #dc2626;
                 }
             """)
+            if _en:
+                del_btn.setStyleSheet(_v2_ghost_icon_css(_t, "danger"))
             del_btn.setCursor(Qt.PointingHandCursor)
             del_btn.clicked.connect(self._delete)
             acts.addWidget(del_btn)
@@ -793,6 +967,12 @@ class AttachmentsDropdownWidget(QWidget):
                 border-radius: 10px;
             }
         """)
+        # V2: flat token popup panel (same language as the toolbar dropdowns)
+        try:
+            from PacsClient.utils.v2_style import apply_dropdown_panel_v2
+            apply_dropdown_panel_v2(self)
+        except Exception:
+            pass
         self.setAttribute(Qt.WA_DeleteOnClose)
 
         root = QVBoxLayout(self)
@@ -814,7 +994,21 @@ class AttachmentsDropdownWidget(QWidget):
                 method_update_counter=method_update_counter
             )
 
+        # Exposed so the opener can size the popup to its content (V2 UX).
+        self.panel = panel
+        self.item_row_height = 148 if file_type == "audio" else 118
+
         root.addWidget(panel)
+
+    def preferred_height(self, max_h: int = 500, min_h: int = 200) -> int:
+        """Content-based popup height: header + N item rows, clamped.
+        Replaces the legacy fixed 500px well that left a large dead area
+        under a single recording."""
+        try:
+            n = max(1, len(getattr(self.panel, "items", []) or []))
+        except Exception:
+            n = 1
+        return min(max_h, max(min_h, 64 + self.item_row_height * n))
 
     def mousePressEvent(self, event):
         if not self.rect().contains(event.pos()):

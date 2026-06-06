@@ -10,9 +10,16 @@ from modules.EchoMind.settings_store import get_llm_backend, get_prompt_settings
 from .config import get_secretary_llm_model, get_secretary_reasoning_effort
 from .contracts import SecretaryActionPlan
 from .prompt_context import build_prompt_context
+from .validator import _ALLOWED_ACTIONS as _VALIDATOR_ACTIONS
+from .validator import _BUS_ALLOWED_ACTIONS
 
 
-_ALLOWED_ACTIONS = {"list_patients", "open_patient", "download_patient"}
+# Single source of truth (2026-06-06): accept exactly what the validator
+# accepts — the 9 home-executor actions plus the CommandBus-bridged actions
+# (module launch, viewer navigation, download control). Previously this was
+# a hard-coded 3-action set, so the LLM fallback could never plan a module
+# or viewer command even when the bus implemented it.
+_ALLOWED_ACTIONS = set(_VALIDATOR_ACTIONS) | set(_BUS_ALLOWED_ACTIONS)
 
 
 def _load_text(path: Path) -> str:

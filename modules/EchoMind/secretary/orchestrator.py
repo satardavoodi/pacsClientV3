@@ -29,6 +29,7 @@ class SecretaryOrchestrator:
         home_widget=None,
         llm_fallback: bool = True,
         use_brain: bool = False,
+        command_bus_getter=None,
     ):
         """
         Parameters
@@ -43,9 +44,22 @@ class SecretaryOrchestrator:
             pipeline (Phase 1: module routing → Phase 2: action planning)
             instead of the single-shot rule + LLM approach.
             Set to True when you want full multi-module agent behaviour.
+        command_bus_getter : callable | None
+            Zero-arg callable returning the app's live ``CommandBus`` (or
+            None). Non-home actions (module launch, viewer navigation,
+            download control) are executed by routing the validated plan to
+            that bus (2026-06-06 bridge). When omitted and ``home_widget``
+            is given, the widget's own ``command_bus`` attribute is used —
+            the home panel wires it at startup — so existing callers gain
+            the bridge automatically.
         """
         self.adapter = HomeWidgetAdapter(home_widget=home_widget)
-        self.executor = SecretaryExecutor(self.adapter)
+        if command_bus_getter is None and home_widget is not None:
+            def command_bus_getter(_hw=home_widget):  # noqa: ANN202
+                return getattr(_hw, "command_bus", None)
+        self.executor = SecretaryExecutor(
+            self.adapter, command_bus_getter=command_bus_getter
+        )
         self.llm_fallback = llm_fallback
         self._sessions: dict[str, dict[str, Any]] = {}
         # ── EchoMind memory ───────────────────────────────────────────────────
@@ -206,15 +220,41 @@ class SecretaryOrchestrator:
             plan["entities"] = entities
         result = self.executor.execute(plan, state, confirmed=confirmed)
         if result.get("ok"):
-            payload = result.get("data")
-            if isinstance(payload, dict):
-                candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else payload
-                if isinstance(candidate, dict):
-                    state["last_patient"] = candidate
-            elif isinstance(payload, list):
-                state["last_list"] = payload
-                if len(payload) == 1 and isinstance(payload[0], dict):
-                    state["last_patient"] = payload[0]
+            # Patient-context capture applies to PATIENT actions only. A
+            # successful bus-bridged action (open_module, change_series, …)
+            # returns module/viewer payloads — storing those as
+            # ``last_patient`` would poison follow-ups like "download this
+            # patient" (2026-06-06 bridge).
+            from .validator import _BUS_ALLOWED_ACTIONS as _bus_actions
+            _action = str(plan.get("action") or "")
+            if _action not in _bus_actions:
+                payload = result.get("data")
+                if isinstance(payload, dict):
+                    candidate = payload.get("candidate") if isinstance(payload.get("candidate"), dict) else payload
+                    if isinstance(candidate, dict):
+                        state["last_patient"] = candidate
+                elif isinstance(payload, list):
+                    state["last_list"] = payload
+                    if len(payload) == 1 and isinstance(payload[0], dict):
+                        state["last_patient"] = payload[0]
+            else:
+                # Module-context tracking (bridge phase 2): remember which
+                # module the user last opened so follow-ups can reference it.
+                _module_map = {
+                    "toggle_eagle": "eagle_ai",
+                    "open_mpr": "mpr",
+                    "open_printing": "printing",
+                    "open_education": "education",
+                    "start_report": "echomind",
+                    "transcribe_voice": "echomind",
+                    "generate_report": "echomind",
+                }
+                if _action == "open_module":
+                    payload = result.get("data")
+                    module = (payload or {}).get("module") if isinstance(payload, dict) else None
+                    state["last_module"] = module or (plan.get("entities") or {}).get("module")
+                elif _action in _module_map:
+                    state["last_module"] = _module_map[_action]
             state["pending"] = None
             return result
 

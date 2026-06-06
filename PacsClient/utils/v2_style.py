@@ -543,6 +543,127 @@ def apply_mic_control_v2(btn, role: str = "primary") -> bool:
         return False
 
 
+def option_control_qss(theme: dict) -> str:
+    """V2 QRadioButton/QCheckBox rows for dark dropdown panels (e.g. the MPR
+    projection dropdown's Mode/View pickers). The Qt default indicator is
+    dark-on-dark — the checked state was nearly invisible. Explicit indicator:
+    2px token border at rest, accent border on hover, solid accent fill when
+    checked; checked label text brightens + bolds. Pure function."""
+    text = theme.get("text_secondary", "#dbe7f3")
+    bright = theme.get("text_primary", "#f8fafc")
+    accent = theme.get("accent", "#3182ce")
+    accent_soft = theme.get("accent_soft", "#21314a")
+    border = theme.get("border", "#4a5568")
+    panel_alt = theme.get("panel_alt_bg", "#1a202c")
+    return (
+        "QRadioButton, QCheckBox {\n"
+        "    color: " + text + ";\n"
+        "    font-size: 12px;\n"
+        "    font-family: 'Roboto', sans-serif;\n"
+        "    background: transparent;\n"
+        "    border: none;\n"
+        "    border-radius: 6px;\n"
+        "    padding: 3px 5px;\n"
+        "    spacing: 7px;\n"
+        "}\n"
+        "QRadioButton:hover, QCheckBox:hover {\n"
+        "    color: " + bright + ";\n    background: " + accent_soft + ";\n"
+        "}\n"
+        "QRadioButton:checked, QCheckBox:checked {\n"
+        "    color: " + bright + ";\n    font-weight: 700;\n"
+        "}\n"
+        "QRadioButton::indicator, QCheckBox::indicator {\n"
+        "    width: 15px;\n    height: 15px;\n"
+        "    border: 2px solid " + border + ";\n"
+        "    background: " + panel_alt + ";\n"
+        "}\n"
+        "QRadioButton::indicator {\n    border-radius: 9px;\n}\n"
+        "QCheckBox::indicator {\n    border-radius: 4px;\n}\n"
+        "QRadioButton::indicator:hover, QCheckBox::indicator:hover {\n"
+        "    border-color: " + accent + ";\n"
+        "}\n"
+        "QRadioButton::indicator:checked, QCheckBox::indicator:checked {\n"
+        "    border-color: " + accent + ";\n    background: " + accent + ";\n"
+        "}\n"
+    )
+
+
+def apply_option_controls_v2(widgets) -> bool:
+    """If Viewer is in v2, give radio/checkbox option rows the high-contrast
+    indicator style (selected state readable on a dark panel). Never raises."""
+    try:
+        if not viewer_is_v2():
+            return False
+        from PacsClient.utils.theme_manager import get_theme_manager
+
+        qss = option_control_qss(get_theme_manager().current_theme())
+        for w in widgets:
+            w.setStyleSheet(qss)
+        return True
+    except Exception:
+        return False
+
+
+def voice_button_qss(theme: dict, role: str = "neutral") -> str:
+    """V2 style for the labelled voice-recorder controls (Play/Pause/Save/
+    Delete/Report/Sync): the flat ghost language of `mic_control_qss` but for
+    TEXT buttons (no 30px icon clamp) — quiet semantic-tinted rest with
+    readable text, soft tint + semantic border on hover, solid fill + white
+    text when pressed. ``role``: success / warning / danger / neutral(accent).
+    Pure function."""
+    text = theme.get("text_secondary", "#dbe7f3")
+    button_text = "#ffffff"
+    if role == "danger":
+        c = theme.get("danger", "#ef4444")
+    elif role == "warning":
+        c = theme.get("warning", "#f59e0b")
+    elif role == "success":
+        c = theme.get("success", "#10b981")
+    else:
+        c = theme.get("accent", "#3182ce")
+    soft = _hex_to_rgba(c, 0.16)
+    return (
+        "QPushButton {\n"
+        "    background: " + _hex_to_rgba(c, 0.08) + ";\n"
+        "    color: " + text + ";\n"
+        "    border: 1px solid " + _hex_to_rgba(c, 0.55) + ";\n"
+        "    border-radius: 8px;\n"
+        "    padding: 5px 10px;\n"
+        "    font-size: 12px;\n"
+        "    font-weight: 600;\n"
+        "    font-family: 'Roboto', sans-serif;\n"
+        "}\n"
+        "QPushButton:hover {\n"
+        "    background: " + soft + ";\n"
+        "    border: 1px solid " + c + ";\n"
+        "    color: #ffffff;\n"
+        "}\n"
+        "QPushButton:pressed, QPushButton:checked {\n"
+        "    background: " + c + ";\n    color: " + button_text + ";\n"
+        "}\n"
+        "QPushButton:disabled {\n"
+        "    background: transparent;\n"
+        "    color: " + theme.get("text_muted", "#93a4b7") + ";\n"
+        "    border: 1px solid " + theme.get("border", "#4a5568") + ";\n"
+        "}\n"
+    )
+
+
+def apply_voice_button_v2(btn, role: str = "neutral") -> bool:
+    """If Viewer is in v2, restyle a labelled voice-recorder button with its
+    semantic ``role``. Applied inside VoiceWidget._build_ui (the source style
+    site) so it would survive any future re-style. Never raises."""
+    try:
+        if not viewer_is_v2():
+            return False
+        from PacsClient.utils.theme_manager import get_theme_manager
+
+        btn.setStyleSheet(voice_button_qss(get_theme_manager().current_theme(), role))
+        return True
+    except Exception:
+        return False
+
+
 def clamp_popup_position(
     anchor_x: int, anchor_y: int, w: int, h: int,
     btn_top_y: int, avail_left: int, avail_top: int, avail_right: int, avail_bottom: int,

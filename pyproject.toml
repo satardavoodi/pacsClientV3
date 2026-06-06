@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aipacs"
-version = "3.2.1"
+version = "3.2.2"
 description = "Modular DICOM workstation with viewer, download, printing, education, and AI assistant modules."
 readme = "README.md"
 requires-python = ">=3.13.5"
@@ -22,9 +22,7 @@ dependencies = { file = ["requirements-core.txt"] }
 dev = { file = ["requirements-dev.txt"] }
 
 [tool.pytest.ini_options]
-# -p no:debugging avoids pytest's pdb plugin importing stdlib `code`, which the
-# tests/code/ directory shadows under prepend import mode (collection INTERNALERROR).
-addopts = "-ra -p no:debugging"
+addopts = "-ra"
 testpaths = [
     "tests",
     "EchoMind/secretary/tests",

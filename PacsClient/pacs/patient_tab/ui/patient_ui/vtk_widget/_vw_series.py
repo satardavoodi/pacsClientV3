@@ -147,17 +147,33 @@ class _VWSeriesMixin:
         # (host=425x554 on all 4). `_last_refit_signature` is cleared at the
         # start of `_queue_qt_startup_refit` so the first real refit runs;
         # subsequent refits on an unchanged host skip the expensive call.
+        # 2026-06-06: the signature also includes the displayed IMAGE dims —
+        # a same-number series rebind can land a different-sized image (e.g.
+        # a 2200x1598 scanned document) at an unchanged host size; deduping
+        # on host size alone skipped the needed refit and left the new image
+        # at the old zoom/pan (page zoomed/cropped to its top).
         try:
             host_size = (int(self.width()), int(self.height()))
         except Exception:
             host_size = None
 
-        if host_size is not None:
+        try:
+            _qv = getattr(self.image_viewer, 'qt_viewer', None)
+            img_dims = (
+                int(getattr(_qv, '_image_width', 0) or 0),
+                int(getattr(_qv, '_image_height', 0) or 0),
+            ) if _qv is not None else (0, 0)
+        except Exception:
+            img_dims = (0, 0)
+
+        refit_sig = (host_size + img_dims) if host_size is not None else None
+
+        if refit_sig is not None:
             last_sig = getattr(self, '_last_refit_signature', None)
-            if last_sig is not None and last_sig == host_size:
+            if last_sig is not None and last_sig == refit_sig:
                 logger.debug(
-                    "[QT_PRESENTATION] zoom_to_fit skipped (dedupe) host=%dx%d",
-                    host_size[0], host_size[1],
+                    "[QT_PRESENTATION] zoom_to_fit skipped (dedupe) host=%dx%d img=%dx%d",
+                    host_size[0], host_size[1], img_dims[0], img_dims[1],
                 )
                 return
 
@@ -165,8 +181,8 @@ class _VWSeriesMixin:
             new_scale = self.image_viewer.zoom_to_fit()
             if new_scale:
                 self._protected_parallel_scale = float(new_scale)
-                if host_size is not None:
-                    self._last_refit_signature = host_size
+                if refit_sig is not None:
+                    self._last_refit_signature = refit_sig
                 # Log components for zoom diagnosis (host geometry + bridge state)
                 try:
                     qv = getattr(self.image_viewer, 'qt_viewer', None)
@@ -221,6 +237,24 @@ class _VWSeriesMixin:
             self.last_series_show = series_index
             self._sync_progressive_available_after_switch()
             self._sync_qt_viewer_presentation(refit_view=False)
+
+            # Single-image series (scanned documents / reception pages, e.g.
+            # series 100000) must render deterministically on EVERY switch:
+            # default W/L + fit-to-viewport. There is no stack to scroll, so
+            # the "don't jump mid-drag" rationale for preserving presentation
+            # does not apply — but stale zoom/pan/WL from earlier interaction
+            # left the page zoomed/cropped (only the top visible). Clearing
+            # the refit-dedupe signature makes the refit actually run (the
+            # host size usually hasn't changed, which otherwise dedupes it).
+            if self.get_count_of_slices() <= 1:
+                try:
+                    bridge.apply_default_window_level(target_slice)
+                    bridge.set_slice(target_slice)
+                except Exception:
+                    pass
+                self._last_refit_signature = None
+                self._sync_qt_viewer_presentation(refit_view=True)
+
             self._qt_switch_refit_applied = False
             self.save_status_camera(bridge)
             logger.info(
@@ -884,6 +918,17 @@ class _VWSeriesMixin:
                     _current_sn = str(_current_meta.get('series', {}).get('series_number', ''))
                     _incoming_sn = str((metadata or {}).get('series', {}).get('series_number', ''))
                     _same_series_refresh = bool(self._qt_bridge_active and _current_sn and _current_sn == _incoming_sn)
+                    if _same_series_refresh:
+                        # Same series NUMBER is not identity: scanned/reception
+                        # documents use a synthetic number (e.g. 100000) in EVERY
+                        # study, so a cross-study drop would wrongly reuse this
+                        # pane's presentation (zoom/pan/WL/slice) for different
+                        # content. When both sides carry a series_path, require
+                        # it to match before taking the in-place refresh path.
+                        _cur_path = str(_current_meta.get('series', {}).get('series_path', '') or '')
+                        _inc_path = str((metadata or {}).get('series', {}).get('series_path', '') or '')
+                        if _cur_path and _inc_path and _cur_path != _inc_path:
+                            _same_series_refresh = False
                 except Exception:
                     _same_series_refresh = False
 

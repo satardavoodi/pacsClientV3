@@ -24,7 +24,10 @@ class MPRMeasurementTools:
         self.mpr_viewer = mpr_viewer
         self.active_tools = {}  # {view_name: {'ruler': [widgets], 'angle': [widgets], ...}}
         self.current_tool = None  # 'ruler', 'angle', 'arrow', None
-        self.tool_color = (1.0, 1.0, 0.0)  # Yellow
+        # App-wide measurement green — matches RulerInteractorStyle /
+        # AngleInteractorStyle (self.color = (0, 0.9, 0)) so MPR measurements
+        # look the same as the 2D viewers.
+        self.tool_color = (0.0, 0.9, 0.0)
         
         # Initialize tool storage for each view
         for view_name in ['axial', 'sagittal', 'coronal']:
@@ -67,10 +70,17 @@ class MPRMeasurementTools:
         interactor = self.mpr_viewer.viewers[view_name]['widget'].GetRenderWindow().GetInteractor()
         renderer = self.mpr_viewer.viewers[view_name]['renderer']
         
-        # IMPORTANT: Create distance widget representation FIRST
+        # IMPORTANT: Create distance widget representation FIRST.
+        # Visuals mirror RulerInteractorStyle.set_widget_repr (2D viewers):
+        # green, 1px line, no tick marks, "%-#6.3g mm" label, 24pt title.
         distance_rep = vtk.vtkDistanceRepresentation2D()
         distance_rep.GetAxis().GetProperty().SetColor(self.tool_color)
-        distance_rep.GetAxis().GetProperty().SetLineWidth(2)
+        distance_rep.GetAxis().GetProperty().SetLineWidth(1)
+        distance_rep.GetAxis().SetTickLength(1)
+        distance_rep.SetLabelFormat('%-#6.3g mm')
+        axis = distance_rep.GetAxis()
+        axis.UseFontSizeFromPropertyOn()
+        axis.GetTitleTextProperty().SetFontSize(24)
         
         # Create distance widget
         distance_widget = vtk.vtkDistanceWidget()
@@ -121,12 +131,17 @@ class MPRMeasurementTools:
         interactor = self.mpr_viewer.viewers[view_name]['widget'].GetRenderWindow().GetInteractor()
         renderer = self.mpr_viewer.viewers[view_name]['renderer']
         
-        # IMPORTANT: Create angle widget representation FIRST
+        # IMPORTANT: Create angle widget representation FIRST.
+        # Visuals mirror AngleInteractorStyle (2D viewers): green rays, arc
+        # and point handles at default line width.
         angle_rep = vtk.vtkAngleRepresentation2D()
         angle_rep.GetRay1().GetProperty().SetColor(self.tool_color)
         angle_rep.GetRay2().GetProperty().SetColor(self.tool_color)
-        angle_rep.GetRay1().GetProperty().SetLineWidth(2)
-        angle_rep.GetRay2().GetProperty().SetLineWidth(2)
+        try:
+            angle_rep.GetArc().GetProperty().SetColor(self.tool_color)
+            angle_rep.GetPoint1Representation().GetProperty().SetColor(self.tool_color)
+        except Exception:
+            pass
         
         # Create angle widget
         angle_widget = vtk.vtkAngleWidget()

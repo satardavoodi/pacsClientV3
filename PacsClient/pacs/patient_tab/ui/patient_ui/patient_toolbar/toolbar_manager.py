@@ -2835,6 +2835,14 @@ class ToolbarManager:
             dropdown.move(button_pos)
             dropdown.setFixedWidth(350)  # Increased width for audio player
             dropdown.setFixedHeight(500)
+            # V2 UX: size the popup to its content (no 500px dead well under
+            # a single recording). No-op in V1.
+            try:
+                from PacsClient.utils.v2_style import viewer_is_v2
+                if viewer_is_v2():
+                    dropdown.setFixedHeight(dropdown.preferred_height())
+            except Exception:
+                pass
             dropdown.raise_()
             dropdown.activateWindow()
 
@@ -2878,6 +2886,13 @@ class ToolbarManager:
             dropdown.move(button_pos)
             dropdown.setFixedWidth(350)
             dropdown.setFixedHeight(500)
+            # V2 UX: size the popup to its content. No-op in V1.
+            try:
+                from PacsClient.utils.v2_style import viewer_is_v2
+                if viewer_is_v2():
+                    dropdown.setFixedHeight(dropdown.preferred_height())
+            except Exception:
+                pass
             dropdown.raise_()
             dropdown.activateWindow()
 
@@ -3219,6 +3234,15 @@ class ToolbarManager:
                     border-radius: 10px;
                 }
             """)
+            # V2 (2026-06-05, readability): flat token panel + quiet header +
+            # high-contrast radio/checkbox indicators — same gated pattern as
+            # the other toolbar dropdowns; V1 keeps the gradient above.
+            from PacsClient.utils.v2_style import (
+                apply_dropdown_panel_v2,
+                apply_dropdown_header_v2,
+                apply_option_controls_v2,
+            )
+            apply_dropdown_panel_v2(dropdown)
 
             layout = QVBoxLayout(dropdown)
             layout.setContentsMargins(10, 10, 10, 10)
@@ -3240,6 +3264,7 @@ class ToolbarManager:
                     margin-bottom: 4px;
                 }
             """)
+            apply_dropdown_header_v2(header)  # V2: quiet caption, no purple bar
             layout.addWidget(header)
 
             # Curved MPR button (Dental)
@@ -3311,6 +3336,13 @@ class ToolbarManager:
             for _cb in (_cb_ax, _cb_sag, _cb_cor):
                 _cb.setStyleSheet(_opt_css); _view_l.addWidget(_cb)
             layout.addWidget(_view_row)
+
+            # V2: the default Qt indicators are dark-on-dark — the SELECTED
+            # mode/view was unreadable. Replace with explicit high-contrast
+            # indicators (accent fill when checked, bright bold label).
+            apply_option_controls_v2(
+                (_rb_std, _rb_mip, _rb_minip, _rb_avg, _cb_ax, _cb_sag, _cb_cor)
+            )
 
             # Open projection
             _open_btn = QPushButton("Open projection")
@@ -4778,6 +4810,12 @@ class ToolbarManager:
                 except Exception as wl_err:
                     logger.warning(f"Could not read window/level from main viewer: {wl_err}")
 
+                # Fallback: DICOM default W/L from series metadata. Without this,
+                # StandardMPRViewer invents a range-based default (~400/40 ≈
+                # Abdomen) and the source preset (e.g. Lung) appears to change.
+                if window_width is None or window_center is None:
+                    window_width, window_center = self._dicom_default_window_level(series_data)
+
                 # --- Zeta MPR canonicalization pre-filter (flag-gated, fail-safe) ---
                 # Resample oblique / non-axial volumes to a true LPS-axial volume (and
                 # mark near-axial volumes) so the proven radiological camera path renders
@@ -5022,6 +5060,10 @@ class ToolbarManager:
                     window_center = selected_widget.window_center
             except Exception as wl_err:
                 logger.warning(f"Could not read window/level from main viewer: {wl_err}")
+
+            # Fallback: DICOM default W/L from series metadata (see toggle_zeta_mpr).
+            if window_width is None or window_center is None:
+                window_width, window_center = self._dicom_default_window_level(series_data)
 
             zeta_widget = StandardMPRViewer(
                 vtk_image_data=vtk_image_data,
@@ -8168,15 +8210,62 @@ class ToolbarManager:
         except Exception as exc:
             QMessageBox.warning(self.patient_widget, "Export Failed", str(exc))
 
+    @staticmethod
+    def _dicom_default_window_level(series_data):
+        """Best-effort DICOM default (window_width, window_center) from series metadata.
+
+        Used as the MPR-open fallback when the live viewer W/L cannot be read,
+        so MPR inherits the series' own preset instead of an invented one.
+        Returns (None, None) when unavailable. Handles DICOM multi-value
+        (list/tuple) and string-encoded values.
+        """
+        def _first_float(value):
+            try:
+                if isinstance(value, (list, tuple)):
+                    value = value[0] if value else None
+                if value is None or value == '':
+                    return None
+                return float(str(value).strip())
+            except (TypeError, ValueError):
+                return None
+
+        try:
+            instances = ((series_data or {}).get('metadata') or {}).get('instances') or []
+            if instances:
+                ww = _first_float(instances[0].get('window_width'))
+                wc = _first_float(instances[0].get('window_center'))
+                if ww is not None and wc is not None and ww > 0:
+                    return ww, wc
+        except Exception:
+            pass
+        return None, None
+
     def _capture_active_layout(self):
         """Capture only the currently active layout (original behavior)"""
         selected_widget = self.patient_widget.selected_widget
-        
+
         if selected_widget is None:
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self.patient_widget, "No Selection", "Please select a viewer first.")
             return
-        
+
+        # Unified routing (CaptureActiveViewport): when an advanced surface
+        # (Zeta/Curve MPR) is visibly replacing the 2D viewport, capture THAT
+        # surface — not the hidden 2D render window behind it. Plain 2D viewing
+        # returns None here and runs the original path below unchanged.
+        try:
+            from modules.viewer.viewport_capture import capture_active_viewport
+            captured_path = capture_active_viewport(self.patient_widget, selected_widget)
+        except Exception as cap_err:
+            captured_path = None
+            print(f"[CAPTURE] Unified viewport routing failed: {cap_err}")
+        if captured_path:
+            print(f"[CAPTURE] Saved (active viewport): {captured_path}")
+            self.update_capture_counter()
+            self.tool_selected = None
+            self.handle_buttons_checked()
+            return
+
         # Deactivate any existing tool first
         self.check_and_deactivate_tools()
         

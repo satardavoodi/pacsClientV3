@@ -211,6 +211,10 @@ class VoiceWidget(QWidget):
             border: 1px solid rgba(255, 255, 255, 0.2);
         }
         """)
+        # V2 (2026-06-05): flat token panel — brings the voice popup onto the
+        # current design system; V1 keeps the legacy glass style above.
+        from PacsClient.utils.v2_style import apply_dropdown_panel_v2, apply_voice_button_v2
+        apply_dropdown_panel_v2(self)
 
         # ردیف بالا: ثانیه‌شمار + موج (stream)
         top = QHBoxLayout()
@@ -239,32 +243,38 @@ class VoiceWidget(QWidget):
         self.btn_play = QPushButton("Play")
         self.btn_play.setCursor(Qt.PointingHandCursor)
         self.btn_play.setStyleSheet(self._btn_style("#10b981"))
+        apply_voice_button_v2(self.btn_play, "success")
         self.btn_play.clicked.connect(self._on_play_clicked)
 
         self.btn_record_pause = QPushButton("Pause")
         self.btn_record_pause.setCursor(Qt.PointingHandCursor)
         self.btn_record_pause.setStyleSheet(self._btn_style("#3b82f6"))
+        apply_voice_button_v2(self.btn_record_pause, "warning")
         self.btn_record_pause.clicked.connect(self._on_record_pause_clicked)
 
         self.btn_save = QPushButton("Save")
         self.btn_save.setCursor(Qt.PointingHandCursor)
         self.btn_save.setStyleSheet(self._btn_style("#22c55e"))
+        apply_voice_button_v2(self.btn_save, "success")
         self.btn_save.clicked.connect(self._on_save_clicked)
 
         self.btn_delete = QPushButton("Delete")
         self.btn_delete.setCursor(Qt.PointingHandCursor)
         self.btn_delete.setStyleSheet(self._btn_style("#ef4444"))
+        apply_voice_button_v2(self.btn_delete, "danger")
         self.btn_delete.clicked.connect(self._on_delete_clicked)
 
         self.btn_report = QPushButton("Report")
         self.btn_report.setCursor(Qt.PointingHandCursor)
         self.btn_report.setStyleSheet(self._btn_style("#6366f1"))
+        apply_voice_button_v2(self.btn_report, "neutral")
         self.btn_report.clicked.connect(self._on_report_clicked)
 
         # 🔹 دکمه Sync جدید
         self.btn_sync = QPushButton("Sync")
         self.btn_sync.setCursor(Qt.PointingHandCursor)
         self.btn_sync.setStyleSheet(self._btn_style("#8b5cf6"))
+        apply_voice_button_v2(self.btn_sync, "neutral")
         self.btn_sync.clicked.connect(self._on_sync_clicked)
         self.btn_sync.setToolTip("Save and sync with server")
 

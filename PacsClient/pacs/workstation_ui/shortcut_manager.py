@@ -22,6 +22,7 @@ class ShortcutManager(QObject):
     - F6: Open AI chatbot
     - F7: Start/stop recording audio (auto-opens chatbot if needed)
     - F8: Send text for report generation
+    - F12: Toggle the EchoMind Secretary popup (global, non-modal)
     """
     
     def __init__(self, main_window, parent=None):
@@ -74,8 +75,14 @@ class ShortcutManager(QObject):
         self.arrow_right_shortcut = QShortcut(QKeySequence(Qt.Key_Right), self.main_window)
         self.arrow_right_shortcut.setContext(Qt.ApplicationShortcut)
         self.arrow_right_shortcut.activated.connect(self._on_arrow_right_pressed)
-        
-        logger.info("Shortcuts initialized: F5/F6/F7/F8 and arrow navigation")
+
+        # F12: Toggle the EchoMind Secretary popup (2026-06-06) — works from
+        # any module/page; non-modal overlay, see secretary_popup.py.
+        self.f12_shortcut = QShortcut(QKeySequence(Qt.Key_F12), self.main_window)
+        self.f12_shortcut.setContext(Qt.ApplicationShortcut)  # Work everywhere
+        self.f12_shortcut.activated.connect(self._on_f12_pressed)
+
+        logger.info("Shortcuts initialized: F5/F6/F7/F8/F12 and arrow navigation")
     
     def set_control_panel(self, control_panel):
         """Set the control panel reference for navigation"""
@@ -383,6 +390,24 @@ class ShortcutManager(QObject):
             import traceback
             traceback.print_exc()
     
+    def _on_f12_pressed(self):
+        """F12: Toggle the global EchoMind Secretary popup.
+
+        Lazy import + create-once singleton (`SecretaryPopup.toggle_for`);
+        fail-safe so a popup problem can never break the shortcut table or
+        the home-page secretary widget (a separate instance).
+        """
+        print("F12 pressed - Toggling EchoMind Secretary popup")
+        try:
+            from PacsClient.pacs.workstation_ui.home_ui.secretary_popup import (
+                SecretaryPopup,
+            )
+            SecretaryPopup.toggle_for(self.main_window)
+        except Exception as e:
+            print(f"✗ Error toggling Secretary popup: {e}")
+            import traceback
+            traceback.print_exc()
+
     def _on_arrow_up_pressed(self):
         """Arrow Up: Previous slice in active viewport"""
         try:

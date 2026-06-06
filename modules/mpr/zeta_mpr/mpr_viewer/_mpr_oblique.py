@@ -392,7 +392,11 @@ class _MprObliqueMixin:
                 self.viewers[view_name]['mapper'] = original_mapper
                 del self.viewers[view_name]['original_mapper']
 
-                window, level = self._get_default_window_level()
+                # Preserve the inherited source-viewer W/L (e.g. Lung) — the
+                # range-based _get_default_window_level() invents ~400/40 (an
+                # Abdomen/Mediastinum-like preset) and silently changed the
+                # user's W/L on orthogonal reset.
+                window, level = self._get_initial_window_level()
                 self.viewers[view_name]['actor'].GetProperty().SetColorWindow(window)
                 self.viewers[view_name]['actor'].GetProperty().SetColorLevel(level)
 

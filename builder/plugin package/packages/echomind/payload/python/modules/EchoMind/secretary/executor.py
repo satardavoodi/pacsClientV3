@@ -1,17 +1,36 @@
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from datetime import datetime, timedelta
-from typing import Any
+from typing import Any, Callable, Optional
 
 from .adapters.home_widget_adapter import HomeWidgetAdapter
 from .contracts import SecretaryActionPlan, SecretaryResult
 from .resolver import compact_patient_row, resolve_patient_by_code
 
 
+def _bus_bridge_enabled() -> bool:
+    """CommandBus routing for non-home actions is ON by default.
+
+    Escape hatch: ``AIPACS_SECRETARY_BUS=0`` restores the pre-2026-06-06
+    behavior (every non-home action returns UNSUPPORTED_ACTION)."""
+    return os.environ.get("AIPACS_SECRETARY_BUS", "").strip().lower() not in (
+        "0", "false", "off",
+    )
+
+
 class SecretaryExecutor:
-    def __init__(self, adapter: HomeWidgetAdapter):
+    def __init__(
+        self,
+        adapter: HomeWidgetAdapter,
+        command_bus_getter: Optional[Callable[[], Any]] = None,
+    ):
         self.adapter = adapter
+        # Resolved lazily on every non-home action so construction order
+        # doesn't matter (the home panel builds its CommandBus during
+        # startup; the orchestrator may be constructed before or after).
+        self._command_bus_getter = command_bus_getter
 
     @staticmethod
     def _to_yyyymmdd(raw: str) -> str:
@@ -305,6 +324,18 @@ class SecretaryExecutor:
             return self._sort_patients(plan, state)
         if action == "select_and_download":
             return self._select_and_download(plan, state, confirmed=confirmed)
+
+        # ── CommandBus bridge (2026-06-06) ───────────────────────────────
+        # Non-home actions (module launch, viewer navigation, download
+        # control, reporting workflow) route to the app's CommandBus, which
+        # already implements them in-process on live widgets. Previously
+        # every such action returned UNSUPPORTED_ACTION here, capping the
+        # voice assistant at the home-panel set. The 9 home actions above
+        # are untouched.
+        bus_result = self._try_command_bus(plan, state, confirmed=confirmed)
+        if bus_result is not None:
+            return bus_result
+
         return {
             "ok": False,
             "action": str(action or "unknown"),
@@ -312,6 +343,95 @@ class SecretaryExecutor:
             "data": None,
             "error_code": "UNSUPPORTED_ACTION",
         }
+
+    # ──────────────────────────────────────────────────────────────────────
+    # CommandBus routing for non-home actions
+    # ──────────────────────────────────────────────────────────────────────
+
+    def _resolve_bus(self) -> Any:
+        getter = self._command_bus_getter
+        if getter is None:
+            return None
+        try:
+            return getter()
+        except Exception:
+            return None
+
+    def _try_command_bus(
+        self,
+        plan: SecretaryActionPlan,
+        state: dict[str, Any],
+        confirmed: bool = False,
+    ) -> SecretaryResult | None:
+        """Route an action the home executor doesn't own to the CommandBus.
+
+        Returns None when the bridge is disabled, no bus is available, or the
+        bus doesn't register the action — the caller then falls through to
+        the legacy UNSUPPORTED_ACTION result. Never raises.
+        """
+        action = str(plan.get("action") or "").strip()
+        if not action or not _bus_bridge_enabled():
+            return None
+        bus = self._resolve_bus()
+        if bus is None:
+            return None
+        # Confirmation gate for sensitive bus actions (e.g. PACS send): reuse
+        # the Secretary's existing confirm turn — _run_plan stores the pending
+        # plan on CONFIRM_REQUIRED and re-executes it with confirmed=True
+        # after the user replies "yes".
+        from .validator import _BUS_CONFIRM_REQUIRED_ACTIONS
+        if action in _BUS_CONFIRM_REQUIRED_ACTIONS and not confirmed:
+            return {
+                "ok": False,
+                "action": action,
+                "message": (
+                    f"Confirm '{action.replace('_', ' ')}' for the current "
+                    "patient? Reply yes to continue or no to cancel."
+                ),
+                "data": None,
+                "error_code": "CONFIRM_REQUIRED",
+            }
+        try:
+            registry = getattr(bus, "registry", None)
+            if registry is None or not registry.has_action(action):
+                return None
+            from .command_envelope import CommandPlan
+
+            cmd_plan = CommandPlan(
+                action=action,
+                entities=dict(plan.get("entities") or {}),
+                confidence=float(plan.get("confidence") or 1.0),
+                needs_confirmation=bool(plan.get("needs_confirmation")),
+                reason=str(plan.get("reason") or "secretary bus bridge"),
+            )
+            result = bus.execute(cmd_plan, state)
+        except Exception as exc:  # noqa: BLE001 — degrade to a typed error
+            return {
+                "ok": False,
+                "action": action,
+                "message": f"Command bus execution failed: {exc}",
+                "data": None,
+                "error_code": "BUS_EXECUTION_FAILED",
+            }
+        try:
+            data = result.data
+            if data is not None and not isinstance(data, (dict, list)):
+                data = {"value": data}
+            return {
+                "ok": bool(result.ok),
+                "action": str(result.action or action),
+                "message": str(result.message or ""),
+                "data": data,
+                "error_code": result.error_code,
+            }
+        except Exception:
+            return {
+                "ok": False,
+                "action": action,
+                "message": "Command bus returned an unreadable result.",
+                "data": None,
+                "error_code": "BUS_BAD_RESULT",
+            }
 
     # ──────────────────────────────────────────────────────────────────────────
     # New action handlers

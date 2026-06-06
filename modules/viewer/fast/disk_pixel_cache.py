@@ -164,6 +164,22 @@ class DiskPixelCache:
         """Store a decoded pixel array to disk (async, fire-and-forget)."""
         if not self._initialized:
             return
+        # The on-disk format is strictly single-channel 2D (header records
+        # rows/cols only). A multi-channel array (e.g. an RGB dicomized
+        # document page, shape (H, W, 3)) would round-trip as the first
+        # third of its interleaved bytes reshaped to (H, W) — a striped,
+        # cropped grayscale corruption. Refuse to cache those; they are
+        # rare single-image series and re-decode cheaply.
+        try:
+            if getattr(arr, 'ndim', 2) != 2:
+                logger.debug(
+                    "[B3.12] Disk cache skip (non-2D array ndim=%s shape=%s) key=%s",
+                    getattr(arr, 'ndim', '?'), getattr(arr, 'shape', '?'),
+                    sop_instance_uid,
+                )
+                return
+        except Exception:
+            return
         key = _uid_hash(sop_instance_uid)
         with self._lock:
             if key in self._index:
@@ -383,6 +399,15 @@ class DiskPixelCache:
             raw = f.read(expected_bytes)
             if len(raw) < expected_bytes:
                 raise ValueError("truncated pixel data")
+            # Legacy multi-channel entries (e.g. RGB document pages written
+            # before the 2D-only put() guard) carry MORE bytes than
+            # rows*cols*itemsize. Reading just the first chunk reinterprets
+            # interleaved RGB as a striped/cropped grayscale page — reject
+            # so the caller deletes the entry and re-decodes from DICOM.
+            if f.read(1):
+                raise ValueError(
+                    "oversized pixel payload (legacy multi-channel entry)"
+                )
 
         arr = np.frombuffer(raw, dtype=dtype).reshape(rows, cols)
         return np.ascontiguousarray(arr)

@@ -116,6 +116,39 @@ class _MprOrientationMixin:
                 actor.GetProperty().SetColorLevel(level)
                 self._request_render(view_name)
 
+    def set_window_level(self, window_width, window_center, flag_default=False):
+        """Public W/L API (same signature as the 2D viewers).
+
+        The main toolbar's CT preset dropdown calls
+        ``mpr_widget.set_window_level(ww, wl)`` when an MPR viewport is
+        active — without this method the call silently no-ops and presets
+        appear broken in MPR. Applies to all 2D MPR panes (same scope as
+        the manual W/L mouse drag, which also applies to all panes).
+        """
+        try:
+            ww = float(window_width)
+            wc = float(window_center)
+        except (TypeError, ValueError):
+            return
+        self._apply_window_level(ww, wc)
+
+    def get_window_level(self):
+        """Return the currently displayed (window, level) of the 2D panes."""
+        for view_name in ['axial', 'sagittal', 'coronal']:
+            if view_name in self.viewers:
+                prop = self.viewers[view_name]['actor'].GetProperty()
+                return prop.GetColorWindow(), prop.GetColorLevel()
+        return self._get_initial_window_level()
+
+    def apply_default_window_level(self, slice_index=0):
+        """Restore the W/L the MPR opened with (toolbar 'Default Preset').
+
+        ``slice_index`` is accepted for 2D-viewer signature parity and ignored —
+        MPR W/L is volume-wide, and the as-opened value is the inherited source
+        viewer W/L (or the computed fallback when none was passed).
+        """
+        self._apply_window_level(*self._get_initial_window_level())
+
     # ------------------------------------------------------------------
     # Render batching
     # ------------------------------------------------------------------

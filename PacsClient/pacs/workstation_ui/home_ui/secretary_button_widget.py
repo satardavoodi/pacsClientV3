@@ -1563,6 +1563,40 @@ class SecretaryButtonWidget(QWidget):
         except Exception:
             pass
 
+    def cancel_recording(self) -> bool:
+        """Stop an in-flight recording WITHOUT processing it.
+
+        Used by the F12 popup's X button (2026-06-06): closing the popup
+        mid-listen must discard the capture instead of sending it to STT.
+        Safe to call at any time from the GUI thread; returns True when a
+        recording was actually cancelled. Never raises.
+        """
+        if not getattr(self, "_rec_running", False):
+            return False
+        self._rec_running = False
+        thread = getattr(self, "_rec_thread", None)
+        if thread is not None:
+            try:
+                thread.join(timeout=1.5)
+            except Exception:
+                pass
+            self._rec_thread = None
+        self._rec_frames = []
+        self._rec_started_at = None
+        try:
+            self._set_thinking_status("Ready")
+        except Exception:
+            pass
+        try:
+            self._post_log("system", "Recording cancelled.")
+        except Exception:
+            pass
+        try:
+            self._set_active_silent(False)
+        except Exception:
+            pass
+        return True
+
     def _stop_recording_and_process(self) -> None:
         if not self._rec_running:
             return

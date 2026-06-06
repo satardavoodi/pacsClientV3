@@ -124,6 +124,11 @@ class _MprCrosshairStateMixin:
         self.crosshairs_enabled = checked
         self.crosshair_interaction_enabled = checked
 
+        # The global switch overrides any per-viewport hides (simple mental
+        # model: turning Crosshairs ON shows them everywhere again).
+        self._crosshair_hidden_views = set()
+        self._sync_view_crosshair_buttons()
+
         for view_name, actors in self.crosshair_actors.items():
             h_line_actor = actors['h_line_actor']
             v_line_actor = actors['v_line_actor']
@@ -146,6 +151,89 @@ class _MprCrosshairStateMixin:
 
         status = 'enabled' if checked else 'disabled'
         logger.info(f"Crosshairs {status} (visibility + interaction)")
+
+    # ------------------------------------------------------------------
+    # Per-viewport crosshair visibility (2026-06-06)
+    # ------------------------------------------------------------------
+    # Each 2D pane has its own small overlay toggle (see
+    # _mpr_views._add_view_crosshair_toggle) so the crosshair can be hidden
+    # in one viewport without hiding it everywhere. Effective visibility of
+    # a pane = crosshairs_enabled AND pane not in _crosshair_hidden_views.
+
+    def toggle_view_crosshair(self, view_name):
+        """Flip crosshair visibility for a single viewport."""
+        hidden = getattr(self, '_crosshair_hidden_views', set())
+        self.set_view_crosshair_visible(view_name, view_name in hidden)
+
+    def set_view_crosshair_visible(self, view_name, visible):
+        """Show/hide the crosshair in ONE viewport only.
+
+        Interaction follows visibility for that pane (an invisible crosshair
+        must not be a drag target), but is only touched while no toolbar tool
+        owns the pane's interactor (_toolbar_active_tool is None) — a toolbar
+        tool's style must never be stomped.
+        """
+        if not hasattr(self, '_crosshair_hidden_views'):
+            self._crosshair_hidden_views = set()
+
+        if visible:
+            self._crosshair_hidden_views.discard(view_name)
+        else:
+            self._crosshair_hidden_views.add(view_name)
+
+        self._apply_view_crosshair_visibility(view_name)
+        self._sync_view_crosshair_buttons()
+
+    def _apply_view_crosshair_visibility(self, view_name):
+        """Apply effective (global AND per-view) crosshair visibility to a pane."""
+        actors = (getattr(self, 'crosshair_actors', None) or {}).get(view_name)
+        if not actors:
+            return
+
+        effective = bool(self.crosshairs_enabled) and (
+            view_name not in getattr(self, '_crosshair_hidden_views', set())
+        )
+
+        h_line_actor = actors['h_line_actor']
+        v_line_actor = actors['v_line_actor']
+        handles = actors.get('handles', [])
+        if effective:
+            h_line_actor.VisibilityOn()
+            v_line_actor.VisibilityOn()
+            for handle in handles:
+                handle['actor'].VisibilityOn()
+        else:
+            h_line_actor.VisibilityOff()
+            v_line_actor.VisibilityOff()
+            for handle in handles:
+                handle['actor'].VisibilityOff()
+
+        if getattr(self, '_toolbar_active_tool', None) is None:
+            if effective and self.crosshair_interaction_enabled:
+                self._enable_crosshair_interaction(view_name)
+            else:
+                self._disable_crosshair_interaction(view_name)
+
+        self._request_render(view_name)
+
+    def _sync_view_crosshair_buttons(self):
+        """Reflect per-view crosshair state on the per-pane overlay buttons."""
+        buttons = getattr(self, '_crosshair_view_buttons', None) or {}
+        hidden = getattr(self, '_crosshair_hidden_views', set())
+        for view_name, btn in buttons.items():
+            if btn is None:
+                continue
+            try:
+                visible = view_name not in hidden
+                btn.blockSignals(True)
+                btn.setChecked(visible)
+                btn.setToolTip(
+                    "Hide crosshair in this viewport" if visible
+                    else "Show crosshair in this viewport"
+                )
+                btn.blockSignals(False)
+            except Exception:
+                pass
 
     def _close_mpr(self):
         """Close MPR viewer and return to normal view"""

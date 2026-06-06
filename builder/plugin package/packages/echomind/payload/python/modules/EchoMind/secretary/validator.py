@@ -26,7 +26,58 @@ _ALLOWED_ACTIONS = {
     "sort_patients",
     "select_and_download",
 }
+
+# ── CommandBus bridge (2026-06-06) ──────────────────────────────────────────
+# Actions executed by routing the plan to the app's CommandBus (bus_factory
+# adapters) instead of SecretaryExecutor's own handlers. These were previously
+# rejected here with ERR_INVALID_ACTION even though the bus implements them —
+# the voice assistant was hard-capped at the home-panel set. Entities for
+# these actions are validated leniently (an object with string keys); every
+# bus adapter performs its own typed validation and returns a recoverable
+# error envelope (e.g. MODULE_NOT_REGISTERED, MISSING_MODULE).
+# ``close_patient_tab`` is deliberately ABSENT (destructive; test-server only).
+_BUS_ALLOWED_ACTIONS = {
+    # modules
+    "open_module",
+    "list_modules",
+    "toggle_eagle",
+    "open_mpr",
+    "open_printing",
+    "open_education",
+    # download manager
+    "cancel_download",
+    "pause_download",
+    "resume_download",
+    "check_download_status",
+    "list_downloads",
+    "download_statistics",
+    # viewer — read-only
+    "get_active_tab",
+    "list_open_tabs",
+    "get_thumbnails_data",
+    "get_active_series",
+    "get_multistudy_info",
+    "get_series_info",
+    # viewer — safe writes (series/tab/slice navigation; nothing destructive)
+    "change_series",
+    "query_viewport_state",
+    "switch_tab",
+    "change_layout",
+    "scroll_slices",
+    # EchoMind reporting workflow (phase 2)
+    "start_report",
+    "transcribe_voice",
+    "generate_report",
+    "send_report_to_pacs",
+}
 _ALLOWED_SOURCES = {"active_tab", "local", "server"}
+
+# Bus actions that must pass the Secretary confirmation turn ("yes") before
+# they execute. ``send_report_to_pacs`` additionally keeps the interactive
+# reception dialog inside the app — two human gates for a clinical send.
+_BUS_CONFIRM_REQUIRED_ACTIONS = {
+    "send_report_to_pacs",
+}
 
 _ALLOWED_ENTITY_KEYS_BY_ACTION: dict[str, set[str]] = {
     "list_patients": {"source", "date", "modality", "patient_name", "patient_code"},
@@ -158,6 +209,23 @@ def validate_plan_semantics(plan: SecretaryActionPlan) -> list[ValidationError]:
     errs: list[ValidationError] = []
 
     action = str(plan.get("action") or "").strip()
+
+    # CommandBus-bridged actions: lenient semantics — the action name must be
+    # known and entities must be an object; per-entity typing is the owning
+    # adapter's job (each returns a typed, recoverable error envelope).
+    if action in _BUS_ALLOWED_ACTIONS:
+        for k in (plan.get("entities") or {}).keys() if isinstance(plan.get("entities"), dict) else []:
+            if not isinstance(k, str):
+                errs.append(
+                    ValidationError(
+                        code=ERR_INVALID_ENTITY,
+                        field="entities",
+                        message="Entity keys must be strings.",
+                    )
+                )
+                break
+        return errs
+
     if action not in _ALLOWED_ACTIONS:
         errs.append(
             ValidationError(
@@ -167,7 +235,9 @@ def validate_plan_semantics(plan: SecretaryActionPlan) -> list[ValidationError]:
                 hint=(
                     "Allowed: list_patients, open_patient, download_patient, "
                     "set_source_mode, import_dicom, select_patient, "
-                    "change_font_size, sort_patients, select_and_download"
+                    "change_font_size, sort_patients, select_and_download, "
+                    "plus module/viewer/download bus actions such as "
+                    "open_module, toggle_eagle, open_mpr, change_series"
                 ),
             )
         )

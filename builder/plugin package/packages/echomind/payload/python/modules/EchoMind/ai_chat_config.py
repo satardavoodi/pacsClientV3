@@ -60,3 +60,31 @@ CLR_ACCENT = "#8a8a8a"
 CLR_BUBBLE_USER = "#333"
 CLR_BUBBLE_BOT = "#2b2b2b"
 
+# ── V2 design-system alignment (2026-06-05, readability fix) ────────────────
+# The legacy flat near-black palette above (#222 / #1b1b1b / #2b2b2b panels,
+# #dddddd text, GRAY accent #8a8a8a) gave the EchoMind chat poor contrast and
+# indistinct active/selected states — the "Generating…" bubble, transcription
+# and translated-output bubbles, composer, send-button states and the
+# reception dialog all derive from these seven tokens. When the EchoMind
+# module is on the V2 design (the build default), re-point them at the live
+# AI-PACS theme: readable bright text, real accent for active states, and the
+# design system's panel surfaces. Pinning V1 (env AIPACS_UI_VARIANT=v1 or the
+# per-module override) — or any error here — keeps the legacy palette
+# byte-identically. Never raises.
+try:
+    from PacsClient.utils.ui_variant import get_ui_variant as _get_ui_variant
+    if _get_ui_variant("echomind") == "v2":
+        from PacsClient.utils.theme_manager import get_theme_manager as _get_tm
+        _t = _get_tm().current_theme()
+        CLR_BG = _t.get("panel_bg", "#111927")            # chat background
+        CLR_BG_PANEL = _t.get("card_bg", "#16202e")       # composer/panels
+        CLR_TEXT = _t.get("text_primary", "#f8fafc")      # readable body text
+        CLR_BORDER = _t.get("border", "#2d3748")
+        CLR_ACCENT = _t.get("accent", "#3182ce")          # real accent, not gray
+        CLR_BUBBLE_USER = _t.get("accent_soft", "#21314a")  # soft accent bubble
+        CLR_BUBBLE_BOT = _t.get("panel_alt_bg", "#1a202c")  # AI/status bubble
+        del _t, _get_tm
+    del _get_ui_variant
+except Exception:
+    pass  # theme not ready / headless context → legacy palette stays
+

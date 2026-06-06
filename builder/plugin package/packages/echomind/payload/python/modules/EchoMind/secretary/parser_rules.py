@@ -110,6 +110,105 @@ def parse_command_rule(text: str) -> SecretaryActionPlan | None:
 
     code = _extract_code(raw)
 
+    # ── Module-open fast path (2026-06-06) ────────────────────────────────
+    # MUST run before the open_patient branch: "open echomind / eagle eye /
+    # mpr / the report module" previously fell into open_patient with no
+    # patient code ("patient code is required" — confusing). Maps the
+    # module word to the CommandBus module name; executed via the
+    # orchestrator→bus bridge. Checked only for open-style commands without
+    # a patient code so "open patient 123" is untouched.
+    module_terms: list[tuple[str, str]] = [
+        ("echomind", "echomind"),
+        ("echo mind", "echomind"),
+        ("اکومایند", "echomind"),
+        ("اکو مایند", "echomind"),
+        ("eagleeye", "eagle_ai"),
+        ("eagle eye", "eagle_ai"),
+        ("eagle", "eagle_ai"),
+        ("ایگل", "eagle_ai"),
+        ("mpr", "mpr"),
+        ("ام پی آر", "mpr"),
+        ("printing", "printing"),
+        ("print module", "printing"),
+        ("report module", "printing"),
+        ("پرینت", "printing"),
+        ("چاپ", "printing"),
+        ("education", "education"),
+        ("آموزش", "education"),
+    ]
+    if _has_any(norm, open_terms) and not code:
+        for term, module_name in module_terms:
+            if term in norm:
+                return _plan(
+                    action="open_module",
+                    entities={"module": module_name},
+                    confidence=0.92,
+                    needs_confirmation=False,
+                    reason=f"rule: open module ({module_name})",
+                )
+
+    # ── Reporting-workflow fast paths (2026-06-06 bridge phase 2) ─────────
+    # Checked before the generic open/download/list branches; none of these
+    # share keywords with them. send → transcribe → generate → start order
+    # matters ("transcribe this voice report" contains "report").
+    if ("send" in norm and ("pacs" in norm or "reception" in norm)) or (
+        "ارسال" in norm and ("پکس" in norm or "پذیرش" in norm)
+    ):
+        return _plan(
+            action="send_report_to_pacs",
+            entities={},
+            confidence=0.9,
+            needs_confirmation=True,
+            reason="rule: send report to PACS",
+        )
+    if "transcribe" in norm or "رونویسی" in norm or "تبدیل صدا" in norm:
+        return _plan(
+            action="transcribe_voice",
+            entities={},
+            confidence=0.9,
+            needs_confirmation=False,
+            reason="rule: transcribe voice",
+        )
+    if "report" in norm or "گزارش" in norm:
+        if "generate" in norm or "تولید" in norm or "بساز" in norm:
+            return _plan(
+                action="generate_report",
+                entities={},
+                confidence=0.9,
+                needs_confirmation=False,
+                reason="rule: generate report",
+            )
+        if _has_any(norm, ["start a report", "start report", "new report",
+                           "شروع گزارش", "گزارش جدید"]):
+            return _plan(
+                action="start_report",
+                entities={},
+                confidence=0.9,
+                needs_confirmation=False,
+                reason="rule: start report",
+            )
+
+    # ── Slice-stack navigation ("scroll/stack this series") ──────────────
+    scroll_terms = ["scroll", "stack", "next image", "previous image",
+                    "next slice", "previous slice", "اسکرول",
+                    "تصویر بعدی", "تصویر قبلی"]
+    if _has_any(norm, scroll_terms):
+        if _has_any(norm, ["previous", "back", "قبلی"]):
+            direction = "previous"
+        elif _has_any(norm, ["first", "اول"]):
+            direction = "first"
+        elif _has_any(norm, ["last", "end", "آخر"]):
+            direction = "last"
+        else:
+            direction = "next"
+        return _plan(
+            action="scroll_slices",
+            entities={"direction": direction},
+            confidence=0.88,
+            needs_confirmation=False,
+            reason=f"rule: scroll slices ({direction})",
+        )
+
     if _has_any(norm, open_terms):
         entities: dict[str, Any] = {}
         if code:

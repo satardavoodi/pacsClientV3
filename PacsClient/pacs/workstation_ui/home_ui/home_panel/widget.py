@@ -242,8 +242,18 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
                 # a patient tab is opened. Unregistered modules return a
                 # MODULE_NOT_REGISTERED error envelope (typed, recoverable).
                 module_launchers={
-                    "eagle_ai": self._launcher_eagle_ai_from_home,
+                    "eagle_ai":  self._launcher_eagle_ai_from_home,
+                    # 2026-06-06 bridge: launchers for the modules the voice
+                    # assistant can now reach (open_module / open_mpr / …).
+                    "echomind":  self._launcher_echomind,
+                    "mpr":       self._launcher_mpr_active_tab,
+                    "printing":  self._launcher_printing,
+                    "education": self._launcher_education,
                 },
+                # Safe viewer-write subset (change_series / switch_tab / …)
+                # so "load series N" works by voice. close_patient_tab stays
+                # test-server-only.
+                enable_viewer_write=True,
             )
             print(f"[CommandBus] wired with {len(self.command_bus.actions())} action(s)")
             # Test Control Server — env-gated external transport for the bus
@@ -279,6 +289,62 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
             return window
         except Exception as _err:  # noqa: BLE001
             print(f"[CommandBus] eagle_ai launcher failed: {_err}")
+            return None
+
+    # ── 2026-06-06 bridge: module launchers for the voice assistant ────────
+    # Each is fail-safe (returns None on any error; the ModuleAdapter wraps
+    # that in a typed MODULE_LAUNCH_FAILED envelope). Per-patient-tab modules
+    # (EchoMind chat, MPR) resolve the ACTIVE patient tab at call time.
+
+    def _launcher_echomind(self, entities: dict):
+        """Open the EchoMind chat window for the active patient tab."""
+        try:
+            tab = self._get_active_patient_tab_for_bus()
+            if tab is None or not hasattr(tab, "ai_chat_layout_ui"):
+                print("[CommandBus] echomind launcher: no active patient tab")
+                return None
+            window = tab.ai_chat_layout_ui()
+            try:
+                if window is not None:
+                    window.show()
+                    window.raise_()
+            except Exception:
+                pass
+            return window
+        except Exception as _err:  # noqa: BLE001
+            print(f"[CommandBus] echomind launcher failed: {_err}")
+            return None
+
+    def _launcher_mpr_active_tab(self, entities: dict):
+        """Open Zeta MPR on the active patient tab (same as the MPR button)."""
+        try:
+            tab = self._get_active_patient_tab_for_bus()
+            tm = getattr(tab, "toolbar_manager", None) if tab is not None else None
+            if tm is None or not hasattr(tm, "toggle_zeta_mpr"):
+                print("[CommandBus] mpr launcher: no active patient tab/toolbar")
+                return None
+            tm.toggle_zeta_mpr()
+            return tm  # non-None signals success to the ModuleAdapter
+        except Exception as _err:  # noqa: BLE001
+            print(f"[CommandBus] mpr launcher failed: {_err}")
+            return None
+
+    def _launcher_printing(self, entities: dict):
+        """Open the printing/report module tab (same as the menu action)."""
+        try:
+            self.open_printing_module()
+            return self  # tab opened on the home widget
+        except Exception as _err:  # noqa: BLE001
+            print(f"[CommandBus] printing launcher failed: {_err}")
+            return None
+
+    def _launcher_education(self, entities: dict):
+        """Open the education module tab (same as the menu action)."""
+        try:
+            self.open_education_module()
+            return self
+        except Exception as _err:  # noqa: BLE001
+            print(f"[CommandBus] education launcher failed: {_err}")
             return None
 
     def _get_active_patient_tab_for_bus(self):

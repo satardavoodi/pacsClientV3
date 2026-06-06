@@ -344,13 +344,17 @@ class ImagingToolsTab(AbstractTab):
         self.patient_widget_container = QWidget()
         self.patient_widget_layout = QVBoxLayout(self.patient_widget_container)
         self.patient_widget_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         # Create patient widget
         self.patient_widget = AIPatientWidget(
             study_uid=study_uid,
             imaging_tab_ui=self
         )
         self.patient_widget_layout.addWidget(self.patient_widget)
+
+        # ---- viewer toolbar (screenshot / copy / save-as / zoom) ----
+        self.viewer_toolbar = self._build_viewer_toolbar()
+        self.vertical_layout.addWidget(self.viewer_toolbar)
 
         self.vertical_layout.addWidget(self.patient_widget_container, stretch=5)
 
@@ -808,6 +812,188 @@ class ImagingToolsTab(AbstractTab):
         return "MG"
 
     # ---------- Home row ----------
+    # ---------- Viewer toolbar (screenshot / copy / save-as / zoom) ----------
+    def _build_viewer_toolbar(self):
+        """Slim always-visible toolbar above the Eagle Eye viewer.
+
+        Reuses the app-wide capture pipeline (modules.viewer.viewport_capture →
+        study attachment folder, same gallery as the main viewer) and the
+        standard image_viewer zoom APIs. Colors use the Eagle Eye palette hex
+        values so AiMainWindow's theme retint maps them to the live theme.
+        """
+        bar = QWidget()
+        bar.setObjectName("eagleViewerToolbar")
+        bar.setStyleSheet("""
+            QWidget#eagleViewerToolbar {
+                background: #1a202c;
+                border: 1px solid #2d3748;
+                border-radius: 6px;
+            }
+            QWidget#eagleViewerToolbar QPushButton {
+                background: #1a202c;
+                color: #f7fafc;
+                border: 1px solid #2d3748;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 12px;
+            }
+            QWidget#eagleViewerToolbar QPushButton:hover {
+                background: #2d3748;
+            }
+            QWidget#eagleViewerToolbar QPushButton:pressed {
+                background: #0f1419;
+            }
+            QWidget#eagleViewerToolbar QLabel {
+                color: #6b7280;
+                font-size: 11px;
+            }
+        """)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(6, 4, 6, 4)
+        layout.setSpacing(6)
+
+        try:
+            import qtawesome as qta
+            _icon = lambda name: qta.icon(name, color='#9ca3af')
+        except Exception:
+            _icon = lambda name: None
+
+        def _add_btn(text, icon_name, tooltip, slot):
+            btn = QPushButton(text)
+            icon = _icon(icon_name)
+            if icon is not None:
+                btn.setIcon(icon)
+            btn.setToolTip(tooltip)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.clicked.connect(slot)
+            layout.addWidget(btn)
+            return btn
+
+        _add_btn('Screenshot', 'fa5s.camera',
+                 'Capture the visible viewer (saved to study attachments)',
+                 self._eagle_screenshot)
+        _add_btn('Copy', 'fa5s.copy',
+                 'Copy the visible viewer image to the clipboard',
+                 self._eagle_copy_image)
+        _add_btn('Save As…', 'fa5s.save',
+                 'Save the visible viewer image to a file',
+                 self._eagle_save_image_as)
+
+        sep = QLabel('|')
+        layout.addWidget(sep)
+
+        _add_btn('Zoom In', 'fa5s.search-plus', 'Zoom in (selected viewer)',
+                 lambda: self._eagle_zoom(1.25))
+        _add_btn('Zoom Out', 'fa5s.search-minus', 'Zoom out (selected viewer)',
+                 lambda: self._eagle_zoom(0.8))
+        _add_btn('Fit', 'fa5s.expand', 'Zoom to fit (selected viewer)',
+                 self._eagle_zoom_fit)
+
+        layout.addStretch()
+        return bar
+
+    def _get_active_eagle_image_viewer(self):
+        """Resolve the image_viewer of the currently selected Eagle Eye pane."""
+        pw = getattr(self, 'patient_widget', None)
+        if pw is None:
+            return None
+        candidates = []
+        sel = getattr(pw, 'selected_widget', None)
+        if sel is not None:
+            candidates.append(getattr(sel, 'vtk_widget', sel))
+        try:
+            for node in list(getattr(pw, 'lst_nodes_viewer', []) or []):
+                w = getattr(node, 'vtk_widget', None)
+                if w is not None:
+                    candidates.append(w)
+        except Exception:
+            pass
+        for widget in candidates:
+            iv = getattr(widget, 'image_viewer', None)
+            if iv is not None:
+                return iv
+        return None
+
+    def _eagle_grab_pixmap(self):
+        """Grab the visible Eagle Eye viewer area (panes + AI box overlays)."""
+        try:
+            from modules.viewer.viewport_capture import grab_widget_pixmap
+            target = getattr(self, 'patient_widget_container', None)
+            if target is None:
+                return None
+            try:
+                target.repaint()
+            except Exception:
+                pass
+            return grab_widget_pixmap(target)
+        except Exception as e:
+            print(f"[EagleEye] grab failed: {e}")
+            return None
+
+    def _eagle_screenshot(self):
+        """Capture the visible viewer into the study's attachment folder."""
+        try:
+            from modules.viewer.viewport_capture import save_pixmap_to_attachments
+            pixmap = self._eagle_grab_pixmap()
+            path = save_pixmap_to_attachments(pixmap, self.study_uid)
+            if path:
+                self.set_processing_status(f"Screenshot saved: {Path(path).name}", active=False)
+            else:
+                QMessageBox.warning(self, "Capture Failed", "Could not capture the viewer image.")
+        except Exception as e:
+            QMessageBox.warning(self, "Capture Failed", f"Could not capture the viewer image.\n{e}")
+
+    def _eagle_copy_image(self):
+        """Copy the visible viewer image to the clipboard."""
+        pixmap = self._eagle_grab_pixmap()
+        if pixmap is None or pixmap.isNull():
+            QMessageBox.warning(self, "Copy Failed", "Could not capture the viewer image.")
+            return
+        QApplication.clipboard().setPixmap(pixmap)
+        self.set_processing_status("Image copied to clipboard", active=False)
+
+    def _eagle_save_image_as(self):
+        """Save the visible viewer image to a user-chosen file."""
+        pixmap = self._eagle_grab_pixmap()
+        if pixmap is None or pixmap.isNull():
+            QMessageBox.warning(self, "Save Failed", "Could not capture the viewer image.")
+            return
+        from datetime import datetime
+        default_name = f"eagleeye_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Save Image As", default_name, "PNG Image (*.png);;JPEG Image (*.jpg)"
+        )
+        if not file_path:
+            return
+        if pixmap.save(file_path):
+            self.set_processing_status(f"Image saved: {Path(file_path).name}", active=False)
+        else:
+            QMessageBox.warning(self, "Save Failed", "Could not write the image file.")
+
+    def _eagle_zoom(self, factor):
+        """Discrete zoom on the selected pane (parallel-projection scale)."""
+        iv = self._get_active_eagle_image_viewer()
+        if iv is None:
+            return
+        try:
+            camera = iv.renderer.GetActiveCamera()
+            scale = camera.GetParallelScale()
+            if scale > 0 and factor > 0:
+                camera.SetParallelScale(scale / float(factor))
+                iv.image_render_window.Render()
+        except Exception as e:
+            print(f"[EagleEye] zoom failed: {e}")
+
+    def _eagle_zoom_fit(self):
+        """Zoom-to-fit on the selected pane (existing image_viewer API)."""
+        iv = self._get_active_eagle_image_viewer()
+        if iv is None:
+            return
+        try:
+            iv.zoom_to_fit()
+        except Exception as e:
+            print(f"[EagleEye] zoom_to_fit failed: {e}")
+
     def home_layout(self):
         layout = QHBoxLayout()
 
