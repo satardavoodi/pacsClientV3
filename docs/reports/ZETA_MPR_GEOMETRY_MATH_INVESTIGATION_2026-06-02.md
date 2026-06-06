@@ -7,7 +7,7 @@
 > `docs/pipelines/mpr-geometry-pipeline.md` §10b/§10c.
 
 **Date:** 2026-06-02 **Status:** Investigation only — **no code changed.**
-**Raw data file:** `ZETA_MPR_GEOMETRY_RAW_2026-06-02.json` (all tags + computed matrices).
+**Raw data file:** `docs/analysis/data/2026-06/ZETA_MPR_GEOMETRY_RAW_2026-06-02.json` (all tags + computed matrices).
 **Series analyzed = the exact ones loaded in each open MPR** (identified by slice count
 from the live review): 44614→ser 201 (82), 44608→ser 5 (24), 44082→ser 4 (21),
 44313→ser 7 (20). Extraction via pydicom, read-only.
@@ -259,5 +259,5 @@ output L/R · A/P · S/I signs once routed through the CT path. These need the s
 verify CT unchanged and the four cases canonical, with `ZETA_MPR_DIAG=1` + `tests/code/mpr/`.
 To enable: set env `AIPACS_ZETA_MPR_CANONICALIZE=1` (or the config file) and restart.
 
-*Raw data: `ZETA_MPR_GEOMETRY_RAW_2026-06-02.json`. Companion analyses:
+*Raw data: `docs/analysis/data/2026-06/ZETA_MPR_GEOMETRY_RAW_2026-06-02.json`. Companion analyses:
 `ZETA_MPR_ORIENTATION_INVESTIGATION_2026-06-02.md`, `ZETA_MPR_FOURCASE_REVIEW_2026-06-02.md`.*

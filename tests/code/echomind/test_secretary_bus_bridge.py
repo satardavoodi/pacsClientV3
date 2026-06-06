@@ -1,6 +1,6 @@
 """Guards for the orchestrator→CommandBus bridge (2026-06-06).
 
-Closes the central gap from SECRETARY_ECHOMIND_PIPELINE_REVIEW_2026-06-06.md:
+Closes the central gap from docs/reports/SECRETARY_ECHOMIND_PIPELINE_REVIEW_2026-06-06.md:
 the voice/text assistant was hard-capped at 9 home-panel actions while the
 24-action CommandBus (modules / viewer / download control) was reachable only
 from the test server. Contract pinned here:

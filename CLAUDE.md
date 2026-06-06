@@ -184,7 +184,7 @@ Before editing `tests/database/test_database.py`, any other DB-touching test, or
 the connection layer (`database/_pool.py`, `database/core.py`), know that the live
 clinical database `user_data/database/dicom.db` had been polluted by ~43 runs of a
 test whose isolation silently failed — **fixed & cleaned 2026-05-24**
-(as-built record: `COPILOT_REPORT_db_cleanup.md`).
+(as-built record: `docs/reports/COPILOT_REPORT_db_cleanup.md`).
 
 Root cause: the old `_setup_temp_db()` patched `database.core._DB_PATH`, an
 attribute nothing reads. The connection factory
@@ -285,7 +285,7 @@ Clinical data isolation is the **highest-severity** invariant: a patient must on
 show / download studies that belong to that exact `patient_id`. Before editing
 `_hp_patient_open.py` (`_resolve_patient_study_uids`, open STEP 3.5), `_hp_series.py`
 (`_reconcile_patient_studies_on_click`), or `_hp_modules.py`
-(`_show_grouped_patient_studies`), **read `CROSS_PATIENT_STUDY_MIXING_44504_2026-06-02.md`**
+(`_show_grouped_patient_studies`), **read `docs/reports/CROSS_PATIENT_STUDY_MIXING_44504_2026-06-02.md`**
 and the [[cross-patient-study-mixing]] history.
 - The 2026-05-31 `_resolve_patient_study_uids` pid-scope guard is a SAFETY NET only and has
   a hole: it KEEPS studies whose owner is unknown in the local DB, so a *fresh* leaked study
@@ -308,7 +308,7 @@ must show ALL of them. Before editing `_hp_patient_open.py`
 `_row_total_studies`, the double-click open), `_hp_series.py`
 (`_reconcile_patient_studies_on_click` server-side enumeration), or
 `_hp_search.py::_add_socket_patient_to_table` (the `_server_patient_meta_by_pid` stash),
-**read `MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`** and the
+**read `docs/reports/MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`** and the
 [[multistudy-multimodality-enumeration]] memory.
 - **Server limitation:** `GetPatientList` returns only ONE study UID per patient (the latest)
   even when it reports `total_studies>1` + multiple `modalities`. It splits a patient's studies
@@ -329,7 +329,7 @@ must show ALL of them. Before editing `_hp_patient_open.py`
 
 ### Single-instance application guard + clean termination (2026-06-02, takeover 2026-06-05)
 Before editing `PacsClient/utils/single_instance_lock.py`, the lock acquire/release in
-`main.py`, or the shutdown `finally`, **read `SINGLE_INSTANCE_GUARD_2026-06-02.md`** and the
+`main.py`, or the shutdown `finally`, **read `docs/reports/SINGLE_INSTANCE_GUARD_2026-06-02.md`** and the
 [[single-instance-guard]] memory.
 - Primary mechanism is a Qt **`QLocalServer`/`QLocalSocket`** (atomic, OS-released on crash,
   cross-process ACTIVATE→raise-window IPC); the PID lock file is a diagnostic/fallback layer.
@@ -353,7 +353,7 @@ Before editing `PacsClient/utils/single_instance_lock.py`, the lock acquire/rele
   via the event loop (so that `finally` runs) with an 8 s hard-exit failsafe.
 
 ### Download-manager reliability + smoothness (2026-06-02)
-See `AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical image integrity verified sound
+See `docs/reports/AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical image integrity verified sound
 (atomic `.part`→`os.replace`, resume rejects partials, DB-lock retry). Applied + test-verified:
 - **DM-H4** `DownloadProcessWorker.ensure_subprocess_dead()` called from
   `WorkerPool._remove_worker` — `QThread.terminate()` bypasses `run()`'s `finally:_cleanup()`,
@@ -367,7 +367,7 @@ See `AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical image integrity 
   executor) reaches `home_panel.widget → zeta_adapter` mid-init, so some test files fail to
   *collect* when a home-panel suite is collected before `download_manager`. Order-only, **no
   production impact**; to verify home-panel changes, collect `tests/code/download_manager` first.
-- **Large-batch stability (2026-06-05,** see `STABILITY_FIXES_TAKEOVER_AND_LARGE_BATCH_2026-06-05.md`**):**
+- **Large-batch stability (2026-06-05,** see `docs/reports/STABILITY_FIXES_TAKEOVER_AND_LARGE_BATCH_2026-06-05.md`**):**
   the response-body recv loop accumulates into a **`bytearray`** (`extend`) — never revert to
   `bytes +=` (O(n²): minutes of CPU on a 300 MB radiology batch = the "stuck download"). A
   per-series **byte-budget soft cap** (`_BATCH_BYTES_SOFT_CAP`, 64 MB) halves subsequent

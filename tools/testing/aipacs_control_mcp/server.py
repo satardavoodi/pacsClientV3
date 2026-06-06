@@ -3,7 +3,7 @@
 
 Bridges MCP tools → the in-app Test Control Server (QLocalServer, enabled by
 launching AI-PACS with ``AIPACS_TEST_SERVER=1``) → the EchoMind CommandBus →
-real application functions. See TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md.
+real application functions. See docs/reports/TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md.
 
 Run (Claude Desktop / any MCP client), using the app venv python:
     E:\\...\\.venv\\Scripts\\python.exe tools/testing/aipacs_control_mcp/server.py

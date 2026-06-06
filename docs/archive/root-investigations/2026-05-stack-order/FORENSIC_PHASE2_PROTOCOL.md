@@ -115,7 +115,7 @@ Get-Content user_data/logs/viewer_diagnostics.log |
 ### Step 1: Run Forensic Comparison Script
 
 ```powershell
-python forensic_detailed_series_comparison.py > forensic_report_phase2.txt
+python tools/analysis/oneoff/forensic_detailed_series_comparison.py > forensic_report_phase2.txt
 ```
 
 This will automatically:
@@ -262,6 +262,6 @@ rm user_data/logs/viewer_diagnostics.log  # Reset baseline
 .\run_app.ps1
 
 # 4. After reproducing bug and closing app:
-python forensic_detailed_series_comparison.py > forensic_report_phase2.txt
+python tools/analysis/oneoff/forensic_detailed_series_comparison.py > forensic_report_phase2.txt
 cat forensic_report_phase2.txt
 ```

@@ -7,7 +7,7 @@
 > view so the next session does not restart from zero.
 >
 > **Companion docs:**
-> - Master plan with per-step actions: `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md`
+> - Master plan with per-step actions: `docs/plans/performance/plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md`
 > - KPI definitions and parser: `tools/performance/clearcanvas_aipacs_kpi_harness.py`
 > - Per-frame log catalog: `docs/performance/FAST_VIEWER_KPI_CATALOG.md`
 > - Stable-version invariants (R1–R20): `.github/copilot-instructions.md`

@@ -1,3 +1,0 @@
-=== after kill: python.exe === 
-INFO: No tasks are running which match the specified criteria.
-=== DONE === 

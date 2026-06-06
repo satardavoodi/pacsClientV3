@@ -123,5 +123,5 @@ Per the user's standing rule ("only stop and ask when you specifically need a li
 
 - `docs/plans/performance/FAST_VIEWER_OPTIMIZATION_STATE_2026-04-29.md` — phase ledger.
 - `docs/plans/performance/CURRENT_KPIS_v2.3.6.md` — KPI list (extend with G6 fields after first live log).
-- `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` — strategic plan.
+- `docs/plans/performance/plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` — strategic plan.
 - Critical rules R1–R20 — preservation contract for any G7+ defer.

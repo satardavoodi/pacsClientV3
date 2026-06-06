@@ -176,7 +176,7 @@ Any performance work targeting the "downloading same series + stacking same seri
 
 **Red-team verification:** to confirm the gate detects breakage, temporarily change the FAST W/L LUT or filter dimensions and re-run — settled hashes must drift. Revert and re-run — bundle must return green.
 
-**Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F1.
+**Plan reference:** `docs/plans/performance/plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F1.
 
 ## Overlap log tag `[OVERLAP_SCENARIO]` (F2.1, 2026-04-28; F2.1b extension 2026-04-29)
 
@@ -233,7 +233,7 @@ And new sentinel-visibility keys (F2.1b):
 
 **Contract tests:** `tests/performance/test_overlap_kpi_parser.py` — 25 tests total. Production-format round-trip is now covered by both `test_parse_overlap_log_text_matches_production_emit_format` (legacy emit) and `test_parse_overlap_log_text_matches_production_emit_format_with_sentinel` (current emit with `sentinel=` field). If you change the emit format string in `Lightweight2DPipeline._maybe_emit_overlap_tag`, both contract tests must be reconciled.
 
-**Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F2.1 / F2.1b / F2.4 / F2.4b.
+**Plan reference:** `docs/plans/performance/plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F2.1 / F2.1b / F2.4 / F2.4b.
 
 ### Retargeted KPI tier (post-2026-04-29 live run)
 
@@ -313,4 +313,4 @@ runs a 1.0s burst over 20 slices at 128x128 and asserts:
 * ``sum(cache_breakdown.values()) == overlap_sample_count``.
 * ``sum(settled_breakdown.values()) == overlap_sample_count``.
 
-**Plan reference:** `plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F0.4.
+**Plan reference:** `docs/plans/performance/plan-fastViewerOverlap100PercentImprovement.prompt.prompt.md` Phase F0.4.

@@ -8,8 +8,8 @@ camera/view‑up logic, or the orientation markers.
 
 This document supersedes the resample‑based approach described in the earlier investigation
 notes. Historical/background docs (still useful for *how we got here*): repo‑root
-`ZETA_MPR_ORIENTATION_INVESTIGATION_2026-06-02.md`, `ZETA_MPR_GEOMETRY_MATH_INVESTIGATION_2026-06-02.md`,
-`ZETA_MPR_FOURCASE_REVIEW_2026-06-02.md`, `ZETA_MPR_GEOMETRY_RAW_2026-06-02.json`, and the module
+`docs/reports/ZETA_MPR_ORIENTATION_INVESTIGATION_2026-06-02.md`, `docs/reports/ZETA_MPR_GEOMETRY_MATH_INVESTIGATION_2026-06-02.md`,
+`docs/reports/ZETA_MPR_FOURCASE_REVIEW_2026-06-02.md`, `ZETA_MPR_GEOMETRY_RAW_2026-06-02.json`, and the module
 journal `modules/mpr/zeta_mpr/ZETA_MPR_ENGINEERING_JOURNAL.md`.
 
 ---
@@ -138,7 +138,7 @@ IOP vectors as **columns** — i.e. the matrix is effectively consumed transpose
 does **not** rely on the camera reorienting by this matrix (cameras use fixed world‑axis
 vectors, §5); it relies on the §6 correction rule. Do not "correct the transpose" in isolation
 — that would change behavior the §6 rule was calibrated against. See
-`ZETA_MPR_GEOMETRY_MATH_INVESTIGATION_2026-06-02.md`.
+`docs/reports/ZETA_MPR_GEOMETRY_MATH_INVESTIGATION_2026-06-02.md`.
 
 ---
 
@@ -280,7 +280,7 @@ always match the displayed anatomy. Do **not** add more hardcoded per‑plane la
 ### 8.1 Update 2026-06-03 — sagittal A/P + corrected world→patient model
 Investigation of brain MRI **44608** (sagittal A/P reversed — face on viewer‑right) and wrist
 CT **44573** found two things; full report:
-`ZETA_MPR_SAGITTAL_AP_AND_WRIST_INVESTIGATION_2026-06-03.md`.
+`docs/reports/ZETA_MPR_SAGITTAL_AP_AND_WRIST_INVESTIGATION_2026-06-03.md`.
 1. **Correct volume→patient transform** (use this, not the metadata matrix, which is wrong on
    the Z axis): `A = [ −IOP_row , −IOP_col , slice_axis_lps ]` (columns, patient LPS), where
    `slice_axis_lps` is the *actual* slice‑stacking direction (§2). `A` reproduces the
@@ -366,7 +366,7 @@ CT 44573 fingers‑up, shoulder MRI 44082 oblique axial now grid‑aligned/uprig
 correct, single marker set throughout. **Do-not-break:** keep the camera vectors on volume grid
 axes (snapped) — reverting to exact patient axes reintroduces the oblique tilt; keep the
 sign-selection from `A` (don't hardcode signs) — that's what keeps orientation canonical without
-per-case ifs. Investigation: `ZETA_MPR_SAGITTAL_AP_AND_WRIST_INVESTIGATION_2026-06-03.md`.
+per-case ifs. Investigation: `docs/reports/ZETA_MPR_SAGITTAL_AP_AND_WRIST_INVESTIGATION_2026-06-03.md`.
 
 ## 10c. PLANE-AWARE VIEWPORT ROUTING (2026-06-03) — native plane → matching pane
 

@@ -5,7 +5,7 @@ Bridges MCP tools → in-app **Test Control Server** (QLocalServer) → EchoMind
 `DragSeries`, `OpenMPR`, … directly instead of driving the mouse — at queue
 pressure a human can't produce, with seeded, replayable scenarios.
 
-Architecture: `TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md` (repo root).
+Architecture: `docs/reports/TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md` (repo root).
 
 ## Components
 
@@ -59,7 +59,7 @@ The same entry works for Cowork/Claude Code as a custom MCP server (stdio).
 
 **Plumbing:** `ping`, `list_actions`, `raw_command`.
 **Workflow (each terminates in the same production function as the real UI
-action — see `MCP_VS_REAL_WORKFLOW_FIDELITY_2026-06-04.md`):**
+action — see `docs/reports/MCP_VS_REAL_WORKFLOW_FIDELITY_2026-06-04.md`):**
 `list_patients` (real server search incl. modality checkboxes; rows carry
 `patient_id`/`study_uid`/`patient_name`/`report_status`/`series_count`),
 `select_patient` (single-click → selection + right-panel thumbnails; name/uid

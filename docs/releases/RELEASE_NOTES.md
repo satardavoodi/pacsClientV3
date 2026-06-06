@@ -1,4 +1,4 @@
-﻿# AIPacs Release Notes (Consolidated)
+# AIPacs Release Notes (Consolidated)
 
 **Current Stable Version:** v3.2.2 (2026-06-06)
 **Previous Stable:** v3.2.1 (2026-06-05)
@@ -285,7 +285,7 @@ fixes, crash-hardening additions, and the new AI-PACS proprietary EULA.
 
 - Multi-study single-tab viewer fix (offset-keyed series, grouped sidebar, repaint-suppressed rebuild) — see `docs/MULTI_STUDY_SINGLE_TAB_PLAN.md`
 - Thumbnail pipeline audit and canonicalization (`THUMBNAIL_PATH/<study_uid>/<series_number>.png`) — see `docs/pipelines/thumbnail-pipeline.md`
-- Database test-isolation hardening + production-DB cleanup tooling — see `COPILOT_REPORT_db_cleanup.md` and `tools/maintenance/cleanup_test_pollution.py`
+- Database test-isolation hardening + production-DB cleanup tooling — see `docs/reports/COPILOT_REPORT_db_cleanup.md` and `tools/maintenance/cleanup_test_pollution.py`
 - Zeta Download Manager review + fix plan (atomic DICOM/thumbnail writes, single GetStudyInfo probe, dead-gRPC quarantine) — see `docs/plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md`
 - EchoMind viewer-chat updates, AI imaging service-tab fixes, reception report viewer updates
 - Home panel / search service / right-panel thumbnail flow updates
@@ -298,7 +298,7 @@ fixes, crash-hardening additions, and the new AI-PACS proprietary EULA.
 - `faulthandler` wired into `main.py` startup — writes a native + Python
   traceback to `user_data/logs/native_fault.log` on hard native crashes
   (`0xC0000409` Qt fail-fast, segfault, stack overflow), bypassing the async
-  logging queue so evidence survives even a silent kill — see `CRASH_ANALYSIS_2026-05-25.md`
+  logging queue so evidence survives even a silent kill — see `docs/reports/CRASH_ANALYSIS_2026-05-25.md`
 - `qt_fast_container.py`, `qt_slice_viewer.py`: viewer memory / rendering fixes
   identified in crash analysis
 - `thumbnail_manager.py`: additional null-guard and cleanup hardening

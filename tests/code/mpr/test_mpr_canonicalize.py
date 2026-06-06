@@ -7,7 +7,7 @@ the VTK viewer suite. The VTK resampling path (`canonicalize_volume`) is gated
 OFF by default and is validated live (CT + 44534 shoulder MR), not here.
 
 Fixtures are the real ImageOrientationPatient values measured on disk
-(see ZETA_MPR_ORIENTATION_INVESTIGATION_2026-06-02.md §1).
+(see docs/reports/ZETA_MPR_ORIENTATION_INVESTIGATION_2026-06-02.md §1).
 """
 
 import os

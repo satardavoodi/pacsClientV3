@@ -76,7 +76,7 @@ LICENSE is unchanged (MIT).
 - Tooling: `tools/maintenance/cleanup_test_pollution.py` (dry-run by default,
   `--apply` to act, backs up to `backups/` first).
 - Pre-cleanup backup: `backups/dicom_pre-cleanup_2026-05-24_192543.db`.
-- As-built record: `COPILOT_REPORT_db_cleanup.md`.
+- As-built record: `docs/reports/COPILOT_REPORT_db_cleanup.md`.
 
 ### Zeta Download Manager review + fixes
 - Confirmed transport is socket, not gRPC. `GrpcMetadataClient` is
@@ -121,7 +121,7 @@ LICENSE is unchanged (MIT).
 - `docs/plans/RESPONSIVE_UI_SCALING_PLAN.md`
 - `docs/plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md`
 - `CLAUDE.md` (project-instructions companion to `.github/copilot-instructions.md`)
-- `COPILOT_REPORT_db_cleanup.md` / `COPILOT_TASK_db_test_isolation_and_cleanup.md`
+- `docs/reports/COPILOT_REPORT_db_cleanup.md` / `docs/reports/COPILOT_TASK_db_test_isolation_and_cleanup.md`
 
 ---
 

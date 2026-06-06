@@ -19,7 +19,7 @@ study can be dragged into any viewport. All studies download.
 ## Background — how the system is laid out (confirmed by probe + trace)
 
 * A multi-study patient genuinely has >1 study under one Patient ID. Probe
-  (`probe_patient_structure.py`, run 2026-05-24): 42471 = 2 studies / 16
+  (`tools/analysis/oneoff/probe_patient_structure.py`, run 2026-05-24): 42471 = 2 studies / 16
   series; 43346 = 1 study (NOT multi-study — correct as-is).
 * **Series identity:** `series_uid` is globally unique; `series_number` is
   **study-local** — it restarts at 1 in every study. This is the root of the

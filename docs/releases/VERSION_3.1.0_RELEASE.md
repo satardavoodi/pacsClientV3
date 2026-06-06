@@ -45,13 +45,13 @@ All v3.0.9 features carried forward:
   ThumbnailImageSourceService + disk fallback) —
   `docs/pipelines/thumbnail-pipeline.md`
 - **Database test isolation** (production `dicom.db` cleanup tooling, test
-  redirection to correct pool) — `COPILOT_REPORT_db_cleanup.md`,
+  redirection to correct pool) — `docs/reports/COPILOT_REPORT_db_cleanup.md`,
   `tools/maintenance/cleanup_test_pollution.py`
 - **Zeta Download Manager** (atomic writes, single GetStudyInfo probe,
   dead-gRPC quarantine) —
   `docs/plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md`
 - **Crash hardening** (`faulthandler` native-fault logging, viewer/UI stability
-  patches, crash-diagnostics tooling) — `CRASH_ANALYSIS_2026-05-25.md`,
+  patches, crash-diagnostics tooling) — `docs/reports/CRASH_ANALYSIS_2026-05-25.md`,
   `crash-diagnostics/`
 
 ### Distributions

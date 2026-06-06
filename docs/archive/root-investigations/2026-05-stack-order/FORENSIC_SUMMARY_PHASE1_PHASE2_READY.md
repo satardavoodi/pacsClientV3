@@ -37,8 +37,8 @@
 - ✅ Confirmed algorithm is deterministic and correct
 
 ### 3. Created Analysis Scripts
-- ✅ `analyze_series4_order.py` — Extracts CANONICAL_SORT timeline
-- ✅ `compare_load1_load2.py` — Detailed Load 1 vs Load 2 comparison
+- ✅ `tools/analysis/oneoff/analyze_series4_order.py` — Extracts CANONICAL_SORT timeline
+- ✅ `tools/analysis/oneoff/compare_load1_load2.py` — Detailed Load 1 vs Load 2 comparison
 - ✅ Extracted 9 loads spanning 6 reopen cycles
 
 ### 4. Identified Root Cause Mechanism
@@ -73,7 +73,7 @@ plane: AXIAL, SAGITTAL, CORONAL, or OBLIQUE
 ```
 
 ### 2. Created Forensic Comparison Script
-**File**: `forensic_detailed_series_comparison.py` (170 lines)
+**File**: `tools/analysis/oneoff/forensic_detailed_series_comparison.py` (170 lines)
 
 **Capabilities**:
 - Parses all [CANONICAL_SORT_INPUT_SAMPLE] entries from logs
@@ -99,7 +99,7 @@ plane: AXIAL, SAGITTAL, CORONAL, or OBLIQUE
 4. Open series 4 (note orientation)
 5. Switch to different series, switch back
 6. Close app
-7. Run `forensic_detailed_series_comparison.py` to analyze logs
+7. Run `tools/analysis/oneoff/forensic_detailed_series_comparison.py` to analyze logs
 8. Review classification and extracted metadata
 
 ---
@@ -157,9 +157,9 @@ Each of these has a different fix location:
   - Zero logic changes, zero behavioral changes
 
 ### Analysis Scripts Created
-- ✅ `analyze_series4_order.py` — Timeline extraction
-- ✅ `compare_load1_load2.py` — Detailed comparison
-- ✅ `forensic_detailed_series_comparison.py` — Comprehensive analysis & classification
+- ✅ `tools/analysis/oneoff/analyze_series4_order.py` — Timeline extraction
+- ✅ `tools/analysis/oneoff/compare_load1_load2.py` — Detailed comparison
+- ✅ `tools/analysis/oneoff/forensic_detailed_series_comparison.py` — Comprehensive analysis & classification
 
 ### Documentation Created  
 - ✅ `FORENSIC_ROOT_CAUSE_REPORT.md` — Initial findings
@@ -207,7 +207,7 @@ rm user_data/logs/viewer_diagnostics.log
 #    - Close app
 
 # 5. Analyze fresh logs
-python forensic_detailed_series_comparison.py > forensic_phase2_results.txt
+python tools/analysis/oneoff/forensic_detailed_series_comparison.py > forensic_phase2_results.txt
 cat forensic_phase2_results.txt
 ```
 

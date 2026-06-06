@@ -26,8 +26,8 @@ All instrumentation deployed, automated analysis ready, fresh reproduction proto
 
 | Script | Purpose | Lines | Status |
 |--------|---------|-------|--------|
-| `analyze_series4_order.py` | Extract CANONICAL_SORT timeline | 270 | ✅ Executed, 9 loads found |
-| `compare_load1_load2.py` | Detailed Load 1 vs Load 2 comparison | 230 | ✅ Executed, normal vector mismatch found |
+| `tools/analysis/oneoff/analyze_series4_order.py` | Extract CANONICAL_SORT timeline | 270 | ✅ Executed, 9 loads found |
+| `tools/analysis/oneoff/compare_load1_load2.py` | Detailed Load 1 vs Load 2 comparison | 230 | ✅ Executed, normal vector mismatch found |
 
 **Outputs**:
 - Series 4 timeline showing 9 loads across 6 reopen cycles
@@ -37,7 +37,7 @@ All instrumentation deployed, automated analysis ready, fresh reproduction proto
 
 | Script | Purpose | Lines | Ready |
 |--------|---------|-------|-------|
-| `forensic_detailed_series_comparison.py` | Auto-classify root cause from fresh logs | 170 | ✅ Ready to run |
+| `tools/analysis/oneoff/forensic_detailed_series_comparison.py` | Auto-classify root cause from fresh logs | 170 | ✅ Ready to run |
 
 **Capabilities**:
 - Parse [CANONICAL_SORT_INPUT_SAMPLE] entries
@@ -116,7 +116,7 @@ rm user_data/logs/viewer_diagnostics.log
 # ... close app
 
 # Step 3: Analyze fresh logs
-python forensic_detailed_series_comparison.py > forensic_phase2_results.txt
+python tools/analysis/oneoff/forensic_detailed_series_comparison.py > forensic_phase2_results.txt
 cat forensic_phase2_results.txt
 ```
 
@@ -163,7 +163,7 @@ CLASSIFICATION:
 - [ ] App is closed
 - [ ] `user_data/logs/viewer_diagnostics.log` deleted or rotated
 - [ ] Fresh Python environment ready
-- [ ] `forensic_detailed_series_comparison.py` script is present
+- [ ] `tools/analysis/oneoff/forensic_detailed_series_comparison.py` script is present
 
 ### During Reproduction
 
@@ -178,7 +178,7 @@ CLASSIFICATION:
 
 ### After Reproduction
 
-- [ ] Run: `python forensic_detailed_series_comparison.py > forensic_phase2_results.txt`
+- [ ] Run: `python tools/analysis/oneoff/forensic_detailed_series_comparison.py > forensic_phase2_results.txt`
 - [ ] Review output for classification
 - [ ] Identify which case (A, B, or C)
 - [ ] Extract concrete evidence from first5/last5 samples

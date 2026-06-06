@@ -185,7 +185,7 @@ Diagnostic traces (in `download_diagnostics.log`): `right_panel_cache_gate`
 ### History — read before changing the gate
 1. **44113 (2026-06-01):** introduced the stash + gate so a study that grew on the
    server (1→9 series) re-fetches on single-click. See
-   `ROOTCAUSE_44113_SINGLE_CLICK_PIPELINE_2026-06-01.md`.
+   `docs/reports/ROOTCAUSE_44113_SINGLE_CLICK_PIPELINE_2026-06-01.md`.
 2. **44323 / 44534 (2026-06-02):** two gate defects found via live DB/disk/log ground
    truth (44323 MRI 20 series/20 PNGs = complete; 44534 DX 3/3 = complete):
    - **B1 — patient-aggregate count mis-attributed to one study.** `count_of_series`
@@ -200,12 +200,12 @@ Diagnostic traces (in `download_diagnostics.log`): `right_panel_cache_gate`
      partial cache was pinned. **Fixed:** key the marker by the server series **count**
      (`f"{uid}@{server_series}"`). An unchanged count still hits the fast cache (same
      key → skip, so the benign off-by-one does not loop); a changed count gets a fresh
-     key → exactly one re-fetch. See `MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`.
+     key → exactly one re-fetch. See `docs/reports/MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`.
 
 Note the *missing MRI study* on 44534 is **not** a thumbnail bug — it is study
 discovery: the server's `GetPatientList` returns only the latest study UID per patient,
 so the MRI study is enumerated per-modality elsewhere (see the multi-study completeness
-guard in `CLAUDE.md` and `MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`). The gate only
+guard in `CLAUDE.md` and `docs/reports/MULTI_STUDY_MULTIMODALITY_44534_2026-06-02.md`). The gate only
 governs thumbnails *within* a study that is already known.
 
 ### Refresh-gate guardrails (read before touching the gate)

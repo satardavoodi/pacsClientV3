@@ -526,7 +526,7 @@ confirm CRITICAL series downloads first; cancel mid-download → confirm no orph
 ### Phase 5 — Documentation & KPI close-out
 - **S5.1** Update `download-pipeline.md` and the rewritten guide to match the
   shipped behavior; add a real-throughput KPI and a resume-effectiveness KPI.
-- **S5.2** Record an as-built note (like `COPILOT_REPORT_db_cleanup.md`) capturing
+- **S5.2** Record an as-built note (like `docs/reports/COPILOT_REPORT_db_cleanup.md`) capturing
   what changed and the new regression guards.
 
 ---
