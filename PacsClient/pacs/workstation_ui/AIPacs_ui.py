@@ -563,25 +563,36 @@ class ControlPanelWindow(object):
         self.verticalLayout_9.addWidget(self.user_manual)
         self.centerMenuPages.addWidget(self.page_5)
 
-        # Page 4 - Information
+        # Page 4 - Information (redesigned 2026-06-06: flat, data-driven
+        # software-release + company dashboard — see home_info_panel.py).
         self.page_4 = QWidget()
         self.verticalLayout_8 = QVBoxLayout(self.page_4)
-        self.label_3 = QLabel("Information", self.page_4)
-        self.label_3.setStyleSheet("color: white;")
-        self.label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.verticalLayout_8.addWidget(self.label_3)
-
-        info_text = (
-            "This software is related to the AI Pacs company, which has been registered in the European Union "
-            "for more than ten years.\n\n"
-            "AIPacs provides tools for medical imaging workflows, study management, viewing, and downloads."
-        )
-        self.info_body = QLabel(info_text, self.page_4)
-        self.info_body.setWordWrap(True)
-        self.info_body.setStyleSheet(
-            "color: #e2e8f0; font-size: 12px; line-height: 1.3; padding: 6px;"
-        )
-        self.verticalLayout_8.addWidget(self.info_body)
+        self.verticalLayout_8.setContentsMargins(0, 0, 0, 0)
+        self.verticalLayout_8.setSpacing(0)
+        try:
+            from PacsClient.pacs.workstation_ui.home_ui.home_info_panel import (
+                HomeInfoPanel,
+            )
+            self.info_panel = HomeInfoPanel(self.page_4)
+            self.verticalLayout_8.addWidget(self.info_panel)
+        except Exception as _info_err:  # fail-safe: legacy text panel
+            print(f"[InfoPanel] init failed (using legacy text): {_info_err}")
+            self.label_3 = QLabel("Information", self.page_4)
+            self.label_3.setStyleSheet("color: white;")
+            self.label_3.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self.verticalLayout_8.addWidget(self.label_3)
+            info_text = (
+                "This software is related to the AI Pacs company, which has been "
+                "registered in the European Union for more than ten years.\n\n"
+                "AIPacs provides tools for medical imaging workflows, study "
+                "management, viewing, and downloads."
+            )
+            self.info_body = QLabel(info_text, self.page_4)
+            self.info_body.setWordWrap(True)
+            self.info_body.setStyleSheet(
+                "color: #e2e8f0; font-size: 12px; line-height: 1.3; padding: 6px;"
+            )
+            self.verticalLayout_8.addWidget(self.info_body)
         self.centerMenuPages.addWidget(self.page_4)
 
         self.verticalLayout_5.addWidget(self.centerMenuPages)
