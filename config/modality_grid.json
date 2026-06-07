@@ -13,8 +13,8 @@
       "cols": 2
     },
     "MG": {
-      "rows": 2,
-      "cols": 2
+      "rows": 1,
+      "cols": 1
     },
     "CR": {
       "rows": 1,
@@ -28,7 +28,7 @@
       "rows": 1,
       "cols": 2
     },
-    "PT": {
+    "XA": {
       "rows": 1,
       "cols": 2
     },
