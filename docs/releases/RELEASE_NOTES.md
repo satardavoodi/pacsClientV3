@@ -1,9 +1,51 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.2.3 (2026-06-07)
-**Previous Stable:** v3.2.2 (2026-06-06)
+**Current Stable Version:** v3.2.4 (2026-06-07)
+**Previous Stable:** v3.2.3 (2026-06-07)
 **Release Date:** 2026-06-07
 **Branch:** beta-version
+
+---
+
+## v3.2.4 (2026-06-07) - Minor release: latest stable consolidation build
+
+### Summary
+
+Minor release consolidating the latest stable beta-version source state into the v3.2.4
+production line with merged UI/Settings/Viewer/CD/Browser improvements and packaging validation.
+
+### Included
+
+- Home Page updates:
+  - Main Page column sizing changes
+  - Patient Name sizing adjustments
+  - Patient ID sizing adjustments
+  - Body Part sizing adjustments
+  - Status and Report column updates
+  - Adaptive-to-screen-size improvements
+  - Column resize behavior improvements
+- Settings updates:
+  - Tool Settings integration fixes
+  - Viewer Configuration fixes
+  - Modality Grid updates
+  - Modality filter synchronization
+  - Default layout configuration support
+  - Settings persistence improvements
+- Viewer updates:
+  - Modality-specific layout handling
+  - MPR-related fixes already merged
+  - Annotation/tool configuration connections
+  - Local settings application
+- CD Module updates:
+  - Portable viewer fixes
+  - Viewer startup fixes
+  - Welcome page infrastructure
+  - Imaging-center information support
+  - CD writer improvements
+- Browser updates:
+  - UI consistency changes
+  - Loading-bar jump fix
+  - Toolbar styling improvements
 
 ---
 
