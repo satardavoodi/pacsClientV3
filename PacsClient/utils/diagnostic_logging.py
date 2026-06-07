@@ -459,7 +459,17 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     console_handler.setFormatter(formatter)
     console_handler.addFilter(context_filter)
     console_handler.addFilter(threshold_filter)
-    root.addHandler(console_handler)
+    # NOTE: do NOT add the console handler synchronously to the root logger
+    # here when async logging is on. A synchronous console StreamHandler
+    # writes on the CALLER's thread — when the process is launched with an
+    # undrained stdout/stderr pipe (automation, schedulers, some shells),
+    # the console buffer fills and write() blocks FOREVER, freezing the GUI
+    # thread on the next log call (py-spy-proven 2026-06-07: main thread
+    # wedged in codecs.write under logging.emit inside toggle_zeta_mpr —
+    # 188 s+ whole-app freeze during the heavy-image stress retest). The
+    # console handler is appended to the async listener's handler list in
+    # _install_async_file_logging below, so a blocked console only ever
+    # stalls the background listener thread.
 
     logs_dir = _ensure_logs_dir()
 
@@ -532,9 +542,13 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
 
     if async_enabled:
         _install_async_file_logging(
-            root, [viewer_handler, download_handler, db_handler, app_handler]
+            root,
+            [viewer_handler, download_handler, db_handler, app_handler,
+             console_handler],
         )
     else:
+        # Sync escape-hatch mode keeps the legacy direct console handler.
+        root.addHandler(console_handler)
         root.addHandler(viewer_handler)
         root.addHandler(download_handler)
         root.addHandler(db_handler)
