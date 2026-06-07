@@ -166,6 +166,49 @@ class _VCLoadMixin:
         )
         QTimer.singleShot(int(delay_ms), _retry)
 
+    def _resolve_plain_series_study_path(self, series_key, study_path, ms_entry=None):
+        """Return a corrected study folder for a plain (non-offset) series key.
+
+        Used when the tab-level study_path does not contain ``<series>/`` on
+        disk — e.g. a multi-study tab whose import_folder_path points at a
+        sibling study (45033: DOC study vs MR study, 2026-06-07 — path_scan
+        ran candidates=1 matches=0 and every drop of series 8 silently
+        failed, spinner retry loop included). The series' own
+        ``_server_series_info`` entry is the disk authority per the
+        multi-study invariant (use each entry's series_path for disk access).
+
+        Fail-open: returns None when the passed path already contains the
+        series folder (common case — one exists() check), when no entry /
+        entry path exists, or when the entry's parent folder is absent.
+        """
+        from pathlib import Path as _Path
+        try:
+            if study_path and (_Path(study_path) / str(series_key)).exists():
+                return None  # tab path is fine — zero-cost common case
+        except Exception:
+            return None
+        try:
+            entry = ms_entry
+            if entry is None:
+                info = getattr(self.parent_widget, '_server_series_info', {}) or {}
+                entry = info.get(str(series_key)) if isinstance(info, dict) else None
+            entry_path = str((entry or {}).get('series_path') or '')
+            if not entry_path:
+                return None
+            parent = _Path(entry_path).parent
+            if study_path and str(parent) == str(study_path):
+                return None  # same folder; nothing to correct
+            if parent.exists():
+                logger.info(
+                    "[MULTI-STUDY LOAD] key=%s -> study_path=%s "
+                    "(plain-key entry series_path; tab path lacked series)",
+                    series_key, parent,
+                )
+                return str(parent)
+        except Exception:
+            pass
+        return None
+
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None,
                                       target_vtk_widget: VTKWidget = None,
                                       allow_paired: bool = True,
@@ -281,6 +324,23 @@ class _VCLoadMixin:
                                 "(ordered_studies=%s); load may use primary path",
                                 series_key, _slot, len(_ordered),
                             )
+                # Plain-key (primary-numbered) series: the tab-level study_path
+                # can be poisoned on a multi-study tab (45033 2026-06-07:
+                # import_folder_path pointed at the sibling DOC study while
+                # study_uid was the MR study — path_scan ran candidates=1
+                # matches=0 and every drop of series 8 failed even after its
+                # download landed). Per the multi-study invariant, the series'
+                # OWN _server_series_info entry is the disk authority: adopt
+                # its series_path parent whenever the passed study_path does
+                # not actually contain this series folder. Fail-open — the
+                # common single-study case short-circuits on one exists().
+                if not _ms_resolved:
+                    _alt_path = self._resolve_plain_series_study_path(
+                        series_key, study_path, _ms_entry
+                    )
+                    if _alt_path:
+                        study_path = _alt_path
+                        _ms_resolved = True
             except Exception:
                 ms_disk_series_number = series_number
 
