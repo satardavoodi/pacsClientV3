@@ -67,8 +67,15 @@ retry. The worker is a QThread: the GUI never blocks.
 * **Self-contained:** `portable_viewer/` must never import `PacsClient` or
   other `modules.*` — it compiles standalone and runs from read-only media.
   Allowed deps: PySide6 (Core/Gui/Widgets), pydicom, numpy (+pylibjpeg).
-* **No VTK / MPR / AI / reporting.** Basic 2D only (open, series list,
-  scroll, zoom, pan, W/L, toolbar). Single-file multi-frame (cine) series
+* **No VTK / MPR / AI / reporting.** v1.1 toolset (final, per clinical spec
+  2026-06-07): stack scrolling, **cross-pane reference lines** (IPP/IOP
+  plane intersection, FoR-matched, `render.reference_line_segment` — pure
+  math, unit-tested), **ruler** (mm via the CP-586 spacing chain
+  PixelSpacing→ImagerPixelSpacing→NominalScanned; shows *px* when
+  uncalibrated — never fabricates mm; rulers are per-image and clear on
+  slice change), plus W/L, zoom, pan. **Default layout = 2 views**
+  (1-view toggle); series-list click loads the ACTIVE pane; first two
+  series auto-distribute on open. Single-file multi-frame (cine) series
   are expanded to frames at selection time.
 * Imports use the `try: from .x import … except ImportError: from x import …`
   pattern so both repo-package and standalone-script modes work.
@@ -171,7 +178,119 @@ backend behavior. New modules: `dicom_prepare.py`, `content_collectors.py`.
   suite total 50 green as of 2026-06-06 evening. Live burn QA of the new
   options pending.
 
-## 10. Known limitations / deferred
+## 10. Burn-image filesystem — NEVER ISO9660-only (fixed 2026-06-06 night)
+
+First cross-PC test of a burned disc failed with the PyInstaller bootloader
+error **"Failed to start embedded python interpreter!"**. Root cause
+(reproduced locally via `tools/analysis/oneoff/Make-TestIso.ps1` + mounted
+ISOs): CD media burns used `FileSystemsToCreate = 1` (ISO9660 only) and
+IMAPI silently mangles every non-8.3 name to DOS form — `_internal` →
+`_INTER~1`, `AIPacsLiteViewer.exe` → `AIPACS~1.EXE` — so the exe runs but
+its `_internal` runtime is unreachable. With `= 3` (ISO9660 + Joliet) names
+survive and the viewer was verified RUNNING from a mounted read-only ISO.
+
+Invariant: `cd_writer.filesystems_for_media()` returns **3 for all media**.
+DICOM conformance is unaffected — the DICOMDIR/PT000000 layout is 8.3-safe,
+so legacy readers use the ISO9660 layer while Joliet carries the real names.
+Guard test: `test_burn_image_always_includes_joliet`. Discs burned BEFORE
+this fix have valid DICOM but a non-functional viewer copy → re-burn.
+
+## 11. Bundle completeness — the missing-PySide6 incident (fixed 2026-06-07)
+
+Second cross-PC failure after the Joliet fix: the viewer launched but died
+with a ModuleNotFoundError dialog on every machine. Root cause (from
+`pyi_work/.../warn-AIPacsLiteViewer.txt`: *"missing module named
+viewer_app"*): **PyInstaller's static analysis does not honor the entry
+script's runtime `sys.path.insert`** — `from viewer_app import main`
+resolved to nothing, so the ENTIRE viewer chain (viewer_app, media_scan,
+render, viewer_meta → PySide6, Qt plugins) was silently dropped. The
+"successful" 64.9 MB bundle contained only the explicitly-passed codec
+hidden-imports; the fixed bundle is **158.1 MB**.
+
+Fixes + release gates (all in `tools/build/build_lite_viewer.py`):
+* `--paths <portable_viewer dir>` + `--hidden-import` for viewer_app /
+  media_scan / render / viewer_meta.
+* `CRITICAL_BUNDLE_FILES` assertion before publish: python313.dll,
+  base_library.zip, VCRUNTIME140.dll, PySide6/QtCore.pyd,
+  PySide6/plugins/platforms/qwindows.dll.
+* **Frozen self-test gate**: the built exe must pass `--selftest`
+  (Qt offscreen init + render pipeline + pydicom + all 4 codecs) or the
+  build refuses to publish. `run_selftest()` lives in viewer_app.
+* Burn-time guard: `_verify_staging_output` fails the burn if
+  `VIEWER/_internal` is missing python313.dll / base_library.zip /
+  VCRUNTIME140.dll / qwindows.dll on the staged media.
+
+Verified: stripped-environment run (PATH=System32 only, no Python/Qt env,
+neutral cwd) of the new bundle FROM A MOUNTED READ-ONLY ISO →
+`SELFTEST OK — qt | render | pydicom 2.4.5 | 4 codecs` exit 0. The bundle
+carries its own CRT (VCRUNTIME140*, ucrtbase + api-ms shims) → no VC++
+redist needed on target PCs. **Lesson: "process stayed alive" is NOT a
+viewer health check — windowed PyInstaller apps show an error dialog and
+keep running; always use `--selftest` exit codes.**
+
+Follow-up caught BY the new staging guard on the very next burn attempt:
+the viewer-staging archive exclusion (`*.zip`, meant for junk like the
+legacy rar) was stripping `_internal\base_library.zip` — the PyInstaller
+runtime itself. `*.zip` is no longer excluded (only `*.rar`/`*.7z`); guard
+test `test_bundle_copies_tree_but_never_junk_archives` pins it, and an
+end-to-end pre-flight (real 158 MB bundle through the worker, burn_to_disc
+=False) confirms all critical files reach the staged media.
+
+## 12. v1.1 startup diet (2026-06-07)
+
+CD startup cost ≈ bytes + file count read from optical media. Measures:
+* New module excludes (cryptography/certifi/charset_normalizer/psutil/
+  urllib3/requests/idna — optional-chain stowaways, not viewer deps).
+* Post-build `PRUNE_PATTERNS` (build script): Qt translations,
+  opengl32sw/d3dcompiler, Qt6Network/OpenGL/Svg/Pdf/Qml/Quick DLLs,
+  imageformats/iconengines/tls/networkinformation/generic plugins.
+  platforms (qwindows+qoffscreen) and styles stay. Completeness assert +
+  `--selftest` run AFTER pruning and gate the publish.
+* Result: 343 → **204 files**, 158.1 → **96.6 MB** (−39%), selftest
+  wall-time 6.3 s → 3.3 s on the dev machine; CD gains scale with the
+  byte/seek reduction. The media scan was already off the UI thread; the
+  window appears as soon as Qt is up.
+
+## 13. Imaging-center identity (v1.2 — 2026-06-07)
+
+The Write CD dialog has an "Imaging Center" section (name / address /
+phone). Entered once → persisted via `center_identity.py` into the shared
+`lightviewer_settings.json` (per-system; save preserves all other keys) →
+auto-reloaded on every later burn. `_build_options()` saves on use and
+carries the values in `BurnOptions.center_*`.
+
+On the media: `_write_portable_support_files` stamps a `center` object
+into `AIPACS_MEDIA_INFO.json` and "Created by / Address / Phone" lines into
+`START_HERE.txt` (only when at least one field is set; center info is
+included even when patient anonymization is ON — it identifies the center,
+not the patient). The viewer (`media_scan.load_media_info` +
+`LiteViewerWindow._apply_media_info`) shows a banner above the panes —
+"NAME · ADDRESS · ☎ PHONE" — and appends the center name to the window
+title. No identity on the media → banner hidden, fully backward compatible.
+
+## 14. Branded welcome page (v1.3 — 2026-06-07)
+
+`portable_viewer/welcome.py` — full-window Persian (RTL) landing page shown
+BEFORE the viewer: AI-PACS logo (`assets/aipacs_logo.png`, copied from
+`Qss/images/aiLogo.png`; shipped via `--add-data` → `_internal/assets`,
+asserted in `CRITICAL_BUNDLE_FILES`), Iran Nobat / INO724 wordmarks, the
+exclusive-representative statement (`COMPANY_STATEMENT_FA`), clickable
+links (`COMPANY_LINKS` — irannobat.ir, ino724.com; product links get
+appended there when provided), the burning center's identity from the
+media manifest, and a primary «مشاهده تصاویر» / Open Viewer button.
+
+Flow: `LiteViewerWindow` central widget is a QStackedWidget — index 0
+welcome (toolbar hidden), index 1 viewer. The media scan keeps running
+under the welcome page, so series are typically ready on click-through.
+Enter/Space also proceeds. `--no-welcome` skips it (QA/tests). Autorun
+already targets the viewer exe, so inserted CDs land on the welcome page;
+RUN_VIEWER.cmd / START_HERE.txt remain the visible manual fallbacks.
+Gotcha: the viewer's global QSS paints every QWidget dark — welcome labels
+need `background: transparent` or they show banding. Offscreen preview
+renders need `QT_QPA_FONTDIR=C:\Windows\Fonts` (offscreen QPA has no GDI
+font database; without it every glyph is tofu).
+
+## 15. Known limitations / deferred
 
 * IMAPI2 `Write()` is synchronous — no fine-grained burn % (progress jumps
   50→95) and mid-write cancel is not possible. Event-sink progress is a

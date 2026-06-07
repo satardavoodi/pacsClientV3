@@ -1766,18 +1766,35 @@ class _PWSyncMixin:
                 P0_w = origin + spacing * I0
                 P1_w = origin + spacing * I1
 
+                # Settings ↔ viewer reconnect (2026-06-06): reference-line
+                # color/width come from the saved Tools Settings (cached
+                # in-memory manager — no DB hit per repaint) for BOTH
+                # backends; previous hardcoded values stay as fallback.
+                _rl_color = (1.0, 0.85, 0.12)
+                _rl_width = 3.0
+                try:
+                    from PacsClient.pacs.patient_tab.utils.tools_settings import (
+                        get_reference_line_style,
+                    )
+                    _rl_st = get_reference_line_style()
+                    _rl_color = tuple(_rl_st.color)[:3]
+                    _rl_width = max(1.0, float(_rl_st.line_width))
+                except Exception:
+                    pass
+
                 if getattr(iv, 'IS_QT_BRIDGE', False):
                     # ── Qt path: overlay lines via QPainter ──
                     # I0, I1 are (i, j, k) index coords: i=column(x), j=row(y)
                     iv.qt_viewer.set_overlay_lines([
                         (float(I0[0]), float(I0[1]),
                          float(I1[0]), float(I1[1]),
-                         1.0, 0.85, 0.12, 3.0),
+                         float(_rl_color[0]), float(_rl_color[1]), float(_rl_color[2]),
+                         _rl_width),
                     ])
                 else:
                     # ── VTK path: line actor ──
                     # Create/update the cached line actor for this viewer
-                    ls, act = reference_line.rl_ensure_line_actor(iv, color=(1.0, 0.85, 0.12), width=3.0)
+                    ls, act = reference_line.rl_ensure_line_actor(iv, color=_rl_color, width=_rl_width)
                     ls.SetPoint1(float(P0_w[0]), float(P0_w[1]), float(P0_w[2]))
                     ls.SetPoint2(float(P1_w[0]), float(P1_w[1]), float(P1_w[2]))
                     act.VisibilityOn()

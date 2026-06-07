@@ -162,10 +162,12 @@ class GridPickerButton(QPushButton):
 class ModalityGridConfigWidget(QWidget):
     configChanged = Signal()
 
+    # 2026-06-06 request: every modality defaults to 1 × 2 (two viewports
+    # side by side) — no single-view or four-view defaults for now.
     DEFAULT_LAYOUTS = {
         "CT": (1, 2),
         "MR": (1, 2),
-        "MG": (2, 2),
+        "MG": (1, 2),
         "CR": (1, 2),
         "DX": (1, 2),
         "US": (1, 2),
@@ -360,6 +362,8 @@ class ModalityGridConfigWidget(QWidget):
 
         self.preset_combo = QComboBox()
         self.preset_combo.addItems(self.GRID_PRESETS.keys())
+        # New modalities default to the standard 1 × 2 layout (2026-06-06).
+        self.preset_combo.setCurrentText("1 × 2")
         self.preset_combo.setMinimumWidth(96)
         self.preset_combo.setMinimumHeight(32)
         self.preset_combo.setStyleSheet(self.new_name.styleSheet())

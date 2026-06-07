@@ -22,6 +22,7 @@ from .cd_burn_manager import (
     get_available_drives,
     check_imapi2_available,
 )
+from .center_identity import load_center_identity, save_center_identity
 from .dicom_prepare import (
     FORMAT_CHOICES,
     FORMAT_LOSSY,
@@ -285,6 +286,30 @@ class CDBurnDialog(QDialog):
 
         studies_group.setLayout(studies_layout)
         content_layout.addWidget(studies_group)
+
+        # ---- Imaging center identity (persisted per system) ----
+        center_group = QGroupBox("Imaging Center")
+        center_layout = QFormLayout()
+        center_layout.setSpacing(6)
+        saved_identity = load_center_identity()
+        self.center_name_edit = QLineEdit(saved_identity.get("center_name", ""))
+        self.center_name_edit.setPlaceholderText("e.g. Alizadeh Imaging Center")
+        self.center_address_edit = QLineEdit(saved_identity.get("center_address", ""))
+        self.center_address_edit.setPlaceholderText("Street, city")
+        self.center_phone_edit = QLineEdit(saved_identity.get("center_phone", ""))
+        self.center_phone_edit.setPlaceholderText("e.g. +98 ...")
+        center_layout.addRow("Center name:", self.center_name_edit)
+        center_layout.addRow("Address:", self.center_address_edit)
+        center_layout.addRow("Phone:", self.center_phone_edit)
+        center_note = QLabel(
+            "Shown at the top of the CD viewer and in START_HERE.txt. "
+            "Saved on this system and reused for future CDs."
+        )
+        center_note.setWordWrap(True)
+        center_note.setStyleSheet("font-size: 11px; color: #a0aec0;")
+        center_layout.addRow("", center_note)
+        center_group.setLayout(center_layout)
+        content_layout.addWidget(center_group)
 
         # ---- Patient privacy ----
         privacy_group = QGroupBox("Patient Privacy")
@@ -629,6 +654,13 @@ class CDBurnDialog(QDialog):
         return FORMAT_ORIGINAL
 
     def _build_options(self) -> BurnOptions:
+        # Persist the center identity the moment it is used ("enter once,
+        # reuse forever") — also picks up edits made for this burn.
+        name = self.center_name_edit.text().strip()
+        address = self.center_address_edit.text().strip()
+        phone = self.center_phone_edit.text().strip()
+        save_center_identity(name, address, phone)
+
         return BurnOptions(
             anonymize=self.anonymize_cb.isChecked(),
             anonymize_seed=int(self.seed_spin.value()),
@@ -639,6 +671,9 @@ class CDBurnDialog(QDialog):
             write_speed_sectors=self.speed_combo.currentData(),
             finalize_disc=self.finalize_cb.isChecked(),
             verify_after_burn=self.verify_cb.isChecked(),
+            center_name=name,
+            center_address=address,
+            center_phone=phone,
         )
 
     def _options_summary(self, options: BurnOptions, viewer_name: Optional[str]) -> str:

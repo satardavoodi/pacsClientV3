@@ -10,6 +10,13 @@ class ArrowInteractorStyle(AbstractInteractorStyle):
         super().__init__(image_viewer)
         self.image_viewer = image_viewer
         self.color = (0, 0.9, 0)
+        # Settings ↔ viewer reconnect (2026-06-06): saved Tools Settings
+        # drive NEW annotations (existing ones keep their style).
+        try:
+            from PacsClient.pacs.patient_tab.utils.tools_settings import get_arrow_style
+            self.color = tuple(get_arrow_style().color)[:3]
+        except Exception:
+            pass
         self.arrow_head_size_px = 42
         self.arrow_head_width_ratio = 0.45
 

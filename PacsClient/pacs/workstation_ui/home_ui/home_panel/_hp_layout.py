@@ -491,6 +491,10 @@ class _HPLayoutMixin:
         self.patient_table_widget.patientClicked.connect(self._on_patient_single_clicked)
         self.patient_table_widget.downloadRequested.connect(self._on_download_requested)
         self.patient_table_widget.zetaDownloadRequested.connect(self._on_zeta_download_requested)
+        # Refresh button also re-pulls the Report column (2026-06-06)
+        self.patient_table_widget.reportRefreshRequested.connect(
+            self._refresh_report_column_from_server
+        )
         self.patient_table_widget.receptionDataRequested.connect(self._on_reception_data_download_requested)
         self.patient_table_widget.offlineCloudExportRequested.connect(self._on_offline_cloud_export_requested)
         self.patient_table_widget.offlineCloudSyncRequested.connect(self._on_offline_cloud_sync_requested)

@@ -592,6 +592,30 @@ class _VCWarmupMixin:
         except Exception:
             pass
 
+    def _apply_modality_layout_for_first_display(self, metadata: dict) -> None:
+        """Apply the configured per-modality grid layout before first display.
+
+        The open pipeline creates viewers with the GLOBAL default layout
+        because no modality is known yet; once the first series' metadata is
+        available this switches to the Viewer Configuration layout for that
+        modality (Settings → modality grid, e.g. MG → 2×2). No-ops when the
+        layout already matches or once a first series was displayed.
+        """
+        try:
+            if getattr(self.parent_widget, '_first_series_displayed', False):
+                return
+            optimal = self.parent_widget.get_optimal_layout_for_series(metadata)
+            current = getattr(self, '_current_layout', None)
+            if not optimal or tuple(optimal) == tuple(current or ()):
+                return
+            logger.info(
+                "[MODALITY_LAYOUT] first display: applying configured layout %s "
+                "(was %s)", optimal, current,
+            )
+            self.apply_multi_viewer(tuple(optimal), modify_by_user=False)
+        except Exception as exc:
+            logger.debug("[MODALITY_LAYOUT] apply failed: %r", exc)
+
     def _display_first_series_in_all_viewers(self, series_number: str, progressive_total: int = 0) -> bool:
         """Display the first downloaded series in all viewers."""
         try:
@@ -610,6 +634,14 @@ class _VCWarmupMixin:
             if vtk_image_data is None or metadata is None or series_idx is None:
                 logger.debug(f"â‌Œ [FIRST DISPLAY] series {series_number} not found in thumbnail cache")
                 return False
+
+            # Modality-grid layout on open (2026-06-06): the viewers were
+            # created with the GLOBAL default before any series (and its
+            # modality) was known. Now that the first series' metadata is in
+            # hand, apply the configured per-modality layout (e.g. MG → 2×2)
+            # BEFORE distributing the series into the viewer nodes. Covers
+            # every open path that funnels through first-display.
+            self._apply_modality_layout_for_first_display(metadata)
 
             if self.lst_nodes_viewer and self.selected_widget is None:
                 first_node = self.lst_nodes_viewer[0]
@@ -673,6 +705,10 @@ class _VCWarmupMixin:
             if vtk_image_data is None or metadata is None or series_idx is None:
                 logger.debug(f"⛔ [FIRST DISPLAY PRIMARY] series {series_number} not found in thumbnail cache")
                 return False
+
+            # Modality-grid layout on open — same rule as the all-viewers
+            # first display (progressive opens must also honor MG → 2×2 etc.).
+            self._apply_modality_layout_for_first_display(metadata)
 
             if not self.lst_nodes_viewer:
                 return False

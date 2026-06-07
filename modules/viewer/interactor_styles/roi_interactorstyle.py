@@ -336,6 +336,14 @@ class RoiInteractorStyle(AbstractInteractorStyle):
         super().__init__(image_viewer)
         self.color = (240, 230, 140)
         self.color = list(map(lambda x: x/255.0, self.color))
+        # Settings ↔ viewer reconnect (2026-06-06): the Tools Settings
+        # "rectangle" style drives NEW ROI annotations (existing ones keep
+        # their style).
+        try:
+            from PacsClient.pacs.patient_tab.utils.tools_settings import get_rectangle_style
+            self.color = list(tuple(get_rectangle_style().color)[:3])
+        except Exception:
+            pass
 
         self.active_widget = self.create_contour_widget()
         self.active_widget.Off()

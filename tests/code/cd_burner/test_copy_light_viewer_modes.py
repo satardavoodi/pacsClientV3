@@ -41,15 +41,19 @@ def test_single_bare_exe_copies_only_the_exe(tmp_path):
     assert "VIEWER\\SomeViewer.exe" in run_cmd
 
 
-def test_bundle_copies_tree_but_never_archives(tmp_path):
+def test_bundle_copies_tree_but_never_junk_archives(tmp_path):
     src = tmp_path / "AIPacsLiteViewer"
     (src / "resources").mkdir(parents=True)
+    (src / "_internal").mkdir()
     exe = src / "AIPacsLiteViewer.exe"
     exe.write_bytes(b"MZ lite")
     (src / "Qt6Core.dll").write_bytes(b"DLL")
     (src / "resources" / "icon.png").write_bytes(b"PNG")
     (src / "lightViewer.rar").write_bytes(b"RAR" * 1000)
-    (src / "backup.zip").write_bytes(b"ZIP")
+    (src / "archive.7z").write_bytes(b"7Z")
+    # PyInstaller runtime: a ZIP that MUST be staged (2026-06-07 incident —
+    # excluding *.zip stripped base_library.zip and bricked the viewer).
+    (src / "_internal" / "base_library.zip").write_bytes(b"PK runtime")
 
     staging = tmp_path / "staging"
     staging.mkdir()
@@ -60,8 +64,9 @@ def test_bundle_copies_tree_but_never_archives(tmp_path):
     assert (viewer_dir / "AIPacsLiteViewer.exe").exists()
     assert (viewer_dir / "Qt6Core.dll").exists()
     assert (viewer_dir / "resources" / "icon.png").exists()
+    assert (viewer_dir / "_internal" / "base_library.zip").exists()
     assert not (viewer_dir / "lightViewer.rar").exists()
-    assert not (viewer_dir / "backup.zip").exists()
+    assert not (viewer_dir / "archive.7z").exists()
 
     manifest = json.loads((staging / "AIPACS_MEDIA_INFO.json").read_text(encoding="utf-8"))
     assert manifest["viewer_display_name"] == "AI-PACS Lite Viewer"

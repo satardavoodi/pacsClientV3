@@ -256,6 +256,15 @@ class ControlPanelWindow(object):
     def _on_modality_grid_config_changed(self):
         if hasattr(self, "home_widget") and self.home_widget:
             self.home_widget.apply_modality_grid_config_to_open_tabs()
+            # Settings ↔ Home filter reconnect (2026-06-06): the modality
+            # grid also drives the Patient Search modality checkboxes —
+            # added modalities appear, removed ones disappear, on Save.
+            try:
+                search_widget = getattr(self.home_widget, "patient_search_widget", None)
+                if search_widget is not None and hasattr(search_widget, "reload_modalities"):
+                    search_widget.reload_modalities()
+            except Exception:
+                pass
 
     def _wire_modality_grid_config_signal(self, viewer_config):
         """Wire the modality-grid configChanged signal once the Viewer

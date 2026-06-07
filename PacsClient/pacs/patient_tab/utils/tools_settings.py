@@ -297,3 +297,58 @@ def get_rectangle_style() -> ToolStyle:
     """Get rectangle tool style"""
     return get_tools_settings().get_tool_style('rectangle')
 
+
+def apply_to_fast_viewer_styles() -> bool:
+    """Push the saved ToolsSettings into the FAST viewer's style constants.
+
+    Settings ↔ viewer reconnect (2026-06-06): the FAST renderer
+    (QPainterToolRenderer) reads ``modules.viewer.tools.styles`` module
+    constants AT RENDER TIME, so mutating them here makes saved settings
+    take effect on the next repaint — no viewer rebuild needed.
+
+    Called at startup (preload_tools_settings) and from the Tools Settings
+    "Save Changes" button. Colors convert 0-1 floats → 0-255 ints.
+
+    Coverage (FAST): ruler → RULER_COLOR/RULER_LINE_WIDTH + label font;
+    angle → ANGLE_COLOR/ANGLE_LINE_WIDTH; arrow → ARROW_COLOR/
+    ARROW_LINE_WIDTH; rectangle → ROI_COLOR/ROI_LINE_WIDTH (+ circle ROI).
+    reference_line is consumed directly by _pw_sync for BOTH backends
+    (FAST overlay lines and the VTK line actor).
+    """
+    try:
+        from modules.viewer.tools import styles
+
+        settings = get_tools_settings().get_settings()
+
+        def _c255(color):
+            return tuple(
+                max(0, min(255, int(round(float(ch) * 255.0))))
+                for ch in tuple(color)[:3]
+            )
+
+        def _w(width, minimum=1):
+            return max(minimum, int(round(float(width))))
+
+        styles.RULER_COLOR = _c255(settings.ruler.color)
+        styles.RULER_LINE_WIDTH = _w(settings.ruler.line_width)
+        styles.LABEL_FONT_SIZE = max(8, int(settings.ruler.font_size or 24))
+
+        styles.ANGLE_COLOR = _c255(settings.angle.color)
+        styles.ANGLE_LINE_WIDTH = _w(settings.angle.line_width)
+
+        styles.ARROW_COLOR = _c255(settings.arrow.color)
+        styles.ARROW_LINE_WIDTH = _w(settings.arrow.line_width)
+
+        styles.ROI_COLOR = _c255(settings.rectangle.color)
+        styles.ROI_LINE_WIDTH = _w(settings.rectangle.line_width)
+        styles.CIRCLE_ROI_COLOR = _c255(settings.rectangle.color)
+        styles.CIRCLE_ROI_LINE_WIDTH = _w(settings.rectangle.line_width)
+
+        return True
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning(
+            "apply_to_fast_viewer_styles failed", exc_info=True
+        )
+        return False
+

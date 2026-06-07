@@ -11,12 +11,19 @@ def preload_tools_settings():
     Should be called once during application initialization in the main thread.
     """
     try:
-        from PacsClient.pacs.patient_tab.utils.tools_settings import get_tools_settings
-        
+        from PacsClient.pacs.patient_tab.utils.tools_settings import (
+            get_tools_settings,
+            apply_to_fast_viewer_styles,
+        )
+
         # Get instance and trigger lazy load
         manager = get_tools_settings()
         settings = manager.get_settings()
-        
+
+        # Settings ↔ viewer reconnect (2026-06-06): saved tool appearance
+        # must actually reach the FAST renderer's style constants at startup.
+        apply_to_fast_viewer_styles()
+
         print("✅ Tools settings pre-loaded into cache")
         return True
     except Exception as e:

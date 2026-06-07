@@ -254,8 +254,10 @@ Key invariants that must not be broken:
   fallback. `viewer_mode` in `lightviewer_settings.json` is back-compat normalized
   (missing mode + configured path = custom). Don't reorder the chain.
 - **Viewer staging**: `single_exe` mode copies ONLY the exe; bundle mode copies the tree
-  but must keep excluding archives (`*.rar/*.zip/*.7z`) — the legacy folder holds a 75 MB
-  rar that must never reach a disc. `.py` changes mirror to the `run_cd` payload
+  excluding junk archives (`*.rar/*.7z` — the legacy folder holds a 75 MB rar). `*.zip`
+  must NEVER be excluded: PyInstaller's runtime is `_internal\base_library.zip` and
+  excluding it bricks the viewer on every PC (caught by the staging guard 2026-06-07).
+  `.py` changes mirror to the `run_cd` payload
   (`tools/dev/sync_plugin_mirrors.py`, then `verify_plugin_mirrors.py`).
 - **Lite viewer build** (`tools/build/build_lite_viewer.py`): PyInstaller onedir is the
   DEFAULT builder (~30 s; Nuitka kept via `--builder nuitka`). Each pylibjpeg plugin
@@ -269,7 +271,17 @@ Key invariants that must not be broken:
   leak), transcode failure FALLS BACK to previous form (never drop images), extras are
   auto-skipped when anonymize is ON, default `BurnOptions()` must stay byte-identical to
   the legacy pipeline, and verify burns with `eject_after=False` then compares + ejects.
-- Run `tests/code/cd_burner/` (offscreen) after any change — 50 green as of 2026-06-06.
+- **Burn-image filesystem:** `cd_writer.filesystems_for_media()` must return 3
+  (ISO9660+Joliet) for ALL media — ISO9660-only mangles names to 8.3 (`_INTER~1`) and
+  bricks the bundled viewer on other PCs ("Failed to start embedded python interpreter",
+  reproduced + fix-verified via mounted ISO 2026-06-06; pipeline doc §10).
+- **Bundle completeness (2026-06-07, pipeline doc §11):** PyInstaller does NOT honor the
+  entry script's runtime `sys.path.insert` — the build MUST keep `--paths` +
+  `--hidden-import viewer_app/media_scan/render/viewer_meta`, the `CRITICAL_BUNDLE_FILES`
+  assertion, and the frozen `--selftest` release gate (exit 0 required). The staging
+  verification's `VIEWER/_internal` completeness check must stay. NEVER judge viewer
+  health by "process stayed alive" — windowed PyInstaller errors keep the process up.
+- Run `tests/code/cd_burner/` (offscreen) after any change — 51 green as of 2026-06-07.
 
 ### Online Consultation — Identity + Drive + Education submodule (implemented 2026-06-06)
 Before editing `modules/Identity/`, `modules/cloud_consultation/`, or

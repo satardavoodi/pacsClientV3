@@ -52,9 +52,24 @@ class BurnOptions:
     write_speed_sectors: Optional[int] = None   # None → Auto
     finalize_disc: bool = True
     verify_after_burn: bool = False
+    # Imaging-center identity stamped onto the media (manifest + START_HERE;
+    # the portable viewer shows it as a header). Center info — included even
+    # when patient anonymization is enabled.
+    center_name: str = ""
+    center_address: str = ""
+    center_phone: str = ""
 
     def wants_extras(self) -> bool:
         return self.include_report or self.include_images or self.include_attachments
+
+    def center_identity(self) -> Optional[Dict[str, str]]:
+        if not (self.center_name or self.center_address or self.center_phone):
+            return None
+        return {
+            "name": self.center_name.strip(),
+            "address": self.center_address.strip(),
+            "phone": self.center_phone.strip(),
+        }
 
 
 def is_auto_label(value: Optional[str]) -> bool:
@@ -542,6 +557,22 @@ class CDBurnWorker(QThread):
             if "No portable viewer was included" not in launch_script and "start \"\"" not in launch_script:
                 issues.append("RUN_VIEWER.cmd does not contain a portable viewer launch command")
 
+        # Viewer-bundle completeness: a PyInstaller-layout viewer (VIEWER/
+        # _internal) must carry its runtime — an incomplete copy means the
+        # viewer fails on every other PC (2026-06-07 incident), so the burn
+        # must fail loudly here instead.
+        viewer_internal = staging_path / "VIEWER" / "_internal"
+        if viewer_internal.is_dir():
+            critical = (
+                "python313.dll",
+                "base_library.zip",
+                "VCRUNTIME140.dll",
+                Path("PySide6") / "plugins" / "platforms" / "qwindows.dll",
+            )
+            for rel in critical:
+                if not (viewer_internal / rel).is_file():
+                    issues.append(f"Viewer bundle incomplete on media: _internal\\{rel} missing")
+
         return {"ok": not issues, "issues": issues, "warnings": warnings, "manifest": manifest}
 
     def _coerce_study_path(self, value: Any) -> Optional[str]:
@@ -662,10 +693,12 @@ class CDBurnWorker(QThread):
                     "*.log",
                     "*.tmp",
                     "*.bak",
-                    # Never ship archives that may sit next to the viewer exe
-                    # (e.g. legacy lightViewer.rar) — they bloat every disc.
+                    # Never ship junk archives that may sit next to the viewer
+                    # exe (e.g. legacy lightViewer.rar) — they bloat every disc.
+                    # *.zip MUST NOT be excluded: PyInstaller's runtime lives in
+                    # _internal\base_library.zip — excluding it bricks the
+                    # viewer on every PC (caught by the staging guard 2026-06-07).
                     "*.rar",
-                    "*.zip",
                     "*.7z",
                     "Thumbs.db",
                     "desktop.ini",
@@ -708,6 +741,7 @@ class CDBurnWorker(QThread):
         viewer_display_name = viewer_display_name or "DICOM Viewer"
         viewer_rel = viewer_launcher_relative_path.as_posix() if viewer_launcher_relative_path else None
         viewer_cmd_rel = viewer_rel.replace("/", "\\") if viewer_rel else None
+        center = self.options.center_identity()
 
         launch_cmd = staging_path / "RUN_VIEWER.cmd"
         if viewer_cmd_rel:
@@ -747,6 +781,16 @@ class CDBurnWorker(QThread):
             "AIPacs DICOM media",
             "==================",
             "",
+        ]
+        if center:
+            if center.get("name"):
+                readme_lines.append(f"Created by: {center['name']}")
+            if center.get("address"):
+                readme_lines.append(f"Address: {center['address']}")
+            if center.get("phone"):
+                readme_lines.append(f"Phone: {center['phone']}")
+            readme_lines.append("")
+        readme_lines += [
             f"Volume label: {volume_label}",
             f"DICOM File-set ID: {fileset_label}",
             "",
@@ -787,6 +831,8 @@ class CDBurnWorker(QThread):
             "portable_launchers": ["RUN_VIEWER.cmd", "OPEN_DICOM_FOLDER.cmd"],
             "generated_by": "AIPacs CD Burner",
         }
+        if center:
+            manifest["center"] = center  # portable viewer shows this header
         manifest_path.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
 
         autorun_path = staging_path / "autorun.inf"

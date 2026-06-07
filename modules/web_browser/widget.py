@@ -21,6 +21,22 @@ from PacsClient.utils.data_paths import (
 )
 from PacsClient.utils.theme_manager import get_theme_manager
 from .state_store import BrowserStateStore
+from .styles import (
+    RADIUS_CONTROL,
+    RADIUS_GROUP,
+    RADIUS_PANEL,
+    RADIUS_PILL,
+    card_qss,
+    dialog_button_qss,
+    icon_button_qss,
+    input_qss,
+    popup_panel_qss,
+    progress_qss,
+    section_button_qss,
+    shell_qss,
+    state_button_qss,
+    tool_button_qss,
+)
 
 
 HOME_URL = "https://www.google.com"
@@ -73,70 +89,34 @@ class BookmarkDialog(QDialog):
         
         # Style for labels
         label_style = f"color: {t['text_primary']}; font-size: 13px; font-weight: bold;"
-        
+        # One shared field style (was 4 duplicated — and brace-broken — blocks
+        # whose f-strings raised NameError and killed this dialog; 2026-06-07).
+        field_style = input_qss(t)
+
         # Name field
         name_label = QLabel("Name:")
         name_label.setStyleSheet(label_style)
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("e.g., STATdx")
         self.name_edit.setMinimumHeight(40)
-        self.name_edit.setStyleSheet(f"""
-            QLineEdit {
-                padding: 10px;
-                border: 1px solid {t['border']};
-                border-radius: 6px;
-                font-size: 14px;
-                color: {t['text_primary']};
-                background-color: {t['panel_alt_bg']};
-            }
-            QLineEdit:focus {
-                border: 2px solid {t['accent']};
-                background-color: {t['menu_hover_bg']};
-            }
-        """)
-        
+        self.name_edit.setStyleSheet(field_style)
+
         # URL field
         url_label = QLabel("URL:")
         url_label.setStyleSheet(label_style)
         self.url_edit = QLineEdit()
         self.url_edit.setPlaceholderText("https://example.com")
         self.url_edit.setMinimumHeight(40)
-        self.url_edit.setStyleSheet(f"""
-            QLineEdit {
-                padding: 10px;
-                border: 1px solid {t['border']};
-                border-radius: 6px;
-                font-size: 14px;
-                color: {t['text_primary']};
-                background-color: {t['panel_alt_bg']};
-            }
-            QLineEdit:focus {
-                border: 2px solid {t['accent']};
-                background-color: {t['menu_hover_bg']};
-            }
-        """)
-        
+        self.url_edit.setStyleSheet(field_style)
+
         # Username field
         username_label = QLabel("Username:")
         username_label.setStyleSheet(label_style)
         self.username_edit = QLineEdit()
         self.username_edit.setPlaceholderText("Username (optional)")
         self.username_edit.setMinimumHeight(40)
-        self.username_edit.setStyleSheet(f"""
-            QLineEdit {
-                padding: 10px;
-                border: 1px solid {t['border']};
-                border-radius: 6px;
-                font-size: 14px;
-                color: {t['text_primary']};
-                background-color: {t['panel_alt_bg']};
-            }
-            QLineEdit:focus {
-                border: 2px solid {t['accent']};
-                background-color: {t['menu_hover_bg']};
-            }
-        """)
-        
+        self.username_edit.setStyleSheet(field_style)
+
         # Password field
         password_label = QLabel("Password:")
         password_label.setStyleSheet(label_style)
@@ -144,20 +124,7 @@ class BookmarkDialog(QDialog):
         self.password_edit.setPlaceholderText("Password (optional)")
         self.password_edit.setEchoMode(QLineEdit.Password)
         self.password_edit.setMinimumHeight(40)
-        self.password_edit.setStyleSheet(f"""
-            QLineEdit {
-                padding: 10px;
-                border: 1px solid {t['border']};
-                border-radius: 6px;
-                font-size: 14px;
-                color: {t['text_primary']};
-                background-color: {t['panel_alt_bg']};
-            }
-            QLineEdit:focus {
-                border: 2px solid {t['accent']};
-                background-color: {t['menu_hover_bg']};
-            }
-        """)
+        self.password_edit.setStyleSheet(field_style)
         
         # Show password checkbox
         self.show_password_cb = QCheckBox("Show Password")
@@ -186,39 +153,13 @@ class BookmarkDialog(QDialog):
         cancel_btn.setMinimumWidth(120)
         cancel_btn.setMinimumHeight(45)
         cancel_btn.clicked.connect(self.reject)
-        cancel_btn.setStyleSheet(f"""
-            QPushButton {
-                background-color: {t['panel_alt_bg']};
-                color: {t['text_primary']};
-                border: none;
-                border-radius: 6px;
-                padding: 12px 28px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: {t['menu_hover_bg']};
-            }
-        """)
-        
+        cancel_btn.setStyleSheet(dialog_button_qss(t, primary=False))
+
         save_btn = QPushButton("Save")
         save_btn.setMinimumWidth(120)
         save_btn.setMinimumHeight(45)
         save_btn.clicked.connect(self.accept)
-        save_btn.setStyleSheet(f"""
-            QPushButton {
-                background-color: {t['accent']};
-                color: {t['button_text']};
-                border: none;
-                border-radius: 6px;
-                padding: 12px 28px;
-                font-weight: bold;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: {t['accent_hover']};
-            }
-        """)
+        save_btn.setStyleSheet(dialog_button_qss(t, primary=True))
         
         button_layout.addWidget(cancel_btn)
         button_layout.addWidget(save_btn)
@@ -276,13 +217,7 @@ class ScreenshotDialog(QDialog):
             f"""
             QDialog {{ background-color: {t['panel_bg']}; }}
             QLabel {{ color: {t['text_primary']}; }}
-            QLineEdit, QComboBox {{
-                padding: 8px 10px;
-                border: 1px solid {t['border']};
-                border-radius: 6px;
-                color: {t['text_primary']};
-                background-color: {t['panel_deep_bg']};
-            }}
+            {input_qss(t)}
             """
         )
         layout = QVBoxLayout(self)
@@ -312,14 +247,10 @@ class ScreenshotDialog(QDialog):
         buttons.addStretch()
         cancel_btn = QPushButton("Cancel")
         cancel_btn.clicked.connect(self.reject)
-        cancel_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {t['panel_alt_bg']}; color: {t['text_primary']}; border-radius: 6px; padding: 10px 18px; }}"
-        )
+        cancel_btn.setStyleSheet(dialog_button_qss(t, primary=False))
         capture_btn = QPushButton("Capture")
         capture_btn.clicked.connect(self.accept)
-        capture_btn.setStyleSheet(
-            f"QPushButton {{ background-color: {t['accent']}; color: {t['button_text']}; border-radius: 6px; padding: 10px 18px; }}"
-        )
+        capture_btn.setStyleSheet(dialog_button_qss(t, primary=True))
         buttons.addWidget(cancel_btn)
         buttons.addWidget(capture_btn)
         layout.addLayout(buttons)
@@ -345,72 +276,63 @@ class BookmarkItemWidget(QFrame):
         self.setup_ui()
     
     def setup_ui(self):
+        t = _current_theme()
         self.setFrameStyle(QFrame.NoFrame)
         self.setCursor(Qt.PointingHandCursor)
-        
+
         layout = QHBoxLayout(self)
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(8)
-        
+
         # Check if has credentials
         has_credentials = bool(self.bookmark_data.get('username') or self.bookmark_data.get('password'))
-        
+
         # Name with icon
         name_text = self.bookmark_data.get('name', 'Unnamed')
         if has_credentials:
             name_text = "🔐 " + name_text
-        
+
         name_label = QLabel(name_text)
-        name_label.setStyleSheet("font-size: 13px; color: #ffffff; padding: 4px;")
+        name_label.setStyleSheet(f"font-size: 13px; color: {t['text_primary']}; padding: 4px; background: transparent; border: none;")
         name_label.setWordWrap(False)
-        
-        # Minimal icon buttons
-        button_style = """
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                border-radius: 12px;
-                padding: 2px;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.1);
-            }
-        """
-        
+
+        # Minimal icon buttons (shared module style)
+        button_style = icon_button_qss(t)
+
         # Visit button
         visit_btn = QPushButton()
-        visit_btn.setIcon(qta.icon('fa5s.external-link-alt', color='#aaaaaa'))
+        visit_btn.setIcon(qta.icon('fa5s.external-link-alt', color=t['text_muted']))
         visit_btn.setFixedSize(24, 24)
         visit_btn.setToolTip("Visit")
         visit_btn.clicked.connect(lambda: self.clicked.emit(self.bookmark_data.get('url', '')))
         visit_btn.setStyleSheet(button_style)
-        
+
         # Auto-login button (if credentials exist)
         login_btn = None
         if has_credentials:
             login_btn = QPushButton()
-            login_btn.setIcon(qta.icon('fa5s.sign-in-alt', color='#81C784'))
+            login_btn.setIcon(qta.icon('fa5s.sign-in-alt', color=t['success']))
             login_btn.setFixedSize(24, 24)
             login_btn.setToolTip("Auto-fill")
             login_btn.clicked.connect(self.auto_login)
             login_btn.setStyleSheet(button_style)
-        
+
         # Edit button
         edit_btn = QPushButton()
-        edit_btn.setIcon(qta.icon('fa5s.edit', color='#aaaaaa'))
+        edit_btn.setIcon(qta.icon('fa5s.edit', color=t['text_muted']))
         edit_btn.setFixedSize(24, 24)
         edit_btn.setToolTip("Edit")
         edit_btn.clicked.connect(self.edit_bookmark)
         edit_btn.setStyleSheet(button_style)
-        
+
         # Delete button
         delete_btn = QPushButton()
-        delete_btn.setIcon(qta.icon('fa5s.trash', color='#aaaaaa'))
+        delete_btn.setIcon(qta.icon('fa5s.trash', color=t['text_muted']))
         delete_btn.setFixedSize(24, 24)
         delete_btn.setToolTip("Delete")
         delete_btn.clicked.connect(lambda: self.deleted.emit(self.bookmark_id))
         delete_btn.setStyleSheet(button_style)
-        
+
         # Add to layout
         layout.addWidget(name_label, 1)
         layout.addWidget(visit_btn)
@@ -418,17 +340,17 @@ class BookmarkItemWidget(QFrame):
             layout.addWidget(login_btn)
         layout.addWidget(edit_btn)
         layout.addWidget(delete_btn)
-        
+
         # Minimal style with no border
-        self.setStyleSheet("""
-            QFrame {
+        self.setStyleSheet(f"""
+            QFrame {{
                 background-color: transparent;
                 border: none;
-                border-radius: 4px;
-            }
-            QFrame:hover {
-                background-color: rgba(255, 255, 255, 0.05);
-            }
+                border-radius: {RADIUS_CONTROL}px;
+            }}
+            QFrame:hover {{
+                background-color: {t['menu_hover_bg']};
+            }}
         """)
     
     def auto_login(self):
@@ -446,39 +368,19 @@ class BookmarkItemWidget(QFrame):
             except:
                 pass
         
-        # Create custom dialog with dark theme
+        # Themed via the app-wide QMessageBox stylesheet; only the rich-text
+        # body needs token colors here.
+        t = _current_theme()
         msg = QMessageBox(self)
         msg.setWindowTitle("Login Credentials")
         msg.setIcon(QMessageBox.Information)
-        msg.setStyleSheet("""
-            QMessageBox {
-                background-color: #2d2d2d;
-            }
-            QMessageBox QLabel {
-                color: #ffffff;
-                font-size: 14px;
-                min-width: 350px;
-            }
-            QMessageBox QPushButton {
-                background-color: #4285f4;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 20px;
-                font-weight: bold;
-                min-width: 80px;
-            }
-            QMessageBox QPushButton:hover {
-                background-color: #357ae8;
-            }
-        """)
-        
+
         msg_text = f"""
-        <div style='color: #ffffff;'>
-        <p style='font-size: 15px; margin-bottom: 15px;'><b>Website:</b> <span style='color: #4285f4;'>{self.bookmark_data.get('name', 'Unknown')}</span></p>
-        <p style='font-size: 14px; margin-bottom: 10px;'><b>Username:</b> <span style='color: #81C784;'>{username}</span></p>
-        <p style='font-size: 14px; margin-bottom: 15px;'><b>Password:</b> <span style='color: #81C784;'>{password}</span></p>
-        <p style='font-size: 12px; color: #aaaaaa; font-style: italic;'>Please enter these credentials on the website.</p>
+        <div style='color: {t['text_primary']};'>
+        <p style='font-size: 15px; margin-bottom: 15px;'><b>Website:</b> <span style='color: {t['accent']};'>{self.bookmark_data.get('name', 'Unknown')}</span></p>
+        <p style='font-size: 14px; margin-bottom: 10px;'><b>Username:</b> <span style='color: {t['success']};'>{username}</span></p>
+        <p style='font-size: 14px; margin-bottom: 15px;'><b>Password:</b> <span style='color: {t['success']};'>{password}</span></p>
+        <p style='font-size: 12px; color: {t['text_muted']}; font-style: italic;'>Please enter these credentials on the website.</p>
         </div>
         """
         msg.setText(msg_text)
@@ -505,19 +407,10 @@ class BookmarkPanel(QWidget):
         self.reload_bookmarks()
 
     def setup_ui(self):
+        self.setObjectName("BrowserBookmarkPanel")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
-        self.setStyleSheet(
-            """
-            QWidget {
-                background-color: #122033;
-                border: 1px solid #2f425a;
-                border-radius: 10px;
-            }
-            """
-        )
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(20)
@@ -526,49 +419,27 @@ class BookmarkPanel(QWidget):
         shadow.setColor(QColor(0, 0, 0, 160))
         self.setGraphicsEffect(shadow)
 
-        header = QWidget()
-        header.setFixedHeight(42)
-        header.setStyleSheet(
-            "background-color: #122033; border-bottom: 1px solid #2f425a;"
-        )
-        header_layout = QHBoxLayout(header)
+        self.header = QWidget()
+        self.header.setFixedHeight(42)
+        header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(12, 0, 12, 0)
 
-        title = QLabel("Favorites")
-        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
+        self.title_label = QLabel("Favorites")
 
         self.add_btn = QPushButton()
-        self.add_btn.setIcon(qta.icon("fa5s.plus", color="#7dd3fc"))
         self.add_btn.setFixedSize(28, 28)
         self.add_btn.setToolTip("Add Favorite")
         self.add_btn.clicked.connect(self.add_bookmark)
-        self.add_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                border-radius: 14px;
-                padding: 4px;
-            }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.1);
-            }
-            """
-        )
 
-        header_layout.addWidget(title)
+        header_layout.addWidget(self.title_label)
         header_layout.addStretch()
         header_layout.addWidget(self.add_btn)
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setStyleSheet(
-            "QScrollArea { border: none; background-color: #122033; }"
-        )
 
         self.bookmarks_widget = QWidget()
-        self.bookmarks_widget.setStyleSheet("background-color: #122033;")
         self.bookmarks_layout = QVBoxLayout(self.bookmarks_widget)
         self.bookmarks_layout.setAlignment(Qt.AlignTop)
         self.bookmarks_layout.setSpacing(2)
@@ -577,14 +448,33 @@ class BookmarkPanel(QWidget):
 
         self.empty_label = QLabel("No favorites yet")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.setStyleSheet(
-            "color: #94a3b8; font-size: 13px; padding: 40px;"
-        )
 
-        layout.addWidget(header)
+        layout.addWidget(self.header)
         layout.addWidget(self.scroll_area)
         layout.addWidget(self.empty_label)
+        self.apply_theme()
         self.update_empty_state()
+
+    def apply_theme(self, theme=None):
+        t = theme or _current_theme()
+        self.setStyleSheet(popup_panel_qss(t, "BrowserBookmarkPanel"))
+        self.header.setStyleSheet(
+            f"background-color: {t['panel_bg']}; border: none; border-bottom: 1px solid {t['border']};"
+        )
+        self.title_label.setStyleSheet(
+            f"font-size: 14px; font-weight: bold; color: {t['text_primary']}; background: transparent; border: none;"
+        )
+        self.add_btn.setIcon(qta.icon("fa5s.plus", color=t['accent']))
+        self.add_btn.setStyleSheet(icon_button_qss(t))
+        self.scroll_area.setStyleSheet(
+            f"QScrollArea {{ border: none; background-color: {t['panel_bg']}; }}"
+        )
+        self.bookmarks_widget.setStyleSheet(
+            f"background-color: {t['panel_bg']}; border: none;"
+        )
+        self.empty_label.setStyleSheet(
+            f"color: {t['text_muted']}; font-size: 13px; padding: 40px; background: transparent; border: none;"
+        )
 
     def add_bookmark(self, current_url=None, current_title=None):
         dialog = BookmarkDialog(self)
@@ -660,26 +550,10 @@ class HistoryPanel(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
+        self.setObjectName("BrowserHistoryPanel")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
-
-        self.setStyleSheet(
-            """
-            QWidget {
-                background-color: #122033;
-                border: 1px solid #2f425a;
-                border-radius: 10px;
-                color: #ffffff;
-            }
-            QListWidget, QLineEdit {
-                background-color: #0d1727;
-                border: 1px solid #2f425a;
-                border-radius: 8px;
-                color: #ffffff;
-            }
-            """
-        )
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(20)
@@ -689,14 +563,10 @@ class HistoryPanel(QWidget):
         self.setGraphicsEffect(shadow)
 
         header_layout = QHBoxLayout()
-        title = QLabel("History")
-        title.setStyleSheet("font-size: 14px; font-weight: bold; color: #ffffff;")
+        self.title_label = QLabel("History")
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.clicked.connect(self.clear_requested.emit)
-        self.clear_btn.setStyleSheet(
-            "QPushButton { background-color: #334155; color: white; border-radius: 6px; padding: 6px 12px; }"
-        )
-        header_layout.addWidget(title)
+        header_layout.addWidget(self.title_label)
         header_layout.addStretch()
         header_layout.addWidget(self.clear_btn)
 
@@ -710,13 +580,25 @@ class HistoryPanel(QWidget):
 
         self.empty_label = QLabel("No pages visited yet")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.setStyleSheet("color: #94a3b8; padding: 30px;")
 
         layout.addLayout(header_layout)
         layout.addWidget(self.search_edit)
         layout.addWidget(self.list_widget)
         layout.addWidget(self.empty_label)
+        self.apply_theme()
         self.update_empty_state()
+
+    def apply_theme(self, theme=None):
+        t = theme or _current_theme()
+        self.setStyleSheet(popup_panel_qss(t, "BrowserHistoryPanel"))
+        self.title_label.setStyleSheet(
+            f"font-size: 14px; font-weight: bold; color: {t['text_primary']}; background: transparent; border: none;"
+        )
+        self.clear_btn.setStyleSheet(dialog_button_qss(t, primary=False))
+        self.search_edit.setStyleSheet(input_qss(t))
+        self.empty_label.setStyleSheet(
+            f"color: {t['text_muted']}; padding: 30px; background: transparent; border: none;"
+        )
 
     def set_entries(self, entries):
         self.entries = list(entries)
@@ -758,20 +640,8 @@ class SavedItemCardWidget(QFrame):
         self.setup_ui()
 
     def setup_ui(self):
-        self.setStyleSheet(
-            """
-            QFrame {
-                background-color: #0f1c2f;
-                border: 1px solid #1d3350;
-                border-radius: 12px;
-            }
-            QLabel {
-                color: #e8eef7;
-                background: transparent;
-                border: none;
-            }
-            """
-        )
+        t = _current_theme()
+        self.setStyleSheet(card_qss(t))
         self.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
 
         layout = QHBoxLayout(self)
@@ -785,17 +655,17 @@ class SavedItemCardWidget(QFrame):
             "download": "fa5s.download",
         }.get(item_type, "fa5s.file")
         icon_color = {
-            "page": "#38bdf8",
-            "screenshot": "#f59e0b",
-            "download": "#34d399",
-        }.get(item_type, "#cbd5e1")
+            "page": t['info'],
+            "screenshot": t['warning'],
+            "download": t['success'],
+        }.get(item_type, t['text_secondary'])
 
         icon_holder = QLabel()
         icon_holder.setFixedSize(26, 26)
         icon_holder.setPixmap(qta.icon(icon_name, color=icon_color).pixmap(18, 18))
         icon_holder.setAlignment(Qt.AlignCenter)
         icon_holder.setStyleSheet(
-            "background-color: #15304f; border: 1px solid #214668; border-radius: 8px;"
+            f"background-color: {t['panel_alt_bg']}; border: 1px solid {t['border']}; border-radius: {RADIUS_CONTROL}px;"
         )
         layout.addWidget(icon_holder, 0, Qt.AlignTop)
 
@@ -812,15 +682,15 @@ class SavedItemCardWidget(QFrame):
         path_text = metrics.elidedText(path, Qt.TextElideMode.ElideMiddle, text_width)
 
         self.title_label = QLabel(title)
-        self.title_label.setStyleSheet("font-weight: 700; color: #f8fafc;")
+        self.title_label.setStyleSheet(f"font-weight: 700; color: {t['text_primary']};")
         self.title_label.setMaximumWidth(text_width)
 
         self.path_label = QLabel(path_text)
-        self.path_label.setStyleSheet("color: #bfd4e7; font-size: 11px;")
+        self.path_label.setStyleSheet(f"color: {t['text_secondary']}; font-size: 11px;")
         self.path_label.setMaximumWidth(text_width)
 
         self.time_label = QLabel(f"Saved: {created_at}")
-        self.time_label.setStyleSheet("color: #8fb1cf; font-size: 11px;")
+        self.time_label.setStyleSheet(f"color: {t['text_muted']}; font-size: 11px;")
         self.time_label.setMaximumWidth(text_width)
 
         text_layout.addWidget(self.title_label)
@@ -850,47 +720,9 @@ class SavedItemsSidebar(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
+        self.setObjectName("BrowserSavedSidebar")
         self.setMinimumWidth(self.expanded_width)
         self.setMaximumWidth(self.expanded_width)
-        self.setStyleSheet(
-            """
-            QWidget {
-                background-color: #0f1724;
-                color: #e8eef7;
-                border: 1px solid #1f3146;
-                border-radius: 12px;
-            }
-            QListWidget, QComboBox {
-                background-color: #132133;
-                color: #e8eef7;
-                border: 1px solid #23364a;
-                border-radius: 10px;
-            }
-            QLabel {
-                color: #e8eef7;
-            }
-            QListWidget {
-                padding: 6px;
-                outline: none;
-            }
-            QListWidget::item {
-                background: transparent;
-                border: none;
-                padding: 2px 0 4px 0;
-                margin: 0px;
-            }
-            QListWidget::item:selected {
-                background: transparent;
-                border: none;
-            }
-            QListWidget::item:hover {
-                background: transparent;
-            }
-            QComboBox {
-                padding: 8px 10px;
-            }
-            """
-        )
         apply_shadow(self, blur=28, y_offset=10, alpha=55)
 
         layout = QVBoxLayout(self)
@@ -901,34 +733,14 @@ class SavedItemsSidebar(QWidget):
         self.icon_badge = QLabel()
         self.icon_badge.setFixedSize(34, 34)
         self.icon_badge.setAlignment(Qt.AlignCenter)
-        self.icon_badge.setPixmap(qta.icon("fa5s.folder-open", color="#7dd3fc").pixmap(18, 18))
-        self.icon_badge.setStyleSheet(
-            "background-color: #13253a; border: 1px solid #20415f; border-radius: 10px;"
-        )
         self.title = QLabel("Saved Browser Items")
-        self.title.setStyleSheet("font-size: 15px; font-weight: 700;")
         self.count_badge = QLabel("0")
         self.count_badge.setAlignment(Qt.AlignCenter)
         self.count_badge.setFixedHeight(24)
         self.count_badge.setMinimumWidth(28)
-        self.count_badge.setStyleSheet(
-            "background-color: #0ea5e9; color: white; border-radius: 12px; font-weight: 700; padding: 0 8px;"
-        )
         self.toggle_btn = QPushButton()
         self.toggle_btn.setFixedSize(28, 28)
         self.toggle_btn.clicked.connect(self.toggle_collapsed)
-        self.toggle_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #132133;
-                border: 1px solid #23364a;
-                border-radius: 8px;
-            }
-            QPushButton:hover {
-                background-color: #1b2c42;
-            }
-            """
-        )
         self.header_layout.setContentsMargins(0, 0, 0, 0)
         self.header_layout.setSpacing(8)
         self.header_layout.addWidget(self.icon_badge)
@@ -943,38 +755,22 @@ class SavedItemsSidebar(QWidget):
         details_layout.setSpacing(10)
 
         self.hero_card = QFrame()
-        self.hero_card.setStyleSheet(
-            """
-            QFrame {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #10233a, stop:1 #163557);
-                border: 1px solid #214668;
-                border-radius: 14px;
-            }
-            """
-        )
         hero_layout = QVBoxLayout(self.hero_card)
         hero_layout.setContentsMargins(12, 12, 12, 12)
         hero_layout.setSpacing(6)
-        hero_title = QLabel("Library")
-        hero_title.setStyleSheet("font-size: 13px; font-weight: 700; color: #f8fafc;")
+        self.hero_title = QLabel("Library")
         self.summary_label = QLabel("Pages, screenshots, videos, and other downloaded content")
         self.summary_label.setWordWrap(True)
-        self.summary_label.setStyleSheet("color: #c8d8e8; font-size: 11px;")
-        hero_layout.addWidget(hero_title)
+        hero_layout.addWidget(self.hero_title)
         hero_layout.addWidget(self.summary_label)
         details_layout.addWidget(self.hero_card)
 
-        options_shell = QFrame()
-        options_shell.setStyleSheet(
-            "QFrame { background-color: #101b2d; border: 1px solid #23364a; border-radius: 12px; }"
-        )
-        options_layout = QVBoxLayout(options_shell)
+        self.options_shell = QFrame()
+        options_layout = QVBoxLayout(self.options_shell)
         options_layout.setContentsMargins(10, 10, 10, 10)
         options_layout.setSpacing(8)
-        options_label = QLabel("Sections")
-        options_label.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
-        options_layout.addWidget(options_label)
+        self.options_label = QLabel("Sections")
+        options_layout.addWidget(self.options_label)
 
         self.section_grid = QGridLayout()
         self.section_grid.setContentsMargins(0, 0, 0, 0)
@@ -1001,18 +797,14 @@ class SavedItemsSidebar(QWidget):
             self.section_buttons[section_key] = button
             self.section_grid.addWidget(button, index // 2, index % 2)
         options_layout.addLayout(self.section_grid)
-        details_layout.addWidget(options_shell)
+        details_layout.addWidget(self.options_shell)
 
         self.library_panel = QFrame()
-        self.library_panel.setStyleSheet(
-            "QFrame { background-color: #101b2d; border: 1px solid #23364a; border-radius: 14px; }"
-        )
         library_layout = QVBoxLayout(self.library_panel)
         library_layout.setContentsMargins(10, 10, 10, 10)
         library_layout.setSpacing(8)
-        library_label = QLabel("Library")
-        library_label.setStyleSheet("color: #e8eef7; font-size: 12px; font-weight: 700;")
-        library_layout.addWidget(library_label)
+        self.library_label = QLabel("Library")
+        library_layout.addWidget(self.library_label)
 
         self.list_widget = QListWidget()
         self.list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -1022,56 +814,99 @@ class SavedItemsSidebar(QWidget):
         self.list_widget.itemDoubleClicked.connect(self._emit_item)
         library_layout.addWidget(self.list_widget, 1)
 
-        controls_shell = QFrame()
-        controls_shell.setStyleSheet("QFrame { background-color: #101b2d; border: 1px solid #23364a; border-radius: 12px; }")
-        controls = QHBoxLayout(controls_shell)
+        self.controls_shell = QFrame()
+        controls = QHBoxLayout(self.controls_shell)
         controls.setContentsMargins(10, 10, 10, 10)
         controls.setSpacing(8)
         self.open_btn = QPushButton("Open")
         self.open_btn.clicked.connect(self.open_current)
-        self.open_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #0284c7;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                padding: 10px 12px;
-                font-weight: 700;
-            }
-            QPushButton:hover { background-color: #0ea5e9; }
-            """
-        )
         self.folder_btn = QPushButton("Folder")
         self.folder_btn.clicked.connect(self.reveal_current)
-        self.folder_btn.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #334155;
-                color: white;
-                border: none;
-                border-radius: 10px;
-                padding: 10px 12px;
-                font-weight: 700;
-            }
-            QPushButton:hover { background-color: #475569; }
-            """
-        )
         controls.addWidget(self.open_btn)
         controls.addWidget(self.folder_btn)
 
         self.empty_label = QLabel("No saved browser items yet")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.setStyleSheet(
-            "color: #94a3b8; padding: 28px; background-color: #0f1c2f; border: 1px dashed #2c4561; border-radius: 12px;"
-        )
         library_layout.addWidget(self.empty_label)
         details_layout.addWidget(self.library_panel, 1)
-        details_layout.addWidget(controls_shell)
+        details_layout.addWidget(self.controls_shell)
         layout.addWidget(self.details_widget, 1)
+        self.apply_theme()
         self.set_collapsed(False)
         self.set_active_filter("all")
         self.update_empty_state()
+
+    def apply_theme(self, theme=None):
+        t = theme or _current_theme()
+        self._theme = t
+        self.setStyleSheet(
+            f"""
+            QWidget#BrowserSavedSidebar {{
+                background-color: {t['panel_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
+                border-radius: {RADIUS_PANEL}px;
+            }}
+            QLabel {{ color: {t['text_primary']}; background: transparent; border: none; }}
+            QListWidget {{
+                background-color: {t['panel_deep_bg']};
+                color: {t['text_primary']};
+                border: 1px solid {t['border']};
+                border-radius: {RADIUS_GROUP}px;
+                padding: 6px;
+                outline: none;
+            }}
+            QListWidget::item {{
+                background: transparent;
+                border: none;
+                padding: 2px 0 4px 0;
+                margin: 0px;
+            }}
+            QListWidget::item:selected, QListWidget::item:hover {{
+                background: transparent;
+                border: none;
+            }}
+            """
+        )
+        self.icon_badge.setPixmap(qta.icon("fa5s.folder-open", color=t['accent']).pixmap(18, 18))
+        self.icon_badge.setStyleSheet(
+            f"background-color: {t['panel_alt_bg']}; border: 1px solid {t['border']}; border-radius: {RADIUS_CONTROL}px;"
+        )
+        self.title.setStyleSheet("font-size: 15px; font-weight: 700; background: transparent; border: none;")
+        self.count_badge.setStyleSheet(
+            f"background-color: {t['accent']}; color: {t['button_text']}; border: none;"
+            " border-radius: 12px; font-weight: 700; padding: 0 8px;"
+        )
+        self.toggle_btn.setStyleSheet(tool_button_qss(t))
+        self.hero_card.setStyleSheet(
+            f"""
+            QFrame {{
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 {t['panel_alt_bg']}, stop:1 {t['accent_soft']});
+                border: 1px solid {t['border']};
+                border-radius: {RADIUS_GROUP}px;
+            }}
+            """
+        )
+        self.hero_title.setStyleSheet(f"font-size: 13px; font-weight: 700; color: {t['text_primary']};")
+        self.summary_label.setStyleSheet(f"color: {t['text_secondary']}; font-size: 11px;")
+        self.options_shell.setStyleSheet(shell_qss(t))
+        self.options_label.setStyleSheet(f"color: {t['text_muted']}; font-size: 11px; font-weight: 600;")
+        section_style = section_button_qss(t)
+        for button in self.section_buttons.values():
+            button.setStyleSheet(section_style)
+        self.library_panel.setStyleSheet(shell_qss(t))
+        self.library_label.setStyleSheet(f"color: {t['text_primary']}; font-size: 12px; font-weight: 700;")
+        self.controls_shell.setStyleSheet(shell_qss(t))
+        self.open_btn.setStyleSheet(dialog_button_qss(t, primary=True))
+        self.folder_btn.setStyleSheet(dialog_button_qss(t, primary=False))
+        self.empty_label.setStyleSheet(
+            f"color: {t['text_muted']}; padding: 28px; background-color: {t['panel_deep_bg']};"
+            f" border: 1px dashed {t['border']}; border-radius: {RADIUS_GROUP}px;"
+        )
+        # Re-tint the collapse chevron for the current theme/state.
+        icon_name = "fa5s.chevron-right" if self._collapsed else "fa5s.chevron-left"
+        self.toggle_btn.setIcon(qta.icon(icon_name, color=t['text_primary']))
 
     def set_items(self, items):
         self.items = list(items)
@@ -1119,32 +954,13 @@ class SavedItemsSidebar(QWidget):
             self.item_activated.emit(entry)
 
     def _make_section_button(self, label, icon_name):
+        t = _current_theme()
         button = QPushButton(label)
         button.setCheckable(True)
         button.setMinimumHeight(54)
-        button.setIcon(qta.icon(icon_name, color="#cfe6fb"))
+        button.setIcon(qta.icon(icon_name, color=t['text_secondary']))
         button.setIconSize(QSize(16, 16))
-        button.setStyleSheet(
-            """
-            QPushButton {
-                background-color: #122840;
-                color: #e8eef7;
-                border: 1px solid #214668;
-                border-radius: 12px;
-                padding: 10px 12px;
-                text-align: left;
-                font-weight: 700;
-            }
-            QPushButton:hover {
-                background-color: #173252;
-            }
-            QPushButton:checked {
-                background-color: #0ea5e9;
-                border-color: #38bdf8;
-                color: white;
-            }
-            """
-        )
+        button.setStyleSheet(section_button_qss(t))
         return button
 
     def set_active_filter(self, filter_name):
@@ -1178,7 +994,8 @@ class SavedItemsSidebar(QWidget):
         self.setMaximumWidth(width)
         icon_name = "fa5s.chevron-right" if self._collapsed else "fa5s.chevron-left"
         tooltip = "Expand sidebar" if self._collapsed else "Collapse sidebar"
-        self.toggle_btn.setIcon(qta.icon(icon_name, color="#e8eef7"))
+        t = getattr(self, "_theme", None) or _current_theme()
+        self.toggle_btn.setIcon(qta.icon(icon_name, color=t['text_primary']))
         self.toggle_btn.setToolTip(tooltip)
 
 
@@ -1204,123 +1021,82 @@ class DownloadItemWidget(QFrame):
         self.setup_ui()
         
     def setup_ui(self):
+        t = _current_theme()
+        self._t = t
         self.setFrameStyle(QFrame.StyledPanel | QFrame.Raised)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(8)
-        
+
         # Top row: Icon, filename, controls
         top_layout = QHBoxLayout()
-        
+
         # Icon
         icon_label = QLabel()
-        icon_label.setPixmap(qta.icon('fa5s.file', color='#4285f4').pixmap(28, 28))
+        icon_label.setPixmap(qta.icon('fa5s.file', color=t['accent']).pixmap(28, 28))
         icon_label.setFixedSize(32, 32)
-        
+
         # Filename
         self.name_label = QLabel(self.filename)
-        self.name_label.setStyleSheet("font-weight: bold; font-size: 12px; color: #333;")
+        self.name_label.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {t['text_primary']};")
         self.name_label.setWordWrap(False)
         self.name_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        
-        # Control buttons
+
+        # Control buttons (semantic states: pause=warning, cancel=danger,
+        # open=success — token-driven, shared hover/pressed/disabled rules)
         self.pause_btn = QPushButton()
-        self.pause_btn.setIcon(qta.icon('fa5s.pause', color='white'))
+        self.pause_btn.setIcon(qta.icon('fa5s.pause', color=t['button_text']))
         self.pause_btn.setFixedSize(32, 32)
         self.pause_btn.setToolTip("Pause")
         self.pause_btn.clicked.connect(self.toggle_pause)
-        self.pause_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #FF9800;
-                border: none;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #F57C00;
-            }
-        """)
-        
+        self.pause_btn.setStyleSheet(state_button_qss(t, "warning"))
+
         self.cancel_btn = QPushButton()
-        self.cancel_btn.setIcon(qta.icon('fa5s.times', color='white'))
+        self.cancel_btn.setIcon(qta.icon('fa5s.times', color=t['button_text']))
         self.cancel_btn.setFixedSize(32, 32)
         self.cancel_btn.setToolTip("Cancel")
         self.cancel_btn.clicked.connect(self.cancel_download)
-        self.cancel_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #f44336;
-                border: none;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #d32f2f;
-            }
-        """)
-        
+        self.cancel_btn.setStyleSheet(state_button_qss(t, "danger"))
+
         self.open_btn = QPushButton()
-        self.open_btn.setIcon(qta.icon('fa5s.folder-open', color='white'))
+        self.open_btn.setIcon(qta.icon('fa5s.folder-open', color=t['button_text']))
         self.open_btn.setFixedSize(32, 32)
         self.open_btn.setToolTip("Open File")
         self.open_btn.clicked.connect(self.open_file)
         self.open_btn.hide()
-        self.open_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                border: none;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-        """)
-        
+        self.open_btn.setStyleSheet(state_button_qss(t, "success"))
+
         top_layout.addWidget(icon_label)
         top_layout.addWidget(self.name_label, 1)
         top_layout.addWidget(self.pause_btn)
         top_layout.addWidget(self.cancel_btn)
         top_layout.addWidget(self.open_btn)
-        
+
         # Progress bar
         self.progress_bar = QProgressBar()
         self.progress_bar.setMaximum(100)
         self.progress_bar.setValue(0)
         self.progress_bar.setFixedHeight(20)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                text-align: center;
-                background-color: #f5f5f5;
-            }
-            QProgressBar::chunk {
-                background-color: #4285f4;
-                border-radius: 3px;
-            }
-        """)
-        
+        self.progress_bar.setStyleSheet(progress_qss(t, "accent"))
+
         # Status labels
         status_layout = QHBoxLayout()
         self.status_label = QLabel("Starting download...")
-        self.status_label.setStyleSheet("color: #666; font-size: 11px;")
-        
+        self.status_label.setStyleSheet(f"color: {t['text_muted']}; font-size: 11px;")
+
         self.speed_label = QLabel("")
-        self.speed_label.setStyleSheet("color: #666; font-size: 11px;")
+        self.speed_label.setStyleSheet(f"color: {t['text_muted']}; font-size: 11px;")
         self.speed_label.setAlignment(Qt.AlignRight)
-        
+
         status_layout.addWidget(self.status_label)
         status_layout.addWidget(self.speed_label)
-        
+
         # Add to main layout
         layout.addLayout(top_layout)
         layout.addWidget(self.progress_bar)
         layout.addLayout(status_layout)
-        
-        self.setStyleSheet("""
-            QFrame {
-                background-color: white;
-                border: 1px solid #ddd;
-                border-radius: 8px;
-            }
-        """)
+
+        self.setStyleSheet(card_qss(t))
         if self.download_request is None:
             self.pause_btn.hide()
             self.cancel_btn.hide()
@@ -1348,17 +1124,7 @@ class DownloadItemWidget(QFrame):
             self.download_request.cancel()
         self.is_canceled = True
         self.status_label.setText("Canceled")
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #f44336;
-                border-radius: 3px;
-            }
-        """)
+        self.progress_bar.setStyleSheet(progress_qss(self._t, "danger"))
         self.pause_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
         self.canceled.emit(self.download_id)
@@ -1386,17 +1152,7 @@ class DownloadItemWidget(QFrame):
         self.is_completed = True
         self.is_paused = False
         self.progress_bar.setValue(100)
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                text-align: center;
-            }
-            QProgressBar::chunk {
-                background-color: #4CAF50;
-                border-radius: 3px;
-            }
-        """)
+        self.progress_bar.setStyleSheet(progress_qss(self._t, "success"))
         self.status_label.setText("Download completed")
         self.speed_label.setText("")
         self.pause_btn.hide()
@@ -1405,11 +1161,7 @@ class DownloadItemWidget(QFrame):
         
     def set_error(self, error_msg):
         self.status_label.setText(f"Error: {error_msg}")
-        self.progress_bar.setStyleSheet("""
-            QProgressBar::chunk {
-                background-color: #f44336;
-            }
-        """)
+        self.progress_bar.setStyleSheet(progress_qss(self._t, "danger"))
         self.pause_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
         
@@ -1452,63 +1204,66 @@ class DownloadManagerPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
+
         # Header
-        header = QWidget()
-        header.setFixedHeight(50)
-        header.setStyleSheet("background-color: #f8f9fa; border-bottom: 1px solid #dee2e6;")
-        header_layout = QHBoxLayout(header)
+        self.header = QWidget()
+        self.header.setFixedHeight(50)
+        header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(15, 0, 15, 0)
-        
-        title = QLabel("Downloads")
-        title.setStyleSheet("font-size: 16px; font-weight: bold; color: #333;")
-        
+
+        self.title_label = QLabel("Downloads")
+
         self.clear_btn = QPushButton()
-        self.clear_btn.setIcon(qta.icon('fa5s.trash', color='white'))
         self.clear_btn.setText("Clear Completed")
         self.clear_btn.clicked.connect(self.clear_completed)
-        self.clear_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #6c757d;
-                color: white;
-                border: none;
-                border-radius: 4px;
-                padding: 8px 16px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background-color: #5a6268;
-            }
-        """)
-        
-        header_layout.addWidget(title)
+
+        header_layout.addWidget(self.title_label)
         header_layout.addStretch()
         header_layout.addWidget(self.clear_btn)
-        
+
         # Downloads area
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: #f5f5f5; }")
-        
+
         self.downloads_widget = QWidget()
         self.downloads_layout = QVBoxLayout(self.downloads_widget)
         self.downloads_layout.setAlignment(Qt.AlignTop)
         self.downloads_layout.setSpacing(10)
         self.downloads_layout.setContentsMargins(15, 15, 15, 15)
-        
+
         self.scroll_area.setWidget(self.downloads_widget)
-        
+
         # Empty state
         self.empty_label = QLabel("No downloads yet")
         self.empty_label.setAlignment(Qt.AlignCenter)
-        self.empty_label.setStyleSheet("color: #999; font-size: 14px; padding: 50px;")
-        
-        layout.addWidget(header)
+
+        layout.addWidget(self.header)
         layout.addWidget(self.scroll_area)
         layout.addWidget(self.empty_label)
-        
+
+        self.apply_theme()
         self.update_empty_state()
+
+    def apply_theme(self, theme=None):
+        t = theme or _current_theme()
+        self.header.setStyleSheet(
+            f"background-color: {t['panel_bg']}; border: none; border-bottom: 1px solid {t['border']};"
+        )
+        self.title_label.setStyleSheet(
+            f"font-size: 16px; font-weight: bold; color: {t['text_primary']}; background: transparent; border: none;"
+        )
+        self.clear_btn.setIcon(qta.icon('fa5s.trash', color=t['text_primary']))
+        self.clear_btn.setStyleSheet(dialog_button_qss(t, primary=False))
+        self.scroll_area.setStyleSheet(
+            f"QScrollArea {{ border: none; background-color: {t['panel_deep_bg']}; }}"
+        )
+        self.downloads_widget.setStyleSheet(
+            f"background-color: {t['panel_deep_bg']}; border: none;"
+        )
+        self.empty_label.setStyleSheet(
+            f"color: {t['text_muted']}; font-size: 14px; padding: 50px; background: transparent; border: none;"
+        )
         
     def add_download(self, download_id, filename, url, save_path, download_request=None):
         download_item = DownloadItemWidget(
@@ -1564,6 +1319,8 @@ class WebBrowserWidget(QWidget):
         self.saved_pages = self.state_store.load_saved_pages()
         self.saved_items = self.state_store.load_saved_items()
         self.current_title = ""
+        self._is_loading = False
+        self._url_user_editing = False
         self.downloads_path = str(self.state_store.downloads_dir)
         self.screenshots_path = str(self.state_store.screenshots_dir)
         os.makedirs(self.downloads_path, exist_ok=True)
@@ -1578,6 +1335,12 @@ class WebBrowserWidget(QWidget):
         self._apply_theme_styles()
 
     def _apply_theme_styles(self):
+        """Single source of truth for the browser chrome styling.
+
+        Radius scale (see .styles): panels 12 / groups 10 / controls 8 /
+        address pill 16. Icons are re-tinted here so they stay readable on
+        every theme (they were hard-coded dark gray before).
+        """
         t = self._theme
         if hasattr(self, "nav_bar"):
             self.nav_bar.setStyleSheet(
@@ -1585,82 +1348,73 @@ class WebBrowserWidget(QWidget):
                 QWidget {{
                     background: {t['panel_bg']};
                     border: 1px solid {t['border']};
-                    border-radius: 16px;
+                    border-radius: {RADIUS_PANEL}px;
                 }}
                 """
             )
 
-        button_style = f"""
-            QPushButton {{
-                background-color: {t['panel_alt_bg']};
-                border: 1px solid {t['border']};
-                border-radius: 12px;
-                color: {t['text_primary']};
-            }}
-            QPushButton:hover {{
-                background-color: {t['menu_hover_bg']};
-                border-color: {t['accent_hover']};
-            }}
-            QPushButton:pressed {{
-                background-color: {t['accent_pressed']};
-                color: {t['button_text']};
-            }}
-            QPushButton:disabled {{
-                background-color: {t['panel_bg']};
-                border-color: {t['border']};
-                color: {t['text_muted']};
-            }}
-        """
-
-        for btn in [
-            getattr(self, "back_btn", None), getattr(self, "forward_btn", None), getattr(self, "reload_btn", None),
-            getattr(self, "home_btn", None), getattr(self, "history_btn", None), getattr(self, "favorite_toggle_btn", None),
-            getattr(self, "bookmark_btn", None), getattr(self, "save_page_btn", None), getattr(self, "downloads_toggle", None),
-            getattr(self, "screenshot_btn", None),
-        ]:
+        button_style = tool_button_qss(t)
+        icon_color = t['text_primary']
+        toolbar_icons = [
+            ("back_btn", "fa5s.arrow-left"),
+            ("forward_btn", "fa5s.arrow-right"),
+            ("home_btn", "fa5s.home"),
+            ("history_btn", "fa5s.history"),
+            ("bookmark_btn", "fa5s.bookmark"),
+            ("save_page_btn", "fa5s.save"),
+            ("downloads_toggle", "fa5s.download"),
+            ("screenshot_btn", "fa5s.camera"),
+        ]
+        for attr, icon_name in toolbar_icons:
+            btn = getattr(self, attr, None)
             if btn is not None:
                 btn.setStyleSheet(button_style)
+                btn.setIcon(qta.icon(icon_name, color=icon_color))
+        if hasattr(self, "reload_btn"):
+            self.reload_btn.setStyleSheet(button_style)
+            self._update_reload_button_icon()
+        if hasattr(self, "favorite_toggle_btn"):
+            self.favorite_toggle_btn.setStyleSheet(button_style)
+            self.update_favorite_button()
 
+        group_style = (
+            f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']};"
+            f" border-radius: {RADIUS_GROUP}px; }}"
+        )
         if hasattr(self, "left_group"):
-            self.left_group.setStyleSheet(
-                f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 14px; }}"
-            )
-        if hasattr(self, "address_group"):
-            self.address_group.setStyleSheet(
-                f"QFrame {{ background-color: {t['panel_deep_bg']}; border: 1px solid {t['border']}; border-radius: 20px; }}"
-            )
+            self.left_group.setStyleSheet(group_style)
         if hasattr(self, "right_group"):
-            self.right_group.setStyleSheet(
-                f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 14px; }}"
-            )
+            self.right_group.setStyleSheet(group_style)
+        if hasattr(self, "address_group"):
+            self._style_address_group(focused=self.url_bar.hasFocus() if hasattr(self, "url_bar") else False)
+        if hasattr(self, "address_icon"):
+            self.address_icon.setPixmap(qta.icon("fa5s.globe", color=t['text_muted']).pixmap(16, 16))
 
         if hasattr(self, "url_bar"):
+            # The address GROUP is the single visible pill; the line edit is
+            # transparent inside it (no more box-in-a-box double border).
             self.url_bar.setStyleSheet(
                 f"""
                 QLineEdit {{
-                    padding: 12px 16px;
-                    border: 1px solid {t['border']};
-                    border-radius: 18px;
-                    background-color: {t['panel_deep_bg']};
+                    padding: 10px 6px;
+                    border: none;
+                    background: transparent;
                     font-size: 13px;
                     color: {t['text_primary']};
-                }}
-                QLineEdit:focus {{
-                    border: 1px solid {t['accent']};
-                    background-color: {t['panel_bg']};
-                    color: {t['text_primary']};
+                    selection-background-color: {t['accent']};
                 }}
                 """
             )
 
         if hasattr(self, "content_row"):
             self.content_row.setStyleSheet(
-                f"QWidget {{ background: {t['window_alt_bg']}; border-radius: 18px; }}"
+                f"QWidget {{ background: {t['window_alt_bg']}; border-radius: {RADIUS_PANEL}px; }}"
             )
 
         if hasattr(self, "page_frame"):
             self.page_frame.setStyleSheet(
-                f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']}; border-radius: 18px; }}"
+                f"QFrame {{ background-color: {t['panel_bg']}; border: 1px solid {t['border']};"
+                f" border-radius: {RADIUS_PANEL}px; }}"
             )
 
         if hasattr(self, "progress_bar"):
@@ -1675,6 +1429,30 @@ class WebBrowserWidget(QWidget):
                 }}
                 """
             )
+
+        # Retint the side panels / popups so a live theme switch reaches them.
+        for panel_attr in ("saved_items_sidebar", "bookmark_panel", "history_panel", "download_panel"):
+            panel = getattr(self, panel_attr, None)
+            if panel is not None and hasattr(panel, "apply_theme"):
+                panel.apply_theme(t)
+
+    def _style_address_group(self, focused=False):
+        t = self._theme
+        border_color = t['accent'] if focused else t['border']
+        self.address_group.setStyleSheet(
+            f"QFrame {{ background-color: {t['panel_deep_bg']}; border: 1px solid {border_color};"
+            f" border-radius: {RADIUS_PILL}px; }}"
+        )
+
+    def _update_reload_button_icon(self):
+        """Reload button doubles as Stop while a page is loading."""
+        t = self._theme
+        if getattr(self, "_is_loading", False):
+            self.reload_btn.setIcon(qta.icon('fa5s.times', color=t['danger']))
+            self.reload_btn.setToolTip("Stop loading")
+        else:
+            self.reload_btn.setIcon(qta.icon('fa5s.sync', color=t['text_primary']))
+            self.reload_btn.setToolTip("Reload")
         
     def setup_ui(self):
         layout = QVBoxLayout(self)
@@ -1690,134 +1468,75 @@ class WebBrowserWidget(QWidget):
         browser_layout.setContentsMargins(0, 0, 0, 0)
         browser_layout.setSpacing(0)
         
-        # Navigation bar
+        # Navigation bar (all styling lives in _apply_theme_styles —
+        # the single theme-token source; nothing is styled inline here)
         nav_bar = QWidget()
         self.nav_bar = nav_bar
         nav_bar.setFixedHeight(72)
-        nav_bar.setStyleSheet(
-            """
-            QWidget {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #ffffff, stop:1 #f7fafc);
-                border: 1px solid #dbe4ee;
-                border-radius: 16px;
-            }
-            """
-        )
         apply_shadow(nav_bar, blur=26, y_offset=8, alpha=45)
         nav_layout = QHBoxLayout(nav_bar)
         nav_layout.setContentsMargins(12, 10, 12, 10)
         nav_layout.setSpacing(10)
-        
+
         # Navigation buttons
         self.back_btn = QPushButton()
-        self.back_btn.setIcon(qta.icon('fa5s.arrow-left', color='#333'))
         self.back_btn.setFixedSize(36, 36)
         self.back_btn.setToolTip("Back")
         self.back_btn.clicked.connect(self.navigate_back)
-        
+
         self.forward_btn = QPushButton()
-        self.forward_btn.setIcon(qta.icon('fa5s.arrow-right', color='#333'))
         self.forward_btn.setFixedSize(36, 36)
         self.forward_btn.setToolTip("Forward")
         self.forward_btn.clicked.connect(self.navigate_forward)
-        
+
         self.reload_btn = QPushButton()
-        self.reload_btn.setIcon(qta.icon('fa5s.sync', color='#333'))
         self.reload_btn.setFixedSize(36, 36)
         self.reload_btn.setToolTip("Reload")
         self.reload_btn.clicked.connect(self.reload_page)
-        
+
         self.home_btn = QPushButton()
-        self.home_btn.setIcon(qta.icon('fa5s.home', color='#333'))
         self.home_btn.setFixedSize(36, 36)
         self.home_btn.setToolTip("Home")
         self.home_btn.clicked.connect(self.navigate_home)
 
         self.history_btn = QPushButton()
-        self.history_btn.setIcon(qta.icon('fa5s.history', color='#334155'))
         self.history_btn.setFixedSize(36, 36)
         self.history_btn.setToolTip("History")
         self.history_btn.clicked.connect(self.toggle_history_panel)
-        
+
         # URL bar
         self.url_bar = QLineEdit()
         self.url_bar.setPlaceholderText("Enter URL or search")
         self.url_bar.returnPressed.connect(self.navigate_to_url)
-        self.url_bar.setStyleSheet("""
-            QLineEdit {
-                padding: 12px 16px;
-                border: 1px solid #d7e2ec;
-                border-radius: 18px;
-                background-color: #f8fbfd;
-                font-size: 13px;
-                color: #0f172a;
-            }
-            QLineEdit:focus {
-                border: 1px solid #38bdf8;
-                background-color: white;
-                color: #0f172a;
-            }
-        """)
-        
+        # Track real user edits (textEdited fires only for keyboard input,
+        # never for programmatic setText) so redirects/loads can't clobber
+        # what the user is typing.
+        self.url_bar.textEdited.connect(self._on_url_text_edited)
+        self.url_bar.installEventFilter(self)
+
         self.favorite_toggle_btn = QPushButton()
         self.favorite_toggle_btn.setFixedSize(36, 36)
         self.favorite_toggle_btn.clicked.connect(self.toggle_current_favorite)
         self.favorite_toggle_btn.setToolTip("Add current page to favorites")
 
         self.bookmark_btn = QPushButton()
-        self.bookmark_btn.setIcon(qta.icon('fa5s.bookmark', color='#333'))
         self.bookmark_btn.setFixedSize(36, 36)
         self.bookmark_btn.setToolTip("Favorites")
         self.bookmark_btn.clicked.connect(self.toggle_bookmarks)
 
         self.save_page_btn = QPushButton()
-        self.save_page_btn.setIcon(qta.icon('fa5s.save', color='#334155'))
         self.save_page_btn.setFixedSize(36, 36)
         self.save_page_btn.setToolTip("Save Page")
         self.save_page_btn.clicked.connect(self.save_current_page)
-        
+
         # Downloads toggle button
         self.downloads_toggle = QPushButton()
-        self.downloads_toggle.setIcon(qta.icon('fa5s.download', color='#333'))
         self.downloads_toggle.setFixedSize(36, 36)
         self.downloads_toggle.setToolTip("Toggle Downloads")
         self.downloads_toggle.clicked.connect(self.toggle_downloads)
-        
-        # Style for nav buttons
-        button_style = """
-            QPushButton {
-                background-color: #f3f7fb;
-                border: 1px solid #dde6ef;
-                border-radius: 12px;
-            }
-            QPushButton:hover {
-                background-color: #e8f2fb;
-                border-color: #bfdbfe;
-            }
-            QPushButton:pressed {
-                background-color: #dbeafe;
-            }
-            QPushButton:disabled {
-                background-color: #f8fafc;
-                border-color: #eef2f7;
-            }
-        """
-        self.back_btn.setStyleSheet(button_style)
-        self.forward_btn.setStyleSheet(button_style)
-        self.reload_btn.setStyleSheet(button_style)
-        self.home_btn.setStyleSheet(button_style)
-        self.history_btn.setStyleSheet(button_style)
-        self.favorite_toggle_btn.setStyleSheet(button_style)
-        self.bookmark_btn.setStyleSheet(button_style)
-        self.save_page_btn.setStyleSheet(button_style)
-        self.downloads_toggle.setStyleSheet(button_style)
-        
+
         left_group = QFrame()
         self.left_group = left_group
-        left_group.setStyleSheet(
-            "QFrame { background-color: #f8fbfd; border: 1px solid #dbe4ee; border-radius: 14px; }"
-        )
         left_group_layout = QHBoxLayout(left_group)
         left_group_layout.setContentsMargins(6, 6, 6, 6)
         left_group_layout.setSpacing(6)
@@ -1826,22 +1545,16 @@ class WebBrowserWidget(QWidget):
 
         address_group = QFrame()
         self.address_group = address_group
-        address_group.setStyleSheet(
-            "QFrame { background-color: #ffffff; border: 1px solid #dbe4ee; border-radius: 20px; }"
-        )
         address_layout = QHBoxLayout(address_group)
         address_layout.setContentsMargins(10, 4, 10, 4)
         address_layout.setSpacing(8)
-        address_icon = QLabel()
-        address_icon.setPixmap(qta.icon("fa5s.globe", color="#64748b").pixmap(16, 16))
-        address_layout.addWidget(address_icon)
+        self.address_icon = QLabel()
+        self.address_icon.setStyleSheet("background: transparent; border: none;")
+        address_layout.addWidget(self.address_icon)
         address_layout.addWidget(self.url_bar, 1)
 
         right_group = QFrame()
         self.right_group = right_group
-        right_group.setStyleSheet(
-            "QFrame { background-color: #f8fbfd; border: 1px solid #dbe4ee; border-radius: 14px; }"
-        )
         right_group_layout = QHBoxLayout(right_group)
         right_group_layout.setContentsMargins(6, 6, 6, 6)
         right_group_layout.setSpacing(6)
@@ -1852,31 +1565,29 @@ class WebBrowserWidget(QWidget):
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setFixedHeight(3)
         self.progress_bar.setTextVisible(False)
+        # Anti-jump (2026-06-06): the 3px loading bar's slot is RESERVED at
+        # all times — hiding it must not relayout the page below (the content
+        # area jumped down on loadStarted and back up on loadFinished).
+        # retainSizeWhenHidden keeps the layout geometry constant; show/hide
+        # then only toggles painting.
+        _pb_policy = self.progress_bar.sizePolicy()
+        _pb_policy.setRetainSizeWhenHidden(True)
+        self.progress_bar.setSizePolicy(_pb_policy)
         self.progress_bar.hide()
-        self.progress_bar.setStyleSheet("""
-            QProgressBar {
-                border: none;
-                background-color: #e2e8f0;
-            }
-            QProgressBar::chunk {
-                background-color: #0ea5e9;
-            }
-        """)
-        
+
         self.screenshot_btn = QPushButton()
-        self.screenshot_btn.setIcon(qta.icon('fa5s.camera', color='#334155'))
         self.screenshot_btn.setFixedSize(36, 36)
         self.screenshot_btn.setToolTip("Screenshot")
         self.screenshot_btn.clicked.connect(self.capture_screenshot)
-        self.screenshot_btn.setStyleSheet(button_style)
         right_group_layout.insertWidget(right_group_layout.count() - 1, self.screenshot_btn)
         nav_layout.addWidget(left_group, 0)
         nav_layout.addWidget(address_group, 1)
         nav_layout.addWidget(right_group, 0)
 
-        # Web view + saved items sidebar
+        # Web view + saved items sidebar. The home URL is set ONCE in
+        # setup_profile() after the persistent profile/page exist — setting it
+        # here too kicked off a throwaway page load on the default profile.
         self.web_view = QWebEngineView()
-        self.web_view.setUrl(QUrl(HOME_URL))
         self.web_view.urlChanged.connect(self.on_url_changed)
         self.web_view.titleChanged.connect(self.on_title_changed)
         self.web_view.loadStarted.connect(self.on_load_started)
@@ -1884,15 +1595,6 @@ class WebBrowserWidget(QWidget):
         self.web_view.loadFinished.connect(self.on_load_finished)
 
         self.content_row = QWidget()
-        self.content_row.setStyleSheet(
-            """
-            QWidget {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #edf4fb, stop:1 #e6edf5);
-                border-radius: 18px;
-            }
-            """
-        )
         content_layout = QHBoxLayout(self.content_row)
         content_layout.setContentsMargins(14, 14, 14, 14)
         content_layout.setSpacing(14)
@@ -1905,15 +1607,6 @@ class WebBrowserWidget(QWidget):
 
         self.page_frame = QFrame()
         self.page_frame.setFrameShape(QFrame.StyledPanel)
-        self.page_frame.setStyleSheet(
-            """
-            QFrame {
-                background-color: #ffffff;
-                border: 1px solid #d7e2ec;
-                border-radius: 18px;
-            }
-            """
-        )
         apply_shadow(self.page_frame, blur=28, y_offset=10, alpha=50)
         page_layout = QVBoxLayout(self.page_frame)
         page_layout.setContentsMargins(8, 8, 8, 8)
@@ -1978,50 +1671,101 @@ class WebBrowserWidget(QWidget):
         self.web_view.setUrl(QUrl(HOME_URL))
         
     def navigate_to_url(self):
-        url = self.url_bar.text()
+        url = self.url_bar.text().strip()
+        if not url:
+            return
         if not url.startswith(('http://', 'https://')):
             # Check if it's a valid domain or search query
             if '.' in url and ' ' not in url:
                 url = 'https://' + url
             else:
                 url = 'https://www.google.com/search?q=' + quote_plus(url)
+        # The user committed this entry — programmatic updates may resume.
+        self._url_user_editing = False
         self.web_view.setUrl(QUrl(url))
-        
+
     def navigate_back(self):
         self.web_view.back()
-        
+
     def navigate_forward(self):
         self.web_view.forward()
-        
+
     def reload_page(self):
-        self.web_view.reload()
-        
+        """Reload — or Stop while a load is in flight (one button, two roles)."""
+        if self._is_loading:
+            self.web_view.stop()
+        else:
+            self.web_view.reload()
+
     def navigate_home(self):
         self.web_view.setUrl(QUrl(HOME_URL))
-        
+
+    def _on_url_text_edited(self, _text):
+        self._url_user_editing = True
+
+    def eventFilter(self, obj, event):
+        if obj is getattr(self, "url_bar", None):
+            if event.type() == QEvent.FocusIn:
+                self._style_address_group(focused=True)
+            elif event.type() == QEvent.FocusOut:
+                # Abandoned edit (no Enter): restore the page's real URL so
+                # the address bar always shows where the user actually is.
+                if self._url_user_editing:
+                    self._url_user_editing = False
+                    self._sync_url_bar()
+                self._style_address_group(focused=False)
+        return super().eventFilter(obj, event)
+
+    def _sync_url_bar(self, url_text=None):
+        """Reflect the web view's URL in the address bar.
+
+        - Never overwrites an in-progress user edit.
+        - Skips no-op setText calls (no cursor/selection churn = no flicker).
+        - Shows an empty field instead of the confusing ``about:blank``.
+        """
+        if self._url_user_editing:
+            return
+        text = url_text if url_text is not None else self.web_view.url().toString()
+        if text == "about:blank":
+            text = ""
+        if self.url_bar.text() != text:
+            self.url_bar.setText(text)
+            if not self.url_bar.hasFocus():
+                self.url_bar.setCursorPosition(0)
+
     def on_url_changed(self, url):
-        self.url_bar.setText(url.toString())
+        self._sync_url_bar(url.toString())
         self.update_navigation_buttons()
         self.update_favorite_button()
-        
+
     def on_title_changed(self, title):
         self.current_title = title.strip()
 
     def on_load_started(self):
+        # Slot is permanently reserved (retainSizeWhenHidden) — show/hide
+        # only toggles painting, never the layout (no content jump).
+        self._is_loading = True
+        self._update_reload_button_icon()
+        self.progress_bar.setValue(0)
         self.progress_bar.show()
 
     def on_load_progress(self, value):
         self.progress_bar.setValue(value)
 
     def on_load_finished(self, ok):
+        self._is_loading = False
+        self._update_reload_button_icon()
         self.progress_bar.hide()
+        # Failed/aborted loads still change canGoBack/canGoForward.
+        self.update_navigation_buttons()
         if not ok:
             return
         url = self.web_view.url().toString()
         if not url or url == "about:blank":
             return
+        # Show the final resolved URL once the page has settled.
+        self._sync_url_bar(url)
         self.record_history(url, self.current_title or url)
-        self.update_navigation_buttons()
         self.update_favorite_button()
         
     def toggle_bookmarks(self):
@@ -2072,8 +1816,9 @@ class WebBrowserWidget(QWidget):
     def navigate_to_bookmark(self, url):
         """Navigate to a bookmarked URL"""
         if url:
+            self._url_user_editing = False
             self.web_view.setUrl(QUrl(url))
-            self.url_bar.setText(url)
+            self._sync_url_bar(url)
             # Close the bookmark panel after navigation
             self.bookmark_panel.hide()
             self.history_panel.hide()
@@ -2320,13 +2065,19 @@ class WebBrowserWidget(QWidget):
         self.forward_btn.setEnabled(history.canGoForward())
 
     def update_favorite_button(self):
+        if not hasattr(self, "bookmark_panel"):
+            return  # called from _apply_theme_styles before panels exist
         url = self.web_view.url().toString()
         is_favorite = any(
             bookmark.get("url") == url for bookmark in self.bookmark_panel.bookmarks.values()
         )
+        t = self._theme
         icon_name = 'fa5s.star' if is_favorite else 'fa5.star'
-        color = '#f59e0b' if is_favorite else '#334155'
+        color = t['warning'] if is_favorite else t['text_primary']
         self.favorite_toggle_btn.setIcon(qta.icon(icon_name, color=color))
+        self.favorite_toggle_btn.setToolTip(
+            "Remove current page from favorites" if is_favorite else "Add current page to favorites"
+        )
 
     def position_popup(self, panel, anchor_button):
         button_pos = anchor_button.mapToGlobal(anchor_button.rect().bottomLeft())

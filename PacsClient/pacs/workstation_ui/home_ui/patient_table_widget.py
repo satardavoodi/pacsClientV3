@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, 
                                 QSizePolicy, QStyledItemDelegate, QDialog, QListWidget, QListWidgetItem,
                                 QDialogButtonBox, QMessageBox, QProgressDialog, QApplication, QToolButton, QMenu)
 from PySide6.QtCore import Signal, Qt, QTimer, QRect, QPersistentModelIndex, QItemSelectionModel
-from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont,QIcon, QAction
+from PySide6.QtGui import QColor, QPainter, QPen, QBrush, QFont, QIcon, QAction, QPixmap
 import threading
 import logging
 import qtawesome as qta
@@ -609,6 +609,12 @@ class PatientTableWidget(QWidget):
     localStudyStateChanged = Signal(str)  # study_uid changed locally and may need offline cloud autosync
     reportDialogDataFetchResult = Signal(str, str, str, int)  # study_uid, comment, reporting_physician, fetch_token
     reportingPhysicianResolved = Signal(str, str, str)  # patient_id, patient_name, reporting_physician
+    # Refresh button pressed → home panel re-pulls report workflow state +
+    # physician for every visible row (2026-06-06).
+    reportRefreshRequested = Signal()
+    # Background hydration resolved a report workflow status for a study
+    # (queued cross-thread, same pattern as reportingPhysicianResolved).
+    reportStatusResolved = Signal(str, str)  # study_uid, report_status
 
     def __init__(self, parent=None):
         super(PatientTableWidget, self).__init__(parent)
@@ -625,6 +631,7 @@ class PatientTableWidget(QWidget):
         # cross-thread connection marshals the column update onto the UI
         # thread. (QTimer.singleShot does not fire from a worker thread.)
         self.reportingPhysicianResolved.connect(self.update_reporting_physician_for_patient)
+        self.reportStatusResolved.connect(self._update_report_status_in_table)
         self._active_report_dialogs = {}
         self._comment_cache_lock = threading.Lock()
         self._report_fetch_lock = threading.Lock()
@@ -884,9 +891,15 @@ class PatientTableWidget(QWidget):
         header.setSectionResizeMode(COL['images'], QHeaderView.Interactive)
         header.setSectionResizeMode(COL['modality'], QHeaderView.Interactive)
         header.setSectionResizeMode(COL['age'], QHeaderView.Interactive)
-        header.setSectionResizeMode(COL['description'], QHeaderView.Stretch)
+        header.setSectionResizeMode(COL['description'], QHeaderView.Interactive)
         header.setSectionResizeMode(COL['study_uid'], QHeaderView.Fixed)
         header.setSectionResizeMode(COL['order'], QHeaderView.Fixed)
+
+        # Balanced adaptive resize support (2026-06-06): track MANUAL column
+        # drags so window-resize auto-refit stands down once the user takes
+        # control of widths. Programmatic passes set
+        # _adaptive_resize_in_progress and are not counted.
+        header.sectionResized.connect(self._on_header_section_resized)
 
         # ULTRA MINIMAL column widths - exact size for content
         self.results_table.setColumnWidth(COL['select'], 50)  # Checkbox column
@@ -897,8 +910,8 @@ class PatientTableWidget(QWidget):
         self.results_table.setColumnWidth(COL['patient_name'], 200)
         self.results_table.setColumnWidth(COL['patient_id'], 100)  # Patient ID
         self.results_table.setColumnWidth(COL['body_part'], 100)  # Body part
-        self.results_table.setColumnWidth(COL['status'], 150)  # Local availability indicators
-        self.results_table.setColumnWidth(COL['report'], 180)  # Report status / physician
+        self.results_table.setColumnWidth(COL['status'], 105)  # Local availability indicators (-30%, 2026-06-06)
+        self.results_table.setColumnWidth(COL['report'], 125)  # Report status / physician (-30%, 2026-06-06)
         self.results_table.setColumnWidth(COL['assign'], 60)  # Assign icon
         self.results_table.setColumnWidth(COL['time'], 80)  # Time
         self.results_table.setColumnWidth(COL['date'], 100)  # Date
@@ -1370,7 +1383,11 @@ class PatientTableWidget(QWidget):
         
         # Refresh button for download statuses
         self.refresh_btn = QPushButton(qta.icon('fa5s.sync-alt', color='white'), "")
-        self.refresh_btn.setToolTip("Refresh Download Statuses\n(Check which studies are downloaded)")
+        self.refresh_btn.setToolTip(
+            "Refresh Statuses\n"
+            "• Download status (which studies are local)\n"
+            "• Report status + reporting physician (from server)"
+        )
         self.refresh_btn.clicked.connect(self.refresh_download_statuses)
         self.refresh_btn.setFixedSize(36, 36)
         self.refresh_btn.setStyleSheet(utility_button_style)
@@ -2798,7 +2815,7 @@ class PatientTableWidget(QWidget):
             
             # Clear cache to force fresh check
             self._download_status_cache.clear()
-            
+
             # Update each study
             for row in range(self.results_table.rowCount()):
                 uid_item = self.results_table.item(row, COL['study_uid'])
@@ -2807,9 +2824,17 @@ class PatientTableWidget(QWidget):
                     if study_uid:
                         # Update status (will use check_study_complete)
                         self.update_study_download_status(study_uid)
-            
+
             print(f"✓ Refreshed download statuses for {self.results_table.rowCount()} studies")
-            
+
+            # 2026-06-06: the same refresh also re-pulls the REPORT column
+            # (workflow status + reporting physician) from the server. Clear
+            # the report-status cache so fresh values are accepted, then let
+            # the home panel run its background hydration for every row.
+            if hasattr(self, '_report_status_cache'):
+                self._report_status_cache.clear()
+            self.reportRefreshRequested.emit()
+
         except Exception as e:
             print(f"Error refreshing download statuses: {e}")
             self.refresh_btn.setEnabled(True)
@@ -3114,7 +3139,20 @@ class PatientTableWidget(QWidget):
         # else: default color (not opened)
         patient_name_item.setData(Qt.UserRole + 2, str(reporting_physician or '').strip())
         patient_name_item.setData(Qt.UserRole + 3, initial_comment)
-        
+
+        # ── Local physician reminder (pin/alarm/note — LOCAL ONLY) ──────
+        # Indicators on the name cell + pin-priority in the default
+        # date-descending ordering: pinned patients get a sort-key boost so
+        # they surface at the TOP of search results. No server interaction.
+        try:
+            from PacsClient.utils.local_reminders import get_reminder
+            _reminder = get_reminder(patient_id)
+        except Exception:
+            _reminder = {"pinned": False, "alarm": False, "note": ""}
+        self._decorate_name_item_with_reminder(patient_name_item, _reminder)
+        if _reminder.get("pinned"):
+            date_key = date_key + self._PIN_SORT_BOOST
+
         self.results_table.setItem(row, COL['patient_name'], patient_name_item)
         self.results_table.setItem(row, COL['patient_id'], _mk(patient_id, patient_id.lower()))
         self.results_table.setItem(row, COL['body_part'], _mk(body_part, body_part.lower()))
@@ -3290,6 +3328,13 @@ class PatientTableWidget(QWidget):
             pass
         else:
             print(f"❌ [UI] Dialog rejected")
+
+        # Local Physician Reminder (2026-06-06): the dialog saves the local
+        # pin/alarm/note on ANY close — refresh this patient's indicators in
+        # the list immediately (pin-to-TOP ordering applies on the next
+        # search, matching the requirement). Local only, no server calls.
+        if getattr(dialog, '_local_reminder_saved', False):
+            self.refresh_local_reminder_indicators_for_patient(patient_id)
 
     @staticmethod
     def _extract_reporting_physician_name_from_patient_payload(patient_payload: dict) -> str:
@@ -3900,6 +3945,84 @@ class PatientTableWidget(QWidget):
         
         logger.info(f"{'='*60}\n")
     
+    # ── Local physician reminders (pin / alarm / note) — LOCAL ONLY ─────
+    # Date sort keys are yyyymmdd-scale ints; the boost dwarfs any real date
+    # so pinned patients lead the default date-descending result ordering.
+    _PIN_SORT_BOOST = 10 ** 12
+
+    def _decorate_name_item_with_reminder(self, name_item, reminder: dict):
+        """Compose pin/alarm/note indicators onto the patient-name item.
+
+        Icon = up to three 14px glyphs side by side (alarm, pin, note);
+        tooltip gains a clearly-labelled local-reminder block including the
+        note text. Purely cosmetic — server data untouched.
+        """
+        try:
+            pinned = bool(reminder.get('pinned'))
+            alarm = bool(reminder.get('alarm'))
+            note = str(reminder.get('note') or '').strip()
+            if not (pinned or alarm or note):
+                name_item.setIcon(QIcon())
+                return
+
+            glyphs = []
+            if alarm:
+                glyphs.append(('fa5s.exclamation-triangle', '#ef4444'))
+            if pinned:
+                glyphs.append(('fa5s.thumbtack', '#3b82f6'))
+            if note:
+                glyphs.append(('fa5s.sticky-note', '#f59e0b'))
+
+            size = 14
+            combined = QPixmap(size * len(glyphs), size)
+            combined.fill(Qt.transparent)
+            painter = QPainter(combined)
+            for i, (icon_name, color) in enumerate(glyphs):
+                try:
+                    pm = qta.icon(icon_name, color=color).pixmap(size, size)
+                    painter.drawPixmap(i * size, 0, pm)
+                except Exception:
+                    pass
+            painter.end()
+            name_item.setIcon(QIcon(combined))
+
+            tooltip_parts = []
+            existing_tip = str(name_item.toolTip() or '').strip()
+            if existing_tip and 'Local reminder' not in existing_tip:
+                tooltip_parts.append(existing_tip)
+            flags = []
+            if pinned:
+                flags.append('PINNED (top of search results)')
+            if alarm:
+                flags.append('ALARM — needs attention')
+            block = 'Local reminder (this workstation only):'
+            if flags:
+                block += '\n  • ' + '\n  • '.join(flags)
+            if note:
+                block += f'\n  Note: {note}'
+            tooltip_parts.append(block)
+            name_item.setToolTip('\n'.join(tooltip_parts))
+        except Exception:
+            pass
+
+    def refresh_local_reminder_indicators_for_patient(self, patient_id: str):
+        """Re-render pin/alarm/note indicators on every row of this patient."""
+        pid = str(patient_id or '').strip()
+        if not pid:
+            return
+        try:
+            from PacsClient.utils.local_reminders import get_reminder
+            reminder = get_reminder(pid)
+        except Exception:
+            return
+        for row in range(self.results_table.rowCount()):
+            id_item = self.results_table.item(row, COL['patient_id'])
+            if id_item is None or str(id_item.text()).strip() != pid:
+                continue
+            name_item = self.results_table.item(row, COL['patient_name'])
+            if name_item is not None:
+                self._decorate_name_item_with_reminder(name_item, reminder)
+
     def _update_report_status_in_table(self, study_uid: str, new_status: str):
         """Update report status display in table"""
         # Update cache
@@ -4012,14 +4135,51 @@ class PatientTableWidget(QWidget):
         """Handle report status error signal from service"""
         QMessageBox.warning(self, "Status Change Error", f"Error: {error_msg}")
 
+    def _on_header_section_resized(self, _index, _old, _new):
+        """Mark that the USER changed a column width (manual drag).
+
+        Window-resize auto-refit then stands down so the manual widths are
+        preserved; the next adaptive pass (search / Adaptive action) re-arms
+        it. Programmatic adaptive passes don't count.
+        """
+        if not getattr(self, '_adaptive_resize_in_progress', False):
+            self._user_adjusted_columns = True
+
+    def resizeEvent(self, event):
+        """Keep the table fitting the area on window resizes (debounced).
+
+        Replaces what the old Stretch column did implicitly — but ONLY while
+        the user hasn't manually resized columns; manual widths are never
+        clobbered by a window resize.
+        """
+        super().resizeEvent(event)
+        try:
+            if getattr(self, '_user_adjusted_columns', False):
+                return
+            timer = getattr(self, '_adaptive_refit_timer', None)
+            if timer is None:
+                timer = QTimer(self)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._refit_columns_if_auto)
+                self._adaptive_refit_timer = timer
+            timer.start(180)
+        except Exception:
+            pass
+
+    def _refit_columns_if_auto(self):
+        if not getattr(self, '_user_adjusted_columns', False):
+            self.auto_resize_columns()
+
     def auto_resize_columns(self):
         """Resize the visible columns to fill the patient-list area.
 
-        Backs the 'Adaptive to Screen Size' action. Every visible column is
-        given a controlled width; one flexible column is left as Stretch so
-        it absorbs the remaining width. When a column is hidden, the freed
-        space flows into the Stretch column and the visible columns keep
-        filling the available area with no empty gap.
+        Backs the 'Adaptive to Screen Size' action. 2026-06-06: the width
+        difference between the table area and the column base widths is
+        distributed PROPORTIONALLY across all visible resizable columns —
+        every column scales by the same factor. Previously one Stretch
+        column (Study Description) absorbed the entire delta and became
+        disproportionately large or small. All data columns stay
+        Interactive, so manual drag-resizing works everywhere.
 
         The old implementation called resizeColumnsToContents(), which let
         the widget columns balloon past the viewport; that pass is removed.
@@ -4033,8 +4193,8 @@ class PatientTableWidget(QWidget):
             COL['patient_name']: 160,
             COL['patient_id']: 100,
             COL['body_part']: 100,
-            COL['status']: 150,
-            COL['report']: 170,
+            COL['status']: 105,   # -30% (2026-06-06)
+            COL['report']: 125,   # -30% (2026-06-06)
             COL['assign']: 60,
             COL['time']: 80,
             COL['date']: 100,
@@ -4042,8 +4202,18 @@ class PatientTableWidget(QWidget):
             COL['modality']: 80,
             COL['age']: 60,
         }
-        # Widget-hosting columns keep a fixed width; the rest are resizable.
-        fixed_cols = {COL['select'], COL['status'], COL['report'], COL['assign']}
+        # Widget-hosting columns that keep a fixed width. Status and Report
+        # were here too, which made them the ONLY data columns the user could
+        # not drag-resize (2026-06-06 request): they are now Interactive like
+        # Patient ID etc., and therefore also picked up by the generic
+        # column-width persistence (_save_column_settings saves every visible
+        # column's width).
+        fixed_cols = {COL['select'], COL['assign']}
+
+        # Study Description participates in the proportional pass with a base
+        # width too (it used to be the lone Stretch column that absorbed the
+        # ENTIRE remaining delta — the reported "last column too large/small").
+        base_widths.setdefault(COL['description'], 220)
 
         try:
             visible = [c for c in range(table.columnCount())
@@ -4051,27 +4221,56 @@ class PatientTableWidget(QWidget):
             if not visible:
                 return
 
-            # The column that absorbs the remaining width: the Study
-            # Description if visible, else the last visible resizable column.
-            # Guarantees the table fills the area whichever column is hidden.
-            stretch_col = COL['description'] if COL['description'] in visible else None
-            if stretch_col is None:
-                for c in reversed(visible):
-                    if c not in fixed_cols:
-                        stretch_col = c
-                        break
+            # 2026-06-06 balanced adaptive resize: distribute the width
+            # difference PROPORTIONALLY across all visible resizable columns
+            # instead of dumping it into one Stretch column. Every resizable
+            # column scales by the same factor; fixed widget columns
+            # (checkbox / assign icon) keep their exact width. All columns
+            # stay Interactive, so manual drag-resizing keeps working on
+            # every column (a Stretch column cannot be dragged).
+            fixed_total = sum(base_widths.get(c, 50) for c in visible if c in fixed_cols)
+            resizable = [c for c in visible if c not in fixed_cols]
+            resizable_base_total = sum(base_widths.get(c, 100) for c in resizable)
 
-            for col in visible:
-                if col == stretch_col:
-                    header.setSectionResizeMode(col, QHeaderView.Stretch)
-                    continue
-                if col in fixed_cols:
-                    header.setSectionResizeMode(col, QHeaderView.Fixed)
-                else:
-                    header.setSectionResizeMode(col, QHeaderView.Interactive)
-                width = base_widths.get(col)
-                if width is not None:
-                    table.setColumnWidth(col, width)
+            viewport_width = int(table.viewport().width() or 0)
+            available_for_resizable = viewport_width - fixed_total
+            if resizable_base_total > 0 and available_for_resizable > 0:
+                scale = available_for_resizable / float(resizable_base_total)
+            else:
+                scale = 1.0
+            # Sanity clamp: never collapse below half nor balloon past 3x.
+            scale = max(0.5, min(3.0, scale))
+
+            self._adaptive_resize_in_progress = True
+            try:
+                assigned_total = 0
+                scaled_widths = {}
+                for col in resizable:
+                    base = base_widths.get(col, 100)
+                    width = max(40, int(round(base * scale)))
+                    scaled_widths[col] = width
+                    assigned_total += width
+
+                # Hand the rounding remainder (a few px) to the widest
+                # resizable column so the table edge lines up exactly.
+                remainder = available_for_resizable - assigned_total
+                if scaled_widths and 0 < abs(remainder) <= len(resizable) * 2:
+                    widest = max(scaled_widths, key=scaled_widths.get)
+                    scaled_widths[widest] = max(40, scaled_widths[widest] + remainder)
+
+                for col in visible:
+                    if col in fixed_cols:
+                        header.setSectionResizeMode(col, QHeaderView.Fixed)
+                        width = base_widths.get(col)
+                    else:
+                        header.setSectionResizeMode(col, QHeaderView.Interactive)
+                        width = scaled_widths.get(col, base_widths.get(col))
+                    if width is not None:
+                        table.setColumnWidth(col, width)
+            finally:
+                self._adaptive_resize_in_progress = False
+            # Adaptive pass owns the widths again → window-resize refit re-armed.
+            self._user_adjusted_columns = False
         except Exception as e:
             print(f"auto_resize_columns error: {e}")
 
@@ -4337,6 +4536,30 @@ class PatientTableWidget(QWidget):
 
         if updated:
             self.results_table.viewport().update()
+
+    def collect_all_rows_for_report_refresh(self):
+        """Return (patient_id, patient_name, study_uid) for EVERY visible row.
+
+        Used by the refresh button (2026-06-06): unlike the post-search
+        collector below — which only hydrates completed rows missing a
+        physician — a manual refresh re-pulls report workflow state for the
+        whole table so status transitions (awaiting approval/secretary/
+        doctor, reported, confirmed, ...) appear without a new search.
+        """
+        rows = []
+        for row in range(self.results_table.rowCount()):
+            pid_item = self.results_table.item(row, COL['patient_id'])
+            pname_item = self.results_table.item(row, COL['patient_name'])
+            uid_item = self.results_table.item(row, COL['study_uid'])
+            pid = str(pid_item.text() if pid_item else '').strip()
+            if not pid:
+                continue
+            rows.append((
+                pid,
+                str(pname_item.text() if pname_item else '').strip(),
+                str(uid_item.text() if uid_item else '').strip(),
+            ))
+        return rows
 
     def collect_completed_rows_missing_reporting_physician(self):
         """Return (patient_id, patient_name, study_uid) for completed rows with no displayable physician text."""

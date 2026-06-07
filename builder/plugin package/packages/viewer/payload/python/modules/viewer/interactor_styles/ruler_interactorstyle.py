@@ -15,6 +15,16 @@ class RulerInteractorStyle(AbstractInteractorStyle):
         self.title = ""
         self.title_format = "%-#6.3g mm"
         self.color = (0, 0.9, 0)
+        self.line_width = 1
+        # Settings ↔ viewer reconnect (2026-06-06): honor the saved Tools
+        # Settings for NEW annotations (already-drawn ones keep their style).
+        try:
+            from PacsClient.pacs.patient_tab.utils.tools_settings import get_ruler_style
+            _st = get_ruler_style()
+            self.color = tuple(_st.color)[:3]
+            self.line_width = max(1, int(round(float(_st.line_width))))
+        except Exception:
+            pass
 
         self.cursor_mode = vtk.VTK_CURSOR_ARROW
         self.n_clicks = 0
@@ -74,7 +84,7 @@ class RulerInteractorStyle(AbstractInteractorStyle):
 
     def set_widget_repr(self, widget, color, title):
         repr = widget.GetRepresentation()
-        repr.GetAxisProperty().SetLineWidth(1)
+        repr.GetAxisProperty().SetLineWidth(getattr(self, 'line_width', 1))
         repr.GetAxisProperty().SetColor(color)
         # repr.GetAxis().SetTitlePosition(0.5)
         repr.GetAxis().SetTickLength(1)

@@ -11,8 +11,9 @@ single Qt type touched here; it is safe headless (offscreen) and in tests.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 from pydicom import dcmread
@@ -20,6 +21,145 @@ from pydicom import dcmread
 from PySide6.QtGui import QImage
 
 logger = logging.getLogger(__name__)
+
+
+def _float_tuple(value, count: int) -> Optional[tuple]:
+    try:
+        values = [float(v) for v in value]
+        if len(values) != count or any(not math.isfinite(v) for v in values):
+            return None
+        return tuple(values)
+    except Exception:
+        return None
+
+
+def _extract_geometry(ds, data: "SliceData") -> None:
+    """Populate IPP/IOP/spacing on the slice (best effort, never raises)."""
+    try:
+        iop = _float_tuple(getattr(ds, "ImageOrientationPatient", None), 6)
+        ipp = _float_tuple(getattr(ds, "ImagePositionPatient", None), 3)
+        if iop and ipp:
+            data.position = ipp
+            data.row_dir = iop[0:3]
+            data.col_dir = iop[3:6]
+        spacing = _float_tuple(getattr(ds, "PixelSpacing", None), 2)
+        if spacing and spacing[0] > 0 and spacing[1] > 0:
+            data.pixel_spacing = spacing
+            data.measure_spacing = spacing
+            data.spacing_source = "PixelSpacing"
+        else:
+            # DICOM CP-586 fallback chain for projection radiography
+            # (DX/CR/MG often carry ImagerPixelSpacing only).
+            for keyword, label in (
+                ("ImagerPixelSpacing", "ImagerPixelSpacing"),
+                ("NominalScannedPixelSpacing", "NominalScannedPixelSpacing"),
+            ):
+                alt = _float_tuple(getattr(ds, keyword, None), 2)
+                if alt and alt[0] > 0 and alt[1] > 0:
+                    data.measure_spacing = alt
+                    data.spacing_source = label
+                    break
+        data.frame_of_reference = str(getattr(ds, "FrameOfReferenceUID", "") or "")
+    except Exception:  # geometry is optional — viewing must never break
+        pass
+
+
+def reference_line_segment(
+    target: "SliceData",
+    other: "SliceData",
+) -> Optional[Tuple[Tuple[float, float], Tuple[float, float]]]:
+    """Intersection of `other`'s slice plane with `target`'s plane, as a 2D
+    segment in TARGET image-pixel coordinates (clipped to the image rect).
+
+    Returns None when geometry is missing, frames of reference differ, or
+    the planes are (nearly) parallel. Pure math — unit-testable headless.
+    """
+    if (
+        target.position is None or target.row_dir is None or target.col_dir is None
+        or target.pixel_spacing is None
+        or other.position is None or other.row_dir is None or other.col_dir is None
+    ):
+        return None
+    if target.frame_of_reference and other.frame_of_reference:
+        if target.frame_of_reference != other.frame_of_reference:
+            return None
+
+    t_pos = np.array(target.position, dtype=np.float64)
+    t_row = np.array(target.row_dir, dtype=np.float64)   # along columns (u)
+    t_col = np.array(target.col_dir, dtype=np.float64)   # along rows (v)
+    o_pos = np.array(other.position, dtype=np.float64)
+    o_n = np.cross(np.array(other.row_dir, np.float64), np.array(other.col_dir, np.float64))
+    t_n = np.cross(t_row, t_col)
+
+    direction = np.cross(t_n, o_n)
+    if np.linalg.norm(direction) < 1e-6:
+        return None  # parallel planes
+
+    # Point on both planes: solve within the target plane. Express X = t_pos
+    # + a*t_row + b*t_col, require (X - o_pos)·o_n = 0.
+    rhs = float(np.dot(o_pos - t_pos, o_n))
+    ca = float(np.dot(t_row, o_n))
+    cb = float(np.dot(t_col, o_n))
+    if abs(ca) < 1e-12 and abs(cb) < 1e-12:
+        return None
+    if abs(ca) >= abs(cb):
+        a0, b0 = rhs / ca, 0.0
+    else:
+        a0, b0 = 0.0, rhs / cb
+    point = t_pos + a0 * t_row + b0 * t_col
+
+    # 2D direction in target (u along row_dir in mm, v along col_dir in mm)
+    d_u = float(np.dot(direction, t_row))
+    d_v = float(np.dot(direction, t_col))
+    row_mm, col_mm = target.pixel_spacing  # (row spacing → v step, col spacing → u step)
+    u0 = float(np.dot(point - t_pos, t_row)) / col_mm
+    v0 = float(np.dot(point - t_pos, t_col)) / row_mm
+    du = d_u / col_mm
+    dv = d_v / row_mm
+    if abs(du) < 1e-12 and abs(dv) < 1e-12:
+        return None
+
+    # Clip the infinite 2D line (u0+t*du, v0+t*dv) to [0,cols]x[0,rows]
+    t_min, t_max = -1e12, 1e12
+    for start, delta, low, high in (
+        (u0, du, 0.0, float(target.cols)),
+        (v0, dv, 0.0, float(target.rows)),
+    ):
+        if abs(delta) < 1e-12:
+            if start < low or start > high:
+                return None
+            continue
+        t1, t2 = (low - start) / delta, (high - start) / delta
+        if t1 > t2:
+            t1, t2 = t2, t1
+        t_min = max(t_min, t1)
+        t_max = min(t_max, t2)
+    if t_min >= t_max:
+        return None
+
+    p1 = (u0 + t_min * du, v0 + t_min * dv)
+    p2 = (u0 + t_max * du, v0 + t_max * dv)
+    return p1, p2
+
+
+def ruler_length_label(
+    slice_data: "SliceData",
+    p1: Tuple[float, float],
+    p2: Tuple[float, float],
+) -> str:
+    """Length of a ruler between two image-pixel points, honoring the
+    measurement spacing chain. Falls back to pixels when no spacing exists
+    (never fabricates millimetres)."""
+    du = p2[0] - p1[0]
+    dv = p2[1] - p1[1]
+    spacing = slice_data.measure_spacing
+    if spacing:
+        row_mm, col_mm = spacing
+        length_mm = math.hypot(du * col_mm, dv * row_mm)
+        if length_mm >= 100:
+            return f"{length_mm / 10:.1f} cm"
+        return f"{length_mm:.1f} mm"
+    return f"{math.hypot(du, dv):.0f} px"
 
 
 @dataclass
@@ -36,6 +176,14 @@ class SliceData:
     modality: str = ""
     instance_label: str = ""
     error: str = ""              # non-empty → placeholder slice with message
+    # --- geometry (reference lines + measurements) ---
+    position: Optional[Tuple[float, float, float]] = None      # IPP
+    row_dir: Optional[Tuple[float, float, float]] = None        # IOP[0:3]
+    col_dir: Optional[Tuple[float, float, float]] = None        # IOP[3:6]
+    pixel_spacing: Optional[Tuple[float, float]] = None         # (row_mm, col_mm) geometric
+    measure_spacing: Optional[Tuple[float, float]] = None       # spacing for RULER (mm/px)
+    spacing_source: str = ""                                     # PixelSpacing/Imager/Nominal
+    frame_of_reference: str = ""
 
     @classmethod
     def error_slice(cls, message: str) -> "SliceData":
@@ -155,7 +303,7 @@ def load_slice(path: str, frame_index: int = 0) -> SliceData:
         rgb = _to_rgb_uint8(array, photometric, ds)
         if rgb is None:
             return SliceData.error_slice("Unsupported color image format.")
-        return SliceData(
+        data = SliceData(
             array=rgb,
             is_color=True,
             invert=False,
@@ -166,6 +314,8 @@ def load_slice(path: str, frame_index: int = 0) -> SliceData:
             modality=modality,
             instance_label=instance_label,
         )
+        _extract_geometry(ds, data)
+        return data
 
     # --- Grayscale path ----------------------------------------------------
     if array.ndim == 3:  # safety: collapse unexpected extra dim
@@ -182,7 +332,7 @@ def load_slice(path: str, frame_index: int = 0) -> SliceData:
     if center is None or width is None or not width or width <= 0:
         center, width = _default_window_from_array(array)
 
-    return SliceData(
+    data = SliceData(
         array=np.ascontiguousarray(array),
         is_color=False,
         invert=(photometric == "MONOCHROME1"),
@@ -193,6 +343,8 @@ def load_slice(path: str, frame_index: int = 0) -> SliceData:
         modality=modality,
         instance_label=instance_label,
     )
+    _extract_geometry(ds, data)
+    return data
 
 
 def slice_to_qimage(slice_data: SliceData, center: float, width: float) -> QImage:

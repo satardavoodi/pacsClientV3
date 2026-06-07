@@ -118,28 +118,82 @@ class PatientSearchWidget(QWidget):
             }
         """)
 
-        modality_layout = QGridLayout()
-        modality_layout.setContentsMargins(5, 5, 5, 5)
-        modality_layout.setSpacing(3)
-        modality_layout.setColumnStretch(0, 1)
-        modality_layout.setColumnStretch(1, 1)
-        modality_layout.setColumnStretch(2, 1)
+        self._modality_layout = QGridLayout()
+        self._modality_layout.setContentsMargins(5, 5, 5, 5)
+        self._modality_layout.setSpacing(3)
+        self._modality_layout.setColumnStretch(0, 1)
+        self._modality_layout.setColumnStretch(1, 1)
+        self._modality_layout.setColumnStretch(2, 1)
 
         self.modality_checks = {}
-        modalities = ['DX', 'CT', 'MR', 'US', 'MG', 'CR', 'NM', 'PT', 'XA']
+        self._populate_modality_checks(self._load_configured_modalities())
 
+        self.modality_group.setLayout(self._modality_layout)
+
+    # Fallback when the Viewer Configuration modality grid is unavailable.
+    _DEFAULT_FILTER_MODALITIES = ['DX', 'CT', 'MR', 'US', 'MG', 'CR', 'NM', 'PT', 'XA']
+
+    def _load_configured_modalities(self):
+        """Modality filter options come from the Viewer Configuration
+        modality grid (config/modality_grid.json) — Settings ↔ Home filter
+        reconnect, 2026-06-06. Falls back to the classic list when the
+        config is missing/unreadable."""
+        try:
+            import json as _json
+            from pathlib import Path as _Path
+            from PacsClient.utils.config import SOCKET_CONFIG_PATH
+            cfg_path = _Path(SOCKET_CONFIG_PATH) / 'modality_grid.json'
+            with open(cfg_path, 'r', encoding='utf-8') as f:
+                cfg = _json.load(f)
+            layouts = cfg.get('modality_layouts') if isinstance(cfg, dict) else None
+            if not isinstance(layouts, dict):
+                layouts = cfg if isinstance(cfg, dict) else {}
+            names = []
+            for raw in layouts.keys():
+                name = str(raw or '').strip().upper()
+                if name and name != 'DEFAULT' and name not in names:
+                    names.append(name)
+            if names:
+                return names
+        except Exception:
+            pass
+        return list(self._DEFAULT_FILTER_MODALITIES)
+
+    def _populate_modality_checks(self, modalities, previously_checked=None):
+        previously_checked = previously_checked or set()
         cols = 3
         for idx, modality in enumerate(modalities):
-            # Use CustomCheckbox with QtAwesome icons
             check = CustomCheckbox(modality)
             check.setToolTip(f"💡 Include {modality} imaging studies in search")
             check.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            if modality in previously_checked:
+                check.setChecked(True)
             self.modality_checks[modality] = check
-            row = idx // cols
-            col = idx % cols
-            modality_layout.addWidget(check, row, col)
+            self._modality_layout.addWidget(check, idx // cols, idx % cols)
 
-        self.modality_group.setLayout(modality_layout)
+    def reload_modalities(self):
+        """Rebuild the modality filter checkboxes from the saved Viewer
+        Configuration (called after Settings 'Save Changes'). Added
+        modalities appear, removed ones disappear; check states of the
+        surviving modalities are preserved."""
+        try:
+            previously_checked = {
+                m for m, c in self.modality_checks.items() if c.isChecked()
+            }
+            while self._modality_layout.count():
+                item = self._modality_layout.takeAt(0)
+                w = item.widget()
+                if w is not None:
+                    w.deleteLater()
+            self.modality_checks = {}
+            self._populate_modality_checks(
+                self._load_configured_modalities(), previously_checked
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "reload_modalities failed", exc_info=True
+            )
 
     def _add_fields_to_layout(self):
         """Add all fields to the search layout in column format (label above field)"""

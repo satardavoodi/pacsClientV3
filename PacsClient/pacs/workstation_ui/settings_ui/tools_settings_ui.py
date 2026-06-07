@@ -368,6 +368,18 @@ class ToolsSettingsWidget(QWidget):
             
             # NO cache clear here! The cache is already updated by update_tool_style
             print("💾 [SETTINGS UI] All settings saved successfully!")
+
+            # Settings ↔ viewer reconnect (2026-06-06): push the saved values
+            # into the FAST renderer style constants so open viewers use them
+            # on the next repaint. New Advanced/VTK annotations pick them up
+            # at tool creation; already-drawn annotations keep their style.
+            try:
+                from PacsClient.pacs.patient_tab.utils.tools_settings import (
+                    apply_to_fast_viewer_styles,
+                )
+                apply_to_fast_viewer_styles()
+            except Exception:
+                pass
             
             self.status_label.setText("✓ Settings saved successfully!")
             self.status_label.setStyleSheet("color: #10b981; padding: 5px 10px; font-weight: 800;")

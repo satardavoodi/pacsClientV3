@@ -207,6 +207,20 @@ def test_build_auto_label_patient_and_anon():
 
 
 # ---------------------------------------------------------------------------
+# Burn-image filesystem choice (regression guard for the 8.3-mangling bug)
+# ---------------------------------------------------------------------------
+
+def test_burn_image_always_includes_joliet():
+    """ISO9660-only (=1) mangles long names to DOS 8.3 (_internal → _INTER~1)
+    which breaks the bundled PyInstaller viewer on other PCs. Every media
+    type must produce ISO9660 + Joliet (=3). See pipeline doc §10."""
+    from modules.cd_burner.cd_writer import filesystems_for_media
+
+    for media_type in (None, 0, 1, 2, 3, 5, 8, 15):
+        assert filesystems_for_media(media_type) == 3
+
+
+# ---------------------------------------------------------------------------
 # Verify comparator
 # ---------------------------------------------------------------------------
 

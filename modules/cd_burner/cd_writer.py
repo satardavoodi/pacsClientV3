@@ -49,6 +49,24 @@ if platform.system() == 'Windows':
         IMAPI2_AVAILABLE = False
 
 
+def filesystems_for_media(media_type: Optional[int]) -> int:
+    """FileSystemsToCreate for the burn image: ISO9660 + Joliet (= 3), ALWAYS.
+
+    ISO9660-only (= 1) was used for CD media until 2026-06-06 and broke the
+    bundled portable viewer on other PCs: IMAPI mangles every non-8.3 name
+    to DOS form (``_internal`` → ``_INTER~1``, ``AIPacsLiteViewer.exe`` →
+    ``AIPACS~1.EXE``), so the PyInstaller bootloader cannot find its
+    ``_internal`` runtime → "Failed to start embedded python interpreter!".
+    Reproduced and fix-verified via mounted test ISOs (see
+    tools/analysis/oneoff/Make-TestIso.ps1 and the pipeline doc §10).
+
+    The DICOM layout (DICOMDIR + PT000000/ST000000/SE000000/IM000001) is
+    8.3-safe by design, so legacy DICOM readers still resolve the ISO9660
+    layer correctly while Joliet preserves real names for the viewer.
+    """
+    return 3
+
+
 def get_available_drives() -> List[Dict[str, str]]:
     """
     Get list of available CD/DVD drives
@@ -330,11 +348,7 @@ class CDBurner:
             except Exception:
                 media_type = None
 
-            # Prefer strict ISO9660 for CD media to stay closer to DICOM CD-R
-            # expectations. For other media we keep the previous ISO9660+Joliet
-            # behavior because UDF support requires more explicit handling.
-            cd_media_types = {1, 2, 3}
-            file_system.FileSystemsToCreate = 1 if media_type in cd_media_types else 3
+            file_system.FileSystemsToCreate = filesystems_for_media(media_type)
             try:
                 disc_format.ForceMediaToBeClosed = bool(finalize)
             except Exception:

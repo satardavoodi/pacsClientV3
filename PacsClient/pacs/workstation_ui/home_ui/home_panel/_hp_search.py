@@ -414,6 +414,94 @@ class _HPSearchMixin:
                 return text_value
         return ""
 
+    # Reception/server report-state words → app report-status vocabulary
+    # (REPORT_STATUSES in patient_table_widget). Conservative: unknown words
+    # map to '' and the row's status is left untouched.
+    _RECEPTION_REPORT_STATUS_MAP = {
+        'pending': 'pending',
+        'awaiting_approval': 'awaiting_approval',
+        'awaiting_physician_approval': 'awaiting_physician_approval',
+        'awaiting_physician': 'awaiting_physician_approval',
+        'awaiting_doctor': 'awaiting_physician_approval',
+        'awaiting_doctor_approval': 'awaiting_physician_approval',
+        'awaiting_secretary_approval': 'awaiting_secretary_approval',
+        'awaiting_secretary': 'awaiting_secretary_approval',
+        'physician_approved': 'physician_approved',
+        'doctor_approved': 'physician_approved',
+        'reported': 'physician_approved',
+        'secretary_approved': 'secretary_approved',
+        'completed': 'completed',
+        'complete': 'completed',
+        'confirmed': 'completed',
+        'approved': 'completed',
+        'final': 'completed',
+        'finalized': 'completed',
+        'archived': 'archived',
+    }
+
+    @classmethod
+    def _extract_report_status_from_reception_payload(cls, patient_payload: dict) -> str:
+        """Best-effort report workflow status from the Reception payload.
+
+        Checks the common status keys on the payload and its `report` block,
+        normalizes (lowercase, spaces/dashes → underscores) and maps through
+        _RECEPTION_REPORT_STATUS_MAP. Falls back to 'completed' when the
+        report block carries an approver/approval timestamp but no explicit
+        status. Returns '' when nothing recognizable is present.
+        """
+        if not isinstance(patient_payload, dict):
+            return ""
+        report_obj = patient_payload.get('report') if isinstance(patient_payload.get('report'), dict) else {}
+
+        candidates = [
+            report_obj.get('status'),
+            report_obj.get('report_status'),
+            report_obj.get('reportStatus'),
+            report_obj.get('workflow_status'),
+            report_obj.get('state'),
+            patient_payload.get('report_status'),
+            patient_payload.get('reportStatus'),
+            patient_payload.get('workflow_status'),
+        ]
+        for value in candidates:
+            text = str(value or '').strip().lower().replace('-', '_').replace(' ', '_')
+            if not text:
+                continue
+            mapped = cls._RECEPTION_REPORT_STATUS_MAP.get(text, '')
+            if mapped:
+                return mapped
+
+        # Approval evidence without an explicit status → completed.
+        if report_obj.get('approvedBy') or report_obj.get('approved_by') or report_obj.get('approved_at'):
+            return 'completed'
+        return ""
+
+    def _refresh_report_column_from_server(self):
+        """Refresh button hook (2026-06-06): re-pull report workflow state +
+        reporting physician for EVERY visible row.
+
+        Clears the physician cache so the background hydration workers fetch
+        fresh Reception data instead of serving cached names; statuses ride
+        the same payload (see _queue_reporting_physician_hydration._worker).
+        Non-blocking — workers are bounded (4 in flight) and marshal UI
+        updates through queued signals.
+        """
+        try:
+            cache = getattr(self, '_reporting_physician_cache', None)
+            if cache:
+                cache.clear()
+        except Exception:
+            pass
+        try:
+            rows = self.patient_table_widget.collect_all_rows_for_report_refresh() or []
+        except Exception:
+            rows = []
+        emit_download_event(
+            _logger, 'reporter-hydration', phase='manual_refresh', rows=len(rows),
+        )
+        for patient_id, patient_name, study_uid in rows:
+            self._queue_reporting_physician_hydration(patient_id, patient_name, study_uid)
+
     def _queue_reporting_physician_hydration(self, patient_id: str, patient_name: str, study_uid: str = ""):
         pid = str(patient_id or '').strip()
         if not pid:
@@ -460,6 +548,23 @@ class _HPSearchMixin:
             try:
                 payload = self._fetch_reception_patient_payload(pid)
                 physician_name = self._extract_reporting_physician_from_reception_payload(payload)
+
+                # Report workflow status rides the same payload (2026-06-06):
+                # awaiting approval/secretary/doctor, reported, confirmed, ...
+                # Queued signal → _update_report_status_in_table on the UI
+                # thread. Only emitted when a status was recognized AND we
+                # know which study row it belongs to.
+                try:
+                    if suid:
+                        mapped_status = self._extract_report_status_from_reception_payload(payload)
+                        if mapped_status:
+                            emit_download_event(
+                                _logger, 'reporter-hydration', phase='status_resolved',
+                                pid=pid, study=suid, status=mapped_status,
+                            )
+                            self.patient_table_widget.reportStatusResolved.emit(suid, mapped_status)
+                except Exception:
+                    pass
                 # If server gave only actor-id, resolve once to full name using existing widget resolver.
                 if self._is_probable_actor_id(physician_name):
                     resolver = getattr(self.patient_table_widget, '_fetch_server_user_full_name', None)

@@ -2276,11 +2276,20 @@ class _VCLoadMixin:
             if GRID_CONFIG_PATH.exists():
                 with open(GRID_CONFIG_PATH, 'r', encoding='utf-8') as f:
                     data = json.load(f)
-                
+
+                # Normalize the lookup (2026-06-06): DICOM modality values and
+                # the settings-saved keys must match case-insensitively
+                # ('mg' / 'MG ' / 'Mg' all hit the MG entry).
+                modality = str(modality or '').strip().upper() or None
+
                 # 1. ط§ع¯ط± ظ…ظˆط¯ط§ظ„غŒطھغŒ ظ…ط´ط®طµ ط´ط¯ظ‡طŒ ط§ط¨طھط¯ط§ ط¯ط± modality_layouts ط¬ط³طھط¬ظˆ ظ…غŒâ€Œع©ظ†غŒظ…
                 if modality:
                     # ط¬ط³طھط¬ظˆ ط¯ط± modality_layouts
                     modality_layouts = data.get('modality_layouts', {})
+                    if isinstance(modality_layouts, dict):
+                        modality_layouts = {
+                            str(k).strip().upper(): v for k, v in modality_layouts.items()
+                        }
                     if modality in modality_layouts:
                         mod_cfg = modality_layouts[modality]
                         if isinstance(mod_cfg, dict):
@@ -2288,15 +2297,19 @@ class _VCLoadMixin:
                             cols = int(mod_cfg.get('cols', 2))
                             logger.debug(f"âœ… Using layout for {modality}: {rows}x{cols}")
                             return (rows, cols)
-                    
+
                     # ط§ع¯ط± ط¯ط± modality_layouts ظ†ط¨ظˆط¯طŒ ظ…ط³طھظ‚غŒظ… ط¯ط± root ط¬ط³طھط¬ظˆ ظ…غŒâ€Œع©ظ†غŒظ… (ط¨ط±ط§غŒ ط³ط§ط²ع¯ط§ط±غŒ ط¨ط§ ظپط§غŒظ„â€Œظ‡ط§غŒ ظ‚ط¯غŒظ…غŒ)
-                    if modality in data:
-                        mod_cfg = data[modality]
-                        if isinstance(mod_cfg, dict):
-                            rows = int(mod_cfg.get('rows', 1))
-                            cols = int(mod_cfg.get('cols', 2))
-                            logger.debug(f"âœ… Using layout for {modality} (legacy): {rows}x{cols}")
-                            return (rows, cols)
+                    legacy = {
+                        str(k).strip().upper(): v
+                        for k, v in data.items()
+                        if isinstance(v, dict) and k not in ('default', 'modality_layouts')
+                    }
+                    if modality in legacy:
+                        mod_cfg = legacy[modality]
+                        rows = int(mod_cfg.get('rows', 1))
+                        cols = int(mod_cfg.get('cols', 2))
+                        logger.debug(f"âœ… Using layout for {modality} (legacy): {rows}x{cols}")
+                        return (rows, cols)
                 
                 # 2. ط§ع¯ط± ظ…ظˆط¯ط§ظ„غŒطھغŒ ظ¾غŒط¯ط§ ظ†ط´ط¯ غŒط§ ظ…ط´ط®طµ ظ†ط´ط¯ظ‡طŒ ط§ط² default ط§ط³طھظپط§ط¯ظ‡ ظ…غŒâ€Œع©ظ†غŒظ…
                 default_cfg = data.get('default') or data.get('DEFAULT')

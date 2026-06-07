@@ -21,6 +21,13 @@ class AngleInteractorStyle(AbstractInteractorStyle):
         self.active_widget.Off()
         self.is_active = False
         self.color = (0, 0.9, 0)
+        # Settings ↔ viewer reconnect (2026-06-06): saved Tools Settings
+        # drive NEW annotations (existing ones keep their style).
+        try:
+            from PacsClient.pacs.patient_tab.utils.tools_settings import get_angle_style
+            self.color = tuple(get_angle_style().color)[:3]
+        except Exception:
+            pass
         self.interactor_name = self.tool_access.ANGLE
         self._dragging_obj = None
         self._drag_start_world = None

@@ -130,7 +130,14 @@ class ReportStatusDialog(QDialog):
             }
         """)
         layout.addWidget(self.comment_text)
-        
+
+        # ── Local Physician Reminder (2026-06-06) ────────────────────────
+        # Strictly local: stored only on this workstation
+        # (PacsClient.utils.local_reminders → user_data JSON). Never sent to
+        # the PACS / reception / reporting server and independent of the
+        # server-synced status/comment above.
+        self._build_local_reminder_section(layout)
+
         # Buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -176,6 +183,129 @@ class ReportStatusDialog(QDialog):
         
         layout.addLayout(button_layout)
     
+    # ── Local Physician Reminder (local-only, no server I/O) ────────────
+    # After exec() the caller checks `_local_reminder_saved` to refresh the
+    # row's pin/alarm/note indicators.
+
+    def _build_local_reminder_section(self, layout):
+        from PySide6.QtWidgets import QFrame, QToolButton
+
+        try:
+            from PacsClient.utils.local_reminders import get_reminder
+            reminder = get_reminder(self.patient_id)
+        except Exception:
+            reminder = {"pinned": False, "alarm": False, "note": ""}
+        self._initial_reminder = dict(reminder)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("QFrame { background: #2d3748; border: none; min-height: 1px; max-height: 1px; }")
+        layout.addWidget(sep)
+
+        header = QLabel("Local Physician Reminder")
+        header.setStyleSheet("font-size: 13px; font-weight: 700; color: #93c5fd;")
+        layout.addWidget(header)
+        subtitle = QLabel("Stored only on this workstation — never sent to the server.")
+        subtitle.setStyleSheet("font-size: 11px; color: #64748b;")
+        layout.addWidget(subtitle)
+
+        toggles = QHBoxLayout()
+        toggles.setSpacing(8)
+
+        def _toggle_btn(text, icon_name, icon_color, tooltip, checked):
+            btn = QToolButton()
+            btn.setText(" " + text)
+            try:
+                btn.setIcon(qta.icon(icon_name, color=icon_color))
+            except Exception:
+                pass
+            btn.setCheckable(True)
+            btn.setChecked(bool(checked))
+            btn.setToolTip(tooltip)
+            btn.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            btn.setCursor(Qt.PointingHandCursor)
+            btn.setStyleSheet("""
+                QToolButton {
+                    background: #1a202c; color: #cbd5e1;
+                    border: 1px solid #4a5568; border-radius: 4px;
+                    padding: 6px 12px; font-size: 12px;
+                }
+                QToolButton:hover { border-color: #3182ce; }
+                QToolButton:checked {
+                    background: #1e3a5f; color: #ffffff; border-color: #3b82f6;
+                }
+            """)
+            toggles.addWidget(btn)
+            return btn
+
+        self.pin_toggle = _toggle_btn(
+            "Pin", 'fa5s.thumbtack', '#3b82f6',
+            "Pin this patient — appears at the TOP of future search results (local only)",
+            reminder.get("pinned"),
+        )
+        self.alarm_toggle = _toggle_btn(
+            "Alarm", 'fa5s.exclamation-triangle', '#ef4444',
+            "Mark as important / needs attention — red warning shown in the patient list (local only)",
+            reminder.get("alarm"),
+        )
+        toggles.addStretch()
+        layout.addLayout(toggles)
+
+        self.local_note_text = QTextEdit()
+        self.local_note_text.setPlaceholderText(
+            "Private note for this patient (visible only on this workstation)..."
+        )
+        self.local_note_text.setMaximumHeight(70)
+        self.local_note_text.setPlainText(str(reminder.get("note") or ""))
+        self.local_note_text.setStyleSheet("""
+            QTextEdit {
+                background: #131a24; border: 1px dashed #3b5371;
+                border-radius: 4px; padding: 8px;
+                color: #bfdbfe; font-size: 12px;
+            }
+            QTextEdit:focus { border: 1px solid #3b82f6; }
+        """)
+        layout.addWidget(self.local_note_text)
+
+    def _save_local_reminder_if_changed(self):
+        """Persist the local section (file only — never the server).
+
+        Called on BOTH Apply and Cancel/close: the local reminder is
+        independent of the server-synced status change above it.
+        """
+        if not hasattr(self, 'pin_toggle'):
+            return
+        try:
+            current = {
+                "pinned": bool(self.pin_toggle.isChecked()),
+                "alarm": bool(self.alarm_toggle.isChecked()),
+                "note": self.local_note_text.toPlainText().strip(),
+            }
+            initial = getattr(self, '_initial_reminder', {}) or {}
+            if (current["pinned"] == bool(initial.get("pinned"))
+                    and current["alarm"] == bool(initial.get("alarm"))
+                    and current["note"] == str(initial.get("note") or "").strip()):
+                return  # nothing changed
+            from PacsClient.utils.local_reminders import set_reminder
+            set_reminder(
+                self.patient_id,
+                pinned=current["pinned"],
+                alarm=current["alarm"],
+                note=current["note"],
+                study_uid=self.study_uid,
+            )
+            self._local_reminder_saved = True
+        except Exception:
+            import logging
+            logging.getLogger(__name__).warning(
+                "local reminder save failed", exc_info=True
+            )
+
+    def done(self, result):  # noqa: D401 — Qt override
+        """Save the local-only section on ANY dialog close (Apply or Cancel)."""
+        self._save_local_reminder_if_changed()
+        super().done(result)
+
     def apply_change(self):
         """Apply the status change"""
         new_status = self.status_combo.currentData()

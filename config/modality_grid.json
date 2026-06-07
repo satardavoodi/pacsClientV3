@@ -9,7 +9,7 @@
       "cols": 2
     },
     "MR": {
-      "rows": 2,
+      "rows": 1,
       "cols": 2
     },
     "MG": {
@@ -28,23 +28,15 @@
       "rows": 1,
       "cols": 2
     },
-    "XA": {
-      "rows": 1,
-      "cols": 2
-    },
-    "RF": {
-      "rows": 1,
-      "cols": 2
-    },
-    "NM": {
-      "rows": 1,
-      "cols": 2
-    },
     "PT": {
       "rows": 1,
       "cols": 2
     },
     "OT": {
+      "rows": 1,
+      "cols": 2
+    },
+    "PX": {
       "rows": 1,
       "cols": 2
     }

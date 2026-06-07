@@ -298,6 +298,25 @@ def scan_media(
     return result
 
 
+def load_media_info(root: str) -> dict:
+    """Read AIPACS_MEDIA_INFO.json at the media root (defensive, never raises).
+
+    Returns {} when missing/unreadable. The burner writes a ``center`` object
+    (imaging-center name/address/phone) which the viewer shows as a header.
+    """
+    try:
+        import json
+
+        path = Path(root) / "AIPACS_MEDIA_INFO.json"
+        if path.is_file():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception as exc:
+        logger.debug("Media info unreadable: %s", exc)
+    return {}
+
+
 def discover_media_root(
     cli_folder: Optional[str],
     exe_dir: Optional[str] = None,

@@ -51,6 +51,11 @@ def write_ct_slice(
     series_description: str = "t2_test_series",
     with_window: bool = True,
     size: tuple = (16, 16),
+    ipp: tuple | None = None,
+    iop: tuple | None = None,
+    pixel_spacing: tuple | None = None,
+    imager_pixel_spacing: tuple | None = None,
+    frame_of_reference: str | None = None,
 ) -> Path:
     """Write one synthetic uncompressed CT slice; returns its path."""
     ds = _base_dataset(CT_SOP_CLASS)
@@ -83,6 +88,16 @@ def write_ct_slice(
     if with_window:
         ds.WindowCenter = 40
         ds.WindowWidth = 400
+    if ipp is not None:
+        ds.ImagePositionPatient = list(ipp)
+    if iop is not None:
+        ds.ImageOrientationPatient = list(iop)
+    if pixel_spacing is not None:
+        ds.PixelSpacing = list(pixel_spacing)
+    if imager_pixel_spacing is not None:
+        ds.ImagerPixelSpacing = list(imager_pixel_spacing)
+    if frame_of_reference is not None:
+        ds.FrameOfReferenceUID = frame_of_reference
     ds.PixelData = arr.tobytes()
 
     folder.mkdir(parents=True, exist_ok=True)
