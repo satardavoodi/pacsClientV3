@@ -711,6 +711,16 @@ class _HPSearchMixin:
             # Extract patient information
             patient_id = patient.get('patient_id', 'N/A')
             patient_name = patient.get('patient_name', 'N/A')
+            # Best-available-name fallback (44982, 2026-06-07): some devices
+            # send an EMPTY PatientName, and the server then returns "" at
+            # every level (patient list AND each study). A blank Name cell /
+            # tab title looks like data loss — fall back to the patient ID so
+            # the row and the tab opened from it stay identifiable. The raw
+            # dict is not mutated; only the display/open value is repaired.
+            if not str(patient_name or '').strip() or patient_name == 'N/A':
+                _pid_str = str(patient_id or '').strip()
+                if _pid_str and _pid_str != 'N/A':
+                    patient_name = f"Patient {_pid_str}"
             study_uid = patient.get('latest_study_uid', 'N/A')
             raw_study_uids = patient.get('study_uids') or []
             if isinstance(raw_study_uids, str):
