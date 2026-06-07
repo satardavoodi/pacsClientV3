@@ -1021,9 +1021,48 @@ class CDBurnDialog(QDialog):
             )
 
             if reply == QMessageBox.Yes:
-                self.burn_manager.cancel()
+                # Clean teardown of the worker QThread before this dialog is
+                # destroyed. Without this, cancel() only sets a flag and the
+                # worker keeps running; the dialog (its signal sink) is then
+                # deleteLater'd and the next progress/completed emit raises
+                # "RuntimeError: Signal source has been deleted" into the
+                # excepthook (observed ×3, 2026-06-07 12:56). Disconnect first
+                # so no late emit reaches a half-deleted widget, then wait for
+                # the thread to actually exit (bounded, GUI never hangs).
+                self._teardown_burn_worker()
                 event.accept()
             else:
                 event.ignore()
         else:
+            self._teardown_burn_worker()
             event.accept()
+
+    def _teardown_burn_worker(self):
+        """Disconnect + stop + join the burn worker so no signal outlives the
+        dialog. Safe to call when no burn is active. Never raises."""
+        mgr = getattr(self, "burn_manager", None)
+        if mgr is None:
+            return
+        for sig_name, slot_name in (
+            ("progress", "on_progress"),
+            ("completed", "on_completed"),
+            ("stage_changed", "on_stage_changed"),
+        ):
+            try:
+                getattr(mgr, sig_name).disconnect(getattr(self, slot_name))
+            except (TypeError, RuntimeError):
+                pass  # already disconnected / never connected
+        try:
+            if hasattr(mgr, "cancel"):
+                mgr.cancel()
+        except Exception:
+            pass
+        try:
+            if hasattr(mgr, "isRunning") and mgr.isRunning():
+                # Bounded join: the worker checks _cancelled at each stage
+                # boundary. 8 s covers a long in-flight DICOMDIR/ISO step;
+                # if it overruns we still proceed (signals are already
+                # disconnected, so a late emit is harmless).
+                mgr.wait(8000)
+        except Exception:
+            pass
