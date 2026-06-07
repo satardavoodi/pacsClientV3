@@ -848,8 +848,31 @@ class _VWSeriesMixin:
         logger.info(f"[SERIES SWITCH]   Image dimensions: {dims[0]}x{dims[1]}x{dims[2]}")
         self._dbg_fast_state("switch_series_post_bind")  # CP1 [FAST-STATE]
         
-        # Check this series has showed
-        if self.last_series_show == series_index:
+        # Check this series has showed — identity by series_number (+series_path
+        # tie-breaker when both sides carry one), never the thumbnail-list
+        # index. ``last_series_show`` is a LIST INDEX by contract
+        # (_vc_layout.py); indexes alias across multi-study sidebar rebuilds,
+        # which made this guard silently swallow legitimate viewport
+        # replacements (45154 s1000102 → pane 1, 2026-06-07). Contract mirrors
+        # the BACKEND_PYDICOM_QT same-series-refresh check further below.
+        _cur_sn = ''
+        _cur_path = ''
+        try:
+            _cur_md = getattr(getattr(self, 'image_viewer', None), 'metadata', {}) or {}
+            _cur_sn = str(_cur_md.get('series', {}).get('series_number', '') or '')
+            _cur_path = str(_cur_md.get('series', {}).get('series_path', '') or '')
+        except Exception:
+            _cur_sn = ''
+        _inc_sn = str(series_number or '')
+        _inc_path = str(metadata.get('series', {}).get('series_path', '') or '') if metadata else ''
+        _same_series_identity = bool(
+            _cur_sn
+            and _inc_sn
+            and _inc_sn != 'N/A'
+            and _cur_sn == _inc_sn
+            and (not (_cur_path and _inc_path) or _cur_path == _inc_path)
+        )
+        if _same_series_identity:
             # v2.2.5.3: Don't skip if incoming data has different dimensions
             # (e.g., preview → full data refresh).  The viewer's internal
             # slice range is stale and needs SetInputData via reset_image_viewer.

@@ -548,10 +548,36 @@ class QtFastContainer(QWidget):
         """
         series_number = (metadata or {}).get('series', {}).get('series_number', 'N/A')
 
-        # Same-series no-op: skip if already showing this series index
-        if self.last_series_show == series_index and self._qt_bridge is not None:
-            logger.debug(
-                "[QtFastContainer] switch_series: already showing series=%s idx=%s, skip",
+        # Same-series no-op: compare the actually DISPLAYED series identity
+        # (series_number + series_path when both sides carry one), never the
+        # thumbnail-list index. ``last_series_show`` is a LIST INDEX by
+        # contract (_vc_layout.py) and indexes alias across multi-study
+        # sidebar rebuilds (45154: offset-key 1000102 vs 1000005), so an
+        # index comparison here silently swallowed legitimate viewport
+        # replacements — drop into pane 1 did nothing while pane 2 worked
+        # (2026-06-07). Identity contract mirrors the _vw_series.py
+        # same-series-refresh check (synthetic numbers like 100000 repeat
+        # across studies, hence the series_path tie-breaker).
+        _inc_sn = str(series_number or '')
+        _inc_path = str((metadata or {}).get('series', {}).get('series_path', '') or '')
+        _cur_sn = ''
+        _cur_path = ''
+        try:
+            _cur_md = getattr(self._qt_bridge, 'metadata', {}) or {}
+            _cur_sn = str(_cur_md.get('series', {}).get('series_number', '') or '')
+            _cur_path = str(_cur_md.get('series', {}).get('series_path', '') or '')
+        except Exception:
+            _cur_sn = ''
+        if (
+            self._qt_bridge is not None
+            and _cur_sn
+            and _inc_sn
+            and _inc_sn != 'N/A'
+            and _cur_sn == _inc_sn
+            and (not (_cur_path and _inc_path) or _cur_path == _inc_path)
+        ):
+            logger.info(
+                "[QtFastContainer] switch_series: already showing series=%s (idx=%s), skip",
                 series_number, series_index,
             )
             return False
