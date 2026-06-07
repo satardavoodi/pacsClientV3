@@ -4,6 +4,7 @@
 
 
 import logging
+import queue
 import threading
 
 from PySide6.QtCore import Signal, Qt, QTimer
@@ -13,6 +14,55 @@ from dataclasses import replace
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+
+# ── Shared retry-I/O worker (heavy-CT freeze fix, 2026-06-07) ────────────────
+# Starting a fresh Thread BLOCKS the caller until the new thread's
+# bootstrap signals "started". Under heavy load (2400-slice CT stress) thread
+# bootstrap starved and the GUI thread wedged >283 s inside Thread.start()
+# called from _on_series_retry (py-spy-proven; see
+# docs/reports/HEAVY_IMAGE_STRESS_2026-06-07.md). The retry/cleanup I/O paths
+# therefore must NEVER spawn threads at call time on the GUI thread.
+#
+# Instead: ONE shared daemon worker, created once at a calm moment
+# (ensure_retry_bg_worker() is called from the DM widget __init__), and all
+# retry I/O jobs are handed over with a lock-free queue put() — O(µs),
+# unaffected by thread-bootstrap starvation.
+_RETRY_BG_QUEUE: "queue.Queue" = queue.Queue()
+_RETRY_BG_LOCK = threading.Lock()
+_RETRY_BG_WORKER: "threading.Thread | None" = None
+
+
+def _retry_bg_loop() -> None:
+    while True:
+        fn = _RETRY_BG_QUEUE.get()
+        if fn is None:  # poison pill (tests only)
+            break
+        try:
+            fn()
+        except Exception:
+            logger.exception("[RETRY-BG] job raised (worker keeps running)")
+
+
+def ensure_retry_bg_worker() -> None:
+    """Start the shared retry-I/O worker once. Call at startup (calm time)."""
+    global _RETRY_BG_WORKER
+    with _RETRY_BG_LOCK:
+        if _RETRY_BG_WORKER is not None and _RETRY_BG_WORKER.is_alive():
+            return
+        _RETRY_BG_WORKER = threading.Thread(
+            target=_retry_bg_loop, daemon=True, name="dm-retry-bg",
+        )
+        _RETRY_BG_WORKER.start()
+
+
+def _retry_bg_submit(fn) -> None:
+    """Queue *fn* onto the shared worker. Never spawns on the caller's thread
+    when the worker is already running (the normal, pre-warmed case)."""
+    if _RETRY_BG_WORKER is None or not _RETRY_BG_WORKER.is_alive():
+        # Fallback only — normally pre-warmed at DM widget init.
+        ensure_retry_bg_worker()
+    _RETRY_BG_QUEUE.put(fn)
 
 class _DMRetryMixin:
     """Per-patient/series retry: non-blocking pause, resume, cancel, retry"""
@@ -291,7 +341,7 @@ class _DMRetryMixin:
                                     logger.info(f"✅ [SERIES RETRY-BG] Deleted")
                             except Exception as e:
                                 logger.error(f"❌ [SERIES RETRY-BG] Error: {e}")
-                        threading.Thread(target=_bg_cleanup, daemon=True, name="series-retry-cleanup").start()
+                        _retry_bg_submit(_bg_cleanup)
                         return
 
                 except Exception as e:
@@ -514,8 +564,8 @@ class _DMRetryMixin:
 
                 QTimer.singleShot(0, _main_thread_continue)
 
-            threading.Thread(target=_bg_series_retry, daemon=True, name="series-retry-io").start()
-            logger.info(f"🔄 [SERIES RETRY] Background I/O thread started for series {_series_key}")
+            _retry_bg_submit(_bg_series_retry)
+            logger.info(f"🔄 [SERIES RETRY] Background I/O queued for series {_series_key}")
 
         except Exception as e:
             logger.exception(f"❌ [SERIES_RETRY] Error for series=%s: %s", _series_key if '_series_key' in locals() else 'unknown', e, extra={"component": "download"})
@@ -636,8 +686,8 @@ class _DMRetryMixin:
 
                 QTimer.singleShot(0, _main_thread_continue)
 
-            threading.Thread(target=_bg_patient_retry, daemon=True, name="patient-retry-io").start()
-            logger.info(f"🔄 [RETRY] Background I/O thread started for {study_uid[:40] if study_uid else 'None'}...")
+            _retry_bg_submit(_bg_patient_retry)
+            logger.info(f"🔄 [RETRY] Background I/O queued for {study_uid[:40] if study_uid else 'None'}...")
 
         except Exception as e:
             logger.exception(f"❌ [PATIENT_RETRY] Failed for study=%s: %s", study_uid[:40] if study_uid else 'None', e, extra={"component": "download"})

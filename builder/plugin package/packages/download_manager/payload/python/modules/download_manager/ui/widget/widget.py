@@ -298,7 +298,17 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         
         # Setup UI
         self._setup_ui()
-        
+
+        # Pre-warm the shared retry-I/O worker at calm startup time so the
+        # retry paths NEVER call Thread.start() on the GUI thread under load
+        # (heavy-CT stress froze the UI >283 s inside Thread.start —
+        # docs/reports/HEAVY_IMAGE_STRESS_2026-06-07.md).
+        try:
+            from ._dm_retry import ensure_retry_bg_worker
+            ensure_retry_bg_worker()
+        except Exception:
+            pass
+
         # Theme integration — retint after UI is built
         self._app_theme_manager = get_theme_manager()
         self._app_theme = self._app_theme_manager.current_theme()

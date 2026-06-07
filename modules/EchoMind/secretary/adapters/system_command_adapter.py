@@ -95,16 +95,24 @@ class SystemCommandAdapter:
             with p.oneshot():
                 mem = p.memory_info()
                 rss_mb = mem.rss / (1024 * 1024)
-                cpu_pct = p.cpu_percent(interval=0.1)
+                # interval=None: non-blocking delta since the previous call.
+                # An interval>0 sleeps ON THE MAIN THREAD (bus handlers run
+                # there, one per event-loop turn) and queues head-of-line
+                # behind any stall (heavy-image stress 2026-06-07).
+                cpu_pct = p.cpu_percent(interval=None)
                 threads = p.num_threads()
                 try:
                     children = len(p.children(recursive=False))
                 except Exception:
                     children = -1
-                try:
-                    open_files = len(p.open_files())
-                except Exception:
-                    open_files = -1
+                # open_files() enumerates handles — can take SECONDS on a
+                # loaded Windows process. Opt-in only.
+                open_files = -1
+                if bool((plan.entities or {}).get("include_open_files")):
+                    try:
+                        open_files = len(p.open_files())
+                    except Exception:
+                        open_files = -1
             return CommandResult(
                 ok=True, action="snapshot_resources",
                 message=f"RSS={rss_mb:.0f} MB cpu={cpu_pct:.1f}% threads={threads}",
