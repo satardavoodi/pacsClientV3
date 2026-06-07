@@ -676,7 +676,7 @@ if sys.platform == 'win32':
     except:
         pass
 
-from PySide6.QtCore import Qt, QEvent
+from PySide6.QtCore import Qt, QEvent, QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from PySide6.QtGui import QIcon
 from PacsClient.app_handler import AppHandler
@@ -1317,7 +1317,18 @@ if __name__ == "__main__":
         app.setStyleSheet(themed_stylesheet)
 
     _apply_application_theme(theme_manager.current_theme())
-    theme_manager.themeChanged.connect(_apply_application_theme)
+
+    def _apply_application_theme_deferred(theme=None):
+        # Theme-preview clicks deliver themeChanged synchronously inside the
+        # button-click dispatch, so app.setStyleSheet's GLOBAL unpolish/
+        # repolish cascade ran on that stack — while viewers could be
+        # mid-build (other-PC access violation 2026-06-07 10:49,
+        # native_fault dump 2: _on_theme_preview_clicked → set_active_theme
+        # → _apply_application_theme → AV). Re-post to a clean event-loop
+        # turn so the global repolish never runs inside emit/click dispatch.
+        QTimer.singleShot(0, lambda: _apply_application_theme(theme))
+
+    theme_manager.themeChanged.connect(_apply_application_theme_deferred)
     
     # Initialize qtawesome fonts (required for icons in PyInstaller builds)
     try:

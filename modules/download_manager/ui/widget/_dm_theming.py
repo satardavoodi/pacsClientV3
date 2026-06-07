@@ -4,21 +4,104 @@
 
 
 import logging
+import re
 
 from PySide6.QtGui import QFont, QTextCursor
+from PySide6.QtWidgets import QWidget
 
 from ...core.enums import DownloadPriority, DownloadStatus
 from typing import List, Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _dm_theme_color_map(theme: Dict) -> Dict[str, str]:
+    """Map the DM v106 hardcoded palette to live theme tokens.
+
+    Keys are the literal colors used by _apply_v106_styling / DM child
+    widgets; values fall back to the same hex so a missing theme token is a
+    no-op rather than a visual regression.
+    """
+    theme = theme or {}
+    return {
+        "#0f1419": theme.get("window_bg", "#0f1419"),    # root background
+        "#1a202c": theme.get("panel_bg", "#1a202c"),     # table background
+        "#1e293b": theme.get("card_bg", "#1e293b"),      # header background
+        "#1f2937": theme.get("panel_bg", "#1f2937"),     # scrollbar trough
+        "#2d3748": theme.get("card_bg", "#2d3748"),      # combo background
+        "#374151": theme.get("border", "#374151"),       # borders/gridlines
+        "#4a5568": theme.get("border", "#4a5568"),       # combo border
+        "#4b5563": theme.get("border", "#4b5563"),       # scrollbar handle hover
+        "#06b6d4": theme.get("accent", "#06b6d4"),       # cyan accent
+        "#3182ce": theme.get("accent", "#3182ce"),       # selection
+        "#f7fafc": theme.get("text_primary", "#f7fafc"), # primary text
+        "#e2e8f0": theme.get("text_primary", "#e2e8f0"), # combo text
+        "#cbd5e1": theme.get("text_secondary", "#cbd5e1"),  # header text
+    }
+
+
+def _dm_retint_stylesheet(css: str, theme: Dict) -> str:
+    """Replace hardcoded DM colors in CSS with theme-aware values."""
+    out = css
+    for old_color, new_color in _dm_theme_color_map(theme).items():
+        out = re.sub(re.escape(old_color), new_color, out, flags=re.IGNORECASE)
+    return out
+
+
+def _dm_retint_widget_tree(root, theme: Dict) -> None:
+    """Recursively retint the DM widget tree with theme colors.
+
+    Mirrors _pw_retint_widget_tree (patient_widget_core/widget.py). This
+    helper was referenced by _on_app_theme_changed since the Phase 2 split
+    but never defined — every theme change with the Download Manager open
+    raised NameError (other-PC crash log 2026-06-07 10:53). Each widget is
+    guarded individually so one dead/odd child can never abort the retint
+    or crash the app.
+    """
+    if root is None:
+        return
+    try:
+        import shiboken6
+        if not shiboken6.isValid(root):
+            return
+    except Exception:
+        pass
+
+    try:
+        own_sheet = root.styleSheet()
+        if own_sheet:
+            root.setStyleSheet(_dm_retint_stylesheet(own_sheet, theme))
+    except Exception:
+        pass
+
+    try:
+        children = root.findChildren(QWidget)
+    except Exception:
+        return
+    for child in children:
+        try:
+            sheet = child.styleSheet()
+            if sheet:
+                child.setStyleSheet(_dm_retint_stylesheet(sheet, theme))
+        except Exception:
+            continue
+
+
 class _DMThemingMixin:
     """Theming & utilities: theme changes, v106 styling, speed display, logging"""
 
     def _on_app_theme_changed(self, theme: Dict) -> None:
-        """Handle app-wide theme changes and retint the entire widget tree."""
-        self._app_theme = theme or self._app_theme_manager.current_theme()
-        _dm_retint_widget_tree(self, self._app_theme)
+        """Handle app-wide theme changes and retint the entire widget tree.
+
+        Must NEVER raise: it runs synchronously inside themeChanged.emit on
+        the GUI thread (a NameError here surfaced as a CRITICAL excepthook
+        on the other PC, 2026-06-07).
+        """
+        try:
+            self._app_theme = theme or self._app_theme_manager.current_theme()
+            _dm_retint_widget_tree(self, self._app_theme)
+        except Exception as e:
+            logger.warning("DM theme retint failed (non-fatal): %s", e)
 
     def _apply_v106_styling(self):
         """Apply comprehensive v1.0.6 styling to the widget"""
