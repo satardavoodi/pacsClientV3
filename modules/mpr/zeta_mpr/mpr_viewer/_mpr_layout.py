@@ -207,6 +207,12 @@ class _MprLayoutMixin:
     def activate_caption(self):
         return self.measurement_tools.activate_caption_tool('all')
 
+    def activate_arrow(self):
+        # Two-click arrow (tail → head). Distinct from caption, which spawns
+        # a "Text" box with a default leader line — the toolbar ARROW used to
+        # call activate_caption, producing the reported wrong arrows.
+        return self.measurement_tools.activate_arrow_tool('all')
+
     def deactivate_tool(self):
         self.measurement_tools.deactivate_tool()
 

@@ -1,9 +1,27 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.2.4 (2026-06-07)
-**Previous Stable:** v3.2.3 (2026-06-07)
-**Release Date:** 2026-06-07
+**Current Stable Version:** v3.2.5 (2026-06-08)
+**Previous Stable:** v3.2.4 (2026-06-07)
+**Release Date:** 2026-06-08
 **Branch:** beta-version
+
+---
+
+## v3.2.5 (2026-06-08) - Minor release: latest stable consolidation build with local updates
+
+### Summary
+
+Minor release consolidating the latest beta-version state, including current local
+changes and incremental documentation/version alignment for the 3.2.5 line.
+
+### Included
+
+- Home Page updates carried forward from v3.2.4
+- Settings updates carried forward from v3.2.4
+- Viewer updates carried forward from v3.2.4
+- CD Module updates carried forward from v3.2.4
+- Browser updates carried forward from v3.2.4
+- Additional current local changes included in this release commit
 
 ---
 

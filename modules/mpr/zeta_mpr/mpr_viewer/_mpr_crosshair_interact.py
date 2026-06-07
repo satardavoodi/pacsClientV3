@@ -341,6 +341,20 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         self.stack_dragging = False
         click_pos = self.GetInteractor().GetEventPosition()
 
+        # Arrow-tool placement (2026-06-07): while the toolbar Arrow tool is
+        # active, its interactor observer (priority 0.6 > this style at 0.0)
+        # owns the press to place the leader endpoints. The crosshair style
+        # must YIELD so placing an arrow point doesn't also move the crosshair
+        # or start a stack drag. (The arrow observer also aborts the event,
+        # but this guard is the reliable path across VTK builds.)
+        try:
+            mt = getattr(self.parent, 'measurement_tools', None)
+            if mt is not None and getattr(mt, 'current_tool', None) == 'arrow':
+                self.left_button_down = False
+                return
+        except Exception:
+            pass
+
         # Left + Right = Pan
         if self.right_button_down:
             self._start_pan()

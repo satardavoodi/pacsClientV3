@@ -34,8 +34,14 @@ class MPRMeasurementTools:
             self.active_tools[view_name] = {
                 'ruler': [],
                 'angle': [],
-                'caption': []
+                'caption': [],
+                'arrow': []
             }
+
+        # Two-click arrow tool state (2026-06-06): per-view interactor
+        # observer tags + the pending first (tail) point per view.
+        self._arrow_observers = {}
+        self._arrow_pending_tail = {}
         
         logger.info("MPR Measurement Tools initialized")
     
@@ -232,6 +238,130 @@ class MPRMeasurementTools:
         logger.info(f"✓ Caption widget created and enabled on {view_name}")
         return True
     
+    # ── Arrow tool (two-click, 2026-06-06) ──────────────────────────────
+    # The toolbar ARROW used to route to the CAPTION tool here, which
+    # instantly spawned a "Text" box with a default leader line in every
+    # pane (the reported broken arrows). This is a real arrow matching the
+    # 2D viewer's semantics: click 1 = tail, click 2 = head → filled-head
+    # arrow drawn between the two points; repeat for more arrows until the
+    # toolbar button is toggled off.
+
+    def activate_arrow_tool(self, view_name='all'):
+        """Activate two-click arrow placement on the given view(s)."""
+        views = ['axial', 'sagittal', 'coronal'] if view_name == 'all' else [view_name]
+        success = 0
+        for vn in views:
+            if self._activate_arrow_on_view(vn):
+                success += 1
+        if success:
+            self.current_tool = 'arrow'
+        logger.info(f"✓ Arrow tool activated on {success}/{len(views)} views")
+        return success > 0
+
+    def _activate_arrow_on_view(self, view_name):
+        if view_name not in self.mpr_viewer.viewers:
+            return False
+        if view_name in self._arrow_observers:
+            return True  # already armed
+
+        interactor = self.mpr_viewer.viewers[view_name]['widget'].GetRenderWindow().GetInteractor()
+
+        def _on_click(obj, event, vn=view_name):
+            try:
+                self._handle_arrow_click(vn, obj)
+            except Exception as exc:
+                logger.error(f"arrow click failed on {vn}: {exc}")
+
+        # Priority 0.6 > interactor style (0.0): consume presses while the
+        # arrow tool is active so the crosshair never fights the placement
+        # (same contract the vtk measurement widgets use at 0.5).
+        tag = interactor.AddObserver("LeftButtonPressEvent", _on_click, 0.6)
+        self._arrow_observers[view_name] = (interactor, tag)
+        return True
+
+    def _display_to_world(self, renderer, x, y):
+        coord = vtk.vtkCoordinate()
+        coord.SetCoordinateSystemToDisplay()
+        coord.SetValue(float(x), float(y), 0.0)
+        return tuple(coord.GetComputedWorldValue(renderer))
+
+    def _handle_arrow_click(self, view_name, interactor_obj):
+        interactor = self.mpr_viewer.viewers[view_name]['widget'].GetRenderWindow().GetInteractor()
+        click_x, click_y = interactor.GetEventPosition()
+        renderer = self.mpr_viewer.viewers[view_name]['renderer']
+        world = self._display_to_world(renderer, click_x, click_y)
+
+        # Consume the press so the crosshair/stack interaction stays out of
+        # the placement gesture. The abort flag lives on the vtkCommand, not
+        # the interactor — fetch it via the stored observer tag and set it so
+        # lower-priority observers (the interactor style at 0.0) are skipped
+        # for THIS press. The crosshair style also self-guards on
+        # current_tool=='arrow' (belt-and-suspenders, since GetCommand abort
+        # support varies across VTK builds).
+        try:
+            entry = self._arrow_observers.get(view_name)
+            if entry is not None:
+                cmd = interactor_obj.GetCommand(entry[1])
+                if cmd is not None:
+                    cmd.SetAbortFlag(1)
+        except Exception:
+            pass
+
+        tail = self._arrow_pending_tail.get(view_name)
+        if tail is None:
+            self._arrow_pending_tail[view_name] = world
+            logger.debug(f"arrow tail anchored on {view_name} at {world}")
+            return
+
+        self._arrow_pending_tail[view_name] = None
+        self._create_arrow_actor(view_name, tail, world)
+
+    def _create_arrow_actor(self, view_name, p1_world, p2_world):
+        """Filled-head arrow between two WORLD points (camera-stable)."""
+        renderer = self.mpr_viewer.viewers[view_name]['renderer']
+
+        # Match the saved Tools Settings arrow style (same as the 2D viewer).
+        color = (0.0, 0.9, 0.0)
+        width = 3.0
+        try:
+            from PacsClient.pacs.patient_tab.utils.tools_settings import get_arrow_style
+            st = get_arrow_style()
+            color = tuple(st.color)[:3]
+            width = max(1.0, float(st.line_width))
+        except Exception:
+            pass
+
+        leader = vtk.vtkLeaderActor2D()
+        leader.GetPositionCoordinate().SetCoordinateSystemToWorld()
+        leader.GetPositionCoordinate().SetValue(*p1_world)
+        leader.GetPosition2Coordinate().SetCoordinateSystemToWorld()
+        leader.GetPosition2Coordinate().SetValue(*p2_world)
+        leader.SetArrowStyleToFilled()
+        leader.SetArrowPlacementToPoint2()
+        leader.SetArrowLength(0.06)
+        leader.GetProperty().SetColor(*color)
+        leader.GetProperty().SetLineWidth(width)
+
+        renderer.AddActor2D(leader)
+        self.active_tools[view_name].setdefault('arrow', []).append({
+            'actor': leader,
+            'renderer': renderer,
+            'p1': tuple(p1_world),
+            'p2': tuple(p2_world),
+        })
+        self.mpr_viewer._request_render(view_name)
+        logger.info(f"✓ Arrow placed on {view_name}")
+
+    def _deactivate_arrow_placement(self):
+        """Remove click observers + pending state (placed arrows stay)."""
+        for view_name, (interactor, tag) in list(self._arrow_observers.items()):
+            try:
+                interactor.RemoveObserver(tag)
+            except Exception:
+                pass
+        self._arrow_observers.clear()
+        self._arrow_pending_tail.clear()
+
     def deactivate_tool(self, view_name=None):
         """
         Deactivate current tool
@@ -242,14 +372,17 @@ class MPRMeasurementTools:
             views = [view_name]
         else:
             views = ['axial', 'sagittal', 'coronal']
-        
+
         for vn in views:
             if vn not in self.active_tools:
                 continue
-            
+
             # We don't remove existing measurements, just stop creating new ones
             # User can clear measurements separately
-        
+
+        # Arrow placement observers must not outlive the tool toggle.
+        self._deactivate_arrow_placement()
+
         self.current_tool = None
         logger.info("Tool deactivated")
     
@@ -268,26 +401,46 @@ class MPRMeasurementTools:
         if tool_type:
             tools = [tool_type]
         else:
-            tools = ['ruler', 'angle', 'caption']
-        
+            tools = ['ruler', 'angle', 'caption', 'arrow']
+
         count = 0
+        dirty_views = set()
         for vn in views:
             if vn not in self.active_tools:
                 continue
-            
+
             for tool in tools:
                 if tool not in self.active_tools[vn]:
                     continue
-                
+
                 for widget in self.active_tools[vn][tool]:
                     try:
-                        widget.Off()
+                        if tool == 'arrow':
+                            # Arrow entries are dicts holding a raw
+                            # vtkLeaderActor2D, not a VTK widget — remove the
+                            # actor from its renderer instead of .Off().
+                            entry = widget
+                            rend = entry.get('renderer')
+                            actor = entry.get('actor')
+                            if rend is not None and actor is not None:
+                                rend.RemoveActor2D(actor)
+                            dirty_views.add(vn)
+                        else:
+                            widget.Off()
                         count += 1
                     except Exception as e:
                         logger.error(f"Error removing widget: {e}")
-                
+
                 self.active_tools[vn][tool].clear()
-        
+
+        # Raw actors don't trigger their own render — repaint the panes we
+        # pulled arrows from.
+        for vn in dirty_views:
+            try:
+                self.mpr_viewer._request_render(vn)
+            except Exception:
+                pass
+
         logger.info(f"✓ Cleared {count} measurements")
         return count
 

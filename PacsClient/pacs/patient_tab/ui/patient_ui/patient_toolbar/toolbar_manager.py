@@ -1947,7 +1947,11 @@ class ToolbarManager:
         if self.is_mpr_viewer(selected_widget):
             mpr_widget = self.get_mpr_widget(selected_widget)
             if mpr_widget:
-                # MPR mode - use MPR measurement tools (caption)
+                # MPR mode - use the MPR arrow tool (two-click leader arrow).
+                # NOTE: this used to call activate_caption(), which spawned a
+                # "Text" caption box with a default diagonal leader line in
+                # every pane — the reported "arrow doesn't draw correctly".
+                # activate_arrow() places a real tail→head arrow instead.
                 is_arrow_active = self.tool_selected and self.tool_access.ARROW in str(self.tool_selected)
                 if is_arrow_active:
                     # Deactivate
@@ -1957,7 +1961,7 @@ class ToolbarManager:
                     # Activate on ALL 2D viewports (axial, sagittal, coronal)
                     if self.tool_selected != self.tool_access.MPR:
                         self.check_and_deactivate_tools()
-                    success = mpr_widget.activate_caption()
+                    success = mpr_widget.activate_arrow()
                     if success:
                         self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ARROW}'
                         print("✓ Arrow tool activated in MPR on all 2D views")
@@ -2164,18 +2168,14 @@ class ToolbarManager:
             if not mpr_widget:
                 return
 
-            if self.tool_selected == self.tool_access.ROTATION_LEFT:
-                self.tool_selected = None
-                self.handle_buttons_checked()
-                return
-
-            if self.tool_selected != self.tool_access.MPR:
-                self.check_and_deactivate_tools()
-
+            # NPR/MPR one-shot transform fix (2026-06-06): apply the
+            # transform on EVERY click. The old flow parked tool_selected on
+            # ROTATION_LEFT, so the next click hit the "already
+            # active -> clear and return" branch and was EATEN (every other
+            # arrow click dead), and the MPR-active state was destroyed.
+            # One-shots must not occupy tool_selected at all.
             mpr_widget.apply_view_transform(self.tool_access.ROTATION_LEFT)
-            self.tool_selected = self.tool_access.ROTATION_LEFT
             self.handle_buttons_checked()
-            self.check_and_deactivate_tools()
             return
         if self.tool_selected == self.tool_access.ROTATION_LEFT:
             self.tool_selected = None
@@ -2199,18 +2199,14 @@ class ToolbarManager:
             if not mpr_widget:
                 return
 
-            if self.tool_selected == self.tool_access.ROTATION_RIGHT:
-                self.tool_selected = None
-                self.handle_buttons_checked()
-                return
-
-            if self.tool_selected != self.tool_access.MPR:
-                self.check_and_deactivate_tools()
-
+            # NPR/MPR one-shot transform fix (2026-06-06): apply the
+            # transform on EVERY click. The old flow parked tool_selected on
+            # ROTATION_RIGHT, so the next click hit the "already
+            # active -> clear and return" branch and was EATEN (every other
+            # arrow click dead), and the MPR-active state was destroyed.
+            # One-shots must not occupy tool_selected at all.
             mpr_widget.apply_view_transform(self.tool_access.ROTATION_RIGHT)
-            self.tool_selected = self.tool_access.ROTATION_RIGHT
             self.handle_buttons_checked()
-            self.check_and_deactivate_tools()
             return
         if self.tool_selected == self.tool_access.ROTATION_RIGHT:
             self.tool_selected = None
@@ -2234,18 +2230,14 @@ class ToolbarManager:
             if not mpr_widget:
                 return
 
-            if self.tool_selected == self.tool_access.FLIP_HORIZONTAL:
-                self.tool_selected = None
-                self.handle_buttons_checked()
-                return
-
-            if self.tool_selected != self.tool_access.MPR:
-                self.check_and_deactivate_tools()
-
+            # NPR/MPR one-shot transform fix (2026-06-06): apply the
+            # transform on EVERY click. The old flow parked tool_selected on
+            # FLIP_HORIZONTAL, so the next click hit the "already
+            # active -> clear and return" branch and was EATEN (every other
+            # arrow click dead), and the MPR-active state was destroyed.
+            # One-shots must not occupy tool_selected at all.
             mpr_widget.apply_view_transform(self.tool_access.FLIP_HORIZONTAL)
-            self.tool_selected = self.tool_access.FLIP_HORIZONTAL
             self.handle_buttons_checked()
-            self.check_and_deactivate_tools()
             return
         if self.tool_selected == self.tool_access.FLIP_HORIZONTAL:
             self.tool_selected = None
@@ -2269,18 +2261,14 @@ class ToolbarManager:
             if not mpr_widget:
                 return
 
-            if self.tool_selected == self.tool_access.FLIP_VERTICAL:
-                self.tool_selected = None
-                self.handle_buttons_checked()
-                return
-
-            if self.tool_selected != self.tool_access.MPR:
-                self.check_and_deactivate_tools()
-
+            # NPR/MPR one-shot transform fix (2026-06-06): apply the
+            # transform on EVERY click. The old flow parked tool_selected on
+            # FLIP_VERTICAL, so the next click hit the "already
+            # active -> clear and return" branch and was EATEN (every other
+            # arrow click dead), and the MPR-active state was destroyed.
+            # One-shots must not occupy tool_selected at all.
             mpr_widget.apply_view_transform(self.tool_access.FLIP_VERTICAL)
-            self.tool_selected = self.tool_access.FLIP_VERTICAL
             self.handle_buttons_checked()
-            self.check_and_deactivate_tools()
             return
         if self.tool_selected == self.tool_access.FLIP_VERTICAL:
             self.tool_selected = None
@@ -8582,7 +8570,53 @@ class ToolbarManager:
                 layout.addWidget(btn_container)
             
             layout.addSpacing(8)
-            
+
+            # ── Comment (2026-06-06): rides the SAME server mechanism as the
+            # Main-Page Report popup (_change_report_status's comment arg —
+            # no second storage system). Typed text is kept on the toolbar
+            # (_pending_report_comment) so it is sent together with the
+            # status when a status is picked, or flushed as a comment-only
+            # update when Sync / Sync-and-Close runs.
+            from PySide6.QtWidgets import QTextEdit
+            comment_label = QLabel("Comment (optional):")
+            comment_label.setStyleSheet(
+                "color: #cbd5e1; font-size: 11px; font-weight: 600;"
+                "background: transparent; padding: 0 2px;"
+            )
+            layout.addWidget(comment_label)
+
+            comment_box = QTextEdit()
+            comment_box.setPlaceholderText("Comment synced with the report status...")
+            comment_box.setFixedHeight(56)
+            comment_box.setStyleSheet("""
+                QTextEdit {
+                    background: #1a202c;
+                    border: 1px solid #4a5568;
+                    border-radius: 6px;
+                    padding: 6px;
+                    color: #e2e8f0;
+                    font-size: 12px;
+                }
+                QTextEdit:focus { border: 1px solid #3182ce; }
+            """)
+            _initial_comment = str(
+                getattr(self, '_pending_report_comment', None)
+                or getattr(self.patient_widget, 'report_comment', '')
+                or ''
+            ).strip()
+            if _initial_comment:
+                comment_box.setPlainText(_initial_comment)
+            self._status_dropdown_initial_comment = _initial_comment
+            comment_box.textChanged.connect(
+                lambda box=comment_box: setattr(
+                    self, '_pending_report_comment', box.toPlainText().strip()
+                )
+            )
+            self._pending_report_comment = _initial_comment
+            layout.addWidget(comment_box)
+
+            layout.addSpacing(6)
+
             # Sync-only button at bottom
             sync_btn = create_dropdown_tool('🔄 Sync', 'fa5s.cloud-upload-alt', '#10b981')
             # V2: quiet the green sync icon to the accent language (gated).
@@ -8655,14 +8689,24 @@ class ToolbarManager:
             
             print(f"[Toolbar] Changing status via dropdown: {current_status} -> {new_status}")
             
-            # Call patient widget's change method
+            # Call patient widget's change method. The comment typed in the
+            # dropdown rides along (same server mechanism as the Main-Page
+            # Report popup); falls back to the legacy marker text when empty.
+            user_comment = str(getattr(self, '_pending_report_comment', '') or '').strip()
             if hasattr(self.patient_widget, '_change_report_status'):
                 success = self.patient_widget._change_report_status(
                     study_uid=self.patient_widget.study_uid,
                     old_status=current_status,
                     new_status=new_status,
-                    comment=f"Status changed via toolbar dropdown"
+                    comment=user_comment or "Status changed via toolbar dropdown"
                 )
+                if success and user_comment:
+                    # The comment is now server-side; don't re-flush on sync.
+                    self._status_dropdown_initial_comment = user_comment
+                    try:
+                        self.patient_widget.report_comment = user_comment
+                    except Exception:
+                        pass
                 
                 # Show result to user
                 if success:
@@ -8841,6 +8885,39 @@ class ToolbarManager:
                 pass
         self._patient_sync_signal_handlers = {}
 
+    def _flush_pending_report_comment(self, study_uid: str) -> None:
+        """Send a comment-only report update if the dropdown comment changed.
+
+        Rides the SAME server path as the Main-Page Report popup
+        (patient_widget._change_report_status with an unchanged status) —
+        no second comment storage. No-op when nothing was typed, when the
+        text equals what was already sent/loaded, or on any failure
+        (sync proceeds regardless; the comment is best-effort).
+        """
+        try:
+            comment = str(getattr(self, '_pending_report_comment', '') or '').strip()
+            initial = str(getattr(self, '_status_dropdown_initial_comment', '') or '').strip()
+            if not comment or comment == initial:
+                return
+            if not hasattr(self.patient_widget, '_change_report_status'):
+                return
+            current_status = getattr(self.patient_widget, 'report_status', 'pending')
+            success = self.patient_widget._change_report_status(
+                study_uid=study_uid,
+                old_status=current_status,
+                new_status=current_status,   # comment-only: status unchanged
+                comment=comment,
+            )
+            if success:
+                self._status_dropdown_initial_comment = comment
+                try:
+                    self.patient_widget.report_comment = comment
+                except Exception:
+                    pass
+                print(f"✅ [Toolbar] Report comment synced with patient sync")
+        except Exception as exc:
+            print(f"⚠️ [Toolbar] comment flush failed (sync continues): {exc}")
+
     def _start_patient_sync(self, *, close_after_sync: bool = False, show_completion_message: bool = True):
         """Start patient data synchronization with server.
 
@@ -8863,7 +8940,14 @@ class ToolbarManager:
             if not study_uid:
                 QMessageBox.warning(self.patient_widget, "Error", "Study UID not found.")
                 return
-            
+
+            # Comment flush (2026-06-06): if the user typed a comment in the
+            # status dropdown but did NOT pick a status (a status pick already
+            # sent it), send it now as a comment-only update through the SAME
+            # server mechanism as the Main-Page Report popup — so "Sync" /
+            # "Sync and Close Patient" ships status + comment together.
+            self._flush_pending_report_comment(study_uid)
+
             # Disable sync button during sync
             if hasattr(self, 'sync_button'):
                 self.sync_button.setEnabled(False)
