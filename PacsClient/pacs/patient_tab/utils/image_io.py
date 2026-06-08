@@ -2758,6 +2758,28 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
             )
             yield _qt_stub, _qt_meta, (patient_pk, study_pk)
             return
+        # Fast path produced no instances.  Distinguish "series not downloaded
+        # yet" (no DICOM files on disk at all) from "files are present but the
+        # fast path could not read them".  In the former case the ITK fallback
+        # below would also find nothing — wasting ~100 ms and risking a
+        # heavy-backend touch that FAST mode must avoid — so end cleanly here and
+        # let the caller show the 'awaiting download' spinner; progressive
+        # display populates the series as the download batches arrive.  When
+        # files DO exist on disk, keep the ITK fallback (a genuine recovery
+        # path).  Uses the loader's own file-discovery helper so the "no files"
+        # check matches what the loader considers loadable (extensionless DICOM
+        # included).
+        try:
+            _no_disk_files = not _list_unique_dicom_files(series_path)
+        except Exception:
+            _no_disk_files = False  # any doubt -> keep the ITK fallback
+        if _no_disk_files:
+            logger.info(
+                "FAST series %s has no DICOM files on disk yet (downloading); "
+                "deferring to progressive display (skipped doomed ITK fallback)",
+                series_number,
+            )
+            return
         logger.warning(
             "pydicom_qt fast-path produced no instances for series %s; "
             "falling back to ITK pipeline",

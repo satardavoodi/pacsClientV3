@@ -683,7 +683,13 @@ class _VCSwitchMixin:
 
                     if not ok:
                         self._trigger_download_if_needed(series_number)
-                        logger.error(f"[PROFILE] change_series_on_viewer: async load-on-demand FAILED for series {series_number} in {(time.perf_counter() - _t_load)*1000:.1f}ms")
+                        # Not a hard failure: this is the normal "switched to a
+                        # series that isn't downloaded yet" path.  The block below
+                        # shows the 'Downloading…' spinner and marks the viewer
+                        # awaiting; progressive display populates it as batches
+                        # arrive.  Log at INFO so it stops surfacing as a recurring
+                        # false ERROR in the diagnostics.
+                        logger.info(f"[PROFILE] change_series_on_viewer: series {series_number} not resident yet ({(time.perf_counter() - _t_load)*1000:.1f}ms) — awaiting download, progressive display will populate")
                         if preview_applied:
                             logger.error(f"â„¹ï¸ڈ [ASYNC SWITCH] preview remained active for series={series_number} (full load failed)")
                         # Keep spinner visible and mark this viewer as awaiting
