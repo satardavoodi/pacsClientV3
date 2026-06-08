@@ -209,6 +209,65 @@ class _VCLoadMixin:
             pass
         return None
 
+    def _ensure_study_pk_for_db_metadata(self) -> None:
+        """H1 (2026-06-08): make the EXISTING DB-metadata primary path reachable
+        for a single-study, server-opened study.
+
+        ``load_single_series_by_number`` reads instance geometry from ``dicom.db``
+        when ``study_pk`` is known (the intended primary path) and only falls back
+        to re-scanning every DICOM header off disk
+        (``_build_metadata_headers_only``) when it is not. For server-opened
+        studies ``study_pk`` was only stamped into ``metadata_fixed`` *after* the
+        first series applied (this file ~793, behind a ``len < 3`` guard already
+        satisfied), so the DB path was never reached and every series re-parsed all
+        headers off disk — even though the downloader already wrote that geometry
+        to the DB (verified 99-100% non-NULL). This resolves ``study_pk`` from the
+        known ``study_uid`` once, up front, so the DB path is used.
+
+        Conservative + reversible:
+          * MULTI-STUDY patients are SKIPPED — their non-primary series resolve to
+            a different study via offset keys, so the primary ``study_pk`` would be
+            wrong and could mix studies. They keep the disk path unchanged.
+          * ``AIPACS_VIEWER_DB_METADATA=0`` disables it (rollback).
+          * No-op if already set, if there is no ``study_uid``, or if the study is
+            not in the local DB yet → the disk-scan fallback runs exactly as before.
+        ``metadata_fixed['study_pk']`` is consumed ONLY as the ``study_pk`` argument
+        to the DB-aware loaders, so stamping it early has no other side effect.
+        """
+        try:
+            import os
+            # Default OFF (2026-06-08): live runs showed the DB series row is found
+            # but has no retrievable instances (series_pk<->instances linkage gap on
+            # server-opened studies), so the load still fell through to the disk
+            # scan and the DB lookup only added ~1-10 ms. Kept dormant until that
+            # linkage is fixed; re-enable for testing with AIPACS_VIEWER_DB_METADATA=1.
+            if os.getenv("AIPACS_VIEWER_DB_METADATA", "0") != "1":
+                return
+            pw = self.parent_widget
+            mf = getattr(pw, 'metadata_fixed', None)
+            if not isinstance(mf, dict) or mf.get('study_pk'):
+                return
+            # Multi-study guard: never feed the primary study_pk to an offset-key
+            # (non-primary) series — keep those on the unchanged disk path.
+            if bool(getattr(pw, '_is_multistudy_hint', False)):
+                return
+            if len(getattr(pw, '_studies_series', {}) or {}) > 1:
+                return
+            study_uid = str(getattr(pw, 'study_uid', '') or '')
+            if not study_uid:
+                return
+            from PacsClient.utils import find_study_pk_with_study_uid
+            spk = find_study_pk_with_study_uid(study_uid)
+            if spk:
+                mf['study_pk'] = spk
+                self.logger.info(
+                    "[H1_DB_METADATA] study_pk=%s resolved from study_uid -> DB "
+                    "metadata path enabled (single-study)", spk,
+                )
+        except Exception:
+            # Any failure leaves study_pk unset -> disk-scan fallback (unchanged).
+            pass
+
     def _load_single_series_on_demand(self, series_number: int, study_path: str = None,
                                       target_vtk_widget: VTKWidget = None,
                                       allow_paired: bool = True,
@@ -261,6 +320,10 @@ class _VCLoadMixin:
                     "stage": "load_request",
                 },
             )
+
+            # H1: resolve study_pk up front (single-study only) so the DB-metadata
+            # primary path is reachable instead of re-scanning headers off disk.
+            self._ensure_study_pk_for_db_metadata()
 
             series_key = str(series_number)
 
