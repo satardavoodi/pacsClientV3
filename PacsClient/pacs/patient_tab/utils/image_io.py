@@ -1538,9 +1538,27 @@ def _emit_volume_alignment_hash(
         return None
 
 
+# Exact tag set used by the per-instance header stub below.  Passing this to
+# pydicom via ``specific_tags`` skips parsing every other element in the header,
+# which is the GIL-bound cost on a large series (benchmark 2026-06-08: 476 files
+# 479 ms full-header read -> 395 ms with specific_tags).  Keep this list in sync
+# with the fields read inside ``_build_instance_header_stub``.
+_HEADER_STUB_TAGS = [
+    "InstanceNumber", "Rows", "Columns",
+    "WindowWidth", "WindowCenter",
+    "PhotometricInterpretation", "SOPInstanceUID",
+    "ImageOrientationPatient", "ImagePositionPatient", "PixelSpacing",
+    "SliceThickness", "SpacingBetweenSlices",
+    "RescaleSlope", "RescaleIntercept",
+    "BitsAllocated", "PixelRepresentation",
+]
+
+
 def _build_instance_header_stub(dicom_file: Path, fallback_index: int):
     try:
-        dcm = utils._safe_dcmread(str(dicom_file), stop_before_pixels=True)
+        dcm = utils._safe_dcmread(
+            str(dicom_file), stop_before_pixels=True, specific_tags=_HEADER_STUB_TAGS
+        )
         if dcm is None:
             return None
 
@@ -1640,25 +1658,41 @@ def _build_metadata_headers_only(series_path: Path, series_number):
     if not dicom_files:
         return None
 
-    instances = []
-    first_dcm = None
+    # Build per-instance header stubs sequentially.  pydicom header *parsing* is
+    # CPU/GIL-bound rather than I/O-bound, so a thread pool does NOT help here —
+    # it measured ~2x SLOWER (benchmark 2026-06-08: 476 files sequential 479 ms
+    # vs ThreadPool-8 922 ms — GIL contention + context switching).  The two
+    # speedups that DO help are kept:
+    #   1. ONE header read per file — the old loop did a *second*, throwaway
+    #      _safe_dcmread per file just to capture series-level metadata; that is
+    #      removed (the series header is read once, below); and
+    #   2. each read parses only the ~16 tags the stub needs via specific_tags
+    #      (see _HEADER_STUB_TAGS) instead of the whole header.
+    # Net: ~2x faster than the old double-read, full-parse loop, with no GIL or
+    # thread risk.  Slice ordering is unchanged (index-keyed, re-sorted below).
+    stubs_by_index = {}
     for i, dicom_file in enumerate(dicom_files, 1):
-        try:
-            dcm = utils._safe_dcmread(str(dicom_file), stop_before_pixels=True)
-            if dcm is None:
-                continue
-            if first_dcm is None:
-                first_dcm = dcm
-            stub = _build_instance_header_stub(dicom_file, i)
-            if stub is not None:
-                instances.append(stub)
-        except Exception:
-            continue
+        stub = _build_instance_header_stub(dicom_file, i)
+        if stub is not None:
+            stubs_by_index[i] = stub
 
-    if not instances:
+    if not stubs_by_index:
         return None
 
+    instances = [stubs_by_index[i] for i in sorted(stubs_by_index)]
+
     _normalize_instances_geometry_order(instances)
+
+    # Series-level metadata comes from the first successfully-read instance's
+    # file.  One header read (previously this header was re-read for every file
+    # in the series).
+    first_dcm = None
+    try:
+        _first_path = instances[0].get("instance_path") if instances else None
+        if _first_path:
+            first_dcm = utils._safe_dcmread(str(_first_path), stop_before_pixels=True)
+    except Exception:
+        first_dcm = None
 
     if first_dcm is None:
         return None
