@@ -320,6 +320,17 @@ class HomeSearchService:
         home = self._home
         loop = asyncio.get_running_loop()
         home._cancel_search_requested = False
+        # Re-entrancy guard (2026-06-08, crash fix): `_cancelled` reads the shared
+        # `home._cancel_search_requested`, which every search resets to False at
+        # entry. So when a 2nd search starts while the 1st is still populating the
+        # table (the loops below yield via `await asyncio.sleep(0)`), the 1st
+        # search stopped seeing cancellation and kept calling add_patient_data on a
+        # table the 2nd had already clear_table()'d → freed Qt cell-widget →
+        # native access violation in patient_table_widget.add_patient_data. A
+        # monotonic generation token lets a superseded population stop before
+        # touching the (re)cleared table.
+        home._search_generation = int(getattr(home, '_search_generation', 0)) + 1
+        _my_search_gen = home._search_generation
 
         try:
             server = home.data_access_panel_widget.get_server_selected()
@@ -352,6 +363,8 @@ class HomeSearchService:
                 home.patient_table_widget.begin_bulk_insert()
                 try:
                     for i, study in enumerate(studies or [], start=1):
+                        if self._cancelled or home._search_generation != _my_search_gen:
+                            raise asyncio.CancelledError()
                         home.add_data2patient_list_table(
                             patient_id=study.get("patient_id"),
                             patient_name=study.get("patient_name"),
@@ -449,7 +462,7 @@ class HomeSearchService:
                 home.patient_table_widget.begin_bulk_insert()
                 try:
                     for i, patient in enumerate(patients, start=1):
-                        if self._cancelled:
+                        if self._cancelled or home._search_generation != _my_search_gen:
                             raise asyncio.CancelledError()
                         home._add_socket_patient_to_table(patient)
 
@@ -532,6 +545,17 @@ class HomeSearchService:
         home = self._home
         loop = asyncio.get_running_loop()
         home._cancel_search_requested = False
+        # Re-entrancy guard (2026-06-08, crash fix): `_cancelled` reads the shared
+        # `home._cancel_search_requested`, which every search resets to False at
+        # entry. So when a 2nd search starts while the 1st is still populating the
+        # table (the loops below yield via `await asyncio.sleep(0)`), the 1st
+        # search stopped seeing cancellation and kept calling add_patient_data on a
+        # table the 2nd had already clear_table()'d → freed Qt cell-widget →
+        # native access violation in patient_table_widget.add_patient_data. A
+        # monotonic generation token lets a superseded population stop before
+        # touching the (re)cleared table.
+        home._search_generation = int(getattr(home, '_search_generation', 0)) + 1
+        _my_search_gen = home._search_generation
 
         try:
             server = home.data_access_panel_widget.get_server_selected()
@@ -591,7 +615,7 @@ class HomeSearchService:
                 home.patient_table_widget.begin_bulk_insert()
                 try:
                     for i, patient in enumerate(rows, start=1):
-                        if self._cancelled:
+                        if self._cancelled or home._search_generation != _my_search_gen:
                             raise asyncio.CancelledError()
                         home._add_socket_patient_to_table(patient)
                         if (i % 10 == 0) or (i == total):
