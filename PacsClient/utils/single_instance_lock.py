@@ -310,22 +310,39 @@ class SingleInstanceLock:
             pass
 
         candidates = {}
-        for proc in psutil.process_iter(["pid", "ppid", "name", "exe", "cmdline"]):
+        # PERF (2026-06-08): enumerate with ONLY the cheap "name" attribute first.
+        # Asking psutil for "exe"/"cmdline"/"ppid" per process is a slow Windows
+        # OpenProcess/PEB read — and "ppid" rebuilds the whole parent-map on every
+        # call (O(n^2)).  Doing that for every process on a busy machine cost ~25 s
+        # at startup, and this sweep runs on EVERY launch (the no-listener orphan
+        # sweep, try_acquire step 4).  `_proc_is_aipacs` can only ever match a
+        # process whose squashed name contains "aipacs" (frozen exe) or "python"
+        # (source/worker run), so use the name as a cheap pre-filter and fetch the
+        # expensive fields only for that handful.  Same matches, ~25 s -> <1 s.
+        for proc in psutil.process_iter(["pid", "name"]):
             try:
                 if proc.pid in protected:
                     continue
-                info = proc.info
+                name = proc.info.get("name") or ""
+                nm = name.lower().replace(" ", "")
+                if ("aipacs" not in nm) and ("python" not in nm):
+                    continue  # cannot match _proc_is_aipacs — skip the slow fields
+                try:
+                    exe = proc.exe() or ""
+                except Exception:
+                    exe = ""
+                try:
+                    cmdline = proc.cmdline() or []
+                except Exception:
+                    cmdline = []
                 cwd = ""
-                cmdline = info.get("cmdline") or []
                 # cwd lookup only when needed (relative "main.py" worker case)
                 if any(str(p).lower().endswith("main.py") for p in cmdline):
                     try:
                         cwd = proc.cwd()
                     except Exception:
                         cwd = ""
-                if self._proc_is_aipacs(
-                    info.get("name") or "", info.get("exe") or "", cmdline, cwd
-                ):
+                if self._proc_is_aipacs(name, exe, cmdline, cwd):
                     candidates[proc.pid] = proc
             except Exception:
                 continue

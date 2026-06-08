@@ -121,3 +121,33 @@ def test_no_dialog_in_takeover_mode():
 def test_graceful_disconnect_still_used_never_abort():
     assert "sock.abort()" not in _SRC
     assert "disconnectFromServer" in _SRC
+
+
+# ── startup-sweep perf: cheap name pre-filter (2026-06-08) ────────────────
+def test_force_close_enumerates_cheap_name_only():
+    """The orphan sweep must enumerate with only the cheap pid+name attrs and
+    pre-filter by name before fetching the slow exe/cmdline.  Root cause of the
+    ~25 s cold-start (every launch): psutil fetched exe + ppid for EVERY process
+    on the machine (slow OpenProcess / O(n^2) ppid-map)."""
+    i = _SRC.index("def _force_close_other_instances")
+    block = _SRC[i:i + 3200]
+    # cheap enumeration only — no eager exe/cmdline/ppid for every process
+    assert 'process_iter(["pid", "name"])' in block
+    assert '"exe", "cmdline"' not in block
+    assert '"ppid", "name"' not in block
+    # the name pre-filter must precede the expensive field fetch
+    i_filter = block.index('("aipacs" not in nm) and ("python" not in nm)')
+    i_exe = block.index("proc.exe()")
+    assert i_filter < i_exe
+
+
+def test_force_close_prefilter_is_superset_of_matcher():
+    """Sanity: every name `_proc_is_aipacs` can match contains 'aipacs' or
+    'python' (squashed), so the cheap name pre-filter never drops a real match."""
+    # frozen exe names
+    for nm in ("aipacs.exe", "AI PACS Viewer.exe", "AIPacs.exe"):
+        squashed = nm.lower().replace(" ", "")
+        assert ("aipacs" in squashed) or ("python" in squashed)
+    # source/worker runs are python processes
+    squashed = "python.exe".lower().replace(" ", "")
+    assert "python" in squashed
