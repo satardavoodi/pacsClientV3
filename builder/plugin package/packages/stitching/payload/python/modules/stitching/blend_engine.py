@@ -1,32 +1,40 @@
 """
 Blend Engine — Seam retouching and blending for stitched radiographs.
 
-Provides multiple blending strategies optimised for radiograph stitching
-where overlapping regions need seamless intensity transitions:
+Provides blending strategies optimised for radiograph stitching where
+overlapping regions need seamless intensity transitions:
 
-* **n_image_feather_blend** — Distance-weighted ramp blending (fast).
 * **n_image_multiband_blend** — Laplacian-pyramid multi-band blending
   (best quality; eliminates visible seam artefacts by blending low and
   high frequencies separately).
+* **n_image_feather_blend** — Distance-weighted ramp blending (fast; used
+  for the quick low-resolution alignment preview).
 * **histogram_match_overlap** — Intensity equalisation in the overlap zone
   so that brightness differences between two X-ray exposures are corrected
   *before* blending.
 
 The default pipeline used by ``StitchWorker`` is::
 
-    arrays  →  histogram_match_overlap  →  n_image_multiband_blend
+    arrays  ->  histogram_match_overlap  ->  n_image_multiband_blend
 
-Inputs and outputs are NumPy arrays on the **canvas grid** produced by
-:mod:`canvas_builder`.
+All math runs in **float32** (radiograph intensity needs no float64 head-room;
+float32 halves memory and is faster). Inputs and outputs are NumPy arrays on
+the canvas grid produced by the worker.
 
 Author : AI Pacs Team
-Created: 2026-02-20
+Created: 2026-02-20  (float32 + eager-free refactor 2026-06-08)
 """
 
 from __future__ import annotations
 
+import logging
+
 import numpy as np
 import SimpleITK as sitk
+
+logger = logging.getLogger(__name__)
+
+_DTYPE = np.float32
 
 
 # ======================================================================
@@ -46,7 +54,7 @@ def _distance_ramp(mask: np.ndarray) -> np.ndarray:
         squaredDistance=False,
         useImageSpacing=False,
     )
-    return sitk.GetArrayFromImage(dist_sitk).astype(np.float64)
+    return sitk.GetArrayFromImage(dist_sitk).astype(_DTYPE)
 
 
 # ======================================================================
@@ -63,20 +71,20 @@ def histogram_match_overlap(arrays: list) -> list:
 
     Parameters
     ----------
-    arrays : list of (H, W) float64 arrays on the same canvas grid.
+    arrays : list of (H, W) arrays on the same canvas grid.
 
     Returns
     -------
-    list of (H, W) float64 arrays — intensity-corrected copies.
+    list of (H, W) float32 arrays — intensity-corrected copies.
     """
     if len(arrays) < 2:
-        return [a.copy() for a in arrays]
+        return [a.astype(_DTYPE, copy=True) for a in arrays]
 
-    result = [arrays[0].copy()]  # anchor — image 0 is unchanged
+    result = [arrays[0].astype(_DTYPE, copy=True)]  # anchor — image 0 unchanged
 
     for k in range(1, len(arrays)):
         arr_prev = result[k - 1]
-        arr_curr = arrays[k].copy()
+        arr_curr = arrays[k].astype(_DTYPE, copy=True)
 
         mask_prev = arr_prev != 0.0
         mask_curr = arr_curr != 0.0
@@ -96,19 +104,18 @@ def histogram_match_overlap(arrays: list) -> list:
         mu_curr, sigma_curr = vals_curr.mean(), vals_curr.std()
 
         # Linear remap: curr_new = (curr - mu_curr) * scale + mu_prev
-        if sigma_curr < 1e-8:
-            # Constant overlap — just shift the mean, no rescaling
-            scale = 1.0
-        elif sigma_prev < 1e-8:
+        if sigma_curr < 1e-8 or sigma_prev < 1e-8:
             scale = 1.0
         else:
             scale = sigma_prev / sigma_curr
 
         arr_curr[mask_curr] = (arr_curr[mask_curr] - mu_curr) * scale + mu_prev
 
-        print(f"[BlendEngine] Histogram match pair {k-1}→{k}: "
-              f"overlap={n_overlap}, mu_prev={mu_prev:.1f}, mu_curr_orig={mu_curr:.1f}, "
-              f"scale={scale:.4f}")
+        logger.debug(
+            "Histogram match pair %d->%d: overlap=%d, mu_prev=%.1f, "
+            "mu_curr_orig=%.1f, scale=%.4f",
+            k - 1, k, n_overlap, mu_prev, mu_curr, scale,
+        )
 
         result.append(arr_curr)
 
@@ -121,107 +128,151 @@ def histogram_match_overlap(arrays: list) -> list:
 
 def _gaussian_blur(arr: np.ndarray, sigma: float) -> np.ndarray:
     """Apply Gaussian blur via SimpleITK (fast, handles large arrays)."""
-    img = sitk.GetImageFromArray(arr.astype(np.float64))
+    img = sitk.GetImageFromArray(arr.astype(_DTYPE))
     blurred = sitk.SmoothingRecursiveGaussian(img, sigma)
-    return sitk.GetArrayFromImage(blurred).astype(np.float64)
+    return sitk.GetArrayFromImage(blurred).astype(_DTYPE)
 
 
-def _build_gaussian_pyramid(arr: np.ndarray, levels: int, sigma: float = 2.0) -> list:
-    """Build a Gaussian pyramid of *levels* layers."""
-    pyr = [arr]
-    current = arr
+def _resample_to_size(arr: np.ndarray, out_h: int, out_w: int) -> np.ndarray:
+    """Linearly resample *arr* onto an (out_h, out_w) grid covering the same
+    physical extent. Handles arbitrary (non-power-of-two) sizes exactly."""
+    in_h, in_w = arr.shape
+    if (in_h, in_w) == (out_h, out_w):
+        return arr.astype(_DTYPE, copy=False)
+    img = sitk.GetImageFromArray(np.ascontiguousarray(arr, dtype=_DTYPE))
+    ref = sitk.Image(int(out_w), int(out_h), sitk.sitkFloat32)
+    ref.SetSpacing((in_w / float(out_w), in_h / float(out_h)))
+    ref.SetOrigin(img.GetOrigin())
+    ref.SetDirection(img.GetDirection())
+    res = sitk.Resample(img, ref, sitk.Transform(), sitk.sitkLinear, 0.0,
+                        sitk.sitkFloat32)
+    return sitk.GetArrayFromImage(res).astype(_DTYPE)
+
+
+def _reduce(arr: np.ndarray, sigma: float) -> np.ndarray:
+    """Anti-alias blur then halve each dimension (Burt-Adelson REDUCE)."""
+    h, w = arr.shape
+    blurred = _gaussian_blur(arr, sigma)
+    return _resample_to_size(blurred, max(1, (h + 1) // 2), max(1, (w + 1) // 2))
+
+
+def _expand(arr: np.ndarray, target_shape: tuple) -> np.ndarray:
+    """Upsample *arr* to *target_shape* (Burt-Adelson EXPAND)."""
+    return _resample_to_size(arr, target_shape[0], target_shape[1])
+
+
+def _safe_levels(shape: tuple, levels: int) -> int:
+    """Cap pyramid depth so the smallest level never collapses below 1 px."""
+    smallest = min(shape)
+    if smallest < 2:
+        return 1
+    return max(1, min(levels, int(np.floor(np.log2(smallest)))))
+
+
+def _build_gaussian_pyramid(arr: np.ndarray, levels: int, sigma: float = 1.0) -> list:
+    """Decimating Gaussian pyramid: each level is half the linear size of the
+    previous one (so total memory is ~1.33x one full image, not Nx)."""
+    pyr = [arr.astype(_DTYPE, copy=False)]
+    current = pyr[0]
     for _ in range(1, levels):
-        current = _gaussian_blur(current, sigma)
+        current = _reduce(current, sigma)
         pyr.append(current)
     return pyr
 
 
 def _build_laplacian_pyramid(gauss_pyr: list) -> list:
-    """Build a Laplacian pyramid from a Gaussian pyramid.
+    """Laplacian pyramid from a *decimated* Gaussian pyramid.
 
-    Each level = Gauss[k] - Gauss[k+1] except the last (residual).
+    level k = Gauss[k] - EXPAND(Gauss[k+1] -> shape of Gauss[k]); last level is
+    the (smallest) Gaussian residual.
     """
     lap = []
     for i in range(len(gauss_pyr) - 1):
-        lap.append(gauss_pyr[i] - gauss_pyr[i + 1])
-    lap.append(gauss_pyr[-1])  # residual (lowest frequency)
+        lap.append(gauss_pyr[i] - _expand(gauss_pyr[i + 1], gauss_pyr[i].shape))
+    lap.append(gauss_pyr[-1])
     return lap
+
+
+def _reconstruct_from_laplacian(lap_pyr: list) -> np.ndarray:
+    """Collapse a Laplacian pyramid back to a full-resolution image."""
+    out = lap_pyr[-1]
+    for i in range(len(lap_pyr) - 2, -1, -1):
+        out = _expand(out, lap_pyr[i].shape) + lap_pyr[i]
+    return out
 
 
 def n_image_multiband_blend(
     arrays: list,
     levels: int = 5,
-    sigma: float = 2.0,
+    sigma: float = 1.0,
 ) -> np.ndarray:
-    """Laplacian-pyramid multi-band blend for *N* images.
+    """Laplacian-pyramid multi-band blend for *N* images (decimating pyramid).
 
     For each pyramid level, distance-based weights are applied separately.
     Low frequencies get smooth, wide transitions while high frequencies
-    (edges, fine structures) are blended with sharper transitions.
-    This eliminates the ghosting and halo artefacts common to simple
-    feather blending at seams.
+    (edges, fine structures) are blended with sharper transitions, which
+    eliminates the ghosting / halo artefacts of simple feather blending at
+    seams. Levels are *decimated* (Burt-Adelson) so memory and time scale with
+    ~1.33x one full image rather than ``levels x N`` full images.
 
     Parameters
     ----------
-    arrays : list of (H, W) float64 arrays on the same canvas grid.
-    levels : number of pyramid levels (default 5).
-    sigma  : Gaussian sigma between levels.
+    arrays : list of (H, W) arrays on the same canvas grid.
+    levels : maximum pyramid levels (auto-capped for small canvases).
+    sigma  : anti-alias Gaussian sigma applied before each 2x reduction.
 
     Returns
     -------
-    blended : (H, W) float64 array.
+    blended : (H, W) float32 array.
     """
     if len(arrays) == 0:
         raise ValueError("Need at least one array to blend")
     if len(arrays) == 1:
-        return arrays[0].copy()
+        return arrays[0].astype(_DTYPE, copy=True)
 
-    # Compute distance-based weight maps for each image
-    masks = [arr != 0.0 for arr in arrays]
-    distances = []
-    for mask in masks:
-        d = _distance_ramp(mask)
-        d = np.clip(d, 0.0, None)
-        distances.append(d)
+    n = len(arrays)
+    shape = arrays[0].shape
+    levels = _safe_levels(shape, levels)
 
-    # Build Laplacian pyramids for each image
+    # Gaussian pyramid per distance-based weight map (decimated).
+    weight_gauss_pyrs = []
+    for arr in arrays:
+        d = _distance_ramp(arr != 0.0)
+        np.clip(d, 0.0, None, out=d)
+        weight_gauss_pyrs.append(_build_gaussian_pyramid(d, levels, sigma))
+        del d
+
+    # Laplacian pyramid per image (free each Gaussian pyramid once consumed).
     image_lap_pyrs = []
     for arr in arrays:
         g_pyr = _build_gaussian_pyramid(arr, levels, sigma)
-        l_pyr = _build_laplacian_pyramid(g_pyr)
-        image_lap_pyrs.append(l_pyr)
+        image_lap_pyrs.append(_build_laplacian_pyramid(g_pyr))
+        del g_pyr
 
-    # Build Gaussian pyramids for each weight map
-    weight_gauss_pyrs = []
-    for dist in distances:
-        w_pyr = _build_gaussian_pyramid(dist, levels, sigma)
-        weight_gauss_pyrs.append(w_pyr)
-
-    # Blend at each pyramid level using level-specific normalised weights
+    # Blend each (small) level with its level-specific normalised weights.
     blended_lap = []
     for lev in range(levels):
-        # Normalise weights at this level
-        w_sum = np.zeros_like(arrays[0])
-        for i in range(len(arrays)):
+        lshape = image_lap_pyrs[0][lev].shape
+        w_sum = np.zeros(lshape, dtype=_DTYPE)
+        for i in range(n):
             w_sum += weight_gauss_pyrs[i][lev]
-        safe_w_sum = np.where(w_sum > 0, w_sum, 1.0)
+        safe_w_sum = np.where(w_sum > 0, w_sum, _DTYPE(1.0))
 
-        level_blend = np.zeros_like(arrays[0])
-        for i in range(len(arrays)):
-            w_norm = weight_gauss_pyrs[i][lev] / safe_w_sum
-            level_blend += w_norm * image_lap_pyrs[i][lev]
-        blended_lap.append(level_blend)
+        acc = np.zeros(lshape, dtype=_DTYPE)
+        for i in range(n):
+            acc += (weight_gauss_pyrs[i][lev] / safe_w_sum) * image_lap_pyrs[i][lev]
+            # Drop each consumed level to keep peak memory down.
+            image_lap_pyrs[i][lev] = None
+            weight_gauss_pyrs[i][lev] = None
+        blended_lap.append(acc)
+        del w_sum, safe_w_sum
 
-    # Reconstruct: sum all Laplacian levels
-    result = np.zeros_like(arrays[0])
-    for lev_arr in blended_lap:
-        result += lev_arr
-
-    return result
+    del image_lap_pyrs, weight_gauss_pyrs
+    return _reconstruct_from_laplacian(blended_lap)
 
 
 # ======================================================================
-#  Simple feather blend (legacy / fast path)
+#  Simple feather blend (fast path — used for the low-res preview)
 # ======================================================================
 
 def n_image_feather_blend(arrays: list) -> np.ndarray:
@@ -229,33 +280,30 @@ def n_image_feather_blend(arrays: list) -> np.ndarray:
 
     Parameters
     ----------
-    arrays : list of (H, W) float64 numpy arrays, all same shape.
+    arrays : list of (H, W) numpy arrays, all same shape.
 
     Returns
     -------
-    blended : (H, W) float64 array.
+    blended : (H, W) float32 array.
     """
     if len(arrays) == 0:
         raise ValueError("Need at least one array to blend")
     if len(arrays) == 1:
-        return arrays[0].copy()
+        return arrays[0].astype(_DTYPE, copy=True)
 
-    masks = [arr != 0.0 for arr in arrays]
+    shape = arrays[0].shape
+    denom = np.zeros(shape, dtype=_DTYPE)
     distances = []
-    for mask in masks:
-        d = _distance_ramp(mask)
-        d = np.clip(d, 0.0, None)
+    for arr in arrays:
+        d = _distance_ramp(arr != 0.0)
+        np.clip(d, 0.0, None, out=d)
         distances.append(d)
-
-    denom = np.zeros_like(arrays[0])
-    for d in distances:
         denom += d
-    safe_denom = np.where(denom > 0, denom, 1.0)
+    safe_denom = np.where(denom > 0, denom, _DTYPE(1.0))
 
-    blended = np.zeros_like(arrays[0])
+    blended = np.zeros(shape, dtype=_DTYPE)
     for arr, dist in zip(arrays, distances):
-        weight = dist / safe_denom
-        blended += weight * arr
+        blended += (dist / safe_denom) * arr.astype(_DTYPE, copy=False)
 
     return blended
 
@@ -267,63 +315,28 @@ def n_image_feather_blend(arrays: list) -> np.ndarray:
 def retouch_and_blend(
     arrays: list,
     levels: int = 5,
-    sigma: float = 2.0,
+    sigma: float = 1.0,
 ) -> np.ndarray:
-    """Full retouching pipeline: histogram match → multi-band blend.
+    """Full retouching pipeline: histogram match -> multi-band blend.
 
-    This is the recommended function for production stitching of
-    radiographs.
+    This is the recommended function for production stitching of radiographs.
 
     Parameters
     ----------
-    arrays : list of (H, W) float64 arrays on the same canvas grid.
-    levels : Laplacian pyramid levels (default 5).
-    sigma  : Gaussian sigma between levels.
+    arrays : list of (H, W) arrays on the same canvas grid.
+    levels : maximum Laplacian pyramid levels (auto-capped for small canvases).
+    sigma  : anti-alias Gaussian sigma applied before each 2x reduction.
 
     Returns
     -------
-    blended : (H, W) float64 array.
+    blended : (H, W) float32 array.
     """
     if len(arrays) < 2:
-        return arrays[0].copy() if arrays else np.array([])
+        return arrays[0].astype(_DTYPE, copy=True) if arrays else np.array([], dtype=_DTYPE)
 
     # Step 1: Equalise intensities in overlap zones
     matched = histogram_match_overlap(arrays)
-
     # Step 2: Multi-band (Laplacian pyramid) blend
     blended = n_image_multiband_blend(matched, levels=levels, sigma=sigma)
-
-    return blended
-
-
-# ======================================================================
-#  Legacy two-image API (kept for backward compatibility)
-# ======================================================================
-
-def feather_blend(
-    fixed_arr: np.ndarray,
-    moving_arr: np.ndarray,
-    overlap_mask: np.ndarray,
-) -> np.ndarray:
-    """Feather-blend two images on a shared canvas grid (legacy API)."""
-    return n_image_feather_blend([fixed_arr, moving_arr])
-
-
-def alpha_blend(
-    fixed_arr: np.ndarray,
-    moving_arr: np.ndarray,
-    overlap_mask: np.ndarray,
-    alpha: float = 0.5,
-) -> np.ndarray:
-    """Simple alpha blend (constant weight) — useful for debugging."""
-    f_mask = fixed_arr != 0.0
-    m_mask = moving_arr != 0.0
-
-    blended = np.zeros_like(fixed_arr)
-    blended[f_mask & ~m_mask] = fixed_arr[f_mask & ~m_mask]
-    blended[m_mask & ~f_mask] = moving_arr[m_mask & ~f_mask]
-    blended[overlap_mask] = (
-        alpha * fixed_arr[overlap_mask]
-        + (1.0 - alpha) * moving_arr[overlap_mask]
-    )
+    del matched
     return blended

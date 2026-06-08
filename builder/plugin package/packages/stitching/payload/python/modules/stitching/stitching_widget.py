@@ -22,6 +22,7 @@ Created: 2026-02-20  (rewritten for multi-series support)
 
 from __future__ import annotations
 
+import logging
 import os
 import tempfile
 from collections import defaultdict
@@ -54,115 +55,121 @@ from PySide6.QtWidgets import (
 
 from vtkmodules.qt.QVTKRenderWindowInteractor import QVTKRenderWindowInteractor
 
+from PacsClient.utils.theme_manager import get_theme_manager
+
 from .landmark_store import LandmarkStore
 from .landmark_interactor_style import LandmarkInteractorStyle, _PanZoomImageStyle
 from .stitch_engine import compute_transform, compute_residuals
+
+logger = logging.getLogger(__name__)
 
 
 # ======================================================================
 #  Dark style
 # ======================================================================
 
-_DARK_STYLE = """
-QWidget {
-    background: #111827;
-    color: #e5e7eb;
+def _build_app_stylesheet(t: dict) -> str:
+    """Themed window stylesheet built from the V2 design tokens.
+
+    Mirrors the previous hard-coded dark style 1:1 in structure (default
+    buttons = accent, danger = red, success = green, checked = warning) so the
+    layout/feel is unchanged but the window now tracks the active AI-PACS theme.
+    """
+    return f"""
+QWidget {{
+    background: {t['window_bg']};
+    color: {t['text_primary']};
     font-family: 'Segoe UI', 'Roboto', sans-serif;
     font-size: 11px;
-}
-QLabel#section_header {
+}}
+QLabel#section_header {{
     font-size: 12px;
     font-weight: bold;
-    color: #93c5fd;
+    color: {t['accent']};
     padding: 4px 0;
-}
-QPushButton {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #2563eb, stop:1 #1e40af);
-    color: #f7fafc;
-    border: 1px solid #1e40af;
-    border-radius: 4px;
+}}
+QPushButton {{
+    background: {t['accent']};
+    color: {t['button_text']};
+    border: 1px solid {t['accent']};
+    border-radius: 6px;
     padding: 8px 12px;
     font-weight: bold;
-}
-QPushButton:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #1d4ed8, stop:1 #1e3a8a);
-}
-QPushButton:pressed {
-    background: #1e3a8a;
-}
-QPushButton:disabled {
-    background: #374151;
-    color: #6b7280;
-    border: 1px solid #4b5563;
-}
-QPushButton:checked {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #f59e0b, stop:1 #d97706);
-    border: 1px solid #d97706;
-    color: #111827;
-}
-QPushButton#btn_danger {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #dc2626, stop:1 #b91c1c);
-    border: 1px solid #991b1b;
-}
-QPushButton#btn_danger:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #b91c1c, stop:1 #7f1d1d);
-}
-QPushButton#btn_success {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #16a34a, stop:1 #15803d);
-    border: 1px solid #15803d;
-}
-QPushButton#btn_success:hover {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-        stop:0 #15803d, stop:1 #166534);
-}
-QComboBox {
-    background: #1f2937;
-    border: 1px solid #374151;
-    border-radius: 4px;
+}}
+QPushButton:hover {{
+    background: {t['accent_hover']};
+    border-color: {t['accent_hover']};
+}}
+QPushButton:pressed {{
+    background: {t['accent_pressed']};
+}}
+QPushButton:disabled {{
+    background: {t['panel_alt_bg']};
+    color: {t['text_muted']};
+    border: 1px solid {t['border']};
+}}
+QPushButton:checked {{
+    background: {t['warning']};
+    border: 1px solid {t['warning']};
+    color: {t['button_text']};
+}}
+QPushButton#btn_danger {{
+    background: {t['danger']};
+    border: 1px solid {t['danger']};
+    color: {t['button_text']};
+}}
+QPushButton#btn_danger:hover {{
+    background: {t['danger_hover']};
+}}
+QPushButton#btn_success {{
+    background: {t['success']};
+    border: 1px solid {t['success']};
+    color: {t['button_text']};
+}}
+QPushButton#btn_success:hover {{
+    background: {t['success_hover']};
+}}
+QComboBox {{
+    background: {t['panel_alt_bg']};
+    border: 1px solid {t['border']};
+    border-radius: 6px;
     padding: 6px 10px;
-    color: #f7fafc;
-}
-QComboBox::drop-down { border: none; }
-QComboBox QAbstractItemView {
-    background: #1f2937;
-    color: #f7fafc;
-    selection-background-color: #2563eb;
-}
-QListWidget {
-    background: #1f2937;
-    border: 1px solid #374151;
-    border-radius: 4px;
-    color: #f7fafc;
-}
-QListWidget::item {
+    color: {t['text_primary']};
+}}
+QComboBox::drop-down {{ border: none; }}
+QComboBox QAbstractItemView {{
+    background: {t['panel_alt_bg']};
+    color: {t['text_primary']};
+    selection-background-color: {t['accent']};
+}}
+QListWidget {{
+    background: {t['panel_deep_bg']};
+    border: 1px solid {t['border']};
+    border-radius: 6px;
+    color: {t['text_primary']};
+}}
+QListWidget::item {{
     padding: 4px 8px;
-}
-QListWidget::item:selected {
-    background: #2563eb;
-}
-QProgressBar {
-    background: #1f2937;
-    border: 1px solid #374151;
-    border-radius: 4px;
+}}
+QListWidget::item:selected {{
+    background: {t['menu_active_bg']};
+}}
+QProgressBar {{
+    background: {t['panel_deep_bg']};
+    border: 1px solid {t['border']};
+    border-radius: 6px;
     text-align: center;
-    color: #f7fafc;
+    color: {t['text_primary']};
     height: 22px;
-}
-QProgressBar::chunk {
-    background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-        stop:0 #2563eb, stop:1 #7c3aed);
-    border-radius: 3px;
-}
-QFrame#separator {
-    background: #374151;
+}}
+QProgressBar::chunk {{
+    background: {t['accent']};
+    border-radius: 5px;
+}}
+QFrame#separator {{
+    background: {t['border']};
     max-height: 1px;
-}
+}}
 """
 
 
@@ -180,7 +187,7 @@ class _MiniViewer2D(QFrame):
 
     def __init__(self, title: str = "", parent: QWidget | None = None) -> None:
         super().__init__(parent)
-        self.setStyleSheet("background: #000; border: 1px solid #333;")
+        self._theme = get_theme_manager().current_theme()
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -190,16 +197,14 @@ class _MiniViewer2D(QFrame):
         if title:
             self._title_label = QLabel(title)
             self._title_label.setAlignment(Qt.AlignCenter)
-            self._title_label.setStyleSheet(
-                "background: #1f2937; color: #93c5fd; font-weight: bold; "
-                "padding: 4px; border: none; font-size: 11px;"
-            )
             layout.addWidget(self._title_label)
 
-        # VTK widget
+        # VTK widget — the image viewport stays BLACK (medical-imaging
+        # standard); only the surrounding chrome is themed.
         self.vtk_widget = QVTKRenderWindowInteractor(self)
         self.vtk_widget.setStyleSheet("border: none; background: black;")
         layout.addWidget(self.vtk_widget)
+        self.apply_theme(self._theme)
 
         # Renderer (layer 0 — image)
         self.renderer = vtk.vtkRenderer()
@@ -234,6 +239,18 @@ class _MiniViewer2D(QFrame):
     def set_title(self, text: str) -> None:
         if self._title_label:
             self._title_label.setText(text)
+
+    def apply_theme(self, theme: dict | None = None) -> None:
+        """Theme the viewer chrome (frame border + title bar). The image
+        viewport itself stays black."""
+        t = theme or get_theme_manager().current_theme()
+        self._theme = t
+        self.setStyleSheet(f"background: #000; border: 1px solid {t['border']};")
+        if self._title_label is not None:
+            self._title_label.setStyleSheet(
+                f"background: {t['panel_bg']}; color: {t['accent']}; "
+                f"font-weight: bold; padding: 4px; border: none; font-size: 11px;"
+            )
 
     # ------------------------------------------------------------------
     #  Image loading
@@ -411,7 +428,11 @@ class StitchingWidget(QWidget):
         self.setWindowTitle("AI Pacs – Stitching")
         self.setMinimumSize(1200, 700)
         self.resize(1500, 850)
-        self.setStyleSheet(_DARK_STYLE)
+
+        # ── Theme ─────────────────────────────────────────────────────
+        self.theme_manager = get_theme_manager()
+        self._theme = self.theme_manager.current_theme()
+        self.theme_manager.themeChanged.connect(self._on_theme_changed)
 
         # ── Data state ────────────────────────────────────────────────
         self._available_series: List[dict] = []
@@ -419,6 +440,7 @@ class StitchingWidget(QWidget):
         self._loaded_images: Dict[str, sitk.Image] = {}  # series_number → sitk
         self._stitched_sitk: sitk.Image | None = None
         self._worker = None
+        self._preview_worker = None               # fast low-res preview thread
         self._temp_dirs: List[str] = []          # temp DICOM dirs (cleanup)
         self._virtual_images: Dict[str, sitk.Image] = {}  # sn → in-memory image
 
@@ -433,6 +455,39 @@ class StitchingWidget(QWidget):
 
         self._build_ui()
         self._connect_signals()
+        self._apply_theme_styles()
+
+    # ==================================================================
+    #  Theme
+    # ==================================================================
+
+    def _on_theme_changed(self, theme) -> None:
+        self._theme = theme or self.theme_manager.current_theme()
+        self._apply_theme_styles()
+
+    def _apply_theme_styles(self) -> None:
+        """Single place that paints the window from V2 tokens (re-run on every
+        live theme change)."""
+        t = self._theme
+        self.setStyleSheet(_build_app_stylesheet(t))
+        self._lbl_loaded_info.setStyleSheet(f"color: {t['info']}; font-style: italic;")
+        self._lbl_pick_status.setStyleSheet(f"color: {t['warning']}; font-style: italic;")
+        self._lbl_compute_hint.setStyleSheet(
+            f"color: {t['warning']}; font-size: 10px; padding: 2px 4px;"
+        )
+        self._style_accuracy("info")
+        for viewer in (self._left_viewer, self._right_viewer):
+            viewer.apply_theme(t)
+
+    def _style_accuracy(self, kind: str) -> None:
+        """Colour the residual/accuracy label by semantic state."""
+        t = self._theme
+        color = {
+            "info": t["info"], "success": t["success"], "danger": t["danger"],
+        }.get(kind, t["info"])
+        self._lbl_accuracy.setStyleSheet(
+            f"color: {color}; font-size: 10px; padding: 4px;"
+        )
 
     # ==================================================================
     #  UI construction
@@ -472,7 +527,6 @@ class StitchingWidget(QWidget):
         cl.addWidget(self._btn_load_selected)
 
         self._lbl_loaded_info = QLabel("")
-        self._lbl_loaded_info.setStyleSheet("color: #93c5fd; font-style: italic;")
         cl.addWidget(self._lbl_loaded_info)
 
         cl.addWidget(self._separator())
@@ -504,7 +558,6 @@ class StitchingWidget(QWidget):
 
         self._lbl_pick_status = QLabel("")
         self._lbl_pick_status.setAlignment(Qt.AlignCenter)
-        self._lbl_pick_status.setStyleSheet("color: #fbbf24; font-style: italic;")
         cl.addWidget(self._lbl_pick_status)
 
         self._landmark_list = QListWidget()
@@ -525,10 +578,24 @@ class StitchingWidget(QWidget):
         cl.addWidget(self._separator())
 
         # -- Action buttons
+        self._btn_quick_preview = QPushButton("Quick Preview (fast)")
+        self._btn_quick_preview.setCursor(Qt.PointingHandCursor)
+        self._btn_quick_preview.setEnabled(False)
+        self._btn_quick_preview.setToolTip(
+            "Fast low-resolution alignment preview from the current landmarks\n"
+            "(no full blend) — check the fit before running Compute Stitching."
+        )
+        cl.addWidget(self._btn_quick_preview)
+
         self._btn_compute = QPushButton("Compute Stitching")
         self._btn_compute.setCursor(Qt.PointingHandCursor)
         self._btn_compute.setEnabled(False)
         cl.addWidget(self._btn_compute)
+
+        # Tells the user *why* Compute is disabled (how many pairs are missing).
+        self._lbl_compute_hint = QLabel("")
+        self._lbl_compute_hint.setWordWrap(True)
+        cl.addWidget(self._lbl_compute_hint)
 
         self._btn_preview = QPushButton("Preview Result")
         self._btn_preview.setObjectName("btn_success")
@@ -565,9 +632,6 @@ class StitchingWidget(QWidget):
         # -- Accuracy info
         self._lbl_accuracy = QLabel("")
         self._lbl_accuracy.setWordWrap(True)
-        self._lbl_accuracy.setStyleSheet(
-            "color: #93c5fd; font-size: 10px; padding: 4px;"
-        )
         cl.addWidget(self._lbl_accuracy)
 
         cl.addStretch()
@@ -603,6 +667,7 @@ class StitchingWidget(QWidget):
         self._btn_place_pair.toggled.connect(self._on_toggle_pick_mode)
         self._btn_remove_lm.clicked.connect(self._on_remove_landmark)
         self._btn_clear_lm.clicked.connect(self._on_clear_landmarks)
+        self._btn_quick_preview.clicked.connect(self._on_quick_preview)
         self._btn_compute.clicked.connect(self._on_compute)
         self._btn_preview.clicked.connect(self._on_preview)
         self._btn_export.clicked.connect(self._on_export)
@@ -665,7 +730,7 @@ class StitchingWidget(QWidget):
         self.show()
         self.raise_()
         self.activateWindow()
-        print(f"[StitchingWidget] Launched with {len(self._available_series)} available series")
+        logger.info("Launched with %d available series", len(self._available_series))
 
     # ==================================================================
     #  Series selection
@@ -726,7 +791,7 @@ class StitchingWidget(QWidget):
                 # Check if this is a virtual (in-memory) stitched result
                 if sn in self._virtual_images:
                     self._loaded_images[sn] = self._virtual_images[sn]
-                    print(f"[StitchingWidget] Loaded virtual series {sn} from memory")
+                    logger.debug("Loaded virtual series %s from memory", sn)
                     continue
                 spath = entry.get("series_path")
                 if not spath or not os.path.isdir(spath):
@@ -737,7 +802,7 @@ class StitchingWidget(QWidget):
                     return
                 img = load_series_as_2d(spath)
                 self._loaded_images[sn] = img
-                print(f"[StitchingWidget] Loaded series {sn}: {img.GetSize()}")
+                logger.debug("Loaded series %s: %s", sn, img.GetSize())
 
         except Exception as exc:
             QMessageBox.critical(self, "Load Error", f"Failed to load series:\n{exc}")
@@ -968,22 +1033,33 @@ class StitchingWidget(QWidget):
         self._update_compute_button()
 
     def _update_compute_button(self) -> None:
-        """Enable Compute if every pair set has enough complete landmarks."""
+        """Enable Compute/Quick-Preview when every boundary has enough pairs,
+        and otherwise tell the user exactly how many more are needed."""
+        min_req = 4  # All transforms require at least 4 landmarks for accuracy
         if not self._selected_series or len(self._selected_series) < 2:
             self._btn_compute.setEnabled(False)
+            self._btn_quick_preview.setEnabled(False)
+            self._lbl_compute_hint.setText("")
             return
 
-        ttype = self._combo_transform.currentText().lower()
-        min_req = 4  # All transforms require at least 4 landmarks for accuracy
         n_pairs = len(self._selected_series) - 1
-
-        all_ok = True
-        for ps in range(n_pairs):
-            if self._landmark_store.complete_count(ps) < min_req:
-                all_ok = False
-                break
+        shortfalls = [
+            (ps, min_req - self._landmark_store.complete_count(ps))
+            for ps in range(n_pairs)
+            if self._landmark_store.complete_count(ps) < min_req
+        ]
+        all_ok = not shortfalls
 
         self._btn_compute.setEnabled(all_ok)
+        self._btn_quick_preview.setEnabled(all_ok)
+        if all_ok:
+            self._lbl_compute_hint.setText("")
+        else:
+            parts = ", ".join(f"pair {ps + 1}: {need} more" for ps, need in shortfalls)
+            self._lbl_compute_hint.setText(
+                f"Place {min_req} complete landmark pairs per boundary to enable "
+                f"Compute  ({parts})."
+            )
 
     def _on_remove_landmark(self) -> None:
         row = self._landmark_list.currentRow()
@@ -1083,9 +1159,7 @@ class StitchingWidget(QWidget):
             self._lbl_accuracy.setText(
                 f"Need {remaining} more complete pair(s) to compute residuals"
             )
-            self._lbl_accuracy.setStyleSheet(
-                "color: #93c5fd; font-size: 10px; padding: 4px;"
-            )
+            self._style_accuracy("info")
             return
 
         try:
@@ -1108,19 +1182,10 @@ class StitchingWidget(QWidget):
             info_text = f"Live Residuals ({header}):\n" + "\n".join(lines)
             self._lbl_accuracy.setText(info_text)
 
-            if any_warning:
-                self._lbl_accuracy.setStyleSheet(
-                    "color: #f87171; font-size: 10px; padding: 4px;"
-                )
-            else:
-                self._lbl_accuracy.setStyleSheet(
-                    "color: #4ade80; font-size: 10px; padding: 4px;"
-                )
+            self._style_accuracy("danger" if any_warning else "success")
         except Exception as exc:
             self._lbl_accuracy.setText(f"Residual error: {exc}")
-            self._lbl_accuracy.setStyleSheet(
-                "color: #f87171; font-size: 10px; padding: 4px;"
-            )
+            self._style_accuracy("danger")
 
     # ==================================================================
     #  Compute & Preview
@@ -1128,7 +1193,7 @@ class StitchingWidget(QWidget):
 
     def _on_compute(self) -> None:
         """Run the N-series chain-stitching pipeline."""
-        if self._worker is not None and self._worker.isRunning():
+        if self._any_worker_running():
             QMessageBox.warning(self, "Busy", "A stitching operation is already running.")
             return
 
@@ -1141,8 +1206,14 @@ class StitchingWidget(QWidget):
         self._lbl_accuracy.setText("")
 
         series_dirs = []
+        preloaded: List[Optional[sitk.Image]] = []
         for entry in self._selected_series:
             series_dirs.append(entry["series_path"])
+            # Reuse the already-loaded image (and the high-fidelity in-memory
+            # stitched result for virtual series) so the worker does not read
+            # the series from disk a second time / lose float precision.
+            sn = str(entry.get("series_number", ""))
+            preloaded.append(self._loaded_images.get(sn))
 
         from .stitch_worker import StitchWorker  # deferred to avoid circular
 
@@ -1151,11 +1222,15 @@ class StitchingWidget(QWidget):
             landmark_store=self._landmark_store,
             transform_type=self._combo_transform.currentText().lower(),
             parent=self,
+            preloaded_images=preloaded,
         )
         self._worker.progress.connect(self._on_worker_progress)
         self._worker.completed.connect(self._on_worker_completed)
         self._worker.error.connect(self._on_worker_error)
         self._worker.residuals_report.connect(self._on_residuals_report)
+        # Release the QThread once it finishes so repeated stitches don't leak
+        # parented workers (each kept a reference to its loaded images).
+        self._worker.finished.connect(self._on_worker_finished)
         self._worker.start()
 
         self._btn_compute.setEnabled(False)
@@ -1174,7 +1249,7 @@ class StitchingWidget(QWidget):
         self._btn_preview.setEnabled(True)
         self._btn_export.setEnabled(True)
         self._btn_use_result.setEnabled(True)
-        print("[StitchingWidget] Chain stitching complete — preview ready")
+        logger.info("Chain stitching complete - preview ready")
 
     def _on_worker_error(self, msg: str) -> None:
         self._progress.setValue(0)
@@ -1182,6 +1257,71 @@ class StitchingWidget(QWidget):
         self._btn_compute.setEnabled(True)
         QMessageBox.critical(self, "Stitching Error", msg)
         self.stitching_error.emit(msg)
+
+    def _on_worker_finished(self) -> None:
+        """Release the finished worker (avoids leaking parented QThreads)."""
+        worker = self._worker
+        self._worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    # ------------------------------------------------------------------
+    #  Quick low-resolution alignment preview (fast feather, no full blend)
+    # ------------------------------------------------------------------
+
+    def _on_quick_preview(self) -> None:
+        if self._any_worker_running():
+            QMessageBox.warning(self, "Busy", "An operation is already running.")
+            return
+
+        series_dirs = []
+        preloaded: List[Optional[sitk.Image]] = []
+        for entry in self._selected_series:
+            series_dirs.append(entry["series_path"])
+            preloaded.append(self._loaded_images.get(str(entry.get("series_number", ""))))
+
+        from .stitch_worker import StitchWorker
+
+        self._preview_worker = StitchWorker(
+            series_dirs=series_dirs,
+            landmark_store=self._landmark_store,
+            transform_type=self._combo_transform.currentText().lower(),
+            parent=self,
+            preloaded_images=preloaded,
+            preview=True,
+        )
+        self._preview_worker.progress.connect(self._on_worker_progress)
+        self._preview_worker.completed.connect(self._on_preview_completed)
+        self._preview_worker.error.connect(self._on_worker_error)
+        self._preview_worker.finished.connect(self._on_preview_worker_finished)
+        self._btn_quick_preview.setEnabled(False)
+        self._btn_compute.setEnabled(False)
+        self._progress.setValue(0)
+        self._preview_worker.start()
+
+    def _on_preview_completed(self, img) -> None:
+        """Display the low-res alignment preview WITHOUT changing the real
+        result state (no export / use-for-next enabled)."""
+        if self._right_interactor:
+            self._right_interactor.clear_markers()
+        self._right_viewer.set_title("Quick Preview (low-res)")
+        self._right_viewer.load_sitk_image(img)
+        self._progress.setValue(100)
+        self._progress.setFormat("Quick preview ready  100%")
+        self._update_compute_button()  # re-enable Compute / Quick Preview
+        logger.debug("Quick preview displayed")
+
+    def _on_preview_worker_finished(self) -> None:
+        worker = self._preview_worker
+        self._preview_worker = None
+        if worker is not None:
+            worker.deleteLater()
+
+    def _any_worker_running(self) -> bool:
+        return bool(
+            (self._worker and self._worker.isRunning())
+            or (self._preview_worker and self._preview_worker.isRunning())
+        )
 
     def _on_preview(self) -> None:
         if self._stitched_sitk is None:
@@ -1192,7 +1332,7 @@ class StitchingWidget(QWidget):
             self._right_interactor.clear_markers()
         self._right_viewer.set_title("Stitched Result")
         self._right_viewer.load_sitk_image(self._stitched_sitk)
-        print("[StitchingWidget] Preview displayed")
+        logger.debug("Preview displayed")
 
     # ==================================================================
     #  Accuracy / residuals — per-landmark report & confirmation dialog
@@ -1245,15 +1385,11 @@ class StitchingWidget(QWidget):
 
         if not any_warning:
             # All within tolerance — worker continues automatically
-            self._lbl_accuracy.setStyleSheet(
-                "color: #4ade80; font-size: 10px; padding: 4px;"
-            )
+            self._style_accuracy("success")
             return
 
         # ── Highlight bad landmarks on the active pair viewers ────────
-        self._lbl_accuracy.setStyleSheet(
-            "color: #f87171; font-size: 10px; padding: 4px;"
-        )
+        self._style_accuracy("danger")
         bad_by_ps: dict[int, set] = defaultdict(set)
         for e in bad_entries:
             bad_by_ps[e["pair_set"]].add(e["lm_index"])
@@ -1323,18 +1459,18 @@ class StitchingWidget(QWidget):
 
         if clicked == btn_continue:
             # User accepts the risk — tell the worker to proceed
-            print("[StitchingWidget] User chose: Continue anyway")
+            logger.info("User chose: Continue anyway")
             if self._worker:
                 self._worker.confirm_continue()
         elif clicked == btn_add_more:
             # Abort stitching, switch to pick mode
-            print("[StitchingWidget] User chose: Add more landmark pairs")
+            logger.info("User chose: Add more landmark pairs")
             if self._worker:
                 self._worker.reject_continue()
             self._btn_place_pair.setChecked(True)
         else:
             # Re-adjust (default) — abort stitching, user will move/re-place
-            print("[StitchingWidget] User chose: Re-adjust landmarks")
+            logger.info("User chose: Re-adjust landmarks")
             if self._worker:
                 self._worker.reject_continue()
 
@@ -1426,7 +1562,7 @@ class StitchingWidget(QWidget):
             "Select it together with the next series to continue "
             "multi-stage stitching.",
         )
-        print(f"[StitchingWidget] Stitched result added as series {new_sn}")
+        logger.info("Stitched result added as series %s", new_sn)
 
     # ==================================================================
     #  DICOM Export
@@ -1470,10 +1606,14 @@ class StitchingWidget(QWidget):
             arr = arr[0]
 
         arr = arr.astype(np.float64)
-        vmin, vmax = arr.min(), arr.max()
+        vmin, vmax = float(arr.min()), float(arr.max())
         if vmax > vmin:
             arr = (arr - vmin) / (vmax - vmin) * 65535.0
-        arr = arr.astype(np.uint16)
+            arr = arr.astype(np.uint16)
+        else:
+            # Constant / blank result — emit a clean zero frame instead of
+            # casting raw (possibly out-of-range) floats to uint16.
+            arr = np.zeros_like(arr, dtype=np.uint16)
         rows, cols = arr.shape
 
         file_meta = FileMetaDataset()
@@ -1523,7 +1663,7 @@ class StitchingWidget(QWidget):
         ]
 
         ds.save_as(filepath)
-        print(f"[StitchingWidget] DICOM exported: {filepath}")
+        logger.info("DICOM exported: %s", filepath)
         return filepath
 
     # ==================================================================
@@ -1531,9 +1671,10 @@ class StitchingWidget(QWidget):
     # ==================================================================
 
     def closeEvent(self, event) -> None:
-        if self._worker and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.wait(3000)
+        for worker in (self._worker, self._preview_worker):
+            if worker and worker.isRunning():
+                worker.cancel()
+                worker.wait(3000)
         self._left_viewer.cleanup()
         self._right_viewer.cleanup()
 

@@ -26,10 +26,13 @@ Created: 2026-02-20  (crosshair markers rewrite)
 
 from __future__ import annotations
 
+import logging
 from typing import List, Literal, Tuple
 
 import vtkmodules.all as vtk
 from PySide6.QtCore import QObject, Signal
+
+logger = logging.getLogger(__name__)
 
 
 # ======================================================================
@@ -310,8 +313,10 @@ class LandmarkInteractorStyle(vtk.vtkInteractorStyleImage):
         # Emit Qt signal
         self.signals.point_picked.emit(self._role, x_phys, y_phys)
 
-        print(f"[LandmarkPick] role={self._role} idx={self._point_index - 1} "
-              f"phys=({x_phys:.2f}, {y_phys:.2f})")
+        logger.debug(
+            "Pick role=%s idx=%d phys=(%.2f, %.2f)",
+            self._role, self._point_index - 1, x_phys, y_phys,
+        )
 
     def _on_left_release(self, obj, event) -> None:
         if not self._enabled:

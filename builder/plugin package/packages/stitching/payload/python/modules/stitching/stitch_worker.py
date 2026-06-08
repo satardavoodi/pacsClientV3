@@ -19,9 +19,10 @@ Created: 2026-02-20  (rewritten for multi-series chain stitching)
 
 from __future__ import annotations
 
+import logging
 import threading
 import traceback
-from typing import List, Literal
+from typing import List, Literal, Optional
 
 import numpy as np
 import SimpleITK as sitk
@@ -29,7 +30,9 @@ from PySide6.QtCore import QThread, Signal
 
 from .landmark_store import LandmarkStore
 from .stitch_engine import compute_transform, compute_residuals, load_series_as_2d
-from .blend_engine import retouch_and_blend
+from .blend_engine import retouch_and_blend, n_image_feather_blend
+
+logger = logging.getLogger(__name__)
 
 
 class StitchWorker(QThread):
@@ -59,11 +62,23 @@ class StitchWorker(QThread):
         landmark_store: LandmarkStore,
         transform_type: Literal["rigid", "similarity", "affine"] = "affine",
         parent=None,
+        preloaded_images: Optional[List[Optional[sitk.Image]]] = None,
+        preview: bool = False,
+        preview_max_dim: int = 1400,
     ) -> None:
         super().__init__(parent)
         self._series_dirs = series_dirs
         self._landmark_store = landmark_store
         self._transform_type = transform_type
+        # Optional ordered list (same order as series_dirs) of already-loaded
+        # 2-D images.  Lets the worker skip a second disk read and use the
+        # high-fidelity in-memory result from a previous stitch stage.
+        self._preloaded_images = preloaded_images
+        # Quick-preview mode: cap the canvas to ``preview_max_dim`` px on its
+        # longest side and use the fast feather blend (skip the accuracy gate)
+        # so the user can eyeball alignment in ~1 s before the full run.
+        self._preview = preview
+        self._preview_max_dim = preview_max_dim
 
         self._cancelled = False
         self._cancel_lock = threading.Lock()
@@ -117,10 +132,19 @@ class StitchWorker(QThread):
                 if self.is_cancelled():
                     return
                 self.progress.emit(f"Loading series {i + 1}/{N}…", i / total_steps)
-                img = load_series_as_2d(d)
+                preloaded = (
+                    self._preloaded_images[i]
+                    if self._preloaded_images is not None
+                    and i < len(self._preloaded_images)
+                    else None
+                )
+                img = preloaded if preloaded is not None else load_series_as_2d(d)
                 images.append(img)
-                print(f"[StitchWorker] Series {i}: size={img.GetSize()}, "
-                      f"spacing={img.GetSpacing()}, origin={img.GetOrigin()}")
+                logger.debug(
+                    "Series %d: size=%s, spacing=%s, origin=%s%s",
+                    i, img.GetSize(), img.GetSpacing(), img.GetOrigin(),
+                    " (preloaded)" if preloaded is not None else "",
+                )
 
             # ── Stage 2: Compute per-pair transforms ─────────────────
             pair_transforms: List[sitk.Transform] = []
@@ -138,12 +162,14 @@ class StitchWorker(QThread):
                 left_flat = self._landmark_store.get_left_flat(ps)
                 right_flat = self._landmark_store.get_right_flat(ps)
                 n_pts = len(left_flat) // 2
-                print(f"[StitchWorker] Pair {ps}: "
-                      f"left_pts={n_pts}, right_pts={len(right_flat)//2}")
+                logger.debug(
+                    "Pair %d: left_pts=%d, right_pts=%d",
+                    ps, n_pts, len(right_flat) // 2,
+                )
 
                 t = compute_transform(left_flat, right_flat, self._transform_type)
                 pair_transforms.append(t)
-                print(f"[StitchWorker] Transform[{ps}]: {t.GetName()}")
+                logger.debug("Transform[%d]: %s", ps, t.GetName())
 
                 # ── Per-landmark residuals with labels ───────────────
                 resids = compute_residuals(left_flat, right_flat, t)
@@ -161,16 +187,18 @@ class StitchWorker(QThread):
                         "exceeds": exceeds,
                     }
                     all_residual_entries.append(entry)
-                    status = "⚠ EXCEEDS 4 mm" if exceeds else "OK"
-                    print(f"[StitchWorker]   {lbl_l}–{lbl_r}: "
-                          f"{r_mm:.3f} mm  [{status}]")
+                    status = "EXCEEDS 4 mm" if exceeds else "OK"
+                    logger.debug(
+                        "  %s-%s: %.3f mm  [%s]", lbl_l, lbl_r, r_mm, status,
+                    )
 
             # ── Emit residual report ─────────────────────────────────
             self.residuals_report.emit(all_residual_entries)
 
             # If any landmark exceeds threshold → pause and wait for
             # user confirmation before doing the expensive stages.
-            if any_exceeds:
+            # Quick preview skips the gate (it is throwaway, low-res output).
+            if any_exceeds and not self._preview:
                 self.progress.emit("Waiting for accuracy confirmation…", 0.35)
                 self._gate.clear()        # block
                 self._gate.wait()         # sleep until UI calls confirm/reject
@@ -223,8 +251,10 @@ class StitchWorker(QThread):
                             cp = inv_ct.TransformPoint(c)
                             all_corners.append(cp)
                     except Exception as exc:
-                        print(f"[StitchWorker] Cannot invert transform for "
-                              f"series {k}: {exc}  — using landmark estimate")
+                        logger.warning(
+                            "Cannot invert transform for series %d: %s "
+                            "- using landmark estimate", k, exc,
+                        )
                         lf = self._landmark_store.get_left_flat(k - 1)
                         rf = self._landmark_store.get_right_flat(k - 1)
                         if lf and rf:
@@ -247,14 +277,26 @@ class StitchWorker(QThread):
             nx = int(np.ceil((max_x - min_x) / finest_sx)) + 1
             ny = int(np.ceil((max_y - min_y) / finest_sy)) + 1
 
+            # Quick preview — cap the longest side so the throwaway preview is
+            # fast and light (coarsen the spacing, keep the physical extent).
+            if self._preview:
+                longest = max(nx, ny)
+                if longest > self._preview_max_dim:
+                    f = longest / float(self._preview_max_dim)
+                    finest_sx *= f
+                    finest_sy *= f
+                    nx = int(np.ceil((max_x - min_x) / finest_sx)) + 1
+                    ny = int(np.ceil((max_y - min_y) / finest_sy)) + 1
+
             canvas = sitk.Image((nx, ny), sitk.sitkFloat32)
             canvas.SetOrigin((min_x, min_y))
             canvas.SetSpacing((finest_sx, finest_sy))
             canvas.SetDirection((1.0, 0.0, 0.0, 1.0))
 
-            print(f"[StitchWorker] Canvas: size=({nx},{ny}), "
-                  f"origin=({min_x:.2f},{min_y:.2f}), "
-                  f"spacing=({finest_sx:.4f},{finest_sy:.4f})")
+            logger.debug(
+                "Canvas: size=(%d,%d), origin=(%.2f,%.2f), spacing=(%.4f,%.4f)",
+                nx, ny, min_x, min_y, finest_sx, finest_sy,
+            )
 
             # ── Stage 5: Resample each image onto the union canvas ───
             arrays: List[np.ndarray] = []
@@ -273,20 +315,32 @@ class StitchWorker(QThread):
                     0.0,
                     sitk.sitkFloat32,
                 )
-                arr = sitk.GetArrayFromImage(resampled).astype(np.float64)
+                # float32 (resample output is already float32) — half the
+                # memory of the old float64 cast, identical visual result.
+                arr = sitk.GetArrayFromImage(resampled).astype(np.float32)
                 arrays.append(arr)
-                nonzero = int((arr != 0).sum())
-                print(f"[StitchWorker] Resampled series {k}: "
-                      f"shape={arr.shape}, nonzero_pixels={nonzero}")
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Resampled series %d: shape=%s, nonzero_pixels=%d",
+                        k, arr.shape, int((arr != 0).sum()),
+                    )
+                del resampled
 
             del images
 
-            # ── Stage 6: Histogram match + multi-band blend ─────────
+            # ── Stage 6: blend ───────────────────────────────────────
+            # Preview = fast feather; full run = histogram match + multi-band.
             if self.is_cancelled():
                 return
             step = N + (N - 1) + 1 + N
-            self.progress.emit("Retouching seams & blending…", step / total_steps)
-            blended = retouch_and_blend(arrays)
+            if self._preview:
+                self.progress.emit("Building quick preview…", step / total_steps)
+                blended = n_image_feather_blend(arrays)
+            else:
+                self.progress.emit(
+                    "Retouching seams & blending…", step / total_steps
+                )
+                blended = retouch_and_blend(arrays)
             del arrays
 
             # ── Wrap result as sitk.Image ────────────────────────────
@@ -300,10 +354,9 @@ class StitchWorker(QThread):
             del blended, canvas
 
             self.progress.emit("Stitching complete", 1.0)
-            print("[StitchWorker] Pipeline finished successfully")
+            logger.info("Pipeline finished successfully")
             self.completed.emit(stitched)
 
         except Exception as exc:
-            tb = traceback.format_exc()
-            print(f"[StitchWorker] ERROR: {exc}\n{tb}")
+            logger.error("Pipeline error: %s\n%s", exc, traceback.format_exc())
             self.error.emit(str(exc))
