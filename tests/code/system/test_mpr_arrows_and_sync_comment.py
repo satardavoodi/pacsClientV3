@@ -262,6 +262,19 @@ def test_measurement_tools_arrow_uses_leader_actor_not_caption():
     assert "GetCommand(" in code
 
 
+def test_mpr_arrow_head_is_proportionate_to_body():
+    """The filled head must be large enough to read against the line body
+    (reported 'body thick / head small'): vtkLeaderActor2D sizes the head as a
+    fraction of the leader length, so both ArrowLength and ArrowWidth are bumped,
+    and the body line width is capped so a thick configured width can't dwarf it."""
+    code = _strip_comments(_MPR_TOOLS.read_text(encoding="utf-8", errors="ignore"))
+    assert "SetArrowLength(0.15)" in code
+    assert "SetArrowWidth(0.12)" in code
+    assert "SetArrowLength(0.06)" not in code   # the old tiny head is gone
+    # body width capped (thinner user settings still honored)
+    assert "min(float(st.line_width), 2.0)" in code
+
+
 def test_crosshair_yields_to_active_arrow_tool():
     """The crosshair press handler must yield while the arrow tool is
     placing, so an arrow click doesn't also move the crosshair."""

@@ -406,14 +406,16 @@ class MPRMeasurementTools:
         """Filled-head arrow between two WORLD points (camera-stable)."""
         renderer = self.mpr_viewer.viewers[view_name]['renderer']
 
-        # Match the saved Tools Settings arrow style (same as the 2D viewer).
+        # Match the saved Tools Settings arrow style (same as the 2D viewer), but
+        # cap the BODY width: a thick configured line dwarfed the small head
+        # (reported "body thick / head small"). Thinner settings are still honored.
         color = (0.0, 0.9, 0.0)
-        width = 3.0
+        width = 2.0
         try:
             from PacsClient.pacs.patient_tab.utils.tools_settings import get_arrow_style
             st = get_arrow_style()
             color = tuple(st.color)[:3]
-            width = max(1.0, float(st.line_width))
+            width = max(1.0, min(float(st.line_width), 2.0))
         except Exception:
             pass
 
@@ -424,7 +426,12 @@ class MPRMeasurementTools:
         leader.GetPosition2Coordinate().SetValue(*p2_world)
         leader.SetArrowStyleToFilled()
         leader.SetArrowPlacementToPoint2()
-        leader.SetArrowLength(0.06)
+        # vtkLeaderActor2D sizes the head as a FRACTION of the leader (line) length,
+        # so the old 0.06 length + default (~0.02) width drew a thin sliver behind
+        # the body. Enlarge BOTH so the filled triangular head reads clearly and is
+        # proportionate to the line. (ArrowLength = head length, ArrowWidth = base.)
+        leader.SetArrowLength(0.15)
+        leader.SetArrowWidth(0.12)
         leader.GetProperty().SetColor(*color)
         leader.GetProperty().SetLineWidth(width)
 
