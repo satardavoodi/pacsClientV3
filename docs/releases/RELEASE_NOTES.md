@@ -19,6 +19,7 @@ all current local working-tree changes in the 3.2.6 release commit.
 - All updates carried forward from v3.2.5
 - Current local source and documentation changes included in this release commit
 - Version metadata and release documentation advanced to v3.2.6
+- Follow-up 3.2.6 sync commit for GitHub account distribution and doc refresh
 
 ---
 

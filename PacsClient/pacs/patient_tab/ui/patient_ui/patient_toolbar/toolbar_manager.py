@@ -3046,6 +3046,139 @@ class ToolbarManager:
             import traceback
             traceback.print_exc()
 
+    # CT window presets — ONE source of truth shared by the WL preset dropdown
+    # buttons AND the F1–F4 Patient-Tab shortcuts (no duplicated apply logic).
+    WINDOW_PRESETS = {
+        'lung': (1500, -600),
+        'abdomen': (400, 40),
+        'brain': (80, 40),
+        'bone': (2000, 500),
+    }
+
+    def _wl_mark_manual_window_level(self, target):
+        """Flag the viewer as manually window-leveled so auto/default WL won't
+        clobber the preset on the next slice."""
+        for candidate in (target, getattr(target, 'image_viewer', None)):
+            if candidate is not None and hasattr(candidate, 'flag_set_custom_window_level'):
+                try:
+                    candidate.flag_set_custom_window_level = True
+                except Exception:
+                    pass
+
+    def _apply_wl_preset(self, ww, wl):
+        """Apply a WW/WL preset to the active viewport (FAST / Advanced / MPR).
+        Extracted from the WL dropdown so the F1–F3 shortcuts run identical
+        code (the 'same backend action as the preset UI')."""
+        try:
+            selected_widget = self.patient_widget.selected_widget
+            if selected_widget is None:
+                return
+            if self.is_mpr_viewer(selected_widget):
+                mpr_widget = self.get_mpr_widget(selected_widget)
+                if mpr_widget and hasattr(mpr_widget, 'set_window_level'):
+                    self._wl_mark_manual_window_level(mpr_widget)
+                    mpr_widget.set_window_level(ww, wl)
+                return
+            image_viewer = getattr(selected_widget, 'image_viewer', None)
+            if image_viewer and hasattr(image_viewer, 'set_window_level'):
+                self._wl_mark_manual_window_level(image_viewer)
+                image_viewer.set_window_level(ww, wl)
+                # Force immediate visual update — set_window_level may hit the
+                # _wl_unchanged early-return guard when the preset matches the
+                # current pipeline WL, leaving the display stale even though
+                # the pipeline WL was updated.  Mirrors _apply_default_wl_preset.
+                try:
+                    if (hasattr(image_viewer, 'pipeline') and
+                            hasattr(image_viewer, 'qt_viewer')):
+                        current_slice = getattr(image_viewer, '_current_slice', 0)
+                        _frame = image_viewer.pipeline.get_rendered_frame(current_slice)
+                        image_viewer.qt_viewer.set_image(_frame.qimage)
+                        image_viewer._window = float(_frame.window_width)
+                        image_viewer._level = float(_frame.window_center)
+                        image_viewer._update_annotations(
+                            current_slice, _frame.window_width, _frame.window_center,
+                        )
+                    else:
+                        image_viewer.Render()
+                except Exception:
+                    pass
+            elif hasattr(selected_widget, 'set_window_level'):
+                self._wl_mark_manual_window_level(selected_widget)
+                selected_widget.set_window_level(ww, wl)
+        except Exception as e:
+            logger.warning(f"[WL_PRESET] Failed to apply preset WW={ww} WL={wl}: {e}")
+
+    def _apply_default_wl_preset(self):
+        """Restore the DICOM-default WW/WL on the active viewport. Extracted so
+        the F4 shortcut runs identical code to the 'Default Preset' button."""
+        try:
+            selected_widget = self.patient_widget.selected_widget
+            if selected_widget is None:
+                return
+            if self.is_mpr_viewer(selected_widget):
+                mpr_widget = self.get_mpr_widget(selected_widget)
+                if mpr_widget and hasattr(mpr_widget, 'apply_default_window_level'):
+                    mpr_widget.apply_default_window_level(0)
+                return
+            image_viewer = getattr(selected_widget, 'image_viewer', None)
+            if image_viewer and hasattr(image_viewer, 'apply_default_window_level'):
+                try:
+                    image_viewer.flag_set_custom_window_level = False
+                except Exception:
+                    pass
+                current_slice = 0
+                try:
+                    if hasattr(image_viewer, '_current_slice'):
+                        current_slice = image_viewer._current_slice
+                    elif hasattr(image_viewer, 'GetSlice'):
+                        current_slice = image_viewer.GetSlice()
+                except Exception:
+                    pass
+                image_viewer.apply_default_window_level(current_slice)
+                # Force immediate visual update (apply_default_window_level uses
+                # flag_default=True which skips qt_viewer.set_image()).
+                try:
+                    if (hasattr(image_viewer, 'pipeline') and
+                            hasattr(image_viewer, 'qt_viewer')):
+                        _frame = image_viewer.pipeline.get_rendered_frame(current_slice)
+                        image_viewer.qt_viewer.set_image(_frame.qimage)
+                        image_viewer._window = float(_frame.window_width)
+                        image_viewer._level = float(_frame.window_center)
+                        image_viewer._update_annotations(
+                            current_slice, _frame.window_width, _frame.window_center,
+                        )
+                    else:
+                        image_viewer.Render()
+                except Exception:
+                    pass
+            elif hasattr(selected_widget, 'apply_default_window_level'):
+                try:
+                    selected_widget.flag_set_custom_window_level = False
+                except Exception:
+                    pass
+                selected_widget.apply_default_window_level(0)
+                try:
+                    selected_widget.Render()
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.warning(f"[WL_PRESET] Failed to apply default preset: {e}")
+
+    def apply_named_window_preset(self, name):
+        """Apply a CT window preset by NAME (lung/abdomen/bone/brain) or
+        'default'/'reset'. Single entry point reused by the WL preset dropdown
+        and the F1–F4 Patient-Tab shortcuts — same backend action either way.
+        Returns True if a known preset was applied."""
+        key = str(name or '').strip().lower()
+        if key in ('default', 'reset', 'dicom'):
+            self._apply_default_wl_preset()
+            return True
+        preset = self.WINDOW_PRESETS.get(key)
+        if preset is not None:
+            self._apply_wl_preset(preset[0], preset[1])
+            return True
+        return False
+
     def _show_wl_presets_dropdown(self, button):
         """Show CT Window/Level preset dropdown next to the WL split-button."""
         CT_PRESETS = [
@@ -3086,53 +3219,9 @@ class ToolbarManager:
             """)
             layout.addWidget(header)
 
-            def _mark_manual_window_level(target):
-                for candidate in (target, getattr(target, 'image_viewer', None)):
-                    if candidate is not None and hasattr(candidate, 'flag_set_custom_window_level'):
-                        try:
-                            candidate.flag_set_custom_window_level = True
-                        except Exception:
-                            pass
-
             def _apply_preset(ww, wl):
-                try:
-                    selected_widget = self.patient_widget.selected_widget
-                    if selected_widget is None:
-                        return
-                    if self.is_mpr_viewer(selected_widget):
-                        mpr_widget = self.get_mpr_widget(selected_widget)
-                        if mpr_widget and hasattr(mpr_widget, 'set_window_level'):
-                            _mark_manual_window_level(mpr_widget)
-                            mpr_widget.set_window_level(ww, wl)
-                        return
-                    image_viewer = getattr(selected_widget, 'image_viewer', None)
-                    if image_viewer and hasattr(image_viewer, 'set_window_level'):
-                        _mark_manual_window_level(image_viewer)
-                        image_viewer.set_window_level(ww, wl)
-                        # Force immediate visual update — set_window_level may hit the
-                        # _wl_unchanged early-return guard when the preset matches the
-                        # current pipeline WL, leaving the display stale even though
-                        # the pipeline WL was updated.  Mirrors _apply_default_preset.
-                        try:
-                            if (hasattr(image_viewer, 'pipeline') and
-                                    hasattr(image_viewer, 'qt_viewer')):
-                                current_slice = getattr(image_viewer, '_current_slice', 0)
-                                _frame = image_viewer.pipeline.get_rendered_frame(current_slice)
-                                image_viewer.qt_viewer.set_image(_frame.qimage)
-                                image_viewer._window = float(_frame.window_width)
-                                image_viewer._level = float(_frame.window_center)
-                                image_viewer._update_annotations(
-                                    current_slice, _frame.window_width, _frame.window_center,
-                                )
-                            else:
-                                image_viewer.Render()
-                        except Exception:
-                            pass
-                    elif hasattr(selected_widget, 'set_window_level'):
-                        _mark_manual_window_level(selected_widget)
-                        selected_widget.set_window_level(ww, wl)
-                except Exception as e:
-                    logger.warning(f"[WL_PRESET] Failed to apply preset WW={ww} WL={wl}: {e}")
+                # Delegates to the shared method (reused by the F1–F3 shortcuts).
+                self._apply_wl_preset(ww, wl)
 
             for label, ww, wl, color in CT_PRESETS:
                 btn = create_dropdown_tool(f'{label}  (WW:{ww} / WL:{wl})', None, color)
@@ -3140,68 +3229,8 @@ class ToolbarManager:
                 layout.addWidget(btn)
 
             def _apply_default_preset():
-                try:
-                    selected_widget = self.patient_widget.selected_widget
-                    if selected_widget is None:
-                        return
-                    if self.is_mpr_viewer(selected_widget):
-                        mpr_widget = self.get_mpr_widget(selected_widget)
-                        if mpr_widget and hasattr(mpr_widget, 'apply_default_window_level'):
-                            mpr_widget.apply_default_window_level(0)
-                        return
-                    image_viewer = getattr(selected_widget, 'image_viewer', None)
-                    if image_viewer and hasattr(image_viewer, 'apply_default_window_level'):
-                        try:
-                            image_viewer.flag_set_custom_window_level = False
-                        except Exception:
-                            pass
-                        current_slice = 0
-                        try:
-                            if hasattr(image_viewer, '_current_slice'):
-                                current_slice = image_viewer._current_slice
-                            elif hasattr(image_viewer, 'GetSlice'):
-                                current_slice = image_viewer.GetSlice()
-                        except Exception:
-                            pass
-                        image_viewer.apply_default_window_level(current_slice)
-                        # Force immediate visual update: apply_default_window_level
-                        # uses flag_default=True which skips qt_viewer.set_image().
-                        # Outside the scroll context the display must be updated
-                        # explicitly so the user sees the change without scrolling.
-                        try:
-                            if (hasattr(image_viewer, 'pipeline') and
-                                    hasattr(image_viewer, 'qt_viewer')):
-                                # FAST mode: re-decode and present the current frame
-                                # with the updated (default) W/L settings.
-                                _frame = image_viewer.pipeline.get_rendered_frame(
-                                    current_slice
-                                )
-                                image_viewer.qt_viewer.set_image(_frame.qimage)
-                                image_viewer._window = float(_frame.window_width)
-                                image_viewer._level = float(_frame.window_center)
-                                image_viewer._update_annotations(
-                                    current_slice,
-                                    _frame.window_width,
-                                    _frame.window_center,
-                                )
-                            else:
-                                # Advanced VTK mode: color_mapper is already dirty
-                                # after set_window_level; Render() flushes it.
-                                image_viewer.Render()
-                        except Exception:
-                            pass
-                    elif hasattr(selected_widget, 'apply_default_window_level'):
-                        try:
-                            selected_widget.flag_set_custom_window_level = False
-                        except Exception:
-                            pass
-                        selected_widget.apply_default_window_level(0)
-                        try:
-                            selected_widget.Render()
-                        except Exception:
-                            pass
-                except Exception as e:
-                    logger.warning(f"[WL_PRESET] Failed to apply default preset: {e}")
+                # Delegates to the shared method (reused by the F4 shortcut).
+                self._apply_default_wl_preset()
 
             from PySide6.QtWidgets import QFrame
             sep = QFrame()

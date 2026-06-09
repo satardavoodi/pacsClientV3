@@ -82,7 +82,35 @@ class ShortcutManager(QObject):
         self.f12_shortcut.setContext(Qt.ApplicationShortcut)  # Work everywhere
         self.f12_shortcut.activated.connect(self._on_f12_pressed)
 
-        logger.info("Shortcuts initialized: F5/F6/F7/F8/F12 and arrow navigation")
+        # ── Patient-Tab scoped shortcuts (2026-06-09) ────────────────────
+        # Registered app-wide for one central shortcut table (same as F5–F8),
+        # but every handler first resolves the ACTIVE patient tab and no-ops
+        # when the current tab isn't a Patient Viewer — so they never disturb
+        # the Home page or other modules. They reuse the toolbar's own button
+        # logic (no duplicated preset/recording/capture code).
+        #   F1–F4 = CT window presets (Lung / Abdomen / Bone / Default)
+        #   F9    = voice record toggle (start → pause → resume)
+        #   F10   = save / approve the current voice recording
+        #   F11   = total-layout screenshot (all viewers)
+        self._patient_fkey_shortcuts = {}
+        for key, handler in (
+            (Qt.Key_F1, lambda: self._on_patient_window_preset('lung')),
+            (Qt.Key_F2, lambda: self._on_patient_window_preset('abdomen')),
+            (Qt.Key_F3, lambda: self._on_patient_window_preset('bone')),
+            (Qt.Key_F4, lambda: self._on_patient_window_preset('default')),
+            (Qt.Key_F9, self._on_patient_voice_toggle),
+            (Qt.Key_F10, self._on_patient_voice_save),
+            (Qt.Key_F11, self._on_patient_total_layout_capture),
+        ):
+            sc = QShortcut(QKeySequence(key), self.main_window)
+            sc.setContext(Qt.ApplicationShortcut)
+            sc.activated.connect(handler)
+            self._patient_fkey_shortcuts[key] = sc
+
+        logger.info(
+            "Shortcuts initialized: F1-F4 (WL presets), F5/F6/F7/F8, "
+            "F9/F10 (voice), F11 (layout capture), F12 and arrow navigation"
+        )
     
     def set_control_panel(self, control_panel):
         """Set the control panel reference for navigation"""
@@ -407,6 +435,83 @@ class ShortcutManager(QObject):
             print(f"✗ Error toggling Secretary popup: {e}")
             import traceback
             traceback.print_exc()
+
+    # ── Patient-Tab scoped shortcut helpers (2026-06-09) ─────────────────
+    def _active_patient_tab(self):
+        """Return the current tab IFF it is a Patient Viewer (carries a live
+        ``toolbar_manager``), else None. This is the scoping guard for the
+        F1–F4 / F9 / F10 / F11 patient shortcuts: when the active tab isn't a
+        patient viewer they no-op, so they never disturb the Home page or
+        other modules."""
+        try:
+            if self.home_widget and hasattr(self.home_widget, 'tab_widget'):
+                cw = self.home_widget.tab_widget.currentWidget()
+                if cw is not None and getattr(cw, 'toolbar_manager', None) is not None:
+                    return cw
+        except Exception:
+            pass
+        return None
+
+    def _on_patient_window_preset(self, name):
+        """F1–F4: apply a CT window preset (lung/abdomen/bone/default) to the
+        active patient viewport — reuses the toolbar's own preset action, so it
+        is identical to picking the preset from the WL preset UI."""
+        pw = self._active_patient_tab()
+        if pw is None:
+            return
+        try:
+            pw.toolbar_manager.apply_named_window_preset(name)
+            print(f"✓ Window preset '{name}' applied via shortcut")
+        except Exception as e:
+            print(f"✗ Error applying window preset '{name}': {e}")
+
+    def _on_patient_voice_toggle(self):
+        """F9: behave exactly like clicking the toolbar mic/Voice button —
+        start recording, then pause ↔ resume on subsequent presses, never
+        losing the captured audio (reuses ToolbarManager.toggle_microphone →
+        VoiceWidget.toggle_recording)."""
+        pw = self._active_patient_tab()
+        if pw is None:
+            return
+        try:
+            tb = pw.toolbar_manager
+            try:
+                mic_btn = tb.tools_button[tb.tool_access.MICROPHONE]
+            except Exception:
+                mic_btn = None
+            selected_widget = getattr(pw, 'selected_widget', None)
+            tb.toggle_microphone(selected_widget, mic_btn)
+            print("✓ Voice record toggled via F9")
+        except Exception as e:
+            print(f"✗ Error toggling voice recording: {e}")
+
+    def _on_patient_voice_save(self):
+        """F10: finalize / save the current voice recording — same action as
+        clicking the green Save button in the voice recorder UI."""
+        pw = self._active_patient_tab()
+        if pw is None:
+            return
+        try:
+            soundbox = pw.toolbar_manager.get_soundbox()
+            if soundbox is not None and hasattr(soundbox, '_on_save_clicked'):
+                soundbox._on_save_clicked()
+                print("✓ Voice recording saved via F10")
+        except Exception as e:
+            print(f"✗ Error saving voice recording: {e}")
+
+    def _on_patient_total_layout_capture(self):
+        """F11: capture a screenshot of the whole viewer layout (all panes) —
+        same action as the capture menu's 'Total Layouts' option."""
+        pw = self._active_patient_tab()
+        if pw is None:
+            return
+        try:
+            tb = pw.toolbar_manager
+            if hasattr(tb, '_capture_all_layouts'):
+                tb._capture_all_layouts()
+                print("✓ Total-layout screenshot captured via F11")
+        except Exception as e:
+            print(f"✗ Error capturing total layout: {e}")
 
     def _on_arrow_up_pressed(self):
         """Arrow Up: Previous slice in active viewport"""

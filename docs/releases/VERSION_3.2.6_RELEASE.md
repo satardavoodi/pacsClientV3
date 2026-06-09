@@ -42,3 +42,4 @@ LICENSE unchanged (AI-PACS EULA v3.0.9, effective 2026-05-25).
 - Built/packaged from latest `beta-version` working state
 - Version line bumped to `v3.2.6` across canonical metadata files
 - Commit and remote sync performed for requested repositories/branches
+- Additional same-version (v3.2.6) follow-up sync commit published to requested remotes
