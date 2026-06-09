@@ -77,12 +77,23 @@ class MPRToolbarInteractorStyle(vtk.vtkInteractorStyleImage):
         self.parent.current_position[2] += scroll_dir[2] * delta_mm
 
         self.parent._clamp_current_position()
-        self.parent._update_all_crosshairs()
-        self.parent._update_slice_positions()
-        self.parent._synchronize_oblique_views()
-        self.parent._update_slice_info_texts()
-        self.parent._update_coordinates_label()
-        self.parent._render_immediately(self.view_name)
+        # Coalesce the cross-pane sync (crosshairs + slice positions + oblique +
+        # slice-info across all panes) to frame cadence — the SAME throttle the
+        # crosshair style uses — so the toolbar Stack drag + wheel stay smooth on
+        # large / oblique series. The scrolled pane's own label + render stay
+        # immediate so each step responds instantly. Legacy inline path when the
+        # throttle is disabled (AIPACS_ZETA_MPR_INTERACT_MS=0).
+        if self.parent._interaction_budget_ms() > 0:
+            self.parent._request_interaction_update('move')
+            self.parent._update_coordinates_label()
+            self.parent._render_immediately(self.view_name)
+        else:
+            self.parent._update_all_crosshairs()
+            self.parent._update_slice_positions()
+            self.parent._synchronize_oblique_views()
+            self.parent._update_slice_info_texts()
+            self.parent._update_coordinates_label()
+            self.parent._render_immediately(self.view_name)
 
     def on_left_button_press(self, obj, event):
         self.parent._set_active_view(self.view_name)
@@ -183,9 +194,10 @@ class MPRToolbarInteractorStyle(vtk.vtkInteractorStyleImage):
         if step_slices == 0:
             return
 
-        # Match 2D behavior: dragging down goes "backward"
-        spacing_mm = self.parent.spacing[axis_index]
-        delta_mm = -step_slices * spacing_mm
+        # Drag DOWN (dy<0 in VTK display coords) → slice number INCREASES; drag UP →
+        # DECREASES. Computed from the desired slice-number change so it is correct
+        # for any series orientation (see _stack_delta_mm).
+        delta_mm = self.parent._stack_delta_mm(self.view_name, axis_index, -step_slices)
         self._move_along_stack(delta_mm)
         self.last_pos = current_pos
 

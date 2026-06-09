@@ -179,8 +179,10 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         if step_slices == 0:
             return
 
-        spacing_mm = self.parent.spacing[axis_index]
-        delta_mm = -step_slices * spacing_mm
+        # Drag DOWN (dy<0 in VTK display coords) → slice number INCREASES; drag UP →
+        # DECREASES. Computed from the desired slice-number change so it is correct
+        # for any series orientation (see _stack_delta_mm).
+        delta_mm = self.parent._stack_delta_mm(self.view_name, axis_index, -step_slices)
         self._move_along_stack(delta_mm)
         self.last_pos = current_pos
 

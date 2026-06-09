@@ -727,6 +727,33 @@ class _MprOrientationMixin:
 
         return camera_pos, self.center, view_up
 
+    def _stack_delta_mm(self, view_name, axis_index, desired_slices):
+        """Convert a DESIRED displayed-slice-number change into the mm delta for
+        ``_move_along_stack`` so the direction is correct for ANY series orientation.
+
+        The displayed number is ``slice_num = (current_position[axis] - origin[axis])
+        / spacing[axis]`` and ``_move_along_stack`` moves ``current_position`` by
+        ``scroll_dir * delta_mm``; therefore ``Δslice_num = scroll_dir[axis] *
+        delta_mm / spacing[axis]``. Solving for the mm needed to realise
+        ``desired_slices`` gives ``delta_mm = desired_slices * spacing[axis] /
+        scroll_dir[axis]``. Because ``scroll_dir``'s sign comes from the DICOM
+        direction matrix (it varies per series), this is what makes
+        ``desired_slices > 0`` ALWAYS increase the displayed slice number — a fixed
+        mm sign could not. Falls back to a stable sign if the look axis has no scroll
+        component."""
+        try:
+            spacing_mm = float(self.spacing[axis_index])
+        except Exception:
+            spacing_mm = 1.0
+        try:
+            scroll_dir = self._get_scroll_direction(view_name)
+            sd = float(scroll_dir[axis_index]) if axis_index < len(scroll_dir) else 0.0
+            if abs(sd) < 1e-6:
+                return desired_slices * spacing_mm
+            return desired_slices * spacing_mm / sd
+        except Exception:
+            return desired_slices * spacing_mm
+
     def _get_scroll_direction(self, view_name):
         """Get the scroll direction vector for a view based on image orientation."""
         slice_dir = [
