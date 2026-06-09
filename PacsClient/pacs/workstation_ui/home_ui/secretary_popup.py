@@ -80,6 +80,14 @@ class SecretaryPopup(QWidget):
 
         # ── the secretary widget itself (own instance) ──────────────────
         self.inner = (inner_factory or _default_inner_factory)()
+        # Mark the widget as hosted in the global popup so it can bring the
+        # main window's Home page forward after a successful home-data command
+        # (download / search / list) — otherwise the command executes in the
+        # background and the user, looking at the viewer, sees "nothing happen".
+        try:
+            self.inner._in_global_popup = True
+        except Exception:
+            pass
         root.addWidget(self.inner, 1)
 
         self.setMinimumWidth(330)

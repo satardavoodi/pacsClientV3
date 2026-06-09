@@ -290,7 +290,20 @@ need `background: transparent` or they show banding. Offscreen preview
 renders need `QT_QPA_FONTDIR=C:\Windows\Fonts` (offscreen QPA has no GDI
 font database; without it every glyph is tofu).
 
-## 15. Known limitations / deferred
+## 15. Series drag-and-drop to a pane (v1.4 — 2026-06-07)
+
+The series list (`SeriesListWidget`) is a drag source: `startDrag` packs the
+series index (Qt.UserRole) into a private MIME type `_SERIES_MIME`; header
+rows (no UserRole) aren't draggable. Each `ImageCanvas` is a drop target
+(`setAcceptDrops`) — `dragEnterEvent` shows a cyan border + "Drop series
+here", `dropEvent` decodes the index and fires `on_series_dropped`, which
+loads that series into THAT pane and activates it. Click-to-active-pane is
+unchanged. Tests drive both ends directly (QDrag.exec is modal so the OS
+loop can't run under pytest): list builds the MIME, a synthetic QDropEvent
+routes to the pane; bad/out-of-range payloads are rejected without changing
+state. `tests/.../test_viewer_dragdrop.py` (4) — suite total 78.
+
+## 16. Known limitations / deferred
 
 * IMAPI2 `Write()` is synchronous — no fine-grained burn % (progress jumps
   50→95) and mid-write cancel is not possible. Event-sink progress is a

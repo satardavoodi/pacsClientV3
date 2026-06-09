@@ -136,7 +136,8 @@ class PatientListSocketClient:
                 length_bytes = len(request_bytes).to_bytes(4, byteorder='big')
                 self.socket.sendall(length_bytes)
                 self.socket.sendall(request_bytes)
-                
+                _t_send = time.perf_counter()  # [NET_TIMING] request fully sent
+
                 logger.debug(f"📤 [Socket] Request sent, waiting for response...")
                 
                 # Loop to handle broadcasts and wait for actual response.
@@ -167,17 +168,20 @@ class PatientListSocketClient:
                         raise Exception(f"Response too large: {response_length} bytes")
                     
                     logger.debug(f"📥 [Socket] Response length: {response_length} bytes")
-                    
+                    _t_hdr = time.perf_counter()  # [NET_TIMING] length header in hand = server started replying
+
                     # Receive response content (exact byte count)
                     response_data = self._recv_exact(response_length)
                     if not response_data or len(response_data) != response_length:
                         raise Exception("Incomplete response data")
-                    
+                    _t_body = time.perf_counter()  # [NET_TIMING] full payload received
+
                     logger.debug(f"📥 [Socket] Received {len(response_data)} bytes of response data")
-                    
+
                     # Convert to JSON
                     response = json.loads(response_data.decode('utf-8'))
-                    
+                    _t_parse = time.perf_counter()  # [NET_TIMING] JSON parsed
+
                     # Check if this is a broadcast message
                     if response.get('type') == 'broadcast':
                         broadcast_count += 1
@@ -188,7 +192,25 @@ class PatientListSocketClient:
                         )
                         continue
                     
-                    # This is the actual response
+                    # This is the actual response.
+                    # [NET_TIMING] (2026-06-09) split the cost: server_wait = time
+                    # from request-sent to the server's first reply byte (server-side
+                    # compute); transfer = time to receive the payload over the wire
+                    # (network + payload size); parse = json.loads. payload_bytes is
+                    # the exact response size — confirms whether the patient list is
+                    # actually small.
+                    try:
+                        logger.warning(
+                            "[NET_TIMING] endpoint=%s payload_bytes=%d server_wait_ms=%.0f "
+                            "transfer_ms=%.0f parse_ms=%.0f total_ms=%.0f",
+                            endpoint, int(response_length),
+                            (_t_hdr - _t_send) * 1000.0,
+                            (_t_body - _t_hdr) * 1000.0,
+                            (_t_parse - _t_body) * 1000.0,
+                            (_t_parse - _t_send) * 1000.0,
+                        )
+                    except Exception:
+                        pass
                     logger.debug(f"📥 [Socket] Parsed response successfully")
                     return response
                 

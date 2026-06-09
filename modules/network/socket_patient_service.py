@@ -225,6 +225,23 @@ class SocketPatientService(QObject):
         Returns:
             list: List of patients
         """
+        # STARTUP-TRACE (2026-06-08, TEMPORARY — remove after diagnosing the
+        # startup OAuth coupling): dump the caller stack for the FIRST sync search
+        # of the process so we can see exactly what triggers the initial home
+        # patient-list load and whether it is chained to the consultation poller.
+        # Read-only; one-shot per process.
+        try:
+            if not getattr(self.__class__, "_startup_search_traced", False):
+                self.__class__._startup_search_traced = True
+                import traceback as _tb
+                import time as _t
+                logger.warning(
+                    "[STARTUP_SEARCH_TRACE] first sync search at mono=%.3f params_keys=%s\nCALLER STACK:\n%s",
+                    _t.perf_counter(), list((search_params or {}).keys()),
+                    "".join(_tb.format_stack(limit=22)),
+                )
+        except Exception:
+            pass
         client = None
         try:
             client = self._get_client()

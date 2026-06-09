@@ -1515,6 +1515,27 @@ class ToolbarManager:
             return widget
         return None
 
+    def _mpr_single_use_tool_finished(self):
+        """Callback fired by the MPR viewer when a single-use tool
+        (ruler/angle/arrow) completes ONE measurement. Mirrors the 2D
+        viewer's auto_deactivate_tool: drop the tool highlight and return to
+        the MPR default mouse mode (stack / WL / zoom). MPR mode itself stays
+        active (tool_selected = MPR), only the measurement tool turns off."""
+        try:
+            self.tool_selected = self.tool_access.MPR
+            self.handle_buttons_checked()
+        except Exception:
+            pass
+
+    def _register_mpr_tool_auto_exit(self, mpr_widget):
+        """Give the MPR viewer the auto-exit callback (no-op if unsupported)."""
+        try:
+            setter = getattr(mpr_widget, 'set_tool_auto_exit_callback', None)
+            if callable(setter):
+                setter(self._mpr_single_use_tool_finished)
+        except Exception:
+            pass
+
     def can_use_tool(self, widget):
         """Check if tool can be used on this widget"""
         # Check if it's an MPR viewer
@@ -1751,6 +1772,7 @@ class ToolbarManager:
                     if self.tool_selected != self.tool_access.MPR:
                         logger.info("   🔧 [RULER] Deactivating other tools first")
                         self.check_and_deactivate_tools()
+                    self._register_mpr_tool_auto_exit(mpr_widget)
                     mpr_widget.activate_ruler()
                     self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.RULER}'
                     logger.info("   ✓ Ruler tool activated in MPR on all 2D views")
@@ -1878,6 +1900,7 @@ class ToolbarManager:
                     # Activate angle
                     if self.tool_selected != self.tool_access.MPR:
                         self.check_and_deactivate_tools()
+                    self._register_mpr_tool_auto_exit(mpr_widget)
                     mpr_widget.activate_angle()
                     self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ANGLE}'
                     print("✓ Angle tool activated in MPR on all 2D views")
@@ -1961,6 +1984,7 @@ class ToolbarManager:
                     # Activate on ALL 2D viewports (axial, sagittal, coronal)
                     if self.tool_selected != self.tool_access.MPR:
                         self.check_and_deactivate_tools()
+                    self._register_mpr_tool_auto_exit(mpr_widget)
                     success = mpr_widget.activate_arrow()
                     if success:
                         self.tool_selected = f'{self.tool_access.MPR},{self.tool_access.ARROW}'

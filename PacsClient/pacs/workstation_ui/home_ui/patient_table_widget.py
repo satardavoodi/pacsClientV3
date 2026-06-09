@@ -4677,23 +4677,61 @@ class PatientTableWidget(QWidget):
                             item.setBackground(QColor('#3182ce'))
                             item.setForeground(QColor('#ffffff'))
     
+    @staticmethod
+    def _modality_summary_label(raw):
+        """Normalize a table modality cell into a CLINICAL imaging-modality
+        label for the results summary.
+
+        DOC (scanned / dicomized clinical-history documents) is an AUXILIARY
+        series attached to a study — NOT a standalone imaging modality. The
+        modality cell joins a study's series modalities (e.g. an MRI study with
+        a scanned history reads ``"MR, DOC"``). For the summary we strip the
+        DOC token and count the study under its PARENT modality, so ``"MR"`` and
+        ``"MR, DOC"`` both tally as ``MRI`` (→ "51 MRI" instead of a fragmented
+        "27 MRI" + "24 MRI with Document"). A study whose ONLY series are
+        documents falls back to ``OTHER`` so ``DOC`` never appears as its own
+        modality category. The DOC series themselves are untouched — this only
+        affects how the summary counts/labels.
+        """
+        import re
+        _DOC = {'DOC', 'DOCUMENT', 'DOCUMENTS'}
+        _LABELS = {'MR': 'MRI'}  # friendly name; other codes pass through
+        # Split on the separators the cell may use (', ' join, slashes, etc.)
+        # plus a literal "… with Document" phrasing, just in case. Case-
+        # insensitive so "with" matches before the tokens are upper-cased.
+        tokens = [
+            t.strip().upper()
+            for t in re.split(r'[,/\\;+]|\bwith\b', str(raw or ''), flags=re.IGNORECASE)
+            if t.strip()
+        ]
+        real = [t for t in tokens if t not in _DOC]
+        if not real:
+            return 'OTHER'  # document-only study → not a real imaging modality
+        out, seen = [], set()
+        for t in real:
+            lab = _LABELS.get(t, t)
+            if lab not in seen:
+                seen.add(lab)
+                out.append(lab)
+        return ', '.join(out)
+
     def _build_modality_count_summary(self):
         """Build a modality-aware results summary, e.g. ' 32 MRI studies found' or
-        ' 32 MRI studies, 16 CT studies found' (most common modality first). Returns
-        None on any problem so the caller can fall back to the plain count."""
+        ' 32 MRI studies, 16 CT studies found' (most common modality first). DOC
+        document series are merged into the parent study's modality (never a
+        separate category) — see ``_modality_summary_label``. Returns None on any
+        problem so the caller can fall back to the plain count."""
         try:
             from collections import Counter
             tally = Counter()
             for row in range(self.results_table.rowCount()):
                 it = self.results_table.item(row, COL['modality'])
-                mod = (it.text().strip().upper() if (it and it.text()) else '') or 'OTHER'
-                tally[mod] += 1
+                raw = it.text() if (it and it.text()) else ''
+                tally[self._modality_summary_label(raw)] += 1
             if not tally:
                 return None
-            label_map = {'MR': 'MRI'}  # show the friendly name; other codes pass through
             parts = []
-            for mod, n in tally.most_common():
-                label = label_map.get(mod, mod)
+            for label, n in tally.most_common():
                 noun = 'study' if n == 1 else 'studies'
                 parts.append(f"{n} {label} {noun}")
             return " " + ", ".join(parts) + " found"

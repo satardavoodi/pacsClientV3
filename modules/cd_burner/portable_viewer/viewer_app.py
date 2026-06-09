@@ -17,11 +17,21 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
-from PySide6.QtCore import QObject, QPoint, QPointF, QRunnable, Qt, QThreadPool, Signal
+from PySide6.QtCore import (
+    QMimeData,
+    QObject,
+    QPoint,
+    QPointF,
+    QRunnable,
+    Qt,
+    QThreadPool,
+    Signal,
+)
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
     QColor,
+    QDrag,
     QFont,
     QImage,
     QKeySequence,
@@ -88,6 +98,7 @@ logger = logging.getLogger(__name__)
 
 _SLICE_CACHE_MAX = 96          # decoded slices kept in memory (LRU, shared)
 _PREFETCH_RADIUS = 2           # neighbour slices loaded in the background
+_SERIES_MIME = "application/x-aipacs-series-index"  # drag payload: series index
 
 _DARK_QSS = """
 QMainWindow, QWidget { background-color: #14181d; color: #d7dde3; }
@@ -140,6 +151,42 @@ class _SliceLoadTask(QRunnable):
 
 
 # ---------------------------------------------------------------------------
+# Series list (drag source)
+# ---------------------------------------------------------------------------
+
+class SeriesListWidget(QListWidget):
+    """Series list that can be dragged onto a viewport pane.
+
+    The drag payload is the series index (Qt.UserRole) wrapped in a private
+    MIME type, so a pane drop knows exactly which series to load — clicking
+    still loads into the active pane (unchanged).
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragEnabled(True)
+        self.setDragDropMode(QListWidget.DragOnly)
+        self.setDefaultDropAction(Qt.CopyAction)
+
+    def mimeTypes(self):  # noqa: N802 — Qt override
+        return [_SERIES_MIME]
+
+    def startDrag(self, supported_actions):  # noqa: N802 — Qt override
+        item = self.currentItem()
+        if item is None:
+            return
+        index = item.data(Qt.UserRole)
+        if index is None:  # patient/study header row — not draggable
+            return
+        mime = QMimeData()
+        mime.setData(_SERIES_MIME, str(int(index)).encode("ascii"))
+        mime.setText(item.text().strip())  # harmless human-readable fallback
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.exec(Qt.CopyAction)
+
+
+# ---------------------------------------------------------------------------
 # Image canvas (one viewport pane)
 # ---------------------------------------------------------------------------
 
@@ -161,6 +208,8 @@ class ImageCanvas(QWidget):
         self.setMinimumSize(220, 220)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.setAcceptDrops(True)            # series drag-and-drop target
+        self._drop_hover = False
 
         self._image: Optional[QImage] = None
         self._zoom: float = 1.0
@@ -184,6 +233,7 @@ class ImageCanvas(QWidget):
         self.on_ruler_done: Callable[[Tuple[float, float], Tuple[float, float]], None] = (
             lambda p1, p2: None
         )
+        self.on_series_dropped: Callable[[int], None] = lambda series_index: None
 
         self._drag_button: Optional[Qt.MouseButton] = None
         self._drag_last: QPoint = QPoint()
@@ -294,6 +344,19 @@ class ImageCanvas(QWidget):
         painter.end()
 
     def _paint_border(self, painter: QPainter):
+        if self._drop_hover:
+            # Highlight + hint while a series is dragged over this pane
+            painter.setPen(QPen(QColor("#22d3ee"), 3))
+            painter.drawRect(self.rect().adjusted(2, 2, -2, -2))
+            painter.setPen(QPen(QColor("#22d3ee")))
+            font = QFont(self.font())
+            font.setPointSize(11)
+            font.setBold(True)
+            painter.setFont(font)
+            painter.drawText(
+                self.rect(), Qt.AlignBottom | Qt.AlignHCenter, "Drop series here  "
+            )
+            return
         color = QColor("#3b82f6") if self.is_active else QColor("#2a323c")
         painter.setPen(QPen(color, 2))
         painter.drawRect(self.rect().adjusted(1, 1, -1, -1))
@@ -448,6 +511,47 @@ class ImageCanvas(QWidget):
         self.on_interaction_changed()
         event.accept()
 
+    # -- drag-and-drop (series → pane) ----------------------------------------
+
+    def dragEnterEvent(self, event):  # noqa: N802 — Qt override
+        if event.mimeData().hasFormat(_SERIES_MIME):
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+            self._drop_hover = True
+            self.update()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):  # noqa: N802 — Qt override
+        if event.mimeData().hasFormat(_SERIES_MIME):
+            event.setDropAction(Qt.CopyAction)
+            event.accept()
+        else:
+            event.ignore()
+
+    def dragLeaveEvent(self, event):  # noqa: N802 — Qt override
+        self._drop_hover = False
+        self.update()
+
+    def dropEvent(self, event):  # noqa: N802 — Qt override
+        self._drop_hover = False
+        data = event.mimeData().data(_SERIES_MIME)
+        if data.isEmpty():
+            event.ignore()
+            self.update()
+            return
+        try:
+            series_index = int(bytes(data).decode("ascii"))
+        except Exception:
+            event.ignore()
+            self.update()
+            return
+        event.setDropAction(Qt.CopyAction)
+        event.accept()
+        self.on_activated()
+        self.on_series_dropped(series_index)
+        self.update()
+
 
 # ---------------------------------------------------------------------------
 # Pane state
@@ -542,7 +646,7 @@ class LiteViewerWindow(QMainWindow):
         self.setStyleSheet(_DARK_QSS)
 
         # Central widgets FIRST — toolbar actions connect to them.
-        self.series_list = QListWidget(self)
+        self.series_list = SeriesListWidget(self)
         self.series_list.setMinimumWidth(220)
         self.series_list.setMaximumWidth(420)
         self.series_list.currentItemChanged.connect(self._on_series_item_changed)
@@ -554,7 +658,8 @@ class LiteViewerWindow(QMainWindow):
             canvas.on_interaction_changed = (lambda i=index: self._refresh_overlay_pane(i))
             canvas.on_activated = (lambda i=index: self._set_active_pane(i))
             canvas.on_ruler_done = (lambda p1, p2, i=index: self._add_ruler(i, p1, p2))
-            canvas.empty_text = "Click a series to load it here"
+            canvas.on_series_dropped = (lambda series_index, i=index: self._on_series_dropped(i, series_index))
+            canvas.empty_text = "Click or drag a series here"
             self.canvases.append(canvas)
 
         toolbar = QToolBar("Main", self)
@@ -839,6 +944,13 @@ class LiteViewerWindow(QMainWindow):
         if idx is None:
             return
         self._select_series_for_pane(self.active_pane, int(idx), from_list=True)
+
+    def _on_series_dropped(self, pane: int, series_index: int):
+        """A series was dragged from the list and dropped onto `pane`."""
+        if not (0 <= series_index < len(self._series)):
+            return
+        self._set_active_pane(pane)
+        self._select_series_for_pane(pane, series_index)
 
     def _select_series(self, index: int, from_list: bool = False):
         """Legacy single-pane API: loads into the ACTIVE pane."""

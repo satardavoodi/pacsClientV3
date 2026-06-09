@@ -213,6 +213,15 @@ class _MprLayoutMixin:
         # call activate_caption, producing the reported wrong arrows.
         return self.measurement_tools.activate_arrow_tool('all')
 
+    def set_tool_auto_exit_callback(self, callback):
+        """Register the toolbar callback invoked when a single-use tool
+        (ruler/angle/arrow) finishes one measurement — lets MPR drop the tool
+        highlight + restore the default mouse mode, matching the 2D viewer."""
+        try:
+            self.measurement_tools.on_auto_exit = callback
+        except Exception:
+            pass
+
     def deactivate_tool(self):
         self.measurement_tools.deactivate_tool()
 

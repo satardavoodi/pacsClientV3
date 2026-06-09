@@ -42,8 +42,88 @@ class MPRMeasurementTools:
         # observer tags + the pending first (tail) point per view.
         self._arrow_observers = {}
         self._arrow_pending_tail = {}
-        
+
+        # Single-use tool auto-exit (2026-06-09): ruler/angle/arrow are
+        # one-shot — after ONE completed measurement the tool returns the
+        # mouse to the MPR default (stack/WL/zoom), exactly like the 2D
+        # viewer's RulerInteractorStyle.auto_deactivate_tool(). `on_auto_exit`
+        # is the toolbar callback (set via _mpr_layout.set_tool_auto_exit_
+        # callback) that drops the tool highlight + restores tool_selected.
+        self.on_auto_exit = None
+        self._placement_clicks = {}      # {(view, tool): count}
+        self._auto_exit_in_progress = False
+
         logger.info("MPR Measurement Tools initialized")
+
+    # ── Single-use tool auto-exit (2026-06-09) ──────────────────────────
+    def _register_placement_autoexit(self, widget, view_name, tool_name, threshold):
+        """Observe a placement widget's PlacePointEvent and auto-exit the tool
+        once `threshold` points are placed (ruler=2, angle=3) — mirrors the 2D
+        viewer's per-tool auto-deactivate so MPR never stays stuck in a tool."""
+        self._placement_clicks[(view_name, tool_name)] = 0
+
+        def _on_place(obj, event, vn=view_name, tn=tool_name, th=threshold):
+            try:
+                key = (vn, tn)
+                self._placement_clicks[key] = self._placement_clicks.get(key, 0) + 1
+                if self._placement_clicks[key] >= th:
+                    self._fire_single_use_auto_exit(vn, tn)
+            except Exception as exc:
+                logger.error(f"placement auto-exit failed on {vn}/{tn}: {exc}")
+
+        try:
+            widget.AddObserver(vtk.vtkCommand.PlacePointEvent, _on_place)
+        except Exception as exc:
+            logger.error(f"could not register placement auto-exit: {exc}")
+
+    def _fire_single_use_auto_exit(self, completed_view, tool_name):
+        """Defer the actual teardown to the next event-loop tick so we never
+        mutate widgets inside their own VTK placement callback."""
+        if self._auto_exit_in_progress:
+            return
+        self._auto_exit_in_progress = True
+        try:
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(
+                0, lambda: self._do_single_use_auto_exit(completed_view, tool_name)
+            )
+        except Exception:
+            # No Qt loop (headless) — run inline as a fallback.
+            self._do_single_use_auto_exit(completed_view, tool_name)
+
+    def _do_single_use_auto_exit(self, completed_view, tool_name):
+        try:
+            # Remove the EMPTY placement widgets on the OTHER views so a stray
+            # click there can't start a second measurement (the reported
+            # "multiple rulers"); keep the one the user just completed.
+            if tool_name in ('ruler', 'angle'):
+                for vn in ('axial', 'sagittal', 'coronal'):
+                    if vn == completed_view or vn not in self.active_tools:
+                        continue
+                    for w in list(self.active_tools[vn].get(tool_name, [])):
+                        try:
+                            w.Off()
+                        except Exception:
+                            pass
+                        try:
+                            self.active_tools[vn][tool_name].remove(w)
+                        except ValueError:
+                            pass
+            # Arrow: drop the click observers so no further arrows are placed.
+            self._deactivate_arrow_placement()
+            self._placement_clicks.clear()
+            self.current_tool = None
+            # Tell the toolbar to drop the tool highlight + restore the MPR
+            # default mouse mode (stack / WL / zoom).
+            cb = self.on_auto_exit
+            if callable(cb):
+                try:
+                    cb()
+                except Exception as exc:
+                    logger.error(f"auto-exit toolbar callback failed: {exc}")
+            logger.info(f"✓ MPR single-use tool '{tool_name}' auto-exited → default")
+        finally:
+            self._auto_exit_in_progress = False
     
     def activate_ruler_tool(self, view_name='axial'):
         """
@@ -109,7 +189,9 @@ class MPRMeasurementTools:
         
         # Store the widget
         self.active_tools[view_name]['ruler'].append(distance_widget)
-        
+        # Single-use: exit ruler mode after the 2-point measurement completes.
+        self._register_placement_autoexit(distance_widget, view_name, 'ruler', 2)
+
         logger.info(f"✓ Ruler widget created and enabled on {view_name}")
         return True
     
@@ -178,7 +260,9 @@ class MPRMeasurementTools:
         
         # Store the widget
         self.active_tools[view_name]['angle'].append(angle_widget)
-        
+        # Single-use: exit angle mode after the 3-point measurement completes.
+        self._register_placement_autoexit(angle_widget, view_name, 'angle', 3)
+
         logger.info(f"✓ Angle widget created and enabled on {view_name}")
         return True
     
@@ -243,8 +327,8 @@ class MPRMeasurementTools:
     # instantly spawned a "Text" box with a default leader line in every
     # pane (the reported broken arrows). This is a real arrow matching the
     # 2D viewer's semantics: click 1 = tail, click 2 = head → filled-head
-    # arrow drawn between the two points; repeat for more arrows until the
-    # toolbar button is toggled off.
+    # arrow drawn between the two points. SINGLE-USE (2026-06-09): after one
+    # arrow the tool auto-exits to the MPR default mouse mode, like ruler/angle.
 
     def activate_arrow_tool(self, view_name='all'):
         """Activate two-click arrow placement on the given view(s)."""
@@ -315,6 +399,8 @@ class MPRMeasurementTools:
 
         self._arrow_pending_tail[view_name] = None
         self._create_arrow_actor(view_name, tail, world)
+        # Single-use: one arrow drawn → return to the MPR default mouse mode.
+        self._fire_single_use_auto_exit(view_name, 'arrow')
 
     def _create_arrow_actor(self, view_name, p1_world, p2_world):
         """Filled-head arrow between two WORLD points (camera-stable)."""

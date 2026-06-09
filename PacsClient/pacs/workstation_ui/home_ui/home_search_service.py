@@ -755,8 +755,24 @@ class HomeSearchService:
         - Ignore patient name (ID is authoritative)
         - Keep normal list limit so all studies for that patient return
         """
+        # Lazy-enrich probe (2026-06-09): a broad (100-row) result takes ~17s
+        # server-side; the cost is the per-patient enrichment. `include_study_count`
+        # makes the server count series across ALL of each patient's studies — the
+        # suspected dominant cost — and it only feeds a thumbnail-cache HINT
+        # (count_of_series/total_studies), so it is safe to defer. `include_latest_study`
+        # is KEPT because the row needs latest_study_uid to be openable.
+        # Flag default OFF = current behavior; AIPACS_SEARCH_LAZY_ENRICH=1 drops
+        # study_count so we can measure the speedup before building the background fill.
+        # Limit knob (default 100 = unchanged). Set AIPACS_SEARCH_LIMIT to a smaller
+        # value to measure whether a CAPPED small page avoids the ~16s full-page
+        # server cost (decides whether "load 20, then the rest" pagination helps).
+        import os as _os
+        try:
+            _limit = int(_os.getenv("AIPACS_SEARCH_LIMIT", "100"))
+        except Exception:
+            _limit = 100
         socket_params = {
-            "limit": 100,
+            "limit": _limit,
             "offset": 0,
             "include_study_count": True,
             "include_latest_study": True,

@@ -1195,12 +1195,40 @@ class SecretaryButtonWidget(QWidget):
     # ── Confirmation dialog ───────────────────────────────────────────────────
 
     def _show_secretary_confirm_dialog(self, result: dict) -> bool:
-        """Show the EchoMind confirmation popup. Returns True if user clicked Yes."""
+        """Show the EchoMind confirmation popup. Returns True if user clicked Yes.
+
+        F12 fix (2026-06-09): when this widget is hosted inside the global
+        ``SecretaryPopup`` (a frameless, always-on-top ``Qt.Tool`` window), a
+        modal dialog parented to that popup is rendered *behind* the always-on-
+        top popup — so the user's "Yes" never cleanly resolves to Accepted and
+        the confirmed action silently cancels (the reported "asks for
+        confirmation, then nothing happens"). Parenting the dialog to the real
+        main window AND giving it WindowStaysOnTopHint makes the F12 flow
+        behave exactly like the Main-Page orb (whose ``self.window()`` is
+        already the main window). Harmless for the orb."""
         try:
-            dlg = SecretaryConfirmDialog(result, parent=self.window())
+            # Resolve the REAL top-level main window, not self.window() (which
+            # is the always-on-top popup when hosted by F12).
+            host = None
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.home_panel.widget import get_home_widget
+                hw = get_home_widget()
+                if hw is not None:
+                    host = hw.window()
+            except Exception:
+                host = None
+            if host is None:
+                host = self.window()
+
+            dlg = SecretaryConfirmDialog(result, parent=host)
+            # Sit above the always-on-top F12 popup so the Yes/No buttons are
+            # actually visible and clickable.
+            try:
+                dlg.setWindowFlag(Qt.WindowStaysOnTopHint, True)
+            except Exception:
+                pass
             dlg.adjustSize()
             # Centre the dialog over the host window
-            host = self.window()
             if host is not None:
                 geo = host.geometry()
                 hint = dlg.sizeHint()
@@ -1211,6 +1239,47 @@ class SecretaryButtonWidget(QWidget):
             return dlg.exec() == QDialog.Accepted
         except Exception:
             return False
+
+    # ── F12 global-popup: surface home-data results (2026-06-09) ─────────
+    # Actions whose result lives on the Home page. When the assistant runs
+    # from the global F12 popup (over the viewer/another module), bring the
+    # Home page forward after one of these succeeds so the user actually sees
+    # the outcome (download manager, search/patient list). Viewer/read actions
+    # are intentionally excluded so reviewing isn't interrupted.
+    _HOME_RESULT_ACTIONS = {
+        "list_patients", "download_patient", "select_and_download",
+        "sort_patients", "set_source_mode", "import_dicom", "select_patient",
+    }
+
+    def _maybe_surface_home_result(self, result: dict) -> None:
+        """Bring the main window's Home page forward for a successful
+        home-data command — ONLY when hosted in the global F12 popup. No-op
+        for the Main-Page orb (already on Home) and for non-home actions.
+        Best-effort; never raises into the result path."""
+        try:
+            if not getattr(self, "_in_global_popup", False):
+                return
+            if not (result or {}).get("ok"):
+                return
+            if str((result or {}).get("action") or "") not in self._HOME_RESULT_ACTIONS:
+                return
+            from PacsClient.pacs.workstation_ui.home_ui.home_panel.widget import get_home_widget
+            hw = get_home_widget()
+            if hw is None:
+                return
+            main_win = hw.window()
+            if main_win is None:
+                return
+            show_home = getattr(main_win, "_show_home_page", None)
+            if callable(show_home):
+                show_home()
+            try:
+                main_win.raise_()
+                main_win.activateWindow()
+            except Exception:
+                pass
+        except Exception:
+            pass
 
     def append_log(self, role, text):
         ts = datetime.now().strftime("%H:%M:%S")
@@ -1798,6 +1867,7 @@ class SecretaryButtonWidget(QWidget):
             elif isinstance(data, dict):
                 _elog2(f"  data keys  : {list(data.keys())}")
             self.append_output(self._format_secretary_result_text(result or {}))
+            self._maybe_surface_home_result(result or {})
             self._set_thinking_status("Ready")
             self.set_ui_state("idle")
             # Update memory label with new cycle count
