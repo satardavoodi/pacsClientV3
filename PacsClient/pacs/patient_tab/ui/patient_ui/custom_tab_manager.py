@@ -779,47 +779,76 @@ class CustomTabManager:
         return self.get_patient_tab_info(current_index)
     
     def on_tab_changed(self, index):
-        """Handle tab change events"""
-        
-        # Set all tabs as inactive first
-        for tab_idx, tab_data in self.patient_tabs.items():
-            if hasattr(tab_data['custom_tab'], 'set_active'):
-                tab_data['custom_tab'].set_active(False)
+        """Handle tab change events.
+
+        Resolve the active tab by the LIVE widget at ``index``
+        (``self.tab_widget.widget(index)``), NOT by ``patient_tabs[index]``.
+        QTabWidget re-indexes the surviving tabs when one is removed (and on a
+        user drag-reorder), but ``patient_tabs`` is keyed by index and is not
+        always rebuilt before this slot runs — e.g. the native tab 'X' routes
+        through ``MainWindow.close_tab``, which closes the tab without going
+        through ``close_patient_tab``/``update_tab_indices``. Keying activation
+        off the stale index then skipped the surviving patient's
+        ``on_tab_activated()`` (leaving its viewer torn down — drag-drop,
+        stacking and series-import all dead). Matching by widget identity makes
+        activation correct regardless of index staleness.
+        """
+        current_widget = (
+            self.tab_widget.widget(index)
+            if 0 <= index < self.tab_widget.count() else None
+        )
+
+        # Deactivate every known patient tab whose widget is NOT the current one.
+        active_tab_data = None
+        for tab_data in self.patient_tabs.values():
+            widget = tab_data.get('widget')
+            if current_widget is not None and widget is current_widget:
+                active_tab_data = tab_data
+                continue
+            custom_tab = tab_data.get('custom_tab')
+            if custom_tab is not None and hasattr(custom_tab, 'set_active'):
+                try:
+                    custom_tab.set_active(False)
+                except Exception:
+                    pass
             try:
-                widget = tab_data.get('widget')
                 if widget is not None and hasattr(widget, 'on_tab_deactivated'):
                     widget.on_tab_deactivated()
             except Exception:
                 pass
-        
-        # Set current tab as active
-        if index in self.patient_tabs:
-            tab_data = self.patient_tabs[index]
-            if hasattr(tab_data['custom_tab'], 'set_active'):
-                tab_data['custom_tab'].set_active(True)
-                # Set logo button as inactive when patient tab is selected
-                self.set_logo_active(False)
 
+        if active_tab_data is not None:
+            # Normal path: the current widget is a tracked patient tab.
+            custom_tab = active_tab_data.get('custom_tab')
+            if custom_tab is not None and hasattr(custom_tab, 'set_active'):
+                try:
+                    custom_tab.set_active(True)
+                except Exception:
+                    pass
+            # Set logo button as inactive when a patient tab is selected
+            self.set_logo_active(False)
             try:
-                widget = tab_data.get('widget')
+                widget = active_tab_data.get('widget')
                 if widget is not None and hasattr(widget, 'on_tab_activated'):
                     widget.on_tab_activated()
             except Exception:
                 pass
-            
-            # Legacy priority manager removed - Zeta handles priority internally
-            # if study_uid and PRIORITY_MANAGER_AVAILABLE:
-            #     priority_manager = get_download_priority_manager()
-            #     priority_manager.on_patient_tab_activated(study_uid)
-            study_uid = tab_data.get('study_uid')
+            study_uid = active_tab_data.get('study_uid')
             if study_uid:
                 logger.debug(f"Tab activated for study {study_uid[:20]}...")
+        elif current_widget is not None and hasattr(current_widget, 'on_tab_activated'):
+            # The current widget is a patient viewer whose patient_tabs entry is
+            # stale/missing (a sibling tab was closed via a path that didn't
+            # rebuild the index map). Activate it BY IDENTITY so it is never left
+            # in the deactivated (torn-down) state.
+            self.set_logo_active(False)
+            try:
+                current_widget.on_tab_activated()
+            except Exception:
+                pass
         else:
-            # If switching to patient list tab (index 0), set logo as active
-            if index == 0:
-                self.set_logo_active(True)
-            else:
-                self.set_logo_active(False)
+            # Patient-list tab (index 0) or a non-patient widget.
+            self.set_logo_active(index == 0)
     
     def show_patient_list(self):
         """Show patient list when logo is clicked"""

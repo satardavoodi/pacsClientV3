@@ -1095,12 +1095,30 @@ class MainWindowWidget(QWidget):
         if not widget:
             return
 
+        # The patient tab-manager (CustomTabManager) tracks tabs in index-keyed
+        # maps (patient_tabs / study_uid_to_tab / title_bar_tabs). removeTab()
+        # below re-indexes the surviving tabs, so those maps MUST be rebuilt or
+        # the surviving patient is mis-resolved: its on_tab_activated() never
+        # fires (viewer left torn down → drag-drop / stacking / series-import
+        # dead) and study_uid→tab lookups point at the wrong tab. The patient
+        # widget's own closeEvent does this via close_patient_tab(); this native
+        # tab-'X' handler must do the equivalent. No-op for non-patient tabs.
+        tab_manager = getattr(widget, "tab_manager", None)
+
         # Determine which tab to select after closing
         # If closing the current tab, select the previous tab (or home if none)
         current_i = self.tab_widget.currentIndex()
         should_go_home = (current_i == index)
 
         self.tab_widget.removeTab(index)
+
+        # Reconcile the tab-manager's index maps with the now re-indexed
+        # QTabWidget before any re-selection drives tab activation.
+        if tab_manager is not None and hasattr(tab_manager, "update_tab_indices"):
+            try:
+                tab_manager.update_tab_indices()
+            except Exception:
+                pass
 
         if should_go_home:
             # If we closed the current tab, go to home or previous tab
