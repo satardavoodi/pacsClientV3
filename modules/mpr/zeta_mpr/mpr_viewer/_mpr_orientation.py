@@ -196,19 +196,40 @@ class _MprOrientationMixin:
         except Exception:
             return 16
 
+    def _mpr_perf_note(self, op, ms):
+        """Gated MPR-latency KPI: log a slow hot-path frame when AIPACS_ZETA_MPR_PERF is
+        set. Off by default (only an env lookup of overhead), so production is untouched;
+        set AIPACS_ZETA_MPR_PERF=1 (optional AIPACS_ZETA_MPR_PERF_MS=<ms>) to capture
+        per-op interaction latency in the logs."""
+        try:
+            import os
+            if not os.environ.get("AIPACS_ZETA_MPR_PERF"):
+                return
+            thresh = float(os.environ.get("AIPACS_ZETA_MPR_PERF_MS", "12") or 12)
+            if ms >= thresh:
+                logger.warning("[ZETA_MPR_PERF] op=%s ms=%.1f", op, ms)
+        except Exception:
+            pass
+
     def _apply_interaction_update(self, kind):
         """Run the actual view updates for one interaction step (same calls/order as the legacy
         inline path). kind='move' → crosshairs + slice positions + oblique + slice-info text;
-        kind='rotate' → crosshairs + oblique only."""
+        kind='rotate' → crosshairs + oblique only; kind='scroll' → crosshairs + oblique +
+        slice-info text (mouse-wheel: the scrolled pane's camera/render is done inline by the
+        wheel handler; this coalesces the cross-pane sync)."""
+        import time as _t
+        _t0 = _t.perf_counter()
         try:
             self._update_all_crosshairs()
             if kind == 'move':
                 self._update_slice_positions()
             self._synchronize_oblique_views()
-            if kind == 'move':
+            if kind in ('move', 'scroll'):
                 self._update_slice_info_texts()
         except Exception as exc:
             logger.debug("[ZETA_MPR] interaction update (%s) failed: %r", kind, exc)
+        finally:
+            self._mpr_perf_note("interaction_%s" % kind, (_t.perf_counter() - _t0) * 1000.0)
 
     def _request_interaction_update(self, kind):
         """Frame-cadence throttle for interactive crosshair updates (see note above)."""
@@ -219,8 +240,11 @@ class _MprOrientationMixin:
             return
         import time as _t
         prev = getattr(self, "_interaction_pending_kind", None)
-        # 'move' supersedes 'rotate' (move does strictly more); within one gesture kind is constant.
-        merged = 'move' if (kind == 'move' or prev == 'move') else 'rotate'
+        # Coalesce by superset rank: move ⊃ scroll ⊃ rotate (each higher rank does strictly
+        # more work). Within one gesture kind is constant; the rank only matters if a pending
+        # frame is upgraded before it flushes.
+        _rank = {'rotate': 0, 'scroll': 1, 'move': 2}
+        merged = kind if _rank.get(kind, 0) >= _rank.get(prev, -1) else prev
         self._interaction_pending_kind = merged
         self._interaction_active_kind = merged
         now = _t.monotonic() * 1000.0

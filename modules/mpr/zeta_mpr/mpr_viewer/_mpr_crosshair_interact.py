@@ -70,9 +70,16 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         return math.sqrt((point[0] - closest_x) ** 2 + (point[1] - closest_y) ** 2)
 
     def _world_to_display(self, world_pos):
-        """Convert world coordinates to display coordinates"""
-        coord_converter = vtk.vtkCoordinate()
-        coord_converter.SetCoordinateSystemToWorld()
+        """Convert world coordinates to display coordinates.
+
+        Reuses ONE cached vtkCoordinate instead of allocating a new one on every
+        call — this runs up to 4× per hover move (check_handle_hover), so the old
+        per-call allocation added avoidable churn to the mouse hot path."""
+        coord_converter = getattr(self, '_coord_converter', None)
+        if coord_converter is None:
+            coord_converter = vtk.vtkCoordinate()
+            coord_converter.SetCoordinateSystemToWorld()
+            self._coord_converter = coord_converter
         coord_converter.SetValue(world_pos[0], world_pos[1], world_pos[2])
         return coord_converter.GetComputedDisplayValue(self.renderer)
 
@@ -251,6 +258,23 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
 
     def check_handle_hover(self, click_pos):
         """Check if mouse is hovering over rotation zones, lines, or center"""
+        # Hover only sets the cursor SHAPE, but it runs a vtkPropPicker.Pick() +
+        # world→display conversions on EVERY MouseMoveEvent (often >100 Hz) — and
+        # it also fires while an annotation tool is drawing (no crosshair drag is
+        # active) — which is the dominant "mouse feels laggy in MPR" cost. Coalesce
+        # to frame cadence so the cursor still refreshes ~60×/s (imperceptible). The
+        # caller ignores the return value. Disable with AIPACS_ZETA_MPR_INTERACT_MS=0.
+        try:
+            budget = self.parent._interaction_budget_ms()
+        except Exception:
+            budget = 0
+        if budget > 0:
+            import time as _t
+            now = _t.monotonic() * 1000.0
+            if (now - getattr(self, '_last_hover_ms', 0.0)) < budget:
+                return None
+            self._last_hover_ms = now
+
         if self.view_name not in self.parent.crosshair_actors:
             self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
             return None
@@ -681,11 +705,22 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         camera.SetFocalPoint(focal)
         camera.SetPosition(pos)
 
-        self.parent._update_all_crosshairs()
-        self.parent._synchronize_oblique_views()
-        self.parent._update_slice_info_texts()
-        self.parent._update_coordinates_label()
-        self.parent._render_immediately(self.view_name)
+        # Coalesce the cross-pane sync (crosshairs + oblique + slice-info across all
+        # panes) to frame cadence so fast wheel scrolling stays smooth on large /
+        # oblique series; the scrolled pane's camera move (above) + its render stay
+        # immediate so each notch responds instantly. The final state lands via the
+        # throttle's trailing flush. Legacy inline path when the throttle is disabled
+        # (AIPACS_ZETA_MPR_INTERACT_MS=0).
+        if self.parent._interaction_budget_ms() > 0:
+            self.parent._request_interaction_update('scroll')
+            self.parent._update_coordinates_label()
+            self.parent._render_immediately(self.view_name)
+        else:
+            self.parent._update_all_crosshairs()
+            self.parent._synchronize_oblique_views()
+            self.parent._update_slice_info_texts()
+            self.parent._update_coordinates_label()
+            self.parent._render_immediately(self.view_name)
 
     def on_mouse_wheel_backward(self, obj, event):
         """Scroll backward through slices"""
@@ -718,11 +753,22 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         camera.SetFocalPoint(focal)
         camera.SetPosition(pos)
 
-        self.parent._update_all_crosshairs()
-        self.parent._synchronize_oblique_views()
-        self.parent._update_slice_info_texts()
-        self.parent._update_coordinates_label()
-        self.parent._render_immediately(self.view_name)
+        # Coalesce the cross-pane sync (crosshairs + oblique + slice-info across all
+        # panes) to frame cadence so fast wheel scrolling stays smooth on large /
+        # oblique series; the scrolled pane's camera move (above) + its render stay
+        # immediate so each notch responds instantly. The final state lands via the
+        # throttle's trailing flush. Legacy inline path when the throttle is disabled
+        # (AIPACS_ZETA_MPR_INTERACT_MS=0).
+        if self.parent._interaction_budget_ms() > 0:
+            self.parent._request_interaction_update('scroll')
+            self.parent._update_coordinates_label()
+            self.parent._render_immediately(self.view_name)
+        else:
+            self.parent._update_all_crosshairs()
+            self.parent._synchronize_oblique_views()
+            self.parent._update_slice_info_texts()
+            self.parent._update_coordinates_label()
+            self.parent._render_immediately(self.view_name)
 
 
 class _MprCrosshairInteractMixin:
