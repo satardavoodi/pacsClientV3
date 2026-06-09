@@ -301,6 +301,15 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
                 return None
             self._last_hover_ms = now
 
+        # Crosshair grabbing off (hidden/disabled) → no rotation/line cursors; keep
+        # the default arrow so the hidden crosshair isn't implied as interactive.
+        if not self._crosshair_grab_active():
+            try:
+                self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
+            except Exception:
+                pass
+            return None
+
         if self.view_name not in self.parent.crosshair_actors:
             self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
             return None
@@ -375,6 +384,25 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         self.GetInteractor().GetRenderWindow().SetCurrentCursor(0)
         return None
 
+    def _crosshair_grab_active(self):
+        """True when left-drag should GRAB the crosshair (rotate / move); False when
+        it must STACK instead — i.e. crosshairs are globally disabled, crosshair
+        interaction is disabled, or THIS pane's crosshair is hidden. This keeps the
+        left button on stack (its prior function) when crosshairs are toggled off,
+        instead of switching to window/level."""
+        p = self.parent
+        try:
+            if not getattr(p, 'crosshairs_enabled', True):
+                return False
+            if not getattr(p, 'crosshair_interaction_enabled', True):
+                return False
+            hidden = getattr(p, '_crosshair_hidden_views', None)
+            if hidden and self.view_name in hidden:
+                return False
+        except Exception:
+            return True
+        return True
+
     # ------------------------------------------------------------------
     # Mouse button events
     # ------------------------------------------------------------------
@@ -422,6 +450,16 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
                 return
         except Exception:
             pass
+
+        # Crosshairs OFF / hidden / non-interactive for this pane → left-drag must
+        # STACK (the prior function). Do NOT fall through to crosshair grabbing, and
+        # (critically) never let the base image style's default left=window/level
+        # take over — toggling crosshairs off used to switch left-drag to WW/WL.
+        if not self._crosshair_grab_active():
+            self.stack_dragging = True
+            self.last_pos = click_pos
+            self.OnLeftButtonDown()
+            return
 
         if self.view_name not in self.parent.crosshair_actors:
             self.stack_dragging = True

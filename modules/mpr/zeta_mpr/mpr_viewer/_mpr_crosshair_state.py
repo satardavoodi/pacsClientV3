@@ -293,7 +293,16 @@ class _MprCrosshairStateMixin:
             logger.debug(f"Crosshair interaction enabled for {view_name}")
 
     def _disable_crosshair_interaction(self, view_name):
-        """Disable crosshair interaction for a specific view"""
+        """Turn OFF crosshair GRABBING for a view while KEEPING the left button on
+        STACK (the prior MPR function).
+
+        Previously this installed a fresh ``vtkInteractorStyleImage`` whose DEFAULT
+        left button is window/level — so toggling crosshairs off silently switched
+        left-drag from stack to WW/WL (the reported bug). Instead we keep the view's
+        ``CrosshairInteractorStyle`` (left=stack, right=WL, middle=zoom,
+        wheel=scroll); its press handler routes left-drag straight to stack whenever
+        crosshair grabbing is inactive (see
+        ``CrosshairInteractorStyle._crosshair_grab_active``)."""
         if view_name not in self.crosshair_styles:
             logger.warning(f"No crosshair style found for {view_name}")
             return
@@ -301,11 +310,14 @@ class _MprCrosshairStateMixin:
         if view_name not in self.viewers:
             return
 
+        style = self.crosshair_styles.get(view_name)
         interactor = self.viewers[view_name]['widget'].GetRenderWindow().GetInteractor()
-        default_style = vtk.vtkInteractorStyleImage()
-        interactor.SetInteractorStyle(default_style)
+        if style is not None:
+            # Keep the crosshair style so left stays on stack; grabbing is gated off
+            # because crosshair_interaction_enabled / crosshairs_enabled is now False.
+            interactor.SetInteractorStyle(style)
 
-        logger.debug(f"Crosshair interaction disabled for {view_name}, using default style")
+        logger.debug(f"Crosshair interaction disabled for {view_name}; left button stays on stack")
 
     def _show_crosshair_settings_menu(self, pos):
         """Show crosshair settings menu on right-click"""
