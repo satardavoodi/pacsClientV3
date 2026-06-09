@@ -83,6 +83,32 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         coord_converter.SetValue(world_pos[0], world_pos[1], world_pos[2])
         return coord_converter.GetComputedDisplayValue(self.renderer)
 
+    def _handle_at(self, click_pos, radius_px=14):
+        """Geometric hit-test for the crosshair rotation handles.
+
+        Replaces a per-event ``vtkPropPicker.Pick()`` — a GPU colour-buffer
+        readback that stalls the render thread and was a visible hiccup at the
+        START of mouse interaction (it ran on press AND on every hover that
+        wasn't already over a rotation zone, i.e. whenever the cursor was over
+        the image). The handles sit at KNOWN world positions (``handle['position']``
+        set in ``_update_all_crosshairs``); comparing the cursor to their DISPLAY
+        positions is pure math and detects the same grips without touching the GPU.
+        Returns the matched handle dict or ``None``."""
+        actors = self.parent.crosshair_actors.get(self.view_name)
+        if not actors:
+            return None
+        r2 = radius_px * radius_px
+        for handle in actors.get('handles', []):
+            pos = handle.get('position')
+            if pos is None:
+                continue
+            hd = self._world_to_display(pos)
+            dx = click_pos[0] - hd[0]
+            dy = click_pos[1] - hd[1]
+            if (dx * dx + dy * dy) <= r2:
+                return handle
+        return None
+
     def _get_axis_index(self):
         # This pane's through-plane (look) VOLUME-world axis — used by _change_stack for the
         # slice spacing and slice count. Via _view_axes() it tracks the routed look-axis, so a
@@ -300,16 +326,11 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
             self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
             return 'v_rotation'
 
-        # PRIORITY 2: Visual handles
-        self.prop_picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
-        picked_actor = self.prop_picker.GetActor()
-
-        if picked_actor and self.view_name in self.parent.crosshair_actors:
-            handles = self.parent.crosshair_actors[self.view_name].get('handles', [])
-            for handle in handles:
-                if handle['actor'] == picked_actor:
-                    self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
-                    return 'handle'
+        # PRIORITY 2: Visual handles (geometric hit-test — no GPU prop pick on the
+        # mouse hot path; see _handle_at).
+        if self._handle_at(click_pos) is not None:
+            self.parent._set_view_cursor(self.view_name, self.parent._get_rotation_cursor())
+            return 'handle'
 
         # PRIORITY 3: Center region (20px)
         center_world = self.parent.current_position
@@ -437,19 +458,15 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
                 self.OnLeftButtonDown()
                 return
 
-            # PRIORITY 2: Visual handles
-            self.prop_picker.Pick(click_pos[0], click_pos[1], 0, self.renderer)
-            picked_actor = self.prop_picker.GetActor()
-
-            if picked_actor:
-                handles = self.parent.crosshair_actors[self.view_name].get('handles', [])
-                for handle in handles:
-                    if handle['actor'] == picked_actor:
-                        self.dragging_handle = True
-                        self.current_handle = handle['id']
-                        logger.info(f"Started rotating via visual handle {handle['id']}")
-                        self.OnLeftButtonDown()
-                        return
+            # PRIORITY 2: Visual handles (geometric hit-test — no GPU prop pick;
+            # see _handle_at).
+            _hit = self._handle_at(click_pos)
+            if _hit is not None:
+                self.dragging_handle = True
+                self.current_handle = _hit['id']
+                logger.info(f"Started rotating via visual handle {_hit['id']}")
+                self.OnLeftButtonDown()
+                return
 
         # PRIORITY 3: Center grab (20px)
         center_world = self.parent.current_position
