@@ -8599,14 +8599,37 @@ class ToolbarManager:
                 }
                 QTextEdit:focus { border: 1px solid #3182ce; }
             """)
+            # Prefill order: in-flight typed text → widget's last comment →
+            # the SHARED local comment cache (same store the Main-Page Report
+            # popup reads), so an existing comment reloads when the dropdown
+            # is reopened.
             _initial_comment = str(
                 getattr(self, '_pending_report_comment', None)
                 or getattr(self.patient_widget, 'report_comment', '')
                 or ''
             ).strip()
+            # "Already on the server" marker for the comment-only flush. A comment
+            # saved LOCALLY but never confirmed synced (sync_state != 'synced')
+            # must NOT suppress the next Sync — otherwise a comment that failed to
+            # reach the server the first time could never be re-sent from here.
+            _synced_comment = ''
+            try:
+                store = self.patient_widget._get_shared_comment_store()
+                pid = self.patient_widget._resolve_patient_id_for_comment()
+                suid = getattr(self.patient_widget, 'study_uid', '') or ''
+                if store is not None:
+                    entry = store._load_local_comment_entry(pid, suid)
+                    if isinstance(entry, dict):
+                        _cached = str(entry.get('comment') or '').strip()
+                        if not _initial_comment:
+                            _initial_comment = _cached
+                        if str(entry.get('sync_state') or '') == 'synced':
+                            _synced_comment = _cached
+            except Exception:
+                pass
             if _initial_comment:
                 comment_box.setPlainText(_initial_comment)
-            self._status_dropdown_initial_comment = _initial_comment
+            self._status_dropdown_initial_comment = _synced_comment
             comment_box.textChanged.connect(
                 lambda box=comment_box: setattr(
                     self, '_pending_report_comment', box.toPlainText().strip()
@@ -8682,23 +8705,35 @@ class ToolbarManager:
             current_status = getattr(self.patient_widget, 'report_status', 'pending')
             
             if new_status == current_status:
-                print(f"[Toolbar] Status is already {new_status}, skipping")
+                # Status unchanged — but a comment typed alongside it must STILL
+                # sync. Route it through the SAME comment-only flush as the Sync
+                # button (same server mechanism as the Main-Page Report popup)
+                # instead of dropping it on the floor.
+                print(f"[Toolbar] Status unchanged ({new_status}); syncing comment only")
+                try:
+                    suid = getattr(self.patient_widget, 'study_uid', '') or ''
+                    if suid:
+                        self._flush_pending_report_comment(suid)
+                except Exception as exc:
+                    print(f"[Toolbar] comment-only flush failed: {exc}")
                 if dropdown:
                     dropdown.close()
                 return
-            
+
             print(f"[Toolbar] Changing status via dropdown: {current_status} -> {new_status}")
-            
+
             # Call patient widget's change method. The comment typed in the
             # dropdown rides along (same server mechanism as the Main-Page
-            # Report popup); falls back to the legacy marker text when empty.
+            # Report popup). When NOTHING was typed, send an empty comment so a
+            # pure status change never overwrites the doctor's existing
+            # server-side comment with placeholder text.
             user_comment = str(getattr(self, '_pending_report_comment', '') or '').strip()
             if hasattr(self.patient_widget, '_change_report_status'):
                 success = self.patient_widget._change_report_status(
                     study_uid=self.patient_widget.study_uid,
                     old_status=current_status,
                     new_status=new_status,
-                    comment=user_comment or "Status changed via toolbar dropdown"
+                    comment=user_comment
                 )
                 if success and user_comment:
                     # The comment is now server-side; don't re-flush on sync.
@@ -8898,9 +8933,14 @@ class ToolbarManager:
             comment = str(getattr(self, '_pending_report_comment', '') or '').strip()
             initial = str(getattr(self, '_status_dropdown_initial_comment', '') or '').strip()
             if not comment or comment == initial:
+                logger.info(
+                    "[Toolbar] comment-only flush SKIPPED study=%s empty=%s unchanged=%s",
+                    study_uid, (not comment), (bool(comment) and comment == initial),
+                )
                 return
             if not hasattr(self.patient_widget, '_change_report_status'):
                 return
+            logger.info("[Toolbar] flushing comment-only update study=%s", study_uid)
             current_status = getattr(self.patient_widget, 'report_status', 'pending')
             success = self.patient_widget._change_report_status(
                 study_uid=study_uid,

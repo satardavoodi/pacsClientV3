@@ -6,6 +6,7 @@ This is a mixin class — do NOT instantiate directly.
 """
 
 
+import logging
 import threading
 import time
 import traceback
@@ -17,6 +18,8 @@ from PySide6.QtWidgets import QApplication, QButtonGroup, QFrame, QGridLayout, Q
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager
 from PacsClient.pacs.patient_tab.utils import ThumbnailImageSourceService, VerticalButton, create_attachment_folder, get_name_file_from_path, get_quickly_series_info, open_folder
 from PacsClient.utils.scroll_style import get_scroll_area_style
+
+logger = logging.getLogger(__name__)
 
 
 class _PWPanelsMixin:
@@ -638,10 +641,54 @@ class _PWPanelsMixin:
             self._report_status_service = get_report_status_service()
         return self._report_status_service
 
+    def _get_shared_comment_store(self):
+        """Return the Main-Page patient-table widget, which owns the SHARED
+        report-comment store (local JSON cache + REST comment endpoint).
+
+        The Patient-Tab status/sync comment rides this SAME store so there is
+        exactly ONE comment storage + ONE server endpoint for the whole app
+        (no duplicate/disconnected storage). Returns None if the home widget
+        isn't available yet (comment then degrades to status-only, never
+        raising)."""
+        try:
+            from PacsClient.pacs.workstation_ui.home_ui.home_panel.widget import get_home_widget
+            home = get_home_widget()
+            return getattr(home, 'patient_table_widget', None) if home else None
+        except Exception:
+            return None
+
+    def _resolve_patient_id_for_comment(self) -> str:
+        try:
+            pid = getattr(self, 'patient_id', None)
+            if not pid:
+                meta = getattr(self, 'metadata_fixed', {}) or {}
+                # Tolerate the various keys devices/servers use for the ID so the
+                # REST comment sync (which needs a non-empty patient_id) never
+                # silently fails with "Missing patient ID" in the viewer.
+                for _k in ('patient_id', 'patientID', 'PatientID',
+                           'patient_code', 'PatientCode'):
+                    if meta.get(_k):
+                        pid = meta.get(_k)
+                        break
+            return str(pid or '').strip()
+        except Exception:
+            return ''
+
     def _change_report_status(self, study_uid: str, old_status: str, new_status: str, comment: str = "") -> bool:
         """
-        Change report status for a study
-        
+        Change report status for a study — and persist the comment through the
+        SAME pipeline as the Main-Page Report popup.
+
+        Pipeline (mirrors PatientTableWidget._change_report_status):
+          1. Save the comment to the shared LOCAL cache first.
+          2. Socket status update ONLY when the status actually changes
+             (a comment-only "Sync" keeps the status, so the socket call —
+             which only carries the comment alongside a status change — is
+             skipped here, exactly like the Main Page).
+          3. REST comment sync (status-independent) — the endpoint that
+             actually persists the comment server-side; on success the local
+             entry is marked synced.
+
         Returns:
             bool: True if update initiated (does not guarantee server success)
         """
@@ -650,39 +697,103 @@ class _PWPanelsMixin:
         print(f"   Old status: {old_status}")
         print(f"   New status: {new_status}")
         print(f"   Comment: {comment}")
-        
-        # Get service (lazy initialization)
-        try:
-            report_status_service = self._get_report_status_service()
-        except Exception as e:
-            print(f"❌ [PatientWidget] Failed to get report status service: {e}")
-            return False
-        
+
+        status_changed = str(new_status or '') != str(old_status or '')
+        comment_text = str(comment or '').strip()
+        patient_id = self._resolve_patient_id_for_comment()
+        comment_store = self._get_shared_comment_store()
+        # Structured trace (Path 2 / viewer) — mirrors the Main-Page logger so the
+        # viewer comment-sync is visible in app.log (the prints below are not).
+        logger.info(
+            "[PatientWidget] status change study=%s old=%s new=%s "
+            "status_changed=%s comment=%r pid=%s store=%s",
+            study_uid, old_status, new_status, status_changed,
+            comment_text, patient_id, comment_store is not None,
+        )
+        if comment_text and (comment_store is None or not patient_id):
+            logger.warning(
+                "[PatientWidget] comment may NOT reach the server — store=%s pid=%r",
+                comment_store is not None, patient_id,
+            )
+
+        # Service is only needed for an actual status change.
+        report_status_service = None
+        if status_changed:
+            try:
+                report_status_service = self._get_report_status_service()
+            except Exception as e:
+                print(f"❌ [PatientWidget] Failed to get report status service: {e}")
+                report_status_service = None
+
+        # 1. Save locally first (same shared cache as the Main Page) so the
+        #    comment survives even if the server sync fails / is offline.
+        if comment_store is not None and comment_text:
+            try:
+                comment_store._save_local_comment_entry(
+                    patient_id, study_uid, comment_text, sync_state='local_only'
+                )
+                # Mirror onto the widget so the dropdown re-prefills immediately.
+                self.report_comment = comment_text
+            except Exception as exc:
+                print(f"⚠️ [PatientWidget] local comment save failed: {exc}")
+
         # Run in background thread to avoid blocking UI
         def update_status_thread():
+            status_response = None
             try:
-                print(f"📡 [Thread] Calling update_report_status service...")
-                response = report_status_service.update_report_status(
-                    study_uid, new_status, user_id=None, comment=comment
-                )
-                print(f"📥 [Thread] Response received: {response}")
-                if response:
-                    print(f"   Response keys: {list(response.keys()) if isinstance(response, dict) else 'Not a dict'}")
-                    print(f"   Response content: {response}")
-                else:
-                    print(f"⚠️ [Thread] Response is None or empty")
-                
-                # Use QTimer to update UI in main thread
-                from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._handle_status_update_result(study_uid, new_status, response))
+                # 2. Socket status update — only when the status changed.
+                if status_changed and report_status_service is not None:
+                    print(f"📡 [Thread] Calling update_report_status service...")
+                    status_response = report_status_service.update_report_status(
+                        study_uid, new_status, user_id=None, comment=comment_text
+                    )
+                    print(f"📥 [Thread] Status response: {status_response}")
+
+                # 3. REST comment sync — same endpoint as the Main Page, sent
+                #    regardless of status change so a comment-only update lands.
+                if comment_store is not None and comment_text:
+                    try:
+                        sync = comment_store._sync_comment_to_server(patient_id, comment_text)
+                        if isinstance(sync, dict) and sync.get('success'):
+                            comment_store._save_local_comment_entry(
+                                patient_id, study_uid, comment_text, sync_state='synced'
+                            )
+                            print(f"✅ [Thread] Comment synced to server")
+                            logger.info(
+                                "[PatientWidget] comment synced to server pid=%s study=%s",
+                                patient_id, study_uid,
+                            )
+                        else:
+                            err = sync.get('error') if isinstance(sync, dict) else 'unknown'
+                            comment_store._save_local_comment_entry(
+                                patient_id, study_uid, comment_text,
+                                sync_state='local_only', sync_error=str(err or ''),
+                            )
+                            print(f"⚠️ [Thread] Comment server sync failed: {err}")
+                            logger.warning(
+                                "[PatientWidget] comment server sync FAILED pid=%s "
+                                "study=%s error=%s", patient_id, study_uid, err,
+                            )
+                    except Exception as exc:
+                        print(f"⚠️ [Thread] Comment sync exception: {exc}")
+                        logger.warning(
+                            "[PatientWidget] comment sync EXCEPTION pid=%s study=%s: %s",
+                            patient_id, study_uid, exc,
+                        )
             except Exception as e:
                 print(f"❌ [Thread] Exception in update_status_thread: {e}")
                 import traceback
                 print(f"   Traceback: {traceback.format_exc()}")
+
+            # UI: only drive the status-result handler when a status change was
+            # attempted — a comment-only sync must NOT pop the status dialog or
+            # trip its "no response" warning.
+            if status_changed:
                 from PySide6.QtCore import QTimer
-                QTimer.singleShot(0, lambda: self._handle_status_update_result(study_uid, new_status, None))
-        
-        # Start background thread
+                QTimer.singleShot(
+                    0, lambda: self._handle_status_update_result(study_uid, new_status, status_response)
+                )
+
         print(f"🚀 [PatientWidget] Starting background thread...")
         thread = threading.Thread(target=update_status_thread, daemon=True)
         thread.start()

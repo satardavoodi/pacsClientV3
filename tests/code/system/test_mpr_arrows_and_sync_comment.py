@@ -75,9 +75,67 @@ def test_status_dropdown_has_comment_box_wired():
     assert "_pending_report_comment" in code
     assert "Comment (optional):" in _TOOLBAR.read_text(encoding="utf-8", errors="ignore")
     # status pick sends the typed comment through the same server call
-    assert "comment=user_comment or" in code
+    assert "comment=user_comment" in code
     # sync flushes a comment-only change before uploading
     assert "_flush_pending_report_comment(study_uid)" in code
+
+
+def test_status_change_does_not_overwrite_comment_with_placeholder():
+    """FIX (2026-06-09): a pure status change must NOT post placeholder text to
+    the comment endpoint — that clobbered the doctor's real server-side comment.
+    The typed comment (possibly empty) is sent as-is; an empty comment is then
+    skipped by _change_report_status so the server comment is left intact."""
+    code = _code()
+    assert "Status changed via toolbar dropdown" not in code, (
+        "placeholder comment text must not be sent — it overwrites the real comment"
+    )
+    assert "comment=user_comment or" not in code
+
+
+def test_same_status_click_still_syncs_typed_comment():
+    """FIX (2026-06-09): clicking the CURRENT status with a comment typed must
+    still sync the comment (comment-only flush) instead of early-returning and
+    dropping it."""
+    src = _TOOLBAR.read_text(encoding="utf-8", errors="ignore")
+    start = src.index("def _change_status_from_dropdown")
+    end = src.index("def _sync_and_go_home", start) if "_sync_and_go_home" in src[start:] else start + 4000
+    branch = src[start:end]
+    same_idx = branch.index("new_status == current_status")
+    # within the same-status branch, the comment-only flush must be invoked
+    same_block = branch[same_idx:same_idx + 700]
+    assert "_flush_pending_report_comment" in same_block, (
+        "same-status branch must flush the typed comment, not silently skip it"
+    )
+
+
+def test_prefill_only_marks_synced_comment_as_already_sent():
+    """FIX (2026-06-09): the dropdown's 'already sent' marker
+    (_status_dropdown_initial_comment) must come from a cache entry that is
+    actually sync_state=='synced'. A locally-saved-but-unsynced comment must NOT
+    suppress the next Sync."""
+    src = _TOOLBAR.read_text(encoding="utf-8", errors="ignore")
+    assert "_synced_comment" in src
+    assert "sync_state') or '') == 'synced'" in src or "== 'synced'" in src
+    assert "self._status_dropdown_initial_comment = _synced_comment" in src
+
+
+# ── Path 2 (viewer) comment sync is observable + uses the shared endpoint ──
+
+def test_pw_panels_comment_sync_logs_and_uses_shared_endpoint():
+    """The viewer's _change_report_status (Path 2) must (a) call the SAME shared
+    _sync_comment_to_server endpoint as the Main Page and (b) emit structured
+    logger output so the sync is visible in app.log (it previously only
+    print()ed, making the viewer path invisible)."""
+    pw_panels = (_ROOT / "PacsClient" / "pacs" / "patient_tab" / "ui"
+                 / "patient_ui" / "patient_widget_core" / "_pw_panels.py")
+    src = pw_panels.read_text(encoding="utf-8", errors="ignore")
+    assert "logger = logging.getLogger(__name__)" in src
+    assert "_sync_comment_to_server(patient_id, comment_text)" in src
+    # outcome is logged (not just printed)
+    assert "comment synced to server" in src
+    assert "comment server sync FAILED" in src
+    # the start-of-change structured trace mirrors the Main-Page logger
+    assert "[PatientWidget] status change" in src
 
 
 def test_flush_sends_comment_only_update_via_same_mechanism():
@@ -90,7 +148,9 @@ def test_flush_sends_comment_only_update_via_same_mechanism():
     start = src.index("def _flush_pending_report_comment")
     end = src.index("def _start_patient_sync", start)
     fn_src = "    " + src[start:end].rstrip() + "\n"
-    namespace = {}
+    # the flush now emits logger.info on skip/flush — provide a logger so the
+    # isolated exec of the repo source doesn't NameError.
+    namespace = {"logger": __import__("logging").getLogger("test")}
     exec("class _Holder:\n" + fn_src, namespace)  # noqa: S102 — test-local exec of repo source
     flush = namespace["_Holder"]._flush_pending_report_comment
 
@@ -125,7 +185,7 @@ def test_flush_noop_when_empty_or_unchanged():
     start = src.index("def _flush_pending_report_comment")
     end = src.index("def _start_patient_sync", start)
     fn_src = "    " + src[start:end].rstrip() + "\n"
-    namespace = {}
+    namespace = {"logger": __import__("logging").getLogger("test")}
     exec("class _Holder:\n" + fn_src, namespace)  # noqa: S102
     flush = namespace["_Holder"]._flush_pending_report_comment
 
