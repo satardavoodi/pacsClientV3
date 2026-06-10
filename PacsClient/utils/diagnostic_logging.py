@@ -624,13 +624,33 @@ def start_resource_monitor(process_role: str = "main") -> None:
                 except Exception:
                     pass
 
+                # Windows per-process GDI / USER object handle counts (default limit
+                # 10000 each). These — not RSS — are what governs OpenGL/window
+                # (VTK render window) exhaustion: if they climb monotonically over a
+                # long session and never fall back after closing viewers/MPR, that is
+                # the leak that ends in an access-violation when the next render
+                # window can't be created. Read-only; -1 on non-Windows / on error.
+                gdi_objs = -1
+                user_objs = -1
+                if platform.system() == "Windows":
+                    try:
+                        import ctypes
+                        _h = ctypes.windll.kernel32.GetCurrentProcess()
+                        # GR_GDIOBJECTS = 0, GR_USEROBJECTS = 1
+                        gdi_objs = int(ctypes.windll.user32.GetGuiResources(_h, 0))
+                        user_objs = int(ctypes.windll.user32.GetGuiResources(_h, 1))
+                    except Exception:
+                        pass
+
                 logger.info(
-                    "resource-summary cpu=%.1f%% rss=%.1fMB io=%s io_wait_ms=%.2f pagefaults=%d platform=%s",
+                    "resource-summary cpu=%.1f%% rss=%.1fMB io=%s io_wait_ms=%.2f pagefaults=%d gdi=%d user=%d platform=%s",
                     cpu_pct,
                     rss_mb,
                     io_rate,
                     io_wait_ms,
                     pagefaults,
+                    gdi_objs,
+                    user_objs,
                     platform.system(),
                     extra={
                         "component": "ui" if process_role == "main" else "download",
