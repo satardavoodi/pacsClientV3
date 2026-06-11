@@ -1204,7 +1204,45 @@ def parse_args() -> argparse.Namespace:
             "this flag the Analysis cache is preserved for faster incremental builds."
         ),
     )
+    parser.add_argument(
+        "--skip-release-gate",
+        action="store_true",
+        help=(
+            "EMERGENCIES ONLY: skip the release gate (plugin-mirror freshness, "
+            "frozen-PYZ runtime probe, stage config/package parity — see "
+            "builder/release_gate.py). The gate exists because stale mirrors / "
+            "stale PYZ / missing config templates have shipped 'works in source, "
+            "missing in installed build' regressions. Never use for a customer release."
+        ),
+    )
     return parser.parse_args()
+
+
+def run_release_gate_pre_build() -> None:
+    """Release gate, pre-build phase: fail the build on plugin-mirror drift."""
+    print_step("Release gate — pre-build checks")
+    from builder import release_gate
+
+    if not release_gate.report(release_gate.run_pre_build_gate(), label="pre-build"):
+        raise SystemExit(
+            "[RELEASE_GATE] Pre-build checks failed. Fix the issues above "
+            "(usually: python tools/dev/sync_plugin_mirrors.py) and rebuild, or "
+            "bypass deliberately with --skip-release-gate (emergencies only)."
+        )
+
+
+def run_release_gate_post_stage() -> None:
+    """Release gate, post-stage phase: probe the staged frozen bundle before ISCC."""
+    print_step("Release gate — post-stage checks")
+    from builder import release_gate
+
+    if not release_gate.report(release_gate.run_post_stage_gate(STAGE_DIR), label="post-stage"):
+        raise SystemExit(
+            "[RELEASE_GATE] Post-stage checks failed — the staged bundle would "
+            "ship a stale/incomplete build. Rebuild (use --clean-build if the PYZ "
+            "is stale), or bypass deliberately with --skip-release-gate "
+            "(emergencies only)."
+        )
 
 
 # Markers that MUST be present in the FROZEN (PYZ) bytecode of the MPR geometry
@@ -1305,6 +1343,16 @@ def main() -> int:
             preserve_plugin_stage=(incremental and args.skip_pyinstaller),
         )
         version = load_version()
+
+        # Release gate, phase 1 (PRE-BUILD): plugin-mirror freshness. Failing
+        # here is cheap; failing after PyInstaller wastes minutes on a build
+        # that would ship stale module code (mechanism #3 of the 2026-06-11
+        # install-staleness incident — see builder/release_gate.py).
+        if args.skip_release_gate:
+            print("[WARN] --skip-release-gate: pre-build release gate SKIPPED (emergencies only).")
+        else:
+            run_release_gate_pre_build()
+
         source_dir = DIST_DIR / "AIPacs"
         if not args.skip_pyinstaller:
             validate_local_graphics_runtime()
@@ -1355,6 +1403,15 @@ def main() -> int:
             reuse_staged_payload=(incremental and args.skip_pyinstaller),
         )
         write_manifest(version, core_dir, advanced_payload, module_packages)
+
+        # Release gate, phase 2 (POST-STAGE, before ISCC): frozen-PYZ runtime
+        # probe + stage config/package parity. A failure here means the staged
+        # bundle would ship a stale or incomplete build — never compile an
+        # installer from it.
+        if args.skip_release_gate:
+            print("[WARN] --skip-release-gate: post-stage release gate SKIPPED (emergencies only).")
+        else:
+            run_release_gate_post_stage()
 
         installer_artifacts: dict[str, str] = {}
         if not args.skip_installer_compile:

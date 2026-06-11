@@ -72,13 +72,29 @@ def probe(msg: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Feature flag (env override, then optional config file)
+# Feature flag (env override, then optional config file, then BUILD DEFAULT)
 # ---------------------------------------------------------------------------
+# Build default for the corrected MPR geometry (anatomical cameras + plane-aware
+# routing). Flipped ON 2026-06-11 after extended live validation (CT unchanged,
+# oblique/sagittal/brain canonical). This MUST be a code default — NOT a seeded
+# config file — because the frozen installer's config seeder only writes files
+# that do not already exist (aipacs_runtime.seed_user_config_defaults), so an
+# upgraded client keeps its OLD config and would never receive a new flag. With
+# the default in code, every install (clean or upgraded) gets the corrected
+# geometry; env/config remain available as an explicit override. The anatomical
+# path does NOT resample (cheap) and fail-safes to the legacy path when the DICOM
+# direction/IPP is unavailable. Set AIPACS_ZETA_MPR_CANONICALIZE=0 (or
+# zeta_mpr.json {"canonicalize": false}) to pin the legacy geometry.
+_BUILD_DEFAULT_CANONICALIZE = True
+
+
 def canonicalize_enabled() -> bool:
-    """True iff the canonicalization pre-filter is enabled. Default OFF.
+    """True iff the canonicalization pre-filter is enabled. Default = build default
+    (``_BUILD_DEFAULT_CANONICALIZE``, ON since 2026-06-11).
 
     Order: env `AIPACS_ZETA_MPR_CANONICALIZE` (explicit on/off wins), then
-    `<USER_DATA_ROOT>/config/zeta_mpr.json` {"canonicalize": bool}.
+    `<USER_DATA_ROOT>/config/zeta_mpr.json` {"canonicalize": bool}, then the
+    build default.
     """
     val = os.environ.get("AIPACS_ZETA_MPR_CANONICALIZE", "").strip().lower()
     if val in ("1", "true", "yes", "on"):
@@ -91,10 +107,12 @@ def canonicalize_enabled() -> bool:
         cfg = os.path.join(str(USER_DATA_ROOT), "config", "zeta_mpr.json")
         if os.path.exists(cfg):
             with open(cfg, "r", encoding="utf-8") as fh:
-                return bool(json.load(fh).get("canonicalize", False))
+                data = json.load(fh)
+            if isinstance(data, dict) and "canonicalize" in data:
+                return bool(data.get("canonicalize"))
     except Exception:
         pass
-    return False
+    return _BUILD_DEFAULT_CANONICALIZE
 
 
 # ---------------------------------------------------------------------------

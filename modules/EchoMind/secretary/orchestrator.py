@@ -115,6 +115,10 @@ class SecretaryOrchestrator:
         text = cmd.get("text") or ""
         language = cmd.get("language") or "auto"
         progress_cb = cmd.get("progress_cb")  # optional callable(stage: str)
+        # Reset the parse-failure detail captured for user-facing diagnostics
+        # (2026-06-11: a SOCKS-proxy outage on an installed PC surfaced as the
+        # misleading "could not map this command" — see _unparsed_result).
+        self._last_parse_failure = ""
 
         # ── AgentBrain path (two-phase: routing + planning) ───────────────────
         if self._use_brain:
@@ -126,14 +130,21 @@ class SecretaryOrchestrator:
                     if callable(progress_cb):
                         progress_cb(f"Phase 3: Planning ({', '.join(decision.modules)})")
                     self._last_modules = list(decision.modules)  # capture for memory
+                elif decision is not None:
+                    # Routing produced nothing — keep the reason; an
+                    # "llm_error: …" reason means the LLM was UNREACHABLE,
+                    # not that the command was unintelligible.
+                    self._last_parse_failure = str(
+                        getattr(decision, "reason", "") or "")
                 brain_plan = self._get_brain().plan(
                     user_text=text, language=language, pre_routed=decision,
                     memory_context=memory_context,
                 )
                 if brain_plan:
                     return self._ensure_source(brain_plan, cmd)
-            except Exception:
-                pass  # fall through to legacy path on any brain failure
+            except Exception as _brain_exc:  # noqa: BLE001
+                self._last_parse_failure = f"brain_exception: {_brain_exc}"
+                # fall through to legacy path on any brain failure
 
         # ── Legacy path: rule parser → single-shot LLM → repair loop ─────────
         plan = parse_command_rule(text)
@@ -143,7 +154,9 @@ class SecretaryOrchestrator:
         if self.llm_fallback:
             try:
                 llm_plan = parse_command_llm(text=text, language=language)
-            except Exception:
+            except Exception as _llm_exc:  # noqa: BLE001
+                if not self._last_parse_failure:
+                    self._last_parse_failure = f"llm_error: {_llm_exc}"
                 llm_plan = None
             if llm_plan:
                 normalized, errs = validate_plan(llm_plan)
@@ -164,6 +177,41 @@ class SecretaryOrchestrator:
                 if repaired:
                     return self._ensure_source(repaired, cmd)
         return None
+
+    def _unparsed_result(self) -> SecretaryResult:
+        """Result for an unparseable command — truthful about WHY.
+
+        2026-06-11: an installed PC with a dead SOCKS proxy reported
+        "I could not map this command" for every LLM-routed command, hiding
+        the real problem (the AI service was unreachable). When the captured
+        parse failure is a network/LLM-transport error, say so and point at
+        the fix; otherwise keep the original message.
+        """
+        failure = str(getattr(self, "_last_parse_failure", "") or "")
+        low = failure.lower()
+        if any(marker in low for marker in (
+                "llm_error", "network error", "connection", "proxy",
+                "timed out", "timeout", "brain_exception")):
+            return {
+                "ok": False,
+                "action": "unknown",
+                "message": (
+                    "I could not reach the AI service to interpret this "
+                    "command — the workstation's AI connection appears to be "
+                    "down (check the internet connection, or the SOCKS proxy "
+                    "in EchoMind Settings if one is configured). Simple "
+                    "commands still work without the AI service."
+                ),
+                "data": {"detail": failure[:300]},
+                "error_code": "LLM_UNREACHABLE",
+            }
+        return {
+            "ok": False,
+            "action": "unknown",
+            "message": "I could not map this command to a Secretary action.",
+            "data": None,
+            "error_code": ERR_UNPARSED,
+        }
 
     @staticmethod
     def _count_result_rows(data: Any) -> int:
@@ -452,13 +500,7 @@ class SecretaryOrchestrator:
                 memory_context=(_mem.get_context_for_llm() if _mem else ""),
             )
             if not plan:
-                return {
-                    "ok": False,
-                    "action": "unknown",
-                    "message": "I could not map this command to a Secretary action.",
-                    "data": None,
-                    "error_code": ERR_UNPARSED,
-                }
+                return self._unparsed_result()
 
             validated_plan, validation_errors = validate_plan(plan)
             if validation_errors:

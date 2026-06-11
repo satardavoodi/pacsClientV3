@@ -154,8 +154,28 @@ def _isolated_user_config(monkeypatch, tmp_path):
     monkeypatch.setattr(_dp, "USER_DATA_ROOT", str(tmp_path), raising=False)
 
 
-def test_flag_default_off(monkeypatch, _isolated_user_config):
+def test_flag_default_is_build_default_on(monkeypatch, _isolated_user_config):
+    # Build default flipped ON 2026-06-11: with no env and no config file the
+    # corrected MPR geometry is enabled (so every install gets it without a
+    # seeded config). Override remains available via env / config.
     monkeypatch.delenv("AIPACS_ZETA_MPR_CANONICALIZE", raising=False)
+    from modules.mpr.zeta_mpr._mpr_canonicalize import _BUILD_DEFAULT_CANONICALIZE
+    assert _BUILD_DEFAULT_CANONICALIZE is True
+    assert canonicalize_enabled() is True
+
+
+def test_flag_env_off_beats_build_default(monkeypatch, _isolated_user_config):
+    monkeypatch.setenv("AIPACS_ZETA_MPR_CANONICALIZE", "0")
+    assert canonicalize_enabled() is False
+
+
+def test_flag_config_false_beats_build_default(monkeypatch, tmp_path, _isolated_user_config):
+    import json as _json
+    monkeypatch.delenv("AIPACS_ZETA_MPR_CANONICALIZE", raising=False)
+    cfg_dir = tmp_path / "config"
+    cfg_dir.mkdir(parents=True, exist_ok=True)
+    (cfg_dir / "zeta_mpr.json").write_text(
+        _json.dumps({"canonicalize": False}), encoding="utf-8")
     assert canonicalize_enabled() is False
 
 
@@ -175,7 +195,9 @@ def test_flag_config_file_toggle(monkeypatch, tmp_path, _isolated_user_config):
 
 @pytest.mark.parametrize("val,expected", [
     ("1", True), ("true", True), ("YES", True), ("on", True),
-    ("0", False), ("", False), ("off", False), ("no", False),
+    ("0", False), ("off", False), ("no", False),
+    # Empty/unrecognized env falls through to the build default (now ON).
+    ("", True),
 ])
 def test_flag_env_parsing(monkeypatch, val, expected, _isolated_user_config):
     monkeypatch.setenv("AIPACS_ZETA_MPR_CANONICALIZE", val)

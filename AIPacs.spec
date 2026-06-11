@@ -34,7 +34,21 @@ app_data_dirs = [
     ('Fonts', 'Fonts'),
     ('Qss', 'Qss'),  # Includes all icons and images
     ('config', 'config'),
+    # EchoMind Secretary NON-PYTHON data (2026-06-11): the two-phase LLM
+    # parser reads catalog.yaml + catalog/modules/*.md + prompts/*.txt via
+    # Path(__file__). The frozen exe bundles modules.EchoMind code in the
+    # PYZ (home_panel imports it statically), and PYZ code can win over the
+    # installed plugin payload — without these datas the frozen Secretary
+    # finds an EMPTY catalog and every LLM-fallback command dies with
+    # "could not map this command" on installed PCs while dev works.
+    ('modules/EchoMind/secretary/catalog', 'modules/EchoMind/secretary/catalog'),
+    ('modules/EchoMind/secretary/prompts', 'modules/EchoMind/secretary/prompts'),
 ]
+
+# Single-file Secretary data (module_map.yaml) — same rationale as above.
+if os.path.exists('modules/EchoMind/secretary/module_map.yaml'):
+    datas.append(('modules/EchoMind/secretary/module_map.yaml',
+                  'modules/EchoMind/secretary'))
 
 for src, dst in app_data_dirs:
     if os.path.exists(src):
@@ -187,6 +201,16 @@ hiddenimports = [
     # PyMuPDF - Optional, imported conditionally, removed from hiddenimports to avoid build issues
     # 'fitz',  # Commented out - causes build crash, will be imported conditionally at runtime if needed
     # 'pymupdf',  # Commented out - causes build crash, will be imported conditionally at runtime if needed
+
+    # Secretary background agent (2026-06-11): education full-content search
+    # + OCR binding. All imported lazily inside functions (graceful skip when
+    # absent), but the frozen build must BUNDLE them so installed apps get
+    # the same search capabilities as the dev venv — same lesson as the
+    # pylibjpeg codecs above. pytesseract is the binding only; the Tesseract
+    # engine ships via tools/vendor/tesseract/ or AIPACS_TESSERACT/PATH.
+    'pypdf',
+    'pptx',          # python-pptx
+    'pytesseract',
     
     # Network/RPC
     'grpc',

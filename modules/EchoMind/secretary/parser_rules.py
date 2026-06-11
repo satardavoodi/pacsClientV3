@@ -67,7 +67,25 @@ _RE_WEB_SEARCH_PATTERNS = [
     re.compile(r"(?:جستجو|سرچ)\s*(?:کن)?\s+(.+?)\s+(?:در|تو|توی)\s+(?:گوگل|وب|اینترنت)\s*\.?$"),
     # Persian: «X را گوگل کن»
     re.compile(r"^(.+?)\s+(?:را|رو)\s+گوگل\s+کن\s*\.?$"),
+    # "search the internet/web about/for X"
+    re.compile(r"search\s+the\s+(?:internet|web)\s+(?:about|for|on|regarding)\s+(.+?)\s*\.?$", re.I),
+    # "look up X on the internet"
+    re.compile(r"look\s+up\s+(.+?)\s+on\s+the\s+(?:internet|web)\s*\.?$", re.I),
+    # Persian: «اینترنت/وب/گوگل را بگرد(ی) راجع به/درباره/در مورد X»
+    # (e.g. «می‌خوام که اینترنت رو بگردی راجع به هرنیاسیون دیسک»)
+    re.compile(r"(?:اینترنت|وب|گوگل)\s*(?:را|رو)?\s*(?:بگردید|بگردی|بگرد|جستجو\s*کن|سرچ\s*کن)\s*(?:و)?\s*(?:راجع\s*به|درباره\s*ی?|در\s*باره\s*ی?|در\s*مورد)\s+(.+?)\s*\.?$"),
+    # Persian: «راجع به/درباره X اینترنت/وب/گوگل را بگرد/جستجو کن»
+    re.compile(r"(?:راجع\s*به|درباره\s*ی?|در\s*باره\s*ی?|در\s*مورد)\s+(.+?)\s+(?:در\s+)?(?:اینترنت|وب|گوگل)\s*(?:را|رو)?\s*(?:بگردید|بگردی|بگرد|جستجو|سرچ)"),
+    # Persian: «X را در اینترنت/وب جستجو/سرچ کن»
+    re.compile(r"^(.+?)\s+(?:را|رو)\s+(?:در|تو|توی)\s+(?:اینترنت|وب)\s+(?:جستجو|سرچ)\s*(?:کن)?\s*\.?$"),
 ]
+
+# Loose Persian fallback markers (used when no exact pattern matched but the
+# sentence clearly asks to search the internet about a topic).
+_FA_SEARCH_VERBS = ("بگرد", "بگردی", "بگردید", "جستجو", "سرچ")
+_FA_NET_WORDS = ("اینترنت", "گوگل", "وب")
+_RE_FA_TOPIC = re.compile(
+    r"(?:راجع\s*به|درباره\s*ی?|در\s*باره\s*ی?|در\s*مورد)\s+(.+?)\s*\.?$")
 
 _RE_EDU_SEARCH_PATTERNS = [
     re.compile(r"search\s+(?:the\s+)?education(?:al)?\s*(?:library|module|content)?\s+for\s+(.+?)\s*\.?$", re.I),
@@ -166,6 +184,15 @@ def _parse_browser_education(raw: str, norm: str) -> SecretaryActionPlan | None:
             if query and query.lower() not in ("google", "گوگل"):
                 return _plan("web_search", {"query": query}, 0.92, False,
                              "rule: web search (google)")
+
+    # Loose Persian fallback: a search verb + internet word + a topic marker
+    # («…اینترنت رو بگردی راجع به X» in any colloquial arrangement).
+    if (any(w in raw for w in _FA_NET_WORDS)
+            and any(v in raw for v in _FA_SEARCH_VERBS)):
+        m = _RE_FA_TOPIC.search(raw)
+        if m and (m.group(1) or "").strip():
+            return _plan("web_search", {"query": m.group(1).strip()},
+                         0.88, False, "rule: web search (fa fallback)")
 
     # ── Open a specific website / URL ─────────────────────────────────────
     if _has_any(norm, ["open", "go to", "navigate to", "باز کن", "برو به",

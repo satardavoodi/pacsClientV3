@@ -1293,6 +1293,15 @@ if __name__ == "__main__":
     app.setApplicationVersion("3.2.7")
     app.setOrganizationName("AIPacs")
 
+    # Feature Activation audit: one [FEATURE_ACTIVATION] line per recent feature
+    # stating active/inactive + reason, so any client app.log shows what is live
+    # without a debugger. Best-effort; never blocks startup.
+    try:
+        from PacsClient.utils.feature_activation_audit import log_feature_activation
+        log_feature_activation()
+    except Exception:
+        pass
+
     # Setup font rendering for better quality
     setup_font_rendering()
 

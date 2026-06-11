@@ -348,6 +348,25 @@ Key invariants that must not be broken:
   tests/code/builder/test_plugin_package_registry.py -q -p no:debugging` after any
   change (128 green as of 2026-06-10).
 
+### New module / new feature-flag checklist (release-parity guards — 2026-06-11)
+The "works in source, missing in installed build" class is guarded by
+`tests/code/builder/test_release_parity_guards.py` (repo level), `builder/release_gate.py`
+(build time, wired into `build_release.py`; `--skip-release-gate` is emergencies-only), and
+`tools/maintenance/install_doctor.py` (read-only field diagnosis). See
+`docs/pipelines/online-consultation-education.md` §12–§13. When adding a module or a
+feature-flag config file, complete ALL of:
+1. `MODULE_CATALOG` entry in `aipacs_runtime.py`.
+2. Plugin package definition under `builder/plugin package/definitions/<id>/`.
+3. `AIPacs_Setup.iss`: component + `[Files]` line (optional tier) AND the id in BOTH
+   JSON writers of `WriteInstallationProfile()` (`modules` + `module_packages`).
+4. New config file: ship the template under `config/` (subdirs seed; `secrets/` and
+   `.gitignore` never do) and add the family to `CONFIG_FAMILY_VERSIONS` — bump that
+   version whenever the template later gains new keys.
+5. Mirrored trees (`modules/education`, run_cd): `tools/dev/sync_plugin_mirrors.py`,
+   then rebuild — a stale stage fails the gate's frozen-PYZ probe.
+6. Run `python -m pytest tests/code/builder tests/code/runtime -q -p no:debugging` —
+   the parity tests enforce steps 1–5 automatically.
+
 ### Viewer/Home "V2" design layer (DEFAULT — flipped 2026-05-31)
 Before editing `PacsClient/utils/v2_style.py`, `PacsClient/utils/ui_variant.py`, the viewer
 toolbar styling (`patient_tab/.../patient_toolbar/toolbar_manager.py`), or home-page widget

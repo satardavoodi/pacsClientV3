@@ -1372,12 +1372,76 @@ def validate_module_installation(module_id: str) -> dict[str, Any]:
     return {"ok": True, "message": f"{record['title']} is ready."}
 
 
+def sync_runtime_profile_with_catalog() -> list[str]:
+    """Materialize NEW catalog module ids into the persisted runtime profile.
+
+    Older installs carry a profile written before a module existed in
+    :data:`MODULE_CATALOG` (e.g. ``consultation``/``identity``, added 2026-06-10).
+    The in-memory merge (`configured_module_map`) already falls back to catalog
+    defaults, but the on-disk file is what the Settings/store UI and support
+    diagnostics inspect — so write the missing ids in with their catalog
+    defaults. This NEVER changes an id the profile already lists (a customer's
+    explicit enable/disable — including a deliberate ``false`` — is preserved),
+    and it does NOT auto-enable optional modules (their catalog default is
+    ``False``; the commercial gate stays). Never raises.
+    """
+    import logging as _log
+
+    logger = _log.getLogger(__name__)
+    try:
+        path = user_runtime_profile_path()
+        raw: dict[str, Any] = {}
+        if path.exists():
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8")) or {}
+                if isinstance(payload, dict):
+                    raw = payload
+            except Exception:
+                raw = {}
+        raw_modules = raw.get("modules") if isinstance(raw.get("modules"), dict) else {}
+        raw_packages = (
+            raw.get("module_packages")
+            if isinstance(raw.get("module_packages"), dict)
+            else {}
+        )
+        missing_modules = [
+            module_id for module_id in module_defaults() if module_id not in raw_modules
+        ]
+        missing_packages = [
+            module_id
+            for module_id in module_package_defaults()
+            if module_id not in raw_packages
+        ]
+        if not missing_modules and not missing_packages:
+            return []
+        # An EMPTY patch is deliberate: load_runtime_profile() already merges
+        # catalog defaults + the installer-written installation profile, so
+        # saving the merged view materializes the missing ids WITHOUT a
+        # value-carrying patch that could override installer state (for
+        # example a pending "selected_for_install" package status).
+        save_runtime_profile({})
+        added = sorted(set(missing_modules) | set(missing_packages))
+        logger.info(
+            "[MODULE_REGISTRY_SYNC] added catalog ids to runtime profile: %s "
+            "(defaults only — no existing value changed)",
+            added,
+        )
+        return added
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("[MODULE_REGISTRY_SYNC] sync failed (ignored): %s", exc)
+        return []
+
+
 def bootstrap_installer_selected_module_packages(
     profile: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """Install setup-selected bundled packages before optional modules are imported."""
     if not is_frozen():
         return []
+
+    # Make sure modules added to the catalog AFTER this machine's profile was
+    # written become visible (with their defaults) before any gating below.
+    sync_runtime_profile_with_catalog()
 
     configured = configured_module_map(profile)
     package_state = module_package_map(profile)
@@ -1825,6 +1889,201 @@ def seed_user_config_defaults() -> None:
     )
     if failed:
         _seed_log.warning("[SEED_CONFIG] copy failures: %s", failed)
+
+    # Subdirectory seeding + versioned key-level migration (2026-06-11).
+    # The loop above only handles TOP-LEVEL files, so config families that live
+    # in subdirectories (config/identity/*, config/cloud_consultation/*) were
+    # never seeded into the roaming root of frozen installs — which silently
+    # disabled Identity + Online Consultation on every installed build.
+    # Guarded + memoized: must never raise into startup and runs once per process.
+    global _CONFIG_MIGRATION_RAN
+    if not _CONFIG_MIGRATION_RAN:
+        _CONFIG_MIGRATION_RAN = True
+        try:
+            _seed_config_subdirectories(src_root, dst_root)
+            migrate_user_config_defaults(src_root, dst_root)
+        except Exception as _mig_err:  # pragma: no cover - defensive
+            _seed_log.warning("[CONFIG_MIGRATE] migration pass failed: %s", _mig_err)
+
+
+# ── Versioned user-config migration (frozen installs) ─────────────────────────
+# Each seeded config-file family carries a CURRENT_CONFIG_VERSION. Bump a
+# family's version whenever its bundled template gains NEW default keys that
+# existing installs must receive (key-level merge — user-set values, including
+# an explicit "enabled": false, are NEVER overwritten). Applied versions are
+# recorded in <roaming config root>/config_migrations.json.
+
+CONFIG_MIGRATIONS_FILENAME = "config_migrations.json"
+
+CONFIG_FAMILY_VERSIONS: dict[str, int] = {
+    # v1 (2026-06-11): seed the family + add hub keys (hub_mode,
+    # consultation_address) introduced by ADR-0004 to pre-hub installs.
+    "cloud_consultation/cloud_consultation.json": 1,
+    # v1 (2026-06-11): seed the Identity feature flag file.
+    "identity/identity.json": 1,
+    # v1 (2026-06-11): aipacs_web pairing config (ADR-0008) — new file that
+    # older installs cannot have.
+    "identity/aipacs_web.json": 1,
+}
+
+_CONFIG_SEED_SKIP_DIRNAMES = {"secrets", "__pycache__"}
+_CONFIG_SEED_SKIP_FILENAMES = {".gitignore"}
+_CONFIG_MIGRATION_RAN = False
+
+
+def _seed_config_subdirectories(src_root: Path, dst_root: Path) -> list[str]:
+    """Copy bundled config files in SUBDIRECTORIES that the user does not have yet.
+
+    Create-if-missing only — never overwrites an existing user file. Skips
+    secret material (``identity/secrets``) and repo housekeeping files.
+    Returns the list of copied relative paths (for logging/tests).
+    """
+    import logging as _log
+
+    copied: list[str] = []
+    for src in sorted(src_root.rglob("*")):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(src_root)
+        if len(rel.parts) < 2:
+            continue  # top-level files are handled by seed_user_config_defaults
+        if any(part in _CONFIG_SEED_SKIP_DIRNAMES for part in rel.parts[:-1]):
+            continue
+        if rel.name in _CONFIG_SEED_SKIP_FILENAMES:
+            continue
+        dst = dst_root / rel
+        if dst.exists():
+            continue
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            copied.append(rel.as_posix())
+        except Exception as exc:
+            _log.getLogger(__name__).warning(
+                "[SEED_CONFIG] subdir copy failed for %s: %s", rel.as_posix(), exc
+            )
+    if copied:
+        _log.getLogger(__name__).info("[SEED_CONFIG] subdir copied=%s", copied)
+    return copied
+
+
+def migrate_user_config_defaults(src_root: Path, dst_root: Path) -> list[dict[str, Any]]:
+    """Key-level merge of NEW bundled default keys into existing user config files.
+
+    For every family in :data:`CONFIG_FAMILY_VERSIONS` whose recorded version is
+    older than the current one:
+
+    * missing user file  -> seeded from the bundled template;
+    * existing user file -> top-level keys present in the template but absent in
+      the user file are ADDED; existing user values (including an explicit
+      ``"enabled": false``) are never changed; unparseable user files are left
+      untouched.
+
+    Idempotent: applied versions are persisted in ``config_migrations.json`` in
+    ``dst_root``. Never raises (per-family failures are logged and skipped).
+    Returns the list of applied actions (for logging/tests).
+    """
+    import logging as _log
+
+    logger = _log.getLogger(__name__)
+    actions: list[dict[str, Any]] = []
+    state_path = dst_root / CONFIG_MIGRATIONS_FILENAME
+    state: dict[str, Any] = {}
+    try:
+        if state_path.exists():
+            payload = json.loads(state_path.read_text(encoding="utf-8")) or {}
+            if isinstance(payload, dict):
+                state = payload
+    except Exception as exc:
+        logger.warning("[CONFIG_MIGRATE] state read failed (%s) — starting fresh", exc)
+    families = state.get("families")
+    if not isinstance(families, dict):
+        families = {}
+    state_changed = False
+
+    for rel, current_version in CONFIG_FAMILY_VERSIONS.items():
+        try:
+            applied = int(families.get(rel, 0) or 0)
+        except Exception:
+            applied = 0
+        if applied >= current_version:
+            continue
+        src = src_root / Path(rel)
+        dst = dst_root / Path(rel)
+        if not src.is_file():
+            # Template absent from this build — do not record the version so a
+            # later build that ships the template still migrates.
+            continue
+        try:
+            defaults = json.loads(src.read_text(encoding="utf-8"))
+        except Exception as exc:
+            logger.warning("[CONFIG_MIGRATE] template unreadable %s: %s", rel, exc)
+            continue
+        if not isinstance(defaults, dict):
+            continue
+
+        added_keys: list[str] = []
+        try:
+            if not dst.exists():
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, dst)
+                added_keys = sorted(defaults.keys())
+            else:
+                try:
+                    current = json.loads(dst.read_text(encoding="utf-8"))
+                except Exception as exc:
+                    logger.warning(
+                        "[CONFIG_MIGRATE] user file unparseable, leaving untouched %s: %s",
+                        rel, exc,
+                    )
+                    continue
+                if not isinstance(current, dict):
+                    logger.warning(
+                        "[CONFIG_MIGRATE] user file is not a JSON object, leaving untouched %s",
+                        rel,
+                    )
+                    continue
+                merged = dict(current)
+                for key, value in defaults.items():
+                    if key not in merged:
+                        merged[key] = value
+                        added_keys.append(key)
+                if added_keys:
+                    dst.write_text(
+                        json.dumps(merged, indent=2, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+        except Exception as exc:
+            logger.warning("[CONFIG_MIGRATE] migration failed for %s: %s", rel, exc)
+            continue
+
+        families[rel] = current_version
+        state_changed = True
+        logger.info(
+            "[CONFIG_MIGRATE] file=%s added_keys=%s version %s→%s",
+            rel, added_keys, applied, current_version,
+        )
+        actions.append(
+            {
+                "file": rel,
+                "added_keys": added_keys,
+                "from_version": applied,
+                "to_version": current_version,
+            }
+        )
+
+    if state_changed:
+        try:
+            state["families"] = families
+            state["updated_at_utc"] = datetime.now(timezone.utc).isoformat()
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            state_path.write_text(
+                json.dumps(state, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as exc:
+            logger.warning("[CONFIG_MIGRATE] state write failed: %s", exc)
+    return actions
 
 
 def module_enabled_map(profile: dict[str, Any] | None = None) -> dict[str, bool]:

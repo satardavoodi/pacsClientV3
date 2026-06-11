@@ -287,16 +287,136 @@ Suites: **234 green** (the four consultation suites) + patient-table guards
 **Policy (owner):** the internal Web Browser module is the DEFAULT surface for ALL
 identity verification/connection flows; the system browser is only the fallback
 (module unavailable / headless CLI). Implemented in
-`modules/Identity/providers/google/oauth_flow.py` � `run_installed_app_flow`
+`modules/Identity/providers/google/oauth_flow.py` � `run_installed_app_flow`
 prefers the embedded browser for Drive connect AND Gmail attestation; new flows
 must use it or `open_verification_url()` (never `webbrowser.open` directly).
 
 Live-bridge validation findings (both fixed): (1) the `identity_links` migration
-existed but was not applied to the live local DB � `php artisan migrate` is part
+existed but was not applied to the live local DB � `php artisan migrate` is part
 of every slice rollout, tests on :memory: do not cover it; (2) `pair_workstation`
-and `link_google` did not send `Accept: application/json` � Laravel turned
+and `link_google` did not send `Accept: application/json` � Laravel turned
 validation errors into 302?HTML and the client reported "Unexpected response";
 both now send the header (keep it on any new endpoint helper). Google attestation
 itself verified live: the user's real Gmail was attested (email+subject extracted,
 credentials discarded). The final in-app link runs in the GUI session via the
 embedded browser. Suites: 234 green after fixes.
+
+## 12. Install-time staleness: mechanism + migration (2026-06-11)
+
+**Symptom:** Education ▸ Online Consultation present in source runs, MISSING in the
+installed (frozen) build — even a build produced AFTER the consultation work
+(verified on the 3.2.7 install of 2026-06-11: `D:\AIPacs\engine` contained all six
+consultation-page files and the staged `consultation` package, yet the tab was gone).
+
+**Three independent mechanisms (all fixed):**
+
+1. **Seeder never copied config SUBDIRECTORIES.** `aipacs_runtime.seed_user_config_defaults`
+   iterated only top-level FILES of the bundled `config/`, so
+   `config/identity/identity.json`, `config/cloud_consultation/cloud_consultation.json`,
+   `config/identity/aipacs_web.json` (and `google_oauth.json`) were NEVER seeded into the
+   roaming root (`%APPDATA%\AIPacs\config`). Both feature flags default OFF → triple gate
+   fails on gates 1+2 in EVERY frozen install, fresh or upgraded.
+   **Fix:** `_seed_config_subdirectories()` (create-if-missing recursion; skips
+   `secrets/`, `.gitignore`) + **versioned key-level migration**
+   `migrate_user_config_defaults()` driven by `CONFIG_FAMILY_VERSIONS`
+   (`config_migrations.json` in the roaming root records applied versions; logs
+   `[CONFIG_MIGRATE] file=… added_keys=… version a→b`). Key-level merge ADDS missing
+   default keys (e.g. `hub_mode`) and NEVER overwrites a user value — an explicit
+   `"enabled": false` stays false. Idempotent, memoized per process, guarded
+   (never raises into startup), dev/source runs untouched (`is_frozen()` gate).
+   To push a new default key to existing installs: add it to the bundled template AND
+   bump that family's version in `CONFIG_FAMILY_VERSIONS`.
+
+2. **Installer profile writer predated the catalog.** `AIPacs_Setup.iss
+   WriteInstallationProfile()` had the `optional\consultation` component (Files/Components,
+   2026-06-10) but its `modules`/`module_packages` JSON still listed only the OLD ids — so
+   selecting Online Consultation in setup copied the package but never enabled the module
+   (gate 3, `is_module_enabled("consultation")`, stayed false).
+   **Fix:** the .iss now writes `consultation` (selection-driven), plus the basic-tier
+   `identity` and `offline_cloud_server` entries, in both maps and in the setup summary.
+
+3. **Old runtime profiles lacked the new ids on disk.** The in-memory merge
+   (`configured_module_map`) already falls back to catalog defaults, but the persisted
+   `runtime_profile.json` is what Settings/store/support read.
+   **Fix:** `sync_runtime_profile_with_catalog()` (called at the top of
+   `bootstrap_installer_selected_module_packages`, frozen only) materializes missing
+   catalog ids with their defaults via an **empty** `save_runtime_profile({})` patch —
+   deliberately empty so it cannot override installer state such as a pending
+   `selected_for_install`. Logs `[MODULE_REGISTRY_SYNC]`. It does NOT auto-enable
+   optional modules — the commercial gate stays; the fix is visibility only.
+
+**Related (no code change):** already-installed `bundled_unlock` runtime packages in
+`%LOCALAPPDATA%\AIPacs\modules_runtime` are never version-refreshed by the bootstrap
+(`if record["installed"]: continue`) — observed: echomind 2.4.5 of 2026-04-26 next to the
+staged 3.2.7. Harmless for behavior because optional payload paths are APPENDED after the
+engine (R24: the fresh frozen `engine/modules/<X>` always wins for module names it ships),
+but the stale runtime copy remains on disk.
+
+**Rebuild requirement (operator):** the installer/stage must be rebuilt AFTER any
+plugin-mirror sync (`tools/dev/sync_plugin_mirrors.py`) — the stage snapshot, not the
+source tree, is what ships. The 2026-06-11 17:47 installer was correct because it was
+built after the mirrors; the missing tab was config/profile staleness, not stale code.
+
+Tests: `tests/code/runtime/test_config_migration.py` (10) — key-merge adds/preserves/
+idempotency/version record, subdir seeding, frozen seed end-to-end, profile sync
+(new ids, idempotent, no auto-enable). Suites after the change: runtime+module_system+
+builder 49 green; the four consultation suites 234 green.
+
+## 13. Prevention system — release-parity guards (2026-06-11)
+
+§12's three mechanisms are now guarded by four ADDITIVE layers so the
+"works in source, missing in installed build" class fails a test run or the
+build itself, never a customer install:
+
+1. **Repo-level parity tests** — `tests/code/builder/test_release_parity_guards.py`:
+   * **A1** every `MODULE_CATALOG` id appears in BOTH JSON writers
+     (`modules` + `module_packages`) of the Pascal `WriteInstallationProfile()`
+     in `builder/installer/AIPacs_Setup.iss` (would have caught mechanism #2;
+     the failure message says exactly what to add and where).
+   * **A2** config seeding coverage: every `config/` template is seed-reachable
+     (functionally verified by running `_seed_config_subdirectories` against a
+     temp root) or on the documented exclude list
+     (`builder/release_gate.py::CONFIG_TEMPLATE_EXCLUDES` — currently only
+     `installation_profile.json`, installer-owned); every `CONFIG_FAMILY_VERSIONS`
+     family exists in `config/`; the three feature-flag files
+     (`identity/identity.json`, `cloud_consultation/cloud_consultation.json`,
+     `identity/aipacs_web.json`) are version-managed; `identity/google_oauth.json`
+     ships.
+   * **A3** plugin-mirror freshness (`tools/dev/verify_plugin_mirrors.py` logic)
+     fails the TEST run on drift, plus an education file-SET parity check that
+     catches a NEW canonical file never synced (invisible to the hash check,
+     which only walks payload→canonical).
+   * **B** unit tests for the release gate; the frozen-PYZ probe runs against the
+     current `builder/output/stage` and skips cleanly when no stage exists.
+
+2. **Build-time release gate** — `builder/release_gate.py`, wired into
+   `builder/build_release.py` (PRE-BUILD: mirror freshness before PyInstaller;
+   POST-STAGE: before ISCC). Post-stage checks: the staged `AIPacs.exe`'s
+   embedded PYZ carries the CURRENT `aipacs_runtime` (catalog ids == source ids
+   via an exec probe of the frozen bytecode, generalized from the 2026-06-11
+   `verify_frozen_runtime.py`; config-migration sentinels present), every
+   shippable `config/` template is byte-identical under
+   `stage/core/engine/config` (and no `secrets/` file leaked), every optional
+   catalog id is staged under `stage/plugin_packages` (advanced_mpr respected
+   as conditional via the feed), education payload file-set parity. Prints
+   `RELEASE_GATE: PASS/FAIL [checks]`; non-zero exit fails the build. Escape
+   hatch `--skip-release-gate` is EMERGENCIES ONLY. Stand-alone:
+   `python builder/release_gate.py [--pre-build|--stage-check]`. Fast by design
+   (hashes only config templates + `.py` payload files).
+
+3. **Install doctor** — `tools/maintenance/install_doctor.py` (READ-ONLY,
+   `--json` for machine output): installed exe/version/mtimes; roaming config vs
+   the installed engine's bundled templates (missing seedable files, missing
+   keys per `CONFIG_FAMILY_VERSIONS`); `installation_profile`/`runtime_profile`
+   module maps vs the INSTALLED engine's catalog (probed from the frozen PYZ,
+   source-catalog fallback); ProgramData `module_packages` feed vs app version;
+   dormant-stale `modules_runtime` copies (the known §12 residual — reports WARN,
+   harmless per R24). PASS/WARN/FAIL table; exit 1 only on FAIL.
+
+4. **Process guardrail** — the "New module / new feature-flag checklist" section
+   in the repo `CLAUDE.md` (enforced automatically by A1–A3).
+
+Verified 2026-06-11 against the real outputs: parity suite 11 green
+(builder+runtime suites 49 green total), `release_gate` full run PASS on
+tonight's stage (14 catalog ids matched via exec probe), `install_doctor` on the
+installed `D:\AIPacs` 3.2.7 → 4 PASS + the expected `modules_runtime` WARN.

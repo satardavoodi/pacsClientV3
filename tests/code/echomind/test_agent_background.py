@@ -425,6 +425,26 @@ def test_parser_agent_commands():
     assert plan and plan["action"] == "web_search"
 
 
+# ── truthful unparsed diagnostics (other-PC SOCKS outage, 2026-06-11) ───────
+
+def test_unparsed_result_reports_llm_unreachable():
+    from modules.EchoMind.secretary.orchestrator import SecretaryOrchestrator
+    orch = object.__new__(SecretaryOrchestrator)  # no __init__ — unit-level
+
+    orch._last_parse_failure = (
+        "llm_error: Network error contacting RAZI: SOCKSHTTPSConnectionPool"
+        "(host='api.gapgpt.app', port=443): Max retries exceeded")
+    res = orch._unparsed_result()
+    assert res["error_code"] == "LLM_UNREACHABLE"
+    assert "AI connection" in res["message"]
+    assert "SOCKS" in res["message"]
+
+    orch._last_parse_failure = ""
+    res = orch._unparsed_result()
+    assert res["error_code"] != "LLM_UNREACHABLE"
+    assert "could not map" in res["message"]
+
+
 # ── notifications mapping ───────────────────────────────────────────────────
 
 def test_notify_task_finished_mapping(monkeypatch):

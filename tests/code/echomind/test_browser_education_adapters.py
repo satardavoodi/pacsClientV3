@@ -261,6 +261,33 @@ def test_parser_web_search_persian():
     assert "آناتومی شانه" in plan["entities"]["query"]
 
 
+def test_parser_web_search_persian_internet_phrasings():
+    # The EXACT live transcript that fell to [unknown] on 2026-06-11:
+    plan = parse_command_rule(
+        "خب می خوام که اینترنت رو بگردی راجع به هرنیاسیون دیسک بین مهره ای")
+    assert plan and plan["action"] == "web_search", plan
+    assert "هرنیاسیون دیسک بین مهره ای" in plan["entities"]["query"]
+
+    for text, fragment in [
+        ("اینترنت را بگرد درباره پارگی منیسک", "پارگی منیسک"),
+        ("راجع به شکستگی لگن در اینترنت جستجو کن", "شکستگی لگن"),
+        ("هرنی دیسک را در اینترنت جستجو کن", "هرنی دیسک"),
+        ("گوگل رو بگرد در مورد ام اس", "ام اس"),
+    ]:
+        plan = parse_command_rule(text)
+        assert plan and plan["action"] == "web_search", (text, plan)
+        assert fragment in plan["entities"]["query"], (text, plan)
+
+
+def test_parser_web_search_english_internet_phrasings():
+    plan = parse_command_rule("search the internet about disc herniation")
+    assert plan and plan["action"] == "web_search"
+    assert plan["entities"]["query"].lower() == "disc herniation"
+    plan = parse_command_rule("look up meniscus tear on the internet")
+    assert plan and plan["action"] == "web_search"
+    assert plan["entities"]["query"].lower() == "meniscus tear"
+
+
 def test_parser_open_url_and_browser():
     plan = parse_command_rule("Open this website: radiopaedia.org")
     assert plan and plan["action"] == "open_url"
