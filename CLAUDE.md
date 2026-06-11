@@ -294,11 +294,26 @@ Key invariants that must not be broken:
   current `auth_user`; it never writes to it. Tokens live in the OS keychain/DPAPI
   (`secure_store`), never in the DB; consultation code never sees raw credentials —
   it gets a Drive client via `get_capability_client(CLOUD_STORAGE)`.
-- **Double-flag gate:** Education's "Online Consultation" tab + the poller are inert
-  unless BOTH `config/identity/identity.json` AND
+- **Triple gate (ADR-0003, 2026-06-10):** Education's "Online Consultation" tab + the
+  poller are inert unless BOTH `config/identity/identity.json` AND
   `config/cloud_consultation/cloud_consultation.json` (or env equivalents) enable
-  them — gate via `online_consultation_available()`. Flag-off Education renders
-  byte-identically (both flags are ON in this source build).
+  them AND `aipacs_runtime.is_module_enabled("consultation")` allows it — gate via
+  `online_consultation_available()` (still the single gate; the registry check FAILS
+  OPEN, and dev/source runs are unaffected because dev defaults enable all modules).
+  Flag-off Education renders byte-identically (both flags are ON in this source
+  build). Consultation is a purchasable module: `MODULE_CATALOG` ids `consultation`
+  (optional, ships `modules/cloud_consultation`) and `identity` (basic/core, ships
+  `modules/Identity`), with plugin package definitions + installer component — the
+  registry parity test enforces all three stay aligned.
+- **De-identification is default-ON in the compose path** (B3, 2026-06-10):
+  `build_export_callable(..., deidentify=True)` runs
+  `modules/cloud_consultation/consultation/deidentify.py` IN PLACE after staging and
+  before envelope sealing. A file that cannot be de-identified is DELETED (an
+  identified file never uploads); losing every image raises. Never disable it
+  silently — consumer Gmail/Drive is not HIPAA-eligible. `deidentify.py` must NOT
+  import `modules/cd_burner` (ships in the separate run_cd package). One-click
+  ingest (B4) reuses `sync_offline_cloud_study_to_local` via `package_import.py` —
+  no fork of the offline engine.
 - **Internal statuses are frozen** (`pending|uploaded|downloaded|reviewed|answered|
   closed|conflict`, guarded by `sync/state_machine.py`); the clinical labels
   Pending/Sent/Received/Answered/Closed are display-only (`status_labels.py`) and
@@ -310,11 +325,28 @@ Key invariants that must not be broken:
 - **No UI-thread blocking** (connect/upload/download/respond in QThread workers;
   poller scans off-thread). The poller is an idempotent QApplication-level singleton
   (`notifications/autostart.py`) and must never raise into the title bar.
+- **Per-physician Drive structure + quota gate (ADR-0005, 2026-06-10):** hub layout is
+  `AI-PACS Consultations/<consultation_address>/<cid>/` + `physician.json` per
+  physician (see pipeline doc §8). The client quota gate (`physician_store.check_quota`)
+  **FAILS OPEN without physician.json** and blocks only on explicit excess; the
+  workstation never writes quota values (approximate usage bump only — the Laravel
+  backend is authoritative: `physician_storage`, `physician:quota`, `drive:sync-usage`).
+  `find_assigned_consultations` must keep scanning BOTH layouts (legacy depth-1 and
+  per-physician depth-2).
+- **Hub-account mode (ADR-0004, 2026-06-10) is the v1 cross-machine transport:**
+  all participating workstations connect the SAME hub Google account; routing is
+  by `consultation_address` (env/flag-file, fallback = Google handle) — see
+  `docs/pipelines/online-consultation-education.md` §7. Share + revocation are
+  best-effort and must never block/fail the local clinical action (send in hub
+  mode / close); `stage_response_attachments` must run BEFORE `record_response`
+  (the re-seal must cover attachment files); keep `num_retries` on every Drive
+  `execute()`/`next_chunk()` call.
 - `modules/education/` is plugin-mirrored: after edits run
   `tools/dev/sync_plugin_mirrors.py` then `verify_plugin_mirrors.py`.
 - Run `python -m pytest tests/code/cloud_consultation tests/code/identity
-  tests/code/education_online_consultation -q -p no:debugging` after any change
-  (72 green as of 2026-06-06).
+  tests/code/education_online_consultation
+  tests/code/builder/test_plugin_package_registry.py -q -p no:debugging` after any
+  change (128 green as of 2026-06-10).
 
 ### Viewer/Home "V2" design layer (DEFAULT — flipped 2026-05-31)
 Before editing `PacsClient/utils/v2_style.py`, `PacsClient/utils/ui_variant.py`, the viewer

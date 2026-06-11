@@ -33,6 +33,12 @@ def _ensure_default_providers() -> None:
         register_provider(GoogleIdentityProvider())
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Google identity provider could not be registered: %s", exc)
+    try:
+        from modules.Identity.providers.aipacs_web import AipacsWebIdentityProvider
+
+        register_provider(AipacsWebIdentityProvider())
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("AI-PACS web identity provider could not be registered: %s", exc)
     # Future providers (registered when implemented):
     #   from modules.Identity.providers.telegram.provider import TelegramIdentityProvider
     #   from modules.Identity.providers.instagram.provider import InstagramIdentityProvider

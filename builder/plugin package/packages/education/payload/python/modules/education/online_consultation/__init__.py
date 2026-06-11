@@ -27,17 +27,45 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def online_consultation_available() -> bool:
-    """True only when both the Identity and cloud-consultation flags are enabled.
+def _consultation_module_enabled() -> bool:
+    """Commercial gate: the ``consultation`` entry in the module registry (ADR-0003).
 
-    Never raises and imports nothing heavy, so callers may use it unconditionally
-    (e.g. while building the Education tab bar).
+    Source/dev runs are unaffected (``module_enabled_map()`` returns the
+    development defaults — all modules enabled). In frozen/packaged builds the
+    installer-written runtime profile decides, exactly like the other optional
+    modules (printing, run_cd, ...).
+
+    FAILS OPEN (returns True) when the runtime registry cannot be consulted:
+    a registry malfunction must never strip a clinically enabled workflow; the
+    two feature flags below remain the operational kill switch.
+    """
+    try:
+        from aipacs_runtime import is_module_enabled
+
+        return bool(is_module_enabled("consultation"))
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("consultation module-registry check failed (failing open): %s", exc)
+        return True
+
+
+def online_consultation_available() -> bool:
+    """True only when both feature flags AND the module registry allow it.
+
+    Gate formula (ADR-0003): Identity flag AND cloud-consultation flag AND
+    ``is_module_enabled("consultation")``. This function remains the SINGLE gate
+    for the feature — don't bypass it. Never raises and imports nothing heavy,
+    so callers may use it unconditionally (e.g. while building the Education
+    tab bar).
     """
     try:
         from modules.Identity.feature_flags import identity_module_enabled
         from modules.cloud_consultation.feature_flags import cloud_consultation_enabled
 
-        return bool(identity_module_enabled() and cloud_consultation_enabled())
+        return bool(
+            identity_module_enabled()
+            and cloud_consultation_enabled()
+            and _consultation_module_enabled()
+        )
     except Exception as exc:  # pragma: no cover - defensive
         logger.debug("online consultation availability check failed: %s", exc)
         return False

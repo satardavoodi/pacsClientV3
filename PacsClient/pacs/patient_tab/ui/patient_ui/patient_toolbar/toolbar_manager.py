@@ -2595,6 +2595,35 @@ class ToolbarManager:
 
         self._set_mic_recording_ui(True)
 
+    def toggle_voice_recording(self):
+        """Shared voice record / pause / resume entry point — the SAME current
+        inline pipeline the toolbar's voice control uses (NOT the legacy bottom
+        popup). Used by the F9 shortcut so the keyboard and the visible UI stay
+        consistent:
+          • not recording → START   (same as clicking the mic button → _on_mic_clicked)
+          • recording      → PAUSE   (same as the inline Pause control → _on_mic_pause_toggle)
+          • paused         → RESUME  (same as the inline Pause control)
+        The captured audio is never lost across pause/resume (VoiceWidget keeps
+        its frames). Never raises into the caller (e.g. the shortcut handler)."""
+        try:
+            soundbox = self.get_soundbox()
+        except Exception:
+            return
+        try:
+            # is_recording() stays True while paused (only the stream stops), so
+            # both pause AND resume route through the inline pause control.
+            if soundbox.is_recording():
+                self._on_mic_pause_toggle()
+            else:
+                try:
+                    mic_btn = self.tools_button[self.tool_access.MICROPHONE]
+                except Exception:
+                    mic_btn = None
+                if mic_btn is not None:
+                    self._on_mic_clicked(mic_btn)
+        except Exception as exc:
+            logger.error(f"toggle_voice_recording failed: {exc}")
+
     def toggle_microphone(self, selected_widget, mic_btn):
         if self.tool_selected == self.tool_access.MICROPHONE:
             # Stop recording

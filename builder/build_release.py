@@ -1207,6 +1207,65 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+# Markers that MUST be present in the FROZEN (PYZ) bytecode of the MPR geometry
+# modules. Because the spec uses module_collection_mode={"modules": "pyz+py"},
+# the runtime imports the PYZ bytecode — NOT the on-disk engine/modules/*.py.
+# An incremental PyInstaller cache that desyncs could embed STALE geometry in the
+# PYZ while the on-disk copy still looks current (the silent-regression failure
+# mode behind the 3.2.x MPR concern). This gate proves the executing bytecode is
+# the corrected geometry, or fails the build.
+MPR_GEOMETRY_PYZ_MARKERS = {
+    "modules.mpr.zeta_mpr.mpr_viewer._mpr_orientation": (
+        "_view_axes", "_anat_look_axis", "_anatomical_camera",
+    ),
+    "modules.mpr.zeta_mpr.mpr_viewer._mpr_crosshair_render": ("_force_crosshair_on_top",),
+    "modules.mpr.zeta_mpr.mpr_viewer._mpr_views": ("_apply_native_plane_interpolation",),
+    "modules.mpr.zeta_mpr.mpr_viewer.widget": ("layout_views", "slab_mode"),
+}
+
+
+def verify_frozen_mpr_geometry(source_dir: Path) -> None:
+    """Fail the build unless the frozen PYZ bytecode carries the corrected MPR
+    geometry. Delegates to builder/audit/scripts/verify_mpr_in_pyz.py so the
+    check stays runnable stand-alone. Bypass with AIPACS_ALLOW_STALE_MPR_PYZ=1
+    (deliberate, logged) — never set it for a release."""
+    print_step("Verifying frozen MPR geometry (PYZ bytecode)")
+    exe = source_dir / "AIPacs.exe"
+    script = BUILDER_DIR / "audit" / "scripts" / "verify_mpr_in_pyz.py"
+    bypass = os.environ.get("AIPACS_ALLOW_STALE_MPR_PYZ", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+    if not script.exists():
+        msg = f"[MPR_GEOMETRY_GATE] verifier missing: {script}"
+        if bypass:
+            print("[WARN] " + msg + " (bypassed)")
+            return
+        raise SystemExit(msg)
+    result = subprocess.run(
+        [sys.executable, str(script), str(exe)],
+        capture_output=True,
+        text=True,
+    )
+    output = (result.stdout or "") + (result.stderr or "")
+    print(output.rstrip())
+    if result.returncode != 0:
+        if bypass:
+            print(
+                "[WARN] [MPR_GEOMETRY_GATE] frozen MPR geometry is STALE but "
+                "AIPACS_ALLOW_STALE_MPR_PYZ=1 — continuing deliberately."
+            )
+            return
+        raise SystemExit(
+            "[MPR_GEOMETRY_GATE] Frozen PYZ bytecode does NOT contain the current MPR "
+            "geometry fixes. The build is stale — run with --clean-build to wipe the "
+            "PyInstaller cache and rebuild. (Bypass with AIPACS_ALLOW_STALE_MPR_PYZ=1.)"
+        )
+    print("[OK] [MPR_GEOMETRY_GATE] frozen MPR geometry verified.")
+
+
 def main() -> int:
     lock_path = _acquire_build_lock()
     args = parse_args()
@@ -1269,6 +1328,7 @@ def main() -> int:
 
         sync_theme_qss(source_dir)
         validate_release_bundle_graphics_runtime(source_dir)
+        verify_frozen_mpr_geometry(source_dir)
 
         core_dir = stage_core_bundle(source_dir, incremental=incremental)
         advanced_payload = stage_advanced_mpr_payload()

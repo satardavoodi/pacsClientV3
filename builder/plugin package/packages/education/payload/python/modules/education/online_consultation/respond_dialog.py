@@ -28,15 +28,20 @@ class _RespondWorker(QThread):
     done = Signal(str)
     failed = Signal(str)
 
-    def __init__(self, aipacs_user: str, consultation: dict, text: str, parent=None):
+    def __init__(self, aipacs_user: str, consultation: dict, text: str,
+                 attachment_paths: list[str] | None = None, parent=None):
         super().__init__(parent)
         self._user = aipacs_user
         self._c = consultation
         self._text = text
+        self._files = list(attachment_paths or [])
 
     def run(self):
         try:
             from modules.cloud_consultation.consultation import workflow
+            from modules.cloud_consultation.consultation.service import (
+                stage_response_attachments,
+            )
             from modules.cloud_consultation.transport.google_drive import (
                 build_google_drive_transport,
             )
@@ -50,6 +55,10 @@ class _RespondWorker(QThread):
             if not local_path:
                 raise RuntimeError("Download the consultation package before responding.")
 
+            # Attachments are copied INTO the package before the re-seal so the
+            # envelope hash covers them and the upload mirrors them (2026-06-10).
+            attachments_ref = stage_response_attachments(local_path, self._files)
+
             transport = build_google_drive_transport(self._user, gid.subject_id)
             workflow.record_and_upload_response(
                 transport=transport,
@@ -58,6 +67,7 @@ class _RespondWorker(QThread):
                 from_user={"email": gid.handle, "name": gid.display_name,
                            "subject": gid.subject_id},
                 text=self._text,
+                attachments_ref=attachments_ref,
                 root_remote_id=self._c.get("remote_folder_id") or None,
             )
             self.done.emit(self._c.get("consultation_id", ""))
@@ -71,6 +81,7 @@ class ConsultationRespondDialog(QDialog):
         self._user = aipacs_user
         self._c = consultation or {}
         self._worker = None
+        self._attachments: list[str] = []
         self._p = palette()
         self.setWindowTitle("Respond to consultation")
         self.setMinimumWidth(540)
@@ -97,6 +108,16 @@ class ConsultationRespondDialog(QDialog):
         self.opinion.setPlaceholderText("Findings, impression, and recommendation…")
         self.opinion.setMinimumHeight(140)
         root.addWidget(self.opinion)
+
+        # Response attachments (2026-06-10): annotated images, PDF report, etc.
+        attach_row = QHBoxLayout()
+        self.attach_btn = QPushButton("Attach files…")
+        self.attach_btn.clicked.connect(self._pick_attachments)
+        attach_row.addWidget(self.attach_btn)
+        self.attach_label = QLabel("No attachments")
+        self.attach_label.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
+        attach_row.addWidget(self.attach_label, 1)
+        root.addLayout(attach_row)
 
         self.status = QLabel("")
         self.status.setWordWrap(True)
@@ -128,6 +149,24 @@ class ConsultationRespondDialog(QDialog):
             """
         )
 
+    def _pick_attachments(self):
+        from PySide6.QtWidgets import QFileDialog
+
+        paths, _ = QFileDialog.getOpenFileNames(
+            self, "Attach files to your response", "",
+            "All files (*);;Images (*.png *.jpg *.jpeg);;Documents (*.pdf *.docx)",
+        )
+        if paths:
+            self._attachments = list(paths)
+            self.attach_label.setText(
+                f"{len(self._attachments)} file(s): "
+                + ", ".join(p.rsplit('/', 1)[-1].rsplit('\\', 1)[-1] for p in self._attachments[:3])
+                + ("…" if len(self._attachments) > 3 else "")
+            )
+        else:
+            self._attachments = []
+            self.attach_label.setText("No attachments")
+
     def _on_send(self):
         if self._worker is not None and self._worker.isRunning():
             return
@@ -137,7 +176,9 @@ class ConsultationRespondDialog(QDialog):
             return
         self.send_btn.setEnabled(False)
         self.status.setText("Uploading response…")
-        self._worker = _RespondWorker(self._user, self._c, text, self)
+        self._worker = _RespondWorker(
+            self._user, self._c, text, getattr(self, "_attachments", []), self
+        )
         self._worker.done.connect(self._on_done)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()

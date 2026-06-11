@@ -69,6 +69,24 @@ _BUS_ALLOWED_ACTIONS = {
     "transcribe_voice",
     "generate_report",
     "send_report_to_pacs",
+    # Web Browser module (2026-06-11) — Google search / URL / navigation
+    "open_browser",
+    "web_search",
+    "open_url",
+    "browser_back",
+    "browser_forward",
+    "refresh_page",
+    # Education module deep navigation (2026-06-11)
+    "open_consultation",
+    "show_consultant_profiles",
+    "open_courses",
+    "open_case_of_day",
+    "search_education",
+    # Background agent workflows (2026-06-11)
+    "login_website",
+    "search_education_content",
+    "agent_task_status",
+    "cancel_agent_task",
 }
 _ALLOWED_SOURCES = {"active_tab", "local", "server"}
 

@@ -65,6 +65,41 @@ def open_consultation_package(package_root, *, verify: bool = True) -> dict:
     return {"is_consultation": True, "envelope": env, "integrity": integrity}
 
 
+def stage_response_attachments(package_root, file_paths) -> list[str]:
+    """Copy response attachment files INTO the package so the re-seal covers them.
+
+    Returns the package-relative POSIX paths (for ``attachments_ref``). Files land
+    under ``responses/<short-id>/`` inside the package root; the subsequent
+    ``record_response`` → ``add_response`` re-seal hashes them, and the upload
+    engine mirrors them into the shared folder. Qt-free, blocking (worker thread).
+    A copy failure raises — a response must never silently lose its attachment.
+    """
+    import shutil
+    from pathlib import Path
+
+    paths = [Path(p) for p in (file_paths or []) if str(p or "").strip()]
+    if not paths:
+        return []
+    root = Path(package_root)
+    if not root.is_dir():
+        raise NotADirectoryError(str(root))
+    bucket = root / "responses" / uuid.uuid4().hex[:8]
+    bucket.mkdir(parents=True, exist_ok=True)
+    refs: list[str] = []
+    for src in paths:
+        if not src.is_file():
+            raise FileNotFoundError(str(src))
+        dst = bucket / src.name
+        # Disambiguate duplicate basenames instead of overwriting.
+        n = 1
+        while dst.exists():
+            dst = bucket / f"{src.stem}_{n}{src.suffix}"
+            n += 1
+        shutil.copy2(str(src), str(dst))
+        refs.append(dst.relative_to(root).as_posix())
+    return refs
+
+
 def record_response(
     package_root, *, from_user: dict, text: str = "", kind: str = "opinion",
     report_ref: str = "", attachments_ref: list | None = None,

@@ -89,6 +89,9 @@ class ConsultationComposeDialog(QDialog):
         self.auth_user = auth_user or {}
         self.selection = selection or {}
         self._worker = None
+        # Set on success so callers (e.g. the Assign popup) can look up the
+        # consultation row (drive folder id) after exec(). Additive only.
+        self.created_consultation_id: str | None = None
         self._p = palette()
         self.setWindowTitle("New consultation")
         self.setMinimumWidth(560)
@@ -213,6 +216,7 @@ class ConsultationComposeDialog(QDialog):
             pass
 
     def _on_done(self, cid: str):
+        self.created_consultation_id = cid
         self.status.setText("Consultation created, uploaded, and shared with the assignee.")
         self.accept()
 

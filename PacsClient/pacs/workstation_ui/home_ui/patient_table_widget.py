@@ -3087,6 +3087,26 @@ class PatientTableWidget(QWidget):
         if assign_to:
             assign_label.setToolTip(f"Assigned to: {assign_to}")
 
+        # Assign-consultation popup (ADR-0006): cell-click → dialog, wired
+        # EXACTLY like the Report column popup (cell-widget mousePressEvent;
+        # the row-selection debounce logic is untouched). Only active when the
+        # online-consultation gate is on.
+        if self._assign_consultation_enabled():
+            assign_label.setCursor(Qt.PointingHandCursor)
+            assign_label.setToolTip(
+                (assign_label.toolTip() + "\n" if assign_label.toolTip() else "")
+                + "Assign consultation…"
+            )
+
+            def make_assign_click_handler(uid, pname, pid):
+                def handler(event):
+                    self._on_assign_clicked(uid, pname, pid)
+                return handler
+
+            assign_label.mousePressEvent = make_assign_click_handler(
+                study_uid, patient_name, patient_id,
+            )
+
         # --- helpers ---
         def _mk(text, sort_key=None):
             it = SortableItem(text, sort_key=sort_key)
@@ -3230,7 +3250,162 @@ class PatientTableWidget(QWidget):
         if getattr(self, '_active_sort_col', None) is None:
             self._programmatic_sort(COL['date'], Qt.DescendingOrder)
         self.results_table.viewport().update()
-    
+
+    # ── Progressive / lazy result loading (2026-06-09) ───────────────────
+    # Local Search can return hundreds–thousands of studies; rendering every
+    # row (each with disk-I/O path checks + cell widgets) on the UI thread did
+    # not scale. We render the FIRST batch immediately and lazy-load the next
+    # batch when the user scrolls near the end — non-blocking, with the full
+    # total kept visible. The caller passes the buffer already in DISPLAY
+    # (date-descending) order so the first batch is the newest studies.
+    _PROGRESSIVE_BATCH = 100
+
+    def load_progressive(self, items, render_one, batch_size=None):
+        """Render ``items`` incrementally. ``render_one(item)`` renders one row
+        (returns True if a row was added). Renders the first batch now; later
+        batches load on scroll-near-end. Replaces any prior progressive buffer."""
+        self._prog_items = list(items or [])
+        self._prog_render_one = render_one
+        self._prog_batch = int(batch_size or self._PROGRESSIVE_BATCH)
+        self._prog_cursor = 0
+        self._prog_total = len(self._prog_items)
+        self._prog_loading = False
+        if not getattr(self, '_prog_scroll_connected', False):
+            try:
+                self.results_table.verticalScrollBar().valueChanged.connect(
+                    self._on_progressive_scroll
+                )
+                self._prog_scroll_connected = True
+            except Exception:
+                pass
+        self._progressive_render_next()
+
+    def _progressive_render_next(self):
+        items = getattr(self, '_prog_items', None)
+        if not items or getattr(self, '_prog_loading', False):
+            return
+        cursor = int(getattr(self, '_prog_cursor', 0))
+        total = int(getattr(self, '_prog_total', 0))
+        if cursor >= total:
+            return
+        render_one = getattr(self, '_prog_render_one', None)
+        if not callable(render_one):
+            return
+        self._prog_loading = True
+        try:
+            end = min(cursor + int(getattr(self, '_prog_batch', self._PROGRESSIVE_BATCH)), total)
+            self.begin_bulk_insert()
+            try:
+                for idx in range(cursor, end):
+                    try:
+                        render_one(items[idx])
+                    except Exception:
+                        pass
+            finally:
+                self.end_bulk_insert()
+            self._prog_cursor = end
+            self._update_progressive_count_label()
+        finally:
+            self._prog_loading = False
+
+    def _on_progressive_scroll(self, value):
+        try:
+            if int(getattr(self, '_prog_cursor', 0)) >= int(getattr(self, '_prog_total', 0)):
+                return
+            sb = self.results_table.verticalScrollBar()
+            mx = sb.maximum()
+            if mx > 0 and value >= int(mx * 0.85):
+                self._progressive_render_next()
+        except Exception:
+            pass
+
+    def _update_progressive_count_label(self):
+        """While more rows remain, show 'Showing X of Y studies'; once fully
+        loaded fall back to the normal modality-aware summary."""
+        try:
+            total = int(getattr(self, '_prog_total', 0))
+            cursor = int(getattr(self, '_prog_cursor', 0))
+            if total and cursor < total:
+                loaded = int(self.results_table.rowCount() or 0)
+                self.results_count_label.setPixmap(
+                    qta.icon('fa5s.chart-bar', color='#3b82f6').pixmap(12, 12))
+                self.results_count_label.setText(f" Showing {loaded} of {total} studies")
+                self.results_count_label.setStyleSheet("""
+                    QLabel {
+                        font-size: 12px;
+                        color: #3b82f6;
+                        padding: 4px 8px;
+                        background: rgba(59, 130, 246, 0.1);
+                        border: 1px solid rgba(59, 130, 246, 0.3);
+                        border-radius: 8px;
+                    }
+                """)
+            else:
+                self._update_results_count()
+        except Exception:
+            pass
+
+    def _assign_consultation_enabled(self) -> bool:
+        """Cached online-consultation gate for the Assign-column popup (ADR-0006).
+
+        Computed once per widget so row inserts stay cheap. Never raises; any
+        failure leaves the Assign column exactly as before (icon only).
+        """
+        cached = getattr(self, '_assign_consult_enabled_cache', None)
+        if cached is not None:
+            return cached
+        enabled = False
+        try:
+            from modules.education.online_consultation import (
+                online_consultation_available,
+            )
+            enabled = bool(online_consultation_available())
+        except Exception:
+            enabled = False
+        self._assign_consult_enabled_cache = enabled
+        return enabled
+
+    def _on_assign_clicked(self, study_uid: str, patient_name: str, patient_id: str):
+        """Open the consultation Assign popup for this row (ADR-0006).
+
+        Same wiring pattern as the Report column popup: a cell-widget click
+        handler that opens a dialog. The single/double-click row-selection
+        debounce is untouched (cell widgets never emit itemClicked).
+        """
+        try:
+            from modules.education.online_consultation import (
+                online_consultation_available,
+            )
+            if not online_consultation_available():
+                return
+            # Collect every study UID merged on this row (UserRole + 10 carries
+            # the full list for multi-study rows; fall back to the cell text).
+            study_uids = []
+            for r in range(self.results_table.rowCount()):
+                uid_item = self.results_table.item(r, COL['study_uid'])
+                if uid_item and uid_item.text() == study_uid:
+                    merged = uid_item.data(Qt.UserRole + 10)
+                    if isinstance(merged, (list, tuple)) and merged:
+                        study_uids = [str(u) for u in merged]
+                    break
+            if not study_uids and study_uid:
+                study_uids = [study_uid]
+
+            from modules.education.online_consultation.assign_dialog import (
+                ConsultationAssignDialog,
+            )
+            auth_user = getattr(self.window(), 'auth_user', None)
+            dialog = ConsultationAssignDialog(
+                patient_id=patient_id,
+                patient_name=patient_name,
+                study_uids=study_uids,
+                auth_user=auth_user if isinstance(auth_user, dict) else None,
+                parent=self,
+            )
+            dialog.exec()
+        except Exception as e:
+            print(f"Error opening assign consultation dialog: {e}")
+
     def _on_report_status_clicked(self, study_uid: str, current_status: str, patient_name: str, patient_id: str, reporting_physician: str = ""):
         """Handle click on report status icon"""
         print(f"\n🖱️ [UI] Report status icon clicked")
@@ -4278,6 +4453,12 @@ class PatientTableWidget(QWidget):
         """Clear all data from the table"""
         self.results_table.setRowCount(0)
         self._last_checked_checkbox = None  # anchor widget no longer exists after clear
+        # Drop any progressive-loading buffer so a stale scroll can never render
+        # the previous search's rows into the freshly cleared table.
+        self._prog_items = []
+        self._prog_cursor = 0
+        self._prog_total = 0
+        self._prog_loading = False
         self.select_all_state = False
         # Bound the per-search report-status cache so it does not grow
         # unbounded across a long session of repeated searches.

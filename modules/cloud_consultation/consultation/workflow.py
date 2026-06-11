@@ -53,10 +53,54 @@ def create_and_upload_consultation(
     )
 
     engine = CloudSyncEngine(transport, progress_cb=progress_cb)
-    remote_folder_id = engine.upload(cid, package_root)
+
+    # Per-physician layout + client-side quota gate (ADR-0005, hub mode only).
+    # Laravel owns the quota values; physician.json is its pushed snapshot.
+    # Fail-open when the snapshot is absent; block only on explicit excess.
+    hub_root_remote_id = None
+    _phys_ctx = None
+    try:
+        from ..feature_flags import consultation_address, hub_mode_enabled
+
+        if hub_mode_enabled():
+            from . import physician_store
+
+            address = consultation_address(default=(from_user or {}).get("email", ""))
+            phys_id = physician_store.ensure_physician_folder(transport, address)
+            meta = physician_store.read_physician_meta(transport, phys_id)
+            package_bytes = physician_store.local_tree_size(package_root)
+            count = physician_store.count_consultation_folders(transport, phys_id)
+            ok, reason = physician_store.check_quota(
+                meta, package_bytes=package_bytes, consultation_count=count
+            )
+            if not ok:
+                consultation_db.update_consultation_fields(cid, status="pending")
+                consultation_db.add_event(cid, "quota_blocked", details=reason)
+                raise RuntimeError(reason)
+            hub_root_remote_id = transport.make_child_folder(phys_id, cid)
+            _phys_ctx = (phys_id, address, meta, package_bytes)
+    except RuntimeError:
+        raise
+    except Exception as exc:  # pragma: no cover - defensive (layout is best-effort)
+        logger.warning("physician folder layout unavailable, using legacy layout: %s", exc)
+
+    remote_folder_id = engine.upload(cid, package_root, root_remote_id=hub_root_remote_id)
     if assignee_email:
         assign(transport, cid, assignee_email,
                assigned_by=(from_user or {}).get("email", ""), remote_folder_id=remote_folder_id)
+
+    if _phys_ctx is not None:
+        # Approximate usage bump; the server's drive:sync-usage recompute is exact.
+        try:
+            from . import physician_store
+
+            phys_id, address, meta, package_bytes = _phys_ctx
+            physician_store.write_physician_meta(
+                transport, phys_id,
+                physician_store.bump_usage(meta, address, added_bytes=package_bytes),
+            )
+        except Exception as exc:  # pragma: no cover - best-effort
+            logger.debug("physician usage bump skipped: %s", exc)
     from ..notifications.models import NotificationKind
 
     _notify(NotificationKind.UPLOAD_DONE, title="Consultation sent",
@@ -157,3 +201,37 @@ def close_consultation(consultation_id: str, *, actor_handle: str = "") -> bool:
     _notify(NotificationKind.CONSULTATION_UPDATED, title="Consultation completed",
             body=row.get("case_title", ""), consultation_id=consultation_id)
     return True
+
+
+def revoke_consultation_access(transport, consultation_id: str, *, actor_handle: str = "") -> bool:
+    """Best-effort: remove the assignee's Drive share after close (2026-06-10).
+
+    Network-touching — run on a worker thread. Returns True when a permission
+    was revoked. NEVER raises: closing is a local clinical act and must not
+    depend on Drive connectivity; a failed revocation is logged + audited only.
+    """
+    from database import consultation_db
+
+    try:
+        row = consultation_db.get_consultation(consultation_id) or {}
+        folder_id = row.get("remote_folder_id") or ""
+        permission_id = row.get("share_permission_id") or ""
+        if not folder_id or not permission_id:
+            return False
+        transport.revoke(folder_id, permission_id)
+        consultation_db.update_consultation_fields(consultation_id, share_permission_id="")
+        consultation_db.add_event(
+            consultation_id, "share_revoked",
+            details="assignee Drive access revoked after close", actor_handle=actor_handle,
+        )
+        return True
+    except Exception as exc:
+        logger.warning("share revocation failed for %s: %s", consultation_id, exc)
+        try:
+            consultation_db.add_event(
+                consultation_id, "share_revoke_failed", details=str(exc),
+                actor_handle=actor_handle,
+            )
+        except Exception:  # pragma: no cover - defensive
+            pass
+        return False

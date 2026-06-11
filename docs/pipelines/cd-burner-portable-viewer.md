@@ -292,16 +292,27 @@ font database; without it every glyph is tofu).
 
 ## 15. Series drag-and-drop to a pane (v1.4 — 2026-06-07)
 
-The series list (`SeriesListWidget`) is a drag source: `startDrag` packs the
-series index (Qt.UserRole) into a private MIME type `_SERIES_MIME`; header
-rows (no UserRole) aren't draggable. Each `ImageCanvas` is a drop target
-(`setAcceptDrops`) — `dragEnterEvent` shows a cyan border + "Drop series
-here", `dropEvent` decodes the index and fires `on_series_dropped`, which
-loads that series into THAT pane and activates it. Click-to-active-pane is
-unchanged. Tests drive both ends directly (QDrag.exec is modal so the OS
-loop can't run under pytest): list builds the MIME, a synthetic QDropEvent
-routes to the pane; bad/out-of-range payloads are rejected without changing
-state. `tests/.../test_viewer_dragdrop.py` (4) — suite total 78.
+**Click vs drag are fully separated (v1.4.1 — 2026-06-07).** The original
+bug: load was wired to the list's selection-change, which fires on
+mouse-PRESS, so the press that starts a drag loaded the series into the
+active pane before the drag began (and looked like Layout 1 "stealing" a
+drop meant for Layout 2). Fix: `SeriesListWidget` drives the drag itself
+(`setDragEnabled(False)`, `NoDragDrop`) —
+* press records position + the row's series index, loads NOTHING;
+* move past `QApplication.startDragDistance()` with the button held starts
+  a `QDrag` carrying `_SERIES_MIME` and a **ghost-thumbnail preview**
+  (`preview_provider` → window renders first-slice thumb + label band;
+  text-chip fallback) — and emits no click;
+* release with no drag, on the same row, emits `seriesClicked` → load into
+  the ACTIVE pane.
+Headers (no UserRole) are inert. Each `ImageCanvas` is the drop target
+(`setAcceptDrops`): `dragEnterEvent` shows a cyan border + "Drop series
+here", `dropEvent` decodes the index → `on_series_dropped` → loads into
+THAT pane and activates it. Import happens ONLY on the final drop; panes
+the cursor merely crosses get nothing. Test seam `_exec_drag` makes the
+modal QDrag non-modal under pytest; synthetic QMouseEvents prove press
+doesn't load, drag suppresses the click, and headers are inert.
+`tests/.../test_viewer_dragdrop.py` (7) — suite total 81.
 
 ## 16. Known limitations / deferred
 

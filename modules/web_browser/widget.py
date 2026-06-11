@@ -177,7 +177,16 @@ class BookmarkDialog(QDialog):
             self.name_edit.setText(self.bookmark_data.get('name', ''))
             self.url_edit.setText(self.bookmark_data.get('url', ''))
             self.username_edit.setText(self.bookmark_data.get('username', ''))
-            # Decode password
+            # Vault-backed entry (2026-06-11): fetch from the OS keychain.
+            vault_id = self.bookmark_data.get('vault_id', '')
+            if vault_id:
+                try:
+                    from modules.web_browser.credential_vault import get_vault
+                    self.password_edit.setText(get_vault().get_password(vault_id))
+                    return
+                except Exception:
+                    pass
+            # Legacy base64 entry (pre-vault bookmarks).
             encoded_pass = self.bookmark_data.get('password', '')
             if encoded_pass:
                 try:
@@ -185,17 +194,49 @@ class BookmarkDialog(QDialog):
                     self.password_edit.setText(password)
                 except:
                     pass
-    
+
     def get_bookmark_data(self):
+        """Bookmark payload for persistence.
+
+        2026-06-11: passwords now go to the encrypted credential vault
+        (OS keychain / DPAPI via Identity secure_store); the bookmarks
+        JSON keeps only a ``vault_id`` reference. The legacy base64
+        ``password`` field is written as '' for new/edited entries.
+        Falls back to the legacy base64 field only if the vault is
+        unavailable, so saving a bookmark never silently loses data.
+        """
         password = self.password_edit.text()
-        # Encode password
-        encoded_pass = base64.b64encode(password.encode('utf-8')).decode('utf-8') if password else ''
-        
+        url = self.url_edit.text()
+        vault_id = (self.bookmark_data or {}).get('vault_id', '') \
+            if isinstance(self.bookmark_data, dict) else ''
+        encoded_pass = ''
+        if password:
+            try:
+                from modules.web_browser.credential_vault import get_vault
+                vault = get_vault()
+                if vault_id and vault.get(vault_id) is not None:
+                    # Re-save under the same id: delete + add fresh secret.
+                    entry = vault.get(vault_id)
+                    vault.delete(vault_id)
+                    new = vault.add(url or entry.get('url', ''),
+                                    self.username_edit.text(), password,
+                                    label=self.name_edit.text())
+                else:
+                    new = vault.add(url, self.username_edit.text(), password,
+                                    label=self.name_edit.text())
+                vault_id = (new or {}).get('id', '')
+                if not vault_id:  # vault failed — legacy fallback
+                    encoded_pass = base64.b64encode(
+                        password.encode('utf-8')).decode('utf-8')
+            except Exception:
+                encoded_pass = base64.b64encode(
+                    password.encode('utf-8')).decode('utf-8')
         return {
             'name': self.name_edit.text(),
-            'url': self.url_edit.text(),
+            'url': url,
             'username': self.username_edit.text(),
             'password': encoded_pass,
+            'vault_id': vault_id,
             'timestamp': datetime.now().isoformat()
         }
 
@@ -1683,6 +1724,99 @@ class WebBrowserWidget(QWidget):
         # The user committed this entry — programmatic updates may resume.
         self._url_user_editing = False
         self.web_view.setUrl(QUrl(url))
+
+    # ── Programmatic controller API (2026-06-11) ─────────────────────────
+    # Used by the Secretary/EchoMind CommandBus (BrowserCommandAdapter) so
+    # voice commands drive the browser through module calls, not UI clicks.
+    # Both methods bypass the URL bar entirely (no _url_user_editing churn);
+    # the bar syncs back via the normal on_url_changed path.
+
+    def load_url(self, url: str) -> bool:
+        """Navigate to *url* programmatically. http/https only.
+
+        Returns True when navigation was issued, False on a bad URL.
+        """
+        target = (url or "").strip()
+        if not target:
+            return False
+        if not target.startswith(("http://", "https://")):
+            if "." in target and " " not in target:
+                target = "https://" + target
+            else:
+                return False
+        self._url_user_editing = False
+        self.web_view.setUrl(QUrl(target))
+        return True
+
+    def search_web(self, query: str) -> bool:
+        """Search *query* on Google (the default search engine).
+
+        Returns True when the search navigation was issued.
+        """
+        q = (query or "").strip()
+        if not q:
+            return False
+        return self.load_url("https://www.google.com/search?q=" + quote_plus(q))
+
+    def auto_fill_login(self, username: str, password: str,
+                        submit: bool = True) -> bool:
+        """Fill the page's login form programmatically (agent login flow).
+
+        Generic heuristic: first password field + the nearest preceding
+        text/email field, then submit the surrounding form. The password
+        is passed as a JSON-encoded JS literal — it is never logged,
+        never stored on the widget, never echoed to the URL bar.
+        """
+        import json as _json
+        if not password:
+            return False
+        js = """
+        (function() {
+            var pw = document.querySelector('input[type=password]');
+            if (!pw) { return false; }
+            var userSel = 'input[type=text], input[type=email], ' +
+                          'input[name*=user i], input[name*=login i], ' +
+                          'input[name*=email i]';
+            var user = null;
+            var form = pw.form;
+            var scope = form || document;
+            var candidates = scope.querySelectorAll(userSel);
+            for (var i = 0; i < candidates.length; i++) {
+                var c = candidates[i];
+                if (c.type !== 'hidden' && c !== pw) { user = c; break; }
+            }
+            function setVal(el, val) {
+                if (!el) { return; }
+                el.focus();
+                el.value = val;
+                el.dispatchEvent(new Event('input',  {bubbles: true}));
+                el.dispatchEvent(new Event('change', {bubbles: true}));
+            }
+            setVal(user, %USERNAME%);
+            setVal(pw, %PASSWORD%);
+            if (%SUBMIT%) {
+                if (form) {
+                    var btn = form.querySelector(
+                        'button[type=submit], input[type=submit]');
+                    if (btn) { btn.click(); } else if (form.requestSubmit) {
+                        form.requestSubmit();
+                    } else { form.submit(); }
+                }
+            }
+            return true;
+        })();
+        """
+        js = (js.replace("%USERNAME%", _json.dumps(username or ""))
+                .replace("%PASSWORD%", _json.dumps(password))
+                .replace("%SUBMIT%", "true" if submit else "false"))
+        try:
+            self.page.runJavaScript(js)
+            return True
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception(
+                "web browser: auto_fill_login failed")
+            return False
 
     def navigate_back(self):
         self.web_view.back()

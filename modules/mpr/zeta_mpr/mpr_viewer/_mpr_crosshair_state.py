@@ -113,6 +113,18 @@ class _MprCrosshairStateMixin:
         """
         self._update_oblique_reslicing()
 
+        # Slice-bound annotations (2026-06-09): this is the universal post-
+        # reslice hook (wheel scroll + crosshair move/scroll/rotate all reach
+        # it), so refresh which measurements are visible for each pane's new
+        # through-plane position. Cheap (change-only toggle) + fully guarded so
+        # it can never break the reslice path.
+        mt = getattr(self, 'measurement_tools', None)
+        if mt is not None:
+            try:
+                mt.refresh_slice_visibility()
+            except Exception:
+                pass
+
     def _update_slice_info_texts(self):
         """Update slice info text in all views (optimized)"""
         for view_name, text_actor in self.text_actors.items():

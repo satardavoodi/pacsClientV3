@@ -68,6 +68,9 @@ Name: "optional\printing"; Description: "Printing — medical film printing and 
 Name: "optional\run_cd"; Description: "Run CD — portable DICOM media export and delivery"; Types: custom
 Name: "optional\web_browser"; Description: "Web Browser — embedded browser access inside the workstation"; Types: custom
 Name: "optional\echomind"; Description: "EchoMind — AI assistant and guided reporting features"; Types: custom
+; consultation added 2026-06-10 (ADR-0003): purchasable Online Consultation module
+; (Drive-backed physician-to-physician second-opinion workflow inside Education).
+Name: "optional\consultation"; Description: "Online Consultation — cloud-based physician-to-physician case consultation"; Types: custom
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -94,6 +97,7 @@ Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{commonappdata}\AIPa
 Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{commonappdata}\AIPacs\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{commonappdata}\AIPacs\module_packages\web_browser"; Components: optional\web_browser; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{commonappdata}\AIPacs\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\consultation\*"; DestDir: "{commonappdata}\AIPacs\module_packages\consultation"; Components: optional\consultation; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"

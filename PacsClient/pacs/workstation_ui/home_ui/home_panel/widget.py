@@ -249,13 +249,21 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
                     "mpr":       self._launcher_mpr_active_tab,
                     "printing":  self._launcher_printing,
                     "education": self._launcher_education,
+                    # 2026-06-11: web browser ("open the browser" via
+                    # open_module; search/navigate via BrowserCommandAdapter).
+                    "web_browser": self._launcher_web_browser,
                 },
                 # Safe viewer-write subset (change_series / switch_tab / …)
                 # so "load series N" works by voice. close_patient_tab stays
                 # test-server-only.
                 enable_viewer_write=True,
+                # 2026-06-11 background agent: web/education tasks run on a
+                # bounded 2-worker engine (LOW/MEDIUM only) so the user can
+                # keep reporting while the agent works and verifies.
+                task_engine_getter=self._get_agent_task_engine,
             )
             print(f"[CommandBus] wired with {len(self.command_bus.actions())} action(s)")
+            self._wire_agent_background_layer()
             # Test Control Server — env-gated external transport for the bus
             # (AIPACS_TEST_SERVER=1, source build only). No-op in production.
             # See TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md §4.
@@ -339,12 +347,95 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
             return None
 
     def _launcher_education(self, entities: dict):
-        """Open the education module tab (same as the menu action)."""
+        """Open the education module tab (same as the menu action).
+
+        Returns the EducationModuleRedesigned widget so the
+        EducationCommandAdapter can navigate its tabs (consultation,
+        courses, case of the day, library search). None on failure.
+        """
         try:
-            self.open_education_module()
-            return self
+            return self.open_education_module()
         except Exception as _err:  # noqa: BLE001
             print(f"[CommandBus] education launcher failed: {_err}")
+            return None
+
+    # ── 2026-06-11: background agent layer (engine + badges + inbox) ──────
+    # Fail-safe end to end: any error leaves the synchronous voice paths
+    # working exactly as before (the BrowserCommandAdapter falls back to
+    # its sync path when the engine getter returns None).
+
+    def _get_agent_task_engine(self):
+        """Lazy singleton engine getter passed to the CommandBus."""
+        try:
+            from modules.EchoMind.secretary.background import get_task_engine
+            return get_task_engine()
+        except Exception as _err:  # noqa: BLE001
+            print(f"[AgentEngine] unavailable: {_err}")
+            return None
+
+    def _wire_agent_background_layer(self):
+        """Init UI bridge + status badges + inbox notifications. Idempotent."""
+        if getattr(self, "_agent_layer_wired", False):
+            return
+        try:
+            engine = self._get_agent_task_engine()
+            if engine is None:
+                return
+            # UI bridge must be created on the main thread (we are on it).
+            from modules.EchoMind.secretary.background.ui_bridge import (
+                init_ui_bridge,
+            )
+            init_ui_bridge()
+            # Module icon badges (gray/blue/green/orange/red).
+            from modules.EchoMind.secretary.background.status_badges import (
+                ModuleStatusBadges,
+            )
+            self._agent_badges = ModuleStatusBadges(
+                engine, self._agent_button_for_module)
+            # Inbox notifications on terminal states (worker thread → DB,
+            # same off-thread pattern the consultation poller uses).
+            from modules.EchoMind.secretary.background.notify import (
+                notify_task_finished,
+            )
+
+            def _notify_listener(task, state):
+                if state in ("completed", "warning", "failed"):
+                    notify_task_finished(task, task.result)
+
+            engine.add_listener(_notify_listener)
+            self._agent_layer_wired = True
+            print("[AgentEngine] background layer wired (badges + inbox)")
+        except Exception as _err:  # noqa: BLE001
+            print(f"[AgentEngine] background layer wiring failed: {_err}")
+
+    def _agent_button_for_module(self, module: str):
+        """Resolve the left-menu button that represents *module*."""
+        try:
+            mw = getattr(self, "mainwindow", None)
+            if mw is None:
+                return None
+            mapping = {
+                "web_browser": "web_browser_btn",
+                "education": "education_btn",
+            }
+            attr = mapping.get(module)
+            return getattr(mw, attr, None) if attr else None
+        except Exception:
+            return None
+
+    def _launcher_web_browser(self, entities: dict):
+        """Open/activate the Web Browser tab (same as the menu action).
+
+        Returns the WebBrowserWidget so the BrowserCommandAdapter can call
+        its controller API (search_web / load_url / navigate_back / …).
+        None when the module is unavailable — the adapter turns that into a
+        clear MODULE_UNAVAILABLE message instead of a silent failure (the
+        modal "not installed" dialog is suppressed on this voice path).
+        """
+        try:
+            return self.open_web_browser(show_unavailable_dialog=False)
+        except Exception as _err:  # noqa: BLE001
+            print(f"[CommandBus] web_browser launcher failed: {_err}")
             return None
 
     def _get_active_patient_tab_for_bus(self):

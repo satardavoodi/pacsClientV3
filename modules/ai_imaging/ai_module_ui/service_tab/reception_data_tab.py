@@ -509,8 +509,12 @@ class ReceptionDataTab(QWidget):
             # Fallback to imagingWorkflow.report
             imaging_workflow = self.current_data.get("imagingWorkflow", {})
             report = imaging_workflow.get("report", {})
-        
+
         if not report:
+            # No server report yet — still offer a blank editor so the user
+            # can write a manual report (report creation must not depend on
+            # EchoMind or on a pre-existing server report).
+            self._create_new_report_section()
             return
         
         status = report.get("status", "pending")
@@ -608,34 +612,81 @@ class ReceptionDataTab(QWidget):
             radiologist_label.setStyleSheet(f"color: {COLORS['primary']}; font-family: 'Tahoma', 'Segoe UI', sans-serif; font-size: 12px; font-weight: bold;")
             layout.addWidget(radiologist_label)
         
-        # Check if report content exists
+        # Always offer the editor: "View / Edit" when content exists, and a
+        # blank "Write Report" form when the report record has no text yet.
         report_content = report.get("content", "") or report.get("findings", "")
-        if report_content:
-            # Add View/Edit Report button
-            view_btn = QPushButton(" View / Edit Report")
-            view_btn.setIcon(qta.icon('fa5s.file-medical', color='white'))
-            view_btn.setStyleSheet(f"""
-                QPushButton {{
-                    background-color: {COLORS['primary']};
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    padding: 8px 16px;
-                    font-family: 'Segoe UI', sans-serif;
-                    font-size: 12px;
-                    font-weight: bold;
-                    margin-top: 8px;
-                }}
-                QPushButton:hover {{
-                    background-color: {COLORS['primary_dark']};
-                }}
-                QPushButton:pressed {{
-                    background-color: {COLORS['primary_dark']}cc;
-                }}
-            """)
-            view_btn.clicked.connect(lambda: self._show_report_editor(report))
-            layout.addWidget(view_btn)
-        
+        view_btn = QPushButton(
+            " View / Edit Report" if report_content else " Write Report"
+        )
+        view_btn.setIcon(qta.icon('fa5s.file-medical', color='white'))
+        view_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                margin-top: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_dark']};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS['primary_dark']}cc;
+            }}
+        """)
+        view_btn.clicked.connect(lambda: self._show_report_editor(report))
+        layout.addWidget(view_btn)
+
+        self.content_layout.addWidget(group)
+
+    def _create_new_report_section(self):
+        """Section shown when the patient has NO server report yet.
+
+        Provides a "Write New Report" button that opens the report editor as
+        a blank form, so manual report creation works without EchoMind.
+        """
+        group = QGroupBox("Report")
+        group.setStyleSheet(get_group_box_style("info"))
+
+        layout = QVBoxLayout(group)
+        layout.setContentsMargins(10, 15, 10, 10)
+        layout.setSpacing(6)
+
+        info_label = QLabel("No report has been written for this reception yet.")
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet(get_label_style("secondary", "md"))
+        layout.addWidget(info_label)
+
+        new_btn = QPushButton(" Write New Report")
+        new_btn.setIcon(qta.icon('fa5s.file-medical', color='white'))
+        new_btn.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {COLORS['primary']};
+                color: white;
+                border: none;
+                border-radius: 4px;
+                padding: 8px 16px;
+                font-family: 'Segoe UI', sans-serif;
+                font-size: 12px;
+                font-weight: bold;
+                margin-top: 8px;
+            }}
+            QPushButton:hover {{
+                background-color: {COLORS['primary_dark']};
+            }}
+            QPushButton:pressed {{
+                background-color: {COLORS['primary_dark']}cc;
+            }}
+        """)
+        new_btn.clicked.connect(
+            lambda: self._show_report_editor({"content": "", "status": "pending"})
+        )
+        layout.addWidget(new_btn)
+
         self.content_layout.addWidget(group)
     
     def _create_attachments_section(self):
@@ -1566,39 +1617,64 @@ class ReceptionDataTab(QWidget):
             dialog: The parent dialog for showing messages
         """
         import requests
-        
+
         # Get authentication token
         token_manager = get_socket_token_manager()
         token = token_manager.get_token()
-        
+
         if not token:
             QMessageBox.critical(dialog, "Authentication Error", "Authentication token not found. Please log in again.")
             return
-        
+
+        # Normalize the OUTGOING payload only (local editor/snapshots keep the
+        # original HTML): inline-styled fragment, per-block RTL/LTR dir +
+        # alignment, neutral-symbol LRM fix — see PacsClient/utils/
+        # report_server_html.py and BIDI_RTL_LTR_IMPLEMENTATION_GUIDE.md.
+        try:
+            from PacsClient.utils.report_server_html import prepare_report_html_for_server
+            server_content = prepare_report_html_for_server(new_content)
+        except Exception:
+            server_content = new_content
+
         # Prepare update data for the new API
         update_data = {
             "receptionId": int(reception_id) if isinstance(reception_id, str) and reception_id.isdigit() else reception_id,
-            "content": new_content,
-            "findings": new_content,
+            "content": server_content,
+            "findings": server_content,
             "status": new_status
         }
-        
+
+        import logging
+        logger = logging.getLogger(__name__)
+
         # Make API call
         try:
             url = f"{self.service.base_url}/api/pacs/update-report"
-            
+
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {token}"
             }
-            
+
+            logger.info(
+                "[REPORT_SAVE] -> POST update-report receptionId=%s status=%s "
+                "content_len=%s (normalized from %s)",
+                update_data["receptionId"], new_status,
+                len(server_content or ""), len(new_content or ""),
+            )
+
             response = requests.post(
                 url,
                 json=update_data,
                 headers=headers,
                 timeout=30
             )
-            
+
+            logger.info(
+                "[REPORT_SAVE] <- status_code=%s body=%.500s",
+                response.status_code, (response.text or "").strip(),
+            )
+
             if response.status_code == 200:
                 response_data = response.json()
                 
@@ -1614,6 +1690,11 @@ class ReceptionDataTab(QWidget):
                             self.current_data["imagingWorkflow"]["report"]["findings"] = new_content
                             self.current_data["imagingWorkflow"]["report"]["status"] = new_status
                     
+                    # Mirror the status onto the PACS report-status pipeline
+                    # (same mechanism as the Patient-Tab sync dropdown) so the
+                    # toolbar badge / home table stay in sync with the send.
+                    self._propagate_status_to_pacs(new_status)
+
                     success_msg = response_data.get("message", "Report saved successfully.")
                     QMessageBox.information(dialog, "Success", success_msg)
                 else:
@@ -1641,6 +1722,59 @@ class ReceptionDataTab(QWidget):
             QMessageBox.critical(dialog, "Connection Error", "Error connecting to server. Please check your internet connection.")
         except Exception as e:
             QMessageBox.critical(dialog, "Error", f"Unexpected error: {str(e)}")
+
+    def _find_patient_widget(self):
+        """Walk up the parent chain to the owning patient widget.
+
+        The patient widget exposes ``_change_report_status`` — the SAME
+        status pipeline used by the Patient-Tab sync dropdown (socket status
+        update + toolbar badge + home-table refresh, all off the GUI thread).
+        Returns None when this tab is hosted outside a patient tab (e.g. the
+        standalone AI main window).
+        """
+        widget = self.parent()
+        while widget is not None:
+            if hasattr(widget, '_change_report_status') and hasattr(widget, 'study_uid'):
+                return widget
+            widget = widget.parent()
+        return None
+
+    def _propagate_status_to_pacs(self, new_status: str):
+        """Mirror the editor's selected status onto the PACS status pipeline.
+
+        Reuses the existing patient-sync mechanism (no new status pipeline):
+        ``patient_widget._change_report_status`` runs the socket
+        ``update_report_status`` in a background thread and refreshes the
+        toolbar badge and the home table. Best-effort — a failure here never
+        blocks the report save (the REST save already succeeded).
+        """
+        import logging
+        logger = logging.getLogger(__name__)
+        try:
+            widget = self._find_patient_widget()
+            if widget is None:
+                logger.info("[REPORT_STATUS] No patient widget found; skipping PACS status sync")
+                return
+            study_uid = str(getattr(widget, 'study_uid', '') or '').strip()
+            if not study_uid:
+                logger.info("[REPORT_STATUS] No study_uid on patient widget; skipping PACS status sync")
+                return
+            old_status = str(getattr(widget, 'report_status', 'pending') or 'pending')
+            if old_status == str(new_status or ''):
+                logger.info("[REPORT_STATUS] Status unchanged (%s); skipping PACS status sync", new_status)
+                return
+            logger.info(
+                "[REPORT_STATUS] Propagating editor status to PACS: %s -> %s (study=%s)",
+                old_status, new_status, study_uid,
+            )
+            widget._change_report_status(
+                study_uid=study_uid,
+                old_status=old_status,
+                new_status=new_status,
+                comment="",
+            )
+        except Exception as e:
+            logger.warning("[REPORT_STATUS] PACS status sync failed (non-fatal): %s", e)
 
     def _create_reception_info_section(self):
         """Create reception information section using the modern ReceptionInfoCard widget."""

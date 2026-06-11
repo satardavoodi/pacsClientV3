@@ -31,27 +31,54 @@ def _download_and_read_envelope(transport, file_id: str) -> dict | None:
         return None
 
 
+def _check_consultation_folder(transport, entry, me: str, known: set, found: list) -> bool:
+    """If ``entry`` is a consultation folder (has an envelope), match + collect it.
+
+    Returns True when the folder contained an envelope (so callers know not to
+    descend further).
+    """
+    child = transport.find_child(entry.id, ENVELOPE_FILENAME)
+    if child is None:
+        return False
+    env = _download_and_read_envelope(transport, child.id)
+    if not env:
+        return True  # had an envelope file, just unreadable — still a leaf
+    cid = str(env.get("consultation_id") or "")
+    assignee_email = str((env.get("assignee") or {}).get("email", "")).strip().lower()
+    if assignee_email == me and me and cid and cid not in known:
+        found.append({"remote_folder_id": entry.id, "envelope": env})
+    return True
+
+
 def find_assigned_consultations(
     transport, app_folder_id: str, my_email: str, known_ids=None
 ) -> list[dict]:
     """Return ``[{remote_folder_id, envelope}]`` for consultations on the cloud that are
-    assigned to ``my_email`` and not in ``known_ids``."""
+    assigned to ``my_email`` and not in ``known_ids``.
+
+    Layout-aware (ADR-0005): scans BOTH the legacy depth-1 layout
+    (``app/<cid>/consultation.json``) and the per-physician layout
+    (``app/<physician_address>/<cid>/consultation.json``). A depth-1 folder
+    without an envelope is treated as a physician folder and its child folders
+    are checked once — bounded two-level scan, no deeper recursion.
+    """
     known = {str(k) for k in (known_ids or ())}
     me = (my_email or "").strip().lower()
     found: list[dict] = []
     for entry in transport.list_folder(app_folder_id):
         if not entry.is_folder:
             continue
-        child = transport.find_child(entry.id, ENVELOPE_FILENAME)
-        if child is None:
+        if _check_consultation_folder(transport, entry, me, known, found):
+            continue  # legacy consultation folder — done
+        # Physician folder (ADR-0005): check its child folders for envelopes.
+        try:
+            children = transport.list_folder(entry.id)
+        except Exception as exc:
+            logger.debug("physician folder listing failed for %s: %s", entry.name, exc)
             continue
-        env = _download_and_read_envelope(transport, child.id)
-        if not env:
-            continue
-        cid = str(env.get("consultation_id") or "")
-        assignee_email = str((env.get("assignee") or {}).get("email", "")).strip().lower()
-        if assignee_email == me and me and cid and cid not in known:
-            found.append({"remote_folder_id": entry.id, "envelope": env})
+        for sub in children:
+            if sub.is_folder:
+                _check_consultation_folder(transport, sub, me, known, found)
     return found
 
 

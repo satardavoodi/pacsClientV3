@@ -99,6 +99,20 @@ MODULE_CATALOG: list[dict[str, Any]] = [
         "healthcheck_import": "modules.offline_cloud_server.service",
     },
     {
+        # ADR-0003 (2026-06-10): Identity ships in the CORE bundle — it is shared
+        # infrastructure (account pill, OAuth custody, future aipacs_web pairing /
+        # licensing provider), required even when Consultation is not purchased.
+        "id": "identity",
+        "title": "Identity & Accounts",
+        "tier": "basic",
+        "default_enabled": True,
+        "component": "basic\\identity",
+        "package_kind": "core",
+        "package_python_paths": ["python"],
+        "package_sources": ["modules/Identity"],
+        "healthcheck_import": "modules.Identity.feature_flags",
+    },
+    {
         "id": "data_analysis",
         "title": "Data Analysis",
         "tier": "optional",
@@ -164,6 +178,23 @@ MODULE_CATALOG: list[dict[str, Any]] = [
         "package_python_paths": ["python"],
         "package_sources": ["modules/EchoMind"],
         "healthcheck_import": "modules.EchoMind.settings_store",
+    },
+    {
+        # ADR-0003 (2026-06-10): the purchasable Online Consultation module.
+        # Ships the engine (modules/cloud_consultation); the Education tab that
+        # composes it ships with the education core package, and modules/Identity
+        # ships in core (see the "identity" entry above). The user-facing gate is
+        # modules.education.online_consultation.online_consultation_available()
+        # = both feature flags AND is_module_enabled("consultation").
+        "id": "consultation",
+        "title": "Online Consultation",
+        "tier": "optional",
+        "default_enabled": False,
+        "component": "optional\\consultation",
+        "package_kind": "bundled_unlock",
+        "package_python_paths": ["python"],
+        "package_sources": ["modules/cloud_consultation"],
+        "healthcheck_import": "modules.cloud_consultation.feature_flags",
     },
 ]
 

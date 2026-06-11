@@ -52,6 +52,149 @@ def _plan(
     }
 
 
+# ── Web Browser + Education rule parsing (2026-06-11) ───────────────────────
+
+_RE_WEB_SEARCH_PATTERNS = [
+    # "search (for) X on/in google|the web|web|internet"
+    re.compile(r"(?:^|\s)(?:search|look\s+up|find)\s+(?:for\s+)?(.+?)\s+(?:on|in)\s+(?:google|the\s+web|web|internet)\s*\.?$", re.I),
+    # "open google and search (for) X" / "google search (for) X" / "search google for X"
+    re.compile(r"(?:^|\s)(?:open\s+google\s+and\s+search\s+(?:for\s+)?|google\s+search\s+(?:for\s+)?|search\s+google\s+for\s+)(.+?)\s*\.?$", re.I),
+    # "google X" (google used as a verb)
+    re.compile(r"^google\s+(.+?)\s*\.?$", re.I),
+    # Persian: «در/تو/توی گوگل (جستجو|سرچ) (کن) X»
+    re.compile(r"(?:در|تو|توی)\s+گوگل\s+(?:جستجو|سرچ)\s*(?:کن)?\s+(.+?)\s*\.?$"),
+    # Persian: «(جستجو|سرچ) (کن) X در/تو/توی گوگل|وب|اینترنت»
+    re.compile(r"(?:جستجو|سرچ)\s*(?:کن)?\s+(.+?)\s+(?:در|تو|توی)\s+(?:گوگل|وب|اینترنت)\s*\.?$"),
+    # Persian: «X را گوگل کن»
+    re.compile(r"^(.+?)\s+(?:را|رو)\s+گوگل\s+کن\s*\.?$"),
+]
+
+_RE_EDU_SEARCH_PATTERNS = [
+    re.compile(r"search\s+(?:the\s+)?education(?:al)?\s*(?:library|module|content)?\s+for\s+(.+?)\s*\.?$", re.I),
+    re.compile(r"(?:در|توی)\s+آموزش\s+(?:جستجو|سرچ)\s*(?:کن)?\s+(.+?)\s*\.?$"),
+]
+
+# Deep (background, full-content) education search — "find ALL …" phrasing.
+_RE_EDU_DEEP_PATTERNS = [
+    # "find all ACL educational materials/resources/content"
+    re.compile(r"find\s+all\s+(?:the\s+)?(.+?)\s+education(?:al)?\s+(?:materials|resources|content)\s*\.?$", re.I),
+    # "find/search all educational resources discussing/about/on X"
+    re.compile(r"(?:find|search)\s+(?:all\s+)?education(?:al)?\s+(?:resources|materials|content)\s+(?:discussing|about|on|for)\s+(.+?)\s*\.?$", re.I),
+    # "search all education (content) for X"
+    re.compile(r"search\s+all\s+education(?:al)?\s*(?:content|resources|materials|library)?\s+(?:for\s+)?(.+?)\s*\.?$", re.I),
+    # Persian: «همه منابع آموزشی درباره X را پیدا/جستجو کن»
+    re.compile(r"(?:همه\s+)?منابع\s+آموزشی\s+(?:درباره|در\s+مورد|راجع\s+به)\s+(.+?)(?:\s+(?:را|رو))?\s+(?:پیدا|جستجو)\s*کن\s*\.?$"),
+]
+
+# Website login via the encrypted credential vault.
+_RE_LOGIN_PATTERNS = [
+    re.compile(r"(?:log\s*in(?:to)?|login|sign\s*in(?:to)?)\s+(?:to\s+)?(?:the\s+)?(?:website\s+|site\s+)?(.+?)\s*\.?$", re.I),
+    re.compile(r"(?:وارد)\s+(?:سایت\s+|وبسایت\s+)?(.+?)\s+(?:شو|بشو)\s*\.?$"),
+    re.compile(r"(?:لاگین)\s+(?:به\s+)?(?:سایت\s+)?(.+?)\s*\.?$"),
+]
+
+_RE_URL = re.compile(
+    r"(https?://\S+|www\.\S+|\b[a-z0-9][a-z0-9\-]*\.(?:com|org|net|io|ir|edu|gov|co|info|me|ai)(?:/\S*)?)",
+    re.I,
+)
+
+
+def _parse_browser_education(raw: str, norm: str) -> SecretaryActionPlan | None:
+    """Rule fast paths for Web Browser + Education voice commands.
+
+    Returns a plan or None (None → later branches / LLM fallback).
+    All produced actions are CommandBus-bridged (validator
+    ``_BUS_ALLOWED_ACTIONS``), side-effect-light, no confirmation needed.
+    """
+    # ── Background agent: task status / cancel ────────────────────────────
+    if _has_any(norm, ["agent status", "task status", "background tasks",
+                       "background task status", "وضعیت تسک",
+                       "وضعیت کارها"]):
+        return _plan("agent_task_status", {}, 0.9, False,
+                     "rule: agent task status")
+    if _has_any(norm, ["cancel the task", "cancel the search",
+                       "cancel background", "stop the search",
+                       "تسک را لغو", "جستجو را لغو"]):
+        return _plan("cancel_agent_task", {}, 0.88, False,
+                     "rule: cancel agent task")
+
+    # ── Background agent: deep education content search ──────────────────
+    for pat in _RE_EDU_DEEP_PATTERNS:
+        m = pat.search(raw)
+        if m and (m.group(1) or "").strip():
+            return _plan("search_education_content",
+                         {"query": m.group(1).strip()}, 0.92, False,
+                         "rule: education deep content search")
+
+    # ── Background agent: website login (credential vault) ───────────────
+    if _has_any(norm, ["log in", "login", "sign in", "log into", "وارد سایت",
+                       "لاگین"]):
+        for pat in _RE_LOGIN_PATTERNS:
+            m = pat.search(raw)
+            if m and (m.group(1) or "").strip():
+                site = m.group(1).strip().strip('"“”')
+                # "log in" with no site → not enough information.
+                if site.lower() not in ("", "the website", "website"):
+                    return _plan("login_website", {"site": site}, 0.9, False,
+                                 "rule: website login")
+
+    # ── Education deep navigation (checked before browser search) ────────
+    if _has_any(norm, ["case of the day", "case of day", "کیس روز", "مورد روز"]):
+        return _plan("open_case_of_day", {}, 0.92, False,
+                     "rule: education case of the day")
+    if "consultant" in norm and "profile" in norm or "پروفایل مشاور" in norm:
+        return _plan("show_consultant_profiles", {}, 0.92, False,
+                     "rule: consultant profiles")
+    if _has_any(norm, ["consultation", "consultations", "مشاوره"]):
+        return _plan("open_consultation", {}, 0.9, False,
+                     "rule: education consultation")
+    for pat in _RE_EDU_SEARCH_PATTERNS:
+        m = pat.search(raw)
+        if m and (m.group(1) or "").strip():
+            return _plan("search_education", {"query": m.group(1).strip()},
+                         0.9, False, "rule: education search")
+    if _has_any(norm, ["open courses", "show courses", "my courses",
+                       "open the courses", "دوره ها را باز", "دوره‌ها را باز",
+                       "دوره های من"]):
+        return _plan("open_courses", {}, 0.9, False, "rule: education courses")
+
+    # ── Web search (Google is the default and only engine) ───────────────
+    for pat in _RE_WEB_SEARCH_PATTERNS:
+        m = pat.search(raw)
+        if m:
+            query = (m.group(1) or "").strip().strip('"“”')
+            if query and query.lower() not in ("google", "گوگل"):
+                return _plan("web_search", {"query": query}, 0.92, False,
+                             "rule: web search (google)")
+
+    # ── Open a specific website / URL ─────────────────────────────────────
+    if _has_any(norm, ["open", "go to", "navigate to", "باز کن", "برو به",
+                       "website", "سایت", "وبسایت"]):
+        m = _RE_URL.search(raw)
+        if m:
+            return _plan("open_url", {"url": m.group(1).strip().rstrip(".,)")},
+                         0.92, False, "rule: open url")
+
+    # ── Browser navigation ────────────────────────────────────────────────
+    if _has_any(norm, ["go back", "navigate back", "page back",
+                       "صفحه قبل", "برگرد به صفحه قبل"]):
+        return _plan("browser_back", {}, 0.88, False, "rule: browser back")
+    if _has_any(norm, ["go forward", "navigate forward", "page forward",
+                       "صفحه بعد"]):
+        return _plan("browser_forward", {}, 0.88, False, "rule: browser forward")
+    if (("refresh" in norm or "reload" in norm or "رفرش" in norm)
+            and ("page" in norm or "browser" in norm or "صفحه" in norm
+                 or norm in ("refresh", "reload", "رفرش"))):
+        return _plan("refresh_page", {}, 0.88, False, "rule: refresh page")
+
+    # ── Open the browser itself ──────────────────────────────────────────
+    if _has_any(norm, ["open the browser", "open browser", "open web browser",
+                       "مرورگر را باز", "مرورگر باز"]):
+        return _plan("open_browser", {}, 0.92, False, "rule: open browser")
+
+    return None
+
+
 def parse_command_rule(text: str) -> SecretaryActionPlan | None:
     raw = text or ""
     norm = _normalize(raw)
@@ -110,6 +253,16 @@ def parse_command_rule(text: str) -> SecretaryActionPlan | None:
 
     code = _extract_code(raw)
 
+    # ── Web Browser + Education fast paths (2026-06-11) ──────────────────
+    # MUST run before the module-open / open_patient / list branches:
+    # "search this on google", "show my consultations", "open courses" etc.
+    # previously fell into open_patient/list_patients. Executed via the
+    # orchestrator→CommandBus bridge (BrowserCommandAdapter /
+    # EducationCommandAdapter).
+    browser_edu_plan = _parse_browser_education(raw, norm)
+    if browser_edu_plan is not None and not code:
+        return browser_edu_plan
+
     # ── Module-open fast path (2026-06-06) ────────────────────────────────
     # MUST run before the open_patient branch: "open echomind / eagle eye /
     # mpr / the report module" previously fell into open_patient with no
@@ -135,6 +288,9 @@ def parse_command_rule(text: str) -> SecretaryActionPlan | None:
         ("چاپ", "printing"),
         ("education", "education"),
         ("آموزش", "education"),
+        ("web browser", "web_browser"),
+        ("browser", "web_browser"),
+        ("مرورگر", "web_browser"),
     ]
     if _has_any(norm, open_terms) and not code:
         for term, module_name in module_terms:

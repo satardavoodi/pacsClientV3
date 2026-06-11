@@ -55,15 +55,23 @@ class _HPModulesMixin:
             import traceback
             traceback.print_exc()
 
-    def open_web_browser(self):
-        """Open web browser in a new tab"""
+    def open_web_browser(self, show_unavailable_dialog: bool = True):
+        """Open web browser in a new tab.
+
+        Returns the WebBrowserWidget (new or existing) so callers — the
+        menu button AND the Secretary CommandBus (BrowserCommandAdapter) —
+        can drive it programmatically. Returns None when the module is
+        unavailable or opening failed. ``show_unavailable_dialog=False``
+        suppresses the modal (voice path reports through its own envelope).
+        """
         try:
             if not is_module_enabled("web_browser"):
-                QMessageBox.information(self, "Web Browser Module",
-                                        "The Web Browser module is not installed for this workstation.")
-                return
+                if show_unavailable_dialog:
+                    QMessageBox.information(self, "Web Browser Module",
+                                            "The Web Browser module is not installed for this workstation.")
+                return None
             from modules.web_browser import WebBrowserWidget
-            activate_or_create_module_tab(
+            return activate_or_create_module_tab(
                 self.tab_widget, self.custom_tab_manager,
                 tab_flag_key='is_web_browser_tab',
                 widget_factory=WebBrowserWidget,
@@ -73,12 +81,19 @@ class _HPModulesMixin:
         except Exception as e:
             print(f"[HomePanelWidget] Error opening web browser: {e}")
             import traceback; traceback.print_exc()
+            return None
 
     def open_education_module(self):
-        """Open education module in a new tab"""
+        """Open education module in a new tab.
+
+        Returns the EducationModuleRedesigned widget (new or existing) so
+        callers — the menu button AND the Secretary CommandBus
+        (EducationCommandAdapter) — can navigate its tabs programmatically.
+        Returns None on failure.
+        """
         try:
             from modules.education.education_module_redesigned import EducationModuleRedesigned
-            activate_or_create_module_tab(
+            return activate_or_create_module_tab(
                 self.tab_widget, self.custom_tab_manager,
                 tab_flag_key='is_education_tab',
                 widget_factory=lambda: EducationModuleRedesigned(
@@ -93,6 +108,7 @@ class _HPModulesMixin:
         except Exception as e:
             print(f"[HomePanelWidget] Error opening education module: {e}")
             import traceback; traceback.print_exc()
+            return None
 
     def open_printing_module(self):
         """Open printing module in a new tab"""

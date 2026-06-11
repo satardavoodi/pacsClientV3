@@ -134,18 +134,38 @@ class _ReceptionIdDialog(QDialog):
     holds the chosen ID and ``mode`` is either ``"current"`` or ``"other"``.
     """
 
-    def __init__(self, parent=None, current_patient_id: str | None = None):
+    def __init__(self, parent=None, current_patient_id: str | None = None,
+                 current_status: str | None = None):
         super().__init__(parent)
         self.setWindowTitle("Select Reception ID")
         self.setMinimumWidth(420)
         self.selected_patient_id: str | None = None
         self.mode: str | None = None
+        self.selected_status: str = "pending"
 
         layout = QVBoxLayout(self)
 
         title = QLabel("Select the reception ID this report should be sent to:")
         title.setWordWrap(True)
         layout.addWidget(title)
+
+        # Report status to set alongside the report text (same status model
+        # as the patient sync workflow — modules.network.socket_report_status_service).
+        status_row = QHBoxLayout()
+        status_row.addWidget(QLabel("Report status:"))
+        self._status_combo = QComboBox()
+        try:
+            from modules.network.socket_report_status_service import REPORT_STATUSES
+            for status_key, status_label in REPORT_STATUSES.items():
+                self._status_combo.addItem(status_label, status_key)
+        except Exception:
+            self._status_combo.addItem("Pending", "pending")
+        if current_status is not None:
+            idx = self._status_combo.findData(current_status)
+            if idx >= 0:
+                self._status_combo.setCurrentIndex(idx)
+        status_row.addWidget(self._status_combo, 1)
+        layout.addLayout(status_row)
 
         if current_patient_id:
             btn_current = QPushButton(f"Send to current patient  ({current_patient_id})")
@@ -175,6 +195,10 @@ class _ReceptionIdDialog(QDialog):
     def _choose(self, patient_id: str, mode: str) -> None:
         self.selected_patient_id = str(patient_id or "").strip()
         self.mode = mode
+        try:
+            self.selected_status = self._status_combo.currentData() or "pending"
+        except Exception:
+            self.selected_status = "pending"
         self.accept()
 
     def _choose_other(self) -> None:
@@ -3834,6 +3858,73 @@ class OneChatPage(QWidget):
         except Exception:
             return loaded_any
 
+    def _propagate_reception_status_to_pacs(self, new_status: str, send_mode):
+        """Mirror the Send-to-Reception status onto the PACS status pipeline.
+
+        Reuses the SAME mechanism as the patient sync workflow (socket
+        ``update_report_status``) — no new status pipeline. Only runs when
+        the report was sent for the CURRENT study (``send_mode == "current"``);
+        sending to another reception ID must never touch this study's status.
+        Best-effort: failures are logged, never raised.
+        """
+        import logging
+        import threading
+        logger = logging.getLogger(__name__)
+
+        if send_mode != "current":
+            return
+        study_uid = str(getattr(self, "study_uid", "") or "").strip()
+        if not study_uid:
+            return
+        try:
+            from modules.network.socket_report_status_service import VALID_STATUSES
+            if new_status not in VALID_STATUSES:
+                logger.warning(
+                    f"[RECEPTION_SERVER] Invalid status {new_status!r}; PACS sync skipped"
+                )
+                return
+        except Exception:
+            return
+
+        # Prefer the owning patient widget's pipeline (it also refreshes the
+        # toolbar badge and the home table, and runs off the GUI thread).
+        widget = self.parent()
+        while widget is not None and not (
+            hasattr(widget, "_change_report_status") and hasattr(widget, "study_uid")
+        ):
+            widget = widget.parent()
+        if widget is not None and str(getattr(widget, "study_uid", "") or "") == study_uid:
+            old_status = str(getattr(widget, "report_status", "pending") or "pending")
+            if old_status != new_status:
+                logger.info(
+                    f"[RECEPTION_SERVER] PACS status via patient widget: "
+                    f"{old_status} -> {new_status} (study={study_uid})"
+                )
+                widget._change_report_status(
+                    study_uid=study_uid,
+                    old_status=old_status,
+                    new_status=new_status,
+                    comment="",
+                )
+            return
+
+        # Fallback: direct socket status service, off the GUI thread.
+        def _update():
+            try:
+                from modules.network.socket_report_status_service import (
+                    get_report_status_service,
+                )
+                service = get_report_status_service()
+                service.update_report_status(study_uid, new_status)
+                logger.info(
+                    f"[RECEPTION_SERVER] PACS status updated via service: "
+                    f"{new_status} (study={study_uid})"
+                )
+            except Exception as exc:
+                logger.warning(f"[RECEPTION_SERVER] PACS status sync failed: {exc}")
+
+        threading.Thread(target=_update, daemon=True).start()
+
     def _send_to_reception(self, bubble: "MessageBubble"):
         """Send report to reception - reads from database for persistence."""
         import logging
@@ -3898,12 +3989,24 @@ class OneChatPage(QWidget):
         # Let the user confirm the current patient or enter a different
         # reception ID before the report is sent.
         current_patient_id = (patient_id or "").strip() or None
-        dialog = _ReceptionIdDialog(self, current_patient_id)
+        # Prefill the status combo with the current study's PACS status.
+        current_status = None
+        try:
+            _w = self.parent()
+            while _w is not None and not hasattr(_w, "report_status"):
+                _w = _w.parent()
+            if _w is not None:
+                current_status = str(getattr(_w, "report_status", "") or "") or None
+        except Exception:
+            current_status = None
+        dialog = _ReceptionIdDialog(self, current_patient_id, current_status=current_status)
         if dialog.exec() != QDialog.Accepted:
             logger.info("Reception send: patient selection canceled by user.")
             return
 
         patient_id = (dialog.selected_patient_id or "").strip()
+        selected_status = str(getattr(dialog, "selected_status", "") or "pending")
+        send_mode = getattr(dialog, "mode", None)
         if not patient_id:
             logger.error("Reception send: no reception ID selected.")
             QMessageBox.warning(
@@ -4012,15 +4115,35 @@ class OneChatPage(QWidget):
                             except Exception:
                                 reception_id = target_patient_id
 
+                            # Normalize the OUTGOING HTML only (local DB save
+                            # above keeps the original): inline styles, per-
+                            # block RTL/LTR dir + alignment, LRM fix — so the
+                            # server preserves EchoMind formatting and renders
+                            # Persian RTL / English LTR correctly. See
+                            # PacsClient/utils/report_server_html.py.
+                            try:
+                                from PacsClient.utils.report_server_html import (
+                                    prepare_report_html_for_server,
+                                )
+                                server_html = prepare_report_html_for_server(html_content)
+                            except Exception as exc:
+                                logger.warning(
+                                    f"[RECEPTION_SERVER] HTML normalization failed; sending raw: {exc}"
+                                )
+                                server_html = html_content
+
                             payload = {
                                 "receptionId": reception_id,
-                                "content": html_content,
-                                "findings": html_content,
-                                "status": "pending",
+                                "content": server_html,
+                                "findings": server_html,
+                                "status": selected_status,
                             }
 
                             logger.info(f"[RECEPTION_SERVER] → POST {url}")
-                            logger.info(f"[RECEPTION_SERVER]   receptionId={reception_id}, content_len={len(html_content)}")
+                            logger.info(
+                                f"[RECEPTION_SERVER]   receptionId={reception_id}, "
+                                f"content_len={len(server_html)}, status={selected_status}"
+                            )
 
                             response = requests.post(
                                 url,
@@ -4059,6 +4182,17 @@ class OneChatPage(QWidget):
                             if response.ok and (response_json is None or response_json.get("success", True)):
                                 server_sent = True
                                 server_message = (response_json or {}).get("message", "OK") if response_json else "OK"
+                                # Mirror the chosen status onto the PACS
+                                # report-status pipeline (same mechanism as
+                                # the patient sync workflow).
+                                try:
+                                    self._propagate_reception_status_to_pacs(
+                                        selected_status, send_mode
+                                    )
+                                except Exception as exc:
+                                    logger.warning(
+                                        f"[RECEPTION_SERVER] PACS status sync skipped: {exc}"
+                                    )
                             else:
                                 server_message = (response_json or {}).get("message", response_text[:200]) if response_text else "Server error"
 

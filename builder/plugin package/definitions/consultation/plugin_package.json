@@ -1,0 +1,28 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "consultation",
+  "title": "Online Consultation",
+  "tier": "optional",
+  "package_kind": "bundled_unlock",
+  "build_strategy": "source_tree",
+  "source_paths": [
+    "modules/cloud_consultation"
+  ],
+  "python_paths": [
+    "python"
+  ],
+  "healthcheck_import": "modules.cloud_consultation.feature_flags",
+  "integration_points": [
+    "education.online_consultation_tab",
+    "titlebar.account_popup"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "consultation",
+  "notes": "ADR-0003: purchasable physician-to-physician consultation engine (Drive transport, envelope, sync, notifications). UI tab ships with the education core package; gate = feature flags AND is_module_enabled('consultation')."
+}

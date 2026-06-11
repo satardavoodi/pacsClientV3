@@ -39,6 +39,45 @@ def test_unavailable_when_either_flag_off(monkeypatch, identity, cloud):
     assert online_consultation_available() is False
 
 
+# ── module-registry gate (ADR-0003, 2026-06-10) ───────────────────────────────
+def test_unavailable_when_module_registry_disables_consultation(monkeypatch):
+    """Flags on but is_module_enabled('consultation') False → gate off."""
+    import aipacs_runtime
+
+    monkeypatch.setenv("AIPACS_IDENTITY_MODULE", "1")
+    monkeypatch.setenv("AIPACS_CLOUD_CONSULTATION", "1")
+    monkeypatch.setattr(
+        aipacs_runtime, "is_module_enabled", lambda module_id, profile=None: False
+    )
+    assert online_consultation_available() is False
+
+
+def test_registry_gate_fails_open(monkeypatch):
+    """A broken registry read must NOT strip the flag-enabled feature."""
+    import aipacs_runtime
+
+    def boom(module_id, profile=None):
+        raise RuntimeError("registry unavailable")
+
+    monkeypatch.setenv("AIPACS_IDENTITY_MODULE", "1")
+    monkeypatch.setenv("AIPACS_CLOUD_CONSULTATION", "1")
+    monkeypatch.setattr(aipacs_runtime, "is_module_enabled", boom)
+    assert online_consultation_available() is True
+
+
+def test_consultation_is_in_module_catalog():
+    """ADR-0003: the purchasable module is declared in the runtime catalog."""
+    import aipacs_runtime
+
+    catalog = {str(item["id"]): item for item in aipacs_runtime.MODULE_CATALOG}
+    assert catalog["consultation"]["tier"] == "optional"
+    assert catalog["consultation"]["default_enabled"] is False
+    assert "modules/cloud_consultation" in catalog["consultation"]["package_sources"]
+    # Identity ships core so the account/OAuth layer exists on every install.
+    assert catalog["identity"]["tier"] == "basic"
+    assert "modules/Identity" in catalog["identity"]["package_sources"]
+
+
 # ── status labels (Pending / Sent / Received / Answered / Closed) ─────────────
 def test_every_internal_status_has_a_label_for_both_directions():
     from modules.cloud_consultation.consultation.models import ConsultationStatus
@@ -114,3 +153,56 @@ def test_export_callable_rejects_empty_selection(tmp_path):
     export = build_export_callable([])
     with pytest.raises(RuntimeError, match="No studies"):
         export(str(tmp_path / "x"))
+
+
+# ── de-identification gate in the compose path (B3 / ADR-0003) ────────────────
+def test_export_callable_deidentifies_by_default(monkeypatch, tmp_path):
+    calls = []
+    _stub_offline_cloud(monkeypatch, {"ok": True, "exported": 1, "errors": []}, calls)
+    deid_calls = []
+
+    from modules.cloud_consultation.consultation import deidentify as deid_mod
+
+    def fake_deidentify(dest, **kwargs):
+        deid_calls.append(dest)
+        return deid_mod.DeidentifyResult(processed_files=1)
+
+    monkeypatch.setattr(deid_mod, "deidentify_package", fake_deidentify)
+    export = build_export_callable(["1.2.3"])
+    dest = tmp_path / "staging"
+    assert export(str(dest)) == str(dest)
+    assert deid_calls == [str(dest)]
+
+
+def test_export_callable_blocks_upload_when_deidentification_fails(monkeypatch, tmp_path):
+    calls = []
+    _stub_offline_cloud(monkeypatch, {"ok": True, "exported": 1, "errors": []}, calls)
+
+    from modules.cloud_consultation.consultation import deidentify as deid_mod
+
+    monkeypatch.setattr(
+        deid_mod,
+        "deidentify_package",
+        lambda dest, **kwargs: deid_mod.DeidentifyResult(
+            processed_files=0, excluded_files=2, warnings=["bad file"]
+        ),
+    )
+    export = build_export_callable(["1.2.3"])
+    with pytest.raises(RuntimeError, match="De-identification failed"):
+        export(str(tmp_path / "x"))
+
+
+def test_export_callable_deidentify_optout(monkeypatch, tmp_path):
+    """deidentify=False (BAA-grade deployments only) skips the scrub step."""
+    calls = []
+    _stub_offline_cloud(monkeypatch, {"ok": True, "exported": 1, "errors": []}, calls)
+
+    from modules.cloud_consultation.consultation import deidentify as deid_mod
+
+    def explode(dest, **kwargs):  # pragma: no cover - must not run
+        raise AssertionError("deidentify_package must not be called when opted out")
+
+    monkeypatch.setattr(deid_mod, "deidentify_package", explode)
+    export = build_export_callable(["1.2.3"], deidentify=False)
+    dest = tmp_path / "staging"
+    assert export(str(dest)) == str(dest)

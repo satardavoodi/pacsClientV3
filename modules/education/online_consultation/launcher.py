@@ -37,11 +37,37 @@ def _find_home_panel():
     return None
 
 
-def open_online_consultation() -> bool:
+def open_online_consultation(section: str | None = None) -> bool:
     """Open (or activate) the Education tab and switch to Online Consultation.
 
-    Returns True when the Education module was reached.
+    ``section`` optionally deep-links into one of the ADR-0007 sections
+    (``directory`` / ``profile`` / ``consultations`` / ``requests`` /
+    ``storage`` / ``shared``). Returns True when the Education module was
+    reached.
     """
+    try:
+        from modules.education.online_consultation import online_consultation_available
+
+        if not online_consultation_available():
+            # ADR-0003: mirror the printing-module pattern — explain instead of
+            # silently doing nothing when the module is not installed/enabled.
+            try:
+                from PySide6.QtWidgets import QApplication, QMessageBox
+
+                if QApplication.instance() is not None:
+                    QMessageBox.information(
+                        None,
+                        "Online Consultation",
+                        "The Online Consultation module is not installed or not "
+                        "enabled for this workstation.",
+                    )
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.debug("not-installed notice skipped: %s", exc)
+            logger.info("online consultation launcher: feature unavailable (gate off)")
+            return False
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("availability pre-check failed: %s", exc)
+
     home = _find_home_panel()
     if home is None:
         logger.info("online consultation launcher: home panel not found")
@@ -63,6 +89,8 @@ def open_online_consultation() -> bool:
             inst = EducationModuleRedesigned.last_instance()
             if inst is not None:
                 try:
+                    inst.show_online_consultation(section=section)
+                except TypeError:  # pragma: no cover - older module signature
                     inst.show_online_consultation()
                 except Exception as exc:  # pragma: no cover - defensive
                     logger.debug("show_online_consultation failed: %s", exc)

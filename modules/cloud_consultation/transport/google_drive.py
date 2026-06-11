@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 _FOLDER_MIME = "application/vnd.google-apps.folder"
 APP_FOLDER_NAME = "AI-PACS Consultations"
 _FILE_FIELDS = "id, name, mimeType, size, modifiedTime, md5Checksum"
+# Transient-error hardening (2026-06-10): googleapiclient retries 5xx/429 with
+# exponential backoff when num_retries is set. Keeps a flaky connection from
+# failing a multi-hundred-file package on one hiccup.
+_NUM_RETRIES = 3
 
 
 def _q_escape(value: str) -> str:
@@ -71,14 +75,14 @@ class GoogleDriveTransport(CloudTransport):
         )
         resp = self._service.files().list(
             q=q, spaces="drive", fields=f"files({_FILE_FIELDS})", pageSize=10
-        ).execute()
+        ).execute(num_retries=_NUM_RETRIES)
         files = resp.get("files", [])
         if files:
             return files[0]["id"]
         created = self._service.files().create(
             body={"name": self._app_folder_name, "mimeType": _FOLDER_MIME},
             fields="id",
-        ).execute()
+        ).execute(num_retries=_NUM_RETRIES)
         return created["id"]
 
     def find_child(self, parent_id: str, name: str):
@@ -89,7 +93,7 @@ class GoogleDriveTransport(CloudTransport):
         )
         resp = self._service.files().list(
             q=q, spaces="drive", fields=f"files({_FILE_FIELDS})", pageSize=10
-        ).execute()
+        ).execute(num_retries=_NUM_RETRIES)
         files = resp.get("files", [])
         return self._to_entry(files[0]) if files else None
 
@@ -101,7 +105,7 @@ class GoogleDriveTransport(CloudTransport):
         created = self._service.files().create(
             body={"name": name, "mimeType": _FOLDER_MIME, "parents": [parent_id]},
             fields="id",
-        ).execute()
+        ).execute(num_retries=_NUM_RETRIES)
         return created["id"]
 
     def list_folder(self, folder_id: str) -> list[RemoteEntry]:
@@ -115,7 +119,7 @@ class GoogleDriveTransport(CloudTransport):
                 fields=f"nextPageToken, files({_FILE_FIELDS})",
                 pageSize=200,
                 pageToken=page_token,
-            ).execute()
+            ).execute(num_retries=_NUM_RETRIES)
             for f in resp.get("files", []):
                 entries.append(self._to_entry(f))
             page_token = resp.get("nextPageToken")
@@ -142,7 +146,7 @@ class GoogleDriveTransport(CloudTransport):
         )
         response = None
         while response is None:
-            status, response = request.next_chunk()
+            status, response = request.next_chunk(num_retries=_NUM_RETRIES)
             if progress_cb and status is not None:
                 progress_cb(TransferProgress(
                     path=name, transferred=int(status.resumable_progress), total=total))
@@ -162,7 +166,7 @@ class GoogleDriveTransport(CloudTransport):
             downloader = MediaIoBaseDownload(fh, request)
             done = False
             while not done:
-                status, done = downloader.next_chunk()
+                status, done = downloader.next_chunk(num_retries=_NUM_RETRIES)
                 if progress_cb and status is not None:
                     progress_cb(TransferProgress(
                         path=str(target),
@@ -173,7 +177,7 @@ class GoogleDriveTransport(CloudTransport):
 
     def delete(self, file_id: str) -> None:
         self._guard("delete")
-        self._service.files().delete(fileId=file_id).execute()
+        self._service.files().delete(fileId=file_id).execute(num_retries=_NUM_RETRIES)
 
     def share(self, file_id: str, email: str, role: str = "reader") -> ShareInfo:
         self._guard("share")
@@ -182,13 +186,20 @@ class GoogleDriveTransport(CloudTransport):
             body={"type": "user", "role": role, "emailAddress": email},
             sendNotificationEmail=True,
             fields="id",
-        ).execute()
+        ).execute(num_retries=_NUM_RETRIES)
         return ShareInfo(permission_id=perm.get("id", ""), email=email, role=role)
+
+    def revoke(self, file_id: str, permission_id: str) -> None:
+        """Remove a previously granted permission (close lifecycle, 2026-06-10)."""
+        self._guard("revoke")
+        self._service.permissions().delete(
+            fileId=file_id, permissionId=permission_id
+        ).execute(num_retries=_NUM_RETRIES)
 
     # ── change feed (used by the Phase-5 notification poller) ──────────────────
     def start_change_cursor(self) -> str:
         self._guard("start_change_cursor")
-        resp = self._service.changes().getStartPageToken().execute()
+        resp = self._service.changes().getStartPageToken().execute(num_retries=_NUM_RETRIES)
         return resp.get("startPageToken", "")
 
     def changes_since(self, cursor: str) -> tuple[list[RemoteChange], str]:
@@ -200,7 +211,7 @@ class GoogleDriveTransport(CloudTransport):
                 pageToken=token,
                 spaces="drive",
                 fields="newStartPageToken, nextPageToken, changes(fileId, removed, file(name))",
-            ).execute()
+            ).execute(num_retries=_NUM_RETRIES)
             for ch in resp.get("changes", []):
                 f = ch.get("file") or {}
                 changes.append(RemoteChange(

@@ -15,6 +15,7 @@ class Capability(enum.Enum):
     CLOUD_STORAGE = "cloud_storage"  # Drive / OneDrive / Dropbox / S3 transport
     MESSAGING = "messaging"        # Telegram, etc. (future)
     PHONE = "phone"
+    CONSULTATION = "consultation"  # AI-PACS web consultation registry (ADR-0006)
 
 
 @dataclass

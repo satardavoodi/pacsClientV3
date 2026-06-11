@@ -30,6 +30,7 @@ from PySide6.QtCore import (
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
+    QBrush,
     QColor,
     QDrag,
     QFont,
@@ -37,6 +38,7 @@ from PySide6.QtGui import (
     QKeySequence,
     QPainter,
     QPen,
+    QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication,
@@ -154,36 +156,141 @@ class _SliceLoadTask(QRunnable):
 # Series list (drag source)
 # ---------------------------------------------------------------------------
 
-class SeriesListWidget(QListWidget):
-    """Series list that can be dragged onto a viewport pane.
+def build_series_mime(series_index: int) -> QMimeData:
+    """MIME payload carrying a series index (shared by drag + tests)."""
+    mime = QMimeData()
+    mime.setData(_SERIES_MIME, str(int(series_index)).encode("ascii"))
+    return mime
 
-    The drag payload is the series index (Qt.UserRole) wrapped in a private
-    MIME type, so a pane drop knows exactly which series to load — clicking
-    still loads into the active pane (unchanged).
+
+class SeriesListWidget(QListWidget):
+    """Series list with click/drag fully separated.
+
+    Mouse-press never loads anything (that was the bug: the default
+    selection-changed-on-press fired the load before a drag could start).
+    Instead:
+
+    * **Single click** (press + release on the same row, no movement) →
+      emits ``seriesClicked`` → the window loads it into the ACTIVE pane.
+    * **Drag** (button held + moved past the platform drag threshold) →
+      a ``QDrag`` with a ghost-thumbnail preview; the import happens ONLY in
+      a pane's ``dropEvent`` at the release position. No click-load fires,
+      and panes the cursor merely passes over receive nothing.
     """
+
+    seriesClicked = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setDragEnabled(True)
-        self.setDragDropMode(QListWidget.DragOnly)
-        self.setDefaultDropAction(Qt.CopyAction)
+        # We drive the drag ourselves so we control the threshold and the
+        # click/drag split — Qt's own DragOnly machinery starts on press.
+        self.setDragEnabled(False)
+        self.setDragDropMode(QListWidget.NoDragDrop)
+        self.setSelectionMode(QListWidget.SingleSelection)
+
+        self.preview_provider: Callable[[int], Optional[QPixmap]] = lambda index: None
+
+        self._press_pos: Optional[QPoint] = None
+        self._press_index: Optional[int] = None
+        self._dragging: bool = False
 
     def mimeTypes(self):  # noqa: N802 — Qt override
         return [_SERIES_MIME]
 
-    def startDrag(self, supported_actions):  # noqa: N802 — Qt override
-        item = self.currentItem()
+    # -- helpers --------------------------------------------------------------
+
+    def _series_index_at(self, pos: QPoint) -> Optional[int]:
+        item = self.itemAt(pos)
         if item is None:
-            return
+            return None
         index = item.data(Qt.UserRole)
-        if index is None:  # patient/study header row — not draggable
-            return
-        mime = QMimeData()
-        mime.setData(_SERIES_MIME, str(int(index)).encode("ascii"))
-        mime.setText(item.text().strip())  # harmless human-readable fallback
-        drag = QDrag(self)
-        drag.setMimeData(mime)
+        return None if index is None else int(index)
+
+    def _exec_drag(self, drag: QDrag):  # test seam (exec is modal)
         drag.exec(Qt.CopyAction)
+
+    def _text_chip(self, series_index: int) -> QPixmap:
+        item = self.currentItem()
+        text = item.text().strip() if item is not None else f"Series {series_index}"
+        font = QFont(self.font())
+        font.setBold(True)
+        metrics = self.fontMetrics()
+        width = min(260, max(120, metrics.horizontalAdvance(text) + 24))
+        pixmap = QPixmap(width, 34)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setBrush(QBrush(QColor(31, 41, 59, 235)))
+        painter.setPen(QPen(QColor("#3b82f6"), 1))
+        painter.drawRoundedRect(pixmap.rect().adjusted(0, 0, -1, -1), 7, 7)
+        painter.setPen(QPen(QColor("#e8eef4")))
+        painter.setFont(font)
+        painter.drawText(pixmap.rect().adjusted(10, 0, -8, 0),
+                         Qt.AlignVCenter | Qt.AlignLeft, text)
+        painter.end()
+        return pixmap
+
+    def _start_series_drag(self, series_index: int):
+        drag = QDrag(self)
+        drag.setMimeData(build_series_mime(series_index))
+        pixmap: Optional[QPixmap] = None
+        try:
+            pixmap = self.preview_provider(series_index)
+        except Exception:
+            pixmap = None
+        if pixmap is None or pixmap.isNull():
+            pixmap = self._text_chip(series_index)
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(QPoint(pixmap.width() // 2, pixmap.height() // 2))
+        self._exec_drag(drag)
+        # Drag finished (dropped or cancelled) — the OS consumed the release,
+        # so reset here; never emit a click for a drag.
+        self._press_pos = None
+        self._press_index = None
+        self._dragging = False
+
+    # -- mouse handling (click vs drag) ----------------------------------------
+
+    def mousePressEvent(self, event):  # noqa: N802 — Qt override
+        if event.button() == Qt.LeftButton:
+            self._press_pos = event.position().toPoint()
+            self._press_index = self._series_index_at(self._press_pos)
+            self._dragging = False
+        super().mousePressEvent(event)  # selection highlight only — no load
+
+    def mouseMoveEvent(self, event):  # noqa: N802 — Qt override
+        if (
+            (event.buttons() & Qt.LeftButton)
+            and self._press_pos is not None
+            and self._press_index is not None
+            and not self._dragging
+        ):
+            moved = (event.position().toPoint() - self._press_pos).manhattanLength()
+            if moved >= QApplication.startDragDistance():
+                self._dragging = True
+                self._start_series_drag(self._press_index)
+            return  # suppress base rubber-band / auto-scroll while pressed
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):  # noqa: N802 — Qt override
+        was_dragging = self._dragging
+        press_index = self._press_index
+        release_index = (
+            self._series_index_at(event.position().toPoint())
+            if self._press_pos is not None else None
+        )
+        self._press_pos = None
+        self._press_index = None
+        self._dragging = False
+        super().mouseReleaseEvent(event)
+        # A genuine click = no drag started AND released on the same row.
+        if (
+            event.button() == Qt.LeftButton
+            and not was_dragging
+            and press_index is not None
+            and release_index == press_index
+        ):
+            self.seriesClicked.emit(press_index)
 
 
 # ---------------------------------------------------------------------------
@@ -649,7 +756,11 @@ class LiteViewerWindow(QMainWindow):
         self.series_list = SeriesListWidget(self)
         self.series_list.setMinimumWidth(220)
         self.series_list.setMaximumWidth(420)
-        self.series_list.currentItemChanged.connect(self._on_series_item_changed)
+        # Load on a genuine CLICK only (not on press/selection-change — that
+        # was loading the series the moment a drag began). Drag is handled by
+        # the list itself and imports only on a pane's drop.
+        self.series_list.seriesClicked.connect(self._on_series_clicked)
+        self.series_list.preview_provider = self._series_drag_pixmap
 
         for index in range(self.PANE_COUNT):
             canvas = ImageCanvas(self)
@@ -937,13 +1048,11 @@ class LiteViewerWindow(QMainWindow):
 
     # -- series / slice handling ----------------------------------------------
 
-    def _on_series_item_changed(self, current: Optional[QListWidgetItem], _previous):
-        if current is None:
+    def _on_series_clicked(self, series_index: int):
+        """A genuine single click → load into the ACTIVE pane."""
+        if not (0 <= series_index < len(self._series)):
             return
-        idx = current.data(Qt.UserRole)
-        if idx is None:
-            return
-        self._select_series_for_pane(self.active_pane, int(idx), from_list=True)
+        self._select_series_for_pane(self.active_pane, series_index, from_list=True)
 
     def _on_series_dropped(self, pane: int, series_index: int):
         """A series was dragged from the list and dropped onto `pane`."""
@@ -951,6 +1060,52 @@ class LiteViewerWindow(QMainWindow):
             return
         self._set_active_pane(pane)
         self._select_series_for_pane(pane, series_index)
+
+    def _series_drag_pixmap(self, series_index: int) -> Optional[QPixmap]:
+        """Ghost preview shown under the cursor while dragging a series:
+        the series' first slice thumbnail plus a label band."""
+        if not (0 <= series_index < len(self._series)):
+            return None
+        series = self._series[series_index]
+        thumb: Optional[QPixmap] = None
+        try:
+            key = (series.instances[0].path, 0)
+            data = self._cache_get(key) or load_slice(key[0], key[1])
+            if not data.error:
+                image = slice_to_qimage(data, data.default_center, data.default_width)
+                thumb = QPixmap.fromImage(image).scaled(
+                    132, 132, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+        except Exception:
+            thumb = None
+
+        label = series.display_label()
+        width = 152
+        thumb_h = thumb.height() if thumb is not None else 0
+        height = thumb_h + 30 + (8 if thumb is not None else 0)
+        pixmap = QPixmap(width, height)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+        painter.setBrush(QBrush(QColor(17, 24, 38, 235)))
+        painter.setPen(QPen(QColor("#3b82f6"), 2))
+        painter.drawRoundedRect(pixmap.rect().adjusted(1, 1, -1, -1), 9, 9)
+        if thumb is not None:
+            painter.drawPixmap((width - thumb.width()) // 2, 6, thumb)
+        font = QFont(self.font())
+        font.setPointSize(8)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QPen(QColor("#dbe7f5")))
+        metrics = painter.fontMetrics()
+        elided = metrics.elidedText(label, Qt.ElideRight, width - 16)
+        painter.drawText(
+            pixmap.rect().adjusted(8, height - 26, -8, -4),
+            Qt.AlignVCenter | Qt.AlignHCenter,
+            elided,
+        )
+        painter.end()
+        return pixmap
 
     def _select_series(self, index: int, from_list: bool = False):
         """Legacy single-pane API: loads into the ACTIVE pane."""

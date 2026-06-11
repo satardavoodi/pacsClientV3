@@ -19,12 +19,22 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def build_export_callable(study_uids: list[str], actor: dict | None = None):
+def build_export_callable(
+    study_uids: list[str], actor: dict | None = None, *, deidentify: bool = True
+):
     """Return ``export_callable(dest) -> package_root`` for the given study UIDs.
 
     The callable runs the existing offline export engine against a staging folder
     (the consultation upload directory). BLOCKING — the compose dialog already runs
     it on a worker thread.
+
+    ``deidentify`` (default ON — B3/ADR-0003): after staging, the package is
+    de-identified IN PLACE (``modules.cloud_consultation.consultation.deidentify``)
+    before the caller seals/uploads it. Consumer Gmail/Drive is not
+    HIPAA-eligible, so identified PHI must never leave the workstation on this
+    transport. A de-identification failure that would leave no clean image
+    raises — a broken or identified package can never upload silently. Pass
+    ``deidentify=False`` only for deployments with a BAA-grade Workspace setup.
     """
     uids = [str(u or "").strip() for u in (study_uids or []) if str(u or "").strip()]
 
@@ -48,6 +58,20 @@ def build_export_callable(study_uids: list[str], actor: dict | None = None):
                 "consultation export: %d/%d studies exported (%s)",
                 exported, len(uids), result.get("errors"),
             )
+        if deidentify:
+            from modules.cloud_consultation.consultation.deidentify import (
+                deidentify_package,
+            )
+
+            deid = deidentify_package(str(dest))
+            for warning in deid.warnings:
+                logger.warning("consultation de-identification: %s", warning)
+            if not deid.ok:
+                raise RuntimeError(
+                    "De-identification failed for every image in the package — "
+                    "upload blocked (identified PHI must not leave the workstation): "
+                    + "; ".join(deid.warnings[:3])
+                )
         return str(dest)
 
     return _export

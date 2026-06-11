@@ -28,6 +28,20 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 
+# Progressive Local-Search rendering is ON by default (render the first batch,
+# lazy-load the rest on scroll). Escape hatch: AIPACS_PROGRESSIVE_LOCAL_SEARCH=0
+# restores the legacy "render every row up front" path.
+import os as _os
+
+
+def _progressive_local_enabled() -> bool:
+    return _os.environ.get("AIPACS_PROGRESSIVE_LOCAL_SEARCH", "").strip().lower() not in (
+        "0", "false", "off",
+    )
+
+
+_LOCAL_SEARCH_BATCH = 100
+
 
 class HomeSearchService:
     """Async patient search (local + Socket server).
@@ -206,97 +220,105 @@ class HomeSearchService:
             home.search_progress.setRange(0, max(1, total))
             home.search_progress.setValue(0)
 
-            # Smaller chunk = shorter per-batch UI-thread freeze during the
-            # chunk-based table population (rows are inserted on the UI thread).
-            CHUNK = 10
-            added = 0
-            skipped = 0
-
             if patients:
-                from PacsClient.pacs.patient_tab.utils.utils import has_subfolders
+                from PacsClient.pacs.patient_tab.utils.utils import has_subfolders, THUMBNAIL_PATH
                 from PacsClient.utils.db_manager import find_study_pk_with_study_uid
 
-                home.patient_table_widget.begin_bulk_insert()
-                try:
-                    for i, patient in enumerate(patients, start=1):
-                        if self._cancelled:
-                            raise asyncio.CancelledError()
+                # Render exactly ONE study row; returns True if a row was added
+                # (False = skipped: no DICOM/thumbnails on disk). Shared by the
+                # progressive path AND the legacy render-all path so the
+                # path-resolution + skip filtering lives in one place.
+                def render_one(patient):
+                    study_path = patient.get('study_path')
+                    study_uid = patient.get('study_uid')
 
-                        study_path = patient.get('study_path')
-                        study_uid = patient.get('study_uid')
-
-                        # Fallback path resolution
-                        _need_fallback = False
-                        if not study_path:
-                            _need_fallback = True
-                        elif study_uid:
-                            try:
-                                if not Path(study_path).exists():
-                                    _need_fallback = True
-                            except Exception:
-                                _need_fallback = True
-
-                        if _need_fallback and study_uid:
-                            try:
-                                fallback_path = SOURCE_PATH / study_uid
-                                if fallback_path.exists() and has_subfolders(fallback_path):
-                                    study_path = str(fallback_path)
-                                    patient['study_path'] = study_path
-                                    study_pk = find_study_pk_with_study_uid(study_uid)
-                                    if study_pk:
-                                        from database.manager import force_update_study_path
-                                        force_update_study_path(study_pk, study_path)
-                            except Exception:
-                                pass
-
-                        if not study_path:
-                            if study_uid:
-                                study_path = str(SOURCE_PATH / study_uid)
-                        if not study_path:
-                            skipped += 1
-                            continue
-
-                        _has_dicom = False
+                    _need_fallback = False
+                    if not study_path:
+                        _need_fallback = True
+                    elif study_uid:
                         try:
-                            _has_dicom = has_subfolders(study_path)
+                            if not Path(study_path).exists():
+                                _need_fallback = True
+                        except Exception:
+                            _need_fallback = True
+
+                    if _need_fallback and study_uid:
+                        try:
+                            fallback_path = SOURCE_PATH / study_uid
+                            if fallback_path.exists() and has_subfolders(fallback_path):
+                                study_path = str(fallback_path)
+                                patient['study_path'] = study_path
+                                study_pk = find_study_pk_with_study_uid(study_uid)
+                                if study_pk:
+                                    from database.manager import force_update_study_path
+                                    force_update_study_path(study_pk, study_path)
                         except Exception:
                             pass
-                        if not _has_dicom:
-                            from PacsClient.pacs.patient_tab.utils.utils import THUMBNAIL_PATH
-                            _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
-                            if not (_thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir())):
-                                skipped += 1
-                                continue
 
-                        _disp_modality = patient.get('modality')
-                        _disp_date = patient.get('study_date')
+                    if not study_path and study_uid:
+                        study_path = str(SOURCE_PATH / study_uid)
+                    if not study_path:
+                        return False
 
-                        home.add_data2patient_list_table(
-                            patient_id=patient.get('patient_id'),
-                            patient_name=patient.get('patient_name'),
-                            study_date=_disp_date,
-                            description=patient.get('study_description'),
-                            modality=_disp_modality,
-                            study_uid=patient.get('study_uid'),
-                            series_count=patient.get('number_of_series'),
-                            images_count=patient.get('number_of_instances'),
-                            is_downloaded=True,
-                            body_part=patient.get('body_part'),
-                            study_time=patient.get('study_time'),
-                            age=patient.get('age'),
-                        )
-                        added += 1
+                    _has_dicom = False
+                    try:
+                        _has_dicom = has_subfolders(study_path)
+                    except Exception:
+                        pass
+                    if not _has_dicom:
+                        _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
+                        if not (_thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir())):
+                            return False
 
-                        if (i % CHUNK == 0) or (i == total):
-                            home.patient_table_widget.end_bulk_insert()
-                            home.search_progress.setValue(i)
-                            await asyncio.sleep(0)
-                            if i != total:
-                                home.patient_table_widget.begin_bulk_insert()
-                finally:
-                    home.patient_table_widget.end_bulk_insert()
+                    home.add_data2patient_list_table(
+                        patient_id=patient.get('patient_id'),
+                        patient_name=patient.get('patient_name'),
+                        study_date=patient.get('study_date'),
+                        description=patient.get('study_description'),
+                        modality=patient.get('modality'),
+                        study_uid=patient.get('study_uid'),
+                        series_count=patient.get('number_of_series'),
+                        images_count=patient.get('number_of_instances'),
+                        is_downloaded=True,
+                        body_part=patient.get('body_part'),
+                        study_time=patient.get('study_time'),
+                        age=patient.get('age'),
+                    )
+                    return True
 
-            home._update_connection_indicator_by_status('online', f'Local DB - Found {added} studies')
+                if _progressive_local_enabled() and total > _LOCAL_SEARCH_BATCH:
+                    # PROGRESSIVE: render the first batch immediately and lazy-
+                    # load the rest on scroll — no per-row UI freeze, scales to
+                    # very large local databases. The buffer is reversed to
+                    # DISPLAY (date-descending = newest-first) order so the first
+                    # batch is the newest studies (matches the table's default
+                    # date-desc sort). Subsequent batches load on scroll-near-end.
+                    patients_display = list(reversed(patients))
+                    home.search_progress.setVisible(False)
+                    home.patient_table_widget.load_progressive(
+                        patients_display, render_one, _LOCAL_SEARCH_BATCH
+                    )
+                else:
+                    # LEGACY: render every row up front, chunked + yielding so the
+                    # UI stays responsive (small result sets, or gate off via
+                    # AIPACS_PROGRESSIVE_LOCAL_SEARCH=0).
+                    CHUNK = 10
+                    home.patient_table_widget.begin_bulk_insert()
+                    try:
+                        for i, patient in enumerate(patients, start=1):
+                            if self._cancelled:
+                                raise asyncio.CancelledError()
+                            render_one(patient)
+                            if (i % CHUNK == 0) or (i == total):
+                                home.patient_table_widget.end_bulk_insert()
+                                home.search_progress.setValue(i)
+                                await asyncio.sleep(0)
+                                if i != total:
+                                    home.patient_table_widget.begin_bulk_insert()
+                    finally:
+                        home.patient_table_widget.end_bulk_insert()
+
+            home._update_connection_indicator_by_status('online', f'Local DB - Found {total} studies')
 
         except asyncio.CancelledError:
             try:

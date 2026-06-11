@@ -362,6 +362,15 @@ class StandardMPRViewer(
             self._mpr_use_anatomical = False
             logger.warning("[ZETA_MPR_CANONICALIZE] ZetaAnatA read failed: %r", _anat_err)
 
+        # Runtime provenance: log (once) which MPR geometry actually loaded and from
+        # where (frozen PYZ vs source) + a fingerprint of the corrected-geometry symbols,
+        # so a stale/mis-packaged build is visible in app.log rather than silent.
+        try:
+            from .._mpr_provenance import log_mpr_geometry_provenance
+            log_mpr_geometry_provenance(type(self))
+        except Exception:
+            pass
+
         logger.info("Calling _setup_ui()...")
         self._setup_ui()
 

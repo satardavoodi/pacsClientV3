@@ -83,6 +83,47 @@ class IdentityService:
         identity_db.upsert_identity(identity)
         return identity
 
+    def connect_with_credentials(
+        self, provider_id: str, credentials: dict[str, Any]
+    ) -> ExternalIdentity:
+        """Connect a provider that needs explicit credentials (e.g. aipacs_web).
+
+        BLOCKING (network). The credentials dict is passed through to the
+        provider and never persisted — providers store only opaque tokens via
+        :mod:`modules.Identity.secure_store`.
+        """
+        provider = get_provider(provider_id)
+        if provider is None:
+            raise ValueError(f"Unknown identity provider: {provider_id!r}")
+        identity = provider.connect(self.aipacs_user, credentials=credentials)
+
+        from database import identity_db
+
+        identity_db.upsert_identity(identity)
+        return identity
+
+    def connect_aipacs_web_via_google(
+        self, gmail: str, *, server_id: str = "", center_id: str = ""
+    ) -> ExternalIdentity:
+        """ADR-0008: link the aipacs_web identity via transient Gmail attestation.
+
+        BLOCKING (browser OAuth + network) — the UI runs it on a worker thread.
+        The transient Google credentials are discarded by the provider; only
+        the backend's Sanctum token is stored, and NO Google identity is
+        created or altered (the hub Drive account stays untouched).
+        """
+        provider = get_provider("aipacs_web")
+        if provider is None:
+            raise ValueError("Unknown identity provider: 'aipacs_web'")
+        identity = provider.connect_via_google_attestation(
+            self.aipacs_user, gmail, server_id=server_id, center_id=center_id
+        )
+
+        from database import identity_db
+
+        identity_db.upsert_identity(identity)
+        return identity
+
     def disconnect(self, provider_id: str, subject_id: str) -> None:
         from database import identity_db
 

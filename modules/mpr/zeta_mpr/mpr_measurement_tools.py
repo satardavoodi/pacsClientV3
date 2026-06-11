@@ -3,9 +3,20 @@ MPR Measurement Tools - VTK Widget-based measurements for MPR viewports
 Uses VTK's built-in widgets that work independently of interactor styles
 """
 import logging
+import os
 import vtk
 
 logger = logging.getLogger(__name__)
+
+
+def _slice_bound_annotations_enabled():
+    """Slice-bound MPR annotations are ON by default (each measurement shows
+    only on the reslice position where it was drawn). Escape hatch:
+    ``AIPACS_MPR_SLICE_ANNOTATIONS=0`` restores the legacy always-visible
+    behaviour."""
+    return os.environ.get("AIPACS_MPR_SLICE_ANNOTATIONS", "").strip().lower() not in (
+        "0", "false", "off",
+    )
 
 
 class MPRMeasurementTools:
@@ -53,7 +64,101 @@ class MPRMeasurementTools:
         self._placement_clicks = {}      # {(view, tool): count}
         self._auto_exit_in_progress = False
 
+        # Slice-bound annotations (2026-06-09): a measurement is visible ONLY
+        # at the reslice position (through-plane coordinate) where it was
+        # drawn — like the 2D viewer's per-slice widgets — instead of being
+        # projected onto every slice. `_annotation_visible_cache` keeps the
+        # last-applied visibility per annotation so the per-frame refresh only
+        # toggles when it actually changes (cheap + flicker-free).
+        self._slice_bound_enabled = _slice_bound_annotations_enabled()
+        self._annotation_visible_cache = {}   # id(item) -> bool
+
         logger.info("MPR Measurement Tools initialized")
+
+    # ── Slice-bound annotation visibility (2026-06-09) ──────────────────
+    def _annotation_look_coord(self, tool_type, item, look_axis):
+        """Return the through-plane (look-axis) WORLD coordinate of an
+        annotation — i.e. the reslice plane it was drawn on. None if it can't
+        be resolved (then the annotation is left visible)."""
+        try:
+            if tool_type == 'arrow':
+                p1 = item.get('p1') if isinstance(item, dict) else None
+                return float(p1[look_axis]) if p1 is not None else None
+            rep = item.GetRepresentation()
+            p = [0.0, 0.0, 0.0]
+            if tool_type == 'ruler':
+                rep.GetPoint1WorldPosition(p)
+            elif tool_type == 'angle':
+                if hasattr(rep, 'GetCenterWorldPosition'):
+                    rep.GetCenterWorldPosition(p)
+                else:
+                    rep.GetPoint1WorldPosition(p)
+            elif tool_type == 'caption':
+                if hasattr(rep, 'GetAnchorPosition'):
+                    rep.GetAnchorPosition(p)
+                else:
+                    return None
+            else:
+                return None
+            return float(p[look_axis])
+        except Exception:
+            return None
+
+    def _apply_annotation_visibility(self, item, tool_type, visible):
+        """Toggle an annotation's visibility; returns True if it CHANGED.
+        VTK widgets use On()/Off() (couples visibility + interactivity, so a
+        hidden annotation can't be grabbed); the raw arrow actor uses
+        SetVisibility."""
+        key = id(item)
+        if self._annotation_visible_cache.get(key) == visible:
+            return False
+        self._annotation_visible_cache[key] = visible
+        try:
+            if tool_type == 'arrow':
+                actor = item.get('actor') if isinstance(item, dict) else None
+                if actor is not None:
+                    actor.SetVisibility(1 if visible else 0)
+            else:
+                if visible:
+                    item.On()
+                else:
+                    item.Off()
+        except Exception:
+            pass
+        return True
+
+    def refresh_slice_visibility(self, view_name=None):
+        """Show only the annotations whose reslice plane matches each pane's
+        current through-plane position; hide the rest. Called from the MPR
+        reslice path (scroll / crosshair move) — cheap + change-only, never
+        destroys annotations (scroll away and back restores them)."""
+        if not self._slice_bound_enabled:
+            return
+        views = [view_name] if view_name else ['axial', 'sagittal', 'coronal']
+        for vn in views:
+            if vn not in self.active_tools:
+                continue
+            try:
+                look_axis = int(self.mpr_viewer._view_axes(vn)[0])
+                cur = float(self.mpr_viewer.current_position[look_axis])
+                sp = abs(float(self.mpr_viewer.spacing[look_axis]))
+                tol = max(sp * 0.5, 0.01)
+            except Exception:
+                continue
+            dirty = False
+            for tool_type in ('ruler', 'angle', 'caption', 'arrow'):
+                for item in list(self.active_tools[vn].get(tool_type, [])):
+                    pos = self._annotation_look_coord(tool_type, item, look_axis)
+                    if pos is None:
+                        continue  # can't bind → leave as-is (visible)
+                    visible = abs(cur - pos) <= tol
+                    if self._apply_annotation_visibility(item, tool_type, visible):
+                        dirty = True
+            if dirty:
+                try:
+                    self.mpr_viewer._request_render(vn)
+                except Exception:
+                    pass
 
     # ── Single-use tool auto-exit (2026-06-09) ──────────────────────────
     def _register_placement_autoexit(self, widget, view_name, tool_name, threshold):
@@ -113,6 +218,27 @@ class MPRMeasurementTools:
             self._deactivate_arrow_placement()
             self._placement_clicks.clear()
             self.current_tool = None
+            # Lock the slice binding for the just-completed measurement (it is
+            # on the current reslice → stays visible here, hides when scrolled),
+            # then force an IMMEDIATE paint of that pane. The batched
+            # `_request_render` inside refresh can be coalesced/dropped during
+            # the tool-completion + auto-exit + toolbar-restyle sequence, which
+            # left a SECOND ruler created-but-not-painted (the reported "second
+            # measurement doesn't show / looks like it's behind the image").
+            try:
+                self.refresh_slice_visibility(completed_view)
+                # GUARANTEE the just-drawn measurement is shown: it was created
+                # on the current reslice, so force its visibility True even if a
+                # tiny reslice drift would fail the tolerance check at this
+                # deferred moment (the slice-binding still hides it correctly on
+                # the next scroll). This is what makes a SECOND/Nth measurement
+                # reliably appear.
+                items = self.active_tools.get(completed_view, {}).get(tool_name, [])
+                if items:
+                    self._apply_annotation_visibility(items[-1], tool_name, True)
+                self.mpr_viewer._render_immediately(completed_view)
+            except Exception:
+                pass
             # Tell the toolbar to drop the tool highlight + restore the MPR
             # default mouse mode (stack / WL / zoom).
             cb = self.on_auto_exit
@@ -508,6 +634,8 @@ class MPRMeasurementTools:
 
                 for widget in self.active_tools[vn][tool]:
                     try:
+                        # Drop the slice-visibility cache entry for this item.
+                        self._annotation_visible_cache.pop(id(widget), None)
                         if tool == 'arrow':
                             # Arrow entries are dicts holding a raw
                             # vtkLeaderActor2D, not a VTK widget — remove the

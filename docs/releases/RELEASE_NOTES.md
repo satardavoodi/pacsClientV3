@@ -1,9 +1,27 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.2.6 (2026-06-09)
-**Previous Stable:** v3.2.5 (2026-06-08)
-**Release Date:** 2026-06-09
+**Current Stable Version:** v3.2.7 (2026-06-11)
+**Previous Stable:** v3.2.6 (2026-06-09)
+**Release Date:** 2026-06-11
 **Branch:** beta-version
+
+---
+
+## v3.2.6 (2026-06-09) - Minor release: latest stable consolidation build with full local working-set updates
+
+## v3.2.7 (2026-06-11) - Minor release: full local-state publication and multi-remote sync
+
+### Summary
+
+Minor release consolidating the latest beta-version source state and publishing
+the complete local working tree under the 3.2.7 release line.
+
+### Included
+
+- Canonical version markers advanced to v3.2.7
+- Release documentation updated for the v3.2.7 stable line
+- Full local repository state committed for release publication
+- Remote sync prepared for all requested GitHub remotes
 
 ---
 

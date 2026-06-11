@@ -60,7 +60,9 @@ def test_fkeys_registered_and_mapped():
 def test_handlers_reuse_toolbar_callables():
     code = _no_comments(_SC.read_text(encoding="utf-8", errors="ignore"))
     assert "toolbar_manager.apply_named_window_preset(name)" in code
-    assert "tb.toggle_microphone(selected_widget, mic_btn)" in code
+    # F9 must drive the CURRENT inline voice pipeline, not the legacy popup.
+    assert "toolbar_manager.toggle_voice_recording()" in code
+    assert "tb.toggle_microphone(selected_widget, mic_btn)" not in code
     assert "get_soundbox()" in code and "_on_save_clicked()" in code
     assert "_capture_all_layouts()" in code
     # scoping guard present
@@ -137,7 +139,7 @@ class _FakeToolAccess:
 class _FakeToolbar:
     def __init__(self):
         self.preset_calls = []
-        self.toggle_calls = []
+        self.voice_toggles = 0
         self.captured = 0
         self.tool_access = _FakeToolAccess()
         self.tools_button = {"MICROPHONE": "MIC_BTN"}
@@ -153,8 +155,8 @@ class _FakeToolbar:
     def apply_named_window_preset(self, name):
         self.preset_calls.append(name)
 
-    def toggle_microphone(self, selected_widget, mic_btn):
-        self.toggle_calls.append((selected_widget, mic_btn))
+    def toggle_voice_recording(self):
+        self.voice_toggles += 1
 
     def get_soundbox(self):
         return self._soundbox
@@ -176,11 +178,12 @@ def test_window_preset_handler_calls_toolbar_when_patient_active():
     assert tb.preset_calls == ['bone']
 
 
-def test_voice_toggle_handler_reuses_toggle_microphone():
+def test_voice_toggle_handler_uses_shared_inline_toggle():
+    # F9 must call the shared inline voice controller, NOT the legacy popup.
     tb = _FakeToolbar()
     inst = _make_handler_stub(_FakePatientTab(tb))
     inst._on_patient_voice_toggle()
-    assert tb.toggle_calls == [("SELECTED", "MIC_BTN")]
+    assert tb.voice_toggles == 1
 
 
 def test_voice_save_handler_calls_save():

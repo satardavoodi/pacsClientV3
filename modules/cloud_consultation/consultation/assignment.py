@@ -36,12 +36,33 @@ def assign(
             "Consultation has no remote_folder_id; upload the package before assigning."
         )
 
-    share = transport.share(folder_id, assignee_email, role=role)
+    share = None
+    try:
+        share = transport.share(folder_id, assignee_email, role=role)
+    except Exception as exc:
+        # Hub mode (2026-06-10): both workstations poll the SAME Drive account,
+        # so the Drive share is a courtesy email, not the access mechanism — a
+        # share failure (e.g. routing address is not a Google account) must not
+        # fail the consultation. In personal-account mode the share IS the
+        # access path, so the error still propagates.
+        from ..feature_flags import hub_mode_enabled
+
+        if not hub_mode_enabled():
+            raise
+        logger.warning(
+            "hub mode: Drive share to %s failed (non-fatal): %s", assignee_email, exc
+        )
+        consultation_db.add_event(
+            consultation_id, "share_failed",
+            details=f"hub mode: share with {assignee_email} failed: {exc}",
+            actor_handle=assigned_by,
+        )
     consultation_db.update_consultation_fields(
         consultation_id,
         assignee_email=assignee_email,
         assigned_by=assigned_by,
         assigned_at=_now_iso(),
+        share_permission_id=getattr(share, "permission_id", "") or "",
     )
     consultation_db.add_event(
         consultation_id, "assigned",

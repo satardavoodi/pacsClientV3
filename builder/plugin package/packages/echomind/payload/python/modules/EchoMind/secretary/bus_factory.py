@@ -45,6 +45,7 @@ def build_command_bus(
     get_main_tab_widget: Optional[Callable[[], Any]] = None,
     orchestrator: Any = None,
     enable_viewer_write: bool = False,
+    task_engine_getter: Optional[Callable[[], Any]] = None,
 ) -> CommandBus:
     """Construct a fully-wired ``CommandBus``.
 
@@ -132,6 +133,58 @@ def build_command_bus(
             })
         except Exception:
             logger.exception("bus_factory: ModuleAdapter registration failed")
+
+    # ── Browser / Education adapters (2026-06-11) ────────────────────
+    # Deep module control for the voice assistant, built on the SAME
+    # launchers the ModuleAdapter uses (activate-or-create singleton tab,
+    # returns the live widget). Browser: Google search / URL / back /
+    # forward / refresh. Education: consultation, courses, case of the
+    # day, library search. Both degrade to typed MODULE_UNAVAILABLE
+    # envelopes when the launcher yields no widget.
+    if module_launchers and "web_browser" in module_launchers:
+        try:
+            from .adapters.browser_command_adapter import (
+                BROWSER_ACTIONS,
+                BrowserCommandAdapter,
+            )
+            br_adapter = BrowserCommandAdapter(
+                open_browser_launcher=module_launchers["web_browser"],
+                engine_getter=task_engine_getter,
+            )
+            reg.register("browser", br_adapter, actions=dict(BROWSER_ACTIONS))
+        except Exception:
+            logger.exception("bus_factory: BrowserAdapter registration failed")
+
+    # ── AgentAdapter — background workflows (2026-06-11) ──────────────
+    # Only when a task engine is wired (production home panel). Login
+    # needs the browser launcher; education content search is engine-only.
+    if task_engine_getter is not None:
+        try:
+            from .adapters.agent_command_adapter import (
+                AGENT_ACTIONS,
+                AgentCommandAdapter,
+            )
+            ag_adapter = AgentCommandAdapter(
+                browser_launcher=(module_launchers or {}).get("web_browser"),
+                engine_getter=task_engine_getter,
+            )
+            reg.register("agent", ag_adapter, actions=dict(AGENT_ACTIONS))
+        except Exception:
+            logger.exception("bus_factory: AgentAdapter registration failed")
+
+    if module_launchers and "education" in module_launchers:
+        try:
+            from .adapters.education_command_adapter import (
+                EDUCATION_ACTIONS,
+                EducationCommandAdapter,
+            )
+            edu_adapter = EducationCommandAdapter(
+                open_education_launcher=module_launchers["education"],
+            )
+            reg.register("education", edu_adapter,
+                         actions=dict(EDUCATION_ACTIONS))
+        except Exception:
+            logger.exception("bus_factory: EducationAdapter registration failed")
 
     # ── ViewerAdapter — read-only viewer-state probe (Phase C.2) ───
     if get_active_patient_tab is not None or get_main_tab_widget is not None:

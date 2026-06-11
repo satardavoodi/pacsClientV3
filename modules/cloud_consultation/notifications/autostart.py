@@ -63,10 +63,21 @@ def ensure_consultation_poller(auth_user: dict | None = None) -> bool:
         if ident is None or not ident.handle:
             return False  # nothing to poll for yet; call again after connect
 
+        # Hub mode (2026-06-10): inbox matching uses the workstation's
+        # consultation address, falling back to the Google handle so the
+        # personal-account flow behaves exactly as before. ADR-0008 (2026-06-11):
+        # a linked aipacs_web identity's attested Gmail slots in between the
+        # flag file and the Google-handle default.
+        from modules.cloud_consultation.feature_flags import consultation_address
+
+        my_address = consultation_address(
+            default=ident.handle, aipacs_user=aipacs_user
+        )
+
         existing = getattr(app, _POLLER_ATTR, None)
         if existing is not None:
-            # Same identity → keep the running poller; new identity → replace it.
-            if getattr(existing, "_my_email", None) == ident.handle:
+            # Same identity/address → keep the running poller; else replace it.
+            if getattr(existing, "_my_email", None) == my_address:
                 return True
             try:
                 existing.stop()
@@ -77,12 +88,12 @@ def ensure_consultation_poller(auth_user: dict | None = None) -> bool:
 
         poller = ConsultationPoller(
             _make_transport_provider(aipacs_user, ident.subject_id),
-            ident.handle,
+            my_address,
             parent=app,
         )
         poller.start()
         setattr(app, _POLLER_ATTR, poller)
-        logger.info("consultation poller started for %s", ident.handle)
+        logger.info("consultation poller started for %s", my_address)
         return True
     except Exception as exc:  # pragma: no cover - must never break callers
         logger.debug("ensure_consultation_poller failed: %s", exc)

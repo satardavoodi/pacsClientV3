@@ -466,22 +466,17 @@ class ShortcutManager(QObject):
             print(f"✗ Error applying window preset '{name}': {e}")
 
     def _on_patient_voice_toggle(self):
-        """F9: behave exactly like clicking the toolbar mic/Voice button —
-        start recording, then pause ↔ resume on subsequent presses, never
-        losing the captured audio (reuses ToolbarManager.toggle_microphone →
-        VoiceWidget.toggle_recording)."""
+        """F9: drive the CURRENT inline voice UI — start, then pause ↔ resume on
+        subsequent presses, never losing the captured audio. Routes through the
+        shared ``ToolbarManager.toggle_voice_recording`` (inline pipeline:
+        _on_mic_clicked + _on_mic_pause_toggle), NOT the obsolete bottom-popup
+        ``toggle_microphone`` path."""
         pw = self._active_patient_tab()
         if pw is None:
             return
         try:
-            tb = pw.toolbar_manager
-            try:
-                mic_btn = tb.tools_button[tb.tool_access.MICROPHONE]
-            except Exception:
-                mic_btn = None
-            selected_widget = getattr(pw, 'selected_widget', None)
-            tb.toggle_microphone(selected_widget, mic_btn)
-            print("✓ Voice record toggled via F9")
+            pw.toolbar_manager.toggle_voice_recording()
+            print("✓ Voice record toggled via F9 (inline)")
         except Exception as e:
             print(f"✗ Error toggling voice recording: {e}")
 

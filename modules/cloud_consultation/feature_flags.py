@@ -40,6 +40,18 @@ def _flag_file_path() -> Path:
     return _config_root() / "cloud_consultation" / _FLAG_FILE
 
 
+def _flag_payload() -> dict:
+    try:
+        path = _flag_file_path()
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception as exc:
+        logger.debug("cloud_consultation flag read failed: %s", exc)
+    return {}
+
+
 def cloud_consultation_enabled() -> bool:
     raw = os.environ.get(_ENV_VAR)
     if raw is not None:
@@ -48,12 +60,73 @@ def cloud_consultation_enabled() -> bool:
             return True
         if val in _FALSE:
             return False
-    try:
-        path = _flag_file_path()
-        if path.exists():
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(data, dict) and "enabled" in data:
-                return bool(data["enabled"])
-    except Exception as exc:
-        logger.debug("cloud_consultation flag read failed: %s", exc)
+    data = _flag_payload()
+    if "enabled" in data:
+        return bool(data["enabled"])
     return False
+
+
+# ── hub-account mode (R1 §4.4 option (a), owner-approved 2026-06-10) ──────────
+# Both workstations connect the SAME shared Google account; all consultations
+# live in one Drive, so cross-account detection works under drive.file. Routing
+# between physicians then needs an app-level address (NOT the Drive account):
+# each workstation declares its own "consultation address", and assignment /
+# inbox matching use it instead of the Google handle.
+
+_HUB_ENV = "AIPACS_CONSULTATION_HUB_MODE"
+_ADDR_ENV = "AIPACS_CONSULTATION_ADDRESS"
+
+
+def hub_mode_enabled() -> bool:
+    """True when consultations run over a shared hub Drive account."""
+    raw = os.environ.get(_HUB_ENV)
+    if raw is not None:
+        val = raw.strip().lower()
+        if val in _TRUE:
+            return True
+        if val in _FALSE:
+            return False
+    return bool(_flag_payload().get("hub_mode"))
+
+
+def consultation_address(default: str = "", aipacs_user: str | None = None) -> str:
+    """The physician routing address for THIS workstation (hub mode).
+
+    Resolution: env → ``consultation_address`` in the flag file →
+    (ADR-0008) the linked aipacs_web identity's attested Gmail for
+    ``aipacs_user`` (when given) → ``default`` (callers pass the Google handle
+    so personal-account mode is unchanged). Never raises.
+    """
+    raw = os.environ.get(_ADDR_ENV)
+    if raw and raw.strip():
+        return raw.strip().lower()
+    addr = str(_flag_payload().get("consultation_address") or "").strip().lower()
+    if addr:
+        return addr
+    if aipacs_user:
+        linked = linked_consultation_address(aipacs_user)
+        if linked:
+            return linked
+    return (default or "").strip().lower()
+
+
+def linked_consultation_address(aipacs_user: str) -> str:
+    """The attested Gmail (or handle) of the linked aipacs_web identity, or "".
+
+    ADR-0008 identity bridge: once a physician has linked their Gmail via the
+    transient attestation flow, that address routes their consultations — no
+    env var / flag-file edit needed per workstation. Lazy Identity import (this
+    module must stay import-cheap); never raises.
+    """
+    try:
+        from modules.Identity.providers.aipacs_web import find_aipacs_web_identity
+
+        ident = find_aipacs_web_identity(aipacs_user)
+        if ident is None:
+            return ""
+        link = (ident.extra or {}).get("link") or {}
+        addr = str(link.get("gmail_email") or ident.handle or "").strip().lower()
+        return addr
+    except Exception as exc:  # pragma: no cover - must never break callers
+        logger.debug("linked consultation address lookup failed: %s", exc)
+        return ""

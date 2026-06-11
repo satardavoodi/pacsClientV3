@@ -145,6 +145,41 @@ modules:
     side_effects: false
     doc_file: "modules/eagle_ai.md"
 
+  - module_id: web_browser
+    display_name: "Web Browser"
+    category: utility
+    description: >
+      Built-in web browser tab.  Supports Google search (the default
+      search engine for all voice web searches), opening specific
+      URLs, and page navigation (back / forward / refresh).  Opens or
+      activates automatically when a web command is issued.
+    typical_intents:
+      - "search <something> on Google / the web"
+      - "open google and search <something>"
+      - "open this website / URL"
+      - "open the browser"
+      - "go back / go forward / refresh the page"
+    side_effects: false
+    doc_file: "modules/web_browser.md"
+
+  - module_id: education
+    display_name: "Education"
+    category: education
+    description: >
+      Educational module with Library (searchable courses, books,
+      videos), My Courses, Build Course, Case of the Day, and the
+      Online Consultation tab (consultant directory, my consultations,
+      requests) when the consultation module is enabled.
+    typical_intents:
+      - "open education"
+      - "open consultation / show my consultations"
+      - "show consultant profiles"
+      - "open courses / my courses"
+      - "open case of the day"
+      - "search education for <topic>"
+    side_effects: false
+    doc_file: "modules/education.md"
+
 # ── Routing rules ───────────────────────────────────────────
 # These are hints to help the LLM decide. The LLM may override:
 routing_hints:
@@ -164,3 +199,7 @@ routing_hints:
     suggested_module: echomind
   - pattern: "eagle"
     suggested_module: eagle_ai
+  - pattern: "google|browser|website|url|web|internet"
+    suggested_module: web_browser
+  - pattern: "education|course|consultation|consultant|case of the day"
+    suggested_module: education

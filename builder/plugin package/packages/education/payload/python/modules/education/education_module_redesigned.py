@@ -3365,12 +3365,18 @@ class EducationModuleRedesigned(QWidget):
             inst = None
         return inst
 
-    def show_online_consultation(self):
-        """Switch to the Online Consultation tab when it exists (flag-gated)."""
+    def show_online_consultation(self, section: str | None = None):
+        """Switch to the Online Consultation tab when it exists (flag-gated).
+
+        ``section`` optionally deep-links into one of the page's ADR-0007
+        sections (directory/profile/consultations/requests/storage/shared).
+        """
         page = getattr(self, "online_consultation_page", None)
         if page is not None:
             try:
                 self.tab_widget.setCurrentWidget(page)
+                if section and hasattr(page, "show_section"):
+                    page.show_section(section)
                 page.refresh()
             except Exception as exc:
                 print(f"[Education] could not switch to Online Consultation: {exc}")

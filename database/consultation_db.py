@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS consultations (
     assignee_email  TEXT,
     assigned_by     TEXT,
     assigned_at     TEXT,
+    share_permission_id TEXT,
     case_title      TEXT,
     clinical_question TEXT,
     priority        TEXT,
@@ -75,7 +76,7 @@ CREATE TABLE IF NOT EXISTS consultation_events (
 _CONSULTATION_COLUMNS = {
     "direction", "status", "provider", "remote_folder_id", "local_path",
     "owner_identity_id", "from_handle", "assignee_email", "assigned_by",
-    "assigned_at", "case_title", "clinical_question", "priority",
+    "assigned_at", "share_permission_id", "case_title", "clinical_question", "priority",
     "package_version", "manifest_sha256", "study_uids", "created_at",
     "updated_at", "due_at", "last_synced_at",
 }
@@ -94,6 +95,18 @@ def consultation_ensure_schema() -> None:
         return
     with _db_conn() as conn:
         conn.executescript(_CREATE_SQL)
+        # Lightweight migration (2026-06-10): share_permission_id was added for
+        # Drive-share revocation on close. CREATE TABLE IF NOT EXISTS does not
+        # extend existing tables, so add the column in place when missing.
+        try:
+            cur = conn.execute("PRAGMA table_info(consultations)")
+            cols = {row[1] for row in cur.fetchall()}
+            if "share_permission_id" not in cols:
+                conn.execute(
+                    "ALTER TABLE consultations ADD COLUMN share_permission_id TEXT"
+                )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("consultations migration check failed: %s", exc)
         conn.commit()
     _schema_ready = True
 

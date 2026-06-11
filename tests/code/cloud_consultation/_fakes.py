@@ -18,7 +18,10 @@ class FakeTransport(CloudTransport):
         self.upload_calls = []
         self.download_calls = []
         self.shares = []          # (file_id, email, role)
+        self.revocations = []     # (file_id, permission_id)
         self.fail_once = set()    # basenames that raise once on upload
+        self.fail_share = False   # share() raises (hub-mode tolerance tests)
+        self.fail_revoke = False  # revoke() raises (best-effort tests)
 
     def _nid(self, pfx):
         self._seq += 1
@@ -80,5 +83,12 @@ class FakeTransport(CloudTransport):
         self.nodes.pop(fid, None)
 
     def share(self, fid, email, role="reader"):
+        if self.fail_share:
+            raise RuntimeError(f"simulated share failure for {email}")
         self.shares.append((fid, email, role))
         return ShareInfo(permission_id=f"perm-{len(self.shares)}", email=email, role=role)
+
+    def revoke(self, fid, permission_id):
+        if self.fail_revoke:
+            raise RuntimeError("simulated revoke failure")
+        self.revocations.append((fid, permission_id))

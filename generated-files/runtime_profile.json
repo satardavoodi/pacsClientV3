@@ -1,7 +1,7 @@
 {
   "app_name": "AIPacs",
   "app_version": "",
-  "generated_at_utc": "2026-06-09T16:53:23.195324+00:00",
+  "generated_at_utc": "2026-06-11T07:58:17.456541+00:00",
   "installer": {
     "current_version": "",
     "detected_existing_version": "",
@@ -15,12 +15,14 @@
     "education": true,
     "stitching": true,
     "offline_cloud_server": true,
+    "identity": true,
     "data_analysis": true,
     "advanced_mpr": false,
     "printing": false,
     "run_cd": false,
     "web_browser": false,
-    "echomind": false
+    "echomind": false,
+    "consultation": false
   },
   "module_packages": {
     "viewer": {
@@ -96,6 +98,20 @@
     "offline_cloud_server": {
       "module_id": "offline_cloud_server",
       "title": "Offline Cloud Server",
+      "tier": "basic",
+      "package_kind": "core",
+      "status": "core",
+      "installed_version": "",
+      "installed_from": "core_bundle",
+      "installed_at_utc": "",
+      "runtime_path": "",
+      "archive_name": "",
+      "requires_restart": false,
+      "warning": ""
+    },
+    "identity": {
+      "module_id": "identity",
+      "title": "Identity & Accounts",
       "tier": "basic",
       "package_kind": "core",
       "status": "core",
@@ -190,6 +206,20 @@
       "archive_name": "",
       "requires_restart": true,
       "warning": ""
+    },
+    "consultation": {
+      "module_id": "consultation",
+      "title": "Online Consultation",
+      "tier": "optional",
+      "package_kind": "bundled_unlock",
+      "status": "not_installed",
+      "installed_version": "",
+      "installed_from": "",
+      "installed_at_utc": "",
+      "runtime_path": "",
+      "archive_name": "",
+      "requires_restart": true,
+      "warning": ""
     }
   },
   "graphics": {
@@ -198,7 +228,7 @@
     "last_detected_gpu": false,
     "last_probe_backend": "",
     "last_probe_device": "",
-    "last_probe_utc": "2026-06-09T16:53:23.194073Z",
+    "last_probe_utc": "2026-06-11T07:58:17.455158Z",
     "last_execution_mode": "cpu_software_opengl",
     "last_software_rendering_status": "ready",
     "last_software_rendering_warning": ""

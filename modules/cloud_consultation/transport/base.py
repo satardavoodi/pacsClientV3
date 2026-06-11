@@ -96,6 +96,11 @@ class CloudTransport(ABC):
     def share(self, file_id: str, email: str, role: str = "reader") -> ShareInfo:
         """Grant a recipient access to a file/folder."""
 
+    # Optional (2026-06-10): revoke a previously granted share (close lifecycle).
+    # Default: unsupported — callers must treat revocation as best-effort.
+    def revoke(self, file_id: str, permission_id: str) -> None:
+        raise NotImplementedError
+
     # Optional (used by the Phase-5 notification poller). Default: unsupported.
     def start_change_cursor(self) -> str:
         raise NotImplementedError

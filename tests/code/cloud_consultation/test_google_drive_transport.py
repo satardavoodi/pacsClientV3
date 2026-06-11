@@ -29,7 +29,8 @@ class _Req:
     def __init__(self, result):
         self._r = result
 
-    def execute(self):
+    def execute(self, num_retries=0):
+        # Mirrors googleapiclient's transient-retry kwarg (hardening, 2026-06-10).
         return self._r
 
 
@@ -59,6 +60,13 @@ class _FakePerms:
     def create(self, fileId=None, body=None, sendNotificationEmail=None, fields=None):
         self.store["perms"].append((fileId, body))
         return _Req({"id": "perm1"})
+
+    def delete(self, fileId=None, permissionId=None):
+        self.store["perms"] = [
+            (fid, body) for (fid, body) in self.store["perms"] if fid != fileId
+        ]
+        self.store.setdefault("revoked", []).append((fileId, permissionId))
+        return _Req({})
 
 
 class FakeDrive:
@@ -112,6 +120,16 @@ def test_share_creates_permission():
     info = t.share(app, "b@hospital.org", role="reader")
     assert info.email == "b@hospital.org" and info.role == "reader"
     assert drive.store["perms"] and drive.store["perms"][0][1]["emailAddress"] == "b@hospital.org"
+
+
+def test_revoke_removes_permission():
+    drive = FakeDrive()
+    t = GoogleDriveTransport(drive)
+    app = t.ensure_app_folder()
+    info = t.share(app, "b@hospital.org")
+    t.revoke(app, info.permission_id)
+    assert drive.store["revoked"] == [(app, info.permission_id)]
+    assert not drive.store["perms"]
 
 
 def test_delete_removes_file():

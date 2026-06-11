@@ -110,7 +110,13 @@ class ReportEditorDialog(QDialog):
         
         logger.info(f"[REPORT_EDITOR] Original content length: {len(self.original_content)} characters")
         
-        self.is_rtl = is_rtl_content(self.original_content)
+        # Existing reports keep content-based direction detection (behavior
+        # unchanged). A BLANK form (new manual report) defaults to RTL since
+        # reports are Persian-first; the RTL/LTR toggle remains available.
+        if (self.original_content or "").strip():
+            self.is_rtl = is_rtl_content(self.original_content)
+        else:
+            self.is_rtl = True
         self.is_maximized = False
         self.normal_geometry = None
         

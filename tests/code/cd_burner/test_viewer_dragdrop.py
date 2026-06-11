@@ -7,13 +7,25 @@ pane via the wired callback.
 """
 
 from pydicom.uid import generate_uid
-from PySide6.QtCore import QMimeData, QPoint, Qt
-from PySide6.QtGui import QDropEvent
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QPointF, Qt
+from PySide6.QtGui import QDropEvent, QMouseEvent
 
 from modules.cd_burner.portable_viewer.media_scan import scan_media
 from modules.cd_burner.portable_viewer.viewer_app import _SERIES_MIME
 
 from .conftest import write_ct_slice
+
+
+def _mouse(kind, pos, button=Qt.LeftButton, buttons=Qt.LeftButton):
+    return QMouseEvent(kind, QPointF(*pos), button, buttons, Qt.NoModifier)
+
+
+def _row_center(lst, series_index):
+    for row in range(lst.count()):
+        if lst.item(row).data(Qt.UserRole) == series_index:
+            rect = lst.visualItemRect(lst.item(row))
+            return (rect.center().x(), rect.center().y())
+    raise AssertionError(f"series {series_index} not in list")
 
 
 def _two_series(tmp_path):
@@ -38,7 +50,7 @@ def _drop_series_on_pane(canvas, series_index: int):
     return event
 
 
-def test_series_list_is_drag_source(tmp_path, qapp):
+def test_series_list_mime_and_rows(tmp_path, qapp):
     from modules.cd_burner.portable_viewer.viewer_app import LiteViewerWindow
 
     _two_series(tmp_path)
@@ -46,15 +58,106 @@ def test_series_list_is_drag_source(tmp_path, qapp):
     try:
         window._on_scan_done(scan_media(str(tmp_path)))
         lst = window.series_list
-        assert lst.dragEnabled()
         assert _SERIES_MIME in lst.mimeTypes()
-
-        # Header rows (no UserRole) must not be draggable; series rows are.
         series_rows = [
             lst.item(r) for r in range(lst.count())
             if lst.item(r).data(Qt.UserRole) is not None
         ]
         assert len(series_rows) == 2
+    finally:
+        window._pool.waitForDone(3000)
+        window.close()
+
+
+def test_single_click_does_not_load_until_release(tmp_path, qapp):
+    """The press that could start a drag must NOT load the series. Loading
+    happens only on a release with no drag (the reported bug)."""
+    from modules.cd_burner.portable_viewer.viewer_app import LiteViewerWindow
+
+    _two_series(tmp_path)
+    window = LiteViewerWindow(media_root=None, show_welcome=False)
+    try:
+        window._on_scan_done(scan_media(str(tmp_path)))
+        window._set_active_pane(0)
+        # Put a known series in pane 0 first, then click a different one.
+        window._select_series_for_pane(0, 1)
+        assert window.pane_states[0].series_index == 1
+
+        lst = window.series_list
+        clicked = []
+        lst.seriesClicked.connect(clicked.append)
+        pos = _row_center(lst, 0)
+
+        lst.mousePressEvent(_mouse(QEvent.MouseButtonPress, pos))
+        # No load on press
+        assert clicked == []
+        assert window.pane_states[0].series_index == 1
+
+        lst.mouseReleaseEvent(_mouse(QEvent.MouseButtonRelease, pos, buttons=Qt.NoButton))
+        # Genuine click → loads series 0 into active pane 0
+        assert clicked == [0]
+        assert window.pane_states[0].series_index == 0
+    finally:
+        window._pool.waitForDone(3000)
+        window.close()
+
+
+def test_drag_suppresses_click_load(tmp_path, qapp, monkeypatch):
+    """Moving past the threshold starts a drag and must NOT emit a click —
+    so Layout 1 never receives a load while dragging toward Layout 2."""
+    from PySide6.QtWidgets import QApplication
+    from modules.cd_burner.portable_viewer.viewer_app import LiteViewerWindow
+
+    _two_series(tmp_path)
+    window = LiteViewerWindow(media_root=None, show_welcome=False)
+    try:
+        window._on_scan_done(scan_media(str(tmp_path)))
+        lst = window.series_list
+        # Make the drag non-modal for the test.
+        started = []
+        monkeypatch.setattr(lst, "_exec_drag", lambda drag: started.append(drag))
+
+        clicked = []
+        lst.seriesClicked.connect(clicked.append)
+
+        start = _row_center(lst, 0)
+        far = (start[0] + QApplication.startDragDistance() + 40, start[1] + 60)
+
+        lst.mousePressEvent(_mouse(QEvent.MouseButtonPress, start))
+        lst.mouseMoveEvent(_mouse(QEvent.MouseMove, far))
+        # Drag was started, with a real MIME payload and a preview pixmap
+        assert len(started) == 1
+        drag = started[0]
+        assert drag.mimeData().hasFormat(_SERIES_MIME)
+        assert not drag.pixmap().isNull()
+
+        lst.mouseReleaseEvent(_mouse(QEvent.MouseButtonRelease, far, buttons=Qt.NoButton))
+        # Crucial: NO click-load fired because a drag happened
+        assert clicked == []
+    finally:
+        window._pool.waitForDone(3000)
+        window.close()
+
+
+def test_click_on_header_row_does_nothing(tmp_path, qapp):
+    from modules.cd_burner.portable_viewer.viewer_app import LiteViewerWindow
+
+    _two_series(tmp_path)
+    window = LiteViewerWindow(media_root=None, show_welcome=False)
+    try:
+        window._on_scan_done(scan_media(str(tmp_path)))
+        lst = window.series_list
+        # Find a header row (no UserRole)
+        header_row = next(
+            r for r in range(lst.count()) if lst.item(r).data(Qt.UserRole) is None
+        )
+        rect = lst.visualItemRect(lst.item(header_row))
+        pos = (rect.center().x(), rect.center().y())
+        clicked = []
+        lst.seriesClicked.connect(clicked.append)
+        lst.mousePressEvent(_mouse(QEvent.MouseButtonPress, pos))
+        lst.mouseReleaseEvent(_mouse(QEvent.MouseButtonRelease, pos, buttons=Qt.NoButton))
+        assert clicked == []  # headers are inert
     finally:
         window._pool.waitForDone(3000)
         window.close()
