@@ -42,8 +42,11 @@ def test_write_portable_support_files_with_viewer_launcher():
     assert manifest["viewer_launcher"] == "VIEWER/Viewer.exe"
 
     autorun = (staging / "autorun.inf").read_text(encoding="utf-8")
-    assert "open=VIEWER\\Viewer.exe --import-folder ." in autorun
-    assert "shellexecute=VIEWER\\Viewer.exe --import-folder ." in autorun
+    # AutoRun routes through RUN_VIEWER.cmd (so the 32-bit guard + folder
+    # fallback runs on autorun too); the icon still points at the viewer exe.
+    assert "open=RUN_VIEWER.cmd" in autorun
+    assert "shellexecute=RUN_VIEWER.cmd" in autorun
+    assert "icon=VIEWER\\Viewer.exe,0" in autorun
 
     launch_script = (staging / "RUN_VIEWER.cmd").read_text(encoding="utf-8")
     assert "--import-folder \"%~dp0\"" in launch_script

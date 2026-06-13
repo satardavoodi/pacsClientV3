@@ -1264,8 +1264,10 @@ class EducationMainWidget(QWidget):
     def _ensure_sample_courses_and_thumbnails(self):
         SAMPLE_THUMBNAIL_DIR.mkdir(parents=True, exist_ok=True)
 
-        # If the DB already has plenty of courses, still ensure visible ones have thumbnails.
-        if len(self.all_courses) >= self.MAX_VISIBLE_CARDS:
+        # Only seed example/demo courses into a brand-new (empty) library. Once
+        # the user has any real courses, demo samples must NOT be re-injected --
+        # deleted demos stay deleted. (Thumbnails for real courses still run.)
+        if self.all_courses:
             self._ensure_thumbnails_for_existing_courses()
             return
 

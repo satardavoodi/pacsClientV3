@@ -37,6 +37,38 @@ def _find_home_panel():
     return None
 
 
+def open_consultation_source() -> bool:
+    """Open (or activate) the "AI-PACS Consultation" source page module tab.
+
+    Workflow v2 (2026-06-12): the page opens through the home panel's module-tab
+    mechanism (``HomePanelWidget.open_consultation_source`` →
+    ``activate_or_create_module_tab`` — the exact Web Browser pattern). The
+    PACS server-selection/socket pipeline is untouched by design. Returns True
+    when the tab was reached. Never raises.
+    """
+    try:
+        from modules.education.online_consultation import (
+            online_consultation_available,
+        )
+
+        if not online_consultation_available():
+            logger.info(
+                "consultation source launcher: feature unavailable (gate off)")
+            return False
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("availability pre-check failed: %s", exc)
+
+    home = _find_home_panel()
+    if home is None or not hasattr(home, "open_consultation_source"):
+        logger.info("consultation source launcher: home panel not found")
+        return False
+    try:
+        return home.open_consultation_source() is not None
+    except Exception as exc:
+        logger.warning("open_consultation_source failed: %s", exc)
+        return False
+
+
 def open_online_consultation(section: str | None = None) -> bool:
     """Open (or activate) the Education tab and switch to Online Consultation.
 

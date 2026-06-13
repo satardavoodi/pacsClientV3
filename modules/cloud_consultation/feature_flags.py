@@ -110,6 +110,30 @@ def consultation_address(default: str = "", aipacs_user: str | None = None) -> s
     return (default or "").strip().lower()
 
 
+_CENTER_ENV = "AIPACS_CONSULTATION_CENTER_ID"
+
+
+def center_id(default: str = "") -> str:
+    """The imaging-center id this workstation reports on new consultations.
+
+    Assignment workflow v2 (2026-06-12): an OPTIONAL ``center_id`` key in
+    ``config/cloud_consultation/cloud_consultation.json`` (env
+    ``AIPACS_CONSULTATION_CENTER_ID`` wins). Creation-only metadata for the
+    registry POST — absent/empty means the field is simply not sent. Never
+    raises.
+    """
+    raw = os.environ.get(_CENTER_ENV)
+    if raw and raw.strip():
+        return raw.strip()
+    try:
+        cid = str(_flag_payload().get("center_id") or "").strip()
+        if cid:
+            return cid
+    except Exception as exc:  # pragma: no cover - must never break callers
+        logger.debug("center_id lookup failed: %s", exc)
+    return (default or "").strip()
+
+
 def linked_consultation_address(aipacs_user: str) -> str:
     """The attested Gmail (or handle) of the linked aipacs_web identity, or "".
 

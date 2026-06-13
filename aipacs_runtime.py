@@ -1918,7 +1918,9 @@ CONFIG_MIGRATIONS_FILENAME = "config_migrations.json"
 CONFIG_FAMILY_VERSIONS: dict[str, int] = {
     # v1 (2026-06-11): seed the family + add hub keys (hub_mode,
     # consultation_address) introduced by ADR-0004 to pre-hub installs.
-    "cloud_consultation/cloud_consultation.json": 1,
+    # v2 (2026-06-12): add the optional "center_id" key (assignment workflow
+    # v2 creation-only registry metadata; empty = not sent).
+    "cloud_consultation/cloud_consultation.json": 2,
     # v1 (2026-06-11): seed the Identity feature flag file.
     "identity/identity.json": 1,
     # v1 (2026-06-11): aipacs_web pairing config (ADR-0008) — new file that

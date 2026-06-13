@@ -59,7 +59,9 @@ class GoogleIdentityProvider(IdentityProvider):
         )
 
         client_config = load_google_client_config()
-        creds = run_installed_app_flow(client_config)
+        # ADR-0009 D5: hub/Drive connect must stay in the internal Web Browser
+        # module — never the external system browser.
+        creds = run_installed_app_flow(client_config, require_embedded=True)
         info = fetch_userinfo(creds)
 
         subject = str(info.get("sub") or info.get("id") or "").strip()

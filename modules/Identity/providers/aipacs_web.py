@@ -200,14 +200,20 @@ def _decode_id_token_payload(id_token: str) -> dict[str, Any]:
         raise AipacsWebError(f"Google returned an unreadable ID token: {exc}")
 
 
-def attest_gmail(gmail: str, *, open_url_cb=None) -> dict[str, Any]:
-    """Prove ownership of ``gmail`` via a transient Google OAuth. BLOCKING.
+def attest_gmail(gmail: str = "", *, open_url_cb=None) -> dict[str, Any]:
+    """Prove ownership of a Google account via a transient OAuth. BLOCKING.
 
     Returns ``{"id_token": str, "subject": str, "email": str}``. Uses ONLY the
     openid+email scopes (never Drive) with ``prompt='select_account'`` so the
     user can pick a different account than the hub Drive account. The OAuth
     credentials are discarded after the ID token is extracted — nothing is
     written to secure_store and no Google identity is created.
+
+    ``gmail`` is OPTIONAL (unified one-step login, owner directive
+    2026-06-11): when empty, the entered-vs-signed-in comparison is skipped
+    and the Google-verified email is simply returned — the server decides
+    authorization. When provided, a mismatch with the signed-in account still
+    raises (admin/testing path).
 
     ``open_url_cb`` optionally overrides how the consent URL is opened
     (default: the Google provider's embedded-browser-or-system-browser
@@ -219,7 +225,7 @@ def attest_gmail(gmail: str, *, open_url_cb=None) -> dict[str, Any]:
     assert_off_gui_thread("aipacs_web gmail attestation")
 
     entered = (gmail or "").strip()
-    if not entered or "@" not in entered:
+    if entered and "@" not in entered:
         raise AipacsWebError("Enter the Gmail address you want to link.")
 
     from modules.Identity.config import google_oauth_path, load_google_client_config
@@ -241,6 +247,10 @@ def attest_gmail(gmail: str, *, open_url_cb=None) -> dict[str, Any]:
                 scopes=list(ATTEST_SCOPES),
                 auth_url_kwargs={"prompt": "select_account"},
                 open_url_cb=open_url_cb,
+                # ADR-0009 D5: Gmail attestation stays in the internal Web
+                # Browser module — never the external system browser. (Honoured
+                # only when no explicit open_url_cb is supplied.)
+                require_embedded=True,
             )
         except Exception as exc:
             raise AipacsWebError(
@@ -257,7 +267,7 @@ def attest_gmail(gmail: str, *, open_url_cb=None) -> dict[str, Any]:
         subject = str(payload.get("sub") or "").strip()
         if not email:
             raise AipacsWebError("Google did not report the account email.")
-        if email.lower() != entered.lower():
+        if entered and email.lower() != entered.lower():
             raise AipacsWebError(
                 f"You signed in as {email}, but entered {entered} — "
                 "use the matching Google account."
@@ -286,8 +296,8 @@ def link_google(
 
     The Laravel backend verifies the Google ID token and links the Gmail to an
     admin-defined consultation profile; 422 carries a clean message (e.g.
-    "This Gmail is not registered by the administrator yet…"). BLOCKING network
-    call — callers must run it off the Qt GUI thread.
+    "Your email is not registered for the Consultation module…"). BLOCKING
+    network call — callers must run it off the Qt GUI thread.
     """
     from modules.Identity.thread_guard import assert_off_gui_thread
 
@@ -446,7 +456,17 @@ class AipacsWebClient:
         study_uid: str = "",
         note: str = "",
         drive_folder_id: str = "",
+        center_id: str = "",
+        patient_id: str = "",
+        study_date: str = "",
+        modality: str = "",
     ) -> dict:
+        """``POST /consultations``.
+
+        ``center_id`` / ``patient_id`` / ``study_date`` / ``modality`` are the
+        OPTIONAL creation-only metadata fields (backend extension, 2026-06-12)
+        — sent only when non-empty so the pre-v2 payload stays byte-identical.
+        """
         body: dict[str, Any] = {
             "type": type,
             "consultant_address": consultant_address,
@@ -458,6 +478,14 @@ class AipacsWebClient:
             body["note"] = note
         if drive_folder_id:
             body["drive_folder_id"] = drive_folder_id
+        if center_id:
+            body["center_id"] = str(center_id)
+        if patient_id:
+            body["patient_id"] = str(patient_id)
+        if study_date:
+            body["study_date"] = str(study_date)
+        if modality:
+            body["modality"] = str(modality)
         data = self._request("POST", "/consultations", json_body=body)
         return self._row(data)
 
@@ -614,7 +642,7 @@ class AipacsWebIdentityProvider(IdentityProvider):
     def connect_via_google_attestation(
         self,
         aipacs_user: str,
-        gmail: str,
+        gmail: str = "",
         *,
         server_id: str = "",
         center_id: str = "",
@@ -626,6 +654,9 @@ class AipacsWebIdentityProvider(IdentityProvider):
         like :meth:`connect` (same secure_store payload + identity shape).
         ``extra["link"]`` carries the link/profile snapshot so the UI can show
         "Linked: <gmail> (Dr. X)". No Google identity is ever written.
+
+        ``gmail`` is OPTIONAL (unified one-step login): when empty the link is
+        made with the Google-verified (attested) email.
         """
         ok, reason = self.is_available()
         if not ok:

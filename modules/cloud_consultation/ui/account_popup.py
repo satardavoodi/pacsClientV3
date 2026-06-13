@@ -1,13 +1,22 @@
 """AccountPopup — the identity & notification hub under the top-right user pill
-(ADR-0007).
+(ADR-0007; dropdown redesign per owner directive 2026-06-11).
 
-Status-only + notifications + deep links: the unchanged AI-PACS server
-identity, connection states (AI-PACS Consultation / Google), the unread
-consultation notifications, and a cached storage line. Management lives in
-Education ▸ Consultation — every block deep-links there. All blocking work
-(Google connect, storage fetch) runs on worker threads; the popup renders
-instantly from cached/empty data and fills in when a worker lands. Everything
-is defensive so a failure can never break the title bar.
+Dropdown shape, top to bottom (exactly ONE identity action):
+
+* **Connected Identity** — not connected → a single "Connect Google Account"
+  button (the existing one-button Google dialog); connected → identity card
+  (profile name, gmail, "Status: Connected ✓ (verified)") plus the DERIVED
+  consultation status line (:mod:`derived_status`).
+* **Manage Account** — opens :class:`ManageAccountDialog` (identity disconnect,
+  hub configuration, storage usage, profile settings all live THERE — the hub
+  section was removed from the dropdown entirely).
+* **Notifications** — unread list + mark-read + deep link, unchanged. The
+  storage line renders ONLY as a compact warning row at ≥80 % used; normal
+  usage moved to Manage Account.
+
+All blocking work (Google connect, storage fetch) runs on worker threads; the
+popup renders instantly from cached/empty data and fills in when a worker
+lands. Everything is defensive so a failure can never break the title bar.
 """
 
 from __future__ import annotations
@@ -21,7 +30,6 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
-    QMessageBox,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -32,6 +40,7 @@ from ._theme import palette
 logger = logging.getLogger(__name__)
 
 # ADR-0007: friendly kind labels for the notification rows in the hub.
+# (Fallback only — severity-tier rows prefer models.category_for, 2026-06-11.)
 _KIND_LABELS = {
     "consultation_assigned": "Assignment",
     "invitation": "Invitation",
@@ -40,7 +49,17 @@ _KIND_LABELS = {
     "upload_done": "Upload",
     "download_done": "Download",
     "sync_error": "Error",
+    "upload_failed": "Urgent",
+    "auth_failed": "Urgent",
+    "quota_exceeded": "Urgent",
+    "system_info": "System",
+    "browser_info": "Browser",
+    "education_info": "Education",
 }
+
+# One-shot QUOTA_EXCEEDED dedupe: the QApplication property holds the usage pct
+# already notified, so re-opening the popup at the same level never re-notifies.
+_QUOTA_NOTIFIED_ATTR = "_aipacs_quota_notified_pct"
 
 # /me/storage result cached on the QApplication object (popup opens must render
 # instantly — the worker refreshes the cache at most every 5 minutes).
@@ -66,6 +85,11 @@ def _store_storage_cache(data):
 
 
 class _ConnectWorker(QThread):
+    """Google (hub Drive) connect off the UI thread.
+
+    Used by :class:`ManageAccountDialog` (the hub actions moved there, owner
+    directive 2026-06-11); kept here so both UI surfaces share one worker."""
+
     done = Signal(object)
     failed = Signal(str)
 
@@ -112,7 +136,13 @@ class _StorageWorker(QThread):
 
 class AccountPopup(QWidget):
     def __init__(self, auth_user=None, parent=None):
-        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        # STAY-OPEN (live bug 2026-06-12): Qt.Popup auto-dismisses the instant the
+        # parent window loses foreground. On this desktop background apps
+        # (Grammarly/Chrome) steal focus constantly, so a Qt.Popup "flashes open
+        # then closes" before the user can read it. A frameless Qt.Tool window does
+        # NOT auto-close on deactivation; we add explicit outside-click dismissal
+        # (see eventFilter) to keep the dropdown feel without the vanishing.
+        super().__init__(parent, Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.auth_user = auth_user or {}
         self._worker = None
         self._storage_worker = None
@@ -131,15 +161,6 @@ class AccountPopup(QWidget):
         from modules.Identity.identity_service import IdentityService
 
         return IdentityService(IdentityService.resolve_aipacs_user(self.auth_user))
-
-    def _google_identity(self):
-        try:
-            for ident in self._service().list_identities():
-                if ident.provider == "google":
-                    return ident
-        except Exception as exc:
-            logger.debug("listing identities failed: %s", exc)
-        return None
 
     # ── build ────────────────────────────────────────────────────────────────
     def _clear(self):
@@ -165,25 +186,37 @@ class AccountPopup(QWidget):
     def _refresh(self):
         self._clear()
         self._root.addWidget(self._header())
-        self._root.addWidget(self._accounts_section())
         try:
-            # Consultation system (AI-PACS web pairing, ADR-0006). Guarded so the
-            # popup renders unchanged when the backend is not configured or the
-            # provider module is unavailable.
+            # Connected Identity — the ONE user-facing identity action (unified
+            # login, owner directive 2026-06-11). Guarded so the popup renders
+            # unchanged when the backend is not configured or the provider
+            # module is unavailable.
             from modules.Identity.providers.aipacs_web import aipacs_web_configured
 
             if aipacs_web_configured():
-                self._root.addWidget(self._consultation_system_section())
+                self._root.addWidget(self._connected_identity_section())
         except Exception as exc:
-            logger.debug("consultation system section skipped: %s", exc)
+            logger.debug("connected identity section skipped: %s", exc)
+        self._root.addWidget(self._manage_account_button())
+        try:
+            # Workflow v2 (2026-06-12): deep link to the Consultation source
+            # page (module tab) right under the Manage Account line. Guarded —
+            # renders nothing when the consultation module is unavailable.
+            from modules.education.online_consultation import (
+                online_consultation_available,
+            )
+
+            if online_consultation_available():
+                self._root.addWidget(self._consultation_source_button())
+        except Exception as exc:
+            logger.debug("consultation source link skipped: %s", exc)
         try:
             from modules.cloud_consultation.feature_flags import cloud_consultation_enabled
 
             if cloud_consultation_enabled():
                 self._root.addWidget(self._notifications_section())
-                self._root.addWidget(self._consultations_section())
         except Exception as exc:
-            logger.debug("consultation section skipped: %s", exc)
+            logger.debug("notifications section skipped: %s", exc)
         self._root.addWidget(self._footer())
         self.adjustSize()
 
@@ -220,69 +253,35 @@ class AccountPopup(QWidget):
         lay.addWidget(badge, 0, Qt.AlignTop)
         return f
 
-    def _accounts_section(self) -> QWidget:
+    def _connected_identity_section(self) -> QWidget:
+        """Connected Identity — the dropdown's single identity block.
+
+        Not connected → exactly one button ("Connect Google Account").
+        Connected → identity card with the derived consultation status line;
+        disconnect lives in :class:`ManageAccountDialog` (only a small
+        "Manage" affordance here keeps the dropdown clean).
+        """
         p = self._p
         box = QFrame()
         v = QVBoxLayout(box)
         v.setContentsMargins(0, 0, 0, 0)
         v.setSpacing(8)
-        v.addWidget(self._label("Connected accounts"))
-
-        ident = self._google_identity()
-        card = QFrame()
-        card.setStyleSheet(
-            f"QFrame{{background:{p['surface2']};border:1px solid {p['border']};border-radius:9px;}}"
-        )
-        row = QHBoxLayout(card)
-        row.setContentsMargins(12, 10, 12, 10)
-        row.setSpacing(10)
-        g = QLabel("G")
-        g.setFixedSize(22, 22)
-        g.setAlignment(Qt.AlignCenter)
-        g.setStyleSheet(f"color:{p['text']};font-size:15px;font-weight:600;")
-        row.addWidget(g)
-        info = QVBoxLayout()
-        info.setSpacing(1)
-        if ident is not None:
-            title = QLabel(ident.handle or ident.display_name or "Google account")
-            title.setStyleSheet(f"color:{p['text']};font-size:13px;")
-            status = QLabel("● Connected · Profile + Drive")
-            status.setStyleSheet(f"color:{p['success']};font-size:11px;")
-        else:
-            title = QLabel("Google account")
-            title.setStyleSheet(f"color:{p['text']};font-size:13px;")
-            status = QLabel("Not connected")
-            status.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
-        info.addWidget(title)
-        info.addWidget(status)
-        row.addLayout(info, 1)
-
-        if ident is not None:
-            btn = QPushButton("Disconnect")
-            btn.setObjectName("danger")
-            btn.clicked.connect(lambda: self._disconnect_google(ident))
-        else:
-            btn = QPushButton("Connect")
-            btn.clicked.connect(self._connect_google)
-        row.addWidget(btn)
-        v.addWidget(card)
-
-        manage = QPushButton("Manage connected accounts…")
-        manage.setObjectName("ghost")
-        manage.clicked.connect(self._open_identity_panel)
-        v.addWidget(manage)
-        return box
-
-    def _consultation_system_section(self) -> QWidget:
-        """AI-PACS Consultation (web backend) sign-in state — ADR-0006."""
-        p = self._p
-        box = QFrame()
-        v = QVBoxLayout(box)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(8)
-        v.addWidget(self._label("Consultation system"))
+        v.addWidget(self._label("Connected Identity"))
 
         ident = self._aipacs_web_identity()
+        if ident is None:
+            btn = QPushButton("Connect Google Account")
+            btn.setObjectName("primary")
+            btn.clicked.connect(self._sign_in_aipacs_web)
+            v.addWidget(btn)
+            return box
+
+        link = (getattr(ident, "extra", None) or {}).get("link") or {}
+        gmail = str(link.get("gmail_email") or ident.handle or "").strip()
+        prof = str(
+            link.get("profile_name") or ident.display_name or ident.handle or ""
+        ).strip() or "Connected account"
+
         card = QFrame()
         card.setStyleSheet(
             f"QFrame{{background:{p['surface2']};border:1px solid {p['border']};border-radius:9px;}}"
@@ -290,70 +289,111 @@ class AccountPopup(QWidget):
         row = QHBoxLayout(card)
         row.setContentsMargins(12, 10, 12, 10)
         row.setSpacing(10)
-        mark = QLabel("☁")
-        mark.setFixedSize(22, 22)
-        mark.setAlignment(Qt.AlignCenter)
-        mark.setStyleSheet(f"color:{p['text']};font-size:14px;")
-        row.addWidget(mark)
         info = QVBoxLayout()
         info.setSpacing(1)
-        if ident is not None:
-            # ADR-0008: a Gmail-attested link shows "Linked: <gmail> (Dr. X)".
-            link = (getattr(ident, "extra", None) or {}).get("link") or {}
-            gmail = str(link.get("gmail_email") or "").strip()
-            prof = str(link.get("profile_name") or ident.display_name or "").strip()
-            if gmail:
-                text = f"Linked: {gmail}" + (f" ({prof})" if prof else "")
-            else:
-                text = ident.handle or ident.display_name or "AI-PACS account"
-            title = QLabel(text)
-            title.setStyleSheet(f"color:{p['text']};font-size:13px;")
-            status = QLabel("● Connected · Consultants + registry")
-            status.setStyleSheet(f"color:{p['success']};font-size:11px;")
-        else:
-            title = QLabel("AI-PACS Consultation")
-            title.setStyleSheet(f"color:{p['text']};font-size:13px;")
-            status = QLabel("Not signed in")
-            status.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
-        info.addWidget(title)
+        name = QLabel(prof)
+        name.setStyleSheet(f"color:{p['text']};font-size:13px;font-weight:600;")
+        info.addWidget(name)
+        if gmail:
+            mail = QLabel(gmail)
+            mail.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
+            info.addWidget(mail)
+        status = QLabel("Status: Connected ✓ (verified)")
+        status.setStyleSheet(f"color:{p['success']};font-size:11px;")
         info.addWidget(status)
+        info.addWidget(self._consultation_status_label())
         row.addLayout(info, 1)
 
-        if ident is not None:
-            btn = QPushButton("Disconnect")
-            btn.setObjectName("danger")
-            btn.clicked.connect(lambda: self._disconnect_aipacs_web(ident))
-        else:
-            btn = QPushButton("Sign in…")
-            btn.clicked.connect(self._sign_in_aipacs_web)
-        row.addWidget(btn)
+        manage = QPushButton("Manage")
+        manage.setObjectName("ghost")
+        manage.setStyleSheet("font-size:11px;padding:4px 10px;")
+        manage.clicked.connect(self._open_manage_account)
+        row.addWidget(manage, 0, Qt.AlignTop)
         v.addWidget(card)
         return box
 
-    def _sign_in_aipacs_web(self):
+    def _consultation_status_label(self) -> QLabel:
+        """The derived consultation-mode line (Qt-free logic, guarded)."""
+        p = self._p
+        text = ""
         try:
-            from modules.Identity.ui.aipacs_web_dialog import AipacsWebSignInDialog
+            from .derived_status import consultation_capabilities
+
+            from modules.Identity.identity_service import IdentityService
+
+            caps = consultation_capabilities(
+                IdentityService.resolve_aipacs_user(self.auth_user),
+                identity_linked=True,  # we are rendering a linked identity card
+            )
+            text = caps["status_text"]
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("derived consultation status failed: %s", exc)
+        lbl = QLabel(text)
+        lbl.setVisible(bool(text))
+        lbl.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
+        return lbl
+
+    def _manage_account_button(self) -> QPushButton:
+        btn = QPushButton("Manage Account")
+        btn.setObjectName("ghost")
+        btn.clicked.connect(self._open_manage_account)
+        return btn
+
+    def _consultation_source_button(self) -> QPushButton:
+        btn = QPushButton("Open Consultation source")
+        btn.setObjectName("ghost")
+        btn.clicked.connect(self._open_consultation_source)
+        return btn
+
+    def _open_consultation_source(self):
+        """Workflow v2: open the AI-PACS Consultation source page module tab."""
+        try:
+            from modules.education.online_consultation.launcher import (
+                open_consultation_source,
+            )
 
             self.close()
-            dlg = AipacsWebSignInDialog(self._service(), parent=self.parent())
-            dlg.exec()
+            open_consultation_source()
+        except Exception as exc:
+            logger.warning("open consultation source failed: %s", exc)
+
+    def _open_manage_account(self):
+        try:
+            from .manage_account_dialog import ManageAccountDialog
+
+            self.close()
+            ManageAccountDialog(auth_user=self.auth_user, parent=self.parent()).exec()
+        except Exception as exc:
+            logger.warning("open manage account failed: %s", exc)
+
+    def _sign_in_aipacs_web(self):
+        # MODELESS (live bug 2026-06-12): a modal exec() grabs input and blocks
+        # the docked browser where the Google consent page renders. open_signin
+        # _dialog shows it non-modally and delivers the result via callback.
+        #
+        # INSTANT UPDATE (2026-06-12): on success we refresh the title-bar
+        # account area in place (pill badge + poller re-arm + reopen the
+        # Connected card) so the signed-in state shows without a manual reopen.
+        try:
+            from modules.Identity.ui.aipacs_web_dialog import open_signin_dialog
+
+            parent = self.parent()
+            auth_user = getattr(self, "auth_user", None)
+
+            def _on_success(_identity=None):
+                try:
+                    from modules.cloud_consultation.ui.account_hook import (
+                        refresh_account_area_after_connect,
+                    )
+
+                    refresh_account_area_after_connect(auth_user)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.debug("post-connect account refresh skipped: %s", exc)
+
+            self.close()
+            open_signin_dialog(self._service(), parent=parent, on_success=_on_success)
         except Exception as exc:
             logger.warning("aipacs_web sign-in failed to open: %s", exc)
-
-    def _disconnect_aipacs_web(self, ident):
-        if ident is None:
-            return
-        if QMessageBox.question(
-            self, "Disconnect AI-PACS Consultation",
-            f"Disconnect {ident.handle or 'this account'}? Your AI-PACS login is unaffected.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        ) != QMessageBox.Yes:
-            return
-        try:
-            self._service().disconnect("aipacs_web", ident.subject_id)
-        except Exception as exc:
-            logger.warning("aipacs_web disconnect failed: %s", exc)
-        self._refresh()
 
     # ── notifications + storage (ADR-0007: the hub) ───────────────────────────
     def _notifications_section(self) -> QWidget:
@@ -369,12 +409,23 @@ class AccountPopup(QWidget):
             from modules.cloud_consultation.notifications import inbox
 
             unread_total = inbox.unread_count()
-            rows = inbox.list_notifications(status="unread", limit=5)
+            # Latest 4, unread first then read, newest first (2026-06-11).
+            rows = inbox.latest_notifications(limit=4)
         except Exception as exc:
             logger.debug("notification fetch failed: %s", exc)
         caption = (f"Notifications ({unread_total} unread)" if unread_total
                    else "Notifications")
-        v.addWidget(self._label(caption))
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.setSpacing(8)
+        head.addWidget(self._label(caption), 1)
+        if unread_total:
+            clear = QPushButton("Clear all")
+            clear.setObjectName("ghost")
+            clear.setStyleSheet("font-size:10px;padding:3px 9px;")
+            clear.clicked.connect(self._clear_all_notifications)
+            head.addWidget(clear, 0)
+        v.addLayout(head)
 
         if rows:
             for n in rows:
@@ -394,40 +445,93 @@ class AccountPopup(QWidget):
         return box
 
     def _notification_row(self, n: dict) -> QWidget:
+        """One feed row, styled by severity tier (derived from kind, 2026-06-11):
+
+        CRITICAL → danger accent + bold + "●" badge ("Urgent" chip);
+        HIGH → accent + bold + category chip (e.g. "Consultation");
+        NORMAL → the standard row; LOW → muted, smaller.
+        """
         p = self._p
+        kind = str(n.get("kind") or "")
+        prio = str(n.get("priority") or "")
+        if not prio:
+            try:
+                from modules.cloud_consultation.notifications.models import priority_for
+
+                prio = priority_for(kind).value
+            except Exception:  # pragma: no cover - defensive
+                prio = "normal"
+        try:
+            from modules.cloud_consultation.notifications.models import category_for
+
+            category = str(n.get("category") or category_for(kind))
+        except Exception:  # pragma: no cover - defensive
+            category = _KIND_LABELS.get(kind, "Notification")
+        is_unread = (str(n.get("status") or "unread") == "unread")
+
         card = QFrame()
+        border = p["border"]
+        if prio == "critical":
+            border = "rgba(248,113,113,0.45)"
         card.setStyleSheet(
-            f"QFrame{{background:{p['surface2']};border:1px solid {p['border']};border-radius:9px;}}"
+            f"QFrame{{background:{p['surface2']};border:1px solid {border};border-radius:9px;}}"
         )
         lay = QHBoxLayout(card)
         lay.setContentsMargins(10, 7, 10, 7)
         lay.setSpacing(9)
-        kind = str(n.get("kind") or "")
-        chip = QLabel(_KIND_LABELS.get(kind, "Notification"))
+
+        chip_color = {"critical": p["danger"], "high": p["accent"],
+                      "low": p["text_muted"]}.get(prio, p["accent"])
+        chip_text = ("● " + category) if prio == "critical" else category
+        chip = QLabel(chip_text)
         chip.setStyleSheet(
-            f"color:{p['accent']};border:1px solid {p['accent']};border-radius:8px;"
+            f"color:{chip_color};border:1px solid {chip_color};border-radius:8px;"
             f"padding:1px 7px;font-size:9px;font-weight:600;"
         )
         lay.addWidget(chip, 0, Qt.AlignTop)
+
         col = QVBoxLayout()
         col.setSpacing(1)
         title = QLabel(str(n.get("title") or "Notification"))
         title.setWordWrap(True)
-        title.setStyleSheet(f"color:{p['text']};font-size:12px;")
+        if prio == "critical":
+            title.setStyleSheet(f"color:{p['danger']};font-size:12px;font-weight:700;")
+        elif prio == "high":
+            title.setStyleSheet(f"color:{p['text']};font-size:12px;font-weight:700;")
+        elif prio == "low":
+            title.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
+        else:
+            title.setStyleSheet(f"color:{p['text']};font-size:12px;")
         col.addWidget(title)
         body = str(n.get("body") or "").strip()
         if body:
             sub = QLabel(body)
             sub.setWordWrap(True)
-            sub.setStyleSheet(f"color:{p['text_muted']};font-size:10px;")
+            sub.setStyleSheet(
+                f"color:{p['text_muted']};font-size:{9 if prio == 'low' else 10}px;")
             col.addWidget(sub)
         lay.addLayout(col, 1)
-        mark = QPushButton("Mark read")
-        mark.setObjectName("ghost")
-        mark.setStyleSheet("font-size:10px;padding:3px 8px;")
-        mark.clicked.connect(lambda _=False, nid=n.get("id"): self._mark_read(nid))
-        lay.addWidget(mark, 0, Qt.AlignTop)
+        if is_unread:
+            mark = QPushButton("Mark read")
+            mark.setObjectName("ghost")
+            mark.setStyleSheet("font-size:10px;padding:3px 8px;")
+            mark.clicked.connect(lambda _=False, nid=n.get("id"): self._mark_read(nid))
+            lay.addWidget(mark, 0, Qt.AlignTop)
+        else:
+            seen = QLabel("read")
+            seen.setStyleSheet(f"color:{p['text_muted']};font-size:9px;")
+            lay.addWidget(seen, 0, Qt.AlignTop)
         return card
+
+    def _clear_all_notifications(self):
+        """'Clear all' = mark every unread read; the feed keeps recent history."""
+        try:
+            from modules.cloud_consultation.notifications import inbox
+
+            inbox.clear_all()
+        except Exception as exc:
+            logger.debug("clear all failed: %s", exc)
+        self._refresh()
 
     def _mark_read(self, notification_id):
         try:
@@ -483,21 +587,48 @@ class AccountPopup(QWidget):
             pct = int(round(100 * summary["fraction"]))
             used = format_bytes(summary["used"])
             quota = format_bytes(summary["quota"])
+            # Owner directive 2026-06-11: the dropdown shows storage ONLY as a
+            # compact warning row (≥80 % warn / ≥95 % alert). Normal usage
+            # lives in Manage Account ▸ Storage Usage.
             if summary.get("alert"):
                 label.setText(f"⛔ Storage {pct}% used ({used} of {quota}) — almost full")
                 label.setStyleSheet(
                     f"color:{p['danger']};font-size:11px;font-weight:600;")
+                self._notify_quota_alert_once(pct, used, quota)
             elif summary["warn"]:
                 label.setText(f"⚠ Storage {pct}% used ({used} of {quota})")
                 label.setStyleSheet(
                     f"color:{p['warning']};font-size:11px;font-weight:600;")
             else:
-                label.setText(f"Storage: {used} of {quota} used ({pct}%)")
-                label.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
+                return  # below the warn threshold — nothing in the dropdown
             label.setVisible(True)
             self.adjustSize()
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("storage line render failed: %s", exc)
+
+    def _notify_quota_alert_once(self, pct: int, used: str, quota: str):
+        """One-shot CRITICAL QUOTA_EXCEEDED at the popup's alert state (≥95 %).
+
+        Deduped via a QApplication property holding the last notified pct, so
+        the same usage level never notifies twice in a session (best-effort,
+        never raises — 2026-06-11)."""
+        try:
+            app = QApplication.instance()
+            if app is None:
+                return
+            if getattr(app, _QUOTA_NOTIFIED_ATTR, None) == pct:
+                return
+            from modules.cloud_consultation.notifications import inbox
+            from modules.cloud_consultation.notifications.models import NotificationKind
+
+            inbox.notify(
+                NotificationKind.QUOTA_EXCEEDED,
+                body=f"Cloud storage {pct}% used ({used} of {quota}). "
+                     "Free space in Education ▸ Consultation ▸ Storage.",
+            )
+            setattr(app, _QUOTA_NOTIFIED_ATTR, pct)
+        except Exception as exc:  # pragma: no cover - best-effort by contract
+            logger.debug("quota notification skipped: %s", exc)
 
     def _deep_link_button(self, section: str, caption: str = "Open Education ▸ Consultation") -> QPushButton:
         btn = QPushButton(caption)
@@ -506,40 +637,10 @@ class AccountPopup(QWidget):
             lambda _=False, s=section: self._open_online_consultation(section=s))
         return btn
 
-    def _consultations_section(self) -> QWidget:
-        p = self._p
-        box = QFrame()
-        v = QVBoxLayout(box)
-        v.setContentsMargins(0, 0, 0, 0)
-        v.setSpacing(8)
-        v.addWidget(self._label("Consultations"))
-
-        inbox_n = sent_n = 0
-        try:
-            from database import consultation_db
-
-            inbox_n = len([c for c in consultation_db.list_consultations(direction="incoming")
-                           if c.get("status") not in ("closed",)])
-            sent_n = len(consultation_db.list_consultations(direction="outgoing"))
-        except Exception as exc:
-            logger.debug("consultation counts failed: %s", exc)
-
-        chips = QHBoxLayout()
-        chips.setSpacing(9)
-        chips.addWidget(self._stat("Inbox", inbox_n, p["warning"]))
-        chips.addWidget(self._stat("Sent", sent_n, p["text"]))
-        v.addLayout(chips)
-
-        # Creation stays one click away; ALL management lives in
-        # Education ▸ Consultation (ADR-0007) — no inline inbox here anymore.
-        new_btn = QPushButton("New consultation")
-        new_btn.setObjectName("primary")
-        new_btn.clicked.connect(self._new_consultation)
-        v.addWidget(new_btn)
-        v.addWidget(self._deep_link_button(section="consultations"))
-        return box
-
     def _footer(self) -> QWidget:
+        # No "Sign Out" row: the workstation/server session has no sign-out
+        # action in this popup today, and the owner directive says omit rather
+        # than invent one. Hub teardown lives in ManageAccountDialog.
         p = self._p
         f = QFrame()
         f.setStyleSheet(f"QFrame{{border-top:1px solid {p['border']};}}")
@@ -548,11 +649,6 @@ class AccountPopup(QWidget):
         hint = QLabel("Manage everything in Education ▸ Consultation")
         hint.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
         lay.addWidget(hint, 1)
-        if self._google_identity() is not None:
-            out = QPushButton("Sign out of Google")
-            out.setObjectName("ghost")
-            out.clicked.connect(lambda: self._disconnect_google(self._google_identity()))
-            lay.addWidget(out)
         return f
 
     # ── small builders ─────────────────────────────────────────────────────────
@@ -561,70 +657,7 @@ class AccountPopup(QWidget):
         lbl.setStyleSheet(f"color:{self._p['text_muted']};font-size:11px;font-weight:500;")
         return lbl
 
-    def _stat(self, label: str, value: int, color: str) -> QWidget:
-        p = self._p
-        f = QFrame()
-        f.setStyleSheet(f"QFrame{{background:{p['surface2']};border:1px solid {p['border']};border-radius:9px;}}")
-        v = QVBoxLayout(f)
-        v.setContentsMargins(11, 9, 11, 9)
-        v.setSpacing(1)
-        num = QLabel(str(value))
-        num.setStyleSheet(f"color:{color};font-size:19px;font-weight:600;")
-        cap = QLabel(label)
-        cap.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
-        v.addWidget(num)
-        v.addWidget(cap)
-        return f
-
     # ── actions ──────────────────────────────────────────────────────────────
-    def _open_identity_panel(self):
-        try:
-            from modules.Identity.ui.identity_panel import IdentityPanel
-
-            self.close()
-            IdentityPanel(self._service(), parent=self.parent()).exec()
-        except Exception as exc:
-            logger.warning("open identity panel failed: %s", exc)
-
-    def _connect_google(self):
-        if self._worker is not None and self._worker.isRunning():
-            return
-        self._worker = _ConnectWorker(self._service(), self)
-        self._worker.done.connect(lambda _ident: self._refresh())
-        self._worker.failed.connect(self._on_connect_failed)
-        self._worker.start()
-
-    def _on_connect_failed(self, message: str):
-        QMessageBox.warning(self, "Google connection failed", message)
-
-    def _disconnect_google(self, ident):
-        if ident is None:
-            return
-        if QMessageBox.question(
-            self, "Disconnect Google",
-            f"Disconnect {ident.handle or 'this Google account'}? Your AI-PACS login is unaffected.",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
-        ) != QMessageBox.Yes:
-            return
-        try:
-            self._service().disconnect("google", ident.subject_id)
-        except Exception as exc:
-            logger.warning("disconnect failed: %s", exc)
-        self._refresh()
-
-    def _new_consultation(self):
-        try:
-            # Prefer the Education submodule (it provides study selection); the
-            # bare compose dialog stays as a fallback.
-            if self._open_online_consultation():
-                return
-            from .compose_dialog import ConsultationComposeDialog
-
-            self.close()
-            ConsultationComposeDialog(auth_user=self.auth_user, parent=self.parent()).exec()
-        except Exception as exc:
-            logger.warning("open compose dialog failed: %s", exc)
-
     def _open_online_consultation(self, section: str | None = None) -> bool:
         """Deep link into Education ▸ Consultation (ADR-0007 hub → destination)."""
         try:
@@ -668,3 +701,67 @@ class AccountPopup(QWidget):
             logger.debug("popup positioning failed: %s", exc)
         self.show()
         self.raise_()
+        # Bring the popup forward and install outside-click dismissal so it stays
+        # open (it is a Qt.Tool, not a Qt.Popup) until the user clicks elsewhere.
+        try:
+            self.activateWindow()
+        except Exception:  # pragma: no cover - defensive
+            pass
+        self._install_outside_dismiss()
+
+    # ── stay-open dropdown dismissal (replaces Qt.Popup auto-close) ────────────
+    def _install_outside_dismiss(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+
+            if getattr(self, "_outside_filter_installed", False):
+                return
+            app = QApplication.instance()
+            if app is not None:
+                app.installEventFilter(self)
+                self._outside_filter_installed = True
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("outside-dismiss install failed: %s", exc)
+
+    def _remove_outside_dismiss(self):
+        try:
+            from PySide6.QtWidgets import QApplication
+
+            if not getattr(self, "_outside_filter_installed", False):
+                return
+            app = QApplication.instance()
+            if app is not None:
+                app.removeEventFilter(self)
+            self._outside_filter_installed = False
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("outside-dismiss remove failed: %s", exc)
+
+    def eventFilter(self, obj, event):
+        try:
+            from PySide6.QtCore import QEvent
+
+            if event.type() == QEvent.MouseButtonPress and self.isVisible():
+                gp = event.globalPosition().toPoint() if hasattr(event, "globalPosition") \
+                    else event.globalPos()
+                if not self.frameGeometry().contains(gp):
+                    # A press anywhere outside the popup dismisses it (dropdown feel)
+                    # — but NOT a focus steal by a background app, which is the bug
+                    # Qt.Popup had. Re-clicking the pill toggles via account_hook.
+                    self.close()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("outside-dismiss filter error: %s", exc)
+        return False  # never consume — let the click reach its target
+
+    def closeEvent(self, event):
+        self._remove_outside_dismiss()
+        try:
+            super().closeEvent(event)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
+    def hideEvent(self, event):
+        self._remove_outside_dismiss()
+        try:
+            super().hideEvent(event)
+        except Exception:  # pragma: no cover - defensive
+            pass

@@ -190,3 +190,21 @@ class ConsultationRespondDialog(QDialog):
     def _on_failed(self, message: str):
         self.send_btn.setEnabled(True)
         self.status.setText(f"Failed: {message}")
+        _notify_failure_best_effort(message, context="Consultation response upload",
+                                    consultation_id=str(self._c.get("consultation_id") or ""))
+
+
+def _notify_failure_best_effort(message: str, *, context: str, consultation_id: str = ""):
+    """Guarded CRITICAL inbox entry for a UI-surfaced failure (2026-06-11).
+
+    UI-side only — the sync engine/poller are untouched; never raises."""
+    try:
+        from modules.cloud_consultation.notifications import inbox
+        from modules.cloud_consultation.notifications.models import NotificationKind
+
+        kind = (NotificationKind.AUTH_FAILED if "sign in" in str(message).lower()
+                else NotificationKind.UPLOAD_FAILED)
+        inbox.notify(kind, body=f"{context} failed: {message}",
+                     consultation_id=consultation_id)
+    except Exception as exc:  # pragma: no cover - best-effort by contract
+        logger.debug("failure notification skipped: %s", exc)

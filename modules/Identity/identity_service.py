@@ -103,7 +103,7 @@ class IdentityService:
         return identity
 
     def connect_aipacs_web_via_google(
-        self, gmail: str, *, server_id: str = "", center_id: str = ""
+        self, gmail: str = "", *, server_id: str = "", center_id: str = ""
     ) -> ExternalIdentity:
         """ADR-0008: link the aipacs_web identity via transient Gmail attestation.
 
@@ -111,6 +111,9 @@ class IdentityService:
         The transient Google credentials are discarded by the provider; only
         the backend's Sanctum token is stored, and NO Google identity is
         created or altered (the hub Drive account stays untouched).
+
+        ``gmail`` is OPTIONAL (unified one-step login, owner directive
+        2026-06-11): empty links with the Google-verified email.
         """
         provider = get_provider("aipacs_web")
         if provider is None:

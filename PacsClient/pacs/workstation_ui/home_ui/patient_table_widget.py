@@ -3098,13 +3098,18 @@ class PatientTableWidget(QWidget):
                 + "Assign consultation…"
             )
 
-            def make_assign_click_handler(uid, pname, pid):
+            def make_assign_click_handler(uid, pname, pid, sdate, smodality):
                 def handler(event):
-                    self._on_assign_clicked(uid, pname, pid)
+                    self._on_assign_clicked(uid, pname, pid,
+                                            study_date=sdate, modality=smodality)
                 return handler
 
+            # Workflow v2 (2026-06-12): the row's study date + modality travel
+            # with the click so the Assign popup can attach them as registry
+            # metadata. Purely additive — the row-selection debounce and the
+            # report-column wiring are untouched.
             assign_label.mousePressEvent = make_assign_click_handler(
-                study_uid, patient_name, patient_id,
+                study_uid, patient_name, patient_id, date_text, modality,
             )
 
         # --- helpers ---
@@ -3365,12 +3370,15 @@ class PatientTableWidget(QWidget):
         self._assign_consult_enabled_cache = enabled
         return enabled
 
-    def _on_assign_clicked(self, study_uid: str, patient_name: str, patient_id: str):
+    def _on_assign_clicked(self, study_uid: str, patient_name: str, patient_id: str,
+                           study_date: str = "", modality: str = ""):
         """Open the consultation Assign popup for this row (ADR-0006).
 
         Same wiring pattern as the Report column popup: a cell-widget click
         handler that opens a dialog. The single/double-click row-selection
         debounce is untouched (cell widgets never emit itemClicked).
+        ``study_date``/``modality`` (workflow v2) are the clicked row's values,
+        forwarded as creation-only registry metadata.
         """
         try:
             from modules.education.online_consultation import (
@@ -3401,6 +3409,8 @@ class PatientTableWidget(QWidget):
                 study_uids=study_uids,
                 auth_user=auth_user if isinstance(auth_user, dict) else None,
                 parent=self,
+                study_date=study_date,
+                modality=modality,
             )
             dialog.exec()
         except Exception as e:

@@ -30,6 +30,21 @@ except NameError:
 
 import sys
 import os
+
+# ---------------------------------------------------------------------------
+# Qt Multimedia backend selection (must run before any QtMultimedia use).
+# Qt 6.8+ defaults to the FFmpeg media backend, which on this workstation
+# DEADLOCKS the UI thread whenever a QMediaPlayer that has a video sink is torn
+# down: stop() / setVideoOutput(None) / setSource() all block waiting for the
+# video sink to flush its final frame, while frame presentation needs the very
+# UI thread that is stuck inside the call. Confirmed by py-spy hung-stack dumps
+# of the Education video player (MainThread blocked in cleanup()->setVideoOutput
+# and stop_video()->stop()). The mature Windows Media Foundation backend tears
+# down cleanly, so force it on Windows. An explicit user override is honoured.
+# ---------------------------------------------------------------------------
+if sys.platform.startswith("win") and not os.environ.get("QT_MEDIA_BACKEND"):
+    os.environ["QT_MEDIA_BACKEND"] = "windows"
+
 import multiprocessing
 import logging
 import subprocess
@@ -52,78 +67,11 @@ from PacsClient.utils.runtime_correlation import (
 )
 
 
-# --- Native-fault tracing (additive, best-effort) ---------------------------
-# faulthandler writes a native + Python traceback straight to a file if the
-# process hits a fatal fault (segfault, access violation, stack overflow).
-# It bypasses the async logging queue, so such a hard crash still leaves a
-# trace on disk. Guarded so it can never prevent startup.
-try:
-    import faulthandler as _faulthandler
-    from PacsClient.utils.data_paths import LOGS_DIR as _LOGS_DIR
-
-    _LOGS_DIR.mkdir(parents=True, exist_ok=True)
-    _native_fault_log = open(
-        _LOGS_DIR / "native_fault.log", "a", buffering=1, encoding="utf-8"
-    )
-    _faulthandler.enable(file=_native_fault_log, all_threads=True)
-except Exception:
-    pass
-
-# --- COM-fault tracer (env-gated, READ-ONLY) --------------------------------
-# Pin the 0x8001010d (RPC_E_WRONGTHREAD) first-chance fault: set AIPACS_COM_TRACE=1
-# to log every Python COM call's thread / apartment / stack to
-# user_data/logs/com_trace.log. No-op (zero behaviour change) unless the env var
-# is set; fully guarded so it can never affect startup.
-try:
-    import os as _os_comtrace
-    if _os_comtrace.getenv("AIPACS_COM_TRACE", "").strip() in ("1", "true", "True", "yes", "on"):
-        from tools.diagnostics.com_fault_tracer import install as _install_com_trace
-        _install_com_trace()
-except Exception:
-    pass
-
-
-# --- Stale temp-file sweep (additive, best-effort) --------------------------
-# The FAST lazy-volume backend writes aipacs_lazy_*.bin mmap temp files and only
-# cleans the ones it registered, on a clean exit. A native fail-fast leaves them
-# behind, so sweep old ones (>6h old, never a live instance's) at startup.
-try:
-    import glob as _glob
-    import tempfile as _tempfile
-    _stale_cutoff = time.time() - 6 * 3600
-    for _stale in _glob.glob(os.path.join(_tempfile.gettempdir(), "aipacs_lazy_*.bin")):
-        try:
-            if os.path.getmtime(_stale) < _stale_cutoff:
-                os.remove(_stale)
-        except OSError:
-            pass
-except Exception:
-    pass
-
-
-def _emit_console(message: str) -> None:
-    """Emit startup/CLI console text without direct print calls."""
-    text = f"{message}\n"
-    # In frozen/windowed builds, stdout can be None.
-    for stream in (getattr(sys, "stdout", None), getattr(sys, "stderr", None)):
-        if stream is None:
-            continue
-        try:
-            stream.write(text)
-            try:
-                stream.flush()
-            except Exception:
-                pass
-            return
-        except Exception:
-            continue
-
-
 def _maybe_nuitka_smoke_test_exit() -> None:
     """Fast startup check for staged Nuitka smoke tests."""
     if os.environ.get("AIPACS_NUITKA_SMOKE_TEST") != "1":
         return
-    _emit_console("[SMOKE] AIPacs startup smoke check reached main bootstrap.")
+    print("[SMOKE] AIPacs startup smoke check reached main bootstrap.")
     raise SystemExit(0)
 
 
@@ -160,7 +108,7 @@ def _extract_startup_import_folder() -> str | None:
                 # Remove custom args so Qt/app internals don't see unknown switches.
                 del sys.argv[idx:idx + 2]
             else:
-                _emit_console("[STARTUP] '--import-folder' provided without a path; ignoring.")
+                print("[STARTUP] '--import-folder' provided without a path; ignoring.")
         except Exception:
             pass
 
@@ -202,7 +150,7 @@ def _extract_startup_import_folder() -> str | None:
             pass
 
     if folder_path:
-        _emit_console(f"[STARTUP] Requested import folder: {folder_path}")
+        print(f"[STARTUP] Requested import folder: {folder_path}")
 
     return folder_path
 
@@ -221,13 +169,13 @@ def _maybe_run_tests_and_exit() -> None:
     pytest_args = sys.argv[arg_index + 1:] or ["tests/test_pydicom_backend_geometry.py"]
 
     if importlib.util.find_spec("pytest") is None:
-        _emit_console("[TEST] pytest is not installed.")
-        _emit_console("[TEST] Install dev dependencies:")
-        _emit_console("       python -m pip install -r requirements-dev.txt")
+        print("[TEST] pytest is not installed.")
+        print("[TEST] Install dev dependencies:")
+        print("       python -m pip install -r requirements-dev.txt")
         sys.exit(2)
 
     cmd = [sys.executable, "-m", "pytest", *pytest_args]
-    _emit_console(f"[TEST] Running: {' '.join(cmd)}")
+    print(f"[TEST] Running: {' '.join(cmd)}")
     rc = subprocess.call(cmd)
     sys.exit(int(rc))
 
@@ -636,31 +584,31 @@ def configure_graphics_fallback():
     # Logging (minimal, before logging subsystem fully initialized)
     # ========================================================================
     
-    _emit_console(f"[GRAPHICS] Build: {'FROZEN' if frozen else 'DEVELOPMENT'}")
+    print(f"[GRAPHICS] Build: {'FROZEN' if frozen else 'DEVELOPMENT'}")
     try:
         save_runtime_profile(build_graphics_runtime_patch(profile))
     except Exception:
         pass
 
-    _emit_console(f"[GRAPHICS] Mode: {'GPU' if use_gpu else 'SOFTWARE_OPENGL'}")
-    _emit_console(f"[GRAPHICS] Execution mode: {profile.get('execution_mode', '')}")
-    _emit_console(f"[GRAPHICS] QT_OPENGL: {os.environ.get('QT_OPENGL', '')}")
-    _emit_console(f"[GRAPHICS] ANGLE_DEFAULT_PLATFORM: {os.environ.get('ANGLE_DEFAULT_PLATFORM', '')}")
-    _emit_console(f"[GRAPHICS] GPU requested: {profile.get('requested_gpu', False)}")
-    _emit_console(f"[GRAPHICS] GPU detected: {profile.get('detected_gpu', False)}")
+    print(f"[GRAPHICS] Mode: {'GPU' if use_gpu else 'SOFTWARE_OPENGL'}")
+    print(f"[GRAPHICS] Execution mode: {profile.get('execution_mode', '')}")
+    print(f"[GRAPHICS] QT_OPENGL: {os.environ.get('QT_OPENGL', '')}")
+    print(f"[GRAPHICS] ANGLE_DEFAULT_PLATFORM: {os.environ.get('ANGLE_DEFAULT_PLATFORM', '')}")
+    print(f"[GRAPHICS] GPU requested: {profile.get('requested_gpu', False)}")
+    print(f"[GRAPHICS] GPU detected: {profile.get('detected_gpu', False)}")
     if profile.get("device_name"):
-        _emit_console(f"[GRAPHICS] GPU device: {profile['device_name']}")
+        print(f"[GRAPHICS] GPU device: {profile['device_name']}")
     software = profile.get("software_rendering") or {}
     if not use_gpu:
-        _emit_console(f"[GRAPHICS] Software renderer status: {software.get('status', '')}")
+        print(f"[GRAPHICS] Software renderer status: {software.get('status', '')}")
         if software.get("qt_opengl_dll"):
-            _emit_console(f"[GRAPHICS] Qt software OpenGL DLL: {software['qt_opengl_dll']}")
+            print(f"[GRAPHICS] Qt software OpenGL DLL: {software['qt_opengl_dll']}")
         if software.get("vtk_osmesa_dll"):
-            _emit_console(f"[GRAPHICS] VTK OSMesa DLL: {software['vtk_osmesa_dll']}")
+            print(f"[GRAPHICS] VTK OSMesa DLL: {software['vtk_osmesa_dll']}")
         if graphics_env.get("warning"):
-            _emit_console(f"[GRAPHICS] Warning: {graphics_env['warning']}")
+            print(f"[GRAPHICS] Warning: {graphics_env['warning']}")
         if graphics_env.get("viewer_backend_override"):
-            _emit_console(f"[GRAPHICS] Safe viewer backend override: {graphics_env['viewer_backend_override']}")
+            print(f"[GRAPHICS] Safe viewer backend override: {graphics_env['viewer_backend_override']}")
     return profile
 
 # Configure graphics BEFORE any Qt/VTK imports
@@ -676,7 +624,7 @@ if sys.platform == 'win32':
     except:
         pass
 
-from PySide6.QtCore import Qt, QEvent, QTimer
+from PySide6.QtCore import Qt, QEvent
 from PySide6.QtWidgets import QApplication, QMessageBox, QDialog
 from PySide6.QtGui import QIcon
 from PacsClient.app_handler import AppHandler
@@ -720,14 +668,14 @@ if __name__ == "__main__":
         env_file = install_dir / '.env'
         if env_file.exists():
             load_dotenv(dotenv_path=env_file, override=True)
-            _emit_console(f"[CONFIG] Loaded environment from: {env_file}")
+            print(f"[CONFIG] Loaded environment from: {env_file}")
         # Also try config/production_logging.env
         config_env = install_dir / 'config' / 'production_logging.env'
         if config_env.exists():
             load_dotenv(dotenv_path=config_env, override=False)  # Don't override .env if it exists
-            _emit_console(f"[CONFIG] Loaded production logging config: {config_env}")
+            print(f"[CONFIG] Loaded production logging config: {config_env}")
     except Exception as e:
-        _emit_console(f"[CONFIG] Could not load .env file: {e}")
+        print(f"[CONFIG] Could not load .env file: {e}")
 
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
@@ -771,115 +719,7 @@ if __name__ == "__main__":
             _original_excepthook(exc_type, exc_value, exc_tb)
 
     sys.excepthook = _aipacs_excepthook
-
-    # ── threading.excepthook: surface exceptions from background/daemon threads ──
-    # Without this, an unhandled exception in a worker thread (async series load,
-    # download/enrich workers, warmup) vanishes silently — no log, no trace — and
-    # can leave per-cycle state flags stuck (e.g. inflight guards), which is how a
-    # workflow "stops working" after repeated use. Additive, behaviour-neutral.
-    def _aipacs_threading_excepthook(args):
-        _crash_logger = logging.getLogger("aipacs.crash")
-        try:
-            import traceback as _tb_mod
-            _crash_logger.critical(
-                "UNHANDLED EXCEPTION in thread %r:\n%s",
-                getattr(args, "thread", None),
-                "".join(
-                    _tb_mod.format_exception(
-                        args.exc_type, args.exc_value, args.exc_traceback
-                    )
-                ),
-                extra={"component": "crash"},
-            )
-        except Exception:
-            pass
-
-    try:
-        threading.excepthook = _aipacs_threading_excepthook
-    except Exception:
-        pass
-
-    # ── qInstallMessageHandler: capture Qt's C++-side diagnostic messages ────────
-    # Qt emits messages such as "QObject::~QObject: Timers cannot be stopped from
-    # another thread" and "Internal C++ object already deleted" directly from C++;
-    # these never reach Python logging by default. Routing them to the log gives
-    # early warning of QObject-lifetime faults — a suspected native fail-fast
-    # trigger. Observation only: the handler logs and never alters control flow.
-    try:
-        from PySide6.QtCore import (
-            qInstallMessageHandler as _qInstallMessageHandler,
-            QtMsgType as _QtMsgType,
-        )
-
-        _qt_logger = logging.getLogger("aipacs.qt")
-        _QT_MSG_LEVELS = {
-            _QtMsgType.QtDebugMsg: logging.DEBUG,
-            _QtMsgType.QtInfoMsg: logging.INFO,
-            _QtMsgType.QtWarningMsg: logging.WARNING,
-            _QtMsgType.QtCriticalMsg: logging.ERROR,
-            _QtMsgType.QtFatalMsg: logging.CRITICAL,
-        }
-
-        def _aipacs_qt_message_handler(mode, context, message):
-            try:
-                _level = _QT_MSG_LEVELS.get(mode, logging.WARNING)
-                _qt_logger.log(
-                    _level, "[Qt] %s", message, extra={"component": "crash"}
-                )
-            except Exception:
-                pass
-
-        _qInstallMessageHandler(_aipacs_qt_message_handler)
-    except Exception:
-        pass
     # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-
-    # ── S2: Session sentinel — startup banner (additive, observation-only) ───
-    # Emits a single [SESSION_START] line with session_id/version/build/python/pid
-    # plus a matching [SESSION_END] line in the finally: block (see end of file).
-    # All work is guarded so a sentinel failure cannot prevent app startup.
-    _session_start_mono = time.monotonic()
-    _session_id_str = "unknown"
-    _session_version = "unknown"
-    _session_build_mode = "frozen" if getattr(sys, "frozen", False) else "dev"
-    try:
-        import platform as _platform
-        try:
-            _session_id_str = str(_corr_session_id())
-        except Exception:
-            pass
-        try:
-            _pyproj_path = Path(__file__).resolve().parent / "pyproject.toml"
-            if _pyproj_path.exists():
-                if sys.version_info >= (3, 11):
-                    import tomllib as _tomllib  # type: ignore
-                else:
-                    import tomli as _tomllib  # type: ignore
-                _pyproj_data = _tomllib.loads(_pyproj_path.read_text(encoding="utf-8"))
-                _session_version = str(
-                    (_pyproj_data.get("project") or {}).get("version") or "unknown"
-                )
-        except Exception:
-            pass
-        logging.getLogger(__name__).info(
-            "[SESSION_START] session_id=%s version=%s build_mode=%s frozen=%s python=%s os=%s pid=%s crash_hook=installed",
-            _session_id_str,
-            _session_version,
-            _session_build_mode,
-            bool(getattr(sys, "frozen", False)),
-            _platform.python_version(),
-            _platform.platform(),
-            os.getpid(),
-            extra={"component": "ui"},
-        )
-    except Exception as _sentinel_exc:
-        try:
-            logging.getLogger(__name__).warning(
-                "[SESSION_START] sentinel failed to initialize: %s", _sentinel_exc
-            )
-        except Exception:
-            pass
-    # ─────────────────────────────────────────────────────────────────────────
 
     # Migrate data from old flat layout to user_data/ (safe to call multiple times)
     try:
@@ -1271,11 +1111,8 @@ if __name__ == "__main__":
     # ========================================================================
     instance_lock = SingleInstanceLock()
     if not instance_lock.try_acquire(show_dialog=True):
-        # TAKEOVER policy (default, 2026-06-05): an existing instance is
-        # closed automatically (graceful SHUTDOWN → force-kill) and this
-        # launch proceeds — so reaching here normally means we raced an even
-        # NEWER launch (defer to it) or legacy mode (AIPACS_NO_TAKEOVER=1)
-        # found a live instance and raised its window.
+        # Another instance is running, user was prompted with dialog
+        # Lock.try_acquire() handles the user interaction and graceful exit
         logging.getLogger(__name__).info("Application initialization canceled - another instance running")
         sys.exit(0)
 
@@ -1290,17 +1127,8 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.2.7")
+    app.setApplicationVersion("3.2.8")
     app.setOrganizationName("AIPacs")
-
-    # Feature Activation audit: one [FEATURE_ACTIVATION] line per recent feature
-    # stating active/inactive + reason, so any client app.log shows what is live
-    # without a debugger. Best-effort; never blocks startup.
-    try:
-        from PacsClient.utils.feature_activation_audit import log_feature_activation
-        log_feature_activation()
-    except Exception:
-        pass
 
     # Setup font rendering for better quality
     setup_font_rendering()
@@ -1310,34 +1138,11 @@ if __name__ == "__main__":
     theme_manager = get_theme_manager()
 
     def _apply_application_theme(theme=None):
-        # Default ("v1") path is byte-identical to before. The parallel "v2"
-        # design layer is opt-in via PacsClient.utils.ui_variant, and ANY failure
-        # in it falls back to v1 — so the live clinical UI can never be broken by
-        # the new design language. See docs/design/CLAUDE_DESIGN_WORKSTATION_V1_PLAN.md.
-        base_stylesheet = theme_manager.build_application_stylesheet(theme)
-        try:
-            from PacsClient.utils.ui_variant import get_ui_variant
-            if get_ui_variant() == "v2":
-                from PacsClient.utils.theme_v2 import build_application_stylesheet_v2
-                base_stylesheet = build_application_stylesheet_v2(theme_manager, theme)
-        except Exception:
-            base_stylesheet = theme_manager.build_application_stylesheet(theme)
-        themed_stylesheet = base_stylesheet + get_scroll_area_style()
+        themed_stylesheet = theme_manager.build_application_stylesheet(theme) + get_scroll_area_style()
         app.setStyleSheet(themed_stylesheet)
 
     _apply_application_theme(theme_manager.current_theme())
-
-    def _apply_application_theme_deferred(theme=None):
-        # Theme-preview clicks deliver themeChanged synchronously inside the
-        # button-click dispatch, so app.setStyleSheet's GLOBAL unpolish/
-        # repolish cascade ran on that stack — while viewers could be
-        # mid-build (other-PC access violation 2026-06-07 10:49,
-        # native_fault dump 2: _on_theme_preview_clicked → set_active_theme
-        # → _apply_application_theme → AV). Re-post to a clean event-loop
-        # turn so the global repolish never runs inside emit/click dispatch.
-        QTimer.singleShot(0, lambda: _apply_application_theme(theme))
-
-    theme_manager.themeChanged.connect(_apply_application_theme_deferred)
+    theme_manager.themeChanged.connect(_apply_application_theme)
     
     # Initialize qtawesome fonts (required for icons in PyInstaller builds)
     try:
@@ -1346,7 +1151,7 @@ if __name__ == "__main__":
         # This ensures icons work properly in PyInstaller builds
         _ = qta.icon('fa5s.home')  # This triggers font loading
     except Exception as e:
-        _emit_console(f"Warning: Could not initialize qtawesome fonts: {e}")
+        print(f"Warning: Could not initialize qtawesome fonts: {e}")
 
     # Check license
     license_manager = LicenseManager()
@@ -1381,95 +1186,8 @@ if __name__ == "__main__":
     except Exception:
         pass
 
-    # ── S7: Signal handlers (SIGINT/SIGTERM) ─────────────────────────
-    # Best-effort safety net so a Ctrl+C or OS-initiated terminate
-    # still leaves a log marker before the queue listener dies. The
-    # handler also requests Qt to quit gracefully so the normal
-    # [SESSION_END] finally block can still run when possible.
-    try:
-        import signal as _signal_mod
-
-        def _aipacs_signal_handler(_signum, _frame):
-            try:
-                _sig_name = _signal_mod.Signals(_signum).name
-            except Exception:
-                _sig_name = str(_signum)
-            try:
-                _uptime_s = time.monotonic() - _session_start_mono
-                logging.getLogger(__name__).warning(
-                    "[SESSION_SIGNAL] session_id=%s signal=%s uptime_s=%.1f",
-                    _session_id_str, _sig_name, _uptime_s,
-                    extra={"component": "ui"},
-                )
-            except Exception:
-                pass
-            try:
-                QApplication.quit()
-            except Exception:
-                pass
-
-        for _sig in (
-            getattr(_signal_mod, "SIGINT", None),
-            getattr(_signal_mod, "SIGTERM", None),
-        ):
-            if _sig is None:
-                continue
-            try:
-                _signal_mod.signal(_sig, _aipacs_signal_handler)
-            except (ValueError, OSError):
-                # Some signals cannot be registered (e.g. non-main
-                # thread, or unsupported on this OS). Skip silently.
-                pass
-    except Exception as _sig_exc:
-        try:
-            logging.getLogger(__name__).warning(
-                "[SESSION_SIGNAL] handler registration failed: %s",
-                _sig_exc,
-            )
-        except Exception:
-            pass
-    # ─────────────────────────────────────────────────────────────────
-
     window = AppHandler(startup_import_folder=startup_import_folder)
     window.show()
-
-    # ── S6: Global Ctrl+Shift+L session-mark shortcut ────────────────
-    # Lets the user bookmark a moment during a session by pressing
-    # Ctrl+Shift+L. Emits [SESSION_MARK] with an auto-incrementing tag
-    # and current uptime to the diagnostic log. Useful for triaging
-    # "the bug happened right here" without needing dev tools. All
-    # failures swallowed — the shortcut is purely diagnostic.
-    try:
-        from PySide6.QtGui import QShortcut, QKeySequence
-        from PySide6.QtCore import Qt as _Qt_sm
-        _session_mark_counter = [0]  # list-wrapped for closure mutation
-
-        def _emit_session_mark():
-            try:
-                _session_mark_counter[0] += 1
-                _mark_uptime_s = time.monotonic() - _session_start_mono
-                logging.getLogger(__name__).warning(
-                    "[SESSION_MARK] tag=%d uptime_s=%.1f session_id=%s",
-                    _session_mark_counter[0], _mark_uptime_s, _session_id_str,
-                    extra={"component": "ui"},
-                )
-            except Exception:
-                pass
-
-        _session_mark_shortcut = QShortcut(QKeySequence("Ctrl+Shift+L"), window)
-        _session_mark_shortcut.setContext(_Qt_sm.ApplicationShortcut)
-        _session_mark_shortcut.activated.connect(_emit_session_mark)
-        # Hold a strong reference on the app so GC cannot reap it
-        app._aipacs_session_mark_shortcut = _session_mark_shortcut
-    except Exception as _sm_exc:
-        try:
-            logging.getLogger(__name__).warning(
-                "[SESSION_MARK] shortcut registration failed: %s", _sm_exc,
-                extra={"component": "ui"},
-            )
-        except Exception:
-            pass
-    # ─────────────────────────────────────────────────────────────────
 
     # â”€â”€ Diagnostic mode (AIPACS_DIAG_MODE=1) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     if os.environ.get("AIPACS_DIAG_MODE") == "1":
@@ -1494,26 +1212,6 @@ if __name__ == "__main__":
     # Store lock on app for cleanup on exit
     app._instance_lock = instance_lock
 
-    # Single-instance: when a SECOND launch happens, the new process sends an
-    # ACTIVATE message over the QLocalServer (then exits); this callback raises +
-    # focuses THIS already-running window instead of starting a duplicate.
-    def _raise_existing_window():
-        try:
-            if window.isMinimized():
-                window.showNormal()
-            else:
-                window.show()
-            window.raise_()
-            window.activateWindow()
-        except Exception as _raise_exc:
-            logging.getLogger(__name__).debug(
-                "[single-instance] raise existing window failed: %s", _raise_exc
-            )
-    try:
-        instance_lock.set_activate_callback(_raise_existing_window)
-    except Exception:
-        pass
-
     # sys.exit(app.exec())
     try:
         with loop:
@@ -1528,54 +1226,6 @@ if __name__ == "__main__":
             shutdown_decode_service()
         except Exception:
             pass
-        # ── S5: DB WAL checkpoint guard on shutdown ──────────────────────
-        # SQLite in WAL mode (see database/core.py) accumulates pages in
-        # the -wal sidecar file until a checkpoint runs. A crash / signal
-        # mid-session can leave a multi-megabyte -wal file that grows
-        # across restarts. A best-effort TRUNCATE checkpoint here keeps
-        # the on-disk footprint stable. Errors are swallowed so a locked
-        # DB or missing file cannot block shutdown.
-        try:
-            from PacsClient.utils.data_paths import DATABASE_FILE as _db_file
-            if _db_file.exists():
-                import sqlite3 as _sqlite_shutdown
-                _conn = _sqlite_shutdown.connect(str(_db_file), timeout=2.0)
-                try:
-                    _conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-                    _conn.commit()
-                finally:
-                    _conn.close()
-                logging.getLogger(__name__).info(
-                    "[SESSION_END] wal_checkpoint=ok db=%s",
-                    _db_file.name,
-                    extra={"component": "ui"},
-                )
-        except Exception as _wal_exc:
-            try:
-                logging.getLogger(__name__).warning(
-                    "[SESSION_END] wal_checkpoint failed: %s", _wal_exc,
-                    extra={"component": "ui"},
-                )
-            except Exception:
-                pass
-        # ─────────────────────────────────────────────────────────────────
-        # ── S2: Session sentinel — end-of-session summary ────────────────
-        # Emitted BEFORE shutdown_diagnostic_logging() so the queued log
-        # listener is still alive to flush it. Guarded so a sentinel
-        # failure cannot prevent normal shutdown.
-        try:
-            _session_uptime_s = time.monotonic() - _session_start_mono
-            logging.getLogger(__name__).info(
-                "[SESSION_END] session_id=%s uptime_s=%.1f version=%s build_mode=%s",
-                _session_id_str,
-                _session_uptime_s,
-                _session_version,
-                _session_build_mode,
-                extra={"component": "ui"},
-            )
-        except Exception:
-            pass
-        # ─────────────────────────────────────────────────────────────────
         # Game-changer #1: flush async log listener before process exit so
         # no records are lost to the queue on shutdown.
         try:
@@ -1583,28 +1233,3 @@ if __name__ == "__main__":
             shutdown_diagnostic_logging()
         except Exception:
             pass
-
-        # ── Clean-termination guarantee ──────────────────────────────────
-        # Force-terminate any download subprocess still registered so a download
-        # in flight at close cannot leave an orphaned python.exe in Task Manager.
-        try:
-            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
-                terminate_all_download_subprocesses as _term_dl_subs,
-            )
-            _term_dl_subs()
-        except Exception:
-            pass
-        # Hard-exit AFTER all cleanup (instance lock released, DB WAL checkpointed,
-        # logs flushed, subprocesses terminated). This guarantees the main process
-        # actually leaves Task Manager even if a non-daemon worker/socket thread is
-        # still alive — Python would otherwise block at interpreter exit waiting on
-        # it, which is the "app stays in Task Manager after the window closes"
-        # symptom. Data integrity is safe: DICOM/thumbnail writes are atomic and the
-        # DB WAL was checkpointed above. Escape hatch: AIPACS_NO_HARD_EXIT=1.
-        try:
-            if os.environ.get("AIPACS_NO_HARD_EXIT") != "1":
-                os._exit(0)
-        except Exception:
-            pass
-
-

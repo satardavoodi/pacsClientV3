@@ -16,6 +16,7 @@ patient → study → series, which the viewer renders as a series list.
 from __future__ import annotations
 
 import logging
+import io
 import os
 import warnings
 from dataclasses import dataclass, field
@@ -24,7 +25,20 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from pydicom import dcmread
 
+try:  # package-relative (dev run inside AI-PACS repo)
+    from .optical_io import read_bytes
+except ImportError:  # standalone build / direct script execution
+    from optical_io import read_bytes  # type: ignore
+
 logger = logging.getLogger(__name__)
+
+
+def _dcmread_header(path: str):
+    """Header-only dcmread, retry-buffered for reliable optical reads."""
+    try:
+        return dcmread(io.BytesIO(read_bytes(path)), stop_before_pixels=True)
+    except Exception:
+        return dcmread(path, stop_before_pixels=True)
 
 # Directories that never contain patient DICOM data on AI-PACS media.
 _SKIP_DIR_NAMES = {"viewer", "$recycle.bin", "system volume information", "__pycache__"}
@@ -224,7 +238,7 @@ def _scan_files(
         if progress and checked % 100 == 0:
             progress(checked, f"Scanned {checked} files…")
         try:
-            ds = dcmread(str(path), stop_before_pixels=True)
+            ds = _dcmread_header(str(path))
         except Exception:
             continue  # not a DICOM file
 
@@ -364,7 +378,7 @@ def discover_media_root(
                 break
             checked += 1
             try:
-                dcmread(str(path), stop_before_pixels=True)
+                _dcmread_header(str(path))
                 return str(resolved)
             except Exception:
                 continue

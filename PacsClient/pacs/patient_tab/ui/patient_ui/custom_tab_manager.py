@@ -1254,6 +1254,63 @@ class CustomTabManager:
         
         return tab_index
     
+    def add_consultation_source_tab(self, widget=None):
+        """
+        Add the "AI-PACS Consultation" source page tab (workflow v2) with the
+        same custom tab UI as the Web Browser tab.
+
+        Args:
+            widget: The ConsultationSourcePage to display
+
+        Returns:
+            int: The index of the added tab
+        """
+        print("[CustomTabManager] add_consultation_source_tab called")
+
+        # Check if the consultation source tab already exists
+        for idx, tab_data in self.patient_tabs.items():
+            if tab_data.get('is_consultation_source_tab', False):
+                print("[CustomTabManager] Consultation source tab already exists, switching to it")
+                self.set_tab_active_simple(idx)
+                return idx
+
+        # Create custom tab widget with icon
+        custom_tab = ServiceTabWidget(
+            service_name="AI-PACS Consultation",
+            icon_name="fa5s.user-md",
+            icon_color="white"
+        )
+
+        # Add tab to tab widget
+        tab_index = self.tab_widget.addTab(widget, "")
+        print(f"[CustomTabManager] Consultation source tab added at index: {tab_index}")
+
+        # Connect close button signal
+        custom_tab.close_requested.connect(partial(self.close_patient_tab, tab_index))
+
+        if self.title_bar_tab_area:
+            # Add to right-side area (near admin/user info)
+            custom_tab.mousePressEvent = lambda event: self.on_title_bar_tab_clicked(tab_index)
+            self._add_title_bar_right_tab_widget(custom_tab)
+            self.title_bar_tabs[tab_index] = custom_tab
+        else:
+            # Set custom tab widget as tab button
+            self.tab_widget.tabBar().setTabButton(tab_index, QTabBar.ButtonPosition.LeftSide, custom_tab)
+
+        # Store reference
+        self.patient_tabs[tab_index] = {
+            'custom_tab': custom_tab,
+            'widget': widget,
+            'is_consultation_source_tab': True
+        }
+
+        # Set as current tab
+        self.tab_widget.setCurrentIndex(tab_index)
+        self.set_tab_active(tab_index)
+        print(f"[CustomTabManager] Consultation source tab added successfully")
+
+        return tab_index
+
     def add_education_module_tab(self, widget=None):
         """
         Add Education Module tab with custom tab UI (like patient tabs)

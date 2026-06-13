@@ -15,6 +15,17 @@ from pathlib import Path
 
 from .models import SyncDirection, SyncProgress
 
+
+class UploadPaused(Exception):
+    """Cooperative pause signal raised out of CloudSyncEngine.upload() when a
+    pause_check() returns True. Already-uploaded files stay marked 'done' in
+    consultation_db, so re-entering upload() resumes (skips them). ADR-0009 D3."""
+
+
+class UploadCancelled(Exception):
+    """Cooperative cancel signal raised out of CloudSyncEngine.upload() when a
+    cancel_check() returns True. The consultation is NOT marked 'uploaded'."""
+
 logger = logging.getLogger(__name__)
 
 
@@ -58,6 +69,7 @@ class CloudSyncEngine:
     def upload(
         self, consultation_id: str, local_root, *,
         app_folder_id: str | None = None, root_remote_id: str | None = None,
+        cancel_check=None, pause_check=None,
     ) -> str:
         """Mirror a local package folder to the provider; returns the remote folder id.
 
@@ -88,6 +100,11 @@ class CloudSyncEngine:
         folder_cache: dict[str, str] = {"": root_remote}
 
         for p in files:
+            # ADR-0009 D3 cooperative pause/cancel (no-op when callbacks absent).
+            if cancel_check is not None and cancel_check():
+                raise UploadCancelled(consultation_id)
+            if pause_check is not None and pause_check():
+                raise UploadPaused(consultation_id)
             rel = p.relative_to(root).as_posix()
             size = p.stat().st_size
             sha = _sha256_file(p)

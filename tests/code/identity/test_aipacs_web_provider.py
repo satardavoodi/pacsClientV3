@@ -280,6 +280,37 @@ def test_client_create_consultation_payload_shape():
     assert "drive_folder_id" not in call["json"]
 
 
+def test_client_create_consultation_metadata_kwargs_sent_when_non_empty():
+    """Workflow v2 (2026-06-12): center_id/patient_id/study_date/modality."""
+    client, sess = _client([_FakeResp(201, {"data": {"id": 11}})])
+    client.create_consultation(
+        type="internal", consultant_address="dr.b@x.com",
+        patient_ref="44113 DOE JOHN",
+        center_id="C7", patient_id="44113",
+        study_date="2026-06-10", modality="MRI",
+    )
+    body = sess.calls[0]["json"]
+    assert body["center_id"] == "C7"
+    assert body["patient_id"] == "44113"
+    assert body["study_date"] == "2026-06-10"
+    assert body["modality"] == "MRI"
+
+
+def test_client_create_consultation_metadata_omitted_when_empty():
+    """Empty metadata kwargs keep the pre-v2 POST body byte-identical."""
+    client, sess = _client([_FakeResp(201, {"data": {"id": 12}})])
+    client.create_consultation(
+        type="internal", consultant_address="dr.b@x.com",
+        patient_ref="44113 DOE JOHN",
+        center_id="", patient_id="", study_date="", modality="",
+    )
+    body = sess.calls[0]["json"]
+    assert body == {
+        "type": "internal", "consultant_address": "dr.b@x.com",
+        "patient_ref": "44113 DOE JOHN",
+    }
+
+
 def test_client_create_external_carries_drive_folder():
     client, sess = _client([_FakeResp(201, {"id": 10})])
     client.create_consultation(

@@ -55,6 +55,24 @@ class _HPModulesMixin:
             import traceback
             traceback.print_exc()
 
+    def open_upload_manager(self):
+        """Open the Consultation Upload Manager tab (ADR-0009). Additive: a
+        new module tab beside Download Manager / Education / Consultation. It
+        reuses the generic module-tab helper (falls back to a plain addTab when
+        no themed adder exists). Never raises into the caller."""
+        try:
+            from modules.upload_manager.ui.widget import UploadManagerWidget
+            return activate_or_create_module_tab(
+                self.tab_widget, self.custom_tab_manager,
+                tab_flag_key='is_upload_manager_tab',
+                widget_factory=UploadManagerWidget,
+                add_tab_method_name='add_upload_manager_tab',
+                fallback_label='Upload Manager',
+            )
+        except Exception as e:
+            print(f"[HomePanelWidget] Error opening upload manager: {e}")
+            return None
+
     def open_web_browser(self, show_unavailable_dialog: bool = True):
         """Open web browser in a new tab.
 
@@ -80,6 +98,40 @@ class _HPModulesMixin:
             )
         except Exception as e:
             print(f"[HomePanelWidget] Error opening web browser: {e}")
+            import traceback; traceback.print_exc()
+            return None
+
+    def open_consultation_source(self):
+        """Open the "AI-PACS Consultation" source page in a module tab.
+
+        Workflow v2 (2026-06-12): the EXACT open_web_browser pattern —
+        activate_or_create_module_tab with a singleton flag key. This is a
+        plain module tab; the PACS server-selection/socket pipeline is
+        untouched by design. Returns the ConsultationSourcePage (new or
+        existing) or None when unavailable.
+        """
+        try:
+            from modules.education.online_consultation import (
+                online_consultation_available,
+            )
+            if not online_consultation_available():
+                QMessageBox.information(
+                    self, "AI-PACS Consultation",
+                    "The Online Consultation module is not installed or not "
+                    "enabled for this workstation.")
+                return None
+            from modules.education.online_consultation.source_page import (
+                ConsultationSourcePage,
+            )
+            return activate_or_create_module_tab(
+                self.tab_widget, self.custom_tab_manager,
+                tab_flag_key='is_consultation_source_tab',
+                widget_factory=ConsultationSourcePage,
+                add_tab_method_name='add_consultation_source_tab',
+                fallback_label='AI-PACS Consultation',
+            )
+        except Exception as e:
+            print(f"[HomePanelWidget] Error opening consultation source: {e}")
             import traceback; traceback.print_exc()
             return None
 

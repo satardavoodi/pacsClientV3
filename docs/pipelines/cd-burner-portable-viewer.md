@@ -314,7 +314,35 @@ modal QDrag non-modal under pytest; synthetic QMouseEvents prove press
 doesn't load, drag suppresses the click, and headers are inert.
 `tests/.../test_viewer_dragdrop.py` (7) — suite total 81.
 
-## 16. Known limitations / deferred
+## 16. Reliable/efficient CD reads + 32-bit policy (v1.5 — 2026-06-07)
+
+**Robust optical reads** (`portable_viewer/optical_io.py`): `read_bytes`
+reads a whole file into RAM in one sequential pass with bounded retries
+(CRC / seek-timeout glitches on CD/DVD usually succeed on retry); the
+viewer parses DICOM from that stable in-memory buffer instead of seeking
+the disc repeatedly. Wired into `render.load_slice` / `peek_frame_count`
+(`_dcmread_robust`) and the media scan (`_dcmread_header`), each with a
+direct-read fallback so a buffered-read failure never blocks viewing.
+`is_optical_path` (GetDriveTypeW) and `stage_files_to_temp` are available
+for future "copy series to temp" staging. Combined with the existing
+worker-thread prefetch + LRU cache, scrolling masks optical latency.
+Hidden-import `optical_io` in the build.
+
+**Architecture / Windows-version policy (decided 2026-06-07):** Qt 6 has
+NO 32-bit Windows build, so the viewer is 64-bit only — and a 64-bit
+PyInstaller bundle that ships its own UCRT (already present:
+ucrtbase + api-ms-win-crt shims + VCRUNTIME140) runs on **Windows 7 SP1
+through 11, 64-bit, with no install**. For genuine 32-bit Windows the disc
+**degrades gracefully**: `RUN_VIEWER.cmd` detects 32-bit
+(`PROCESSOR_ARCHITECTURE==x86` && no `PROCESSOR_ARCHITEW6432`), prints a
+clear message and opens the DICOM folder so DICOMDIR works with any
+installed viewer — no cryptic "not a valid Win32 application". AutoRun now
+routes through `RUN_VIEWER.cmd` (not the exe) so the guard runs on autorun
+too; START_HERE states the 64-bit requirement + fallback. Building a
+separate 32-bit viewer (PyQt5/tkinter) was considered and declined — 32-bit
+Windows is effectively end-of-life (Win11 is 64-bit only).
+
+## 17. Known limitations / deferred
 
 * IMAPI2 `Write()` is synchronous — no fine-grained burn % (progress jumps
   50→95) and mid-write cancel is not possible. Event-sink progress is a

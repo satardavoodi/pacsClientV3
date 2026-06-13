@@ -26,6 +26,25 @@ def test_is_external_flag_is_honoured():
     assert core.decide_route({"is_external": True}) == core.EXTERNAL
 
 
+# ── hub gate on the routing (owner directive 2026-06-11) ───────────────────────
+def test_ensure_route_allowed_refuses_external_without_hub():
+    with pytest.raises(ValueError) as exc:
+        core.ensure_route_allowed({"type": "external"}, external_enabled=False)
+    assert str(exc.value) == core.EXTERNAL_DISABLED_REASON
+
+
+def test_ensure_route_allowed_internal_never_gated():
+    assert core.ensure_route_allowed({"type": "internal"}, False) == core.INTERNAL
+    # unknown type defaults to internal — also never gated
+    assert core.ensure_route_allowed({}, False) == core.INTERNAL
+
+
+def test_ensure_route_allowed_passes_external_when_hub_available():
+    assert core.ensure_route_allowed({"type": "external"}, True) == core.EXTERNAL
+    # default keeps legacy behaviour byte-identical
+    assert core.ensure_route_allowed({"type": "external"}) == core.EXTERNAL
+
+
 # ── patient_ref + addresses ────────────────────────────────────────────────────
 def test_patient_ref_is_id_then_name_with_carets_collapsed():
     assert core.build_patient_ref("44113", "DOE^JOHN") == "44113 DOE JOHN"
@@ -81,6 +100,114 @@ def test_external_registry_payload_carries_drive_folder():
     assert payload["drive_folder_id"] == "folderX"
     assert payload["patient_ref"] == "44113 DOE JOHN"
     assert "note" not in payload  # empty fields are omitted
+
+
+# ── workflow v2: creation-only metadata ────────────────────────────────────────
+def test_assignment_metadata_only_non_empty_fields():
+    assert core.assignment_metadata() == {}
+    assert core.assignment_metadata(center_id=" ", patient_id="", modality="") == {}
+    assert core.assignment_metadata(
+        center_id="C1", patient_id="44113", study_date="2026-06-10",
+        modality="MRI",
+    ) == {
+        "center_id": "C1", "patient_id": "44113",
+        "study_date": "2026-06-10", "modality": "MRI",
+    }
+
+
+def test_internal_payload_without_metadata_is_byte_identical():
+    """No metadata → exactly the pre-v2 payload (regression guard)."""
+    payload = core.build_internal_payload(
+        {"type": "internal", "consultation_address": "dr.b@hub"},
+        "44113", "DOE^JOHN", study_uid="1.2.3", note="opinion?",
+    )
+    assert set(payload) == {"type", "consultant_address", "patient_ref",
+                            "study_uid", "note"}
+
+
+def test_internal_payload_carries_metadata_fields():
+    payload = core.build_internal_payload(
+        {"type": "internal", "consultation_address": "dr.b@hub"},
+        "44113", "DOE^JOHN", study_uid="1.2.3",
+        metadata={"center_id": "C1", "patient_id": "44113",
+                  "study_date": "2026-06-10", "modality": "MRI"},
+    )
+    assert payload["center_id"] == "C1"
+    assert payload["patient_id"] == "44113"
+    assert payload["study_date"] == "2026-06-10"
+    assert payload["modality"] == "MRI"
+    assert "drive_folder_id" not in payload  # internal stays Drive-free
+
+
+def test_external_registry_payload_carries_metadata_fields():
+    payload = core.build_external_registry_payload(
+        {"type": "external", "email": "dr.c@x.com"},
+        "44113", "DOE^JOHN", drive_folder_id="folderX",
+        metadata={"patient_id": "44113", "modality": "DX"},
+    )
+    assert payload["patient_id"] == "44113"
+    assert payload["modality"] == "DX"
+    assert payload["drive_folder_id"] == "folderX"
+
+
+def test_external_payload_unchanged_without_metadata():
+    payload = core.build_external_registry_payload(
+        {"type": "external", "email": "dr.c@x.com"},
+        "44113", "DOE^JOHN", study_uid="1.2.3", drive_folder_id="folderX",
+    )
+    assert set(payload) == {"type", "consultant_address", "patient_ref",
+                            "study_uid", "drive_folder_id"}
+
+
+# ── workflow v2: internal multi-assign ─────────────────────────────────────────
+def test_multi_internal_payloads_one_per_physician():
+    consultants = [
+        {"type": "internal", "consultation_address": "dr.a@hub"},
+        {"type": "internal", "consultation_address": "dr.b@hub"},
+    ]
+    payloads = core.build_multi_internal_payloads(
+        consultants, "44113", "DOE^JOHN", study_uid="1.2.3", note="shared",
+        metadata={"modality": "MRI"},
+    )
+    assert [p["consultant_address"] for p in payloads] == ["dr.a@hub", "dr.b@hub"]
+    for p in payloads:
+        assert p["type"] == "internal"
+        assert p["patient_ref"] == "44113 DOE JOHN"
+        assert p["note"] == "shared"          # shared note on every payload
+        assert p["modality"] == "MRI"         # shared metadata on every payload
+        assert "drive_folder_id" not in p
+
+
+def test_multi_internal_payloads_dedupes_addresses():
+    consultants = [
+        {"type": "internal", "consultation_address": "dr.a@hub"},
+        {"type": "internal", "consultation_address": "DR.A@HUB"},  # duplicate
+    ]
+    payloads = core.build_multi_internal_payloads(consultants, "1", "X")
+    assert len(payloads) == 1
+
+
+def test_multi_internal_payloads_empty_selection():
+    assert core.build_multi_internal_payloads([], "1", "X") == []
+
+
+def test_multi_internal_payloads_raise_on_missing_address():
+    with pytest.raises(ValueError, match="address"):
+        core.build_multi_internal_payloads([{}], "1", "X")
+
+
+# ── workflow v2: patient metadata display line ─────────────────────────────────
+def test_patient_metadata_summary_formats_present_fields():
+    assert core.patient_metadata_summary(
+        {"patient_id": "44113", "modality": "MRI", "study_date": "2026-06-10"}
+    ) == "ID 44113 · MRI · 2026-06-10"
+    assert core.patient_metadata_summary({"modality": "DX"}) == "DX"
+
+
+def test_patient_metadata_summary_empty_for_pre_v2_rows():
+    assert core.patient_metadata_summary({}) == ""
+    assert core.patient_metadata_summary({"patient_ref": "44113 DOE"}) == ""
+    assert core.patient_metadata_summary(None) == ""
 
 
 # ── registry merge into Inbox/Sent ─────────────────────────────────────────────

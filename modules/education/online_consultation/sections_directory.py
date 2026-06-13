@@ -12,7 +12,6 @@ import logging
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
-    QDialog,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -23,91 +22,23 @@ from PySide6.QtWidgets import (
 )
 
 from . import assign_core, dashboard_core
+from .profile_dialog import ConsultantProfileDialog as _SharedProfileDialog
 from .sections_common import ConsultationSection
 
 logger = logging.getLogger(__name__)
 
 
-class ConsultantProfileDialog(QDialog):
-    """Read-only profile detail with a "Request consultation…" entry point."""
+class ConsultantProfileDialog(_SharedProfileDialog):
+    """Directory profile detail — the shared dialog (``profile_dialog``) with
+    the "Request consultation…" entry point wired to this page (workflow v2:
+    one ProfileDialog serves both the Directory and the Assign popup)."""
 
     def __init__(self, consultant: dict, page, parent=None):
-        super().__init__(parent)
-        self._consultant = dict(consultant or {})
+        super().__init__(
+            consultant, palette=page._p, parent=parent,
+            request_callback=lambda c: page._assign_consultation(preselect=c),
+        )
         self._page = page
-        p = page._p
-        d = assign_core.consultant_display(self._consultant)
-        self.setWindowTitle(f"Consultant — {d['name']}")
-        self.setMinimumWidth(460)
-        root = QVBoxLayout(self)
-        root.setContentsMargins(18, 16, 18, 16)
-        root.setSpacing(8)
-
-        head = QHBoxLayout()
-        name = QLabel(d["name"])
-        name.setStyleSheet(f"color:{p['text']};font-size:16px;font-weight:600;")
-        head.addWidget(name, 1)
-        badge = QLabel(d["badge"])
-        color = p["accent"] if d["kind"] == assign_core.INTERNAL else p["warning"]
-        badge.setStyleSheet(
-            f"color:{color};border:1px solid {color};border-radius:9px;"
-            f"padding:2px 9px;font-size:10px;font-weight:600;"
-        )
-        head.addWidget(badge, 0, Qt.AlignTop)
-        root.addLayout(head)
-
-        c = self._consultant
-        for caption, value in (
-            ("Specialty", d["specialty"]),
-            ("Expertise", c.get("expertise")),
-            ("Availability", d["availability"]),
-            ("Consultation address", d["address"]),
-            ("Interests", c.get("consultation_interests") or c.get("interests")),
-            ("Background", c.get("resume_summary") or c.get("background")),
-            ("About", c.get("description") or c.get("bio")),
-        ):
-            text = str(value or "").strip()
-            if not text:
-                continue
-            cap = QLabel(caption.upper())
-            cap.setStyleSheet(
-                f"color:{p['text_muted']};font-size:10px;font-weight:600;"
-            )
-            val = QLabel(text)
-            val.setWordWrap(True)
-            val.setStyleSheet(f"color:{p['text']};font-size:13px;")
-            root.addWidget(cap)
-            root.addWidget(val)
-
-        root.addSpacing(6)
-        btns = QHBoxLayout()
-        btns.addStretch(1)
-        close = QPushButton("Close")
-        close.clicked.connect(self.reject)
-        request = QPushButton("Request consultation…")
-        request.setObjectName("primary")
-        request.clicked.connect(self._request)
-        btns.addWidget(close)
-        btns.addWidget(request)
-        root.addLayout(btns)
-
-        self.setStyleSheet(
-            f"""
-            QDialog {{ background:{p['surface']}; }}
-            QPushButton {{ background:transparent; color:{p['text_muted']};
-                border:1px solid {p['border']}; border-radius:8px;
-                padding:7px 14px; font-size:12px; }}
-            QPushButton#primary {{ background:{p['accent']};
-                color:{p['button_text']}; border:none; }}
-            """
-        )
-
-    def _request(self):
-        self.accept()
-        try:
-            self._page._assign_consultation(preselect=self._consultant)
-        except Exception as exc:  # pragma: no cover - defensive
-            logger.warning("request consultation from profile failed: %s", exc)
 
 
 class DirectorySection(ConsultationSection):
@@ -159,8 +90,22 @@ class DirectorySection(ConsultationSection):
 
     def _on_consultants(self, rows):
         self._consultants = list(rows or [])
+        self._ext_ok = self._external_enabled()
         self._repopulate_specialties()
         self._apply_filters()
+
+    def _external_enabled(self) -> bool:
+        """Derived hub gate (owner directive 2026-06-11); fails OPEN."""
+        try:
+            from modules.cloud_consultation.ui.derived_status import (
+                consultation_capabilities,
+            )
+
+            return bool(consultation_capabilities(
+                self._page._aipacs_user())["external_enabled"])
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("external capability check failed (failing open): %s", exc)
+            return True
 
     def _repopulate_specialties(self):
         """Refill the specialty combo from the roster, keeping the selection."""
@@ -204,12 +149,19 @@ class DirectorySection(ConsultationSection):
     def _card(self, c: dict) -> QWidget:
         p = self._p
         d = assign_core.consultant_display(c)
+        # Hub gate (owner directive 2026-06-11): without the AI-PACS Cloud Hub
+        # external consultants render grayed/disabled with the reason; internal
+        # consultants (and everything when the hub is available) are unchanged.
+        ext_blocked = (d["kind"] == assign_core.EXTERNAL
+                       and not getattr(self, "_ext_ok", True))
         f = self.card()
         lay = QHBoxLayout(f)
         lay.setContentsMargins(12, 10, 12, 10)
         lay.setSpacing(10)
         badge = QLabel(d["badge"])
         color = p["accent"] if d["kind"] == assign_core.INTERNAL else p["warning"]
+        if ext_blocked:
+            color = p["text_muted"]
         badge.setStyleSheet(
             f"color:{color};border:1px solid {color};border-radius:9px;"
             f"padding:2px 9px;font-size:10px;font-weight:600;"
@@ -218,7 +170,8 @@ class DirectorySection(ConsultationSection):
         col = QVBoxLayout()
         col.setSpacing(2)
         name = QLabel(d["name"])
-        name.setStyleSheet(f"color:{p['text']};font-size:13px;font-weight:500;")
+        name_color = p["text_muted"] if ext_blocked else p["text"]
+        name.setStyleSheet(f"color:{name_color};font-size:13px;font-weight:500;")
         bits = [b for b in (d["specialty"], str(c.get("expertise") or ""),
                             d["availability"], d["address"]) if b]
         sub = QLabel(" · ".join(bits))
@@ -226,9 +179,19 @@ class DirectorySection(ConsultationSection):
         sub.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
         col.addWidget(name)
         col.addWidget(sub)
+        if ext_blocked:
+            reason = QLabel(assign_core.EXTERNAL_DISABLED_REASON)
+            reason.setWordWrap(True)
+            reason.setStyleSheet(
+                f"color:{p['warning']};font-size:10px;font-style:italic;")
+            col.addWidget(reason)
         lay.addLayout(col, 1)
         profile = QPushButton("Profile…")
         profile.clicked.connect(lambda _=False, cc=c: self._open_profile(cc))
+        if ext_blocked:
+            profile.setEnabled(False)
+            profile.setToolTip(assign_core.EXTERNAL_DISABLED_REASON)
+            f.setToolTip(assign_core.EXTERNAL_DISABLED_REASON)
         lay.addWidget(profile)
         return f
 

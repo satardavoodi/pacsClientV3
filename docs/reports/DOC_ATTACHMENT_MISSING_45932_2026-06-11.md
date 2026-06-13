@@ -135,6 +135,55 @@ every working patient, and it requires no risk to the workstation's shared disco
 I did **not** make a code change: an unconditional DOC probe would touch the open-latency
 contract for *every* patient, and it may not even resolve this case.
 
+---
+
+## 8. Follow-up after the server fix — patient 46024 (2026-06-13): first-open vs reopen
+
+The server-side fix (PatientID normalization in `socket_server.py::GetPatientList` +
+`document_store.py` attach) was applied, and it **works**: for patient **46024**
+(BAGHIAN^AMIRA) the workstation now discovers, downloads, and persists the DOC study.
+Local DB confirms BOTH studies present:
+- `study_pk=1043` MR `…30000026061104273317000000007` (12 series #2–11 + #100/#101)
+- `study_pk=1054` DOC `1.2.826.0.1.3680043.8.498.11911704554218379962738311408928699750`
+  (1 series **#100000 "Documents", modality DOC, 2 images**) ✅
+
+**New, narrower client issue surfaced by the fix: the attachment only appears on the
+SECOND open (close + reopen), not the first.** This is a first-open refresh-timing gap,
+not a discovery gap. Open trace (`app.log` 2026-06-13 13:40:11–14, patient 46024):
+```
+phase=plus_entry                study_uids_count=1          # only MR known at open
+phase=right_panel_cache_gate    grew=1 server_series=12
+phase=right_panel_display_done  thumbnail_count=12          # 12 MR series shown, NO DOC
+search_patients_sync → "Found 1 patients"                   # async re-query returns AFTER
+download_process_worker … study=1.2.826…11911… series=1     # DOC study discovered + downloaded
+(… no further right_panel_* / display refresh …)            # UI never re-rendered to add DOC
+```
+So at open, `_resolve_patient_study_uids` returns **1** UID (the MR study, the only one in
+the table/DB at that moment). The DOC study is found by the **async** enumeration
+(`_resolve_patient_study_uids_async` / `_reconcile_patient_studies_on_click` →
+`_enumerate_studies_for_row`) and downloaded ~300–900 ms later — but the home right-panel
+(and the viewer series sidebar) were already built from the 1-study resolution, and
+**nothing refreshes them in-session when the late study lands**. On reopen, the DOC study
+is already in the local DB (`study_pk=1054`), so it is resolved from the start and renders.
+
+### Root cause (this sub-issue)
+Pipeline stage = **UI refresh after async multi-study discovery**. Discovery, download,
+registration, and persistence all now succeed; the missing step is re-rendering the
+right-panel thumbnails / series sidebar for the patient once the enumeration adds a study
+(and its DOC download completes) within the same session.
+
+### Smallest safe fix (proposed, not yet implemented)
+When the single-click reconcile / async resolve discovers **additional** study UIDs for
+the patient that were not in the initial render set, re-trigger the patient's right-panel
+thumbnail display (and, if a viewer tab for that patient is open, its series-info refresh)
+— exactly the existing "server grew" refresh, but keyed on *study count grew* rather than
+*series count grew*. Gate it to fire **only** when extra studies were actually found
+(zero-cost for the common single-study patient), reuse the existing
+`display_thumbnails` / series-info refresh entry points (no new render path), and keep the
+render-coalescing signature so it does not double-render when nothing changed. This is the
+real fix, not a workaround; it does not alter discovery, isolation guards, or the
+single-study open-latency contract.
+
 ## 7. Invariants that must be preserved by any future fix
 - Single-study / single-modality patients keep **zero** extra server queries on open.
 - Cross-patient study isolation guards (server `patient_id` re-check) still run on every

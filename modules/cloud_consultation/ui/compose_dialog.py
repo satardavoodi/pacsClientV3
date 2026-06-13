@@ -83,6 +83,59 @@ class _CreateWorker(QThread):
             self.failed.emit(str(exc))
 
 
+def _upload_manager_enabled() -> bool:
+    """ADR-0009 Phase 5 cutover flag. DEFAULT OFF — the blocking compose path
+    is unchanged unless AIPACS_UPLOAD_MANAGER is set truthy."""
+    import os
+    return str(os.environ.get("AIPACS_UPLOAD_MANAGER", "")).strip().lower() in (
+        "1", "true", "on", "yes", "enabled")
+
+
+def _build_consultation_transfer(params: dict):
+    """Return transfer(cancel_check, pause_check, progress_cb) -> consultation id.
+    Replicates _CreateWorker.run()'s steps (transport + export + workflow) and
+    threads the Upload Manager's cooperative cancel/pause into the engine.
+
+    STABILITY (ADR-0009): the closure caches a single consultation_id + the
+    exported package_root, so a pause/resume or retry REUSES the same
+    consultation (build_envelope reuses the id, make_child_folder is
+    find-or-create, engine.upload skips already-done files) — it never creates
+    a duplicate consultation or re-exports/re-de-identifies the package."""
+    import uuid as _uuid
+    cache = {"cid": _uuid.uuid4().hex, "package_root": params.get("package_root")}
+
+    def _transfer(cancel_check, pause_check, progress_cb):
+        from modules.cloud_consultation.consultation import workflow
+        from modules.cloud_consultation.transport.google_drive import build_google_drive_transport
+        from modules.Identity.identity_service import IdentityService
+        p = params
+        svc = IdentityService(p["aipacs_user"])
+        gid = next((i for i in svc.list_identities() if i.provider == "google"), None)
+        if gid is None:
+            raise RuntimeError("Connect a Google account first (Account ▸ Connect).")
+        transport = build_google_drive_transport(p["aipacs_user"], gid.subject_id)
+        package_root = cache.get("package_root")
+        if not package_root and callable(p.get("export_callable")):
+            import os
+            from PacsClient.utils.data_paths import USER_DATA_ROOT
+            staging = os.path.join(str(USER_DATA_ROOT), "cloud_consultation", "outgoing", cache["cid"])
+            os.makedirs(staging, exist_ok=True)
+            package_root = p["export_callable"](staging)
+            cache["package_root"] = package_root
+        if not package_root:
+            raise RuntimeError("No exported package to upload.")
+        return workflow.create_and_upload_consultation(
+            transport=transport, package_root=package_root, aipacs_user=p["aipacs_user"],
+            from_user={"email": gid.handle, "name": gid.display_name, "subject": gid.subject_id},
+            case_title=p["case_title"], clinical_question=p["clinical_question"],
+            assignee_email=p["assignee_email"], study_uids=p.get("study_uids") or [],
+            priority=p["priority"], due_at=p.get("due_at", ""),
+            progress_cb=progress_cb, cancel_check=cancel_check, pause_check=pause_check,
+            consultation_id=cache["cid"],
+        )
+    return _transfer
+
+
 class ConsultationComposeDialog(QDialog):
     def __init__(self, auth_user=None, selection: dict | None = None, parent=None):
         super().__init__(parent)
@@ -201,6 +254,9 @@ class ConsultationComposeDialog(QDialog):
             "package_root": self.selection.get("package_root"),
             "export_callable": self.selection.get("export_callable"),
         }
+        if _upload_manager_enabled():
+            self._enqueue_to_upload_manager(params)
+            return
         self.create_btn.setEnabled(False)
         self.status.setText("Sealing and uploading… a study can take a while.")
         self._worker = _CreateWorker(params, self)
@@ -208,6 +264,55 @@ class ConsultationComposeDialog(QDialog):
         self._worker.done.connect(self._on_done)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
+
+    def _enqueue_to_upload_manager(self, params: dict):
+        """Hand the upload to the Upload Manager queue (ADR-0009) and open its
+        tab. Guarded — on any error fall back to a clear status message."""
+        try:
+            import uuid
+            from modules.upload_manager import get_upload_manager
+            from modules.upload_manager.core.models import UploadJob
+            from modules.upload_manager.core.enums import UploadPriority
+            sel = self.selection
+            job = UploadJob(
+                job_id=uuid.uuid4().hex,
+                transfer=_build_consultation_transfer(params),
+                patient_name=sel.get("patient_name", "") or (sel.get("label") or ""),
+                patient_id=sel.get("patient_id", ""),
+                study_date=sel.get("study_date", ""),
+                modality=sel.get("modality", ""),
+                study_uids=tuple(params.get("study_uids") or []),
+                assigned_consultant=params.get("assignee_email", ""),
+                case_title=params.get("case_title", ""),
+                is_external=True,
+                priority=(UploadPriority.CRITICAL if params.get("priority") == "urgent"
+                          else UploadPriority.NORMAL),
+            )
+            get_upload_manager().enqueue(job)
+            self.status.setText("Added to Upload Manager.")
+            self._open_upload_manager_tab()
+            self.accept()
+        except Exception as exc:
+            self.create_btn.setEnabled(True)
+            self.status.setText(f"Couldn't queue upload: {exc}")
+
+    def _open_upload_manager_tab(self):
+        """Best-effort: find the home panel up the parent/top-level chain and
+        open the Upload Manager tab. Never raises."""
+        try:
+            from PySide6.QtWidgets import QApplication
+            cands = []
+            w = self.parent()
+            while w is not None:
+                cands.append(w)
+                w = w.parent() if hasattr(w, "parent") else None
+            cands += list(QApplication.topLevelWidgets())
+            for c in cands:
+                if hasattr(c, "open_upload_manager"):
+                    c.open_upload_manager()
+                    return
+        except Exception:
+            pass
 
     def _on_progress(self, pr):
         try:
@@ -223,6 +328,19 @@ class ConsultationComposeDialog(QDialog):
     def _on_failed(self, message: str):
         self.create_btn.setEnabled(True)
         self.status.setText(f"Failed: {message}")
+        # Best-effort CRITICAL inbox entry (2026-06-11). UI-side only — the
+        # sync engine is untouched; never raises into the dialog.
+        try:
+            from modules.cloud_consultation.notifications import inbox
+            from modules.cloud_consultation.notifications.models import NotificationKind
+
+            kind = (NotificationKind.AUTH_FAILED if "sign in" in str(message).lower()
+                    else NotificationKind.UPLOAD_FAILED)
+            inbox.notify(kind, body=f"Consultation upload failed: {message}")
+        except Exception as exc:  # pragma: no cover - best-effort by contract
+            import logging
+
+            logging.getLogger(__name__).debug("failure notification skipped: %s", exc)
 
     def _apply_style(self):
         p = self._p

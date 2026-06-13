@@ -75,6 +75,30 @@ def test_bundle_copies_tree_but_never_junk_archives(tmp_path):
     assert "VIEWER\\AIPacsLiteViewer.exe" in autorun
 
 
+def test_launcher_has_32bit_guard_and_autorun_uses_cmd(tmp_path):
+    """RUN_VIEWER.cmd must degrade gracefully on 32-bit Windows, and autorun
+    must route through it so the guard runs on autorun too."""
+    src = tmp_path / "viewerdir"
+    src.mkdir()
+    exe = src / "v.exe"
+    exe.write_bytes(b"MZ")
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    worker = _make_worker(exe, display_name="AI-PACS Lite Viewer")
+    worker._copy_light_viewer(str(staging))
+
+    run_cmd = (staging / "RUN_VIEWER.cmd").read_text(encoding="utf-8")
+    assert 'PROCESSOR_ARCHITECTURE' in run_cmd and 'PROCESSOR_ARCHITEW6432' in run_cmd
+    assert "requires 64-bit Windows" in run_cmd
+    assert "explorer.exe" in run_cmd  # opens the DICOM folder as fallback
+
+    autorun = (staging / "autorun.inf").read_text(encoding="utf-8")
+    assert "open=RUN_VIEWER.cmd" in autorun
+
+    readme = (staging / "START_HERE.txt").read_text(encoding="utf-8")
+    assert "64-bit Windows" in readme
+
+
 def test_staging_verification_passes_after_viewer_copy(tmp_path):
     src = tmp_path / "bundle"
     src.mkdir()

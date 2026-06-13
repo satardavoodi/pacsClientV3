@@ -1,5 +1,6 @@
 {
     "enabled": true,
     "hub_mode": true,
-    "consultation_address": "alizadehimagingcenter@gmail.com"
+    "consultation_address": "alizadehimagingcenter@gmail.com",
+    "center_id": ""
 }

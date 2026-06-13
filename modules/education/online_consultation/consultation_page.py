@@ -70,6 +70,9 @@ _SECTION_ALIASES = {
 }
 _DEFAULT_SECTION = "consultations"
 
+# Workflow v2 (2026-06-12): the incoming Requests pane title.
+INCOMING_TAB_TITLE = "Received / Assigned to Me"
+
 
 class _AipacsRegistryWorker(QThread):
     """Fetch the internal/external registry boxes (ADR-0006/0007).
@@ -429,6 +432,10 @@ class OnlineConsultationPage(QWidget):
         self.assign_btn = QPushButton("Assign consultation…")
         self.assign_btn.clicked.connect(lambda _=False: self._assign_consultation())
         head.addWidget(self.assign_btn)
+        # Workflow v2 (2026-06-12): the Consultation source page (module tab).
+        self.source_btn = QPushButton("Open Consultation source")
+        self.source_btn.clicked.connect(self._open_consultation_source)
+        head.addWidget(self.source_btn)
         refresh = QPushButton("Refresh")
         refresh.clicked.connect(self.refresh)
         head.addWidget(refresh)
@@ -494,7 +501,9 @@ class OnlineConsultationPage(QWidget):
         self.req_tabs = QTabWidget()
         self.inbox_host, self.inbox_list = self._make_list_tab()
         self.sent_host, self.sent_list = self._make_list_tab()
-        self.req_tabs.addTab(self.inbox_host, "Inbox")
+        # Workflow v2 (2026-06-12): the incoming pane is titled
+        # "Received / Assigned to Me" (was "Inbox").
+        self.req_tabs.addTab(self.inbox_host, INCOMING_TAB_TITLE)
         self.req_tabs.addTab(self.sent_host, "Sent")
         lay.addWidget(self.req_tabs, 1)
         return host
@@ -623,7 +632,7 @@ class OnlineConsultationPage(QWidget):
                    "No sent consultations yet. Use “New consultation…” to share "
                    "studies with a colleague.")
         try:
-            self.req_tabs.setTabText(0, f"Inbox ({len([c for c in incoming if c.get('status') != 'closed'])})")
+            self.req_tabs.setTabText(0, f"{INCOMING_TAB_TITLE} ({len([c for c in incoming if c.get('status') != 'closed'])})")
             self.req_tabs.setTabText(1, f"Sent ({len([c for c in outgoing if c.get('status') != 'closed'])})")
         except Exception:
             pass
@@ -843,15 +852,19 @@ class OnlineConsultationPage(QWidget):
         self.inbox_list.insertWidget(0, msg)
 
     def _sign_in_aipacs_web(self, on_success=None):
+        # MODELESS (live bug 2026-06-12): a modal exec() grabs input and blocks
+        # the docked browser where the Google consent page renders. Run the
+        # post-success refresh on the dialog's success callback instead.
         try:
-            from modules.Identity.ui.aipacs_web_dialog import AipacsWebSignInDialog
+            from modules.Identity.ui.aipacs_web_dialog import open_signin_dialog
 
-            dlg = AipacsWebSignInDialog(self._service(), parent=self)
-            if dlg.exec():
+            def _done(_identity):
                 if callable(on_success):
                     on_success()
                 else:
                     self.refresh()
+
+            open_signin_dialog(self._service(), parent=self, on_success=_done)
         except Exception as exc:
             logger.warning("aipacs_web sign-in failed to open: %s", exc)
 
@@ -903,12 +916,29 @@ class OnlineConsultationPage(QWidget):
         sub.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
         col.addWidget(title)
         col.addWidget(sub)
+        # Workflow v2: patient metadata line (ID / modality / study date) when
+        # the registry row carries the creation-only metadata fields.
+        meta_text = assign_core.patient_metadata_summary(row)
+        if meta_text:
+            meta = QLabel(meta_text)
+            meta.setStyleSheet(f"color:{p['text']};font-size:11px;")
+            col.addWidget(meta)
         if row.get("note"):
             note = QLabel(str(row.get("note")))
             note.setWordWrap(True)
             note.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
             col.addWidget(note)
         lay.addLayout(col, 1)
+
+        # Workflow v2: internal rows get a "Patient details" dialog (requester,
+        # patient_id, study_uid, study_date, modality, note, status + copy-ID).
+        # Deliberately NOT wired into the guarded patient-open machinery.
+        kind = str(row.get("type") or assign_core.INTERNAL).strip().lower()
+        if kind != assign_core.EXTERNAL:
+            b = QPushButton("Patient details")
+            b.clicked.connect(
+                lambda _=False, r=row: self._show_patient_details(r))
+            lay.addWidget(b)
 
         for action in assign_core.registry_actions(row, box):
             b = QPushButton(assign_core.ACTION_LABELS.get(action, action.capitalize()))
@@ -918,6 +948,15 @@ class OnlineConsultationPage(QWidget):
                 lambda _=False, a=action, r=row: self._registry_action(a, r))
             lay.addWidget(b)
         return f
+
+    def _show_patient_details(self, row: dict):
+        """Workflow v2: read-only patient context for an internal registry row."""
+        try:
+            from .patient_details_dialog import PatientDetailsDialog
+
+            PatientDetailsDialog(row, palette=self._p, parent=self).exec()
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("patient details dialog failed: %s", exc)
 
     def _registry_action(self, action: str, row: dict):
         if (self._registry_action_worker is not None
@@ -949,6 +988,17 @@ class OnlineConsultationPage(QWidget):
         self._registry_action_worker.failed.connect(
             lambda m: self.status.setText(f"Update failed: {m}"))
         self._registry_action_worker.start()
+
+    def _open_consultation_source(self):
+        """Workflow v2: open the Consultation source page (module tab)."""
+        try:
+            from .launcher import open_consultation_source
+
+            if not open_consultation_source():
+                self.status.setText(
+                    "Could not open the Consultation source page.")
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("open consultation source failed: %s", exc)
 
     def _assign_consultation(self, preselect: dict | None = None):
         """Header / directory entry point: pick a study → the Assign popup.

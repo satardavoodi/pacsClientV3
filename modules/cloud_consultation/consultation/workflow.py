@@ -29,6 +29,7 @@ def create_and_upload_consultation(
     *, transport, package_root, aipacs_user: str, from_user: dict,
     case_title: str, clinical_question: str, assignee_email: str,
     study_uids=None, priority: str = "routine", due_at: str = "", progress_cb=None,
+    cancel_check=None, pause_check=None, consultation_id: str = "",
 ) -> str:
     """Seal an exported package as a consultation, upload it, and share with the
     assignee. Returns the consultation id. BLOCKING — run off the UI thread."""
@@ -42,6 +43,7 @@ def create_and_upload_consultation(
         package_root, case_title=case_title, clinical_question=clinical_question,
         from_user=from_user, assignee={"email": assignee_email}, study_uids=study_uids or [],
         priority=priority, due_at=due_at,
+        consultation_id=consultation_id or None,
     )
     cid = env.consultation_id
     consultation_db.upsert_consultation(
@@ -84,7 +86,10 @@ def create_and_upload_consultation(
     except Exception as exc:  # pragma: no cover - defensive (layout is best-effort)
         logger.warning("physician folder layout unavailable, using legacy layout: %s", exc)
 
-    remote_folder_id = engine.upload(cid, package_root, root_remote_id=hub_root_remote_id)
+    remote_folder_id = engine.upload(
+        cid, package_root, root_remote_id=hub_root_remote_id,
+        cancel_check=cancel_check, pause_check=pause_check,
+    )
     if assignee_email:
         assign(transport, cid, assignee_email,
                assigned_by=(from_user or {}).get("email", ""), remote_folder_id=remote_folder_id)

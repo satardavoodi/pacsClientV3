@@ -166,7 +166,41 @@ class VideoSlideWidget(QWidget):
         if self.autoplay:
             self.player.play()
             self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
-    
+
+    def set_video(self, video_path, autoplay=True):
+        """Reuse this SAME widget/player for a new video.
+
+        Reusing one persistent player avoids ever creating/destroying players
+        during a session. Destroying (or stop()/setVideoOutput()) deadlocks the
+        UI thread in this app, so the player is never torn down while in use --
+        we only ever setSource()/play()/pause() on a widget that is visible."""
+        from pathlib import Path as _P
+        self.video_path = video_path
+        self.autoplay = autoplay
+        if not _P(video_path).exists():
+            self.show_error(f"Video file not found: {video_path}")
+            return
+        try:
+            self.player.setSource(QUrl.fromLocalFile(video_path))
+            self.audio_output.setVolume(self.volume_slider.value() / 100.0)
+            self.progress_slider.setValue(0)
+            if autoplay:
+                self.player.play()
+                self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
+        except Exception:
+            pass
+
+    def pause_only(self):
+        """Pause WITHOUT any teardown. The Education viewer calls this when the
+        user switches away from a video; tearing the player down (stop /
+        setVideoOutput / setSource / delete) deadlocks the UI thread in-app, so
+        we never do that during a session -- a paused, hidden widget is safe."""
+        try:
+            if self.player:
+                self.player.pause()
+        except Exception:
+            pass
+
     def toggle_play_pause(self):
         """Toggle between play and pause."""
         if self.player.playbackState() == QMediaPlayer.PlayingState:
@@ -177,8 +211,20 @@ class VideoSlideWidget(QWidget):
             self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPause))
     
     def stop_video(self):
-        """Stop video playback."""
-        self.player.stop()
+        """Stop playback (pause + rewind to start).
+
+        We deliberately AVOID QMediaPlayer.stop() here: on Windows it can deadlock
+        the UI thread while a video sink is attached (stop() waits for the sink to
+        flush its last frame, but frame presentation needs the UI thread, which is
+        blocked inside stop()). pause()+setPosition(0) gives the same user-visible
+        result with no teardown and no deadlock. The real teardown (with sink
+        detach) happens in cleanup()."""
+        if self.player:
+            try:
+                self.player.pause()
+                self.player.setPosition(0)
+            except Exception:
+                pass
         self.play_pause_btn.setIcon(self.style().standardIcon(QStyle.SP_MediaPlay))
         self.progress_slider.setValue(0)
     
@@ -239,8 +285,26 @@ class VideoSlideWidget(QWidget):
     def cleanup(self):
         """Cleanup resources when widget is destroyed."""
         if self.player:
-            self.player.stop()
-            self.player.setSource(QUrl())
+            # Detach the sinks BEFORE stop(). On Windows, QMediaPlayer.stop() can
+            # DEADLOCK the UI thread: stop() waits for the video sink to flush its
+            # last frame, but frame presentation needs the UI thread -- which is
+            # blocked inside stop(). With no video/audio output attached, stop()
+            # and teardown return immediately. (Confirmed via a hung-stack dump:
+            # MainThread blocked in cleanup()->player.stop() when switching item
+            # while a video was playing.)
+            try:
+                self.player.setVideoOutput(None)
+                self.player.setAudioOutput(None)
+            except Exception:
+                pass
+            try:
+                self.player.stop()
+            except Exception:
+                pass
+            try:
+                self.player.setSource(QUrl())
+            except Exception:
+                pass
 
 
 class SimpleVideoWidget(QWidget):
@@ -282,11 +346,29 @@ class SimpleVideoWidget(QWidget):
         self.player.pause()
     
     def stop(self):
-        """Stop playback."""
-        self.player.stop()
+        """Stop playback (pause + rewind; avoids the stop() UI-thread deadlock)."""
+        if self.player:
+            try:
+                self.player.pause()
+                self.player.setPosition(0)
+            except Exception:
+                pass
     
     def cleanup(self):
         """Cleanup resources."""
         if self.player:
-            self.player.stop()
-            self.player.setSource(QUrl())
+            # Detach sinks before stop() to avoid the Windows UI-thread deadlock
+            # (see VideoSlideWidget.cleanup for the full explanation).
+            try:
+                self.player.setVideoOutput(None)
+                self.player.setAudioOutput(None)
+            except Exception:
+                pass
+            try:
+                self.player.stop()
+            except Exception:
+                pass
+            try:
+                self.player.setSource(QUrl())
+            except Exception:
+                pass

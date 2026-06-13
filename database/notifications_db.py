@@ -85,6 +85,16 @@ def set_status(notification_id: int, status: str) -> bool:
         return cur.rowcount > 0
 
 
+def mark_all_read() -> int:
+    """Set every unread notification to read ("Clear all"). Returns row count."""
+    notifications_ensure_schema()
+    with _db_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("UPDATE notifications SET status = 'read' WHERE status = 'unread'")
+        conn.commit()
+        return int(cur.rowcount or 0)
+
+
 def count(status: str | None = "unread") -> int:
     notifications_ensure_schema()
     with _db_conn() as conn:

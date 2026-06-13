@@ -1,0 +1,145 @@
+{
+  "_comment": "Curated, AI-drafted enrichment for the PooyanPacs Learn migration. Keyed by source course folder. All text is AI-generated from DICOM-derived facts (modality/body part) and should be reviewed by an educator. No specific diagnoses are asserted. 'ai': true marks the course needs-review.",
+
+  "Course-10": {
+    "title": "Knee, Thigh & Femur MRI - Teaching Cases",
+    "description": "A musculoskeletal MRI teaching collection of the knee, thigh and femur. The cases support a systematic review of the menisci, cruciate and collateral ligaments, articular cartilage, extensor mechanism and bone marrow across standard multiplanar MR sequences.",
+    "objectives": [
+      "Review normal knee, thigh and femoral MR anatomy across planes and sequences.",
+      "Apply a structured search pattern to the menisci, ligaments, cartilage and extensor mechanism.",
+      "Recognise common internal derangement, soft-tissue and marrow abnormalities of the knee and thigh."
+    ],
+    "keywords": ["MRI", "Knee", "Thigh", "Femur", "Leg", "MSK", "Meniscus", "Ligament", "Teaching"],
+    "level": "Intermediate",
+    "ai": true
+  },
+
+  "Course-1010": {
+    "title": "TMJ & Maxillofacial Imaging - Panoramic, CT & MRI",
+    "description": "A maxillofacial teaching collection of the temporomandibular joint (TMJ), skull and head combining panoramic radiography, CT and MRI. Cases emphasise correlative osseous and soft-tissue evaluation of the TMJ and facial skeleton across modalities.",
+    "objectives": [
+      "Correlate panoramic, CT and MR findings of the TMJ and facial skeleton.",
+      "Evaluate the mandibular condyle, articular eminence and disc position.",
+      "Recognise degenerative and structural abnormalities of the TMJ."
+    ],
+    "keywords": ["TMJ", "Maxillofacial", "Panoramic", "CT", "MRI", "Skull", "Head", "Neuro", "Teaching"],
+    "level": "Intermediate",
+    "ai": true
+  },
+
+  "Course-1011": {
+    "title": "Temporomandibular Joint (TMJ) - CT & MRI Cases",
+    "description": "Focused TMJ teaching cases using CT and MRI, including degenerative joint disease material. Emphasis is on condylar morphology, joint-space assessment, and disc and soft-tissue evaluation.",
+    "objectives": [
+      "Assess condylar and articular-surface morphology on CT.",
+      "Evaluate disc position and joint effusion on MRI.",
+      "Identify imaging features associated with TMJ degenerative joint disease."
+    ],
+    "keywords": ["TMJ", "CT", "MRI", "Degenerative joint disease", "Condyle", "Maxillofacial", "Teaching"],
+    "level": "Intermediate",
+    "ai": true
+  },
+
+  "Course-2011": {
+    "title": "Foot & Ankle MRI - Teaching Cases",
+    "description": "Musculoskeletal MRI of the foot and ankle with correlative radiographs. The cases support a systematic review of the tendons, ligaments, osseous structures and plantar soft tissues.",
+    "objectives": [
+      "Review normal foot and ankle MR anatomy.",
+      "Systematically evaluate the tendons, ligaments and bones of the foot and ankle.",
+      "Recognise common foot and ankle pathology."
+    ],
+    "keywords": ["MRI", "Foot", "Ankle", "MSK", "Tendon", "Ligament", "Teaching"],
+    "level": "Intermediate",
+    "ai": true
+  },
+
+  "Course-2012": {
+    "title": "Shoulder MRI - Comprehensive Teaching Collection",
+    "description": "A large shoulder MRI teaching collection. Practise evaluation of the rotator cuff, labrum, biceps tendon, acromioclavicular joint and osseous structures across standard shoulder MR planes and sequences.",
+    "objectives": [
+      "Apply a structured approach to shoulder MR interpretation.",
+      "Evaluate the rotator cuff, glenoid labrum and biceps anchor.",
+      "Recognise common shoulder pathology and impingement patterns."
+    ],
+    "keywords": ["MRI", "Shoulder", "Rotator cuff", "Labrum", "Biceps", "MSK", "Teaching"],
+    "level": "Advanced",
+    "ai": true
+  },
+
+  "Course-2013": {
+    "title": "Lower-Limb MRI - Knee, Ankle & Leg (Comprehensive)",
+    "description": "A large lower-extremity MRI teaching collection covering the knee, ankle and leg with correlative radiographs. The cases support joint-by-joint systematic review of articular structures, ligaments, tendons and marrow.",
+    "objectives": [
+      "Review knee, ankle and leg MR anatomy.",
+      "Apply systematic joint-by-joint search patterns to the lower limb.",
+      "Recognise common lower-limb internal derangement and soft-tissue injury."
+    ],
+    "keywords": ["MRI", "Knee", "Ankle", "Leg", "Lower limb", "MSK", "Teaching"],
+    "level": "Advanced",
+    "ai": true
+  },
+
+  "Course-3": {
+    "title": "Mixed Cases - Shoulder MRI & Mammography",
+    "description": "A mixed teaching set containing shoulder MRI and mammographic (MG) breast-imaging cases. Note: this collection spans two distinct topics that were migrated together; consider splitting it into separate courses during review.",
+    "objectives": [
+      "Review shoulder MR anatomy and common findings.",
+      "Review a systematic approach to mammographic interpretation.",
+      "Distinguish the imaging features and reporting approach specific to each modality."
+    ],
+    "keywords": ["MRI", "Shoulder", "Mammography", "Breast", "MSK", "Teaching", "Review-split"],
+    "level": "Intermediate",
+    "ai": true
+  },
+
+  "Course-4": {
+    "title": "Foot Radiograph - Single Teaching Case",
+    "description": "A single digital-radiography (DX) case of the foot. Useful as a focused spotter for foot radiographic anatomy, alignment and a systematic review approach.",
+    "objectives": [
+      "Review normal foot radiographic anatomy and alignment.",
+      "Describe a systematic approach to interpreting the foot radiograph."
+    ],
+    "keywords": ["X-ray", "DX", "Foot", "MSK", "Spotter", "Teaching"],
+    "level": "Basic",
+    "ai": true
+  },
+
+  "Course-7": {
+    "title": "Hand, Wrist & Finger Imaging - Multimodality",
+    "description": "A multimodality teaching collection of the hand, wrist and fingers using radiography, ultrasound, CT and MRI. The cases support cross-modality correlation for osseous, articular and soft-tissue assessment.",
+    "objectives": [
+      "Correlate radiographic, ultrasound, CT and MR findings of the hand and wrist.",
+      "Evaluate the carpus, joints and tendons with a systematic approach.",
+      "Recognise common hand, wrist and finger pathology."
+    ],
+    "keywords": ["Hand", "Wrist", "Finger", "X-ray", "Ultrasound", "CT", "MRI", "MSK", "Teaching"],
+    "level": "Intermediate",
+    "ai": true
+  },
+
+  "Course-8": {
+    "title": "Wrist & Hand MRI - Teaching Cases",
+    "description": "Musculoskeletal MRI of the wrist and hand with correlative radiographs. Emphasis on the carpal bones, triangular fibrocartilage complex (TFCC), intrinsic ligaments and tendons.",
+    "objectives": [
+      "Review wrist and hand MR anatomy.",
+      "Evaluate the TFCC, intrinsic ligaments and tendons.",
+      "Recognise common wrist and hand pathology."
+    ],
+    "keywords": ["MRI", "Wrist", "Hand", "TFCC", "Carpus", "MSK", "Teaching"],
+    "level": "Intermediate",
+    "ai": true
+  },
+
+  "Course-9": {
+    "title": "Ankle MRI - Teaching Cases",
+    "description": "A focused ankle MRI teaching collection. Practise systematic evaluation of the tendons (peroneal, posterior tibial and Achilles), the ligaments and the osteochondral surfaces.",
+    "objectives": [
+      "Review normal ankle MR anatomy.",
+      "Systematically assess the ankle tendons and ligaments.",
+      "Recognise osteochondral and soft-tissue abnormalities of the ankle."
+    ],
+    "keywords": ["MRI", "Ankle", "Tendon", "Ligament", "Osteochondral", "MSK", "Teaching"],
+    "level": "Intermediate",
+    "ai": true
+  }
+}

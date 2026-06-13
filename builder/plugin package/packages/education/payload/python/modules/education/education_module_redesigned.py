@@ -137,7 +137,10 @@ class FilterPanel(QFrame):
     
     def setup_ui(self):
         """Setup filter panel UI - Professional clinical style."""
-        self.setFixedWidth(380)  # Wide enough to prevent any text overlap
+        # Narrower than before (was 380): reclaim horizontal space for the
+        # course grid + details panel.  Filter labels fit because the modality
+        # grid drops to 2 columns below.
+        self.setFixedWidth(300)
         self.setStyleSheet("""
             QFrame {
                 background-color: #0f1419;
@@ -160,13 +163,14 @@ class FilterPanel(QFrame):
         
         layout.addSpacing(8)  # More space after title
         
-        # Modality filter: 4 columns x 2 rows
+        # Modality filter: 2 columns so labels like "Mammography" /
+        # "Fluoroscopy" are never truncated in the narrower panel.
         self.add_filter_grid_group(
             layout,
             "Modality",
             MODALITIES,
             "modality",
-            columns=4,
+            columns=2,
             row_major=True,
         )
         
@@ -673,7 +677,10 @@ class CourseDetailsPanel(QFrame):
     
     def setup_ui(self):
         """Setup professional details panel UI."""
-        self.setFixedWidth(340)
+        # Wider than before (was 340) so the title / description / tags no
+        # longer truncate.  Paired with the narrower filter panel this keeps
+        # the centre grid roomy.
+        self.setFixedWidth(420)
         self.setStyleSheet("""
             QFrame {
                 background-color: #161b22;
@@ -717,17 +724,35 @@ class CourseDetailsPanel(QFrame):
         # Scroll area for content
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        # Never allow a horizontal scrollbar: it let content overflow and clip
+        # the left edge of the title/description. Force everything to wrap.
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         scroll.setStyleSheet("""
             QScrollArea {
                 border: none;
                 background-color: transparent;
             }
         """)
-        
+
         content = QWidget()
         layout = QVBoxLayout(content)
         layout.setSpacing(20)  # Increased section spacing: 18-22px
-        
+
+        # Course thumbnail (if available) — gives the panel a visual anchor.
+        thumb_path = str(course_data.get('thumbnail_path') or "").strip()
+        if thumb_path and Path(thumb_path).exists():
+            try:
+                from PySide6.QtGui import QPixmap as _QPixmap
+                thumb_label = QLabel()
+                pm = _QPixmap(thumb_path)
+                if not pm.isNull():
+                    thumb_label.setPixmap(pm.scaledToWidth(300, Qt.SmoothTransformation))
+                    thumb_label.setAlignment(Qt.AlignCenter)
+                    thumb_label.setStyleSheet("border: none; border-radius: 4px;")
+                    layout.addWidget(thumb_label)
+            except Exception:
+                pass
+
         # Title
         title = QLabel(course_data['course_name'])
         title_font = QFont()
@@ -1114,22 +1139,38 @@ class LibraryPage(QWidget):
         
         self.selected_card = None
         
-        # Add course cards - 3 columns, first 2 rows visible, rest via scroll
+        # Responsive columns: reflow 3 -> 2 -> 1 as width shrinks (readability
+        # first; never squeeze a card below its fixed 300px).
         visible_courses = self.filtered_courses
-        cols = self.GRID_COLUMNS
+        cols = self._responsive_columns()
+        self._last_grid_cols = cols
         for i, course in enumerate(visible_courses):
             row = i // cols
             col = i % cols
-            
+
             card = ModernCourseCard(course)
             card.clicked.connect(self.on_card_clicked)
             card.action_requested.connect(self.on_card_action)
             self.grid_layout.addWidget(card, row, col)
         self._update_cards_scroll_height()
 
+    def _responsive_columns(self) -> int:
+        """Number of card columns that fit the current grid viewport width."""
+        span = 320  # 300px card + 20px grid spacing
+        try:
+            avail = self.cards_scroll.viewport().width()
+        except Exception:
+            avail = self.width()
+        if avail <= 0:
+            avail = self.width()
+        return max(1, min(self.GRID_COLUMNS, avail // span))
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._update_cards_scroll_height()
+        # Reflow the grid only when the responsive column count actually changes.
+        if self._responsive_columns() != getattr(self, "_last_grid_cols", None):
+            self.update_grid()
 
     def _update_cards_scroll_height(self):
         target_height = (self.CARD_HEIGHT * self.VISIBLE_ROWS) + (self.GRID_SPACING * (self.VISIBLE_ROWS - 1)) + 10
@@ -1976,6 +2017,11 @@ class MyCoursesPage(QWidget):
 
     def _ensure_my_courses_samples(self):
         existing_courses = get_all_courses()
+        # Only seed example/demo courses into a brand-new (empty) library.
+        # Once the user has any real courses (migrated / imported / created),
+        # demo samples must NOT be re-injected -- deleted demos stay deleted.
+        if existing_courses:
+            return
         existing_names = {(c.get('course_name') or '').strip().lower() for c in existing_courses}
 
         sample_courses = [

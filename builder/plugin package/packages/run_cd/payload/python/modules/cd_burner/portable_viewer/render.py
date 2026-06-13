@@ -10,6 +10,7 @@ single Qt type touched here; it is safe headless (offscreen) and in tests.
 
 from __future__ import annotations
 
+import io
 import logging
 import math
 from dataclasses import dataclass
@@ -20,7 +21,23 @@ from pydicom import dcmread
 
 from PySide6.QtGui import QImage
 
+try:  # package-relative (dev run inside AI-PACS repo)
+    from .optical_io import read_bytes
+except ImportError:  # standalone build / direct script execution
+    from optical_io import read_bytes  # type: ignore
+
 logger = logging.getLogger(__name__)
+
+
+def _dcmread_robust(path: str, **kwargs):
+    """dcmread via a retry-buffered byte read (reliable on optical media).
+
+    Falls back to a direct path read if the buffered read fails outright.
+    """
+    try:
+        return dcmread(io.BytesIO(read_bytes(path)), **kwargs)
+    except Exception:
+        return dcmread(path, **kwargs)
 
 
 def _float_tuple(value, count: int) -> Optional[tuple]:
@@ -263,7 +280,7 @@ def _to_rgb_uint8(array: np.ndarray, photometric: str, ds) -> Optional[np.ndarra
 def load_slice(path: str, frame_index: int = 0) -> SliceData:
     """Decode one slice. Never raises — returns an error slice instead."""
     try:
-        ds = dcmread(path)
+        ds = _dcmread_robust(path)
     except Exception as exc:
         return SliceData.error_slice(f"Cannot read file:\n{exc}")
 
@@ -372,7 +389,7 @@ def slice_to_qimage(slice_data: SliceData, center: float, width: float) -> QImag
 def peek_frame_count(path: str) -> int:
     """Header-only read of NumberOfFrames (for single-file cine series)."""
     try:
-        ds = dcmread(path, stop_before_pixels=True)
+        ds = _dcmread_robust(path, stop_before_pixels=True)
         return max(1, int(getattr(ds, "NumberOfFrames", 1) or 1))
     except Exception:
         return 1

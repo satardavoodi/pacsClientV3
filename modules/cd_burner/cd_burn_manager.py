@@ -745,11 +745,28 @@ class CDBurnWorker(QThread):
 
         launch_cmd = staging_path / "RUN_VIEWER.cmd"
         if viewer_cmd_rel:
+            # The bundled viewer is 64-bit (Qt 6 has no 32-bit build). On a
+            # genuine 32-bit Windows PC the exe cannot start, so detect that
+            # and degrade gracefully — a clear message + open the DICOM
+            # folder so DICOMDIR can be used with any installed viewer —
+            # instead of a cryptic "not a valid Win32 application" error.
             launch_cmd.write_text(
                 "@echo off\n"
                 "setlocal\n"
                 "cd /d %~dp0\n"
                 "set \"AIPACS_IMPORT_FOLDER=%~dp0\"\n"
+                "if /I \"%PROCESSOR_ARCHITECTURE%\"==\"x86\" if not defined PROCESSOR_ARCHITEW6432 (\n"
+                "  echo.\n"
+                "  echo The bundled AI-PACS viewer requires 64-bit Windows.\n"
+                "  echo This computer is running 32-bit Windows.\n"
+                "  echo.\n"
+                "  echo Opening the DICOM folder instead. Open the DICOMDIR file\n"
+                "  echo with any DICOM viewer to see the images.\n"
+                "  echo.\n"
+                "  start \"\" explorer.exe \"%~dp0\"\n"
+                "  pause\n"
+                "  exit /b 0\n"
+                ")\n"
                 f"if not exist \"{viewer_cmd_rel}\" (\n"
                 "  echo Viewer executable was not found.\n"
                 "  pause\n"
@@ -801,6 +818,9 @@ class CDBurnWorker(QThread):
             "4. If the included viewer does not start on that PC, install or use any DICOM viewer and open the DICOMDIR file from the media root.",
             "",
             "Compatibility notes:",
+            "- The bundled viewer runs on 64-bit Windows (Windows 7 SP1 through 11).",
+            "  On a 32-bit Windows PC, RUN_VIEWER.cmd opens the DICOM folder so you",
+            "  can open DICOMDIR with any installed DICOM viewer instead.",
             "- AutoRun is not guaranteed on modern Windows versions, so launch RUN_VIEWER.cmd manually.",
             "- The included viewer should be a portable Windows viewer bundle for best compatibility.",
             "- For the broadest compatibility, keep file names and media label unchanged after export.",
@@ -837,10 +857,12 @@ class CDBurnWorker(QThread):
 
         autorun_path = staging_path / "autorun.inf"
         if viewer_cmd_rel:
+            # AutoRun goes through RUN_VIEWER.cmd (not the exe directly) so the
+            # 32-bit-Windows guard + folder fallback runs even on autorun.
             autorun_content = (
                 "[autorun]\n"
-                f"open={viewer_cmd_rel} --import-folder .\n"
-                f"shellexecute={viewer_cmd_rel} --import-folder .\n"
+                "open=RUN_VIEWER.cmd\n"
+                "shellexecute=RUN_VIEWER.cmd\n"
                 f"icon={viewer_cmd_rel},0\n"
                 f"label={volume_label}\n"
                 f"action=Open {viewer_display_name}\n\n"

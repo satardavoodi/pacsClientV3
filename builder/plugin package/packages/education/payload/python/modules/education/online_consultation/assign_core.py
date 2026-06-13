@@ -63,9 +63,33 @@ def consultant_display(consultant: dict) -> dict:
 
 
 # ── routing + payloads ─────────────────────────────────────────────────────────
+# Owner directive 2026-06-11: external consultations require the AI-PACS Cloud
+# Hub (a connected hub Google/Drive identity). When it is absent the UI renders
+# external consultants disabled with this reason, and the routing refuses with
+# the same message. Internal consultations are license + identity only.
+EXTERNAL_DISABLED_REASON = (
+    "External consultation requires the AI-PACS Cloud Hub (not configured)"
+)
+
+
 def decide_route(consultant: dict) -> str:
     """INTERNAL → registry-only POST; EXTERNAL → existing Drive flow (+registry)."""
     return consultant_kind(consultant)
+
+
+def ensure_route_allowed(consultant: dict, external_enabled: bool = True) -> str:
+    """The route for ``consultant``, refusing external when the hub is absent.
+
+    ``external_enabled`` is the derived capability
+    (``consultation_capabilities(...)["external_enabled"]``). An EXTERNAL route
+    with ``external_enabled=False`` raises ``ValueError`` carrying
+    :data:`EXTERNAL_DISABLED_REASON`; INTERNAL routes are never affected, and
+    the default (``True``) keeps the legacy behaviour byte-identical.
+    """
+    route = decide_route(consultant)
+    if route == EXTERNAL and not external_enabled:
+        raise ValueError(EXTERNAL_DISABLED_REASON)
+    return route
 
 
 def build_patient_ref(patient_id: str, patient_name: str) -> str:
@@ -75,11 +99,37 @@ def build_patient_ref(patient_id: str, patient_name: str) -> str:
     return f"{pid} {name}".strip()
 
 
+def assignment_metadata(
+    *, center_id: str = "", patient_id: str = "", study_date: str = "",
+    modality: str = "",
+) -> dict:
+    """Creation-only metadata for the registry POST (workflow v2, 2026-06-12).
+
+    Only NON-EMPTY fields are included, so callers that have no metadata keep
+    the pre-v2 payload byte-identical. The backend returns these fields in all
+    consultation payloads afterwards.
+    """
+    out: dict = {}
+    if str(center_id or "").strip():
+        out["center_id"] = str(center_id).strip()
+    if str(patient_id or "").strip():
+        out["patient_id"] = str(patient_id).strip()
+    if str(study_date or "").strip():
+        out["study_date"] = str(study_date).strip()
+    if str(modality or "").strip():
+        out["modality"] = str(modality).strip()
+    return out
+
+
 def build_internal_payload(
     consultant: dict, patient_id: str, patient_name: str,
-    study_uid: str = "", note: str = "",
+    study_uid: str = "", note: str = "", metadata: dict | None = None,
 ) -> dict:
-    """POST body for an internal consultation. NO Drive fields, ever."""
+    """POST body for an internal consultation. NO Drive fields, ever.
+
+    ``metadata`` is an optional :func:`assignment_metadata` dict (workflow v2);
+    omitted/empty keeps the payload byte-identical to pre-v2.
+    """
     addr = consultant_address(consultant)
     if not addr:
         raise ValueError("The selected consultant has no consultation address.")
@@ -92,12 +142,42 @@ def build_internal_payload(
         payload["study_uid"] = str(study_uid)
     if note:
         payload["note"] = str(note)
+    if metadata:
+        payload.update(assignment_metadata(**{
+            k: metadata.get(k, "") for k in
+            ("center_id", "patient_id", "study_date", "modality")
+        }))
     return payload
+
+
+def build_multi_internal_payloads(
+    consultants: list[dict], patient_id: str, patient_name: str,
+    study_uid: str = "", note: str = "", metadata: dict | None = None,
+) -> list[dict]:
+    """One internal POST body PER selected physician (multi-assign, v2).
+
+    Duplicate consultation addresses are collapsed (one POST per physician);
+    a consultant without an address raises — same contract as the single
+    builder. The shared ``note``/``metadata`` are applied to every payload.
+    """
+    payloads: list[dict] = []
+    seen: set[str] = set()
+    for c in consultants or []:
+        addr = consultant_address(c).lower()
+        if addr and addr in seen:
+            continue
+        payloads.append(build_internal_payload(
+            c, patient_id, patient_name,
+            study_uid=study_uid, note=note, metadata=metadata,
+        ))
+        seen.add(addr)
+    return payloads
 
 
 def build_external_registry_payload(
     consultant: dict, patient_id: str, patient_name: str,
     study_uid: str = "", note: str = "", drive_folder_id: str = "",
+    metadata: dict | None = None,
 ) -> dict:
     """Best-effort registry record AFTER a successful external Drive upload."""
     addr = consultant_address(consultant)
@@ -114,7 +194,32 @@ def build_external_registry_payload(
         payload["note"] = str(note)
     if drive_folder_id:
         payload["drive_folder_id"] = str(drive_folder_id)
+    if metadata:
+        payload.update(assignment_metadata(**{
+            k: metadata.get(k, "") for k in
+            ("center_id", "patient_id", "study_date", "modality")
+        }))
     return payload
+
+
+def patient_metadata_summary(row: dict) -> str:
+    """One-line patient metadata for a registry row: ``ID · modality · date``.
+
+    Empty string when the row carries none of the v2 metadata fields, so
+    pre-v2 rows render exactly as before.
+    """
+    r = row or {}
+    bits = []
+    pid = str(r.get("patient_id") or "").strip()
+    if pid:
+        bits.append(f"ID {pid}")
+    modality = str(r.get("modality") or "").strip()
+    if modality:
+        bits.append(modality)
+    study_date = str(r.get("study_date") or "").strip()
+    if study_date:
+        bits.append(study_date)
+    return " · ".join(bits)
 
 
 # ── Inbox/Sent merge of registry rows (Education tab) ──────────────────────────

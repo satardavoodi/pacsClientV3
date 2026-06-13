@@ -362,6 +362,14 @@ class QtSliceViewer(QWidget):
         self._zoom: float = 1.0
         self._pan_offset: QPointF = QPointF(0.0, 0.0)
         self._fit_to_viewport: bool = True
+        # Viewport size at which the current fit zoom was computed. Lets us detect
+        # "the pane resized since we last fit" so a same-dimension series (or an
+        # image loaded before the pane reached its final size) still fits.
+        self._last_fit_w: int = 0
+        self._last_fit_h: int = 0
+        # Guards a single deferred (post-layout) re-fit so a content drop fits the
+        # pane's FINAL size even when the image was set before the layout settled.
+        self._deferred_fit_pending: bool = False
         self._display_scale_x: float = 1.0
         self._display_scale_y: float = 1.0
 
@@ -502,13 +510,17 @@ class QtSliceViewer(QWidget):
                 _depth_log.append(float(_pending_depth))
             except Exception:
                 pass
-        # If image dimensions changed (e.g. first frame after series switch) and
-        # fit-to-viewport is active, recalculate zoom immediately so the image
-        # fills the viewport correctly even if zoom_to_fit() is not called
-        # separately (defensive fix for R11 / series-specific zoom regressions).
-        if self._fit_to_viewport and (self._image_width != old_w or self._image_height != old_h):
-            self._zoom = self._calculate_fit_zoom()
-            self._pan_offset = QPointF(0.0, 0.0)
+        # Re-fit (in fit mode) when the image dimensions changed (new series) OR the
+        # viewport resized since the last fit (same-dimension series, or an image set
+        # before the pane reached its final size). Slice scrolling keeps both equal,
+        # so the user's manual zoom is preserved there.
+        dims_changed = (self._image_width != old_w or self._image_height != old_h)
+        size_changed = (self.width() != self._last_fit_w or self.height() != self._last_fit_h)
+        if self._fit_to_viewport and (dims_changed or size_changed):
+            self._apply_fit_zoom()
+            # The pane may still settle to its final size right after this call (drop
+            # into a multi-pane layout / first show) -- one deferred re-fit catches it.
+            self._schedule_deferred_fit()
         self.update()
         if should_emit_fast_hotpath_diag():
             try:
@@ -579,8 +591,7 @@ class QtSliceViewer(QWidget):
         self._display_scale_y = float(row_spacing / base)
 
         if self._fit_to_viewport and self._image_width > 0 and self._image_height > 0:
-            self._zoom = self._calculate_fit_zoom()
-            self._pan_offset = QPointF(0.0, 0.0)
+            self._apply_fit_zoom()
         self.update()
 
     def get_pan_offset(self) -> QPointF:
@@ -590,20 +601,53 @@ class QtSliceViewer(QWidget):
         self._pan_offset = QPointF(offset)
         self.update()
 
-    def reset_view(self) -> None:
-        """Reset zoom and pan to fit image in widget."""
+    def _apply_fit_zoom(self) -> float:
+        """Compute + apply the fit zoom and remember the viewport size used."""
         self._zoom = self._calculate_fit_zoom()
         self._pan_offset = QPointF(0.0, 0.0)
+        self._last_fit_w = self.width()
+        self._last_fit_h = self.height()
+        return self._zoom
+
+    def _schedule_deferred_fit(self) -> None:
+        """Queue a single post-layout re-fit (coalesced; fit-mode only)."""
+        if not self._fit_to_viewport or self._deferred_fit_pending:
+            return
+        self._deferred_fit_pending = True
+        QTimer.singleShot(0, self._run_deferred_fit)
+
+    def _run_deferred_fit(self) -> None:
+        """Re-fit once the layout has settled, if the pane size changed."""
+        self._deferred_fit_pending = False
+        if not self._fit_to_viewport or self._image_width <= 0 or self._image_height <= 0:
+            return
+        # Only act if the viewport reached a different (final) size after set_image;
+        # this never overrides a manual zoom (fit flag is False then) and is a no-op
+        # during slice scrolling (size unchanged).
+        if self.width() != self._last_fit_w or self.height() != self._last_fit_h:
+            self._apply_fit_zoom()
+            self.update()
+
+    def showEvent(self, event) -> None:
+        """Re-fit on first real show — geometry is only final once shown."""
+        super().showEvent(event)
+        if self._fit_to_viewport and self._image_width > 0 and self._image_height > 0:
+            self._apply_fit_zoom()
+            self._schedule_deferred_fit()
+            self.update()
+
+    def reset_view(self) -> None:
+        """Reset zoom and pan to fit image in widget."""
         self._fit_to_viewport = True
+        self._apply_fit_zoom()
         self.update()
 
     def zoom_to_fit(self) -> float:
         """Zoom to fit and return the zoom factor."""
-        self._zoom = self._calculate_fit_zoom()
-        self._pan_offset = QPointF(0.0, 0.0)
         self._fit_to_viewport = True
+        z = self._apply_fit_zoom()
         self.update()
-        return self._zoom
+        return z
 
     def set_window_level_values(self, window: float, level: float) -> None:
         """Set current W/L values (for display in annotations)."""
@@ -1922,8 +1966,7 @@ class QtSliceViewer(QWidget):
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         if self._fit_to_viewport and self._image_width > 0 and self._image_height > 0:
-            self._zoom = self._calculate_fit_zoom()
-            self._pan_offset = QPointF(0.0, 0.0)
+            self._apply_fit_zoom()
             self.update()
 
     # ── Private: painting ─────────────────────────────────────────────

@@ -105,6 +105,7 @@ def test_attest_gmail_success_decodes_token_and_discards_credentials(fake_oauth)
 
 
 def test_attest_gmail_email_mismatch_raises(fake_oauth):
+    # Provided-gmail path (admin/testing): the mismatch guard stays.
     fake_oauth["install_flow"](_jwt({"sub": "s", "email": "other@gmail.com"}))
     with pytest.raises(AipacsWebError, match="signed in as other@gmail.com.*entered dr.a@gmail.com"):
         attest_gmail("dr.a@gmail.com")
@@ -116,9 +117,29 @@ def test_attest_gmail_match_is_case_insensitive(fake_oauth):
     assert attest_gmail("dr.a@gmail.com")["subject"] == "s"
 
 
-def test_attest_gmail_requires_an_address(fake_oauth):
-    with pytest.raises(AipacsWebError, match="Enter the Gmail"):
-        attest_gmail("   ")
+def test_attest_gmail_empty_returns_signed_in_email(fake_oauth):
+    """Unified one-step login: no pre-typed Gmail — whatever Google verifies
+    is returned (no mismatch comparison); the server authorizes it."""
+    token = _jwt({"sub": "g-sub-9", "email": "whoever@gmail.com"})
+    fake_oauth["install_flow"](token)
+
+    out = attest_gmail()  # default "" — no gmail argument at all
+    assert out == {"id_token": token, "subject": "g-sub-9",
+                   "email": "whoever@gmail.com"}
+
+    # Still openid+email ONLY + select_account; still no secure_store write.
+    call = fake_oauth["flow_calls"][0]
+    assert call["scopes"] == list(ATTEST_SCOPES)
+    assert call["auth_url_kwargs"] == {"prompt": "select_account"}
+    assert fake_oauth["saved"] == []
+
+
+def test_attest_gmail_whitespace_is_treated_as_empty(fake_oauth):
+    fake_oauth["install_flow"](_jwt({"sub": "s", "email": "any@gmail.com"}))
+    assert attest_gmail("   ")["email"] == "any@gmail.com"
+
+
+def test_attest_gmail_rejects_a_non_email_when_provided(fake_oauth):
     with pytest.raises(AipacsWebError, match="Enter the Gmail"):
         attest_gmail("not-an-email")
     assert fake_oauth["flow_calls"] == []  # never opens a browser
@@ -182,14 +203,17 @@ def test_link_google_includes_optional_ids_when_given():
     assert body["server_id"] == "srv9" and body["center_id"] == "c3"
 
 
-def test_link_google_422_admin_not_registered_message():
+def test_link_google_422_not_registered_message():
+    # The server's owner-directive 422 wording must surface verbatim.
     sess = _FakeSession([_FakeResp(422, {
         "message": "The given data was invalid.",
         "errors": {"gmail": [
-            "This Gmail is not registered by the administrator yet. "
-            "Ask your administrator to add it."]},
+            "Your email is not registered for the Consultation module. "
+            "Please contact AI-PACS.com to activate/register your "
+            "Consultation access."]},
     })])
-    with pytest.raises(AipacsWebError, match="not registered by the administrator"):
+    with pytest.raises(AipacsWebError,
+                       match="not registered for the Consultation module"):
         link_google("http://h", gmail="x@g.com", id_token="i",
                     workstation_user_id="drv", session=sess)
 
@@ -280,6 +304,45 @@ def test_connect_via_attestation_stores_token_and_link(monkeypatch):
                                             "base_url": "http://h/consult"}}
 
 
+def test_connect_via_attestation_links_attested_email_when_gmail_empty(monkeypatch):
+    """Unified one-step login: empty gmail → the link is made with whatever
+    email Google attested (the server authorizes it)."""
+    prov = AipacsWebIdentityProvider()
+    monkeypatch.setattr(AipacsWebIdentityProvider, "is_available",
+                        lambda self: (True, "ok"))
+    monkeypatch.setattr(aw, "load_aipacs_web_config",
+                        lambda: {"base_url": "http://h/consult", "enabled": True})
+    attest_calls = []
+    monkeypatch.setattr(
+        aw, "attest_gmail",
+        lambda gmail="", **kw: attest_calls.append(gmail) or {
+            "id_token": "idtok", "subject": "g-sub",
+            "email": "verified.by.google@gmail.com",
+        },
+    )
+    link_calls = []
+    monkeypatch.setattr(
+        aw, "link_google",
+        lambda base, **kw: link_calls.append((base, kw)) or {
+            "token": "sanctum-e",
+            "user": {"id": 44, "name": "Dr Verified",
+                     "email": "verified.by.google@gmail.com"},
+            "link": {"gmail_email": "verified.by.google@gmail.com",
+                     "status": "active"},
+        },
+    )
+    monkeypatch.setattr(secure_store, "save_secret", lambda *a, **k: True)
+
+    ident = prov.connect_via_google_attestation("drv")  # no gmail at all
+
+    assert attest_calls == [""]
+    _base, kw = link_calls[0]
+    # The link payload carries the GOOGLE-VERIFIED email, not user input.
+    assert kw["gmail"] == "verified.by.google@gmail.com"
+    assert ident.handle == "verified.by.google@gmail.com"
+    assert ident.extra["link"]["gmail_email"] == "verified.by.google@gmail.com"
+
+
 def test_connect_via_attestation_raises_when_unavailable(monkeypatch):
     prov = AipacsWebIdentityProvider()
     monkeypatch.setattr(AipacsWebIdentityProvider, "is_available",
@@ -299,8 +362,11 @@ def test_connect_via_attestation_propagates_server_422(monkeypatch):
 
     def _422(base, **kw):
         raise AipacsWebError(
-            "This Gmail is not registered by the administrator yet.")
+            "Your email is not registered for the Consultation module. "
+            "Please contact AI-PACS.com to activate/register your "
+            "Consultation access.")
 
     monkeypatch.setattr(aw, "link_google", _422)
-    with pytest.raises(AipacsWebError, match="not registered by the administrator"):
+    with pytest.raises(AipacsWebError,
+                       match="not registered for the Consultation module"):
         prov.connect_via_google_attestation("drv", "x@gmail.com")

@@ -37,6 +37,7 @@ def seal_package_as_consultation(
     package_root, *, case_title: str, clinical_question: str, from_user: dict,
     assignee: dict | None = None, study_uids: list | None = None,
     priority: str = "routine", due_at: str = "",
+    consultation_id: str | None = None,
 ) -> ConsultationEnvelope:
     """Turn an existing Offline Cloud package folder into a consultation package by
     writing a sealed ``consultation.json``. The offline package is not modified."""
@@ -48,6 +49,7 @@ def seal_package_as_consultation(
         study_uids=study_uids,
         priority=priority,
         due_at=due_at,
+        consultation_id=consultation_id,
     )
     return seal_envelope(package_root, env)
 
