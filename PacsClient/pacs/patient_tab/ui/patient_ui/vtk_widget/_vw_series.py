@@ -870,7 +870,14 @@ class _VWSeriesMixin:
             and _inc_sn
             and _inc_sn != 'N/A'
             and _cur_sn == _inc_sn
-            and (not (_cur_path and _inc_path) or _cur_path == _inc_path)
+            # Require a POSITIVE series_path match (the per-study disk identity).
+            # When EITHER side lacks a path we cannot prove same-series, and a
+            # same series_NUMBER recurs across studies (multi-study patients), so
+            # this must NOT be treated as a no-op — proceed and switch. The old
+            # ``not (_cur_path and _inc_path) or ...`` skipped on number alone
+            # when a path was missing, intermittently swallowing a legitimate
+            # cross-study viewport replacement.
+            and _cur_path and _inc_path and _cur_path == _inc_path
         )
         if _same_series_identity:
             # v2.2.5.3: Don't skip if incoming data has different dimensions

@@ -76,13 +76,35 @@ def test_aliased_index_still_replaces_different_series(container):
 
 
 def test_same_series_redrop_skips(container):
-    """Genuine same-series re-drop keeps the cheap no-op (even if the index
-    shifted after a sidebar rebuild)."""
-    container._qt_bridge = _bridge("1000102")
+    """Genuine same-series re-drop (CONFIRMED by matching series_path) keeps the
+    cheap no-op (even if the index shifted after a sidebar rebuild)."""
+    container._qt_bridge = _bridge("1000102", series_path="X:/study_A/1000102")
     container.last_series_show = 3
-    ok = container.switch_series(None, _meta("1000102"), series_index=9)
+    ok = container.switch_series(
+        None, _meta("1000102", series_path="X:/study_A/1000102"), series_index=9
+    )
     assert ok is False
     assert container._test_start_calls == []
+
+
+def test_same_number_missing_path_loads_to_be_safe(container):
+    """THE intermittent multi-study bug (other-PC logs 2026-06-13): same
+    series_NUMBER but a series_path is MISSING on one side → we cannot prove it
+    is the same series, and numbers recur across studies, so we must LOAD rather
+    than swallow the drop. A redundant reload is harmless; showing the wrong
+    study's image is a safety bug."""
+    # current pane carries a path, the dropped series does not
+    container._qt_bridge = _bridge("2", series_path="X:/study_A/2")
+    container.last_series_show = 0
+    ok = container.switch_series(None, _meta("2"), series_index=0)
+    assert ok is True
+    assert len(container._test_start_calls) == 1
+    # and the reverse: current pane has no path, dropped one does
+    container._test_start_calls.clear()
+    container._qt_bridge = _bridge("2")
+    ok = container.switch_series(None, _meta("2", series_path="X:/study_B/2"), series_index=0)
+    assert ok is True
+    assert len(container._test_start_calls) == 1
 
 
 def test_synthetic_number_cross_study_replaces_on_path_mismatch(container):
@@ -130,3 +152,14 @@ def test_source_no_index_based_same_series_guard():
     for fname in ("qt_fast_container.py", "_vw_series.py"):
         src = (VTK_WIDGET_DIR / fname).read_text(encoding="utf-8")
         assert "self.last_series_show == series_index" not in src, fname
+
+
+def test_source_requires_positive_path_match_to_skip():
+    """The same-series no-op must require a POSITIVE series_path match in BOTH
+    paths — the old permissive ``not (_cur_path and _inc_path) or ...`` form
+    skipped on series-number alone when a path was missing, which intermittently
+    swallowed multi-study viewport replacements."""
+    for fname in ("qt_fast_container.py", "_vw_series.py"):
+        src = (VTK_WIDGET_DIR / fname).read_text(encoding="utf-8")
+        assert "not (_cur_path and _inc_path) or _cur_path == _inc_path" not in src, fname
+        assert "_cur_path and _inc_path and _cur_path == _inc_path" in src, fname

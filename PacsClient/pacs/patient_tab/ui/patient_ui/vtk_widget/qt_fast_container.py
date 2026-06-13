@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import logging
 import time as _time
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
 from PySide6.QtCore import Qt, QTimer
 
 from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
@@ -128,8 +128,14 @@ class QtFastContainer(QWidget):
         super().__init__(parent)
 
         # ── Geometry ────────────────────────────────────────────────────────
+        # `height_viewer` is the FULL viewer height (caller passes sidebar.height()),
+        # so it is only a preferred hint — never the hard minimum. Pinning it would
+        # stop a pane shrinking to its grid cell in a multi-row layout (2x2/3x3) or
+        # a shortened area (Education's dock), overflowing the #1a1a2e surface past
+        # the cell. Layout-managed: tiny floor + Expanding lets it shrink and fill.
         self.height_viewer = height_viewer
-        self.setMinimumHeight(height_viewer)
+        self.setMinimumHeight(40)
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Dark background to match the VTK placeholder appearance while empty.
         self.setStyleSheet("background-color: #1a1a2e;")
@@ -574,11 +580,21 @@ class QtFastContainer(QWidget):
             and _inc_sn
             and _inc_sn != 'N/A'
             and _cur_sn == _inc_sn
-            and (not (_cur_path and _inc_path) or _cur_path == _inc_path)
+            # Require a POSITIVE same-series confirmation via series_path (the
+            # per-study disk identity {study_uid}/{series_number}). When EITHER
+            # side lacks a series_path we CANNOT prove it is the same series —
+            # and a same series_NUMBER recurs across studies (multi-study
+            # patients; synthetic 100000 for DOC) — so we must NOT skip; proceed
+            # and load. The old ``not (_cur_path and _inc_path) or ...`` form
+            # skipped on the number ALONE whenever a path was missing, which
+            # intermittently swallowed the drop of another study's
+            # same-numbered series onto an already-open pane (the reported
+            # "new series can't load on the previously opened one").
+            and _cur_path and _inc_path and _cur_path == _inc_path
         ):
             logger.info(
-                "[QtFastContainer] switch_series: already showing series=%s (idx=%s), skip",
-                series_number, series_index,
+                "[QtFastContainer] switch_series: already showing series=%s path=%s (idx=%s), skip",
+                series_number, _inc_path, series_index,
             )
             return False
 
