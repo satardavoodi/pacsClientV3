@@ -867,7 +867,11 @@ class AIVTKWidget(VTKWidget):
         self._schedule_manager_ai_safe(reason="start_process_series")
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
-                      metadata_fixed=None):
+                      metadata_fixed=None, force_reload: bool = False):
+        # force_reload (manual drag-drop "always replace", 2026-06-14): accept and
+        # forward to the base VTKWidget so the Eagle Eye viewport stays compatible
+        # with the shared switch pipeline. Without this kwarg every series load
+        # into the AI viewport raised TypeError and the image never appeared.
         print(f"[MG][VTK] switch_series called for series={series_index} modality={metadata.get('series', {}).get('modality', 'N/A')}")
         
         # Load CSV paths if not already loaded (happens when viewer is created as placeholder)
@@ -898,7 +902,7 @@ class AIVTKWidget(VTKWidget):
         
         # ✅ CRITICAL FIX: Use super().switch_series() not switch_series_backup()
         result = super().switch_series(vtk_image_data, metadata, series_index, vtk_image_data_2, metadata_2,
-                                       metadata_fixed)
+                                       metadata_fixed, force_reload=force_reload)
         if result:
             self._seg_request_token += 1
             self._seg_helper_series_uid = None

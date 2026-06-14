@@ -11,7 +11,7 @@ class NodeViewer:
     def change_main_widget(self, widget):
         self.widget = widget
     
-    def switch_series(self, vtk_image_data, metadata, series_index, vtk_widget_data_2=None, metadata_2=None, metadata_fixed=None):
+    def switch_series(self, vtk_image_data, metadata, series_index, vtk_widget_data_2=None, metadata_2=None, metadata_fixed=None, force_reload: bool = False):
         """Switch series in the viewer"""
         try:
             # Check if vtk_widget is None (placeholder viewer)
@@ -31,9 +31,11 @@ class NodeViewer:
             print(f"🔍 vtk_widget type: {type(self.vtk_widget)}")
             print(f"🔍 vtk_widget has switch_series: {hasattr(self.vtk_widget, 'switch_series')}")
                 
-            # Delegate to the vtk_widget if it has the method
+            # Delegate to the vtk_widget if it has the method. Forward force_reload
+            # (manual drag-drop "always replace") through this wrapper layer; all
+            # concrete viewers (FAST, VTK, AIVTKWidget) accept it.
             if hasattr(self.vtk_widget, 'switch_series'):
-                result = self.vtk_widget.switch_series(vtk_image_data, metadata, series_key, vtk_widget_data_2, metadata_2, metadata_fixed)
+                result = self.vtk_widget.switch_series(vtk_image_data, metadata, series_key, vtk_widget_data_2, metadata_2, metadata_fixed, force_reload=force_reload)
                 print(f"🔍 vtk_widget.switch_series returned: {result}")
                 return result
             else:

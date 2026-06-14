@@ -2239,7 +2239,7 @@ class VTKWidget(QVTKRenderWindowInteractor):
     # Was ~72 lines with no callers in the codebase.
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
-                      metadata_fixed=None, progressive_total: int = 0):
+                      metadata_fixed=None, progressive_total: int = 0, force_reload: bool = False):
         """
         ├ت┌ّ╪î HIGHLY OPTIMIZED: Series switch with minimal flickering
         - Shows loading spinner immediately with smart messaging
