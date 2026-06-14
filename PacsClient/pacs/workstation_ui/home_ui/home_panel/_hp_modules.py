@@ -593,8 +593,15 @@ Study UID: {study_uid}
             # Hide loading dialog first
             self.hide_loading()
 
-    async def _show_grouped_patient_studies(self, patient_id: str, patient_name: str, study_uids: list):
-        """Load thumbnails for multiple studies and display them in grouped order."""
+    async def _show_grouped_patient_studies(self, patient_id: str, patient_name: str, study_uids: list,
+                                            force_server_merge: bool = False):
+        """Load thumbnails for multiple studies and display them in grouped order.
+
+        force_server_merge=True (used by the resync-on-reopen path, 45611) makes
+        each study ALSO fetch the server thumbnail list and merge in any series
+        not already present on local disk — so series added on the server after
+        first download become visible without a manual cache wipe. Default False
+        keeps the original local-first / server-only-when-empty behaviour."""
         # Snapshot the current patient-selection request id. If the user clicks
         # a different patient while the (slow) multi-study fetch below is still
         # awaiting, this lets us drop the stale result instead of rendering one
@@ -650,8 +657,10 @@ Study UID: {study_uid}
                     }
                 )
 
-            # Fallback to server thumbnails for non-downloaded studies.
-            if not study_thumbs:
+            # Fetch server thumbnails when nothing is local (non-downloaded study)
+            # OR when a resync asked us to merge — so newly-added server series are
+            # revealed even though older series already exist on local disk.
+            if (not study_thumbs) or force_server_merge:
                 def _fetch_in_background() -> dict | None:
                     host = server.get('host') or server.get('socket_host')
                     from modules.network.socket_config import get_socket_server_settings
@@ -698,14 +707,28 @@ Study UID: {study_uid}
                     response = None
 
                 if response:
-                    response = self.save_thumbnail(response)
-                    for thumb in response.get('thumbnails', []):
-                        if not thumb.get('file_path'):
-                            continue
-                        thumb['study_uid'] = study_uid
-                        thumb['study_label'] = study_label
-                        thumb['_study_order'] = index
-                        study_thumbs.append(thumb)
+                    # Merge mode: keep only series we are NOT already showing from
+                    # local disk, so existing series are never duplicated or
+                    # overwritten — only genuinely new server series are added.
+                    _have_numbers = {
+                        str(t.get('series_number') or '').strip()
+                        for t in study_thumbs
+                        if str(t.get('series_number') or '').strip()
+                    }
+                    if _have_numbers:
+                        response['thumbnails'] = [
+                            t for t in (response.get('thumbnails') or [])
+                            if str(t.get('series_number') or '').strip() not in _have_numbers
+                        ]
+                    if response.get('thumbnails'):
+                        response = self.save_thumbnail(response)
+                        for thumb in response.get('thumbnails', []):
+                            if not thumb.get('file_path'):
+                                continue
+                            thumb['study_uid'] = study_uid
+                            thumb['study_label'] = study_label
+                            thumb['_study_order'] = index
+                            study_thumbs.append(thumb)
 
             combined_thumbnails.extend(study_thumbs)
 

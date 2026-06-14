@@ -3,6 +3,7 @@
 
 import asyncio
 import logging as _logging
+import os as _os
 import time
 import threading
 import traceback
@@ -21,6 +22,27 @@ from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.config import THUMBNAIL_PATH
 
 from .widget import SourceOfPatientLoad
+
+# ── Resync-on-reopen (server-vs-local study completeness) ─────────────────────
+# Bug 45611 (multi-study patient MR+DOC): a study that GAINED series on the
+# server after first download was never re-checked on the home page — the
+# multi-study grouped path renders local thumbnails and only queries the server
+# when NONE exist, and the single-click "server grew" gate is fed by a stash
+# that is deliberately suppressed for multi-study patients (44534 guard). So new
+# series stayed invisible until a manual cache wipe.
+#
+# Smart-check policy (user-chosen 2026-06-14): on (re)select, verify the
+# patient's already-downloaded studies against the server and pull anything new
+# — WITHOUT making every click hit the network. A per-study throttle (TTL) means
+# a study is re-checked at most once per window; the manual "Refresh / Sync from
+# server" action forces an immediate check (force=True, ignores the throttle and
+# the env gate). Comparison uses each study's OWN server series list (never the
+# patient-aggregate count_of_series), so the 44534 false-grew bug stays fixed.
+_RESYNC_ON_REOPEN_ENABLED = str(
+    _os.environ.get('AIPACS_RESYNC_ON_REOPEN', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+_RESYNC_TTL_S = 300.0  # re-check a given study at most once per 5 min (auto path)
+
 
 class _HPSeriesMixin:
     """Series info, thumbnails, right panel display"""
@@ -184,6 +206,208 @@ class _HPSeriesMixin:
         except Exception as e:
             print(f"Error in _load_and_display_series_info_async: {str(e)}")
             self.hide_loading()
+
+    # ── Resync-on-reopen: server-vs-local study completeness ──────────────────
+    def _study_due_for_resync(self, study_uid, force=False):
+        """Smart-check throttle: True when this study should be re-verified
+        against the server now. force=True (manual refresh) always returns True;
+        otherwise re-check at most once per _RESYNC_TTL_S, and only when the
+        feature is enabled."""
+        if force:
+            return True
+        if not _RESYNC_ON_REOPEN_ENABLED:
+            return False
+        try:
+            ts_map = getattr(self, '_study_resync_check_ts', None)
+            if not ts_map:
+                return True
+            last = ts_map.get(str(study_uid or '').strip())
+            if last is None:
+                return True
+            return (time.monotonic() - float(last)) >= _RESYNC_TTL_S
+        except Exception:
+            return True
+
+    def _mark_study_resync_checked(self, study_uid):
+        try:
+            if not hasattr(self, '_study_resync_check_ts'):
+                self._study_resync_check_ts = {}
+            self._study_resync_check_ts[str(study_uid or '').strip()] = time.monotonic()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _detect_study_growth(server_by_num, local_by_num):
+        """Pure server-vs-local growth decision for ONE study. Returns
+        (grew, new_series, grown_series).
+
+        grew is True when the server has a series number we don't hold locally
+        (new sequence), OR a series whose server image_count exceeds our local
+        count (more instances), OR simply more series than we have. Uses the
+        study's OWN per-series numbers — never the patient-aggregate
+        count_of_series — so it is immune to the 44534 multi-study false-grew."""
+        new_series = [sn for sn in server_by_num if sn not in local_by_num]
+        grown_series = [
+            sn for sn in server_by_num
+            if sn in local_by_num and 0 < local_by_num[sn] < server_by_num[sn]
+        ]
+        grew = bool(new_series) or bool(grown_series) or (len(server_by_num) > len(local_by_num))
+        return grew, new_series, grown_series
+
+    def _local_series_counts(self, study_uid):
+        """{series_number: locally-recorded image_count} from the DB for a study.
+        Empty dict when the study is unknown locally. Used only to detect server
+        growth (new series numbers / higher per-series counts) — never the sole
+        authority for what to display (disk stays the read authority)."""
+        out = {}
+        try:
+            from PacsClient.utils.db_manager import (
+                find_study_pk_with_study_uid, get_series_by_study_pk,
+            )
+            pk = find_study_pk_with_study_uid(study_uid)
+            for r in (get_series_by_study_pk(pk) or []) if pk else []:
+                sn = str(r.get('series_number') or '').strip()
+                if sn:
+                    out[sn] = int(r.get('image_count') or 0)
+        except Exception:
+            pass
+        return out
+
+    async def _resync_patient_studies_from_server(self, patient_id, patient_name,
+                                                  study_uids, *, force=False):
+        """Verify a patient's already-downloaded studies against the server and
+        pull anything newly added. Reuses the guarded per-study fetch
+        (`_get_or_fetch_series_info`, force_refresh) + cross-patient guard + DM
+        enqueue (the resume scan dedups, so no duplicate files). Fire-and-forget:
+        never blocks first paint; re-renders only when a study actually grew.
+
+        - auto path (force=False): throttled per study; honours the env gate.
+        - manual path (force=True): ignores throttle + gate (Refresh / Sync).
+        """
+        if not force and not _RESYNC_ON_REOPEN_ENABLED:
+            return
+        try:
+            pid = str(patient_id or '').strip()
+            uids = [str(u or '').strip() for u in (study_uids or []) if str(u or '').strip()]
+            if not pid or not uids:
+                return
+            dm = None
+            changed_any = False
+            for study_uid in uids:
+                if not self._study_due_for_resync(study_uid, force=force):
+                    continue
+                self._mark_study_resync_checked(study_uid)
+                try:
+                    study_info = await asyncio.wait_for(
+                        asyncio.to_thread(self._get_or_fetch_series_info, study_uid, pid, True),
+                        timeout=45.0,
+                    )
+                except Exception:
+                    study_info = None
+                if not study_info:
+                    continue
+
+                # Clinical isolation: never persist/download a study the server
+                # attributes to a DIFFERENT patient (same guard as the reconcile
+                # missing-study loop and the double-click STEP 3.5).
+                _owner = str((study_info or {}).get('patient_id') or '').strip()
+                if _owner and _owner != pid:
+                    try:
+                        self._log_open_trace(
+                            study_uid, 'resync_cross_patient_skip', level='warning',
+                            requested_patient_id=pid, owner_patient_id=_owner)
+                    except Exception:
+                        pass
+                    continue
+
+                server_series = study_info.get('series') or []
+                server_by_num = {}
+                for s in server_series:
+                    sn = str(s.get('series_number') or '').strip()
+                    if sn:
+                        server_by_num[sn] = int(s.get('image_count') or 0)
+                local_by_num = self._local_series_counts(study_uid)
+                grew, new_series, grown_series = self._detect_study_growth(server_by_num, local_by_num)
+
+                try:
+                    self._log_open_trace(
+                        study_uid, 'study_resync_check', patient_id=pid,
+                        local_series=len(local_by_num), server_series=len(server_by_num),
+                        new_series=(','.join(new_series[:12]) or '-'),
+                        grown_series=(','.join(grown_series[:12]) or '-'),
+                        result=('grew' if grew else 'current'), forced=int(bool(force)))
+                except Exception:
+                    pass
+
+                if not grew:
+                    continue
+
+                # Persist the refreshed series rows, then enqueue the study for
+                # background download (DM resume scan pulls only the missing
+                # series/instances — never re-downloads existing files).
+                try:
+                    self.save_complete_study_info(study_uid, pid, study_info=study_info)
+                except Exception:
+                    pass
+                try:
+                    clear_study_cache(study_uid)
+                except Exception:
+                    pass
+                if dm is None:
+                    dm = self._get_or_create_download_manager_tab(activate_tab=False)
+                if dm:
+                    try:
+                        dm.add_downloads([{
+                            'patient_id': pid,
+                            'patient_name': patient_name,
+                            'study_uid': study_uid,
+                            'study_date': study_info.get('study_date', ''),
+                            'modality': study_info.get('modality', ''),
+                            'description': study_info.get('study_description', ''),
+                            'series_count': study_info.get('count_of_series', len(server_series)),
+                            'images_count': sum(int(s.get('image_count', 0) or 0) for s in server_series),
+                            'series': server_series,
+                        }], start_immediately=True)
+                    except Exception:
+                        pass
+                changed_any = True
+
+            # Reveal: re-render with a server-thumbnail merge so the newly-added
+            # series appear immediately (their full images keep downloading in the
+            # background). Only when this patient is still the active selection.
+            if changed_any and self._is_active_patient_selection(patient_id, uids[0]):
+                try:
+                    if len(uids) > 1 and hasattr(self, '_show_grouped_patient_studies'):
+                        await self._show_grouped_patient_studies(
+                            patient_id, patient_name, uids, force_server_merge=True)
+                    else:
+                        await self.show_patient_studies({
+                            'PatientID': pid, 'PatientName': patient_name,
+                            'StudyInstanceUID': uids[0],
+                        })
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+    def _on_resync_from_server_requested(self, patient_id, patient_name, study_uids):
+        """Manual 'Refresh / Sync from server' (patient right-click menu). Forces
+        an immediate server completeness check for the patient's studies,
+        bypassing the throttle and the env gate."""
+        try:
+            uids = [str(u or '').strip() for u in (study_uids or []) if str(u or '').strip()]
+            if not uids:
+                return
+            # Target this patient so the resync's re-render lands here.
+            try:
+                self._mark_active_patient_selection(patient_id, uids[0])
+            except Exception:
+                pass
+            self._schedule_ui_coro(
+                self._resync_patient_studies_from_server(
+                    patient_id, patient_name, uids, force=True))
+        except Exception as e:
+            print(f"Error in _on_resync_from_server_requested: {str(e)}")
 
     async def _reconcile_patient_studies_on_click(self, patient_id, patient_name, fallback_study_uid):
         """Reconcile patient studies (server vs local) with throttling and no loops."""
@@ -431,6 +655,21 @@ class _HPSeriesMixin:
             study_uids = await self._reconcile_patient_studies_on_click(patient_id, patient_name, study_uid)
             if not self._is_active_patient_selection(patient_id, study_uid):
                 return
+
+            # Smart resync-on-reopen (45611): verify this patient's already-local
+            # studies against the server in the background and pull any series
+            # added since first download. Fire-and-forget (throttled per study) so
+            # it never delays the cache-first first paint below; it re-renders only
+            # if a study actually grew. Covers the multi-study grouped path, which
+            # otherwise has no server-growth detection at all.
+            if _RESYNC_ON_REOPEN_ENABLED:
+                try:
+                    self._schedule_ui_coro(
+                        self._resync_patient_studies_from_server(
+                            patient_id, patient_name, list(study_uids), force=False))
+                except Exception:
+                    pass
+
             if len(study_uids) > 1 and hasattr(self, '_show_grouped_patient_studies'):
                 await self._show_grouped_patient_studies(patient_id, patient_name, study_uids)
                 print(f"[PROFILE] single-click: grouped studies displayed ({len(study_uids)}) for {patient_id} in {(time.perf_counter() - _t0)*1000:.1f}ms")

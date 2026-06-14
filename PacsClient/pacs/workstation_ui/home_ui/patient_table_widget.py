@@ -615,6 +615,9 @@ class PatientTableWidget(QWidget):
     # Background hydration resolved a report workflow status for a study
     # (queued cross-thread, same pattern as reportingPhysicianResolved).
     reportStatusResolved = Signal(str, str)  # study_uid, report_status
+    # Right-click "Refresh / Sync from server": force a server completeness check
+    # for the patient's studies and pull any newly-added series (45611).
+    resyncFromServerRequested = Signal(str, str, list)  # patient_id, patient_name, study_uids
 
     def __init__(self, parent=None):
         super(PatientTableWidget, self).__init__(parent)
@@ -799,6 +802,15 @@ class PatientTableWidget(QWidget):
         
         self.results_table.setColumnHidden(COL['study_uid'], True)
         self.results_table.setColumnHidden(COL['order'], True)
+
+        # Right-click context menu: "Refresh / Sync from server" (45611). Forces a
+        # server completeness check for the patient under the cursor and pulls any
+        # newly-added series. Standard PACS pattern; no layout change.
+        try:
+            self.results_table.setContextMenuPolicy(Qt.CustomContextMenu)
+            self.results_table.customContextMenuRequested.connect(self._on_table_context_menu)
+        except Exception:
+            pass
 
         # Store header titles for all sortable columns
         self._header_titles = {
@@ -4800,6 +4812,36 @@ class PatientTableWidget(QWidget):
 
     def get_patient_data_by_row(self, row):
         return self._extract_row_data(row)
+
+    def _on_table_context_menu(self, pos):
+        """Right-click menu on a patient row → 'Refresh / Sync from server'
+        (45611). Emits resyncFromServerRequested(patient_id, patient_name,
+        study_uids) for the home panel to run a forced server completeness check.
+        Safe to invoke repeatedly."""
+        try:
+            item = self.results_table.itemAt(pos)
+            if item is None:
+                return
+            row = item.row()
+            if row is None or int(row) < 0:
+                return
+            data = self.get_patient_data_by_row(int(row)) or {}
+            pid = str(data.get('patient_id') or '').strip()
+            pname = str(data.get('patient_name') or '').strip()
+            uids = [str(u or '').strip() for u in (data.get('study_uids') or []) if str(u or '').strip()]
+            if not uids:
+                _su = str(data.get('study_uid') or '').strip()
+                if _su:
+                    uids = [_su]
+            if not pid or not uids:
+                return
+            menu = QMenu(self)
+            act_refresh = menu.addAction("Refresh / Sync from server")
+            chosen = menu.exec(self.results_table.viewport().mapToGlobal(pos))
+            if chosen is not None and chosen == act_refresh:
+                self.resyncFromServerRequested.emit(pid, pname, uids)
+        except Exception:
+            pass
 
     def get_all_patient_data(self):
         data = []

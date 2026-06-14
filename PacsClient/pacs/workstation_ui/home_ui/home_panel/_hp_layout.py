@@ -501,6 +501,9 @@ class _HPLayoutMixin:
         self.patient_table_widget.cdBurnRequested.connect(self._on_cd_burn_requested)
         self.patient_table_widget.printRequested.connect(self.open_printing_module)
         self.patient_table_widget.localStudyStateChanged.connect(self._on_local_study_state_changed)
+        # Right-click "Refresh / Sync from server" → forced server completeness
+        # check + pull newly-added series for the patient (45611).
+        self.patient_table_widget.resyncFromServerRequested.connect(self._on_resync_from_server_requested)
 
         # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
         if hasattr(self.patient_table_widget, 'results_table'):
