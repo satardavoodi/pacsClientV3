@@ -228,3 +228,72 @@ def test_source_force_reload_threaded_through_switch_paths():
     vws = (VTK_WIDGET_DIR / "_vw_series.py").read_text(encoding="utf-8")
     assert "force_reload: bool = False" in vws
     assert "_same_series_identity and not force_reload" in vws
+
+
+# ── regression: the WHOLE drop call chain must accept force_reload (2026-06-14) ─
+#
+# The first force_reload pass updated _VCSwitchMixin.change_series_on_viewer (the
+# viewer-controller dispatcher) but BOTH drop handlers actually call the PATIENT
+# WIDGET's public entry point _PWSeriesMixin.change_series_on_viewer, which did
+# NOT accept force_reload — so every drop raised
+#   TypeError: change_series_on_viewer() got an unexpected keyword argument 'force_reload'
+# and no series loaded. Guard the full chain, not just the leaf.
+
+def test_pw_series_entry_point_source_forwards_force_reload():
+    """The patient-widget public entry point (what both drop handlers call) must
+    accept force_reload AND forward it to the viewer controller."""
+    pw = (
+        REPO_ROOT / "PacsClient" / "pacs" / "patient_tab" / "ui" / "patient_ui"
+        / "patient_widget_core" / "_pw_series.py"
+    ).read_text(encoding="utf-8")
+    assert "force_reload: bool = False" in pw
+    assert "force_reload=force_reload" in pw
+
+
+def test_drop_chain_change_series_signatures_accept_force_reload():
+    """inspect the live signatures: both change_series_on_viewer implementations
+    in the drop path must accept force_reload, so a drop's force_reload=True call
+    can never raise TypeError again."""
+    import inspect
+
+    try:
+        from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_series import (  # noqa: E402
+            _PWSeriesMixin,
+        )
+        from PacsClient.pacs.patient_tab.ui.patient_ui._vc_switch import (  # noqa: E402
+            _VCSwitchMixin,
+        )
+    except Exception as exc:  # pragma: no cover - import env guard
+        pytest.skip(f"viewer mixins not importable in this env: {exc}")
+
+    for cls in (_PWSeriesMixin, _VCSwitchMixin):
+        sig = inspect.signature(cls.change_series_on_viewer)
+        assert "force_reload" in sig.parameters, cls.__name__
+
+
+def test_pw_series_forwards_force_reload_to_controller():
+    """Behavioral: calling the patient-widget entry point with force_reload=True
+    forwards it to the viewer controller (the exact path a manual drop takes)."""
+    try:
+        from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_series import (  # noqa: E402
+            _PWSeriesMixin,
+        )
+    except Exception as exc:  # pragma: no cover - import env guard
+        pytest.skip(f"_pw_series not importable in this env: {exc}")
+
+    received = {}
+
+    class _VC:
+        def change_series_on_viewer(self, *args, **kwargs):
+            received["args"] = args
+            received["kwargs"] = kwargs
+
+    class _PW(_PWSeriesMixin):
+        def __init__(self):
+            self.viewer_controller = _VC()  # no zeta_boost attr → boost branch skipped
+
+    _PW().change_series_on_viewer(5, force_reload=True)
+    # forwarded as the trailing positional or keyword — accept either
+    assert received.get("kwargs", {}).get("force_reload") is True or (
+        len(received.get("args", ())) >= 6 and received["args"][5] is True
+    )

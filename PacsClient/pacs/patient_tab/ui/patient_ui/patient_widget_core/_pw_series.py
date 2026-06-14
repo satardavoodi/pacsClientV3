@@ -28,10 +28,16 @@ class _PWSeriesMixin:
 
     def change_series_on_viewer(self, series_index, flag_change_selected_widget=True,
                                 vtk_widget: VTKWidget = None, slider: QSlider = None,
-                                allow_paired: bool = True):
+                                allow_paired: bool = True, force_reload: bool = False):
         """
         Switch series with robust handling for layout changes and missing data
         Uses caching to avoid redundant lookups
+
+        ``force_reload`` is set True ONLY by a manual drag-and-drop (both drop
+        handlers route through this public entry point); it threads down to the
+        viewer controller so the drop always replaces the target viewport, even
+        for the identical series. Every other caller leaves it False and keeps
+        the cheap same-series no-op.
 
         ✅ Always ensures viewers exist before attempting to display series
         """
@@ -70,9 +76,11 @@ class _PWSeriesMixin:
         except Exception as e:
             print(f"⚠️ [INTERACTIVE_BOOST] error: {e}")
         
-        # Delegate to viewer controller
+        # Delegate to viewer controller (forward force_reload so a manual
+        # drag-and-drop always replaces the viewport — see
+        # _VCSwitchMixin.change_series_on_viewer).
         self.viewer_controller.change_series_on_viewer(series_index, flag_change_selected_widget, vtk_widget, slider,
-                                   allow_paired)
+                                   allow_paired, force_reload=force_reload)
 
     def _get_correct_study_path(self) -> str:
         """Get the correct study path, ensuring it's not pointing to a series subfolder"""
