@@ -22,6 +22,7 @@ from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
 )
 
 from .contracts import FrameData, GeometryData
+from .dicom_color import decode_color_for_display
 from .dicom_header_scan import DicomHeaderEntry, scan_series_header_entries
 from ._decode_guard import (
     decode_serialisation_guard,
@@ -330,7 +331,10 @@ class PyDicom2DBackend(QObject):
             )
 
         arr = self.get_pixel_array(idx)
-        if sm.samples_per_pixel >= 3:
+        # A decoded COLOUR slice is 3-channel (RGB / YBR / PALETTE / embedded
+        # palette) regardless of SamplesPerPixel — route it to the RGB path so
+        # window/level never destroys colour. Genuine monochrome stays 2-D.
+        if arr.ndim == 3:
             qimg = self._rgb_to_qimage(arr, sm.cols, sm.rows)
         else:
             ww, wc = normalize_window_level(self._window, self._level)
@@ -396,15 +400,16 @@ class PyDicom2DBackend(QObject):
         thread_state_canary("lazy_backend", "post_decode")
 
         t_post = time.perf_counter()
-        if arr.ndim == 3 and sm.samples_per_pixel < 3:
-            # Multi-frame single-slice fallback
-            arr = arr[0]
-        if sm.samples_per_pixel >= 3:
-            if arr.ndim == 4:
-                arr = arr[0]
-            if arr.dtype != np.uint8:
-                arr = np.clip(arr, 0, 255).astype(np.uint8)
-            out = np.ascontiguousarray(arr)
+
+        # Standards-based colour decode (DICOM PS3.3 C.7.6.3): RGB passthrough,
+        # YBR_FULL/422 -> RGB, PALETTE COLOR -> RGB, and an embedded Palette
+        # Colour LUT on a MONOCHROME parametric map (Siemens TTP/perfusion) ->
+        # RGB. Returns an HxWx3 uint8 array for any colour case, else None for
+        # genuine monochrome (then the original window/level path below runs,
+        # byte-for-byte unchanged). Replaces the old samples>=3-only RGB branch.
+        color_rgb = decode_color_for_display(ds, arr)
+        if color_rgb is not None:
+            out = np.ascontiguousarray(color_rgb)
             post_ms = (time.perf_counter() - t_post) * 1000.0
             with self._decode_metrics_lock:
                 self._decode_metrics[int(idx)] = {
@@ -414,6 +419,10 @@ class PyDicom2DBackend(QObject):
                     "total_ms": float((time.perf_counter() - t_total) * 1000.0),
                 }
             return out
+
+        if arr.ndim == 3 and sm.samples_per_pixel < 3:
+            # Multi-frame single-slice fallback (monochrome)
+            arr = arr[0]
 
         arr = arr.astype(np.float32, copy=False)
         slope = _safe_float(getattr(ds, "RescaleSlope", sm.slope), 1.0) or 1.0
