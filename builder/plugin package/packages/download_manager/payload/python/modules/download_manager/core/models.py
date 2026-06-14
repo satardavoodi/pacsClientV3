@@ -4,6 +4,7 @@ Core Models - Data classes for download system
 All models use dataclasses for clean, immutable data structures with validation.
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -11,6 +12,8 @@ from pathlib import Path
 
 from .enums import DownloadPriority, DownloadStatus, ResumeAction
 from .exceptions import ValidationError
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -120,7 +123,63 @@ class DownloadTask:
     patient_sex: Optional[str] = None
     patient_birth_date: Optional[str] = None
     body_part: Optional[str] = None
-    
+
+    def __post_init__(self):
+        # Guard against an inflated/accumulated series_list (2026-06-14, patient
+        # 46271): a multi-study / drag-preempt enqueue was observed handing in a
+        # series_list with the SAME series repeated many times, so
+        # ``total_image_count`` (sum over series_list) ballooned to 423988 for a
+        # 247-image patient — the Download Manager then chased a phantom total and
+        # thrashed the downloader. A real study NEVER has two series with the same
+        # SeriesInstanceUID, so collapsing by series_uid is a safe no-op for clean
+        # tasks and corrects the count for contaminated ones. Frozen dataclass →
+        # rewrite the field via object.__setattr__.
+        self._dedupe_series_list()
+
+    def _dedupe_series_list(self) -> None:
+        try:
+            original = list(self.series_list or [])
+        except Exception:
+            return
+        seen: Dict[str, int] = {}
+        deduped: List['SeriesInfo'] = []
+        for s in original:
+            uid = str(getattr(s, 'series_uid', '') or '').strip()
+            if not uid:
+                # No UID to de-dupe on — keep as-is (can't prove it's a duplicate).
+                deduped.append(s)
+                continue
+            if uid in seen:
+                # Duplicate: keep the richer row (largest image_count).
+                idx = seen[uid]
+                if int(getattr(s, 'image_count', 0) or 0) > int(getattr(deduped[idx], 'image_count', 0) or 0):
+                    deduped[idx] = s
+                continue
+            seen[uid] = len(deduped)
+            deduped.append(s)
+        removed = len(original) - len(deduped)
+        if removed > 0:
+            object.__setattr__(self, 'series_list', deduped)
+        # Diagnostic — surface the inflated-enqueue class of bug either way.
+        try:
+            total = sum(int(getattr(s, 'image_count', 0) or 0) for s in deduped)
+            if removed > 0:
+                logger.warning(
+                    "[DM_DEDUP] collapsed duplicate series in DownloadTask study=%s "
+                    "patient=%s: series %d->%d, total_images now=%d (removed %d dup rows)",
+                    self.study_uid, self.patient_id, len(original), len(deduped),
+                    total, removed,
+                )
+            elif total > 50000 or len(deduped) > 2000:
+                logger.warning(
+                    "[DM_COUNT_SANITY] implausible DownloadTask size study=%s patient=%s "
+                    "series=%d total_images=%d (no duplicate series_uids — suspect inflated "
+                    "per-series count upstream)",
+                    self.study_uid, self.patient_id, len(deduped), total,
+                )
+        except Exception:
+            pass
+
     @property
     def total_image_count(self) -> int:
         """Total images to download"""
