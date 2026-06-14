@@ -83,7 +83,12 @@ class _VCSwitchMixin:
 
     def change_series_on_viewer(self, series_index, flag_change_selected_widget=True,
                                 vtk_widget: VTKWidget = None, slider: QSlider = None,
-                                allow_paired: bool = True):
+                                allow_paired: bool = True, force_reload: bool = False):
+        # force_reload=True marks an EXPLICIT user request (manual drag-and-drop):
+        # always replace the target viewport with the dropped series — never skip
+        # via the same-series no-op, and reload from a clean (cache-invalidated)
+        # state. Automatic/progressive/cache callers leave it False and keep the
+        # cheap duplicate-prevention no-op below.
         """
         âڑ، OPTIMIZED: Switch series with O(1) lookup and minimal overhead.
         
@@ -249,7 +254,7 @@ class _VCSwitchMixin:
                     current_series_no = str(
                         current_metadata.get('series', {}).get('series_number', '')
                     )
-                if current_series_no and current_series_no == series_number:
+                if (not force_reload) and current_series_no and current_series_no == series_number:
                     backend_mismatch = (
                         str(getattr(vtk_widget, "_active_backend", BACKEND_VTK) or BACKEND_VTK)
                         != str(requested_backend or BACKEND_VTK)
@@ -514,14 +519,15 @@ class _VCSwitchMixin:
                     target_widget_for_spinner=target_widget_for_spinner,
                     total_start=_t0,
                     viewer_backend=requested_backend,
-                    force_reload=(requested_backend == BACKEND_PYDICOM),
+                    force_reload=force_reload or (requested_backend == BACKEND_PYDICOM),
                 )
                 return
 
             # âڑ، PERFORM SWITCH WITH OPTIMIZED PAIRED SERIES LOOKUP
             self._perform_series_switch_optimized(vtk_widget, metadata, vtk_image_data, series_idx, slider,
                                                   allow_paired=allow_paired,
-                                                  expected_token=expected_token)
+                                                  expected_token=expected_token,
+                                                  force_reload=force_reload)
             self._hide_spinner_for_widget(target_widget_for_spinner)
             if not bool(getattr(self, '_first_series_displayed', False)):
                 self._mark_first_series_displayed()
@@ -744,6 +750,7 @@ class _VCSwitchMixin:
                         slider,
                         allow_paired=allow_paired,
                         expected_token=expected_token,
+                        force_reload=force_reload,
                     )
                     self._hide_spinner_for_widget(target_widget_for_spinner)
                     if not bool(getattr(self, '_first_series_displayed', False)):
@@ -845,7 +852,8 @@ class _VCSwitchMixin:
             return None
 
     def _perform_series_switch_optimized(self, vtk_widget, metadata, vtk_image_data, series_idx, slider,
-                                         allow_paired: bool = True, expected_token=None):
+                                         allow_paired: bool = True, expected_token=None,
+                                         force_reload: bool = False):
         """
         âڑ، OPTIMIZED: Perform series switch with O(1) paired series lookup.
         
@@ -1068,7 +1076,8 @@ class _VCSwitchMixin:
                     series_idx,
                     vtk_widget_data_2,
                     metadata_2,
-                    self.parent_widget.metadata_fixed
+                    self.parent_widget.metadata_fixed,
+                    force_reload=force_reload,
                 )
                 _t_switch_ms = (time.perf_counter() - _t0_sw) * 1000
                 _corr_record_event(

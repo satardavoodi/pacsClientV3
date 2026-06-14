@@ -545,12 +545,17 @@ class QtFastContainer(QWidget):
 
     def switch_series(self, vtk_image_data, metadata, series_index,
                       vtk_image_data_2=None, metadata_2=None,
-                      metadata_fixed=None, progressive_total: int = 0):
+                      metadata_fixed=None, progressive_total: int = 0,
+                      force_reload: bool = False):
         """Switch series on the FAST viewer.
 
         Mirrors the Qt fast path in VTKWidget.switch_series() from
         _legacy_widget.py.  Ignores vtk_image_data / vtk_image_data_2 because
         FAST mode loads pixels directly from DICOM files via the pipeline.
+
+        ``force_reload=True`` (manual drag-and-drop) bypasses the same-series
+        no-op below: the drop is an explicit user request, so the viewport is
+        always rebound to the dropped series even if it is the same one.
         """
         series_number = (metadata or {}).get('series', {}).get('series_number', 'N/A')
 
@@ -575,7 +580,8 @@ class QtFastContainer(QWidget):
         except Exception:
             _cur_sn = ''
         if (
-            self._qt_bridge is not None
+            not force_reload
+            and self._qt_bridge is not None
             and _cur_sn
             and _inc_sn
             and _inc_sn != 'N/A'
@@ -848,14 +854,28 @@ class QtFastContainer(QWidget):
 
         def _do_switch():
             try:
+                # Manual drag-and-drop = explicit user request: ALWAYS replace the
+                # viewport with the dropped series. force_reload=True bypasses the
+                # same-series no-op and reloads from a clean (cache-invalidated)
+                # state, so the drop wins even when the same Study/Series is already
+                # open here or in another viewport.
                 _method(
                     series_index=int(series_number),
                     flag_change_selected_widget=False,
                     vtk_widget=self,
                     slider=_slider,
+                    force_reload=True,
                 )
             except Exception as _err:
-                logger.error("[QtFastContainer DROP] series switch raised: %s", _err, exc_info=True)
+                logger.error(
+                    "[QtFastContainer DROP] series load FAILED — dropped series=%s target_viewer=%s: %s",
+                    series_number, self.id_vtk_widget, _err, exc_info=True,
+                )
+                if self.viewport_spinner:
+                    try:
+                        self.viewport_spinner.hide_loading()
+                    except Exception:
+                        pass
 
         QTimer.singleShot(0, _do_switch)
 

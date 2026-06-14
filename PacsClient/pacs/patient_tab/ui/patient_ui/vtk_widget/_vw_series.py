@@ -766,7 +766,7 @@ class _VWSeriesMixin:
         self._update_backend_badge()
 
     def switch_series(self, vtk_image_data, metadata, series_index, vtk_image_data_2=None, metadata_2=None,
-                      metadata_fixed=None, progressive_total: int = 0):
+                      metadata_fixed=None, progressive_total: int = 0, force_reload: bool = False):
         """
         HIGHLY OPTIMIZED: Series switch with minimal flickering
         - Shows loading spinner immediately with smart messaging
@@ -879,7 +879,9 @@ class _VWSeriesMixin:
             # cross-study viewport replacement.
             and _cur_path and _inc_path and _cur_path == _inc_path
         )
-        if _same_series_identity:
+        if _same_series_identity and not force_reload:
+            # force_reload (manual drag-and-drop) always rebinds the viewport,
+            # even for the identical series — the drop is an explicit user request.
             # v2.2.5.3: Don't skip if incoming data has different dimensions
             # (e.g., preview → full data refresh).  The viewer's internal
             # slice range is stale and needs SetInputData via reset_image_viewer.

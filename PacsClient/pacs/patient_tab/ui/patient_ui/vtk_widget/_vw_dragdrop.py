@@ -290,13 +290,22 @@ class _VWDragDropMixin:
         # This allows the spinner to display before the expensive series switch
         def _do_series_switch():
             try:
+                # Manual drag-and-drop is an EXPLICIT user request: ALWAYS replace
+                # the target viewport with the dropped series. force_reload=True
+                # bypasses the same-series no-op and reloads from a clean
+                # (cache-invalidated) state, so the drop wins even when the same
+                # Study/Series is already open here or in another viewport.
                 _method(
                     series_index=int(data),
                     flag_change_selected_widget=False,
                     vtk_widget=self,
                     slider=_slider,
+                    force_reload=True,
                 )
             except Exception as _sw_err:
-                logger.error("[DROP] method_change_series_on_viewer raised: %s", _sw_err, exc_info=True)
+                logger.error(
+                    "[DROP] series load FAILED — dropped series=%s target_viewer=%s: %s",
+                    data, getattr(self, 'id_vtk_widget', '?'), _sw_err, exc_info=True,
+                )
 
         QTimer.singleShot(0, _do_series_switch)

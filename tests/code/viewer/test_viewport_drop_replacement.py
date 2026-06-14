@@ -163,3 +163,68 @@ def test_source_requires_positive_path_match_to_skip():
         src = (VTK_WIDGET_DIR / fname).read_text(encoding="utf-8")
         assert "not (_cur_path and _inc_path) or _cur_path == _inc_path" not in src, fname
         assert "_cur_path and _inc_path and _cur_path == _inc_path" in src, fname
+
+
+# ── force_reload: "manual drag-and-drop must always win" (2026-06-14) ──────────
+#
+# New requirement: a manual drop is an EXPLICIT user request and must ALWAYS
+# replace the target viewport with the dropped series — even for the identical
+# Study/Series the same-series no-op would normally skip. We thread a
+# ``force_reload`` flag from BOTH drop handlers (the VTKWidget _vw_dragdrop mixin
+# and QtFastContainer.dropEvent) through change_series_on_viewer →
+# _perform_series_switch_optimized → switch_series, defaulting False everywhere
+# so automatic / progressive / cache callers keep the cheap no-op unchanged.
+
+
+def test_force_reload_reloads_identical_series_same_path(container):
+    """force_reload=True (manual drop) must rebind even the SAME series+path that
+    the no-op would otherwise skip — the drop wins unconditionally."""
+    container._qt_bridge = _bridge("100000", series_path="X:/study_A/100000")
+    container.last_series_show = 2
+    ok = container.switch_series(
+        None, _meta("100000", series_path="X:/study_A/100000"),
+        series_index=2, force_reload=True,
+    )
+    assert ok is True
+    assert len(container._test_start_calls) == 1
+
+
+def test_without_force_reload_identical_series_still_skips(container):
+    """The automatic / cache path (force_reload default False) keeps the cheap
+    same-series no-op — force_reload must NOT leak into non-drop callers."""
+    container._qt_bridge = _bridge("100000", series_path="X:/study_A/100000")
+    container.last_series_show = 2
+    ok = container.switch_series(
+        None, _meta("100000", series_path="X:/study_A/100000"), series_index=5
+    )
+    assert ok is False
+    assert container._test_start_calls == []
+
+
+def test_source_both_drop_handlers_force_reload():
+    """Both manual-drop entry points must pass force_reload=True so the drop is
+    never swallowed by a same-series no-op."""
+    # VTKWidget drag-drop mixin
+    dragdrop = (VTK_WIDGET_DIR / "_vw_dragdrop.py").read_text(encoding="utf-8")
+    assert "force_reload=True" in dragdrop
+    # QtFastContainer.dropEvent
+    qfc = (VTK_WIDGET_DIR / "qt_fast_container.py").read_text(encoding="utf-8")
+    assert "force_reload=True" in qfc
+
+
+def test_source_force_reload_threaded_through_switch_paths():
+    """force_reload must be an accepted (default-False) parameter on the
+    dispatcher and both switch_series implementations, and must gate each
+    same-series no-op."""
+    # dispatcher: change_series_on_viewer accepts it AND its no-op is bypassed
+    vc = (VTK_WIDGET_DIR.parent / "_vc_switch.py").read_text(encoding="utf-8")
+    assert "force_reload: bool = False" in vc
+    assert "(not force_reload) and current_series_no" in vc
+    # FAST viewer switch_series accepts it AND its no-op is bypassed
+    qfc = (VTK_WIDGET_DIR / "qt_fast_container.py").read_text(encoding="utf-8")
+    assert "force_reload: bool = False" in qfc
+    assert "not force_reload" in qfc
+    # Advanced VTK viewer switch_series accepts it AND its no-op is bypassed
+    vws = (VTK_WIDGET_DIR / "_vw_series.py").read_text(encoding="utf-8")
+    assert "force_reload: bool = False" in vws
+    assert "_same_series_identity and not force_reload" in vws
