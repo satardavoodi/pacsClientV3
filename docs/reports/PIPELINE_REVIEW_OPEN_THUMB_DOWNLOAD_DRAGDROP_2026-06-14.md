@@ -215,3 +215,71 @@ Resilience:
 
 Note: the other clinic PC runs the **frozen installed build** — it needs a rebuilt
 installer to pick up these logging changes and the earlier drag-drop fix.
+
+---
+
+## 6. Deeper validation — KPIs, conflicts, test baseline (2026-06-14)
+
+### 6.1 Test baseline (proves the changes are isolated)
+Ran `tests/code/viewer + download_manager + system + ui_services`. Result with the changes:
+**73 failed, 1731 passed, 20 skipped**. To prove the 73 are not mine, the 4 logging-only
+files were reverted to their pre-change state and the viewer+DM suites re-run: **73 failed,
+1459 passed** — the **identical 73-failure set** (the extra passes at HEAD are only because
+the HEAD run also included system+ui_services). So **the logging additions introduce zero
+new failures.** Targeted suites for the changed surface stay green:
+`test_viewport_drop_replacement.py` + `test_resync_on_reopen.py` = **30 passed**.
+
+The 73 failures are **pre-existing**, from other in-flight work, not this pipeline:
+geometry `[R30_FIX] matrix[2,3]=-1.0` (`test_display_geometry`), B34/B35 prefetch &
+deferred-header-fill, FAST backend stage1/2 migration, theme retint (`test_dm_theme_retint`
+asserts a `main.py` string), and the AST-resolver false-positive in
+`test_vtk_widget_split::test_mixin_method_names_resolve` (fails identically for
+`_vw_backend` / `_vw_interactor`, which this work never touched). **Recommend addressing the
+viewer-suite red backlog separately — it is unrelated to open/thumbnail/download/drag-drop.**
+
+### 6.2 KPIs (from real session logs)
+| KPI (log marker) | n | p50 | p95 | max | read |
+|---|---|---|---|---|---|
+| `GetStudyThumbnails` total_ms (`NET_TIMING`) | 778 | 45 | 105 | 241 | thumbnails are cheap ✔ |
+| `GetPatientList` total_ms (`NET_TIMING`) | 496 | 349 | 2642 | 29583 | slow tail, but **off-thread** ⚠ |
+| FAST `headers_only_build` ms | 509 | 60 | 249 | 6761 | dominant load cost (server studies) |
+| `MAIN_THREAD_STALL` duration ms | 5528 | 153 | 1396 | 122194 | tagged cause: table_refresh 562 > viewer_switch 222 > fast_drag 45 |
+| right-panel `cache_gate` | 1565 | — | — | — | **grew=0 (cache hit) 1191 / grew=1 (fetch) 374 → ~76% no server call** ✔ |
+| `study_resync_check` | 18 | — | — | — | grew 8 / current 10 → fires modestly, not hammering ✔ |
+
+Reads: single-click thumbnail preview is fast and mostly served from local cache (76% hits);
+`GetPatientList`'s slow tail (used by per-modality enumeration) is the main server-side cost
+but runs off the GUI thread; the dominant main-thread stalls are **home table refresh**, not
+the viewer drop path; resync fires modestly.
+
+### 6.3 Cross-subsystem conflict analysis (no conflicts found)
+- **force_reload × cache / progressive / ZetaBoost:** `force_reload` defaults **False**
+  everywhere, so automatic / click / scroll / progressive / cache loads are byte-identical
+  and keep the cheap no-op. It only invalidates the full-series cache on a **manual drop**.
+  Cost of a forced re-drop of the same large series ≈ one `headers_only_build`
+  (p50 60 ms / p95 249 ms) — acceptable for a user-initiated action; not a hot loop.
+- **force_reload × multi-study isolation:** force_reload gates only the *same-series no-ops*;
+  it does **not** touch the cross-patient owner guards (STEP 3.5 / reconcile / resync). No
+  isolation bypass.
+- **force_reload × token race:** the drop still allocates `expected_token` and honors
+  `_is_request_current`; force_reload does not bypass the race guard, so **last drop wins**
+  on fast repeated drops (covered by the 16 drop tests).
+- **resync × consultation poller / GUI thread:** resync does all server I/O via
+  `asyncio.to_thread` with a 45 s timeout — **no network on the GUI thread** (honors the
+  poller-stall rule). Throttled 5 min/study so rapid reselect can't hammer the server.
+- **resync × download-manager dedup:** resync enqueues via `add_downloads(start_immediately
+  =True)`; the DM StateStore + on-disk resume scan dedup means a study already
+  downloading/complete is **not** re-fetched, even though STEP 3.5 may also enqueue it.
+  No duplicate downloads / no duplicate series rows.
+- **logging cost:** `[SERIES UNLOAD]` fires once per series switch (same cadence as the
+  existing `[SERIES SWITCH] COMPLETE`); `[DROP] apply` once per user drop; resync bracket
+  once per (throttled) resync. None are per-frame/per-slice/per-batch. Negligible.
+
+### 6.4 Reliability verdict
+The open / thumbnail / download / sync / drag-drop pipeline is **stable and internally
+consistent**; the two recent changes are correctly isolated behind a default-False flag and a
+throttled, off-thread, owner-guarded resync, with no detected conflict against caching,
+progressive loading, multi-study isolation, the race guard, the download manager, or the
+consultation poller. Residual items are the pre-existing **viewer test backlog** (§6.1, other
+teams' work) and proposals **P1/P2** (§4). One thing the headless tests cannot cover — a real
+Qt drag on a fast LAN — still wants the manual QA pass in §5 on the source build.
