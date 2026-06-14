@@ -703,7 +703,21 @@ class MainWindowWidget(QWidget):
         if w is None:
             return False
 
-        return (w is self.title_bar)
+        # Draggable surfaces = the title-bar frame itself PLUS the bare regions of
+        # the tab-strip container frames. The tab strip (tab_area, stretch=1) claims
+        # most of the title-bar width, leaving almost no raw title_bar background to
+        # grab — so dragging the empty tab-strip area must also move the window.
+        # Window buttons and the standard tab bar are already excluded above, and
+        # the user/account pill (user_info_container) is intentionally NOT included
+        # here because it is now clickable (Connected Accounts popup) — making it a
+        # drag surface would swallow that click. A click on an actual tab returns
+        # the tab/tabbar from widgetAt (not these frames), so tabs still work.
+        drag_surfaces = [
+            self.title_bar,
+            getattr(self, "tab_area", None),
+            getattr(self, "right_tab_area", None),
+        ]
+        return any(w is surface for surface in drag_surfaces if surface is not None)
 
     def _is_over_tabbar(self, global_pos) -> bool:
         """True اگر موس روی ناحیه QTabBar استاندارد QTabWidget باشد."""
