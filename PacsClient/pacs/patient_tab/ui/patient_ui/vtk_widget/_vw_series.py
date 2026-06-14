@@ -731,6 +731,19 @@ class _VWSeriesMixin:
 
     def cleanup_image_viewer(self, preserve_bound_backend=False):
         self._dbg_fast_state("cleanup_image_viewer")  # CP7 [FAST-DIAG]
+        # Lifecycle trace: the previous series' viewer is being torn down before
+        # the viewport is rebound (drag-drop replace, series switch, layout reset).
+        try:
+            logger.info(
+                "[SERIES UNLOAD] viewer=%s backend=%s qt_active=%s had_image_viewer=%s preserve_backend=%s",
+                getattr(self, 'id_vtk_widget', '?'),
+                getattr(self, '_active_backend', '?'),
+                bool(getattr(self, '_qt_bridge_active', False)),
+                self.image_viewer is not None,
+                bool(preserve_bound_backend),
+            )
+        except Exception:
+            pass
         _preserved_backend = str(getattr(self, '_active_backend', BACKEND_VTK) or BACKEND_VTK)
         # Hide and release Qt viewer resources if active
         if self._qt_bridge_active:

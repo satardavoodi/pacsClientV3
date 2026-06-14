@@ -291,6 +291,12 @@ class _HPSeriesMixin:
             uids = [str(u or '').strip() for u in (study_uids or []) if str(u or '').strip()]
             if not pid or not uids:
                 return
+            try:
+                self._log_open_trace(
+                    uids[0], 'resync_start', patient_id=pid,
+                    study_count=len(uids), forced=int(bool(force)))
+            except Exception:
+                pass
             dm = None
             changed_any = False
             for study_uid in uids:
@@ -387,6 +393,13 @@ class _HPSeriesMixin:
                         })
                 except Exception:
                     pass
+            try:
+                self._log_open_trace(
+                    uids[0], 'resync_complete', patient_id=pid,
+                    changed=int(bool(changed_any)),
+                    rerendered=int(bool(changed_any and self._is_active_patient_selection(patient_id, uids[0]))))
+            except Exception:
+                pass
         except Exception:
             pass
 

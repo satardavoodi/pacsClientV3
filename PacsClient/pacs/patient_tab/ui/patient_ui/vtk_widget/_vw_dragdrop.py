@@ -295,6 +295,10 @@ class _VWDragDropMixin:
                 # bypasses the same-series no-op and reloads from a clean
                 # (cache-invalidated) state, so the drop wins even when the same
                 # Study/Series is already open here or in another viewport.
+                logger.info(
+                    "[DROP] apply — series=%s target_viewer=%s force_reload=1",
+                    data, getattr(self, 'id_vtk_widget', '?'),
+                )
                 _method(
                     series_index=int(data),
                     flag_change_selected_widget=False,

@@ -859,6 +859,10 @@ class QtFastContainer(QWidget):
                 # same-series no-op and reloads from a clean (cache-invalidated)
                 # state, so the drop wins even when the same Study/Series is already
                 # open here or in another viewport.
+                logger.info(
+                    "[QtFastContainer DROP] apply — series=%s target_viewer=%s force_reload=1",
+                    series_number, self.id_vtk_widget,
+                )
                 _method(
                     series_index=int(series_number),
                     flag_change_selected_widget=False,
