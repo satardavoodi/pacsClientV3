@@ -559,41 +559,41 @@ class TestV2BandParams:
     # ── Proportional px_per_slice for ALL bands (v3.0.5 unification) ─────────
 
     def test_v2_tiny_proportional_px_per_slice(self):
-        """tiny band (10 ≤ n < 25) uses proportional dead-zone h/n × 0.86 (15% faster than small)."""
+        """tiny band (10 ≤ n < 25) uses proportional dead-zone h/n × 0.70 (v3.0.8 retune, 0.86→0.70)."""
         from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
         band = _DRAG_BAND_PARAMS["tiny"]
         assert band.get("px_per_slice_fixed") is None, "tiny must use divisor, not fixed"
-        assert band.get("base_divisor") == 0.86
-        # n=11, h=550  →  550/11 × 0.86 = 43.0
-        assert abs(_v2_effective_px_per_slice(11, 550.0, band) - 43.0) < 0.01
-        # n=20, h=400  →  400/20 × 0.86 = 17.2
-        assert abs(_v2_effective_px_per_slice(20, 400.0, band) - 17.2) < 0.01
+        assert band.get("base_divisor") == 0.70
+        # n=11, h=550  →  550/11 × 0.70 = 35.0
+        assert abs(_v2_effective_px_per_slice(11, 550.0, band) - 35.0) < 0.01
+        # n=20, h=400  →  400/20 × 0.70 = 14.0
+        assert abs(_v2_effective_px_per_slice(20, 400.0, band) - 14.0) < 0.01
         # Varies with h and n (not fixed)
         r1 = _v2_effective_px_per_slice(11, 500.0, band)
         r2 = _v2_effective_px_per_slice(20, 500.0, band)
         assert r1 != r2, "px must scale with n, not be a constant"
 
     def test_v2_sub50_bands_10pct_faster(self):
-        """micro/tiny (n<25) use base_divisor=0.86 (15% faster than small);
-        small (25-49) uses 0.99 (10% faster than medium+)."""
+        """micro/tiny (n<25) use base_divisor=0.70 (v3.0.8 retune, 0.86→0.70);
+        small (25-49) uses 0.80 (0.99→0.80)."""
         from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS, _v2_select_drag_band
         h, v = 500.0, 150.0
         std_traversal   = h * 1.1  / v   # medium+    ≈ 3.67 s
-        small_traversal = h * 0.99 / v   # small      ≈ 3.30 s  (10% faster than medium)
-        fast_traversal  = h * 0.86 / v   # micro/tiny ≈ 2.87 s  (15% faster than small)
-        # micro and tiny must use base_divisor=0.86
+        small_traversal = h * 0.80 / v   # small      ≈ 2.67 s
+        fast_traversal  = h * 0.70 / v   # micro/tiny ≈ 2.33 s
+        # micro and tiny must use base_divisor=0.70
         for band_name, n_example in [("micro", 5), ("tiny", 15)]:
             band = _DRAG_BAND_PARAMS[band_name]
-            assert band.get("base_divisor") == 0.86, f"{band_name} must use base_divisor=0.86"
+            assert band.get("base_divisor") == 0.70, f"{band_name} must use base_divisor=0.70"
             px = _v2_effective_px_per_slice(n_example, h, band)
             traversal = n_example * px / v
             assert traversal < std_traversal, f"{band_name} must be faster than medium"
             assert abs(traversal - fast_traversal) / fast_traversal < 0.01, (
                 f"{band_name}: traversal={traversal:.3f}s, expected≈{fast_traversal:.3f}s"
             )
-        # small must use base_divisor=0.99 (10% faster than medium, unchanged)
+        # small must use base_divisor=0.80
         band_s = _DRAG_BAND_PARAMS["small"]
-        assert band_s.get("base_divisor") == 0.99, "small must use base_divisor=0.99"
+        assert band_s.get("base_divisor") == 0.80, "small must use base_divisor=0.80"
         px_s = _v2_effective_px_per_slice(35, h, band_s)
         traversal_s = 35 * px_s / v
         assert traversal_s < std_traversal, "small must be faster than medium"
@@ -607,30 +607,32 @@ class TestV2BandParams:
         assert _v2_select_drag_band(50) is _DRAG_BAND_PARAMS["medium"]
 
     def test_v2_small_proportional_px_per_slice(self):
-        """small band uses proportional dead-zone h/n × 0.99 — 10% faster, no fixed constant."""
+        """small band uses proportional dead-zone h/n × 0.80 (v3.0.8 retune, 0.99→0.80)."""
         from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
         band = _DRAG_BAND_PARAMS["small"]
         assert band.get("px_per_slice_fixed") is None, "small must use divisor, not fixed"
-        assert band.get("base_divisor") == 0.99
-        # n=40, h=440  →  440/40 × 0.99 = 10.89
-        assert abs(_v2_effective_px_per_slice(40, 440.0, band) - 10.89) < 0.01
-        # n=30, h=300  →  300/30 × 0.99 = 9.9
-        assert abs(_v2_effective_px_per_slice(30, 300.0, band) - 9.9) < 0.01
+        assert band.get("base_divisor") == 0.80
+        # n=40, h=440  →  440/40 × 0.80 = 8.8
+        assert abs(_v2_effective_px_per_slice(40, 440.0, band) - 8.8) < 0.01
+        # n=30, h=300  →  300/30 × 0.80 = 8.0
+        assert abs(_v2_effective_px_per_slice(30, 300.0, band) - 8.0) < 0.01
 
-    def test_v2_tiny_no_gain(self):
-        """tiny band disables velocity gain — v_onset and gain_max enforce no acceleration."""
+    def test_v2_tiny_mild_gain(self):
+        """tiny band has MILD velocity gain (v3.0.8): v_onset=450, gain_max=1.2 — power-user
+        acceleration above 450 px/s without affecting clinical pace."""
         from modules.viewer.fast.qt_slice_viewer import _DRAG_BAND_PARAMS
         band = _DRAG_BAND_PARAMS["tiny"]
-        assert band["v_onset"] > 1e8, "tiny v_onset must be effectively infinite"
-        assert band["gain_max"] == 1.0, "tiny must have gain_max=1.0"
+        assert band["v_onset"] == 450.0, "tiny v_onset is 450 px/s (v3.0.8 mild gain)"
+        assert band["gain_max"] == 1.2, "tiny gain_max=1.2"
         assert band["max_per_event"] == 1
 
-    def test_v2_small_no_gain(self):
-        """small band disables velocity gain in the revised model."""
+    def test_v2_small_mild_gain(self):
+        """small band has MILD velocity gain (v3.0.8): v_onset=500, gain_max=1.3 — rapid scanning
+        at high speed without clinical-pace interference."""
         from modules.viewer.fast.qt_slice_viewer import _DRAG_BAND_PARAMS
         band = _DRAG_BAND_PARAMS["small"]
-        assert band["v_onset"] > 1e8, "small v_onset must be effectively infinite"
-        assert band["gain_max"] == 1.0, "small must have gain_max=1.0"
+        assert band["v_onset"] == 500.0, "small v_onset is 500 px/s (v3.0.8 mild gain)"
+        assert band["gain_max"] == 1.3, "small gain_max=1.3"
         assert band["max_per_event"] == 1
 
     # ── Safety floor ──────────────────────────────────────────────────────
@@ -686,8 +688,8 @@ class TestV2BandParams:
         """micro/tiny deliver h×0.86/v (15% faster than small); small delivers h×0.99/v; medium…huge deliver h×1.1/v."""
         from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
         h, v = 500.0, 150.0
-        tiny_traversal = h * 0.86 / v   # ≈ 2.87 s — micro/tiny
-        fast_traversal = h * 0.99 / v   # ≈ 3.30 s — small
+        tiny_traversal = h * 0.70 / v   # ≈ 2.33 s — micro/tiny
+        fast_traversal = h * 0.80 / v   # ≈ 2.67 s — small
         std_traversal  = h * 1.1  / v   # ≈ 3.67 s — medium…huge
         tiny_cases = [
             ("micro",  5), ("micro",  8),
@@ -725,16 +727,16 @@ class TestV2BandParams:
             )
 
     def test_v2_uniform_base_divisor_all_bands(self):
-        """Every band has no fixed constant; micro/tiny=0.86, small=0.99, medium…huge=1.1."""
+        """Every band has no fixed constant; micro/tiny=0.70, small=0.80, medium…huge=1.1 (v3.0.8)."""
         from modules.viewer.fast.qt_slice_viewer import _DRAG_BAND_PARAMS
         for name, params in _DRAG_BAND_PARAMS.items():
             assert params.get("px_per_slice_fixed") is None, (
                 f"{name}: production bands must use divisor model (px_per_slice_fixed must be None)"
             )
             if name in ("micro", "tiny"):
-                expected_div = 0.86
+                expected_div = 0.70
             elif name == "small":
-                expected_div = 0.99
+                expected_div = 0.80
             else:
                 expected_div = 1.1
             assert params.get("base_divisor") == expected_div, (
@@ -744,13 +746,13 @@ class TestV2BandParams:
     def test_v2_traversal_invariant_different_heights(self):
         """Traversal-time invariant holds across different viewport heights.
 
-        micro/tiny → h × 0.86 / v (faster); small → h × 0.99 / v; large/huge → h × 1.1 / v (standard).
+        micro/tiny → h × 0.70 / v (v3.0.8); small → h × 0.80 / v; large/huge → h × 1.1 / v (standard).
         """
         from modules.viewer.fast.qt_slice_viewer import _v2_effective_px_per_slice, _DRAG_BAND_PARAMS
         v = 150.0
         for h in [300.0, 500.0, 800.0]:
-            tiny_expected = h * 0.86 / v
-            fast_expected = h * 0.99 / v
+            tiny_expected = h * 0.70 / v
+            fast_expected = h * 0.80 / v
             std_expected  = h * 1.1  / v
             for band_name, n, expected in [
                 ("tiny",  15, tiny_expected),

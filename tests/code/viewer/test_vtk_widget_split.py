@@ -450,7 +450,9 @@ _BUILTINS_AND_IMPLICIT = {
     "issubclass", "getattr", "setattr", "hasattr", "delattr", "id", "hex",
     "abs", "min", "max", "sum", "round", "sorted", "reversed", "enumerate",
     "zip", "map", "filter", "any", "all", "next", "iter", "open", "repr",
-    "hash", "callable", "ValueError", "TypeError", "KeyError", "IndexError",
+    "hash", "callable", "object", "frozenset", "complex", "vars", "dir",
+    "format", "chr", "ord", "slice", "divmod", "pow", "globals", "locals",
+    "ValueError", "TypeError", "KeyError", "IndexError",
     "AttributeError", "RuntimeError", "StopIteration", "FileNotFoundError",
     "OSError", "ImportError", "IOError", "Exception", "BaseException",
     "NotImplementedError", "NameError", "OverflowError", "ZeroDivisionError",
@@ -479,6 +481,9 @@ def _collect_imported_names(tree: ast.Module) -> set[str]:
                     names.add(target.id)
         elif isinstance(node, ast.FunctionDef):
             # Module-level function defs
+            names.add(node.name)
+        elif isinstance(node, ast.ClassDef):
+            # Module-level class defs (helper classes referenced by methods, e.g. _QtBridgeStyle)
             names.add(node.name)
     return names
 
@@ -556,8 +561,25 @@ def _collect_referenced_global_names(tree: ast.Module) -> dict[str, list[int]]:
                                 if isinstance(e, ast.Name):
                                     local_names.add(e.id)
                 elif isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                    # nested function: treat its name as local
+                    # nested function: its name AND its parameters are local
+                    # (e.g. def _deferred_release(_k=_key): ...)
                     local_names.add(stmt.name)
+                    for a in (stmt.args.args + stmt.args.posonlyargs
+                              + stmt.args.kwonlyargs):
+                        local_names.add(a.arg)
+                    if stmt.args.vararg:
+                        local_names.add(stmt.args.vararg.arg)
+                    if stmt.args.kwarg:
+                        local_names.add(stmt.args.kwarg.arg)
+                elif isinstance(stmt, ast.Lambda):
+                    # lambda parameters are local (e.g. lambda d=delay_ms: ...)
+                    for a in (stmt.args.args + stmt.args.posonlyargs
+                              + stmt.args.kwonlyargs):
+                        local_names.add(a.arg)
+                    if stmt.args.vararg:
+                        local_names.add(stmt.args.vararg.arg)
+                    if stmt.args.kwarg:
+                        local_names.add(stmt.args.kwarg.arg)
                 elif isinstance(stmt, ast.ClassDef):
                     # nested class: treat its name as local
                     local_names.add(stmt.name)

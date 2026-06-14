@@ -7,6 +7,7 @@ import logging
 import os
 import time
 import threading
+import gc  # GC threshold save/restore around heavy series loads (was used un-imported)
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import QApplication
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing

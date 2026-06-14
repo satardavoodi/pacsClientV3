@@ -24,6 +24,7 @@ def test_set_slice_skips_overlay_sync_when_no_overlays():
         _emit_orientation_audit_active=lambda **_kwargs: None,
         _emit_advanced_vtk_orientation_audit=lambda _idx: None,
         _emit_axial_stack_order_policy_audit=lambda _idx: None,
+        _emit_mg_parity_trace=lambda _idx: None,
         flag_set_custom_window_level=True,
         update_corners_actors=lambda: calls.__setitem__("corners", calls["corners"] + 1),
         _sync_all_overlays_extent=lambda: calls.__setitem__("overlay_sync", calls["overlay_sync"] + 1),

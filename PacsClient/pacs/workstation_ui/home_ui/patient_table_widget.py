@@ -2851,6 +2851,38 @@ class PatientTableWidget(QWidget):
             print(f"Error refreshing download statuses: {e}")
             self.refresh_btn.setEnabled(True)
 
+    def refresh_download_statuses_local_only(self):
+        """Recompute every visible study's downloaded/green status from disk,
+        WITHOUT any server call or button animation.
+
+        Used after a storage clear (Settings -> Viewer Configuration ->
+        Information Storage): disk is the source of truth, so a study whose files
+        were just deleted must stop showing as downloaded/green. Unlike
+        ``refresh_download_statuses()`` this deliberately does NOT animate the
+        refresh button and does NOT clear the report cache / emit
+        ``reportRefreshRequested`` (which would re-pull the report column from the
+        server). It touches only the local download-status badges, keeping the
+        blast radius of a storage clear as small as possible. Reuses the same
+        per-study disk check (``update_study_download_status`` ->
+        ``_check_study_download_status`` -> ``check_study_complete``).
+
+        Returns the number of rows re-evaluated (0 on any failure)."""
+        try:
+            # Force a fresh disk check (the per-study cache is consulted first).
+            self._download_status_cache.clear()
+            count = 0
+            for row in range(self.results_table.rowCount()):
+                uid_item = self.results_table.item(row, COL['study_uid'])
+                if uid_item:
+                    study_uid = uid_item.text()
+                    if study_uid:
+                        self.update_study_download_status(study_uid)
+                        count += 1
+            return count
+        except Exception as e:
+            print(f"Error refreshing local download statuses: {e}")
+            return 0
+
     def update_visited_status(self, study_uid: str, status: str = 'opened'):
         """
         Update patient name color based on status:

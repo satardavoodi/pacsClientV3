@@ -4,9 +4,9 @@ import logging
 import shutil
 import ctypes
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Dict, List
+from typing import Any, Dict, List
 
 from PacsClient.utils.config import (
     ATTACHMENT_PATH,
@@ -37,6 +37,9 @@ class CleanupResult:
     files_deleted: int
     db_rows_affected: int
     message: str
+    # Non-fatal partial-failure notes (e.g. files deleted but DB cleanup failed).
+    # Empty on a fully-consistent clean. The UI should surface these to the user.
+    warnings: List[str] = field(default_factory=list)
 
 
 class LocalStorageCleanupManager:
@@ -60,6 +63,145 @@ class LocalStorageCleanupManager:
     def invalidate_caches(self) -> None:
         self._folder_usage_cache = None
         self._folder_usage_cache_ts = 0.0
+
+    def _clear_thumbnail_store(self, warnings: List[str] | None = None) -> None:
+        """Clear the in-memory ThumbnailStore so stale bytes do not survive a disk
+        clear (otherwise a deleted thumbnail could still display from RAM until LRU
+        eviction or restart)."""
+        try:
+            from modules.storage.thumbnail_store import ThumbnailStore
+            ThumbnailStore.instance().clear()
+        except Exception as exc:  # best-effort; never block a clean over this
+            logger.debug("[storage-cleanup] ThumbnailStore.clear skipped: %s", exc)
+            if warnings is not None:
+                warnings.append(f"in-memory thumbnail cache not cleared: {exc}")
+
+    def validate_storage_consistency(self) -> Dict[str, Any]:
+        """Read-only consistency check between the database and on-disk files.
+
+        Disk is the source of truth for download status (get_study_download_status
+        reads the folder, not a DB flag), so this surfaces the mismatches that
+        confuse the app and the green/downloaded badge:
+          * db_studies_missing_files  — a studies row whose SOURCE_PATH/<uid> folder
+            is gone/empty (DB still 'knows' a study whose images were cleared)
+          * orphan_disk_studies       — a SOURCE_PATH/<uid> folder with no studies row
+          * thumbnails_missing_source — series.thumbnail_path set but the PNG is gone
+        Makes NO changes. Pair with repair_storage_consistency().
+        """
+        report: Dict[str, Any] = {
+            "db_studies_missing_files": [],
+            "orphan_disk_studies": [],
+            "thumbnails_missing_source": [],
+            "counts": {},
+        }
+        try:
+            db_uids: set[str] = set()
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT study_uid FROM studies "
+                    "WHERE study_uid IS NOT NULL AND study_uid != ''"
+                )
+                db_uids = {str(r[0]) for r in cur.fetchall() if r and r[0]}
+                cur.execute("PRAGMA table_info(series)")
+                scols = {r[1] for r in cur.fetchall()}
+                if "thumbnail_path" in scols:
+                    cur.execute(
+                        "SELECT thumbnail_path FROM series "
+                        "WHERE thumbnail_path IS NOT NULL AND thumbnail_path != ''"
+                    )
+                    for r in cur.fetchall():
+                        tp = str(r[0]) if r and r[0] else ""
+                        if tp and not Path(tp).exists():
+                            report["thumbnails_missing_source"].append(tp)
+
+            # DB study rows whose on-disk folder is gone or empty.
+            for uid in db_uids:
+                folder = SOURCE_PATH / uid
+                try:
+                    present = folder.exists() and any(folder.iterdir())
+                except Exception:
+                    present = False
+                if not present:
+                    report["db_studies_missing_files"].append(uid)
+
+            # Disk study folders with no DB row.
+            try:
+                if SOURCE_PATH.exists():
+                    for child in SOURCE_PATH.iterdir():
+                        if child.is_dir() and child.name not in db_uids:
+                            report["orphan_disk_studies"].append(child.name)
+            except Exception:
+                pass
+
+            report["counts"] = {
+                "db_studies": len(db_uids),
+                "db_studies_missing_files": len(report["db_studies_missing_files"]),
+                "orphan_disk_studies": len(report["orphan_disk_studies"]),
+                "thumbnails_missing_source": len(report["thumbnails_missing_source"]),
+            }
+            logger.info("[storage-consistency] %s", report["counts"])
+        except Exception as exc:
+            logger.error("[storage-consistency] validation failed: %s", exc, exc_info=True)
+            report["error"] = str(exc)
+        return report
+
+    def repair_storage_consistency(self, report: Dict[str, Any] | None = None) -> Dict[str, Any]:
+        """Reset the DATABASE to match disk (disk = source of truth). Conservative:
+          * removes studies (+ their series/instances) whose files are gone, so the
+            download status reverts to 'not_downloaded' and the green badge clears
+          * NULLs series.thumbnail_path entries whose PNG is missing
+        NEVER deletes disk files and NEVER touches a study whose files are present, so
+        a still-downloaded patient is unaffected. orphan_disk_studies are only reported
+        (the files may be a valid not-yet-indexed import). Series/instances are deleted
+        explicitly so it is correct regardless of the connection's foreign-key setting.
+        """
+        if report is None:
+            report = self.validate_storage_consistency()
+        summary: Dict[str, Any] = {"removed_db_studies": 0, "nulled_thumbnails": 0, "warnings": []}
+        try:
+            with get_db_connection() as conn:
+                cur = conn.cursor()
+                for uid in list(report.get("db_studies_missing_files", []) or []):
+                    try:
+                        cur.execute(
+                            "DELETE FROM instances WHERE series_fk IN "
+                            "(SELECT series_pk FROM series WHERE study_fk IN "
+                            "(SELECT study_pk FROM studies WHERE study_uid = ?))",
+                            (str(uid),),
+                        )
+                        cur.execute(
+                            "DELETE FROM series WHERE study_fk IN "
+                            "(SELECT study_pk FROM studies WHERE study_uid = ?)",
+                            (str(uid),),
+                        )
+                        cur.execute("DELETE FROM studies WHERE study_uid = ?", (str(uid),))
+                        summary["removed_db_studies"] += int(cur.rowcount or 0)
+                    except Exception as exc:
+                        summary["warnings"].append(f"failed removing DB study {uid}: {exc}")
+                cur.execute("PRAGMA table_info(series)")
+                scols = {r[1] for r in cur.fetchall()}
+                if "thumbnail_path" in scols:
+                    for tp in list(report.get("thumbnails_missing_source", []) or []):
+                        try:
+                            cur.execute(
+                                "UPDATE series SET thumbnail_path = NULL, main_thumbnail = 0 "
+                                "WHERE thumbnail_path = ?",
+                                (str(tp),),
+                            )
+                            summary["nulled_thumbnails"] += int(cur.rowcount or 0)
+                        except Exception as exc:
+                            summary["warnings"].append(f"failed nulling thumbnail {tp}: {exc}")
+            self._clear_thumbnail_store(summary["warnings"])
+            self.invalidate_caches()
+            logger.info(
+                "[storage-consistency] repair: removed_db_studies=%d nulled_thumbnails=%d warnings=%d",
+                summary["removed_db_studies"], summary["nulled_thumbnails"], len(summary["warnings"]),
+            )
+        except Exception as exc:
+            summary["warnings"].append(f"repair failed: {exc}")
+            logger.error("[storage-consistency] repair failed: %s", exc, exc_info=True)
+        return summary
 
     @staticmethod
     def format_size(size_bytes: int) -> str:
@@ -143,15 +285,31 @@ class LocalStorageCleanupManager:
 
     def cleanup_patients_folder(self) -> CleanupResult:
         files_deleted, folders_touched = self._clear_paths([SOURCE_PATH])
-        db_rows = self._cleanup_patients_db()
+        warnings: List[str] = []
+        db_ok = True
+        try:
+            db_rows = self._cleanup_patients_db()
+        except Exception as exc:
+            db_ok = False
+            db_rows = 0
+            warnings.append(f"patient files deleted but DB cleanup failed: {exc}")
+            logger.error(
+                "[storage-cleanup] patients DB cleanup failed after file deletion: %s",
+                exc, exc_info=True,
+            )
+        # Patient images are gone -> their cached thumbnail bytes must not survive in
+        # RAM (would otherwise still preview a cleared patient until LRU eviction).
+        self._clear_thumbnail_store(warnings)
         self.invalidate_caches()
         return CleanupResult(
-            success=True,
+            success=db_ok,
             category="patients",
             folders_touched=folders_touched,
             files_deleted=files_deleted,
             db_rows_affected=db_rows,
-            message="Patients data folder cleaned and patient-linked DB rows removed.",
+            message="Patients data folder cleaned and patient-linked DB rows removed."
+                    + ("" if db_ok else " WARNING: DB cleanup failed — run the storage consistency check."),
+            warnings=warnings,
         )
 
     def cleanup_education_folder(self) -> CleanupResult:
@@ -169,15 +327,31 @@ class LocalStorageCleanupManager:
 
     def cleanup_cache_folder(self) -> CleanupResult:
         files_deleted, folders_touched = self._clear_paths(self.cache_paths)
-        db_rows = self._cleanup_cache_db()
+        warnings: List[str] = []
+        db_ok = True
+        try:
+            db_rows = self._cleanup_cache_db()
+        except Exception as exc:
+            db_ok = False
+            db_rows = 0
+            warnings.append(f"cache files deleted but DB pointer reset failed: {exc}")
+            logger.error(
+                "[storage-cleanup] cache DB cleanup failed after file deletion: %s",
+                exc, exc_info=True,
+            )
+        # BUG-1 fix: drop the in-memory ThumbnailStore so deleted thumbnails are not
+        # still served from RAM after the files are gone.
+        self._clear_thumbnail_store(warnings)
         self.invalidate_caches()
         return CleanupResult(
-            success=True,
+            success=db_ok,
             category="cache",
             folders_touched=folders_touched,
             files_deleted=files_deleted,
             db_rows_affected=db_rows,
-            message="Cache folders cleaned and cache-linked DB references reset.",
+            message="Cache folders cleaned and cache-linked DB references reset."
+                    + ("" if db_ok else " WARNING: DB reset failed — run the storage consistency check."),
+            warnings=warnings,
         )
 
     def cleanup_printing_folder(self) -> CleanupResult:

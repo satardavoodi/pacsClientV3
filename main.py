@@ -1127,7 +1127,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.2.8")
+    app.setApplicationVersion("3.2.9")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1141,8 +1141,18 @@ if __name__ == "__main__":
         themed_stylesheet = theme_manager.build_application_stylesheet(theme) + get_scroll_area_style()
         app.setStyleSheet(themed_stylesheet)
 
+    def _apply_application_theme_deferred(theme=None):
+        # Defer the expensive full-application setStyleSheet (it re-polishes
+        # every widget in the app) OUT of the themeChanged signal emission, so a
+        # theme re-tint never hitches the UI inside the emit. The initial apply
+        # below stays synchronous (first paint needs the stylesheet); only the
+        # themeChanged-triggered re-apply is deferred to the next event-loop
+        # turn. Guarded by tests/code/download_manager/test_dm_theme_retint.py.
+        from PySide6.QtCore import QTimer as _QTimer
+        _QTimer.singleShot(0, lambda: _apply_application_theme(theme))
+
     _apply_application_theme(theme_manager.current_theme())
-    theme_manager.themeChanged.connect(_apply_application_theme)
+    theme_manager.themeChanged.connect(_apply_application_theme_deferred)
     
     # Initialize qtawesome fonts (required for icons in PyInstaller builds)
     try:

@@ -545,7 +545,18 @@ class _MprViewsMixin:
 
         volume_mapper = vtk.vtkGPUVolumeRayCastMapper()
         volume_mapper.SetInputData(self.image_data)
-        volume_mapper.SetAutoAdjustSampleDistances(0)
+        # Interactive VRT quality (2026-06-14). On a large volume (e.g. 46293 = 512x512x198)
+        # the previous fixed config — AutoAdjustSampleDistances OFF + a fine fixed SampleDistance
+        # — ray-cast at FULL quality on every rotation frame, so rotation could never go coarse and
+        # felt slow. The trackball style already raises the render window's desired update rate
+        # during a drag; enabling auto-adjust lets the GPU mapper honor it: COARSE while rotating
+        # (smooth), FULL quality the instant the camera settles (no still-image regression). The
+        # fixed SampleDistance(0.5) stays as the at-rest target. Reversible: set
+        # AIPACS_ZETA_MPR_VRT_ADAPTIVE=0 to restore the legacy fixed-quality-every-frame behavior.
+        import os as _os
+        _vrt_adaptive = _os.environ.get("AIPACS_ZETA_MPR_VRT_ADAPTIVE", "1").strip().lower() \
+            not in ("0", "false", "no", "off")
+        volume_mapper.SetAutoAdjustSampleDistances(1 if _vrt_adaptive else 0)
         volume_mapper.SetSampleDistance(0.5)
         volume_mapper.SetImageSampleDistance(1.0)
         volume_mapper.SetMaxMemoryInBytes(1024 * 1024 * 512)
@@ -609,6 +620,16 @@ class _MprViewsMixin:
         interactor = vtk_widget.GetRenderWindow().GetInteractor()
         style = VRTInteractorStyle(self, vtk_widget)
         interactor.SetInteractorStyle(style)
+
+        if _vrt_adaptive:
+            # Target ~15 fps while interacting (mapper goes coarse), refine at rest. Pairs with
+            # AutoAdjustSampleDistances above. Guarded so a VTK build without these setters can't
+            # break viewer creation.
+            try:
+                interactor.SetDesiredUpdateRate(15.0)
+                interactor.SetStillUpdateRate(0.001)
+            except Exception:
+                pass
 
         vtk_widget.Initialize()
         vtk_widget.Start()

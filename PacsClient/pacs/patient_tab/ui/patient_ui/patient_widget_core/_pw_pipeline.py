@@ -146,39 +146,56 @@ class _PWPipelineMixin:
         Register all interactive buttons with the button safeguard.
         This prevents multiple simultaneous button clicks that could cause hangs.
         """
+        # A button attribute can still exist on `self` (hasattr True) while its
+        # underlying Qt C++ object has already been deleted — e.g. a patient tab
+        # closed during multi-tab churn while this init ran. Passing such a dead
+        # wrapper into register_buttons raised 'Internal C++ object deleted',
+        # which aborted the WHOLE batch (observed: '[PatientWidget] Error
+        # registering buttons with safeguard: Internal C++ object deleted').
+        # Skip deleted widgets so live buttons still register, and make
+        # auto-discover best-effort so one dead child cannot block the rest.
         try:
-            buttons_to_register = []
-            
-            # Sidebar buttons
-            if hasattr(self, 'btn_series'):
-                buttons_to_register.append(self.btn_series)
-            if hasattr(self, 'btn_reception'):
-                buttons_to_register.append(self.btn_reception)
-            if hasattr(self, 'btn_ai_chat'):
-                buttons_to_register.append(self.btn_ai_chat)
-            if hasattr(self, 'btn_ai_module'):
-                buttons_to_register.append(self.btn_ai_module)
-            if hasattr(self, 'btn_advanced_tools'):
-                buttons_to_register.append(self.btn_advanced_tools)
-            
-            # Advanced Analysis buttons
-            if hasattr(self, 'btn_advanced_mpr'):
-                buttons_to_register.append(self.btn_advanced_mpr)
-            if hasattr(self, 'btn_stitching'):
-                buttons_to_register.append(self.btn_stitching)
-            
-            # Reception panel buttons
-            if hasattr(self, 'btn_open_folder_attachments'):
-                buttons_to_register.append(self.btn_open_folder_attachments)
-            
-            # Register all buttons
+            from shiboken6 import isValid as _sip_isvalid  # PySide6
+        except Exception:
+            _sip_isvalid = None
+
+        def _alive(b):
+            if b is None:
+                return False
+            if _sip_isvalid is not None:
+                try:
+                    return bool(_sip_isvalid(b))
+                except Exception:
+                    return False
+            try:
+                b.objectName()  # cheap touch; RuntimeError if C++ object gone
+                return True
+            except Exception:
+                return False
+
+        try:
+            _names = (
+                'btn_series', 'btn_reception', 'btn_ai_chat', 'btn_ai_module',
+                'btn_advanced_tools', 'btn_advanced_mpr', 'btn_stitching',
+                'btn_open_folder_attachments',
+            )
+            buttons_to_register = [
+                b for b in (getattr(self, n, None) for n in _names) if _alive(b)
+            ]
+
             self.button_safeguard.register_buttons(buttons_to_register)
-            
-            # Also auto-discover any other buttons we might have missed
-            self.button_safeguard.auto_discover_buttons()
-            
+
+            # Auto-discover any other buttons — best-effort: a deleted child in the
+            # tree must not lose the explicit registration that already succeeded.
+            try:
+                self.button_safeguard.auto_discover_buttons()
+            except Exception as _disc_err:
+                logger.warning(
+                    "[PatientWidget] auto_discover_buttons skipped (%s)", _disc_err
+                )
+
             logger.info(f"[PatientWidget] Registered {len(buttons_to_register)} buttons with safeguard")
-            
+
         except Exception as e:
             logger.error(f"[PatientWidget] Error registering buttons with safeguard: {e}")
             import traceback

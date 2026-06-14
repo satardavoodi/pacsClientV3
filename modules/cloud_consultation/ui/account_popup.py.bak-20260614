@@ -362,21 +362,7 @@ class AccountPopup(QWidget):
             from .manage_account_dialog import ManageAccountDialog
 
             self.close()
-            # NON-MODAL (live bug 2026-06-13): a modal exec() blocks the docked
-            # Web Browser where the hub / identity Google login renders, so the
-            # user cannot complete sign-in. Show it modeless and keep a strong
-            # reference on the QApplication so it is not garbage-collected while
-            # open (dropped when the dialog is destroyed).
-            dlg = ManageAccountDialog(auth_user=self.auth_user, parent=self.parent())
-            dlg.setAttribute(Qt.WA_DeleteOnClose, True)
-            app = QApplication.instance()
-            if app is not None:
-                setattr(app, "_aipacs_manage_account_dialog", dlg)
-                dlg.destroyed.connect(
-                    lambda *_: setattr(app, "_aipacs_manage_account_dialog", None)
-                )
-            dlg.show()
-            dlg.raise_()
+            ManageAccountDialog(auth_user=self.auth_user, parent=self.parent()).exec()
         except Exception as exc:
             logger.warning("open manage account failed: %s", exc)
 

@@ -28,6 +28,7 @@ from PySide6.QtWidgets import QApplication, QLabel  # noqa: E402
 
 from PacsClient.pacs.workstation_ui.home_ui.home_info_panel import (  # noqa: E402
     COMPANY_INFO,
+    PERSIAN_EDITION,
     RELEASE_INFO,
     HomeInfoPanel,
 )
@@ -105,6 +106,45 @@ def test_add_section_extends_without_redesign(qapp):
     texts = " | ".join(_labels(panel))
     assert "MAINTENANCE" in texts and "Server window: Friday 22:00" in texts
     assert len(panel.findChildren(QLabel)) == before + 2
+
+
+# ── Persian customized edition notice ───────────────────────────────────────
+def test_persian_edition_data_complete():
+    # English (full) notice carries the partner + version + collaboration line
+    en = " ".join(PERSIAN_EDITION["en"])
+    assert "AI-PACS Version 3.2.8" in en
+    assert "Iran Nobat" in en
+    assert "customized" in en.lower() and "localized" in en.lower()
+    assert "collaboration with Iran Nobat" in en
+    # Farsi rendering of the same notice (partner name + brand present)
+    fa = " ".join(PERSIAN_EDITION["fa"])
+    assert "ایران نوبت" in fa
+    assert "AI-PACS" in fa
+    assert len(PERSIAN_EDITION["fa"]) == len(PERSIAN_EDITION["en"])
+
+
+def test_panel_renders_persian_edition(qapp):
+    panel = HomeInfoPanel()
+    texts = " | ".join(_labels(panel))
+    # caption is uppercased by add_section
+    assert "PERSIAN CUSTOMIZED EDITION" in texts
+    # both languages reach the UI
+    assert "Developed by AI-PACS in collaboration with Iran Nobat." in texts
+    assert any("ایران نوبت" in t for t in _labels(panel))
+
+
+def test_persian_lines_render_right_to_left(qapp):
+    from PySide6.QtCore import Qt
+    panel = HomeInfoPanel()
+    fa_first = PERSIAN_EDITION["fa"][0]
+    matches = [l for l in panel.findChildren(QLabel) if l.text() == fa_first]
+    assert matches, "Farsi line not found in panel"
+    assert matches[0].layoutDirection() == Qt.RightToLeft
+
+
+def test_persian_edition_adds_no_extra_border():
+    # flat-design contract must hold: still exactly one bordered element (chip)
+    assert _SRC.count("border: 1px solid") == 1
 
 
 # ── wiring ────────────────────────────────────────────────────────────────

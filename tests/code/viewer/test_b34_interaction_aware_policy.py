@@ -617,6 +617,7 @@ class TestDirectionReversal:
             _prefetch_generation=3,
             _prefetch_request_epoch=7,
             _active_prefetch_targets={1, 2, 3},
+            _grow_future=None,
             _slices=[1, 2, 3],
             _current_index=2,
             _window=400.0,

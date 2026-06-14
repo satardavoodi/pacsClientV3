@@ -228,14 +228,12 @@ class HomeInfoPanel(QWidget):
         self.add_lines(PERSIAN_EDITION["fa"], rtl=True)
 
     # ── extensible section API ────────────────────────────────────────────
-    def add_section(self, title: str, lines: Iterable[str],
-                    rtl: bool = False) -> None:
+    def add_section(self, title: str, lines: Iterable[str]) -> None:
         """Append a flat section: quiet uppercase caption + body lines.
 
         The single entry point for ALL current and FUTURE content (release
         notes, maintenance notices, company news, regulatory updates…) —
-        callers never deal with styling or frames. Pass ``rtl=True`` for
-        right-to-left scripts (e.g. Farsi) so the body lines align correctly.
+        callers never deal with styling or frames.
         """
         self._add_gap(12)
         caption = QLabel(str(title).upper())
@@ -244,16 +242,13 @@ class HomeInfoPanel(QWidget):
             " letter-spacing: 1px; background: transparent; border: none;"
         )
         self._body_layout.addWidget(caption)
-        self.add_lines(lines, rtl=rtl)
+        self.add_lines(lines)
 
-    def add_lines(self, lines: Iterable[str], rtl: bool = False) -> None:
+    def add_lines(self, lines: Iterable[str]) -> None:
         for line in lines or []:
             lbl = QLabel(str(line))
             lbl.setWordWrap(True)
             lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
-            if rtl:
-                lbl.setLayoutDirection(Qt.RightToLeft)
-                lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
             lbl.setStyleSheet(
                 f"color: {self._text}; font-size: 11px; line-height: 1.45;"
                 " background: transparent; border: none; padding: 1px 0;"
@@ -267,4 +262,4 @@ class HomeInfoPanel(QWidget):
         self._body_layout.addWidget(gap)
 
 
-__all__ = ["HomeInfoPanel", "RELEASE_INFO", "COMPANY_INFO", "PERSIAN_EDITION"]
+__all__ = ["HomeInfoPanel", "RELEASE_INFO", "COMPANY_INFO"]

@@ -1,4 +1,4 @@
 {
-    "base_url": "http://localhost:8080/consult-form",
+    "base_url": "https://ai-pacs.com/consult-form",
     "enabled": true
 }

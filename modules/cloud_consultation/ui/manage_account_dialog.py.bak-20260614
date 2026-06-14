@@ -60,13 +60,6 @@ class ManageAccountDialog(QDialog):
         self._storage_bar = None
         self._p = palette()
         self.setWindowTitle("Manage Account")
-        # NON-MODAL (live bug 2026-06-13): never grab global input. A modal
-        # exec() freezes the docked Web Browser where the hub / identity Google
-        # login renders, so the user cannot complete sign-in. Opened via show()
-        # (see account_popup._open_manage_account); the connect flows also
-        # lower() this dialog so the browser stays reachable.
-        self.setModal(False)
-        self.setWindowModality(Qt.NonModal)
         self.setMinimumWidth(460)
         self._root = QVBoxLayout(self)
         self._root.setContentsMargins(18, 16, 18, 16)
@@ -183,7 +176,6 @@ class ManageAccountDialog(QDialog):
                 parent=self,
                 on_finished=lambda _accepted: self._rebuild(),
             )
-            self._lower_for_browser_login()
         except Exception as exc:
             logger.warning("aipacs_web sign-in failed to open: %s", exc)
             self._rebuild()
@@ -248,21 +240,6 @@ class ManageAccountDialog(QDialog):
         self._connect_worker.failed.connect(
             lambda m: QMessageBox.warning(self, "Google connection failed", m))
         self._connect_worker.start()
-        self._lower_for_browser_login()
-
-    def _lower_for_browser_login(self):
-        """Drop behind the docked Web Browser so the Google login is reachable.
-
-        The dialog is already non-modal (never blocks input); lowering it just
-        moves it out of the way while the user completes consent in the browser.
-        It stays alive and refreshes via the connect worker's done signal / the
-        sign-in dialog's on_finished callback.
-        """
-        try:
-            self.lower()
-            self.clearFocus()
-        except Exception:  # pragma: no cover - defensive
-            pass
 
     def _disconnect_hub(self, ident):
         if ident is None:

@@ -280,6 +280,42 @@ class ControlPanelWindow(object):
         except Exception:
             logger.exception("Failed to wire modality grid config signal")
 
+        # 2026-06-14: refresh the home patient list's downloaded/green badges
+        # whenever storage is cleared from Settings -> Viewer Configuration ->
+        # Information Storage. Without this, a study keeps showing as downloaded
+        # after its DICOM files were deleted (disk is the source of truth, but
+        # the table caches the per-study status until something invalidates it).
+        # Fully guarded so it can never break the modality-grid wiring above or
+        # app startup; the viewer-config tab is lazy, so this runs once it exists.
+        try:
+            panel = getattr(viewer_config, "storage_cleanup_panel", None)
+            if panel is not None and hasattr(panel, "storageChanged"):
+                panel.storageChanged.connect(self._on_storage_changed_refresh_home)
+        except Exception:
+            logger.exception("Failed to wire storage cleanup refresh signal")
+
+    def _on_storage_changed_refresh_home(self):
+        """Re-evaluate the home patient table's downloaded/green status after a
+        storage clear, so a study whose files were just deleted stops showing as
+        downloaded. Local-only recompute (disk is the source of truth via
+        check_study_complete); never raises into the UI.
+
+        Prefers the focused ``refresh_download_statuses_local_only`` (no server
+        call, no button animation) and only falls back to the broader
+        ``refresh_download_statuses`` if that method isn't present, so a storage
+        clear has the smallest possible blast radius."""
+        try:
+            home = getattr(self, "home_widget", None)
+            table = getattr(home, "patient_table_widget", None) if home else None
+            if table is None:
+                return
+            if hasattr(table, "refresh_download_statuses_local_only"):
+                table.refresh_download_statuses_local_only()
+            elif hasattr(table, "refresh_download_statuses"):
+                table.refresh_download_statuses()
+        except Exception:
+            logger.exception("Failed to refresh home download statuses after storage change")
+
     def _toggle_center_menu(self, *, page: str):
         """Show/hide the center menu and switch to the requested page."""
         try:

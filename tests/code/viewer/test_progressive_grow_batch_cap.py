@@ -32,20 +32,20 @@ from unittest.mock import patch, MagicMock
 # ---------------------------------------------------------------------------
 
 _SCAN_MODULE_PATH = (
-    Path(__file__).parent.parent.parent
+    Path(__file__).resolve().parents[3]
     / "modules" / "viewer" / "fast" / "dicom_header_scan.py"
 )
 _PIPELINE_MODULE_PATH = (
-    Path(__file__).parent.parent.parent
+    Path(__file__).resolve().parents[3]
     / "modules" / "viewer" / "fast" / "lightweight_2d_pipeline.py"
 )
 _PLUGIN_SCAN_PATH = (
-    Path(__file__).parent.parent.parent
+    Path(__file__).resolve().parents[3]
     / "builder" / "plugin package" / "packages" / "viewer"
     / "payload" / "python" / "modules" / "viewer" / "fast" / "dicom_header_scan.py"
 )
 _PLUGIN_PIPELINE_PATH = (
-    Path(__file__).parent.parent.parent
+    Path(__file__).resolve().parents[3]
     / "builder" / "plugin package" / "packages" / "viewer"
     / "payload" / "python" / "modules" / "viewer" / "fast" / "lightweight_2d_pipeline.py"
 )
@@ -203,13 +203,23 @@ def test_pipeline_defines_max_entries_constant_plugin():
 
 
 def test_pipeline_passes_max_entries_to_scan_canonical():
-    """A3b-canonical: refresh_file_list must pass max_new_entries to scan_series_header_entries."""
+    """A3b-canonical: refresh_file_list must pass a max_new_entries cap (derived from
+    _MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK) to scan_series_header_entries.
+
+    v3.x: the cap is selected per-tick — ``_max_grow`` = _MAX_PROGRESSIVE_GROW_ENTRIES_HEAVY
+    during heavy download, else _MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK — and passed as
+    ``max_new_entries=_max_grow``. Accept either the direct constant or the _max_grow form
+    (both keep the batch cap effective; verified at runtime by the A2 tests above).
+    """
     src = _src(_PIPELINE_MODULE_PATH)
-    # Must contain the kwarg name at the call site (inside refresh_file_list)
-    assert "max_new_entries=_MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK" in src, (
-        "[canonical] refresh_file_list does not pass "
-        "max_new_entries=_MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK to "
-        "scan_series_header_entries.  Without this the batch cap has no effect."
+    passes_cap = (
+        "max_new_entries=_MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK" in src
+        or "max_new_entries=_max_grow" in src
+    )
+    assert passes_cap and "_MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK" in src, (
+        "[canonical] refresh_file_list does not pass max_new_entries=<cap> to "
+        "scan_series_header_entries (cap from _MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK). "
+        "Without this the batch cap has no effect."
     )
 
 
@@ -218,8 +228,12 @@ def test_pipeline_passes_max_entries_to_scan_plugin():
     if not _PLUGIN_PIPELINE_PATH.exists():
         import pytest; pytest.skip("plugin copy not present")
     src = _src(_PLUGIN_PIPELINE_PATH)
-    assert "max_new_entries=_MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK" in src, (
-        "[plugin] refresh_file_list does not pass max_new_entries."
+    passes_cap = (
+        "max_new_entries=_MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK" in src
+        or "max_new_entries=_max_grow" in src
+    )
+    assert passes_cap and "_MAX_PROGRESSIVE_GROW_ENTRIES_PER_TICK" in src, (
+        "[plugin] refresh_file_list does not pass max_new_entries=<cap>."
     )
 
 

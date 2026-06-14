@@ -442,10 +442,15 @@ def test_apply_progressive_to_target_viewer_happy_path():
 #  S7: _apply_progressive_to_target_viewer — cache miss hides spinner
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def test_apply_progressive_to_target_viewer_cache_miss_hides_spinner():
+def test_apply_progressive_to_target_viewer_cache_miss_rearms_and_keeps_spinner():
     """
-    When _get_series_by_number_fast returns (None, None, 0), the method must
-    hide the spinner and NOT enter progressive mode (cleanup path).
+    BUG-1 fix (2026-06-04): on a cache miss after load ((None,None,0)), the method
+    must RE-ARM the awaiting marker and KEEP the spinner (within a bounded retry
+    budget) so the next progress/terminal signal re-finds this viewer and retries —
+    it must NOT clear+hide+orphan the viewer. The old clear+hide path orphaned the
+    drop (later signals became 'untargeted background … loader-only'); drops died
+    silently and only close+reopen recovered. The retries-exhausted path (>=40)
+    hides the spinner and gives up.
     """
     controller = _build_controller()
     sn = "3"
@@ -460,22 +465,30 @@ def test_apply_progressive_to_target_viewer_cache_miss_hides_spinner():
     controller._hide_spinner_for_widget = lambda w: hide_calls.append(w)
     controller._is_fast_viewer_mode = lambda: False
 
-    controller._apply_progressive_to_target_viewer(sn, total, vtk_w, node)
+    result = controller._apply_progressive_to_target_viewer(sn, total, vtk_w, node)
 
-    # Marker still cleared (happens before cache lookup)
-    assert vtk_w._awaiting_series_number is None
-
-    # Spinner hidden to clean up
-    assert len(hide_calls) == 1, f"Expected 1 hide call, got {len(hide_calls)}"
-    assert hide_calls[0] is vtk_w
-
+    # Re-armed (kept awaiting) so the next signal retries — viewer NOT orphaned
+    assert vtk_w._awaiting_series_number == sn, (
+        f"cache miss must re-arm the awaiting marker (got {vtk_w._awaiting_series_number!r})"
+    )
+    assert result is False, "cache miss returns False so the caller keeps the retry reachable"
+    # Spinner KEPT (not hidden) within the retry budget
+    assert len(hide_calls) == 0, f"spinner must be kept on a re-armed retry, got {len(hide_calls)} hide(s)"
     # No progressive mode on cache miss
     assert len(vtk_w._enter_progressive_calls) == 0
 
-    _kpi.record("S7: cache_miss", "spinner hidden once", len(hide_calls), passed=(len(hide_calls) == 1))
+    # Retries-exhausted path (>=40) still hides the spinner + gives up.
+    vtk_w._awaiting_apply_retries = 40
+    vtk_w._awaiting_apply_series = sn
+    controller._apply_progressive_to_target_viewer(sn, total, vtk_w, node)
+    assert len(hide_calls) == 1, "after 40 retries the spinner is hidden (give up)"
+
+    _kpi.record("S7: cache_miss", "marker re-armed (not orphaned)",
+                vtk_w._awaiting_series_number == sn, passed=(vtk_w._awaiting_series_number == sn))
+    _kpi.record("S7: cache_miss", "spinner kept then hidden after exhaustion",
+                len(hide_calls) == 1, passed=True)
     _kpi.record("S7: cache_miss", "no enter_progressive_mode on miss",
                 len(vtk_w._enter_progressive_calls), passed=(len(vtk_w._enter_progressive_calls) == 0))
-    _kpi.record("S7: cache_miss", "_awaiting_series_number cleared", True, passed=True)
     print("✅ S7 passed")
 
 

@@ -313,8 +313,11 @@ def test_viewport_container_styles_emphasize_active_selection():
     active = _VCLayoutMixin._viewport_container_styles(active=True)
     inactive = _VCLayoutMixin._viewport_container_styles(active=False)
 
-    assert "#60a5fa" in active
-    assert "rgba(96, 165, 250, 0.08)" in active
+    # Active border + inner tint now derive from the theme `accent` token,
+    # whose default is #3182ce = rgb(49,130,206) (was hard-coded sky-blue
+    # #60a5fa; see _vc_layout._viewport_container_styles docstring).
+    assert "#3182ce" in active
+    assert "rgba(49, 130, 206, 0.08)" in active
     assert "rgba(156, 163, 175, 0.72)" in inactive
     assert "rgba(15, 23, 42, 0.03)" in inactive
 
@@ -338,7 +341,7 @@ def test_change_container_border_applies_active_and_inactive_styles():
 
     assert active_container.properties["active"] is True
     assert inactive_container.properties["active"] is False
-    assert "#60a5fa" in active_container.stylesheet
+    assert "#3182ce" in active_container.stylesheet
     assert "rgba(156, 163, 175, 0.72)" in inactive_container.stylesheet
     assert selected_nodes == [selected_node]
     assert refline_calls == [True]

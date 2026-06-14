@@ -113,6 +113,7 @@ def _build_wl_bridge_stub():
     bridge.flag_set_custom_window_level = False
     bridge._wl_scroll_cache_ww = None
     bridge._wl_scroll_cache_wc = None
+    bridge._current_window_level = None
     bridge.qt_viewer = SimpleNamespace(
         set_image=lambda _img: None,
         set_window_level_values=lambda _ww, _wc: None,

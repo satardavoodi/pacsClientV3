@@ -155,6 +155,21 @@ class StorageCleanupPanelWidget(QWidget):
         refresh_btn.setCursor(Qt.PointingHandCursor)
         refresh_btn.clicked.connect(self._on_refresh_storage_info_clicked)
         refresh_row.addWidget(refresh_btn)
+
+        consistency_btn = QPushButton("🩺  Check Consistency")
+        consistency_btn.setStyleSheet(
+            "QPushButton { font-size: 14px; padding: 10px 20px; min-height: 40px; "
+            "background-color: #0d9488; border: none; border-radius: 6px; font-weight: 600; } "
+            "QPushButton:hover { background-color: #0f766e; }"
+        )
+        consistency_btn.setToolTip(
+            "Find DB/file mismatches (studies still marked downloaded but whose files "
+            "are gone, dangling thumbnails) and optionally repair them so the "
+            "green/downloaded status matches the actual local files."
+        )
+        consistency_btn.setCursor(Qt.PointingHandCursor)
+        consistency_btn.clicked.connect(self._on_check_consistency_clicked)
+        refresh_row.addWidget(consistency_btn)
         refresh_row.addStretch(1)
         folders_card_layout.addLayout(refresh_row)
 
@@ -337,23 +352,94 @@ class StorageCleanupPanelWidget(QWidget):
             else:
                 raise ValueError(f"Unknown cleanup category: {category}")
 
+            _warn = ""
+            if getattr(result, "warnings", None):
+                _warn = "\n\n⚠ Warnings:\n- " + "\n- ".join(result.warnings)
+            _ok = getattr(result, "success", True)
             QMessageBox.information(
                 self,
-                "Cleanup Completed",
+                "Cleanup Completed" if _ok else "Cleanup Completed With Warnings",
                 (
                     f"{result.message}\n\n"
                     f"Folders touched: {result.folders_touched}\n"
                     f"Files deleted: {result.files_deleted}\n"
                     f"DB rows affected: {result.db_rows_affected}"
+                    f"{_warn}"
                 ),
             )
             self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True)
+            # NOTE: storageChanged is emitted so the rest of the app can refresh
+            # patient-list download/green badges to match the now-cleared files.
+            # (Disk is the source of truth for download status.)
             self.storageChanged.emit()
         except Exception as e:
             QMessageBox.critical(
                 self,
                 "Cleanup Failed",
                 f"Could not complete cleanup:\n{e}",
+            )
+
+    def _on_check_consistency_clicked(self, _checked=False):
+        """Validate DB/file consistency and offer a conservative repair.
+
+        Surfaces the real bug class: a study whose DICOM files were cleared but the
+        database still 'knows' it (so it can still show green/downloaded). Repair
+        removes those stale DB records (disk is the source of truth) and clears
+        dangling thumbnail pointers — it never deletes any files.
+        """
+        try:
+            report = self.cleanup_manager.validate_storage_consistency()
+        except Exception as e:
+            QMessageBox.critical(self, "Consistency Check Failed",
+                                 f"Could not check storage consistency:\n{e}")
+            return
+
+        counts = report.get("counts", {}) or {}
+        n_missing = int(counts.get("db_studies_missing_files", 0))
+        n_orphan = int(counts.get("orphan_disk_studies", 0))
+        n_thumb = int(counts.get("thumbnails_missing_source", 0))
+        repairable = n_missing + n_thumb
+
+        if repairable == 0 and n_orphan == 0:
+            QMessageBox.information(
+                self, "Storage Consistency",
+                f"No inconsistencies found.\n\nDB studies checked: {counts.get('db_studies', 0)}",
+            )
+            return
+
+        body = (
+            f"DB studies whose files are gone (stale downloaded status): {n_missing}\n"
+            f"Disk study folders with no DB record: {n_orphan}\n"
+            f"Thumbnails pointing at missing files: {n_thumb}\n\n"
+        )
+        if repairable > 0:
+            ans = QMessageBox.question(
+                self, "Storage Consistency",
+                body + (
+                    "Repair will remove the stale DB study records and clear dangling "
+                    "thumbnail pointers so the downloaded/green status matches the actual "
+                    "files on disk. It will NOT delete any files. Run repair now?"
+                ),
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+            )
+            if ans == QMessageBox.Yes:
+                try:
+                    summary = self.cleanup_manager.repair_storage_consistency(report)
+                except Exception as e:
+                    QMessageBox.critical(self, "Repair Failed", f"Could not repair:\n{e}")
+                    return
+                warn = ("\n\n⚠ " + "\n".join(summary.get("warnings", []))) if summary.get("warnings") else ""
+                QMessageBox.information(
+                    self, "Repair Completed",
+                    f"Removed stale DB studies: {summary.get('removed_db_studies', 0)}\n"
+                    f"Cleared dangling thumbnails: {summary.get('nulled_thumbnails', 0)}{warn}",
+                )
+                self.refresh_storage_insights(force_refresh=True, defer_folder_sizes=True)
+                self.storageChanged.emit()
+        else:
+            QMessageBox.information(
+                self, "Storage Consistency",
+                body + "(Orphan disk folders are only reported — they may be a not-yet-indexed import.)",
             )
 
     def _show_patient_cleanup_dialog(self):

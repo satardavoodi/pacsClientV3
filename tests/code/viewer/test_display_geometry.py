@@ -61,10 +61,16 @@ def _unit(v):
 # ─────────────────────────────────────────────────────────────────────────────
 
 class TestIdentityStart:
-    def test_display_to_raw_is_identity(self):
+    def test_display_to_raw_init_is_r30_identity(self):
+        # R30 (2026-05-17): display indices are 1-based, raw VTK is 0-based, so
+        # the initial display->raw map is identity IN-PLANE with M[2,3] = -1.0
+        # (raw_k = display_k - 1). It is intentionally NOT eye(4); see
+        # display_geometry.py [R30_FIX_INIT].
         sg = _axial_source()
         dg = DisplayGeometry(sg, "vp0")
-        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, np.eye(4), atol=1e-9)
+        expected = np.eye(4)
+        expected[2, 3] = -1.0
+        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, expected, atol=1e-9)
 
     def test_effective_equals_raw_affine(self):
         sg = _axial_source()
@@ -81,12 +87,16 @@ class TestIdentityStart:
         product = dg.lps_to_effective_display_ijk_4x4 @ dg.effective_display_ijk_to_lps_4x4
         np.testing.assert_allclose(product, np.eye(4), atol=1e-6)
 
-    def test_reset_restores_identity(self):
+    def test_reset_restores_initial(self):
+        # reset() restores the R30 *initial* map (eye in-plane, M[2,3]=-1.0),
+        # not eye(4). Compare against the captured initial state so the test
+        # stays correct regardless of the exact init constant.
         sg = _axial_source(n_rows=256, n_cols=256)
         dg = DisplayGeometry(sg, "vp0")
+        M0 = dg.display_to_raw_ijk_4x4.copy()
         dg.apply_y_flip(256)
         dg.reset()
-        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, np.eye(4), atol=1e-9)
+        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, M0, atol=1e-9)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -133,11 +143,12 @@ class TestYFlip:
         np.testing.assert_allclose(sr, sg.row_cosines, atol=1e-9)
 
     def test_y_flip_twice_restores_identity(self):
-        """Two Y-flips = identity."""
+        """Two Y-flips return display_to_raw to its initial state (R30 init, not eye(4))."""
         sg = _axial_source(n_rows=256)
         dg = DisplayGeometry(sg, "vp0")
+        M0 = dg.display_to_raw_ijk_4x4.copy()
         dg.apply_y_flip(256).apply_y_flip(256)
-        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, np.eye(4), atol=1e-9)
+        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, M0, atol=1e-9)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -161,8 +172,9 @@ class TestXFlip:
     def test_x_flip_twice_restores_identity(self):
         sg = _axial_source(n_cols=256)
         dg = DisplayGeometry(sg, "vp0")
+        M0 = dg.display_to_raw_ijk_4x4.copy()
         dg.apply_x_flip(256).apply_x_flip(256)
-        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, np.eye(4), atol=1e-9)
+        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, M0, atol=1e-9)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -240,23 +252,26 @@ class TestRoundTrip:
     def test_cw_then_ccw_is_identity(self):
         sg = _axial_source(n_rows=256, n_cols=256)
         dg = DisplayGeometry(sg, "vp0")
+        M0 = dg.display_to_raw_ijk_4x4.copy()
         dg.apply_rotate_cw_90(256, 256)
         dg.apply_rotate_ccw_90(256, 256)  # after CW, shape is n_cols×n_rows
-        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, np.eye(4), atol=1e-9)
+        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, M0, atol=1e-9)
 
     def test_four_cw_is_identity(self):
         """Four CW 90° rotations = identity (for square image)."""
         sg = _axial_source(n_rows=256, n_cols=256)
         dg = DisplayGeometry(sg, "vp0")
+        M0 = dg.display_to_raw_ijk_4x4.copy()
         for _ in range(4):
             dg.apply_rotate_cw_90(256, 256)
-        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, np.eye(4), atol=1e-9)
+        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, M0, atol=1e-9)
 
     def test_y_flip_twice_identity(self):
         sg = _axial_source(n_rows=512)
         dg = DisplayGeometry(sg, "vp0")
+        M0 = dg.display_to_raw_ijk_4x4.copy()
         dg.apply_y_flip(512).apply_y_flip(512)
-        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, np.eye(4), atol=1e-9)
+        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, M0, atol=1e-9)
 
     def test_x_flip_y_flip_commute(self):
         """X-flip and Y-flip act on independent axes: they always commute."""
@@ -287,8 +302,9 @@ class TestTranspose:
     def test_transpose_twice_identity(self):
         sg = _axial_source()
         dg = DisplayGeometry(sg, "vp0")
+        M0 = dg.display_to_raw_ijk_4x4.copy()
         dg.apply_transpose().apply_transpose()
-        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, np.eye(4), atol=1e-9)
+        np.testing.assert_allclose(dg.display_to_raw_ijk_4x4, M0, atol=1e-9)
 
     def test_transpose_swaps_columns(self):
         sg = _axial_source()
