@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtGui import QPixmap
 
 from modules.storage.thumbnail_store import ThumbnailStore, make_pixmap_from_bytes  # type: ignore
+
+logger = logging.getLogger(__name__)
 
 
 class ThumbnailImageSourceService:
@@ -24,7 +28,20 @@ class ThumbnailImageSourceService:
         pixmap = self._load_from_store(parent_widget, str(series_number))
         if pixmap is not None and not pixmap.isNull():
             return pixmap
-        return QPixmap(file_path_thumbnail)
+        disk = QPixmap(file_path_thumbnail)
+        if disk.isNull():
+            # Neither the in-memory/disk store nor the explicit file yielded a
+            # thumbnail — the caller falls back to a placeholder. Log at DEBUG so
+            # a genuinely-missing thumbnail is traceable without spamming during
+            # normal first-load (many series have no thumbnail yet).
+            try:
+                logger.debug(
+                    "[THUMB-MISS] no store/disk thumbnail series=%s path=%s (placeholder used)",
+                    series_number, file_path_thumbnail,
+                )
+            except Exception:
+                pass
+        return disk
 
     def _load_from_store(self, parent_widget, series_number: str) -> QPixmap | None:
         try:

@@ -446,6 +446,16 @@ class QtFastContainer(QWidget):
             series_uid=series_uid,
         )
         if self._qt_bridge is not None:
+            # Lifecycle trace (FAST/default backend): the previous series' Qt bridge
+            # is torn down before the viewport rebinds. Mirrors the Advanced/VTK
+            # path's [SERIES UNLOAD] so load/unload is visible in both backends.
+            try:
+                logger.info(
+                    "[SERIES UNLOAD] viewer=%s backend=FAST had_bridge=1 rebind_to_series=%s",
+                    self.id_vtk_widget, series_number,
+                )
+            except Exception:
+                pass
             try:
                 self._qt_bridge.cleanup()
             except Exception:
