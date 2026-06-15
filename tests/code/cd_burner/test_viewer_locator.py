@@ -109,4 +109,26 @@ def test_frozen_candidate_roots_find_viewer(tmp_path, monkeypatch):
 def test_not_frozen_ignores_exe_dir(fake_root, monkeypatch):
     """Non-frozen runs only look next to the module (no exe-dir scanning)."""
     monkeypatch.setattr(viewer_locator.sys, "frozen", False, raising=False)
+    # No installed module_packages payload in this isolated env either.
+    import aipacs_runtime
+    monkeypatch.setattr(aipacs_runtime, "bundled_module_packages_search_roots", lambda: [])
     assert resolve_default_viewer() is None  # fake_root is empty
+
+
+def test_installed_payload_root_resolves_viewer(fake_root, monkeypatch, tmp_path):
+    """When cd_burner is excluded from the engine (PyInstaller build), the
+    viewer must still resolve from the installed run_cd plugin payload."""
+    monkeypatch.delenv(viewer_locator.ENV_OVERRIDE, raising=False)
+    # Module dir empty (engine ships no viewer); payload carries it.
+    import aipacs_runtime
+    mp_root = tmp_path / "module_packages"
+    lite = (mp_root / "run_cd" / "payload" / "python" / "modules" / "cd_burner"
+            / "lightViewer_dist" / "AIPacsLiteViewer" / "AIPacsLiteViewer.exe")
+    lite.parent.mkdir(parents=True)
+    lite.write_bytes(b"MZ lite")
+    monkeypatch.setattr(aipacs_runtime, "bundled_module_packages_search_roots", lambda: [mp_root])
+
+    info = resolve_default_viewer()
+    assert info is not None
+    assert info["kind"] == "lite"
+    assert Path(info["path"]) == lite.resolve()

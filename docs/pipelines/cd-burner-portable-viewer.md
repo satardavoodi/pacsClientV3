@@ -399,7 +399,67 @@ an installed client clicking "Write CD" gets "viewer not found".
   `_sanitize_name`, `_sanitize_folder_name`) and unused imports across the
   module. cd_burner suite: 104 green; with builder+runtime: 153 green.
 
-## 19. Known limitations / deferred
+## 19. Auto-build viewer in release + installer auto-enable (2026-06-15)
+
+**Release builds always build the lite viewer.** Both release pipelines now
+build it before staging the run_cd payload, so a release can never ship a
+stale/absent viewer:
+* `tools/build/build_lite_viewer.py::ensure_built(force=True)` — importable
+  entry; `--if-missing` for build-if-absent.
+* `materialize_plugin_packages(build_lite_viewer=True)` runs
+  `_ensure_lite_viewer_built()` (subprocesses the build script) before the
+  loop; CLI `--build-lite-viewer`; skip with
+  `AIPACS_SKIP_LITE_VIEWER_BUILD=1`.
+* Wired: Nuitka `stage_08_plugin_staging` (build_lite_viewer=True) and
+  PyInstaller `build_release.build_module_packages` (calls
+  `_ensure_lite_viewer_built()` + `_validate_run_cd_lite_viewer` on the
+  run_cd package). build_release has its OWN staging copy — its
+  `PACKAGE_IGNORE_PATTERNS` also now drops `lightViewer` + `*.rar`.
+
+**Installer tick ⇒ auto-enabled (already wired, confirmed).** run_cd is
+`bundled_unlock`, NOT license-gated — ticking the "Run CD" component is the
+only gate. `AIPacs_Setup.iss::WriteInstallationProfile` writes
+`run_cd` into BOTH `modules` (`OptionalModuleSelected` → enables
+`is_module_enabled("run_cd")`) and `module_packages`
+(status=selected_for_install), and `[Files]` copies the payload to
+`%ProgramData%\AIPacs\module_packages\run_cd`. At runtime
+`activate_optional_module_runtime` adds the payload to `sys.path`, the home
+panel shows the CD button, and `viewer_locator` finds the bundled viewer in
+the payload. So: tick → installed → enabled → viewer used, automatically.
+
+GOTCHA: running `materialize_plugin_packages.py` standalone REGENERATES the
+committed `builder/plugin package/packages/` mirrors (full copytree) and can
+desync them from canonical for hand-curated plugins — always run
+`tools/dev/sync_plugin_mirrors.py` afterward (restores 389-pair match).
+Tests: `test_lite_viewer_autobuild.py` (6); cd_burner 110, builder+runtime 49.
+
+## 20. PyInstaller builder path — verified + slimmed (2026-06-15)
+
+The PyInstaller `builder/build_release.py` is the primary release path.
+Verified end-to-end (no full compile needed): `build_module_packages` (main
+@1415) calls `_ensure_lite_viewer_built()` then stages run_cd via its OWN
+`_copy_package_source_tree` (full copytree, `_package_ignore_filter`), runs
+`_validate_run_cd_lite_viewer`, and `run_release_gate_post_stage` runs after.
+Proven: the STAGED viewer exe `--selftest` exits 0 after the staging copy's
+filters apply — i.e. the copy doesn't break it. `lightViewer`/`*.rar` are in
+`PACKAGE_IGNORE_PATTERNS` so the 143 MB legacy never stages.
+
+**Key architecture fact:** `appA_workstation.spec` `optional_prefixes`
+EXCLUDES `modules.cd_burner` from the engine (hiddenimports filter), so in
+the PyInstaller build the CD code loads ONLY from the installed run_cd
+plugin payload (`%ProgramData%\AIPacs\module_packages\run_cd\payload\python\
+modules\cd_burner`), never from engine datas. Therefore the engine-datas
+copy of `lightViewer_dist` (~97 MB, 180 files) was **dead weight shipped in
+EVERY installer** (even non-CD customers) — removed from
+`spec_utils.common_app_datas` (assets stay; patient_table_widget reads them
+via BASE_PATH). The viewer now ships once, via the run_cd payload (build-
+asserted present). `viewer_locator._candidate_roots` also adds the installed
+payload path (`bundled_module_packages_search_roots()` → run_cd/payload/...)
+as a resolution backstop, so the viewer resolves regardless of which channel
+loads cd_burner. Guard tests: `test_installed_payload_root_resolves_viewer`,
+engine-datas-has-0-viewer assertion. cd_burner 111 green, mirrors 389.
+
+## 21. Known limitations / deferred
 
 * IMAPI2 `Write()` is synchronous — no fine-grained burn % (progress jumps
   50→95) and mid-write cancel is not possible. Event-sink progress is a

@@ -266,10 +266,46 @@ def _write_runtime_payload_placeholder(package_dir: Path, definition: dict[str, 
     (package_dir / "PAYLOAD_NOT_MATERIALIZED.txt").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def materialize_plugin_packages(*, include_runtime_payloads: bool = False) -> list[dict[str, object]]:
+_SKIP_LITE_VIEWER_BUILD_ENV = "AIPACS_SKIP_LITE_VIEWER_BUILD"
+
+
+def _ensure_lite_viewer_built() -> None:
+    """Build the AI-PACS Lite Viewer so the run_cd payload always ships a
+    fresh copy. Runs the build script as a subprocess for isolation (it
+    spawns PyInstaller). Skip with ``AIPACS_SKIP_LITE_VIEWER_BUILD=1`` for
+    fast local iteration."""
+    import subprocess
+    import sys
+
+    if os.environ.get(_SKIP_LITE_VIEWER_BUILD_ENV, "").strip() in ("1", "true", "yes"):
+        print(f"[materialize] lite viewer build skipped via {_SKIP_LITE_VIEWER_BUILD_ENV}")
+        return
+    script = PROJECT_ROOT / "tools" / "build" / "build_lite_viewer.py"
+    if not script.is_file():
+        raise RuntimeError(f"Lite viewer build script not found: {script}")
+    print(f"[materialize] building AI-PACS Lite Viewer ({script.name})…")
+    result = subprocess.run([sys.executable, str(script)], cwd=str(PROJECT_ROOT))
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"Lite viewer build failed (exit {result.returncode}). The run_cd "
+            "module cannot ship without its viewer. Fix the build or set "
+            f"{_ALLOW_MISSING_LITE_VIEWER_ENV}=1 to ship without it."
+        )
+
+
+def materialize_plugin_packages(
+    *,
+    include_runtime_payloads: bool = False,
+    build_lite_viewer: bool = False,
+) -> list[dict[str, object]]:
     version = load_version()
     PLUGIN_PACKAGES_DIR.mkdir(parents=True, exist_ok=True)
     package_index: list[dict[str, object]] = []
+
+    # Release pipelines pass build_lite_viewer=True so every build ships a
+    # freshly-built portable viewer in the run_cd payload.
+    if build_lite_viewer:
+        _ensure_lite_viewer_built()
 
     for definition in load_plugin_package_definitions():
         module_id = str(definition["module_id"])
@@ -367,12 +403,20 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Copy external runtime payloads such as Advanced MPR into the package workspace.",
     )
+    parser.add_argument(
+        "--build-lite-viewer",
+        action="store_true",
+        help="Build the AI-PACS Lite Viewer first so run_cd ships a fresh viewer.",
+    )
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    packages = materialize_plugin_packages(include_runtime_payloads=args.include_runtime_payloads)
+    packages = materialize_plugin_packages(
+        include_runtime_payloads=args.include_runtime_payloads,
+        build_lite_viewer=args.build_lite_viewer,
+    )
     print(f"Materialized {len(packages)} plugin packages into: {PLUGIN_PACKAGES_DIR}")
     for package in packages:
         status = "payload" if package["materialized_payload"] else "metadata-only"

@@ -194,9 +194,11 @@ def common_app_datas() -> list[tuple[str, str]]:
         "config",
         "education_assets",
         "modules/cd_burner/assets",
-        # Default portable CD viewer bundle (built by tools/build/build_lite_viewer.py;
-        # collect_tree_datas returns [] when not built yet).
-        "modules/cd_burner/lightViewer_dist",
+        # NOTE: the portable CD viewer (lightViewer_dist) is NOT shipped here.
+        # cd_burner is excluded from the engine (appA_workstation.spec
+        # optional_prefixes), so it loads only from the run_cd plugin payload
+        # — which already carries the viewer. Shipping it in engine datas too
+        # was ~97 MB of dead weight in EVERY installer (incl. non-CD users).
         "modules/EchoMind/secretary/catalog",
         "modules/EchoMind/secretary/prompts",
         "modules/EchoMind/secretary/module_map.yaml",

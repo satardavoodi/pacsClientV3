@@ -21,9 +21,9 @@ from pydicom import dcmread
 
 from PySide6.QtGui import QImage
 
-try:  # package-relative (dev run inside AI-PACS repo)
+if __package__:  # package-relative (dev run inside AI-PACS repo)
     from .optical_io import read_bytes
-except ImportError:  # standalone build / direct script execution
+else:  # standalone build / direct script execution
     from optical_io import read_bytes  # type: ignore
 
 logger = logging.getLogger(__name__)

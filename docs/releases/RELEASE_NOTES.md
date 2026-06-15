@@ -20,6 +20,9 @@ the complete local working tree under the 3.3.1 release line.
 - Release documentation updated for the v3.3.1 stable line
 - Full local repository state committed for release publication
 - Remote sync prepared for all requested GitHub remotes/branches
+- Lite Viewer frozen startup fix: avoided duplicate import-path fallbacks that
+  could trigger `ImportError: cannot load module more than once per process`
+- Fresh Lite Viewer build completed and frozen self-test passed
 
 ---
 

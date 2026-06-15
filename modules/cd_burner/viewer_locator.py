@@ -59,9 +59,10 @@ def _candidate_roots() -> List[Path]:
 
     add(_module_root())  # next to this file (source + most frozen layouts)
 
+    rel = Path("modules") / "cd_burner"
+
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
-        rel = Path("modules") / "cd_burner"
         if meipass:
             add(Path(meipass) / rel)
         try:
@@ -70,6 +71,17 @@ def _candidate_roots() -> List[Path]:
             add(exe_dir / "_internal" / rel)
         except Exception:
             pass
+
+    # Installed run_cd plugin payload — the authoritative copy in the
+    # PyInstaller build, where cd_burner code loads from the payload (it is
+    # excluded from the engine), not from engine datas. Best-effort.
+    try:
+        from aipacs_runtime import bundled_module_packages_search_roots
+
+        for mp_root in bundled_module_packages_search_roots():
+            add(Path(mp_root) / "run_cd" / "payload" / "python" / rel)
+    except Exception:
+        pass
     return roots
 
 

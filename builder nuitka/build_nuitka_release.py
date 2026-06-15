@@ -1160,7 +1160,9 @@ def stage_07_runtime_resources(ctx: BuildContext, stage: Stage, log_path: Path) 
 
 
 def stage_08_plugin_staging(ctx: BuildContext, stage: Stage, log_path: Path) -> StageResult:
-    materialize_plugin_packages(include_runtime_payloads=True)
+    # build_lite_viewer=True → always build a fresh portable viewer so the
+    # run_cd payload ships it (skip via AIPACS_SKIP_LITE_VIEWER_BUILD=1).
+    materialize_plugin_packages(include_runtime_payloads=True, build_lite_viewer=True)
     plugin_stage = STAGE_DIR / "plugin_packages"
     if plugin_stage.exists():
         shutil.rmtree(plugin_stage, ignore_errors=True)

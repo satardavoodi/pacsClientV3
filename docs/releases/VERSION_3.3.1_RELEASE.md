@@ -33,6 +33,10 @@ LICENSE unchanged.
 - All updates carried in v3.3.0 release line
 - Complete current local source and documentation changes
 - Version and release documentation advanced to v3.3.1
+- Lite Viewer frozen import hardening: replaced broad ImportError fallback
+	imports with package-context import routing to prevent duplicate NumPy module
+	loading in one process
+- Fresh Lite Viewer bundle rebuilt; frozen self-test passes
 
 ---
 

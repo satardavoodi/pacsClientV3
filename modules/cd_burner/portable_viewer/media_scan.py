@@ -25,9 +25,9 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from pydicom import dcmread
 
-try:  # package-relative (dev run inside AI-PACS repo)
+if __package__:  # package-relative (dev run inside AI-PACS repo)
     from .optical_io import read_bytes
-except ImportError:  # standalone build / direct script execution
+else:  # standalone build / direct script execution
     from optical_io import read_bytes  # type: ignore
 
 logger = logging.getLogger(__name__)

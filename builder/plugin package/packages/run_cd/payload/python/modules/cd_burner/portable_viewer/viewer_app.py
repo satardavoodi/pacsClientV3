@@ -59,7 +59,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-try:  # package-relative (dev run inside AI-PACS repo)
+if __package__:  # package-relative (dev run inside AI-PACS repo)
     from .viewer_meta import VIEWER_DISPLAY_NAME, VIEWER_VERSION
     from .media_scan import (
         ScanResult,
@@ -77,7 +77,7 @@ try:  # package-relative (dev run inside AI-PACS repo)
         slice_to_qimage,
     )
     from .welcome import WelcomePage
-except ImportError:  # standalone build / direct script execution
+else:  # standalone build / direct script execution
     from viewer_meta import VIEWER_DISPLAY_NAME, VIEWER_VERSION  # type: ignore
     from media_scan import (  # type: ignore
         ScanResult,

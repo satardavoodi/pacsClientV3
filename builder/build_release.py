@@ -63,6 +63,11 @@ PACKAGE_IGNORE_PATTERNS = (
     "*.pyi",
     ".pytest_cache",
     ".mypy_cache",
+    # CD module: the legacy 72 MB lightViewer/AiPacs.exe + *.rar are dead
+    # weight — the viewer now ships as lightViewer_dist (the built lite
+    # viewer). Excluding them trims ~143 MB per installer.
+    "lightViewer",
+    "*.rar",
 )
 THEME_QSS_SOURCE = PROJECT_ROOT / "generated-files" / "css" / "main.css"
 THEME_QSS_RELATIVE_PATH = Path("Qss") / "main.qss"
@@ -660,6 +665,14 @@ def build_module_packages(
     PACKAGE_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     STAGED_PLUGIN_PACKAGE_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Always build a fresh AI-PACS Lite Viewer so the run_cd payload ships it
+    # (skip with AIPACS_SKIP_LITE_VIEWER_BUILD=1).
+    from builder.materialize_plugin_packages import (
+        _ensure_lite_viewer_built,
+        _validate_run_cd_lite_viewer,
+    )
+    _ensure_lite_viewer_built()
+
     package_index: list[dict[str, object]] = []
     for definition in load_plugin_package_definitions(optional_only=True):
         module_id = str(definition["module_id"])
@@ -696,6 +709,8 @@ def build_module_packages(
             package_dir.mkdir(parents=True, exist_ok=True)
             has_payload = _copy_package_source_tree(package_dir, list(definition.get("source_paths") or []))
             _validate_staged_plugin_no_namespace_shadow(package_dir, module_id)
+            if module_id == "run_cd":
+                _validate_run_cd_lite_viewer(package_dir)
 
         manifest = {
             "format_version": MODULE_PACKAGE_FORMAT_VERSION,
