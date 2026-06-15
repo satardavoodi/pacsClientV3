@@ -356,6 +356,14 @@ class _HPStudySaveMixin:
                     or len(response.get('series_thumbnails') or response.get('series') or [])
                 ),
                 'thumbnails_available': bool(response.get('thumbnails_available', True)),
+                # contentVersion: server's monotonic per-study content counter — the
+                # cheap authoritative staleness signal used by the resync gate. None
+                # when the server doesn't send it (callers fall back to disk-aware).
+                # Accept both snake_case and camelCase (the query_series_thumbnails
+                # fallback may not pass through the socket-client normalizer).
+                'content_version': (response.get('content_version')
+                                    if response.get('content_version') is not None
+                                    else response.get('contentVersion')),
                 'series': []
             }
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import queue
 import time
@@ -21,6 +22,8 @@ try:
     from PacsClient.utils.config import ATTACHMENT_PATH
 except Exception:
     ATTACHMENT_PATH = Path.cwd() / "attachment"
+
+logger = logging.getLogger(__name__)
 
 
 class VoiceWidget(QWidget):
@@ -601,15 +604,52 @@ class VoiceWidget(QWidget):
         self._stop_stream()
         self._timer.stop()
 
+        # Drain any audio still in the capture queue BEFORE saving. _on_timer (a
+        # 60 ms QTimer) is normally the ONLY thing that moves frames from _audio_q
+        # to _audio_frames, and it was just stopped — so without this drain the
+        # audio captured since the last tick is lost, and a SHORT recording (or one
+        # where the timer was starved by a busy UI) loses ALL of it, leaving
+        # _audio_frames empty so the save below silently writes nothing. This was
+        # the root cause of "the voice didn't save, I had to record 2-3 times".
+        # The queue is recreated per recording, so this only ever drains the
+        # current take.
+        drained = 0
+        while not self._audio_q.empty():
+            try:
+                self._audio_frames.append(self._audio_q.get_nowait())
+                drained += 1
+            except Exception:
+                break
+
         # ذخیره WAV
         if self._audio_frames and self._file_path is not None:
             data = np.concatenate(self._audio_frames, axis=0)
             try:
                 sf.write(str(self._file_path), data, self._sample_rate)
                 self.method_update_audio_counter()
+                logger.info(
+                    "[VOICE] saved recording path=%s frames=%d drained_on_stop=%d "
+                    "samples=%d duration_s=%.2f sr=%d",
+                    self._file_path, len(self._audio_frames), drained,
+                    int(data.shape[0]),
+                    float(data.shape[0]) / float(max(1, self._sample_rate)),
+                    self._sample_rate,
+                )
             except Exception as e:
+                logger.exception(
+                    "[VOICE] failed to write recording to %s", self._file_path
+                )
                 QMessageBox.warning(self, "Save Error", f"Cannot save audio file:\n{e}")
                 self._file_path = None
+        else:
+            # No audio captured even after draining the queue — surface it in the
+            # log (the path was previously a SILENT no-op, leaving no trace of why
+            # the attachment never appeared).
+            logger.warning(
+                "[VOICE] stop produced no audio to save (frames=%d drained_on_stop=%d "
+                "file=%s) — the microphone delivered no samples for this take",
+                len(self._audio_frames), drained, self._file_path,
+            )
 
         self._is_recording = False
         self._is_paused = False

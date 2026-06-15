@@ -88,6 +88,19 @@ _FAST_STACK_PRESSURE_SAMPLE_MIN_INTERVAL_MS = 125.0
 # affects rendering, reference lines, geometry overlays, or filters — so it is
 # OFF by default and opt-in via AIPACS_FAST_STACK_PRESSURE=1.
 _FAST_STACK_PRESSURE_ENABLED = str(os.getenv('AIPACS_FAST_STACK_PRESSURE', '') or '').strip() == '1'
+# Per-instance DICOM window/level on stack scroll (46370 series 61 — Siemens CSI
+# spectroscopy). A series can be HETEROGENEOUS: it may mix SPECTRUM secondary
+# captures (WC2048/WW4096) with REFERENCEIMAGE frames (WC301/WW637). The viewer
+# seeds the series window from slice 0 and keeps it across slices (correct for a
+# normal homogeneous series), which forces slice-0's window onto every frame — so
+# the reference images render near-black under a 4096-wide window. When ON (default)
+# and the user has NOT set a custom window, each slice re-applies its OWN DICOM
+# WC/WW on scroll. For a homogeneous series every slice's WC/WW equals slice 0's,
+# so the existing scroll-cache guard short-circuits and behaviour is byte-identical.
+# `0` restores the legacy series-constant window.
+_FAST_PER_INSTANCE_WINDOW = str(
+    os.getenv('AIPACS_FAST_PER_INSTANCE_WINDOW', '1') or '1'
+).strip().lower() not in ('0', 'false', 'no', 'off')
 _FAST_RENDER_CLOCK_BASE_INTERVAL_MS = 33
 _FAST_RENDER_CLOCK_FAST_INTERVAL_MS = 16
 _FAST_RENDER_CLOCK_IDLE_STOP_MS = 260.0
@@ -1025,6 +1038,23 @@ class QtViewerBridge:
         self.qt_viewer._current_slice_index = idx
         self._sync_interaction_slice_count_hint()
 
+        # Per-instance DICOM window (46370 series 61): re-apply THIS slice's own
+        # WC/WW so a heterogeneous series (e.g. CSI spectroscopy mixing SPECTRUM and
+        # REFERENCEIMAGE frames) doesn't keep slice 0's window and render the other
+        # frames near-black. Only fires when the slice's window differs SUBSTANTIALLY
+        # from what's shown (so a normal series — including one with minor per-slice
+        # WC/WW variation — keeps a stable window while scrolling, byte-identical to
+        # legacy). Skipped when the user set a custom window (manual W/L persists),
+        # and flag-gated.
+        if _FAST_PER_INSTANCE_WINDOW and not self.flag_set_custom_window_level:
+            try:
+                ww_i, wc_i = self.pipeline.get_default_window_level(idx)
+                cur_ww, cur_wc = self._current_window_level()
+                if self._window_differs_substantially(ww_i, wc_i, cur_ww, cur_wc):
+                    self.apply_default_window_level(idx)
+            except Exception:
+                pass
+
         # Set fast-interaction mode on pipeline
         t_stage = time.perf_counter()
         try:
@@ -1387,6 +1417,23 @@ class QtViewerBridge:
         _stop_clock = getattr(self, '_stop_render_clock_if_idle', None)
         if callable(_stop_clock):
             _stop_clock()
+
+    @staticmethod
+    def _window_differs_substantially(ww_a, wc_a, ww_b, wc_b) -> bool:
+        """True only when two windows are DRAMATICALLY different — the heterogeneous
+        / spectroscopy case (e.g. WW4096 vs WW637 = 6.4x). Minor per-slice WC/WW
+        variation in a normal series returns False, so its window stays stable while
+        scrolling (legacy behaviour preserved). Conservative: any None/parse issue
+        falls back to an exact-inequality test."""
+        try:
+            ww_a = float(ww_a); wc_a = float(wc_a)
+            ww_b = float(ww_b); wc_b = float(wc_b)
+        except (TypeError, ValueError):
+            return (ww_a, wc_a) != (ww_b, wc_b)
+        lo = max(1e-6, min(abs(ww_a), abs(ww_b)))
+        width_ratio = max(abs(ww_a), abs(ww_b)) / lo
+        level_shift = abs(wc_a - wc_b) / lo
+        return width_ratio >= 1.5 or level_shift >= 0.5
 
     def apply_default_window_level(self, slice_index: int = 0) -> None:
         """Apply default W/L for the given slice."""

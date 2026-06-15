@@ -173,6 +173,21 @@ class SocketConfig:
     def is_auto_reconnect_enabled(self) -> bool:
         """Check if auto-reconnect is enabled"""
         return self.get("auto_reconnect", True)
+
+    def get_patient_list_fallback_mode(self):
+        """MongoDB $sortArray compatibility (incident 2026-06-15): pin the
+        GetPatientList query mode for a known-legacy server.
+        None (default) -> automatic: normal first, fall back only on the
+        $sortArray error. 'compatibility' / 'simple' -> always use that mode."""
+        mode = self.get("patient_list_fallback_mode", None)
+        if isinstance(mode, str) and mode.strip().lower() in ("compatibility", "simple"):
+            return mode.strip().lower()
+        return None
+
+    def is_force_compatibility_mode(self) -> bool:
+        """Start GetPatientList in compatibility mode immediately (skip the
+        normal attempt) for servers known to run MongoDB < 5.2."""
+        return bool(self.get("force_compatibility_mode", False))
     
     def get_connection_pool_size(self) -> int:
         """Get connection pool size"""

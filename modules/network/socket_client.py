@@ -18,6 +18,65 @@ _LARGE_PAYLOAD_ENDPOINTS = {
     "QuerySeriesThumbnails",
 }
 
+# ── MongoDB $sortArray compatibility fallback (incident 2026-06-15) ───────────
+# The backend's GetPatientList aggregation uses $sortArray, which is unsupported
+# on MongoDB < 5.2: the whole pipeline fails with InvalidPipelineOperator
+# (code 168) and the client got NO patient data. The true fix is server-side
+# (drop $sortArray / upgrade MongoDB); on the client we degrade gracefully so a
+# legacy server still yields a usable list instead of a hard failure.
+#
+# When (and ONLY when) that SPECIFIC error is seen, the client progressively
+# degrades the query, then caches the first working mode so it is not
+# re-discovered on every request. A healthy/modern server never triggers this —
+# the normal request succeeds and the fallback stays completely inert. Unrelated
+# failures (timeouts, auth) are NOT degraded.
+#   "normal"        -> the request as-is (default)
+#   "compatibility" -> ask the server for a legacy-safe aggregation
+#   "simple"        -> ask the server to skip its sort; the client sorts the rows
+_PL_FALLBACK_MODES = [
+    ("normal", {}, False),
+    ("compatibility", {"compatibility_mode": True, "mongodb_compatibility": True}, False),
+    ("simple", {"simple_query": True, "no_sort": True}, True),  # True => client-side sort
+]
+_PL_MODE_BY_NAME = {name: (flags, csort) for name, flags, csort in _PL_FALLBACK_MODES}
+# Process-wide cache of the first mode that returned data (one round-trip after
+# discovery). A restart re-discovers, so a later server upgrade self-heals.
+_PATIENT_LIST_FALLBACK_MODE = None  # type: Optional[str]
+_PATIENT_LIST_FALLBACK_LOCK = threading.Lock()
+
+
+def _is_sortarray_compat_error(response: Optional[Dict[str, Any]]) -> bool:
+    """True ONLY for the MongoDB $sortArray / InvalidPipelineOperator failure —
+    never for timeouts or unrelated errors (those must not trigger degradation)."""
+    if not isinstance(response, dict):
+        return False
+    blob = " ".join(
+        str(response.get(k, "")) for k in ("error", "message", "codeName", "code", "detail")
+    ).lower()
+    return (
+        "sortarray" in blob
+        or "invalidpipelineoperator" in blob
+        or "code: 168" in blob
+        or "unrecognized expression '$sort" in blob
+    )
+
+
+def _patient_list_client_sort(patients: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Best-effort newest-first sort for the no-server-sort path. The home table
+    re-sorts for display, so this only needs a sensible default and must never
+    raise."""
+    def _key(p):
+        if isinstance(p, dict):
+            for f in ("study_date", "latest_study_date", "date", "StudyDate"):
+                v = p.get(f)
+                if v:
+                    return str(v)
+        return ""
+    try:
+        return sorted(patients, key=_key, reverse=True)
+    except Exception:
+        return patients
+
 
 class PatientListSocketClient:
     """
@@ -178,8 +237,20 @@ class PatientListSocketClient:
 
                     logger.debug(f"📥 [Socket] Received {len(response_data)} bytes of response data")
 
-                    # Convert to JSON
-                    response = json.loads(response_data.decode('utf-8'))
+                    # Convert to JSON. Tolerant decode: a non-UTF-8 byte in a patient
+                    # name / description field (Persian/Western-European source data
+                    # encoded Windows-1256 / Latin-1) must not crash the patient-list /
+                    # thumbnail parse. Strict UTF-8 first (normal case), then replacement
+                    # so json.loads still succeeds; only that field degrades.
+                    try:
+                        _payload_text = response_data.decode('utf-8')
+                    except UnicodeDecodeError as _dec_exc:
+                        logger.warning(
+                            f"⚠️ [Socket] Non-UTF-8 byte in response ({_dec_exc}); "
+                            f"decoding with replacement so the parse proceeds"
+                        )
+                        _payload_text = response_data.decode('utf-8', errors='replace')
+                    response = json.loads(_payload_text)
                     _t_parse = time.perf_counter()  # [NET_TIMING] JSON parsed
 
                     # Check if this is a broadcast message
@@ -232,50 +303,103 @@ class PatientListSocketClient:
                     self.socket = None
                 return None
     
-    def get_patient_list_safe(self, **params) -> Optional[List[Dict[str, Any]]]:
-        """Get patient list with error handling"""
-        try:
-            response = self.send_request("GetPatientList", params)
-            if response and response.get("status") == "success":
-                data = response.get("data", {})
-                
-                # Handle different response formats
-                patients = []
-                if isinstance(data, dict):
-                    # Format: {'data': {'patients': [...]}}
-                    patients = data.get("patients", [])
-                elif isinstance(data, list):
-                    # Format: {'data': [...]}
-                    patients = data
-                
-                # Process patient data
-                if isinstance(patients, list):
-                    processed_data = []
-                    for item in patients:
-                        if isinstance(item, str):
-                            # Try to parse string as JSON
-                            try:
-                                import json
-                                parsed_item = json.loads(item)
-                                processed_data.append(parsed_item)
-                            except:
-                                # If parsing fails, create a basic dict
-                                processed_data.append({"patient_name": str(item), "patient_id": str(item)})
-                        elif isinstance(item, dict):
-                            processed_data.append(item)
-                        else:
-                            # Convert other types to basic dict
-                            processed_data.append({"patient_name": str(item), "patient_id": str(item)})
-                    return processed_data
-                else:
-                    return []
+    def _extract_patient_list(self, response: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Normalize the GetPatientList payload into a list of patient dicts.
+        Handles {'data': {'patients': [...]}} and {'data': [...]} and JSON-string
+        items (unchanged from the original processing)."""
+        data = response.get("data", {})
+        patients = []
+        if isinstance(data, dict):
+            patients = data.get("patients", [])
+        elif isinstance(data, list):
+            patients = data
+        if not isinstance(patients, list):
+            return []
+        processed = []
+        for item in patients:
+            if isinstance(item, str):
+                try:
+                    processed.append(json.loads(item))
+                except Exception:
+                    processed.append({"patient_name": str(item), "patient_id": str(item)})
+            elif isinstance(item, dict):
+                processed.append(item)
             else:
-                error_msg = response.get("error", "Unknown error") if response else "No response"
-                logger.error(f"❌ Patient list request failed: {error_msg}")
+                processed.append({"patient_name": str(item), "patient_id": str(item)})
+        return processed
+
+    def get_patient_list_safe(self, **params) -> Optional[List[Dict[str, Any]]]:
+        """Get patient list, with a MongoDB $sortArray compatibility fallback.
+
+        On a healthy/modern server the normal request succeeds and nothing below
+        changes. ONLY on the specific InvalidPipelineOperator/$sortArray failure
+        does the client progressively degrade the query (compatibility ->
+        simple/no_sort + client-side sort), caching the first working mode so it
+        is reused. Unrelated failures (timeouts, auth) are returned as-is (no
+        degradation). See docs MONGODB_COMPATIBILITY_INCIDENT_2026-06-15.
+        """
+        global _PATIENT_LIST_FALLBACK_MODE
+
+        # Where to start: explicit config pin/force > cached discovered mode > normal.
+        forced = None
+        force_compat = False
+        try:
+            cfg = get_socket_config()
+            forced = cfg.get_patient_list_fallback_mode()
+            force_compat = cfg.is_force_compatibility_mode()
+        except Exception:
+            pass
+
+        if forced in _PL_MODE_BY_NAME and forced != "normal":
+            modes_to_try = [forced]               # pinned by config: only that mode
+        else:
+            names = [m[0] for m in _PL_FALLBACK_MODES]
+            start = "compatibility" if force_compat else (
+                _PATIENT_LIST_FALLBACK_MODE if _PATIENT_LIST_FALLBACK_MODE in _PL_MODE_BY_NAME else None
+            )
+            start_idx = names.index(start) if start in names else 0
+            modes_to_try = names[start_idx:]
+
+        last_response = None
+        for mode_name in modes_to_try:
+            flags, client_sort = _PL_MODE_BY_NAME[mode_name]
+            req = dict(params)
+            req.update(flags)
+            try:
+                response = self.send_request("GetPatientList", req)
+            except Exception as e:
+                logger.error(f"❌ Error getting patient list (mode={mode_name}): {e}")
                 return None
-        except Exception as e:
-            logger.error(f"❌ Error getting patient list: {e}")
-            return None
+            last_response = response
+
+            if response and response.get("status") == "success":
+                patients = self._extract_patient_list(response)
+                if client_sort:
+                    patients = _patient_list_client_sort(patients)
+                if mode_name != "normal":
+                    with _PATIENT_LIST_FALLBACK_LOCK:
+                        _PATIENT_LIST_FALLBACK_MODE = mode_name
+                    logger.info(
+                        f"✅ Patient list recovered via compatibility fallback mode='{mode_name}'"
+                    )
+                return patients
+
+            # Escalate ONLY on the specific $sortArray / InvalidPipelineOperator error.
+            if _is_sortarray_compat_error(response):
+                logger.warning(
+                    f"⚠️ GetPatientList $sortArray incompatibility (mode={mode_name}); "
+                    f"degrading query and retrying"
+                )
+                continue
+            # Any other failure (timeout/auth/etc.) -> do not degrade further.
+            break
+
+        error_msg = (
+            last_response.get("error", "Unknown error")
+            if isinstance(last_response, dict) else "No response"
+        )
+        logger.error(f"❌ Patient list request failed: {error_msg}")
+        return None
 
     def get_study_thumbnails(
         self,
@@ -312,7 +436,24 @@ class PatientListSocketClient:
                 return None
 
             data = response.get("data")
-            return data if isinstance(data, dict) else None
+            if isinstance(data, dict):
+                # contentVersion (server's monotonic per-study content counter) is
+                # the authoritative staleness signal. The server may place it at the
+                # response top level or inside data — surface it on the returned dict
+                # either way. Absent => callers treat None as "unknown" and fall back.
+                if "content_version" not in data:
+                    # Accept both snake_case and the server's camelCase spelling,
+                    # at the response top level OR inside data — otherwise a casing
+                    # mismatch would silently disable the whole staleness gate.
+                    cv = response.get("content_version")
+                    if cv is None:
+                        cv = response.get("contentVersion")
+                    if cv is None:
+                        cv = data.get("contentVersion")
+                    if cv is not None:
+                        data["content_version"] = cv
+                return data
+            return None
         except Exception as e:
             logger.error(f"❌ Error getting study thumbnails via socket: {e}")
             return None

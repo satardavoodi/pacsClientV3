@@ -34,6 +34,28 @@ _TWO_ARG = re.compile(r'QPropertyAnimation\(\s*self\s*,\s*b"geometry"\s*\)')
 _THREE_ARG = re.compile(r'QPropertyAnimation\(\s*self\s*,\s*b"geometry"\s*,\s*self\s*\)')
 
 
+_THUMB_MGR = (
+    _REPO / "PacsClient" / "pacs" / "patient_tab" / "utils" / "thumbnail_manager.py"
+)
+# Buggy bare-local form on the progress border (no parent / no kept ref).
+_TWO_ARG_BORDER = re.compile(
+    r'QPropertyAnimation\(\s*widget\.progress_border\s*,\s*b"_border_width"\s*\)'
+)
+
+
+def test_thumbnail_priority_flash_animation_is_parented_and_referenced():
+    """thumbnail_manager priority-flash border animations must be parented + kept
+    referenced — a bare local one GC'd mid-flash access-violates, and a large
+    all-modality search flashes many at once (the 46692 crash class)."""
+    src = _THUMB_MGR.read_text(encoding="utf-8-sig")
+    assert not _TWO_ARG_BORDER.search(src), (
+        "priority-flash QPropertyAnimation must be parented to progress_border (3-arg)"
+    )
+    # Both the flash and the return animation keep a reference on the border.
+    assert "_priority_flash_anim" in src and "_priority_flash_anim2" in src
+    assert 'b"_border_width", widget.progress_border)' in src
+
+
 @pytest.mark.parametrize(
     "path, stored_attrs",
     [

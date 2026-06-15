@@ -45,6 +45,17 @@ def _run(coro):
         loop.close()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_growth_detection(monkeypatch):
+    """These tests pin the per-series GROWTH detection + grouped reveal — NOT the
+    disk-aware file check. The disk-aware check (_RESYNC_DISK_AWARE) reads the REAL
+    disk via the sync manifest, but the stub models only DB series counts (no files),
+    so it would report every stub study as 'files missing' and dominate the
+    needs_sync decision. Disk completeness is covered by the storage manifest /
+    open-skip suites; isolate it here so the growth logic is what's under test."""
+    monkeypatch.setattr(mod, "_RESYNC_DISK_AWARE", False)
+
+
 # ── pure growth detection (study's OWN per-series list, never the aggregate) ──
 def test_detect_growth_new_series():
     grew, new, grown = _Mixin._detect_study_growth(

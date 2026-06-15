@@ -3,10 +3,7 @@ DICOMDIR Builder Module
 Creates standard DICOMDIR files from DICOM images using pydicom
 """
 
-import os
 import warnings
-import shutil
-import re
 from pathlib import Path
 from typing import List, Optional, Callable
 import logging
@@ -14,13 +11,72 @@ import logging
 try:
     from pydicom import dcmread
     from pydicom.fileset import FileSet
-    from pydicom.uid import generate_uid
     PYDICOM_AVAILABLE = True
 except ImportError:
     PYDICOM_AVAILABLE = False
     print("⚠ pydicom not available - DICOMDIR creation will be limited")
 
 logger = logging.getLogger(__name__)
+
+
+# DICOMDIR directory records (pydicom's default record creators) require these
+# elements to be PRESENT and NON-EMPTY (pydicom treats an empty Type-1 value
+# as "missing"). Server images sometimes omit them, which makes FileSet.add()
+# raise and silently drops the instance. We backfill safe, DICOM-valid
+# defaults; UIDs and pixel data are never touched. Date/Time fields are filled
+# from the image's own alternate date/time elements when available.
+# (keyword, default_value)
+_DICOMDIR_REQUIRED_FIELDS = (
+    ("PatientID", "ANONYMOUS"),
+    ("StudyID", "1"),
+    ("AccessionNumber", "0"),
+    ("Modality", "OT"),
+    ("SeriesNumber", "1"),
+    ("InstanceNumber", "1"),
+)
+
+
+def _first_value(ds, keywords, default):
+    for keyword in keywords:
+        value = ds.get(keyword, None)
+        if value is not None and str(value).strip():
+            return str(value)
+    return default
+
+
+def _is_blank(ds, keyword) -> bool:
+    if keyword not in ds:
+        return True
+    value = ds.get(keyword, None)
+    return value is None or str(value).strip() == ""
+
+
+def _ensure_dicomdir_fields(ds) -> None:
+    """Backfill DICOMDIR-required elements that are absent or empty.
+
+    Only fills gaps — existing values (and all UIDs / pixel data) are left
+    untouched, so this never alters real clinical content.
+    """
+    # Date/Time: prefer the image's own alternate date/time elements so the
+    # directory record stays meaningful; placeholder only as a last resort.
+    if _is_blank(ds, "StudyDate"):
+        ds.StudyDate = _first_value(
+            ds, ("SeriesDate", "ContentDate", "AcquisitionDate"), "19000101"
+        )
+    if _is_blank(ds, "StudyTime"):
+        ds.StudyTime = _first_value(
+            ds, ("SeriesTime", "ContentTime", "AcquisitionTime"), "000000"
+        )
+    # Patient name is Type-2 in the PATIENT record — empty is allowed, but the
+    # element must exist.
+    if "PatientName" not in ds:
+        ds.PatientName = ""
+    for keyword, default in _DICOMDIR_REQUIRED_FIELDS:
+        if _is_blank(ds, keyword):
+            try:
+                setattr(ds, keyword, default)
+            except Exception:
+                logger.debug("Could not backfill DICOMDIR field %s", keyword)
 
 
 class DicomDirBuilder:
@@ -148,21 +204,43 @@ class DicomDirBuilder:
                     self._report_progress(progress, f"Analyzed {processed}/{total_files} files")
             
             self._report_progress(50, "Adding files to DICOMDIR...")
-            
+
             # Add all DICOM files to FileSet
             # pydicom's FileSet.write() will create the proper folder structure and DICOMDIR
             expected_sop_instance_uids = set()
+            add_failures = []
             for patient_key, patient_data in hierarchy.items():
                 for study_uid, series_dict in patient_data['studies'].items():
                     for series_uid, series_data in series_dict.items():
                         for file_info in series_data['files']:
                             try:
                                 ds = dcmread(str(file_info['path']))
+                                # pydicom's default DICOMDIR record creators require
+                                # certain elements (e.g. StudyDate/StudyTime/StudyID/
+                                # AccessionNumber for the STUDY record). Server images
+                                # sometimes omit them — backfill safe defaults so the
+                                # instance is not silently dropped from the disc.
+                                _ensure_dicomdir_fields(ds)
                                 fs.add(ds)
                                 expected_sop_instance_uids.add(str(ds.SOPInstanceUID))
                             except Exception as e:
                                 logger.warning(f"Could not add file to FileSet: {e}")
-            
+                                add_failures.append((str(file_info['path']), str(e)))
+
+            # A File-set with ZERO instances is a silent failure: it writes a
+            # 0-image DICOMDIR that used to "pass" validation (empty == empty)
+            # and produced a disc with no images. Fail loudly instead.
+            if not expected_sop_instance_uids:
+                detail = add_failures[0][1] if add_failures else "no addable DICOM instances"
+                logger.error("DICOMDIR build added 0 instances: %s", detail)
+                self._report_progress(100, "No DICOM images could be added to DICOMDIR")
+                return False
+            if add_failures:
+                logger.warning(
+                    "DICOMDIR: %d of %d instance(s) could not be added",
+                    len(add_failures), len(add_failures) + len(expected_sop_instance_uids),
+                )
+
             self._report_progress(75, "Writing DICOMDIR and copying files...")
             
             # Write the FileSet - this creates DICOMDIR and copies files to standard structure
@@ -196,19 +274,6 @@ class DicomDirBuilder:
             import traceback
             traceback.print_exc()
             return False
-    
-    def build_simple(self, dicom_folder: str, output_folder: str) -> bool:
-        """
-        Simple DICOMDIR creation from a single folder
-        
-        Args:
-            dicom_folder: Path to folder containing DICOM files
-            output_folder: Path where DICOMDIR will be created
-        
-        Returns:
-            True if successful, False otherwise
-        """
-        return self.build_from_study_folders([dicom_folder], output_folder, copy_files=True)
 
     def _find_dicom_files(self, study_path: Path) -> List[Path]:
         """Return DICOM files under `study_path`.
@@ -244,6 +309,12 @@ class DicomDirBuilder:
                 logger.error("DICOMDIR file was not created")
                 return False
 
+            # A 0-instance File-set must never validate as success — that is
+            # exactly the empty-disc bug (empty expected == empty actual).
+            if not expected_uids:
+                logger.error("DICOMDIR validation: no instances were added")
+                return False
+
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", DeprecationWarning)
                 validation_fs = FileSet(str(dicomdir_path))
@@ -271,110 +342,6 @@ class DicomDirBuilder:
         except Exception as exc:
             logger.error(f"Error validating generated File-set: {exc}")
             return False
-    
-    def _sanitize_name(self, name: str, max_length: int = 8) -> str:
-        """Sanitize a name for file system compatibility (8.3 format)"""
-        # Remove invalid characters
-        sanitized = re.sub(r'[<>:"/\\|?*\s]', '_', name)
-        # Truncate to max length
-        return sanitized[:max_length].upper()
-    
-    def _sanitize_folder_name(self, name: str, max_length: int = 64) -> str:
-        """Sanitize a folder name for file system compatibility"""
-        # Remove invalid characters for Windows/Linux
-        sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
-        # Replace multiple underscores/spaces with single underscore
-        sanitized = re.sub(r'[\s_]+', '_', sanitized)
-        # Remove leading/trailing underscores
-        sanitized = sanitized.strip('_')
-        # Truncate to max length
-        if len(sanitized) > max_length:
-            sanitized = sanitized[:max_length]
-        return sanitized if sanitized else 'UNKNOWN'
-    
-    def create_folder_structure(
-        self,
-        studies_data: List[dict],
-        output_folder: str,
-        light_viewer_path: Optional[str] = None
-    ) -> bool:
-        """
-        Create complete CD folder structure without burning
-        
-        Args:
-            studies_data: List of study information dicts with paths
-            output_folder: Destination folder path
-            light_viewer_path: Optional path to light viewer executable
-        
-        Returns:
-            True if successful
-        """
-        try:
-            output_path = Path(output_folder)
-            output_path.mkdir(parents=True, exist_ok=True)
-            
-            # Collect study folders from studies_data
-            study_folders = []
-            for study in studies_data:
-                study_path = study.get('study_path') or study.get('path')
-                if study_path and Path(study_path).exists():
-                    study_folders.append(study_path)
-            
-            if not study_folders:
-                logger.error("No valid study folders found")
-                return False
-            
-            # Build DICOMDIR
-            success = self.build_from_study_folders(study_folders, output_folder)
-            
-            if not success:
-                return False
-            
-            # Copy light viewer if provided
-            if light_viewer_path and Path(light_viewer_path).exists():
-                self._copy_light_viewer(light_viewer_path, output_folder)
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error creating folder structure: {e}")
-            return False
-    
-    def _copy_light_viewer(self, viewer_path: str, output_folder: str):
-        """Copy light viewer to output folder root (next to DICOMDIR) with autorun.inf"""
-        try:
-            output_path = Path(output_folder)
-            viewer_path_obj = Path(viewer_path)
-            
-            # Copy the viewer executable directly to root (next to DICOMDIR)
-            dest_path = output_path / viewer_path_obj.name
-            shutil.copy2(viewer_path, dest_path)
-            
-            # Copy any DLLs or dependencies in the same folder to root
-            viewer_dir = viewer_path_obj.parent
-            for item in viewer_dir.iterdir():
-                if item.is_file() and item.suffix.lower() in ['.dll', '.ini', '.cfg', '.dat', '.xml']:
-                    shutil.copy2(item, output_path / item.name)
-            
-            # Create autorun.inf
-            autorun_content = f"""[autorun]
-open={viewer_path_obj.name}
-icon={viewer_path_obj.name},0
-label=DICOM Viewer
-action=Open DICOM Viewer
-
-[Content]
-MusicFiles=false
-PictureFiles=false
-VideoFiles=false
-"""
-            autorun_path = output_path / "autorun.inf"
-            autorun_path.write_text(autorun_content, encoding='utf-8')
-            
-            logger.info(f"Light viewer copied to: {dest_path}")
-            
-        except Exception as e:
-            logger.warning(f"Could not copy light viewer: {e}")
 
 
 def check_pydicom_available() -> bool:

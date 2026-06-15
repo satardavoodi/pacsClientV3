@@ -9,8 +9,8 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushB
                                QMessageBox, QFileDialog, QCheckBox, QTextEdit, QFrame,
                                QRadioButton, QButtonGroup, QSpinBox, QScrollArea, QWidget,
                                QGridLayout)
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QIcon, QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon, QPixmap
 import qtawesome as qta
 from typing import List, Optional
 import os

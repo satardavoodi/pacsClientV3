@@ -5,6 +5,7 @@ Validates download requests before execution.
 """
 
 import logging
+import os
 from typing import Optional, Dict, Any
 
 from ..core.models import DownloadTask, ValidationResult, RuleResult
@@ -19,6 +20,17 @@ except ImportError:
     DATABASE_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
+
+# R17 stale-COMPLETED hardening (46640/46533, 2026-06-15): R17b (DB check) already
+# verifies files on disk before trusting a 'Completed' status, but R17a (in-memory
+# StateStore check) blanket-blocked any COMPLETED study — so a study that GREW on
+# the server (or whose files were cleared) was rejected and its new series never
+# downloaded. When on, R17a applies the SAME disk check: a COMPLETED study whose
+# files are missing on disk is allowed to resume (download the missing series); a
+# genuinely-complete study still blocks (no re-download). Off => legacy blanket block.
+_R17_DISK_AWARE_COMPLETED = str(
+    os.environ.get('AIPACS_R17_DISK_AWARE_COMPLETED', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 class ValidationRules:
@@ -41,7 +53,34 @@ class ValidationRules:
         self.state = state_store
         self.config = config
         logger.info("✅ ValidationRules initialized")
-    
+
+    def _task_files_complete_on_disk(self, task: DownloadTask) -> bool:
+        """True if every series in the task has its expected DICOM count on disk.
+
+        Used to decide whether a 'Completed' status is real or stale (study grew
+        on the server / files cleared). Mirrors the R17b verification. Returns True
+        (trust completed) when there is nothing to verify or on any error, so it
+        can never make the rule MORE permissive than the legacy behaviour by
+        accident — it only ALLOWS a re-download when files are provably missing.
+        """
+        if not task.output_dir or not task.series_list:
+            return True
+        try:
+            from pathlib import Path
+            study_dir = Path(task.output_dir)
+            for si in task.series_list:
+                sdir = study_dir / str(si.series_number)
+                if not sdir.exists():
+                    return False
+                dcm_count = sum(
+                    1 for f in os.listdir(sdir) if f.lower().endswith('.dcm')
+                )
+                if dcm_count < (si.image_count or 0):
+                    return False
+            return True
+        except Exception:
+            return True
+
     def validate_download_task(self, task: DownloadTask) -> RuleResult:
         """
         Validate download task before adding to queue
@@ -64,9 +103,34 @@ class ValidationRules:
                 existing_state = self.state.get(task.study_uid)
                 logger.info(f"R17a: Study exists in StateStore (Status: {existing_state.status.value})")
 
-                # Allow resume for incomplete downloads (non-terminal states)
-                # Terminal states: COMPLETED, CANCELLED — these should still block
-                if existing_state.status in (DownloadStatus.COMPLETED, DownloadStatus.CANCELLED):
+                # CANCELLED: the user explicitly cancelled — respect it (block);
+                # do not auto-resume just because the study grew.
+                if existing_state.status == DownloadStatus.CANCELLED:
+                    return RuleResult(
+                        allowed=False,
+                        reason=f"Download already exists (Status: {existing_state.status.value})",
+                        action="skip",
+                        metadata={'existing_state': existing_state}
+                    )
+
+                # COMPLETED: normally block — but a 'Completed' state goes STALE
+                # when the study GROWS on the server or its files are cleared. Mirror
+                # the R17b disk check: if the task's series are not actually present
+                # on disk, the study is NOT really complete, so allow a resume of the
+                # missing series instead of blocking (46640/46533). A genuinely
+                # complete study still blocks (no re-download).
+                if existing_state.status == DownloadStatus.COMPLETED:
+                    if _R17_DISK_AWARE_COMPLETED and not self._task_files_complete_on_disk(task):
+                        logger.info(
+                            "R17a: StateStore 'Completed' but files missing on disk "
+                            "(study grew / cleared) — allowing resume of missing series"
+                        )
+                        return RuleResult(
+                            allowed=False,
+                            reason="Completed state stale (files missing) — resuming",
+                            action="resume",
+                            metadata={'existing_state': existing_state, 'should_resume': True},
+                        )
                     return RuleResult(
                         allowed=False,
                         reason=f"Download already exists (Status: {existing_state.status.value})",

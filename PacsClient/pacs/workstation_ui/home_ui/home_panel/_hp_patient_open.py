@@ -2,6 +2,7 @@
 # Auto-generated from home_ui.py — Phase 3 split
 
 import asyncio
+import os
 import logging
 import logging as _logging
 import time as _time
@@ -9,6 +10,41 @@ import threading
 import traceback
 
 _logger = logging.getLogger(__name__)
+
+# S1 (sync/download lifecycle review 2026-06-15): on an explicit open the server
+# series-info is ALWAYS re-fetched (the lightweight server metadata check), but a
+# full CRITICAL priority re-download was then started even when the study is
+# already complete — spawning a download subprocess that contends disk I/O with
+# the viewer reading the same files (observed on patient 46370). When this flag is
+# on, the open skips that re-download for a study the SERVER confirms is fully
+# present locally (no missing/partial series); the background resync remains the
+# safety net for any genuinely new series. Any doubt falls through to download.
+_OPEN_SKIP_DOWNLOAD_WHEN_COMPLETE = str(
+    os.environ.get('AIPACS_OPEN_SKIP_DOWNLOAD_WHEN_COMPLETE', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+
+# Stale-COMPLETED unblock (46640, 2026-06-15): a study that was downloaded when it
+# had N series is marked COMPLETED in the Download Manager state store. If the
+# server later GAINS series, R17 ("Download already exists (Status: Completed)")
+# REJECTS the new download — so the new series never download through the normal
+# open/resync path. When the FRESH server list shows missing series we therefore
+# clear the stale TERMINAL (COMPLETED/CANCELLED) DM state so the new series can be
+# queued; the resume scan still skips the already-local files. Off => legacy
+# (new series blocked until a manual force).
+_OPEN_RESET_STALE_COMPLETE = str(
+    os.environ.get('AIPACS_OPEN_RESET_STALE_COMPLETE', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+
+# Already-open refresh (46533, 2026-06-15): re-opening (double-click) a patient
+# whose tab is ALREADY open short-circuits to "focus the existing tab" and returns
+# — it never re-checks the server, so series ADDED on the server after the tab was
+# opened are neither shown in the open viewer nor downloaded. When on, re-focusing
+# an open tab also fires a FORCED server check (downloads any new series) and
+# refreshes that viewer's series sidebar (set_server_series_info is merge-aware, so
+# only genuinely-new series are added). Both run without blocking the focus.
+_OPEN_REFRESH_ALREADY_OPEN = str(
+    os.environ.get('AIPACS_OPEN_REFRESH_ALREADY_OPEN', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
 
 # Redirect print() to logger to avoid synchronous console I/O on Windows.
 _print_logger = _logging.getLogger(__name__)
@@ -615,6 +651,41 @@ class _HPPatientOpenMixin:
                             self._maybe_hide_double_click_loading()
                             self.patient_table_widget.update_visited_status(study_uid, status='opened')
                             self._log_open_trace(study_uid, 'existing_tab_focused')
+
+                            # 46533: the tab was already open, but the study may
+                            # have GAINED series on the server since it was opened.
+                            # Re-focusing alone left the viewer + download stale.
+                            # Fire a FORCED server check (the resync downloads any
+                            # new series — stale-COMPLETED reset + only-missing) and
+                            # refresh THIS viewer's series sidebar so the new series
+                            # appear. Tab is already focused above, so neither call
+                            # blocks the user; both are best-effort.
+                            if _OPEN_REFRESH_ALREADY_OPEN:
+                                try:
+                                    self._schedule_ui_coro(
+                                        self._resync_patient_studies_from_server(
+                                            patient_id, patient_name,
+                                            list(all_study_uids), force=True))
+                                except Exception:
+                                    pass
+                                try:
+                                    _ri = await asyncio.to_thread(
+                                        self._get_or_fetch_series_info,
+                                        study_uid, patient_id, True)
+                                    _rs = (_ri or {}).get('series') or []
+                                    if (_rs and is_widget_alive(existing_widget)
+                                            and hasattr(existing_widget, 'set_server_series_info')):
+                                        for _s in _rs:
+                                            if isinstance(_s, dict) and 'study_uid' not in _s:
+                                                _s['study_uid'] = study_uid
+                                        existing_widget.set_server_series_info(_rs)
+                                        self._log_open_trace(
+                                            study_uid, 'existing_tab_series_refreshed',
+                                            series_count=len(_rs))
+                                except Exception as _rf_err:
+                                    _logger.debug(
+                                        "existing-tab series refresh failed for %s (%s)",
+                                        study_uid, _rf_err)
                             return
                 except Exception as e:
                     self._log_open_trace(study_uid, 'existing_tab_focus_error', level='error', error=str(e))
@@ -872,11 +943,6 @@ class _HPPatientOpenMixin:
                                 'body_part': current_study_data.get('body_part', '') if current_study_data else '',
                             }
 
-                            _logger.info(
-                                "[FAST-SERIES-DOWNLOAD-QUEUE] study=%s series_count=%d priority=High",
-                                current_study_uid,
-                                len(series_list),
-                            )
                             if not series_list:
                                 self._log_open_trace(
                                     current_study_uid,
@@ -885,6 +951,90 @@ class _HPPatientOpenMixin:
                                     patient_id=patient_id,
                                 )
                                 continue
+
+                            # S1/S6 (sync lifecycle review): download ONLY what the
+                            # SERVER says is missing locally — never the whole study.
+                            #   * nothing missing      -> skip the re-download (S1)
+                            #   * some series missing  -> queue ONLY the missing /
+                            #     partial series (S6). A study that grew from 1 to 11
+                            #     series queues the 10 NEW ones, NOT all 11, so the
+                            #     already-local series do not appear to "re-download"
+                            #     (the exact 46640 complaint). series_list is the
+                            #     FRESH server list; the DM resume still skips
+                            #     complete files as a second layer. ANY error/doubt
+                            #     -> fall through to the full server list.
+                            _download_series_list = series_list
+                            if _OPEN_SKIP_DOWNLOAD_WHEN_COMPLETE and study_info:
+                                try:
+                                    from modules.storage.sync_manifest import evaluate_sync as _eval_sync
+                                    _dec = _eval_sync(current_study_uid, server_series=series_list)
+                                    _need = set(_dec.get('missing_series') or []) | set(_dec.get('partial_series') or [])
+                                    if not _need:
+                                        self._log_open_trace(
+                                            current_study_uid,
+                                            'download_skipped_complete',
+                                            patient_id=patient_id,
+                                            series_count=len(series_list),
+                                            state=_dec.get('state'),
+                                        )
+                                        continue
+                                    _filtered = [
+                                        s for s in series_list
+                                        if str((s or {}).get('series_number')) in _need
+                                    ]
+                                    if _filtered and len(_filtered) < len(series_list):
+                                        _download_series_list = _filtered
+                                        self._log_open_trace(
+                                            current_study_uid,
+                                            'download_only_missing',
+                                            patient_id=patient_id,
+                                            server_series=len(series_list),
+                                            missing=len(_filtered),
+                                            state=_dec.get('state'),
+                                        )
+                                except Exception as _skip_err:
+                                    _logger.debug(
+                                        "missing-only download check failed for %s (%s); downloading full list",
+                                        current_study_uid, _skip_err,
+                                    )
+
+                            # The queue + DM task reflect ONLY what is downloaded.
+                            if _download_series_list is not series_list:
+                                dm_study_data = dict(dm_study_data)
+                                dm_study_data['series'] = _download_series_list
+                                dm_study_data['series_count'] = len(_download_series_list)
+                            # We are about to download (series ARE missing), so a
+                            # COMPLETED/CANCELLED DM state for this study is STALE
+                            # (it grew on the server). Clear it so R17 does not
+                            # reject the new series with "Download already exists
+                            # (Status: Completed)" — the 46640 bug. Only terminal
+                            # states are touched (no active worker to orphan); the
+                            # resume scan still skips the already-local files.
+                            if _OPEN_RESET_STALE_COMPLETE:
+                                try:
+                                    _ss = getattr(download_manager, 'state_store', None)
+                                    _st = _ss.get(current_study_uid) if _ss is not None else None
+                                    _st_status = getattr(getattr(_st, 'status', None), 'name', '') if _st else ''
+                                    if _st_status in ('COMPLETED', 'CANCELLED'):
+                                        _ss.reset(current_study_uid)
+                                        self._log_open_trace(
+                                            current_study_uid,
+                                            'download_reset_stale_complete',
+                                            patient_id=patient_id,
+                                            prior_status=_st_status,
+                                            queued=len(_download_series_list),
+                                        )
+                                except Exception as _rst_err:
+                                    _logger.debug(
+                                        "stale-complete reset failed for %s (%s)",
+                                        current_study_uid, _rst_err,
+                                    )
+
+                            _logger.info(
+                                "[FAST-SERIES-DOWNLOAD-QUEUE] study=%s series_count=%d priority=High",
+                                current_study_uid,
+                                len(_download_series_list),
+                            )
                             download_manager.start_priority_download_immediately(
                                 study_data=dm_study_data,
                                 server_info=server,

@@ -1,0 +1,27 @@
+{
+  "format_version": 1,
+  "app_name": "AIPacs",
+  "module_id": "consultation",
+  "title": "Online Consultation",
+  "tier": "optional",
+  "version": "3.3.0",
+  "package_kind": "bundled_unlock",
+  "payload_dir": "payload",
+  "python_paths": [
+    "python"
+  ],
+  "requires_restart": true,
+  "healthcheck_import": "modules.cloud_consultation.feature_flags",
+  "healthcheck_path": "",
+  "integration_points": [
+    "education.online_consultation_tab",
+    "titlebar.account_popup"
+  ],
+  "install_channels": [
+    "installer",
+    "settings",
+    "store"
+  ],
+  "sdk_entrypoint_group": "aipacs.plugins",
+  "sdk_entrypoint_name": "consultation"
+}

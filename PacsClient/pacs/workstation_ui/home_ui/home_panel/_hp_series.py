@@ -42,6 +42,34 @@ _RESYNC_ON_REOPEN_ENABLED = str(
     _os.environ.get('AIPACS_RESYNC_ON_REOPEN', '1')
 ).strip().lower() not in ('0', 'false', 'no', 'off')
 _RESYNC_TTL_S = 300.0  # re-check a given study at most once per 5 min (auto path)
+# Same stale-COMPLETED unblock as the open path (FIX-010, 46640): when the resync
+# detects a study GREW on the server but its Download-Manager state is terminal
+# (COMPLETED/CANCELLED from an earlier full download), the new series' enqueue is
+# rejected by the queue de-dup. Resetting the terminal state lets the new series
+# download. Shares the AIPACS_OPEN_RESET_STALE_COMPLETE flag so one switch governs
+# both the open and the resync paths.
+_RESYNC_RESET_STALE_COMPLETE = str(
+    _os.environ.get('AIPACS_OPEN_RESET_STALE_COMPLETE', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+# Disk-aware resync (46533 follow-up): the growth check compares DB series ROWS
+# vs the server, so a study whose DB rows exist but whose FILES are missing (a
+# prior fetch saved the rows but the download never finished) reports 'current'
+# and never re-downloads. When on, the resync ALSO consults the manifest (disk
+# files vs server) and treats disk-missing/partial series as a reason to sync.
+# Off => legacy DB-only growth detection.
+_RESYNC_DISK_AWARE = str(
+    _os.environ.get('AIPACS_RESYNC_DISK_AWARE', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+# contentVersion fast-gate (server STUDY_STORAGE_AND_VERSIONING): the server keeps
+# a monotonic per-study contentVersion and returns it on GetStudyThumbnails. When
+# the server reports the SAME version we last confirmed complete, the study is
+# unchanged -> skip the DB query + disk manifest scan entirely (the cheapest gate).
+# Only when it advanced (or we have no record / the server omits it) do we fall
+# through to the disk-aware check below. Inert when the server does not send the
+# field (content_version is None) -> behaviour identical to disk-aware-only.
+_RESYNC_USE_CONTENT_VERSION = str(
+    _os.environ.get('AIPACS_CONTENT_VERSION_SYNC', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 class _HPSeriesMixin:
@@ -286,6 +314,34 @@ class _HPSeriesMixin:
         """
         if not force and not _RESYNC_ON_REOPEN_ENABLED:
             return
+        # Mode-aware guard — the AUTO resync is a REMOTE operation, gated by the
+        # workflow mode (docs/architecture/SYNC_MODE_SEPARATION.md). LiveServer
+        # (contentVersion delta sync) and OfflineServer (cloud preview sync) run;
+        # Import / CD / unknown are purely local and never auto-contact a remote;
+        # LocalDatabase runs only with AIPACS_LOCALDB_AUTO_SERVER_SYNC=1 (default
+        # off per the directive — a DB/Local patient opens without requiring the live
+        # server). A manual "Refresh / Sync from server" (force=True) always runs.
+        if not force:
+            _src = getattr(self, 'source_of_patient_load', None)
+            try:
+                from modules.storage.sync_mode_policy import (
+                    requires_remote_resync as _needs_resync,
+                    log_mode_decision as _log_mode,
+                )
+                _allowed = _needs_resync(_src)
+            except Exception:
+                # Policy unavailable → match the policy intent: skip ONLY the
+                # explicitly-local IMPORT source; run for every other source
+                # (including unknown) so the resync can never regress.
+                _allowed = (_src != SourceOfPatientLoad.IMPORT)
+                _log_mode = None
+            if not _allowed:
+                if _log_mode is not None:
+                    _log_mode(
+                        _logging.getLogger(__name__), source=_src,
+                        study_uid=(str(study_uids[0]) if study_uids else ''),
+                        sync_skipped=True, reason='non_remote_auto_path')
+                return
         try:
             pid = str(patient_id or '').strip()
             uids = [str(u or '').strip() for u in (study_uids or []) if str(u or '').strip()]
@@ -295,6 +351,18 @@ class _HPSeriesMixin:
                 self._log_open_trace(
                     uids[0], 'resync_start', patient_id=pid,
                     study_count=len(uids), forced=int(bool(force)))
+            except Exception:
+                pass
+            # Mode-aware log: the resync is proceeding — record the workflow mode +
+            # source of truth so the log makes the LiveServer/OfflineServer/(opt-in)
+            # LocalDatabase decision explicit (forced=manual refresh on any source).
+            try:
+                from modules.storage.sync_mode_policy import log_mode_decision as _log_mode2
+                _log_mode2(
+                    _logging.getLogger(__name__),
+                    source=getattr(self, 'source_of_patient_load', None),
+                    study_uid=uids[0], sync_skipped=False,
+                    reason=('manual_refresh' if force else 'auto_remote_resync'))
             except Exception:
                 pass
             dm = None
@@ -332,8 +400,53 @@ class _HPSeriesMixin:
                     sn = str(s.get('series_number') or '').strip()
                     if sn:
                         server_by_num[sn] = int(s.get('image_count') or 0)
+
+                # ── contentVersion fast-gate (cheapest, authoritative) ──────────
+                # The server returns a monotonic per-study contentVersion. If it
+                # matches the version we last confirmed COMPLETE on disk, the study
+                # is unchanged → skip the DB query + disk manifest scan + enqueue
+                # entirely. Only a changed/unknown version (or the field being
+                # absent) falls through to the disk-aware check below. Inert when
+                # the server omits the field (server_cv_int is None).
+                server_cv = (study_info or {}).get('content_version')
+                try:
+                    server_cv_int = int(server_cv) if server_cv is not None else None
+                except (TypeError, ValueError):
+                    server_cv_int = None
+                if _RESYNC_USE_CONTENT_VERSION and server_cv_int is not None and not force:
+                    try:
+                        from modules.storage.content_version_store import get_synced_version as _get_cv
+                        local_cv = _get_cv(study_uid)
+                    except Exception:
+                        local_cv = None
+                    if local_cv is not None and server_cv_int <= int(local_cv):
+                        try:
+                            self._log_open_trace(
+                                study_uid, 'study_resync_check', patient_id=pid,
+                                server_series=len(server_by_num),
+                                content_version=server_cv_int,
+                                result='current_cv', forced=int(bool(force)))
+                        except Exception:
+                            pass
+                        continue
+
                 local_by_num = self._local_series_counts(study_uid)
                 grew, new_series, grown_series = self._detect_study_growth(server_by_num, local_by_num)
+
+                # Disk-aware: DB rows can exist for series whose FILES are missing
+                # (a prior fetch saved the rows but the download never completed),
+                # which the DB-only growth check above misses (reports 'current').
+                # Consult the manifest (disk files vs server) so missing/partial
+                # files are ALSO a reason to (re)download (46533 follow-up).
+                disk_missing = []
+                if _RESYNC_DISK_AWARE:
+                    try:
+                        from modules.storage.sync_manifest import evaluate_sync as _eval_sync
+                        _dec = _eval_sync(study_uid, server_series=server_series)
+                        disk_missing = list(_dec.get('missing_series') or []) + list(_dec.get('partial_series') or [])
+                    except Exception:
+                        disk_missing = []
+                needs_sync = grew or bool(disk_missing)
 
                 try:
                     self._log_open_trace(
@@ -341,11 +454,26 @@ class _HPSeriesMixin:
                         local_series=len(local_by_num), server_series=len(server_by_num),
                         new_series=(','.join(new_series[:12]) or '-'),
                         grown_series=(','.join(grown_series[:12]) or '-'),
-                        result=('grew' if grew else 'current'), forced=int(bool(force)))
+                        disk_missing=(','.join(disk_missing[:12]) or '-'),
+                        content_version=(server_cv_int if server_cv_int is not None else -1),
+                        result=('grew' if grew else ('disk_missing' if disk_missing else 'current')),
+                        forced=int(bool(force)))
                 except Exception:
                     pass
 
-                if not grew:
+                if not needs_sync:
+                    # Disk confirmed complete at this server contentVersion — record
+                    # it so future resyncs cheap-skip (no DB/disk scan) until the
+                    # server's version actually advances. Stamped ONLY on this
+                    # confirmed-complete branch, never on the enqueue branch below
+                    # (a downloading study is not yet complete — see the store
+                    # docstring). Inert when the server omits the field.
+                    if _RESYNC_USE_CONTENT_VERSION and server_cv_int is not None:
+                        try:
+                            from modules.storage.content_version_store import set_synced_version as _set_cv
+                            _set_cv(study_uid, server_cv_int)
+                        except Exception:
+                            pass
                     continue
 
                 # Persist the refreshed series rows, then enqueue the study for
@@ -362,6 +490,27 @@ class _HPSeriesMixin:
                 if dm is None:
                     dm = self._get_or_create_download_manager_tab(activate_tab=False)
                 if dm:
+                    # The study GREW, so a terminal (COMPLETED/CANCELLED) DM state
+                    # is stale and would make add_downloads reject the new series
+                    # ("Download already exists"). Reset it first (idle state only;
+                    # resume still skips already-local files). Mirrors the open
+                    # path's stale-COMPLETED unblock (FIX-010, 46640).
+                    if _RESYNC_RESET_STALE_COMPLETE:
+                        try:
+                            _ss = getattr(dm, 'state_store', None)
+                            _st = _ss.get(study_uid) if _ss is not None else None
+                            _stn = getattr(getattr(_st, 'status', None), 'name', '') if _st else ''
+                            if _stn in ('COMPLETED', 'CANCELLED'):
+                                _ss.reset(study_uid)
+                                try:
+                                    self._log_open_trace(
+                                        study_uid, 'resync_reset_stale_complete',
+                                        patient_id=pid, prior_status=_stn,
+                                        new_series=(','.join(new_series[:12]) or '-'))
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
                     try:
                         dm.add_downloads([{
                             'patient_id': pid,

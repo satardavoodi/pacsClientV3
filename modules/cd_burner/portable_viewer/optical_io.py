@@ -25,7 +25,7 @@ import shutil
 import tempfile
 import time
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Dict, Iterable, Optional
 
 logger = logging.getLogger(__name__)
 

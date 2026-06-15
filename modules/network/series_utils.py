@@ -40,6 +40,13 @@ def extract_series_info_from_grpc_response(grpc_response) -> Dict[str, Any]:
             'study_description': grpc_response.study_description,
             'count_of_series': grpc_response.count_of_series,
             'thumbnails_available': grpc_response.thumbnails_available,
+            # contentVersion: server's monotonic per-study content counter (the
+            # authoritative staleness signal). Optional — None when the server does
+            # not send it, in which case callers fall back to the disk-aware check.
+            # Accept both snake_case and camelCase attribute spellings.
+            'content_version': (getattr(grpc_response, 'content_version', None)
+                                if getattr(grpc_response, 'content_version', None) is not None
+                                else getattr(grpc_response, 'contentVersion', None)),
             'series': []
         }
         

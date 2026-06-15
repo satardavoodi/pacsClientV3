@@ -615,3 +615,44 @@ respectively; neither is multi-study).
 
 **Action items for pc2:** (1) rebuild + reinstall to pick up FIX-007/FIX-008 and the loading_overlay guard;
 (2) fix that PC's network/PACS-server connectivity (the `WinError 10060/10065` upstream trigger).
+
+## 18. Slow patient open — disk-bound header re-scan (FIX-009, 2026-06-15)
+
+**Symptom.** Patient 46370 (62 series, all already downloaded) opened in **~44s to first image**
+(~100s total) on the live build — vs **1.5s** for the same patient the day before.
+
+**Root cause (from the live logs).** The main-thread stack sampler (`viewer_diagnostics.log`) sat
+inside `open()/fp_read()/os.path.exists()` for the *entire* 42s gap; CPU ~1%, disk read ~50–180 KB/s
+(~69 ms/file) — i.e. **I/O-wait-bound disk reads, not compute**. Because the study was opened from a
+server search (`is_local=False`), the FAST load skips the DB-metadata path (the known **H1** issue) and
+`_build_metadata_headers_only` re-reads **every** DICOM header **sequentially on the main thread**. The
+day-before fast open was an artifact of the study being mid-download then (0 local series → only a few
+files read). The actual render is fast (`headers_only_build=1110ms`, switch `368ms`); the time was pure
+serial disk I/O.
+
+**Fix — adaptive parallel header read (`_read_header_stubs`).** The per-file header read is independent
+and file I/O releases the GIL, so the reads can overlap on a slow disk. But a thread pool is ~2× *slower*
+on a fast SSD (parse-bound — measured 2026-06-08), so the new reader is **adaptive**: it probes the first
+~6 files and stays **sequential** on a fast SSD (no regression, honours the old benchmark) but
+**overlaps** the remaining reads with a bounded pool (≤8 workers) on a slow/I-O-bound disk. Slow-disk
+micro-benchmark: **30 ms/file × 60 → 1.82s sequential vs 0.40s parallel (4.6×), byte-identical result** —
+so 46370's ~42s scan drops to roughly ~9s. Gated by `AIPACS_HEADER_SCAN_PARALLEL=auto`(default)`|0`
+(legacy sequential)`|1/force`. **Slice ordering / geometry / displayed result are unchanged** — stubs stay
+index-keyed and are re-sorted + geometry-normalized regardless of completion order.
+
+**Concurrent server check — already satisfied.** The "any new series on the server?" check
+(`_resync_patient_studies_from_server`) is **already on by default** (`AIPACS_RESYNC_ON_REOPEN=1`) and runs
+as a **non-blocking, off-thread, fire-and-forget** coroutine (server fetch via `asyncio.to_thread`) that
+detects growth and pulls new series. It only *appeared* late for 46370 because the 42s main-thread scan
+starved the event loop; with the scan fast it overlaps the load as designed. No change needed there.
+
+**Tests.** `tests/code/viewer/test_header_scan_parallel.py` (9 — completeness, index/order correctness,
+sequential==forced-parallel==auto equivalence, failing-file resilience) + the existing
+`test_headers_only_parallel_scan.py` invariants (now 16 green together). py_compile clean; mirrors 335/335.
+
+**Remaining (not in this fix):** the scan still blocks the main thread (now ~9s, not ~42s) — fully
+de-blocking needs preview-first/off-thread load (deferred; render must stay on the main thread). A full
+62-series **re-download is queued on an already-complete study** (wasteful; didn't transfer) — the
+download-on-complete trigger should be fixed separately. The proper H1 (use the downloader's DB metadata)
+stays deferred until the downloader's slice-spacing write-gap is closed (clinical geometry). Best confirmed
+live: reopen 46370 and watch `first_series_visible` drop + `header_scan_parallel` appear.

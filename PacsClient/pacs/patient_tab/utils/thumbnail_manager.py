@@ -1944,7 +1944,14 @@ class ThumbnailManager(QObject):
                                     # Double-check that objects still exist before animation
                                     try:
                                         if widget and widget.progress_border:
-                                            anim = QPropertyAnimation(widget.progress_border, b"_border_width")
+                                            # Parent to progress_border + keep a reference: a bare local
+                                            # QPropertyAnimation gets garbage-collected while the 500 ms
+                                            # flash is still running, freeing the C++ object mid-flight ->
+                                            # access violation. During a large/all-modality search many
+                                            # thumbnails flash at once, so this is a real crash (same class
+                                            # as the tab-hover fix). Parent + stored ref keep it alive.
+                                            anim = QPropertyAnimation(widget.progress_border, b"_border_width", widget.progress_border)
+                                            widget.progress_border._priority_flash_anim = anim
                                             anim.setDuration(500)
                                             anim.setStartValue(original_width)
                                             anim.setEndValue(original_width * 2)  # Thicker border
@@ -1954,7 +1961,8 @@ class ThumbnailManager(QObject):
                                                 # Return to original
                                                 try:
                                                     if widget and widget.progress_border:
-                                                        anim2 = QPropertyAnimation(widget.progress_border, b"_border_width")
+                                                        anim2 = QPropertyAnimation(widget.progress_border, b"_border_width", widget.progress_border)
+                                                        widget.progress_border._priority_flash_anim2 = anim2
                                                         anim2.setDuration(500)
                                                         anim2.setStartValue(original_width * 2)
                                                         anim2.setEndValue(original_width)

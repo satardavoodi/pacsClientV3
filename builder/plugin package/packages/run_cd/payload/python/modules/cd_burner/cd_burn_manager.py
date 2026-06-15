@@ -8,14 +8,13 @@ Coordinates the entire CD burning process including:
 """
 
 import datetime
-import os
 import shutil
 import tempfile
 import logging
 import json
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Dict, Callable, Any
+from typing import List, Optional, Dict, Any
 from PySide6.QtCore import QObject, Signal, QThread
 
 from .dicomdir_builder import DicomDirBuilder, check_pydicom_available

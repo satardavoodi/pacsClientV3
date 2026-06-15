@@ -1,0 +1,19 @@
+Module: advanced_mpr
+Payload materialization skipped.
+
+This package is prepared for an external runtime payload and keeps a pointer
+to the live runtime source instead of copying it into builder/plugin package/packages.
+
+Runtime source override env: AIPACS_ADVANCED_MPR_RUNTIME_SOURCE
+Selected source: E:\ai-pacs\ai-pacs codes\ai-pacs beta version\modules\mpr\advanced_3d_slicer\slicer_custom_app\NewMPR2Slicer\build
+Candidate sources:
+  - E:\ai-pacs\ai-pacs codes\ai-pacs beta version\modules\mpr\advanced_3d_slicer\slicer_custom_app\NewMPR2Slicer\build
+  - C:\Users\Dr.Alizadeh\AppData\Local\AIPacs\modules_runtime\advanced_mpr
+
+Missing required files:
+
+Run:
+  set AIPACS_ADVANCED_MPR_RUNTIME_SOURCE=<built Slicer runtime root>
+  python builder/materialize_plugin_packages.py --include-runtime-payloads
+
+The runtime root must contain AIPacsAdvancedViewer.exe and its launcher/runtime files.

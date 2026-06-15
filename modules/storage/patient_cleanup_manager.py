@@ -81,7 +81,15 @@ def delete_patient_completely(patient_pk: int) -> Tuple[bool, str]:
                 delete_download_progress(study_uid)
             except Exception as e:
                 logger.warning(f"Failed to delete download progress for {study_uid}: {e}")
-        
+            # Forget the synced contentVersion so a re-download after clear isn't
+            # masked by the resync fast-gate (a cleared study has no local files;
+            # without this the gate could cheap-skip it as "current"). Best-effort.
+            try:
+                from modules.storage.content_version_store import clear as _clear_cv
+                _clear_cv(study_uid)
+            except Exception:
+                pass
+
         logger.info(f"  ✓ Download progress records deleted")
         
         # Step 4: Delete file system data

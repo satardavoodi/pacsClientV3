@@ -44,6 +44,48 @@ def load_version() -> str:
     return str((data.get("project") or {}).get("version") or "0.0.0")
 
 
+_ALLOW_MISSING_LITE_VIEWER_ENV = "AIPACS_ALLOW_MISSING_LITE_VIEWER"
+
+# Files that prove the lite viewer bundle is present AND complete in a run_cd
+# payload — same critical set the build script and burn-time guard assert.
+_RUN_CD_LITE_VIEWER_REQUIRED = (
+    "AIPacsLiteViewer.exe",
+    "_internal/base_library.zip",
+    "_internal/python313.dll",
+    "_internal/PySide6/plugins/platforms/qwindows.dll",
+)
+
+
+def _validate_run_cd_lite_viewer(package_dir: Path) -> None:
+    """Guarantee the run_cd payload ships the default lite viewer.
+
+    The whole point of the CD module is that an INSTALLED client can open a
+    burned disc — which needs the bundled viewer present. If the lite viewer
+    was never built (``tools/build/build_lite_viewer.py``), the payload would
+    ship without it and the installed app would say "viewer not found". Fail
+    the build loudly here instead. Emergency escape hatch:
+    ``AIPACS_ALLOW_MISSING_LITE_VIEWER=1``.
+    """
+    bundle = (
+        package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME / "python" / "modules"
+        / "cd_burner" / "lightViewer_dist" / "AIPacsLiteViewer"
+    )
+    missing = [rel for rel in _RUN_CD_LITE_VIEWER_REQUIRED if not (bundle / rel).is_file()]
+    if not missing:
+        return
+    message = (
+        "run_cd payload is missing the default AI-PACS Lite Viewer "
+        f"(checked {bundle}).\nMissing: {', '.join(missing)}\n"
+        "Build it first:  tools\\build\\build_lite_viewer.bat\n"
+        f"(or set {_ALLOW_MISSING_LITE_VIEWER_ENV}=1 to ship without it — the "
+        "installed CD module will then have no default viewer)."
+    )
+    if os.environ.get(_ALLOW_MISSING_LITE_VIEWER_ENV, "").strip() in ("1", "true", "yes"):
+        print(f"[materialize] WARNING: {message}")
+        return
+    raise RuntimeError(message)
+
+
 def _copy_source_tree(package_dir: Path, source_dirs: list[str]) -> bool:
     payload_root = package_dir / MODULE_PACKAGE_PAYLOAD_DIRNAME / "python"
     copied = False
@@ -58,7 +100,13 @@ def _copy_source_tree(package_dir: Path, source_dirs: list[str]) -> bool:
                 source,
                 destination,
                 dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo", "tests", "docs", "build"),
+                # `lightViewer` (legacy 72 MB AiPacs.exe) and `*.rar` are dead
+                # weight — the CD viewer now ships as `lightViewer_dist` (the
+                # built lite viewer). Excluding them trims ~143 MB per installer.
+                ignore=shutil.ignore_patterns(
+                    "__pycache__", "*.pyc", "*.pyo", "tests", "docs", "build",
+                    "lightViewer", "*.rar",
+                ),
             )
         else:
             shutil.copy2(source, destination)
@@ -235,6 +283,8 @@ def materialize_plugin_packages(*, include_runtime_payloads: bool = False) -> li
         if build_strategy == "source_tree":
             has_payload = _copy_source_tree(package_dir, list(definition.get("source_paths") or []))
             _validate_plugin_no_namespace_shadow(package_dir, module_id)
+            if module_id == "run_cd":
+                _validate_run_cd_lite_viewer(package_dir)
         elif build_strategy == "runtime_payload":
             runtime_source = _runtime_payload_source(module_id)
             missing_runtime_files = _missing_runtime_payload_files(module_id, runtime_source)

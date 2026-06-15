@@ -6,12 +6,21 @@ DICOM header when DB metadata was unavailable (server-opened studies), costing
 
 The first attempt parallelized the scan with a thread pool, but a live re-measure
 (patient 45557, series 202, 476 files) + a micro-benchmark proved pydicom header
-*parsing* is GIL-bound, so the pool ran ~2x SLOWER than sequential (479 ms ->
-922 ms).  The pool was reverted.  The two speedups that actually help are kept:
+*parsing* is GIL-bound on a FAST SSD, so the pool ran ~2x SLOWER than sequential
+(479 ms -> 922 ms).  The two speedups that actually help are kept:
   * ONE header read per file (the old loop did a throwaway second read per file
     just to capture series-level metadata), and
   * ``specific_tags`` so each read parses only the ~16 fields the stub needs
     (479 ms -> 395 ms).
+
+Update (2026-06-15): the pool is back, but **adaptive** (``_read_header_stubs``).
+On a fast SSD the cost is GIL-bound parsing and the reader stays SEQUENTIAL (the
+benchmark above still holds — these tests' fast mock probes < 12 ms/file). On a
+SLOW / I-O-bound disk the cost is per-file read WAIT (which releases the GIL); a
+62-series fully-local study then blocked the main thread 30-100 s (patient 46370),
+so the reader probes the first few files and only then overlaps the reads. Order
+is still by 1-based index regardless of completion timing — see
+``test_header_scan_parallel.py`` for the mode-equivalence guards.
 
 These guards lock in the behavioural invariants that must survive the change:
   1. Slice ordering is by 1-based index, stable regardless of read timing.

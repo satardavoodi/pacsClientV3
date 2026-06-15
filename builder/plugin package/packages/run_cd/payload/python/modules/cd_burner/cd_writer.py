@@ -3,8 +3,6 @@ CD/DVD Writer Module
 Provides CD/DVD burning functionality using Windows IMAPI2 API
 """
 
-import os
-import sys
 import logging
 import re
 from pathlib import Path

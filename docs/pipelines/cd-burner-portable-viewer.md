@@ -342,7 +342,64 @@ too; START_HERE states the 64-bit requirement + fallback. Building a
 separate 32-bit viewer (PyQt5/tkinter) was considered and declined — 32-bit
 Windows is effectively end-of-life (Win11 is 64-bit only).
 
-## 17. Known limitations / deferred
+## 17. Empty-DICOMDIR bug — image missing directory fields (2026-06-15)
+
+Patient 46419 (single 8 MB image) prepared a folder with DICOMDIR + viewer
+but **no PT/ST/SE/IM image tree**. Root cause: the image lacked
+StudyDate/StudyTime/StudyID/AccessionNumber, so pydicom's default STUDY
+record creator raised in `FileSet.add()` ("missing a required element or
+value"); `build_from_study_folders` caught and merely *logged* it, wrote a
+0-instance DICOMDIR, and validation PASSED because expected-uids and
+actual-uids were both empty → the burn reported success with no images.
+
+Fixes (`dicomdir_builder.py`):
+* `_ensure_dicomdir_fields(ds)` backfills the directory-record-required
+  elements when absent OR empty (pydicom treats an empty Type-1 value as
+  missing): StudyDate/StudyTime from the image's own Series/Content/
+  Acquisition date-time (placeholder 19000101/000000 only as last resort),
+  StudyID/SeriesNumber/InstanceNumber→"1", Modality→"OT", PatientID→
+  "ANONYMOUS", AccessionNumber→"0", PatientName present. UIDs/pixels never
+  touched; existing values never overwritten.
+* Zero added instances now **fails the build loudly** (returns False) and
+  the validation rejects an empty expected-uid set — a silent empty disc is
+  impossible. Guard tests: `test_dicomdir_required_fields.py` (8), incl. the
+  exact 46419 case (all four fields dropped) and a real end-to-end prepare
+  that confirms the image lands at PT000000/ST000000/SE000000/IM000000.
+  Suite total 97.
+
+## 18. Installed-client viewer guarantee + module cleanup (2026-06-15)
+
+**Guarantee the viewer ships in the installed app.** The CD module is the
+optional `run_cd` plugin; its payload must carry the default lite viewer or
+an installed client clicking "Write CD" gets "viewer not found".
+* `builder/materialize_plugin_packages.py::_validate_run_cd_lite_viewer`
+  now FAILS the build if the run_cd payload lacks a complete lite viewer
+  (exe + `_internal/base_library.zip` + python313.dll + qwindows.dll).
+  Escape hatch: `AIPACS_ALLOW_MISSING_LITE_VIEWER=1`. So you can't
+  accidentally ship the CD module without its viewer.
+* `viewer_locator.resolve_default_viewer` is now frozen-robust: it searches
+  `_candidate_roots()` — the module dir AND, when `sys.frozen`, the
+  `_MEIPASS` / exe-dir / `_internal` `modules/cd_burner` locations — so the
+  bundled viewer resolves under PyInstaller, Nuitka, and source identically.
+* PyInstaller engine still ships `modules/cd_burner/lightViewer_dist` via
+  `spec_utils.common_app_datas`; the installer ships the run_cd plugin
+  payload (Inno `[Files]` → `%ProgramData%\AIPacs\module_packages\run_cd`).
+
+**Cleanup / optimization.**
+* Retired the obsolete legacy viewer (`modules/cd_burner/lightViewer/`
+  AiPacs.exe ~72 MB + `lightViewer.rar` ~71 MB) to
+  `_recovery/legacy_lightviewer_20260615/` — the lite viewer is the default
+  and always shipped, so the legacy binary was ~143 MB of dead weight (and
+  its asymmetric presence tripped the plugin shadow guard once excluded).
+  The `viewer_locator` legacy fallback code stays as harmless defence.
+* `materialize._copy_source_tree` now also ignores `lightViewer` + `*.rar`
+  so no plugin payload re-accretes that bloat.
+* Removed dead `DicomDirBuilder` methods (`build_simple`,
+  `create_folder_structure`, its private `_copy_light_viewer`,
+  `_sanitize_name`, `_sanitize_folder_name`) and unused imports across the
+  module. cd_burner suite: 104 green; with builder+runtime: 153 green.
+
+## 19. Known limitations / deferred
 
 * IMAPI2 `Write()` is synchronous — no fine-grained burn % (progress jumps
   50→95) and mid-write cancel is not possible. Event-sink progress is a

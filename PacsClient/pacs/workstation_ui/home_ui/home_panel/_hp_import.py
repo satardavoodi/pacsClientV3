@@ -182,6 +182,41 @@ class _HPImportMixin:
         clear_study_cache(study_uid)
         return generated_count
 
+    def _prepare_imported_studies_for_fast_open(self, studies: list) -> int:
+        """Prepare EVERY imported study for the fast viewer (thumbnails + series
+        records), in the given order (primary first).
+
+        Bug fix (2026-06-15): the import previously prepared ONLY the primary
+        study, so any additional study in a multi-study folder opened with an
+        empty "0 series" sidebar (its per-series thumbnails were never built and
+        the sidebar is thumbnail-driven). Preparing each study here keeps every
+        imported study viewable. Per-study failures are isolated so one bad study
+        never blocks the rest.
+        """
+        total = 0
+        for study in studies or []:
+            try:
+                total += int(self._prepare_imported_study_for_fast_open(study) or 0)
+            except Exception as e:
+                print(
+                    f"[FAST_PREP] study preparation failed "
+                    f"(study={(study or {}).get('study_uid')}): {e}"
+                )
+        return total
+
+    def _studies_to_prepare_for_fast_open(self, imported_studies, primary_study, failed_studies):
+        """Build the prepare list: every successfully-saved study, primary first."""
+        ordered = []
+        primary_uid = primary_study.get("study_uid") if primary_study else None
+        if primary_study and primary_uid not in failed_studies:
+            ordered.append(primary_study)
+        for study in imported_studies or []:
+            su = study.get("study_uid")
+            if su in failed_studies or su == primary_uid:
+                continue
+            ordered.append(study)
+        return ordered
+
     def _open_imported_primary_study(self, study_info: dict):
         study_uid = study_info.get("study_uid")
         if not study_uid:
@@ -288,17 +323,23 @@ class _HPImportMixin:
                 failed_studies.append(study.get("study_uid", "Unknown Study"))
 
         primary_study = import_result.get("primary_study")
-        if primary_study and primary_study.get("study_uid") not in failed_studies:
+        # Prepare EVERY successfully-saved study for the fast viewer (primary first),
+        # not just the primary — otherwise the other studies in a multi-study folder
+        # open with an empty "0 series" sidebar (their thumbnails were never built).
+        studies_to_prepare = self._studies_to_prepare_for_fast_open(
+            imported_studies, primary_study, failed_studies
+        )
+        if studies_to_prepare:
             try:
                 self._run_background_job_with_progress(
                     "Prepare Fast Viewer",
                     "Creating thumbnails and preparing the fast viewer...",
-                    self._prepare_imported_study_for_fast_open,
-                    primary_study,
+                    self._prepare_imported_studies_for_fast_open,
+                    studies_to_prepare,
                 )
             except Exception as exc:
                 warning_messages = [
-                    "The study was imported, but fast-viewer preparation failed:",
+                    "The studies were imported, but fast-viewer preparation failed:",
                     str(exc),
                 ]
                 QMessageBox.warning(
@@ -409,13 +450,18 @@ class _HPImportMixin:
                 failed_studies.append(study.get("study_uid", "Unknown Study"))
 
         primary_study = import_result.get("primary_study")
-        if primary_study and primary_study.get("study_uid") not in failed_studies:
+        # Prepare every saved study (primary first), not just the primary, so no
+        # imported study opens with an empty "0 series" sidebar.
+        studies_to_prepare = self._studies_to_prepare_for_fast_open(
+            imported_studies, primary_study, failed_studies
+        )
+        if studies_to_prepare:
             try:
                 self._run_background_job_with_progress(
                     "Startup Fast Viewer Prep",
                     "Preparing thumbnails for fast opening...",
-                    self._prepare_imported_study_for_fast_open,
-                    primary_study,
+                    self._prepare_imported_studies_for_fast_open,
+                    studies_to_prepare,
                 )
             except Exception as exc:
                 print(f"[STARTUP_IMPORT] Fast viewer preparation warning: {exc}")

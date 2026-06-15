@@ -745,7 +745,36 @@ if __name__ == "__main__":
             _t0_notify = time.perf_counter()
             try:
                 return super().notify(receiver, event)
-            except Exception:
+            except Exception as _notify_exc:
+                # MALFORMED dispatch guard: a rare Qt/teardown edge case can invoke
+                # notify() with a non-QObject receiver (observed once as
+                # "QApplication.notify() called with wrong argument types:
+                # notify(QEvent, QEvent)"). super().notify() then raises TypeError
+                # BEFORE any handler runs, and the `raise` below would propagate it
+                # to the excepthook and crash the app over a spurious event. Treat
+                # such a call as an unhandled event (return False) instead. REAL
+                # handler exceptions (receiver IS a QObject) are untouched — they
+                # still hit the capture + re-raise path below.
+                try:
+                    from PySide6.QtCore import QObject as _QObjectCheck
+                    _malformed_dispatch = (
+                        isinstance(_notify_exc, TypeError)
+                        and not isinstance(receiver, _QObjectCheck)
+                    )
+                except Exception:
+                    _malformed_dispatch = False
+                if _malformed_dispatch:
+                    try:
+                        logging.getLogger("aipacs.crash").warning(
+                            "notify() skipped malformed dispatch: receiver=%s event=%s (%s)",
+                            type(receiver).__name__,
+                            (type(event).__name__ if event is not None else None),
+                            _notify_exc,
+                            extra={"component": "crash"},
+                        )
+                    except Exception:
+                        pass
+                    return False
                 _crash_logger = logging.getLogger("aipacs.crash")
                 try:
                     import traceback as _tb_mod
@@ -1127,7 +1156,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.3.0")
+    app.setApplicationVersion("3.3.1")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

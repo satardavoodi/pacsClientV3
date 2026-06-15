@@ -81,3 +81,32 @@ def test_env_override_invalid_falls_through(fake_root, monkeypatch):
     info = resolve_default_viewer()
     assert info["kind"] == "lite"
     assert Path(info["path"]) == lite
+
+
+def test_frozen_candidate_roots_find_viewer(tmp_path, monkeypatch):
+    """When frozen, the viewer next to the exe / in _internal is found even
+    if the module's own dir has no bundle (the installed-client guarantee)."""
+    monkeypatch.delenv(viewer_locator.ENV_OVERRIDE, raising=False)
+    # Module dir = empty; exe dir carries the bundle under _internal.
+    empty_module_dir = tmp_path / "engine_modules" / "cd_burner"
+    empty_module_dir.mkdir(parents=True)
+    monkeypatch.setattr(viewer_locator, "_module_root", lambda: empty_module_dir)
+
+    exe_dir = tmp_path / "app"
+    lite = exe_dir / "_internal" / "modules" / "cd_burner" / "lightViewer_dist" / "AIPacsLiteViewer" / "AIPacsLiteViewer.exe"
+    lite.parent.mkdir(parents=True)
+    lite.write_bytes(b"MZ lite")
+
+    monkeypatch.setattr(viewer_locator.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(viewer_locator.sys, "executable", str(exe_dir / "AIPacs.exe"), raising=False)
+
+    info = resolve_default_viewer()
+    assert info is not None
+    assert info["kind"] == "lite"
+    assert Path(info["path"]) == lite.resolve()
+
+
+def test_not_frozen_ignores_exe_dir(fake_root, monkeypatch):
+    """Non-frozen runs only look next to the module (no exe-dir scanning)."""
+    monkeypatch.setattr(viewer_locator.sys, "frozen", False, raising=False)
+    assert resolve_default_viewer() is None  # fake_root is empty

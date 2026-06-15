@@ -50,6 +50,44 @@ from modules.network.socket_token_manager import get_socket_token_manager
 logger = logging.getLogger(__name__)
 _download_progress_aggregator = DownloadProgressAggregator(logger, interval_seconds=2.0)
 
+
+def _decode_socket_payload(data: bytes) -> str:
+    """Decode a socket JSON payload tolerantly.
+
+    The payload is normally UTF-8 JSON, but a single field (a patient name or
+    description) can carry non-UTF-8 bytes — Persian / Western-European source data
+    that was encoded Windows-1256 / Latin-1 by the modality and forwarded verbatim.
+    A strict ``decode('utf-8')`` then raises ``UnicodeDecodeError`` and aborts the
+    ENTIRE download (observed on a client PC: bytes 0xe7/0xf6/0xed/0xfb at
+    ``_send_request_once``). Try strict UTF-8 first (the normal case — zero change),
+    then fall back to UTF-8 with replacement so ``json.loads`` still succeeds and the
+    download proceeds; only the offending text field degrades to a placeholder, never
+    the image data.
+    """
+    try:
+        return data.decode('utf-8')
+    except UnicodeDecodeError as exc:
+        logger.warning(
+            "Socket payload had non-UTF-8 byte(s) (%s); decoding with replacement so "
+            "the download proceeds (a name/description field may show a placeholder).",
+            exc,
+        )
+        return data.decode('utf-8', errors='replace')
+
+
+# Max server broadcast messages to skip while waiting for a request's own response.
+# On a busy PACS the server interleaves legitimate `type='broadcast'` events on the
+# shared socket; a low cap (was 10) made GetSeriesImages fail with "Too many broadcast
+# messages, no response received" during normal multi-workstation use (observed 43x on
+# a client PC). These are valid broadcasts (not a stream desync — desync raises length
+# errors, not parseable broadcasts), so skipping more of them is safe: each recv is
+# socket-timeout-bounded, so a genuinely-lost response still fails, just after more
+# skips. Configurable via AIPACS_MAX_BROADCAST_RETRIES.
+try:
+    _MAX_BROADCAST_RETRIES = max(10, int(os.getenv('AIPACS_MAX_BROADCAST_RETRIES', '50') or '50'))
+except (TypeError, ValueError):
+    _MAX_BROADCAST_RETRIES = 50
+
 # Distinct non-failure marker for the same-study critical yield (2026-06-05):
 # a SeriesDownloadResult carrying this error_message means "stopped cleanly at
 # a batch boundary so a dragged CRITICAL series can go first" — the series is
@@ -733,8 +771,9 @@ class SocketDicomClient:
                 )
                 logger.debug(f"📤 Request sent, waiting for response...")
 
-                # Loop to handle broadcasts and wait for actual response
-                max_broadcast_retries = 10
+                # Loop to handle broadcasts and wait for actual response. Cap raised
+                # + made configurable (was a hard 10) — see _MAX_BROADCAST_RETRIES.
+                max_broadcast_retries = _MAX_BROADCAST_RETRIES
                 broadcast_count = 0
                 
                 while broadcast_count < max_broadcast_retries:
@@ -833,9 +872,10 @@ class SocketDicomClient:
                         response_bytes=str(len(response_data)),
                     )
 
-                    # Parse response
+                    # Parse response (tolerant decode: a non-UTF-8 byte in a name/
+                    # description field must not crash the whole download).
                     t_parse = now_ms()
-                    response = json.loads(response_data.decode('utf-8'))
+                    response = json.loads(_decode_socket_payload(response_data))
                     log_stage_timing(
                         logger,
                         component="ipc",

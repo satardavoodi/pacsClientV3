@@ -1653,28 +1653,102 @@ def _metadata_needs_geometry_backfill(metadata) -> bool:
     return not ok
 
 
+# ── Adaptive header-scan parallelism (2026-06-15) ────────────────────────────
+# On a fast SSD the per-file cost is pydicom PARSING (GIL-bound) and a thread
+# pool is ~2x slower (measured 2026-06-08: 476 files seq 479 ms vs ThreadPool-8
+# 922 ms). But on a SLOW / contended disk (HDD, busy network drive, AV scan) the
+# cost is per-file I/O WAIT (open+read RELEASES the GIL), and a 62-series fully
+# local study then blocks the main thread 30-100 s (patient 46370, 2026-06-15:
+# ~69 ms/file -> 42 s for one large series). The reader below PROBES the first
+# few files: a fast disk stays sequential (no regression); an I/O-bound disk
+# overlaps the reads with a bounded pool. Order-neutral — every stub keeps its
+# 1-based file index and the caller re-sorts + geometry-normalizes regardless of
+# completion order, so slice ordering / displayed result are unchanged.
+#   AIPACS_HEADER_SCAN_PARALLEL = auto (default) | 0/off (legacy sequential)
+#                                 | 1/force (always parallel)
+_HEADER_SCAN_MIN_FILES = 24      # below this, sequential is always fine
+_HEADER_SCAN_PROBE_FILES = 6     # files timed sequentially to detect a slow disk
+_HEADER_SCAN_SLOW_MS = 12.0      # per-file ms above which the disk is I/O-bound
+_HEADER_SCAN_MAX_WORKERS = 8
+
+
+def _read_header_stubs(dicom_files):
+    """Return {1-based index: header stub} for ``dicom_files``.
+
+    Adaptively parallelizes the per-file header reads ONLY when the disk is
+    I/O-bound (see note above). Pure/thread-safe: ``_build_instance_header_stub``
+    takes a path + index and returns an independent dict, so completion order
+    never affects the result (the caller sorts by index, then by geometry).
+    """
+    n = len(dicom_files)
+    stubs_by_index = {}
+
+    def _seq(indices):
+        for i in indices:
+            s = _build_instance_header_stub(dicom_files[i - 1], i)
+            if s is not None:
+                stubs_by_index[i] = s
+
+    mode = os.getenv("AIPACS_HEADER_SCAN_PARALLEL", "auto").strip().lower()
+    if mode in ("0", "off", "false", "no") or n < _HEADER_SCAN_MIN_FILES:
+        _seq(range(1, n + 1))
+        return stubs_by_index
+
+    force = mode in ("1", "on", "true", "yes", "force")
+    probe = min(_HEADER_SCAN_PROBE_FILES, n)
+    t0 = time.perf_counter()
+    _seq(range(1, probe + 1))
+    per_file_ms = ((time.perf_counter() - t0) * 1000.0) / max(1, probe)
+    remaining = list(range(probe + 1, n + 1))
+    if not remaining:
+        return stubs_by_index
+
+    if not force and per_file_ms < _HEADER_SCAN_SLOW_MS:
+        # Fast disk -> parsing-bound -> sequential is fastest (no GIL/thread cost).
+        _seq(remaining)
+        return stubs_by_index
+
+    # Slow / I/O-bound disk -> overlap the per-file read waits.
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        workers = min(_HEADER_SCAN_MAX_WORKERS, max(2, (os.cpu_count() or 4)))
+        with ThreadPoolExecutor(max_workers=workers,
+                                thread_name_prefix="hdrscan") as ex:
+            fut_to_idx = {
+                ex.submit(_build_instance_header_stub, dicom_files[i - 1], i): i
+                for i in remaining
+            }
+            for fut in fut_to_idx:
+                i = fut_to_idx[fut]
+                try:
+                    s = fut.result()
+                except Exception:
+                    s = None
+                if s is not None:
+                    stubs_by_index[i] = s
+        try:
+            logger.info(
+                "[FAST_LOAD_BREAKDOWN] header_scan_parallel files=%d workers=%d probe_per_file_ms=%.1f",
+                n, workers, per_file_ms,
+            )
+        except Exception:
+            pass
+    except Exception:
+        # Any pool failure -> finish sequentially (correctness over speed).
+        _seq([i for i in remaining if i not in stubs_by_index])
+    return stubs_by_index
+
+
 def _build_metadata_headers_only(series_path: Path, series_number):
     dicom_files = _list_unique_dicom_files(series_path)
     if not dicom_files:
         return None
 
-    # Build per-instance header stubs sequentially.  pydicom header *parsing* is
-    # CPU/GIL-bound rather than I/O-bound, so a thread pool does NOT help here —
-    # it measured ~2x SLOWER (benchmark 2026-06-08: 476 files sequential 479 ms
-    # vs ThreadPool-8 922 ms — GIL contention + context switching).  The two
-    # speedups that DO help are kept:
-    #   1. ONE header read per file — the old loop did a *second*, throwaway
-    #      _safe_dcmread per file just to capture series-level metadata; that is
-    #      removed (the series header is read once, below); and
-    #   2. each read parses only the ~16 tags the stub needs via specific_tags
-    #      (see _HEADER_STUB_TAGS) instead of the whole header.
-    # Net: ~2x faster than the old double-read, full-parse loop, with no GIL or
-    # thread risk.  Slice ordering is unchanged (index-keyed, re-sorted below).
-    stubs_by_index = {}
-    for i, dicom_file in enumerate(dicom_files, 1):
-        stub = _build_instance_header_stub(dicom_file, i)
-        if stub is not None:
-            stubs_by_index[i] = stub
+    # Per-instance header stubs. One header read per file, each parsing only the
+    # ~16 tags the stub needs (specific_tags=_HEADER_STUB_TAGS). The read is
+    # adaptively parallelized on slow/I-O-bound disks (see _read_header_stubs);
+    # slice ordering is unchanged (index-keyed, re-sorted below).
+    stubs_by_index = _read_header_stubs(dicom_files)
 
     if not stubs_by_index:
         return None

@@ -18,8 +18,9 @@ settings widget, not here.
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from .portable_viewer.viewer_meta import VIEWER_DISPLAY_NAME, VIEWER_EXE_NAME
 
@@ -32,6 +33,44 @@ LEGACY_DIRNAME = "lightViewer"
 def _module_root() -> Path:
     """``modules/cd_burner`` directory (works in source and frozen layouts)."""
     return Path(__file__).resolve().parent
+
+
+def _candidate_roots() -> List[Path]:
+    """All plausible ``modules/cd_burner`` locations, most-specific first.
+
+    Covers source runs, the run_cd plugin payload, and frozen layouts
+    (PyInstaller ``_MEIPASS``/``_internal``, Nuitka, installed exe dir) so
+    the bundled viewer is found no matter which channel shipped it.
+    """
+    roots: List[Path] = []
+    seen = set()
+
+    def add(path: Optional[Path]):
+        if path is None:
+            return
+        try:
+            resolved = Path(path).resolve()
+        except Exception:
+            return
+        key = str(resolved).lower()
+        if key not in seen:
+            seen.add(key)
+            roots.append(resolved)
+
+    add(_module_root())  # next to this file (source + most frozen layouts)
+
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        rel = Path("modules") / "cd_burner"
+        if meipass:
+            add(Path(meipass) / rel)
+        try:
+            exe_dir = Path(sys.executable).resolve().parent
+            add(exe_dir / rel)
+            add(exe_dir / "_internal" / rel)
+        except Exception:
+            pass
+    return roots
 
 
 def _describe(path: Path, kind: str, display_name: str) -> Dict[str, Any]:
@@ -71,21 +110,25 @@ def resolve_default_viewer() -> Optional[Dict[str, Any]]:
     if override:
         return override
 
-    root = _module_root()
+    roots = _candidate_roots()
 
-    lite_exe = root / LITE_DIST_DIRNAME / LITE_BUNDLE_DIRNAME / VIEWER_EXE_NAME
-    if lite_exe.is_file():
-        return _describe(lite_exe, "lite", VIEWER_DISPLAY_NAME)
+    # Prefer the built lite viewer in any candidate location.
+    for root in roots:
+        lite_exe = root / LITE_DIST_DIRNAME / LITE_BUNDLE_DIRNAME / VIEWER_EXE_NAME
+        if lite_exe.is_file():
+            return _describe(lite_exe, "lite", VIEWER_DISPLAY_NAME)
 
-    legacy_dir = root / LEGACY_DIRNAME
-    if legacy_dir.is_dir():
-        legacy_exes = sorted(p for p in legacy_dir.glob("*.exe") if p.is_file())
-        if legacy_exes:
-            preferred = next(
-                (p for p in legacy_exes if p.name.lower() == "aipacs.exe"),
-                legacy_exes[0],
-            )
-            return _describe(preferred, "legacy", f"AI-PACS Viewer ({preferred.stem})")
+    # Legacy fallback (older installs that still carry lightViewer/*.exe).
+    for root in roots:
+        legacy_dir = root / LEGACY_DIRNAME
+        if legacy_dir.is_dir():
+            legacy_exes = sorted(p for p in legacy_dir.glob("*.exe") if p.is_file())
+            if legacy_exes:
+                preferred = next(
+                    (p for p in legacy_exes if p.name.lower() == "aipacs.exe"),
+                    legacy_exes[0],
+                )
+                return _describe(preferred, "legacy", f"AI-PACS Viewer ({preferred.stem})")
 
     return None
 

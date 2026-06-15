@@ -1,7 +1,32 @@
-# Zeta Download Manager - Complete Implementation Guide
+> # ⚠️ SUPERSEDED — DO NOT RELY ON THIS DOCUMENT
+>
+> This guide is **historically inaccurate** and is kept only for reference.
+> It was verified against the as-built code on **2026-05-24** and found to
+> describe a design that does not match the shipped module:
+>
+> - It documents a `PacsClient/zeta_download_manager/` package. The canonical
+>   runtime module is **`modules/download_manager/`**; the `PacsClient/`
+>   package no longer exists.
+> - It describes an idealized JSON-RPC chunk protocol with `ChunkDownloader`,
+>   `FileAssembler`, `PipelineCoordinator`, SHA256 chunk verification, etc.
+>   The real transport is a JSON envelope with a 4-byte length prefix and
+>   base64+gzip payloads (`network/socket_client.py`); there is no chunk
+>   protocol and no `ChunkDownloader`/`FileAssembler` class.
+> - The `socket_config.json` example (nested `server.host/port`, port `5555`)
+>   does not match the real flat-keyed file (`socket_host`, `socket_port`,
+>   default `50052`).
+> - The version header below (`2.2.2.6` / `2.2.7`) does not match the module
+>   (`__init__.py` reports `1.08.9.8.3`).
+>
+> **Authoritative references instead:**
+> - `docs/pipelines/download-pipeline.md` — current as-built pipeline.
+> - `docs/plans/performance/ZETA_DOWNLOAD_MANAGER_REVIEW_AND_FIX_PLAN_2026-05-24.md`
+>   — current review, findings register, and fix plan.
+
+# Zeta Download Manager - Complete Implementation Guide (HISTORICAL)
 **Version:** 2.2.2.6  
 **Date:** February 22, 2026  
-**Status:** Production Ready
+**Status:** Superseded — see banner above
 
 ## Overview
 
