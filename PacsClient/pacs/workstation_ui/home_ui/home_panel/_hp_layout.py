@@ -872,38 +872,65 @@ class _HPLayoutMixin:
         self._loading_overlay.show()
 
         if QGraphicsOpacityEffect and QPropertyAnimation:
-            effect = self._loading_overlay.graphicsEffect()
-            if not isinstance(effect, QGraphicsOpacityEffect):
-                effect = QGraphicsOpacityEffect(self._loading_overlay)
-                self._loading_overlay.setGraphicsEffect(effect)
-            effect.setOpacity(0.0)
-            anim = QPropertyAnimation(effect, b"opacity")
-            anim.setDuration(180)
-            anim.setStartValue(0.0)
-            anim.setEndValue(1.0)
-            if QEasingCurve:
-                anim.setEasingCurve(QEasingCurve.OutCubic)
-            anim.start()
-            self._loading_overlay_anim = anim
+            # The fade-in is cosmetic; the overlay is already shown above. Guard
+            # it so a teardown race on the effect/overlay can never raise into
+            # the open path (see _hide_loading_overlay liveness note).
+            try:
+                effect = self._loading_overlay.graphicsEffect()
+                if not isinstance(effect, QGraphicsOpacityEffect):
+                    effect = QGraphicsOpacityEffect(self._loading_overlay)
+                    self._loading_overlay.setGraphicsEffect(effect)
+                effect.setOpacity(0.0)
+                anim = QPropertyAnimation(effect, b"opacity")
+                anim.setDuration(180)
+                anim.setStartValue(0.0)
+                anim.setEndValue(1.0)
+                if QEasingCurve:
+                    anim.setEasingCurve(QEasingCurve.OutCubic)
+                anim.start()
+                self._loading_overlay_anim = anim
+            except Exception:
+                pass
 
     def _hide_loading_overlay(self):
         overlay = getattr(self, "_loading_overlay", None)
         if not overlay:
             return
-        effect = overlay.graphicsEffect()
-        if effect is None:
-            overlay.hide()
-            return
+        # Liveness guard (other-PC crash, native_fault.log): during an async
+        # patient-open teardown the overlay's C++ object can already be gone, so
+        # touching effect/opacity or building a QPropertyAnimation on it
+        # access-violates — and the main.py notify() override then escalates that
+        # into a hard process crash. Match the hardened pattern in
+        # components/loading_overlay.py: verify liveness and never let a dying
+        # overlay raise into the patient-open path; worst case just hide it.
+        try:
+            import shiboken6
+            if not shiboken6.isValid(overlay):
+                self._loading_overlay = None
+                return
+        except ImportError:
+            pass
 
-        from PySide6.QtCore import QPropertyAnimation, QEasingCurve
-        anim = QPropertyAnimation(effect, b"opacity")
-        anim.setDuration(180)
-        anim.setStartValue(effect.opacity())
-        anim.setEndValue(0.0)
-        anim.setEasingCurve(QEasingCurve.InCubic)
-        anim.finished.connect(overlay.hide)
-        anim.start()
-        self._loading_overlay_anim = anim
+        try:
+            effect = overlay.graphicsEffect()
+            if effect is None:
+                overlay.hide()
+                return
+            from PySide6.QtCore import QPropertyAnimation, QEasingCurve
+            anim = QPropertyAnimation(effect, b"opacity")
+            anim.setDuration(180)
+            anim.setStartValue(effect.opacity())
+            anim.setEndValue(0.0)
+            anim.setEasingCurve(QEasingCurve.InCubic)
+            anim.finished.connect(overlay.hide)
+            anim.start()
+            self._loading_overlay_anim = anim
+        except Exception:
+            # Qt wrapper died or effect unusable — best-effort hide, never crash.
+            try:
+                overlay.hide()
+            except Exception:
+                pass
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

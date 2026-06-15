@@ -22,6 +22,8 @@ from PacsClient.pacs.patient_tab.utils.dicom_windowing import (
 )
 
 from .contracts import FrameData, GeometryData
+from .dicom_color import decode_color_for_display
+from .dicom_overlay import extract_overlay_mask, overlay_color
 from .dicom_header_scan import DicomHeaderEntry, scan_series_header_entries
 from ._decode_guard import (
     decode_serialisation_guard,
@@ -110,6 +112,10 @@ class PyDicom2DBackend(QObject):
         self._prefetch_radius = max(0, int(prefetch_radius))
         self._pixel_cache: "OrderedDict[int, np.ndarray]" = OrderedDict()
         self._frame_cache: "OrderedDict[Tuple[int, Optional[float], Optional[float]], QImage]" = OrderedDict()
+        # Per-slice DICOM overlay mask (group 60xx graphics) or None. Populated
+        # during decode (where the dataset is available) and composited in
+        # get_frame so e.g. the Siemens chart on a black SC frame is visible.
+        self._overlay_cache: Dict[int, Any] = {}
         self._prefetch_pending = set()
         self._prefetch_lock = threading.Lock()
         self._decode_metrics: Dict[int, Dict[str, float]] = {}
@@ -219,6 +225,7 @@ class PyDicom2DBackend(QObject):
     def close_series(self) -> None:
         self._pixel_cache.clear()
         self._frame_cache.clear()
+        self._overlay_cache.clear()
         with self._prefetch_lock:
             self._prefetch_pending.clear()
         with self._decode_metrics_lock:
@@ -330,8 +337,14 @@ class PyDicom2DBackend(QObject):
             )
 
         arr = self.get_pixel_array(idx)
-        if sm.samples_per_pixel >= 3:
-            qimg = self._rgb_to_qimage(arr, sm.cols, sm.rows)
+        overlay = self._overlay_cache.get(int(idx))
+        # A decoded COLOUR slice is 3-channel (RGB / YBR / PALETTE / embedded
+        # palette) regardless of SamplesPerPixel — route it to the RGB path so
+        # window/level never destroys colour. Genuine monochrome stays 2-D.
+        if arr.ndim == 3:
+            rgb = arr if overlay is None else self._apply_overlay(
+                np.array(arr, dtype=np.uint8, copy=True), overlay)
+            qimg = self._rgb_to_qimage(rgb, sm.cols, sm.rows)
         else:
             ww, wc = normalize_window_level(self._window, self._level)
             if ww is None or wc is None:
@@ -343,7 +356,14 @@ class PyDicom2DBackend(QObject):
             if ww is None or wc is None:
                 ww, wc = auto_window_level_from_array(arr, 5.0, 95.0)
             disp = _window_level_to_uint8(arr.astype(np.float32, copy=False), float(ww), float(wc))
-            qimg = QImage(disp.data, sm.cols, sm.rows, sm.cols, QImage.Format_Grayscale8).copy()
+            if overlay is not None:
+                # Composite the overlay graphics in a highlight colour onto a
+                # greyscale-derived RGB image (only overlay-bearing slices pay the
+                # RGB conversion; the no-overlay mono path stays Grayscale8).
+                rgb = self._apply_overlay(np.repeat(disp[..., None], 3, axis=2), overlay)
+                qimg = self._rgb_to_qimage(rgb, sm.cols, sm.rows)
+            else:
+                qimg = QImage(disp.data, sm.cols, sm.rows, sm.cols, QImage.Format_Grayscale8).copy()
 
         self._put_frame_cache(cache_key, qimg)
         self._prefetch_around(idx)
@@ -387,6 +407,22 @@ class PyDicom2DBackend(QObject):
             arr = np.asarray(ds.pixel_array)
             pixel_decode_ms = (time.perf_counter() - t_pixel) * 1000.0
 
+        # DICOM overlay plane (group 60xx graphics): extract once here while the
+        # dataset is in hand; composited later in get_frame. Only genuine
+        # overlays are cached (a no-overlay image is a single cheap tag probe and
+        # stores nothing), and the cache is bounded so an all-overlay series
+        # cannot grow memory without limit.
+        try:
+            _ov = extract_overlay_mask(ds, sm.rows, sm.cols)
+            if _ov is not None:
+                self._overlay_cache[int(idx)] = _ov
+                while len(self._overlay_cache) > self._cache_size:
+                    self._overlay_cache.pop(next(iter(self._overlay_cache)), None)
+            else:
+                self._overlay_cache.pop(int(idx), None)
+        except Exception:
+            self._overlay_cache.pop(int(idx), None)
+
         codec_info = extract_codec_info(ds)
         log_decode_exit(
             "lazy_backend", idx,
@@ -396,15 +432,16 @@ class PyDicom2DBackend(QObject):
         thread_state_canary("lazy_backend", "post_decode")
 
         t_post = time.perf_counter()
-        if arr.ndim == 3 and sm.samples_per_pixel < 3:
-            # Multi-frame single-slice fallback
-            arr = arr[0]
-        if sm.samples_per_pixel >= 3:
-            if arr.ndim == 4:
-                arr = arr[0]
-            if arr.dtype != np.uint8:
-                arr = np.clip(arr, 0, 255).astype(np.uint8)
-            out = np.ascontiguousarray(arr)
+
+        # Standards-based colour decode (DICOM PS3.3 C.7.6.3): RGB passthrough,
+        # YBR_FULL/422 -> RGB, PALETTE COLOR -> RGB, and an embedded Palette
+        # Colour LUT on a MONOCHROME parametric map (Siemens TTP/perfusion) ->
+        # RGB. Returns an HxWx3 uint8 array for any colour case, else None for
+        # genuine monochrome (then the original window/level path below runs,
+        # byte-for-byte unchanged). Replaces the old samples>=3-only RGB branch.
+        color_rgb = decode_color_for_display(ds, arr)
+        if color_rgb is not None:
+            out = np.ascontiguousarray(color_rgb)
             post_ms = (time.perf_counter() - t_post) * 1000.0
             with self._decode_metrics_lock:
                 self._decode_metrics[int(idx)] = {
@@ -414,6 +451,10 @@ class PyDicom2DBackend(QObject):
                     "total_ms": float((time.perf_counter() - t_total) * 1000.0),
                 }
             return out
+
+        if arr.ndim == 3 and sm.samples_per_pixel < 3:
+            # Multi-frame single-slice fallback (monochrome)
+            arr = arr[0]
 
         arr = arr.astype(np.float32, copy=False)
         slope = _safe_float(getattr(ds, "RescaleSlope", sm.slope), 1.0) or 1.0
@@ -444,6 +485,22 @@ class PyDicom2DBackend(QObject):
         arr = np.ascontiguousarray(arr)
         bytes_per_line = int(arr.strides[0])
         return QImage(arr.data, cols, rows, bytes_per_line, QImage.Format_RGB888).copy()
+
+    def _apply_overlay(self, rgb: np.ndarray, overlay) -> np.ndarray:
+        """Paint a DICOM overlay mask onto an HxWx3 uint8 image in a highlight
+        colour. Shape-guarded and exception-safe — a mismatch returns the base
+        image rather than crashing the decode."""
+        try:
+            if overlay is None:
+                return rgb
+            mask = np.asarray(overlay).astype(bool)
+            rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
+            if mask.shape != rgb.shape[:2]:
+                return rgb
+            rgb[mask] = np.asarray(overlay_color(), dtype=np.uint8)
+            return rgb
+        except Exception:
+            return rgb
 
     def _prefetch_around(self, center: int, direction: int = 0) -> None:
         if self._prefetch_radius <= 0:

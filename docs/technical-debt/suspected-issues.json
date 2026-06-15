@@ -215,6 +215,68 @@
       "severity": "low",
       "recommendedInvestigation": "n/a",
       "status": "fixed"
+    },
+    {
+      "issueId": "FIX-007",
+      "area": "Stability/Qt-lifetime (non-clinical)",
+      "file": "PacsClient/pacs/patient_tab/ui/patient_ui/patient_tab_widget.py + service_tab_widget.py",
+      "function": "animate_hover / animate_active (called from enterEvent/leaveEvent)",
+      "observation": "native_fault.log on the other PC (installed build) captured a Windows access violation with the live-event-loop stack 'animate_hover <- enterEvent <- notify <- run_forever'. animate_hover/animate_active created a LOCAL QPropertyAnimation(self, b'geometry') with no parent and no stored reference, called start(), and returned. Python could garbage-collect the wrapper while the 150-200 ms animation was still running, freeing the underlying C++ QObject mid-flight -> crash. Fast hovering across tabs (an impatient user) creates many short-lived animations and makes the race likely.",
+      "whyMayBeWrong": "Classic PySide6 lifetime defect (a running QPropertyAnimation must stay referenced/parented). Pure UI animation; no clinical geometry/slice-order/rendering involved.",
+      "reasonForDeferral": "n/a - fixed immediately (clear SE/stability defect, output-preserving).",
+      "resolution": "FIXED (2026-06-14): both animate_hover and animate_active now reuse ONE animation per widget, lazily created as QPropertyAnimation(self, b'geometry', self) (parented to self) and stored on self._hover_animation / self._active_animation (kept reference), stopped before each restart. It can no longer be GC'd while running, and reusing one instance avoids accumulating child objects. Same duration/easing/geometry deltas -> identical visible animation. The two OTHER access violations in native_fault.log (main.py:1597 and :1606) are shutdown/takeover teardown (known, mostly benign).",
+      "risk": "medium (intermittent hard crash during normal tab hovering).",
+      "relatedStudy": "native_fault.log 'Current thread ... animate_hover ... run_forever' (other PC, installed build)",
+      "relatedTests": "tests/code/test_tab_hover_animation_lifetime.py (2 — parented + referenced, both sibling widgets)",
+      "severity": "high",
+      "recommendedInvestigation": "Reaches the other PC only after a rebuilt installer (it runs the frozen build). The same bare-local QPropertyAnimation pattern exists in a few non-crash paths (app_handler fade-out, _hp_layout opacity, thumbnail_manager border) — lower risk (fade/opacity, often on widgets being destroyed) but worth the same parent+reference treatment opportunistically.",
+      "status": "fixed"
+    },
+    {
+      "issueId": "OBS-009",
+      "area": "Networking/Environmental (not a client code bug)",
+      "file": "modules/network/socket_client.py + modules/download_manager/network/socket_client.py (callers)",
+      "function": "connect / send_request / get_report_status / download_all_series",
+      "observation": "download_diagnostics.log on the other PC has ~337 ERROR lines, dominated by network connectivity to the PACS server: 45x NetworkError 'Too many broadcast messages, no response received', '[WinError 10060] connection attempt failed ... party did not properly respond' (TCP timeout), 3x 'Connection lost while receiving data', plus 1x UnicodeDecodeError and 1x JSONDecodeError on a desynced/garbled response. app.log and db_diagnostics.log are clean over the same period.",
+      "whyMayBeWrong": "These are server/network conditions on the other PC (host unreachable / slow / dropping connections), not a client logic defect. The client logs them and retries; the app stayed up (clean app.log/db). NOT something to 'fix' in code.",
+      "reasonForDeferral": "Environmental — verify the other PC's connectivity to the PACS server (firewall, host up, correct host/port, link quality). One genuine client-robustness sub-item: a desynced response currently surfaces as UnicodeDecodeError/JSONDecodeError instead of the structured 'Response too large' desync path — a candidate for more graceful handling (already partially guarded for GetSeriesImages).",
+      "risk": "low (client-side; the failures are handled/retried). User-facing impact is failed/slow downloads when the server link is bad.",
+      "relatedStudy": "download_diagnostics.log (WinError 10060; 'no response received')",
+      "relatedTests": "n/a (environmental)",
+      "severity": "low",
+      "recommendedInvestigation": "Confirm network/server health on the other PC. Optionally harden the recv/decode path so a garbled response always maps to the structured desync error + bounded retry rather than a raw UnicodeDecodeError/JSONDecodeError.",
+      "status": "observed"
+    },
+    {
+      "issueId": "FIX-008",
+      "area": "Stability/Qt-lifetime (non-clinical)",
+      "file": "PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_layout.py",
+      "function": "_hide_loading_overlay / _show_loading_overlay",
+      "observation": "pc2 (previous installed build) native_fault.log: access violation with stack '_hp_layout.py _hide_loading_overlay <- hide_loading <- _on_patient_double_clicked_async'. The overlay fade built a QPropertyAnimation on the overlay's graphics effect WITHOUT a liveness check; during an async patient-open teardown race (frequent on that PC because of network failures) the overlay's C++ object was already gone, so effect.opacity()/the animation dereferenced a deleted QObject -> crash, which the main.py notify() override escalates into a hard process crash.",
+      "whyMayBeWrong": "Missing liveness guard on a UI-teardown race. Pure UI overlay animation; no clinical geometry/slice-order/rendering involved. The sibling components/loading_overlay.py was already hardened the same way; _hp_layout was not.",
+      "reasonForDeferral": "n/a - fixed (clear SE/stability defect, output-preserving). Current source was still exposed (the guard existed only in loading_overlay.py).",
+      "resolution": "FIXED (2026-06-15): both methods now verify shiboken6.isValid(overlay) and wrap the fade in try/except, falling back to overlay.hide() so a dying overlay can never raise into the patient-open path. Reference still kept on self._loading_overlay_anim. Matches the loading_overlay.py pattern.",
+      "risk": "medium (intermittent hard crash on patient open, worse under flaky network).",
+      "relatedStudy": "pc2 native_fault.log crash @ _hide_loading_overlay; coincident WinError 10060/10065 in the same open",
+      "relatedTests": "tests/code/test_loading_overlay_liveness_guard.py (3)",
+      "severity": "high",
+      "recommendedInvestigation": "Reaches pc2 only after a rebuilt installer (frozen build).",
+      "status": "fixed"
+    },
+    {
+      "issueId": "OBS-010",
+      "area": "Stability/CrashEscalation + Multi-study triage (pc2)",
+      "file": "main.py::_AIPacsApplication.notify (intentional crash capture) + patient-open path",
+      "function": "notify / _on_patient_double_clicked_async",
+      "observation": "pc2 native_fault.log has 9 access violations; app.log shows the cascade signature: 'SystemError: ...QApplication::notify(): <built-in function perf_counter> returned a result with an exception set', \"<class 'PySide6.QtWidgets.QMenu'> returned NULL without setting an exception\", 'notify called with wrong argument types'. The trigger correlates with NETWORK failures during patient open (WinError 10065 'unreachable host' attachments, WinError 10060 timeouts). MULTI-STUDY FUNCTIONAL BEHAVIOUR IS HEALTHY: multistudy_rendered series_count=17 studies=3 / 16 studies=2 / 16 studies=3, sibling-study prefetch present, and the right_panel_cache_gate grew= decisions are correct (44 grew=1 are DIFFERENT patients' first opens with local_thumbs=0, then grew=0 cache hits — no refetch loop, no cross-patient, no missing study). study_enumerated_by_modality / cross_patient_skip / resync markers are ABSENT (this previous build predates the 2026-06-02 per-modality enumeration + resync work).",
+      "whyMayBeWrong": "The notify() override re-raises any event-dispatch exception into Qt's C++ caller by DESIGN (to capture a full traceback), but that converts a recoverable transient (a network blip raising during open) into a fatal SystemError/TypeError cascade across subsequent Qt calls. This is a crash-handling DESIGN choice, not a clear bug — do not silently change a safety/diagnostic mechanism.",
+      "reasonForDeferral": "Changing notify() to swallow-and-recover is a core-system change needing the author's sign-off (could mask real crashes / violates 'do not disable safety checks'). The conservative mitigation is to catch transient exceptions at their SOURCE in the open path (done for the overlay case in FIX-008) and to fix the upstream network failures (OBS-009). Several specific crash sites are ALREADY hardened in current source (loading_overlay liveness guard; tab-hover animations FIX-007) so they only reproduce on pc2's older build -> need a rebuilt installer.",
+      "risk": "medium (hard crashes during patient open when the server link is flaky).",
+      "relatedStudy": "pc2 app.log _on_patient_double_clicked_async SystemError; native_fault.log crashes @ loading_overlay/_hp_layout/_mpr_views/_create_axial_view/add_patient_data",
+      "relatedTests": "n/a (diagnosis)",
+      "severity": "medium",
+      "recommendedInvestigation": "1) Rebuild + reinstall on pc2 to pick up FIX-007/FIX-008 and the loading_overlay guard. 2) Fix that PC's PACS link (OBS-009). 3) DISCUSS with the author whether notify() should recover (log + return) for non-fatal exceptions instead of re-raising. 4) Separately verify the MPR axial-view (_mpr_views.py _create_axial_view) and add_patient_data crashes against current source — likely VTK/GPU-environmental and old-build line numbers respectively; not multi-study.",
+      "status": "observed"
     }
   ]
 }

@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v3.2.9 (2026-06-14)
+> **Current Stable Version:** v3.3.0 (2026-06-15)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -94,6 +94,7 @@ Once oriented, the existing per-task table below still applies.
 
 ### Releases
 - [Release Notes](releases/RELEASE_NOTES.md) — Current consolidated release history
+- [Version 3.3.0 Release](releases/VERSION_3.3.0_RELEASE.md) — Latest stable release notes
 - [Version 3.0.3 Release](releases/VERSION_3.0.3_RELEASE.md) — FAST-to-MPR route hardening and geometry boundary stabilization
 - [Version 2.4.7c Release](releases/VERSION_2.4.7c_RELEASE.md) — Current conservative FAST cache release notes
 - [Version 2.4.6 Release](releases/VERSION_2.4.6_RELEASE.md) — Previous stable release notes

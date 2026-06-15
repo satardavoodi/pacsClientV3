@@ -527,3 +527,91 @@ lazy-init + settings integrations re-run clean (28 passed together) — **no reg
 **Remaining (live confirm):** download a study (green) → Clear Patient Data → verify the home badge flips
 to not-downloaded without a restart. The wiring + recompute are verified statically and by unit tests;
 the end-to-end UI flip is best confirmed on the running app.
+
+## 16. Other-PC log triage (follow-up 4 — installed build, 2026-06-14)
+
+Triaged the logs from the second workstation (`Desktop\log on other pc\`: `native_fault.log`,
+`app.log[.1]`, `download_diagnostics.log`, `db_diagnostics.log`, `viewer_diagnostics.log`).
+
+**Real client crash found + FIXED (FIX-007).** `native_fault.log` captured a Windows **access violation**
+on the live event loop:
+
+```
+Current thread (most recent call first):
+  patient_tab_widget.py line 458 in animate_hover
+  patient_tab_widget.py line 448 in enterEvent
+  main.py line 907 in notify   ←  run_forever (main.py:1511)
+```
+
+Root cause: `animate_hover` / `animate_active` created a **local** `QPropertyAnimation(self, b"geometry")`
+with no parent and no stored reference, called `start()`, and returned — so Python could garbage-collect
+the wrapper while the 150–200 ms animation was still running, freeing the underlying C++ object mid-flight.
+Fast hovering across patient/service tabs (an impatient user) spawns many short-lived animations and makes
+the race likely. **Fix:** reuse one animation per widget, **parented to `self` and stored on `self`**
+(`_hover_animation` / `_active_animation`), stopped before each restart — identical visible animation, but
+it can no longer be collected while running. Applied to both sibling widgets
+(`patient_tab_widget.py`, `service_tab_widget.py`); guard test
+`tests/code/test_tab_hover_animation_lifetime.py` (2 green). The same bare-local pattern exists in a few
+non-crash paths (fade-out / opacity / border animations) — lower risk, noted for opportunistic cleanup.
+The other two access violations in `native_fault.log` (`main.py:1597` and `:1606`) are
+**shutdown/takeover teardown** — known and mostly benign.
+
+**Environmental, NOT a code bug (OBS-009).** `download_diagnostics.log` has ~337 ERROR lines, dominated by
+**network/server connectivity**: 45× `NetworkError: Too many broadcast messages, no response received`,
+`[WinError 10060]` TCP connection timeouts (`the connected party did not properly respond`), 3× `Connection
+lost while receiving data`, plus 1× `UnicodeDecodeError` / 1× `JSONDecodeError` on a garbled/desynced
+response. **`app.log` and `db_diagnostics.log` are clean over the same period** — the client logged and
+retried, and the app stayed up. Action is on that PC's link to the PACS server (host reachable, firewall,
+correct host/port, link quality), not in client code. One optional client-robustness item: map a desynced
+response to the structured "Response too large" desync path + bounded retry instead of a raw decode error.
+
+**Viewer (downstream, not a standalone defect).** Two `[ASYNC SWITCH] preview remained active for
+series=… (full load failed)` lines coincide with the network failures — the viewer's **defensive fallback**
+(keep the preview when the full series can't be fetched) working as intended, not a separate bug.
+
+**Reaches the other PC only after a rebuilt installer** — it runs the frozen build, which predates these
+source fixes.
+
+## 17. Second-PC log triage — "pc 2 baba", multi-study focus (follow-up 5, 2026-06-15)
+
+Triaged the `pc 2 baba\` logs (previous installed build, June 15): `native_fault.log` (9 access
+violations), `app.log`, `download_diagnostics.log`, `viewer_diagnostics.log`, `db_diagnostics.log`.
+
+**Multi-study functional behaviour is HEALTHY (the headline answer).** The logs show grouped multi-study
+rendering working: `patient_tab_thumb_multistudy_rendered series_count=17 studies=3`, `…16 studies=2`,
+`…16 studies=3`, each preceded by per-sibling-study `multistudy_prefetch`. The right-panel cache gate is
+also correct: of 70 `right_panel_cache_gate` decisions, the 44 `grew=1` are **different patients' first
+opens** (`local_thumbs=0` → fetch), each followed by `grew=0` cache hits on re-open — **no refetch loop,
+no cross-patient mixing, no missing study**. `cross_patient_skip`, `study_enumerated_by_modality`, and
+`resync` markers are **absent** — this previous build simply predates the 2026-06-02 per-modality
+enumeration and the resync work; nothing in the logs shows a multi-study study going missing on this build.
+
+**The real problem is crashes — root cause identified.** All 9 access violations share one mechanism. The
+`main.py` `notify()` override (an **intentional** crash-capture that re-raises any event-dispatch exception
+so a full traceback is logged) converts a recoverable transient into a PySide cascade:
+`SystemError: …notify(): <built-in function perf_counter> returned a result with an exception set`,
+`<class 'PySide6.QtWidgets.QMenu'> returned NULL without setting an exception`, `notify called with wrong
+argument types`. The **trigger correlates with network failures during patient open** — `WinError 10065`
+(unreachable host, attachments) and `WinError 10060` timeouts. So the crashes are largely **environmental
+(flaky PACS link) amplified by crash-on-exception**, occurring in the open path.
+
+**Fixed (FIX-008, conservative, current-source bug).** One concrete crash site was still exposed in current
+source: `_hp_layout._hide_loading_overlay` built an opacity `QPropertyAnimation` on a possibly-deleted
+overlay during the async-open teardown race (`_hide_loading_overlay ← hide_loading ←
+_on_patient_double_clicked_async`). Added the same liveness guard the sibling `loading_overlay.py` already
+has — `shiboken6.isValid` + try/except → fall back to `overlay.hide()`, never raise into the open path.
+Applied to `_hide_loading_overlay` and `_show_loading_overlay`. Guard test
+`tests/code/test_loading_overlay_liveness_guard.py` (3 green).
+
+**Already fixed in source → need a rebuilt installer on pc2.** The `loading_overlay.py _start_fade` crash
+and the tab-hover animation crashes (FIX-007) are already hardened in current source; they reproduce on pc2
+only because it runs the older frozen build.
+
+**Documented, not changed (needs author sign-off).** Changing `notify()` to recover (log + return) instead
+of re-raising would reduce these crashes, but it is a core safety/diagnostic mechanism — flagged in OBS-010,
+not altered unilaterally. The MPR axial-view (`_mpr_views._create_axial_view`) and `add_patient_data`
+crashes are noted for separate verification (likely VTK/GPU-environmental and old-build line numbers
+respectively; neither is multi-study).
+
+**Action items for pc2:** (1) rebuild + reinstall to pick up FIX-007/FIX-008 and the loading_overlay guard;
+(2) fix that PC's network/PACS-server connectivity (the `WinError 10060/10065` upstream trigger).

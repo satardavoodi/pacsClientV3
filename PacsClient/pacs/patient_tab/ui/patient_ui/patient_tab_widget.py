@@ -455,7 +455,17 @@ class PatientTabWidget(QWidget):
 
     def animate_hover(self, hover_in):
         """Animate the hover effect"""
-        animation = QPropertyAnimation(self, b"geometry")
+        # Reuse a single animation that is parented to self and kept referenced.
+        # Creating a local QPropertyAnimation and only calling start() lets Python
+        # garbage-collect it while the 150 ms animation is still running, which
+        # frees the underlying C++ object mid-flight -> Windows access violation
+        # (the intermittent crash seen on fast tab hovering). Parent + stored ref
+        # keep it alive; reusing one instance avoids accumulating child objects.
+        animation = getattr(self, "_hover_animation", None)
+        if animation is None:
+            animation = QPropertyAnimation(self, b"geometry", self)
+            self._hover_animation = animation
+        animation.stop()
         animation.setDuration(150)
         animation.setEasingCurve(QEasingCurve.OutCubic)
 
@@ -473,7 +483,14 @@ class PatientTabWidget(QWidget):
 
     def animate_active(self, active):
         """Animate the active state change"""
-        animation = QPropertyAnimation(self, b"geometry")
+        # Same lifetime fix as animate_hover: keep one parented, referenced
+        # animation instead of a local that Python can GC while it is still
+        # running (which access-violates in PySide6).
+        animation = getattr(self, "_active_animation", None)
+        if animation is None:
+            animation = QPropertyAnimation(self, b"geometry", self)
+            self._active_animation = animation
+        animation.stop()
         animation.setDuration(200)
         animation.setEasingCurve(QEasingCurve.OutBack)
 

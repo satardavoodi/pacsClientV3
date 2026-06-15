@@ -294,16 +294,24 @@ class ServiceTabWidget(QWidget):
     
     def animate_hover(self, hover_in):
         """Animate the hover effect"""
-        animation = QPropertyAnimation(self, b"geometry")
+        # Keep one parented, referenced animation instead of a local that Python
+        # can garbage-collect while it is still running (a GC'd running
+        # QPropertyAnimation access-violates in PySide6 — the intermittent crash
+        # seen on fast tab hovering). Same fix as PatientTabWidget.animate_hover.
+        animation = getattr(self, "_hover_animation", None)
+        if animation is None:
+            animation = QPropertyAnimation(self, b"geometry", self)
+            self._hover_animation = animation
+        animation.stop()
         animation.setDuration(150)
         animation.setEasingCurve(QEasingCurve.OutCubic)
-        
+
         current_geometry = self.geometry()
         if hover_in:
             new_geometry = current_geometry.adjusted(0, -1, 0, -1)
         else:
             new_geometry = current_geometry.adjusted(0, 1, 0, 1)
-        
+
         animation.setStartValue(current_geometry)
         animation.setEndValue(new_geometry)
         animation.start()
