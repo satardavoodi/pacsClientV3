@@ -718,12 +718,14 @@ class _VCSwitchMixin:
                                 vtk_widget.viewport_spinner.show_loading(
                                     f"Downloading series {series_number}..."
                                 )
-                                # Immediate status line before the first progress
-                                # signal arrives, so the spinner never reads as a
-                                # blank "is it stuck?" wait. Live "N of M" replaces
-                                # this as batches land (on_series_images_progress).
+                                # Seed the rich loading state (identity + "Connecting…")
+                                # and arm the connection-state watchdog so the spinner
+                                # never reads as a blank "is it stuck?" wait — even
+                                # before the first progress signal. Live "N of M · %",
+                                # speed/ETA and slow-link warnings replace it as batches
+                                # land (on_series_images_progress / the watchdog).
                                 try:
-                                    vtk_widget.viewport_spinner.set_status("Downloading…")
+                                    self._begin_download_wait(vtk_widget, series_number)
                                 except Exception:
                                     pass
                             print(

@@ -604,14 +604,34 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   priority/download intent waits. Keep the downstream per-`(study,series)` cooldowns (500 ms
   notify / 2 s retry) and the `:691` token guard (`_is_request_current`). Guard
   `tests/code/viewer/test_dragdrop_coalesce.py`.
-- **Live download notification** (`_vc_progressive.py` + `loading_spinner.py` (mirrored) +
-  `loading_overlay.py`, NOT all mirrored): the waiting spinner shows "Downloading N of M
-  images…" via `_update_download_spinner_text` (fed by `on_series_images_progress`) →
-  `ViewportSpinner.set_status` → the minimal `AiPacsLoadingOverlay` status line. **The call
-  is wrapped in try/except in the progress impl** — a status update must NEVER abort the
+- **Rich download notification** (`_vc_progressive.py` + `loading_spinner.py` (mirrored) +
+  `loading_overlay.py`, NOT all mirrored): the waiting spinner shows series identity,
+  "Downloading N of M · P%", a progress bar, speed/ETA/elapsed, and an inferred connection
+  state ("Connecting…" → "Waiting for server…" → "Slow connection — still trying…") via
+  `_update_download_spinner_text` (fed by `on_series_images_progress`) + `_begin_download_wait`
+  + the self-stopping `_dl_watchdog_tick` staleness watchdog → `ViewportSpinner.set_loading_details`
+  → the minimal `AiPacsLoadingOverlay` (identity line + `QProgressBar` + detail line). **The
+  progress-impl call is wrapped in try/except** — a status update must NEVER abort the
   progressive-display/grow pipeline (tests drive that impl on partial stubs; production
-  hardening). `AIPACS_DOWNLOAD_PROGRESS_TEXT`. Guard
-  `tests/code/viewer/test_download_progress_text.py`.
+  hardening). Connection state is INFERRED from progress staleness (no cross-layer signal) and
+  must **NEVER assert the connection is slow** — the viewer cannot tell a slow link from a series
+  queued behind another download or downloading under a different key (false "slow connection" on
+  a 100 Mb/s LAN, patient 46970). `_connection_state_text` is neutral only ("Preparing images…" /
+  "Still loading… (the series may be queued)"); a regression test forbids the phrase "slow
+  connection". Real DM retry counts are a deferred future enhancement. `AIPACS_DOWNLOAD_PROGRESS_TEXT`
+  (+ `AIPACS_DL_SLOW_AFTER_S` / `AIPACS_DL_STALLED_AFTER_S` / `AIPACS_DL_WATCHDOG_INTERVAL_MS`).
+  Guard `tests/code/viewer/test_download_progress_text.py`.
+- **Multi-study progressive binding by series_uid** (`home_download_service.py` +
+  `_vc_progressive.py`, NOT mirrored — patient 46970, 2026-06-17): a secondary-study series is
+  awaited under a DISPLAY KEY (offset key 1000302) but the DM reports progress under the bare
+  resolved number (302), so it never bound → empty viewport until a manual re-drag. Series numbers
+  COLLIDE across a patient's studies, so number-only matching is unsafe. The bridge
+  `on_series_progress` re-keys progress to the awaiting display key, matched on the globally-unique
+  `series_uid` via `display_key_awaiting_series_uid(series_uid)`, so the existing progressive
+  machinery binds + grows + loads from the correct per-study folder. Single-study unaffected
+  (display key == number). No Qt signal-signature change (the 3-arg `series_images_progress` + the
+  3-arg `diagnostic_hooks/hooks.py` wrapper stay intact). Flag `AIPACS_PROGRESSIVE_UID_BIND`
+  (default on). Guard `tests/code/viewer/test_progressive_uid_bind.py`.
 - **Clinical guardrail:** download/priority/perception only. No VTK/MPR geometry, slice
   order, orientation, or render change. No data-loss risk (atomic `.part` + resume). All
   three pieces are flag-gated default-on with the legacy path preserved as a kill switch.

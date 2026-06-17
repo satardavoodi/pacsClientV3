@@ -1,13 +1,20 @@
-"""Guards for the viewport download-progress notification (2026-06-17).
+"""Guards for the viewport download notification (2026-06-17).
 
-While a dropped series is still downloading, the waiting spinner shows a live
-"Downloading N of M images…" line so the user sees motion instead of a bare
-spinner (and does not assume it is stuck and re-drag — the slow-link thrash
-trigger). Pure UI status text — no render/geometry effect.
+While a dropped series is still downloading, the waiting spinner shows a rich,
+reassuring loading state so the user sees it is working, not frozen (and does not
+re-drag — the slow-link thrash trigger):
 
-Pins the pure formatter, the helper's viewport-matching behavior, and that it is
-wired into the progress handler + the spinner/overlay plumbing. The heavy Qt import
-is skip-guarded (matching test_batch_growth.py / test_dragdrop_coalesce.py).
+  - series identity ("MR · Series 4 · T2 FLAIR"),
+  - main status ("Downloading 12 of 25 · 48%" / "Finalizing…"),
+  - a progress-bar fraction,
+  - a detail line ("1.2 img/s · ~8s left · 5s elapsed"),
+  - an inferred connection state ("Connecting…" / "Waiting for server…" /
+    "Slow connection — still trying…").
+
+Pure UI only — no render/geometry effect. These tests pin the pure formatters, the
+helper's viewport-matching behavior, and that it is wired into the progress handler
++ the spinner/overlay plumbing. The heavy Qt import is skip-guarded (matching
+test_batch_growth.py / test_dragdrop_coalesce.py).
 """
 from __future__ import annotations
 
@@ -39,66 +46,126 @@ def _mod():
     return m
 
 
-# ---- pure formatter -----------------------------------------------------
+# ---- pure status formatter (now with percent) ---------------------------
 
-def test_format_in_flight():
-    assert _mod()._format_download_progress(3, 25) == "Downloading 3 of 25 images…"
+def test_status_in_flight_has_count_and_percent():
+    assert _mod()._format_download_progress(12, 25) == "Downloading 12 of 25 · 48%"
 
 
-def test_format_complete_is_finalizing():
+def test_status_complete_is_finalizing():
     assert _mod()._format_download_progress(25, 25) == "Finalizing…"
 
 
-def test_format_clamps_overshoot_to_finalizing():
-    # A transient count > total must never print "26 of 25".
+def test_status_clamps_overshoot():
     assert _mod()._format_download_progress(26, 25) == "Finalizing…"
 
 
-def test_format_unknown_total_is_plain():
+def test_status_unknown_total_is_plain():
     m = _mod()
     assert m._format_download_progress(5, 0) == "Downloading…"
     assert m._format_download_progress("x", "y") == "Downloading…"
 
 
-def test_format_clamps_negative_downloaded():
-    assert _mod()._format_download_progress(-3, 25) == "Downloading 0 of 25 images…"
+def test_status_clamps_negative_downloaded():
+    assert _mod()._format_download_progress(-3, 25) == "Downloading 0 of 25 · 0%"
 
 
-# ---- helper viewport-matching behavior ----------------------------------
+# ---- progress fraction --------------------------------------------------
+
+def test_fraction_basic_and_clamps():
+    m = _mod()
+    assert m._download_fraction(5, 20) == 0.25
+    assert m._download_fraction(0, 0) is None
+    assert m._download_fraction(30, 20) == 1.0
+    assert m._download_fraction(-5, 20) == 0.0
+
+
+# ---- rate / ETA + detail line -------------------------------------------
+
+def test_rate_eta_smoothed_from_first_observation():
+    m = _mod()
+    # 0 → 10 images over 5 s = 2 img/s; 15 remaining of 25 ⇒ ETA 7.5 s.
+    rate, eta = m._compute_download_rate_eta(0, 100.0, 10, 105.0, 25)
+    assert abs(rate - 2.0) < 1e-6
+    assert abs(eta - 7.5) < 1e-6
+
+
+def test_rate_eta_none_without_progress_or_time():
+    m = _mod()
+    assert m._compute_download_rate_eta(10, 100.0, 10, 105.0, 25) == (None, None)  # no Δcount
+    assert m._compute_download_rate_eta(0, 100.0, 10, 100.0, 25) == (None, None)   # no Δtime
+
+
+def test_detail_line_omits_unknown_parts():
+    m = _mod()
+    assert m._format_download_detail(2.0, 7.5, 5) == "2.0 img/s · ~8s left · 5s elapsed"
+    assert m._format_download_detail(None, None, 0) == ""
+    assert m._format_download_detail(1.0, 0, 0) == "1.0 img/s"
+
+
+def test_fmt_secs_minutes():
+    m = _mod()
+    assert m._fmt_secs(8) == "8s"
+    assert m._fmt_secs(75) == "1m 15s"
+
+
+# ---- series identity ----------------------------------------------------
+
+def test_identity_full_and_partial():
+    m = _mod()
+    assert m._resolve_series_identity_text("MR", "4", "T2 FLAIR") == "MR · Series 4 · T2 FLAIR"
+    assert m._resolve_series_identity_text("", "4", "") == "Series 4"
+    assert m._resolve_series_identity_text("CT", "", None) == "CT"
+    assert m._resolve_series_identity_text("", "", "") == ""
+
+
+# ---- connection-state inference -----------------------------------------
+
+def test_connection_state_is_neutral_and_never_claims_slow_network():
+    m = _mod()
+    # Fresh → no override (the normal "Downloading…" line shows instead).
+    assert m._connection_state_text(1.0, has_progress=False) == ""
+    # Progress arriving → never nags, even if a little stale between batches.
+    assert m._connection_state_text(m._DL_STALLED_AFTER_S + 5, has_progress=True) == ""
+    # A quiet, not-yet-started wait escalates only to NEUTRAL wording.
+    assert m._connection_state_text(m._DL_SLOW_AFTER_S + 0.1, has_progress=False) == "Preparing images…"
+    assert m._connection_state_text(m._DL_STALLED_AFTER_S + 0.1, has_progress=False) == "Still loading… (the series may be queued)"
+    # Regression guard (patient 46970, fast LAN): the viewer must NEVER assert the
+    # connection is slow — it cannot tell slow-link from queued/other-key download.
+    for age in (1, 7, 20, 120):
+        assert "slow connection" not in m._connection_state_text(age, False).lower()
+        assert "slow connection" not in m._connection_state_text(age, True).lower()
+
+
+# ---- helper viewport-matching behavior (now pushes set_loading_details) --
 
 def _spinner_stub(calls):
-    return SimpleNamespace(set_status=lambda t: calls.append(t))
+    return SimpleNamespace(set_loading_details=lambda **kw: calls.append(kw))
 
 
 def _node(spinner, awaiting=None, progressive=None):
     vw = SimpleNamespace(
         viewport_spinner=spinner,
+        image_viewer=SimpleNamespace(metadata={"series": {"series_number": awaiting or progressive}}),
         _awaiting_series_number=awaiting,
         _progressive_series_number=progressive,
     )
     return SimpleNamespace(vtk_widget=vw)
 
 
-def test_helper_updates_only_the_matching_viewport():
+def test_helper_pushes_details_to_matching_viewport_only():
     m = _mod()
     a_calls, b_calls = [], []
     inst = object.__new__(m._VCProgressiveMixin)
+    inst.parent_widget = SimpleNamespace(_server_series_info={})
     inst.lst_nodes_viewer = [
-        _node(_spinner_stub(a_calls), awaiting="7"),   # awaiting series 7
-        _node(_spinner_stub(b_calls), awaiting="3"),   # awaiting a DIFFERENT series
+        _node(_spinner_stub(a_calls), awaiting="7"),
+        _node(_spinner_stub(b_calls), awaiting="3"),
     ]
-    inst._update_download_spinner_text("7", 4, 20)
-    assert a_calls == ["Downloading 4 of 20 images…"]
+    inst._update_download_spinner_text("7", 12, 25)
+    assert len(a_calls) == 1 and a_calls[0]["status"] == "Downloading 12 of 25 · 48%"
+    assert a_calls[0]["fraction"] == 0.48
     assert b_calls == []  # non-matching viewport untouched
-
-
-def test_helper_matches_progressive_series_too():
-    m = _mod()
-    calls = []
-    inst = object.__new__(m._VCProgressiveMixin)
-    inst.lst_nodes_viewer = [_node(_spinner_stub(calls), progressive="9")]
-    inst._update_download_spinner_text("9", 10, 10)
-    assert calls == ["Finalizing…"]
 
 
 def test_helper_off_when_flag_disabled(monkeypatch):
@@ -106,17 +173,20 @@ def test_helper_off_when_flag_disabled(monkeypatch):
     monkeypatch.setattr(m, "_DOWNLOAD_PROGRESS_TEXT", False)
     calls = []
     inst = object.__new__(m._VCProgressiveMixin)
+    inst.parent_widget = SimpleNamespace(_server_series_info={})
     inst.lst_nodes_viewer = [_node(_spinner_stub(calls), awaiting="7")]
     inst._update_download_spinner_text("7", 4, 20)
-    assert calls == []  # kill switch → no status updates
+    assert calls == []
 
 
 def test_helper_survives_viewport_without_spinner():
     m = _mod()
     inst = object.__new__(m._VCProgressiveMixin)
+    inst.parent_widget = SimpleNamespace(_server_series_info={})
     inst.lst_nodes_viewer = [
         SimpleNamespace(vtk_widget=SimpleNamespace(
-            _awaiting_series_number="7", _progressive_series_number=None))
+            _awaiting_series_number="7", _progressive_series_number=None,
+            viewport_spinner=None))
     ]
     inst._update_download_spinner_text("7", 4, 20)  # must not raise
 
@@ -131,17 +201,18 @@ def test_helper_called_from_progress_impl():
     assert "self._update_download_spinner_text(sn, downloaded, total)" in _SRC_PROG
 
 
-def test_viewport_spinner_exposes_set_status():
-    assert "def set_status(self, text):" in _SRC_SPINNER
+def test_overlay_has_structured_updater_and_bar():
+    assert "def set_loading_details(" in _SRC_OVERLAY
+    assert "QProgressBar" in _SRC_OVERLAY
+    assert "AiPacsLoaderIdentityMinimal" in _SRC_OVERLAY  # identity line
 
 
-def test_minimal_overlay_has_status_label():
-    # The minimal branded overlay (used by ViewportSpinner) grew an optional
-    # status line for this feature; it used to return early with no label.
-    assert "AiPacsLoaderStatusMinimal" in _SRC_OVERLAY
+def test_viewport_spinner_delegates_loading_details():
+    assert "def set_loading_details(" in _SRC_SPINNER
 
 
-def test_initial_downloading_status_set_on_await():
-    # The awaiting-download path seeds an immediate status so the spinner is
-    # never a blank "is it stuck?" wait before the first progress signal.
-    assert 'set_status("Downloading' in _SRC_SWITCH
+def test_connection_state_watchdog_wired():
+    assert "def _dl_watchdog_tick(" in _SRC_PROG
+    assert "def _begin_download_wait(" in _SRC_PROG
+    # The awaiting path seeds the wait (identity + "Connecting…") + arms the watchdog.
+    assert "self._begin_download_wait(vtk_widget, series_number)" in _SRC_SWITCH

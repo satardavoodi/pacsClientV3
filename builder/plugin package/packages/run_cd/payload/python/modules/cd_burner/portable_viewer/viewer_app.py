@@ -1433,8 +1433,6 @@ def run_selftest() -> int:
     image pipeline, DICOM codecs. Exit code 0 = OK. Used by the build script
     as a release gate — a bundle that cannot pass this must never ship.
     """
-    import numpy as np
-
     report: List[str] = []
     try:
         # Qt platform must initialize (proves qwindows/qoffscreen shipped)
@@ -1442,15 +1440,16 @@ def run_selftest() -> int:
         app = QApplication.instance() or QApplication(["selftest"])
         report.append("qt: ok")
 
-        # Render pipeline (module-level imports already resolved render/
-        # media_scan/viewer_meta — reaching here proves they shipped)
-        data = SliceData(
-            array=np.linspace(0, 100, 64, dtype=np.float32).reshape(8, 8),
-            is_color=False, invert=False,
-            default_center=50.0, default_width=100.0, rows=8, cols=8,
+        # Render a deterministic 16x16 gradient through the windowing math.
+        # SliceData.selftest_slice keeps numpy access inside the already-loaded
+        # render module (no second numpy import → no "load module more than
+        # once" crash) and a well-formed array avoids the fragile 1x1 QImage
+        # that intermittently came back null under heavy build-time load.
+        data = SliceData.selftest_slice(16)
+        image = slice_to_qimage(data, data.default_center, data.default_width)
+        assert image.width() == 16 and image.height() == 16, (
+            f"selftest render produced {image.width()}x{image.height()} image"
         )
-        image = slice_to_qimage(data, 50.0, 100.0)
-        assert image.width() == 8 and image.height() == 8
         report.append("render: ok")
 
         # DICOM + codec availability

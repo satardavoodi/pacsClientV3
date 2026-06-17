@@ -165,6 +165,28 @@ def test_corrupt_file_yields_error_slice(tmp_path):
     assert data.error
 
 
+def test_selftest_slice_is_well_formed(qapp):
+    """The frozen-bundle self-test must render a NON-degenerate image. The old
+    1x1 placeholder could construct as a null QImage (0x0) under heavy
+    build-time load and fail the release gate spuriously."""
+    from modules.cd_burner.portable_viewer.render import SliceData
+
+    data = SliceData.selftest_slice(16)
+    assert data.array.shape == (16, 16)
+    assert data.rows == 16 and data.cols == 16
+    img = slice_to_qimage(data, data.default_center, data.default_width)
+    assert img.width() == 16 and img.height() == 16
+
+
+def test_run_selftest_returns_zero(qapp):
+    """run_selftest is the build's release gate — it must pass in-process so a
+    healthy bundle is never rejected. Keeps numpy access inside render (no
+    second numpy import → no 'cannot load module more than once' crash)."""
+    from modules.cd_burner.portable_viewer import viewer_app
+
+    assert viewer_app.run_selftest() == 0
+
+
 # ---------------------------------------------------------------------------
 # viewer window (offscreen smoke test)
 # ---------------------------------------------------------------------------

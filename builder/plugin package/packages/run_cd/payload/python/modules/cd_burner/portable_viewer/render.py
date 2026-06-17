@@ -16,7 +16,6 @@ import math
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
-import numpy as np
 from pydicom import dcmread
 
 from PySide6.QtGui import QImage
@@ -27,6 +26,12 @@ else:  # standalone build / direct script execution
     from optical_io import read_bytes  # type: ignore
 
 logger = logging.getLogger(__name__)
+
+
+def _np():
+    import numpy as np
+
+    return np
 
 
 def _dcmread_robust(path: str, **kwargs):
@@ -91,6 +96,7 @@ def reference_line_segment(
     Returns None when geometry is missing, frames of reference differ, or
     the planes are (nearly) parallel. Pure math — unit-testable headless.
     """
+    np = _np()
     if (
         target.position is None or target.row_dir is None or target.col_dir is None
         or target.pixel_spacing is None
@@ -204,6 +210,7 @@ class SliceData:
 
     @classmethod
     def error_slice(cls, message: str) -> "SliceData":
+        np = _np()
         return cls(
             array=np.zeros((1, 1), dtype=np.float32),
             is_color=False,
@@ -213,6 +220,31 @@ class SliceData:
             rows=1,
             cols=1,
             error=message,
+        )
+
+    @classmethod
+    def selftest_slice(cls, size: int = 16) -> "SliceData":
+        """Deterministic NxN gradient slice for the frozen-bundle self-test.
+
+        Built here (not in the entry's ``run_selftest``) so numpy is touched
+        ONLY through the already-imported ``render`` module — importing numpy a
+        second time from the entry path triggers a "cannot load module more
+        than once per process" crash in the frozen bundle. A real ``size``x
+        ``size`` array (well-formed scanlines) also avoids the degenerate 1x1
+        QImage edge case that intermittently constructed as a null image under
+        heavy build-time load.
+        """
+        np = _np()
+        ramp = np.linspace(0.0, 255.0, max(2, int(size)), dtype=np.float32)
+        array = np.ascontiguousarray(np.tile(ramp, (max(2, int(size)), 1)))
+        return cls(
+            array=array,
+            is_color=False,
+            invert=False,
+            default_center=127.5,
+            default_width=255.0,
+            rows=array.shape[0],
+            cols=array.shape[1],
         )
 
 
@@ -232,6 +264,7 @@ def _first_number(value, default: Optional[float] = None) -> Optional[float]:
 
 def _default_window_from_array(array: np.ndarray) -> Tuple[float, float]:
     """Percentile-based fallback window when the header has none."""
+    np = _np()
     try:
         finite = array[np.isfinite(array)]
         if finite.size == 0:
@@ -250,6 +283,7 @@ def _default_window_from_array(array: np.ndarray) -> Tuple[float, float]:
 
 def _to_rgb_uint8(array: np.ndarray, photometric: str, ds) -> Optional[np.ndarray]:
     """Normalize a color pixel array to uint8 RGB (H, W, 3)."""
+    np = _np()
     try:
         if photometric == "PALETTE COLOR":
             from pydicom.pixel_data_handlers.util import apply_color_lut
@@ -279,6 +313,7 @@ def _to_rgb_uint8(array: np.ndarray, photometric: str, ds) -> Optional[np.ndarra
 
 def load_slice(path: str, frame_index: int = 0) -> SliceData:
     """Decode one slice. Never raises — returns an error slice instead."""
+    np = _np()
     try:
         ds = _dcmread_robust(path)
     except Exception as exc:
@@ -366,6 +401,7 @@ def load_slice(path: str, frame_index: int = 0) -> SliceData:
 
 def slice_to_qimage(slice_data: SliceData, center: float, width: float) -> QImage:
     """Window a slice into a display ``QImage`` (Grayscale8 or RGB888)."""
+    np = _np()
     if slice_data.is_color:
         rgb = slice_data.array
         image = QImage(

@@ -176,11 +176,17 @@ it living outside. Root cause + as-built: `docs/reports/DRAGDROP_SLOW_INTERNET_P
   `_trigger_download_if_needed` (`_vc_switch.py`): rapid drops of different series/studies
   collapse to the FINAL target, so the one slot is not preempted/torn-down per drop. The view
   switch is NOT debounced — only the DM intent. `AIPACS_DRAGDROP_DEBOUNCE`.
-- **Live download notification** — the waiting spinner shows "Downloading N of M images…"
-  (`_vc_progressive.py::_update_download_spinner_text` + `_format_download_progress`, fed by
-  `on_series_images_progress`; `ViewportSpinner.set_status` + the minimal
-  `AiPacsLoadingOverlay` status line). Removes the "is it stuck?" blank wait that triggers the
-  re-drag. `AIPACS_DOWNLOAD_PROGRESS_TEXT`. Guards: `tests/code/viewer/test_download_progress_text.py`.
+- **Rich download notification** — the waiting spinner shows series identity ("MR · Series 4
+  · T2 FLAIR"), "Downloading N of M · P%", a progress bar, speed/ETA/elapsed, and an inferred
+  connection state ("Connecting…" → "Waiting for server…" → "Slow connection — still trying…").
+  `_vc_progressive.py` (`_update_download_spinner_text` + pure formatters + `_begin_download_wait`
+  + the `_dl_watchdog_tick` staleness watchdog, fed by `on_series_images_progress`) →
+  `ViewportSpinner.set_loading_details` (`loading_spinner.py`, mirrored) → the minimal
+  `AiPacsLoadingOverlay` (identity line + `QProgressBar` + detail line + `set_loading_details`).
+  Removes the "is it stuck?" blank wait that triggers the re-drag. Isolated in try/except so it
+  can never disturb the progressive-display pipeline. `AIPACS_DOWNLOAD_PROGRESS_TEXT`. Guards:
+  `tests/code/viewer/test_download_progress_text.py`. (Future: exact retry counts from the DM —
+  needs a cross-layer state signal; the staleness inference covers the confidence case for now.)
 
 ### Staged (need live slow-link validation before building)
 - **Settle-then-switch cross-study preemption** — coalescing already cuts the *frequency* of

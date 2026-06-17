@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QFrame,
     QLabel,
+    QProgressBar,
     QVBoxLayout,
     QWidget,
 )
@@ -268,11 +269,29 @@ class AiPacsLoadingOverlay(QWidget):
             outer.addWidget(spinner, alignment=Qt.AlignCenter)
             self._dots_n = 0
             self._status_base = status or ""
-            # Optional one-line status under the spinner — used for the drag-drop
-            # "Downloading N of M images…" progress text. It stays empty/hidden
-            # unless set_status() is called, so the plain waiting spinner looks
-            # exactly as before when there is no status (no dots timer in minimal
-            # mode: a live count reads better than animated dots).
+            # Minimal overlay grows an optional, compact "download card" used by the
+            # drag-drop loading state: an identity line, a status line, a thin
+            # progress bar, and a detail line (speed/ETA/elapsed). Every element
+            # stays empty/hidden until set_loading_details()/set_status() populates
+            # it, so the plain waiting spinner looks exactly as before when idle.
+            # (No dots timer in minimal mode — a live count reads better.)
+            outer.addSpacing(10)
+
+            # Identity line (e.g. "MR · Series 4 · T2 FLAIR") — bold, on top.
+            self._lbl_title = QLabel("", self)
+            self._lbl_title.setObjectName("AiPacsLoaderIdentityMinimal")
+            self._lbl_title.setAlignment(Qt.AlignCenter)
+            self._lbl_title.setStyleSheet("""
+                QLabel#AiPacsLoaderIdentityMinimal {
+                    font-size: 14px; font-weight: 700; color: #f1f5f9;
+                    font-family: 'Segoe UI', 'Roboto', sans-serif;
+                    background: transparent; border: none; letter-spacing: 0.3px;
+                }
+            """)
+            self._lbl_title.setVisible(False)
+            outer.addWidget(self._lbl_title, alignment=Qt.AlignCenter)
+
+            # Status line ("Downloading 12 of 25 · 48%", "Reconnecting…", etc.).
             self._lbl_status = QLabel(self._status_base, self)
             self._lbl_status.setObjectName("AiPacsLoaderStatusMinimal")
             self._lbl_status.setAlignment(Qt.AlignCenter)
@@ -280,13 +299,47 @@ class AiPacsLoadingOverlay(QWidget):
                 QLabel#AiPacsLoaderStatusMinimal {
                     font-size: 13px; font-weight: 600; color: #e2e8f0;
                     font-family: 'Segoe UI', 'Roboto', sans-serif;
-                    background: transparent; border: none;
-                    letter-spacing: 0.3px;
+                    background: transparent; border: none; letter-spacing: 0.3px;
                 }
             """)
             self._lbl_status.setVisible(bool(self._status_base))
-            outer.addSpacing(10)
+            outer.addSpacing(4)
             outer.addWidget(self._lbl_status, alignment=Qt.AlignCenter)
+
+            # Thin determinate progress bar (hidden until a fraction is set, so
+            # indeterminate states like "Connecting…" show no bar).
+            self._progress_bar = QProgressBar(self)
+            self._progress_bar.setObjectName("AiPacsLoaderBarMinimal")
+            self._progress_bar.setRange(0, 100)
+            self._progress_bar.setTextVisible(False)
+            self._progress_bar.setFixedSize(220, 6)
+            self._progress_bar.setStyleSheet("""
+                QProgressBar#AiPacsLoaderBarMinimal {
+                    background: rgba(148,163,184,0.25); border: none;
+                    border-radius: 3px;
+                }
+                QProgressBar#AiPacsLoaderBarMinimal::chunk {
+                    background: #3b82f6; border-radius: 3px;
+                }
+            """)
+            self._progress_bar.setVisible(False)
+            outer.addSpacing(6)
+            outer.addWidget(self._progress_bar, alignment=Qt.AlignCenter)
+
+            # Detail line (speed · ETA · elapsed) — smaller, quieter.
+            self._lbl_detail = QLabel("", self)
+            self._lbl_detail.setObjectName("AiPacsLoaderDetailMinimal")
+            self._lbl_detail.setAlignment(Qt.AlignCenter)
+            self._lbl_detail.setStyleSheet("""
+                QLabel#AiPacsLoaderDetailMinimal {
+                    font-size: 11px; color: #94a3b8;
+                    font-family: 'Segoe UI', 'Roboto', sans-serif;
+                    background: transparent; border: none;
+                }
+            """)
+            self._lbl_detail.setVisible(False)
+            outer.addSpacing(4)
+            outer.addWidget(self._lbl_detail, alignment=Qt.AlignCenter)
             return
 
         # ── Card ─────────────────────────────────────────────────────
@@ -408,6 +461,41 @@ class AiPacsLoadingOverlay(QWidget):
                     self._lbl_status.setVisible(bool(text))
                 except Exception:
                     pass
+
+    def set_loading_details(self, *, title=None, status=None, detail=None, fraction=None):
+        """Update the rich download-loading fields on the minimal overlay.
+
+        All keyword-only and independent: pass only what changed. ``title`` is the
+        series-identity line, ``status`` the main line (progress text / connection
+        state), ``detail`` the small speed/ETA/elapsed line, and ``fraction`` a
+        0..1 progress value (``None`` hides the bar for indeterminate states like
+        "Connecting…"). Each element is shown only when it has content, so the plain
+        spinner is unchanged when nothing is set. Best-effort: never raises.
+        """
+        try:
+            if status is not None:
+                self.set_status(status)
+            lbl_title = getattr(self, "_lbl_title", None)
+            if title is not None and lbl_title is not None:
+                lbl_title.setText(str(title))
+                lbl_title.setVisible(bool(title))
+            lbl_detail = getattr(self, "_lbl_detail", None)
+            if detail is not None and lbl_detail is not None:
+                lbl_detail.setText(str(detail))
+                lbl_detail.setVisible(bool(detail))
+            bar = getattr(self, "_progress_bar", None)
+            if bar is not None:
+                if fraction is None:
+                    bar.setVisible(False)
+                else:
+                    try:
+                        pct = max(0, min(100, int(round(float(fraction) * 100))))
+                    except Exception:
+                        pct = 0
+                    bar.setValue(pct)
+                    bar.setVisible(True)
+        except Exception:
+            pass
 
     # ── class-level show / hide API ──────────────────────────────────
     @classmethod

@@ -220,20 +220,39 @@ slot, two viewports each dropped a *different* series within the same 350 ms win
 only the last as CRITICAL (the others still download at normal priority — no lost data,
 just lost force-promotion). This matches the `MAX_CONCURRENT_STUDIES = 1` reality.
 
-### Phase 1b — Live download notification on the waiting spinner ✅ IMPLEMENTED (flag-gated, default on)
-The waiting spinner now shows a live **"Downloading N of M images…"** line (then
-"Finalizing…") so a slow first batch never reads as a blank "is it stuck?" wait — removing
-the re-drag trigger even before the first image lands. `_vc_progressive.py`:
-`_format_download_progress` (pure) + `_update_download_spinner_text` (updates the awaiting /
-progressively-showing viewport, fed by the existing `on_series_images_progress` so it carries
-the real `downloaded`/`total`), isolated in try/except so a status update can never disturb
-the progressive-display pipeline. `ViewportSpinner.set_status` (`loading_spinner.py`,
-plugin-mirrored) drives the branded minimal `AiPacsLoadingOverlay`'s new status line
-(`loading_overlay.py`) or the legacy fallback spinner; the awaiting path seeds an immediate
-"Downloading…" before the first signal. Flag `AIPACS_DOWNLOAD_PROGRESS_TEXT` (kill switch
-`=0`). Pure UI text — no render/geometry. Tests:
-`tests/code/viewer/test_download_progress_text.py` (14 — formatter + viewport matching +
-wiring). Viewer drop subset **233 passed** (1 unrelated pre-existing failure).
+### Phase 1b — Rich download notification on the waiting spinner ✅ IMPLEMENTED (flag-gated, default on)
+The waiting spinner now shows a **rich, reassuring loading state** so a slow/dropping link
+never reads as a blank "is it stuck?" wait — removing the re-drag trigger even before the
+first image lands. Four fields, all of which the user requested:
+- **Series identity** — "MR · Series 4 · T2 FLAIR" (`_resolve_series_identity` from viewer
+  metadata, falling back to the home panel's `_server_series_info`). Clarifies *which* series
+  is loading, especially with multiple viewports/drops.
+- **Status + percent** — "Downloading 12 of 25 · 48%" → "Finalizing…" (`_format_download_progress`).
+- **Progress bar** — a thin determinate bar in the minimal overlay (`set_loading_details(fraction=…)`);
+  hidden for indeterminate states.
+- **Speed · ETA · elapsed** — "1.2 img/s · ~8s left · 5s elapsed" (`_compute_download_rate_eta`
+  smoothed from the first observation + `_format_download_detail`).
+- **Connection state** — "Connecting…" → "Waiting for server…" → "Slow connection — still
+  trying…" / "Receiving slowly…" (`_connection_state_text`), **inferred** from progress
+  staleness by a self-stopping watchdog QTimer (`_dl_watchdog_tick`, 2 s) armed when the wait
+  begins (`_begin_download_wait`). No new cross-layer signal — robust on the flaky link.
+
+Plumbing: `loading_overlay.py` minimal `AiPacsLoadingOverlay` grew an identity line, a
+`QProgressBar`, and a detail line + a structured `set_loading_details(title/status/detail/
+fraction)`; `ViewportSpinner.set_loading_details` (`loading_spinner.py`, **plugin-mirrored**)
+delegates to it (or the legacy fallback spinner). `_vc_progressive.py` computes the fields and
+pushes them from `on_series_images_progress`, **isolated in try/except** so a status update can
+never disturb the progressive-display/grow pipeline (the partial-stub guard tests rely on this).
+Flag `AIPACS_DOWNLOAD_PROGRESS_TEXT` (kill switch `=0`); thresholds env-tunable
+(`AIPACS_DL_SLOW_AFTER_S`, `AIPACS_DL_STALLED_AFTER_S`, `AIPACS_DL_WATCHDOG_INTERVAL_MS`). Pure
+UI — no render/geometry. Tests: `tests/code/viewer/test_download_progress_text.py` (20 —
+formatters + rate/ETA + identity + connection state + viewport matching + wiring). Viewer drop
+subset **239 passed** (1 unrelated pre-existing failure).
+
+**Future (real retry counts):** the connection state is inferred from progress staleness, which
+covers the "is it stuck?" case. Exact retry/reconnect attempt numbers ("retry 2 of 10") would
+need the download subprocess/coordinator to emit a state signal up to the viewport — a separate,
+larger cross-layer change; deferred.
 
 ### Staged — not yet implemented (need live validation / deeper DM work)
 - **Phase 3 — settle-then-switch cross-study preemption.** Phase 2 reduces the

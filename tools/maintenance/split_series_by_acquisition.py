@@ -1,25 +1,34 @@
 #!/usr/bin/env python3
-"""Split a multi-acquisition series into one local series per AcquisitionNumber.
+"""Separate genuinely-distinct DICOM series that were stored in ONE local folder.
 
-Use case (POKORA 562346 series 3): ONE SeriesInstanceUID holds two acquisitions
-(AcquisitionNumber 1 and 2), 401 slices each over the same 401 positions, with
-DIFFERENT pixels (a two-pass / repeat CT). The viewer stacks both passes into one
-802-slice volume that looks "duplicated". This is REAL data — nothing is deleted.
-This tool presents each acquisition as its own local series (401 each) so the
-sidebar shows two clean volumes.
+DEFAULT KEY = SeriesInstanceUID (the correct DICOM series identity). NOT
+AcquisitionNumber — AcquisitionNumber is not a series-identity field, and a single
+legitimate series can legitimately hold several acquisitions; splitting on it would
+fragment real data. `--by-acquisition` keeps the old behaviour for a proven case
+only, and prints a warning.
 
-The LOWEST AcquisitionNumber keeps the original series row/folder. Each additional
-acquisition becomes a NEW local series row + folder, with its files MOVED (not
-copied/deleted) and its DB instance rows re-pointed. image_count + study series
-count are corrected. Local series come from get_series_by_study_pk (DB), so the new
-series appears in the sidebar.
+Verified case (POKORA 562346 series 3): the local folder "3" held 802 slices that
+are actually TWO real DICOM series — SeriesInstanceUID ...785475746 "Tetnicza"
+(arterial, AcquisitionNumber 1, 401 slices) and ...531075778 "Zylna" (venous,
+AcquisitionNumber 2, 401 slices) — same 401 positions, fully SOP-disjoint (zero
+duplicates). They collided into one folder; this tool re-separates them by their
+true SeriesInstanceUID so the sidebar shows two clean volumes. NOTE: this is NOT a
+duplication bug and is unrelated to the patient-list "Images" count doubling (that
+was a separate count-aggregation bug — see _hp_search._resolve_patient_table_counts).
+
+The LARGEST group keeps the original series row/folder. Each other group becomes a
+NEW local series row + folder, its files MOVED (never copied/deleted, DICOM tags
+untouched) and its DB instance rows re-pointed; the new series row uses the group's
+REAL SeriesInstanceUID. image_count + study series count are corrected.
 
 SAFE BY DEFAULT: dry-run unless --apply. --apply backs up dicom.db to backups/
 first; files are MOVED (reversible); the DB backup lets you revert wholesale.
 
-USAGE:
+USAGE (default = split by SeriesInstanceUID):
   python tools/maintenance/split_series_by_acquisition.py --patient-id 562346 --series 3
   python tools/maintenance/split_series_by_acquisition.py --patient-id 562346 --series 3 --apply
+  # legacy / proven case only:
+  python tools/maintenance/split_series_by_acquisition.py --patient-id X --series N --by-acquisition
 """
 from __future__ import annotations
 
@@ -65,6 +74,13 @@ def main():
     ap.add_argument("--patient-id", required=True)
     ap.add_argument("--series", required=True, help="series_number to split")
     ap.add_argument("--apply", action="store_true")
+    ap.add_argument(
+        "--by-acquisition", action="store_true",
+        help="DANGER: split by AcquisitionNumber. AcquisitionNumber is NOT a series-"
+             "identity field — a single legitimate series can contain several "
+             "acquisitions, and splitting it fragments real data. The DEFAULT (and "
+             "correct) key is SeriesInstanceUID. Only use this for a proven case.",
+    )
     args = ap.parse_args()
 
     import pydicom
@@ -93,32 +109,52 @@ def main():
     print(f"series_pk={series_pk} folder={folder}")
 
     files = sorted(folder.glob("*.dcm"))
-    by_acq = defaultdict(list)
+    by_key = defaultdict(list)
+    key_real_uid = {}   # group key -> real SeriesInstanceUID read from the files
+    key_label = {}      # group key -> human label for logs
     for f in files:
+        real_uid = ""
+        acq = 1
         try:
             ds = pydicom.dcmread(str(f), stop_before_pixels=True, force=True)
+            real_uid = str(ds.get("SeriesInstanceUID", "") or "")
             acq = int(ds.get("AcquisitionNumber", 1) or 1)
         except Exception:
-            acq = 1
-        by_acq[acq].append(f)
-    acqs = sorted(by_acq)
-    print(f"files={len(files)} acquisitions={ {a: len(by_acq[a]) for a in acqs} }")
-    if len(acqs) < 2:
-        print("Only one acquisition — nothing to split."); return
+            pass
+        if args.by_acquisition:
+            key = f"acq:{acq}"
+            key_label[key] = f"AcquisitionNumber {acq}"
+        else:
+            # DEFAULT: group by the true DICOM series identity (SeriesInstanceUID).
+            key = f"uid:{real_uid}" if real_uid else "uid:__missing__"
+            key_label[key] = f"SeriesInstanceUID {real_uid or '(missing)'}"
+        by_key[key].append(f)
+        key_real_uid.setdefault(key, real_uid)
 
-    keep = acqs[0]
-    print(f"keep acquisition {keep} ({len(by_acq[keep])}) as series {series_number}")
+    mode = "AcquisitionNumber" if args.by_acquisition else "SeriesInstanceUID"
+    # Largest group stays as the original series; others become new series.
+    keys = sorted(by_key, key=lambda k: (-len(by_key[k]), k))
+    print(f"files={len(files)} split_by={mode} groups={ {key_label[k]: len(by_key[k]) for k in keys} }")
+    if args.by_acquisition:
+        print("WARNING: --by-acquisition splits on AcquisitionNumber, which is NOT a "
+              "series-identity field. A single legitimate series can hold several "
+              "acquisitions; prefer the default SeriesInstanceUID grouping.")
+    if len(keys) < 2:
+        print(f"Only one {mode} group — grouping is already correct; nothing to split."); return
 
-    # choose new series numbers for the extra acquisitions (max existing + 1, ...)
+    keep = keys[0]
+    print(f"keep {key_label[keep]} ({len(by_key[keep])}) as series {series_number}")
+
+    # choose new series numbers for the extra groups (max existing + 1, ...)
     existing_nums = [int(r[0]) for r in cur.execute(
         "SELECT series_number FROM series WHERE study_fk=? AND series_number GLOB '[0-9]*'", (study_fk,)
     ).fetchall() if str(r[0]).isdigit()]
     next_num = (max(existing_nums) if existing_nums else int(series_number)) + 1
 
     plan = []
-    for a in acqs[1:]:
-        plan.append((a, next_num, by_acq[a]))
-        print(f"  acquisition {a} ({len(by_acq[a])}) -> NEW series {next_num}")
+    for k in keys[1:]:
+        plan.append((k, next_num, by_key[k], key_real_uid.get(k, "")))
+        print(f"  {key_label[k]} ({len(by_key[k])}) -> NEW series {next_num}")
         next_num += 1
 
     if not args.apply:
@@ -131,11 +167,13 @@ def main():
     print(f"DB backup: {bkp}")
 
     thumb_root = _thumb_root()
-    for a, new_num, fs in plan:
+    for k, new_num, fs, real_uid in plan:
         new_folder = _source_root() / study_uid / str(new_num)
         new_folder.mkdir(parents=True, exist_ok=True)
-        new_uid = f"{series_uid}.{a}"
-        new_desc = f"{desc or ''} (Acq {a} of series {series_number})".strip()
+        # Prefer the REAL distinct SeriesInstanceUID from the files (correct DICOM
+        # identity). Only synthesize a suffix if the files lacked a usable UID.
+        new_uid = real_uid or f"{series_uid}.{new_num}"
+        new_desc = f"{desc or ''} (split of series {series_number})".strip()
         cur.execute(
             "INSERT INTO series (series_uid, series_name, study_fk, series_number, modality, "
             "series_description, image_count, series_path, main_thumbnail) "

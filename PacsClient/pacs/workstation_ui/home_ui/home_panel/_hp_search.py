@@ -14,6 +14,82 @@ import requests
 
 _logger = logging.getLogger(__name__)
 
+# ── Patient image/series count = whole-patient total, applied ONCE (2026-06-17) ──
+# The server's per-patient `count_of_instances` / `count_of_series` are WHOLE-PATIENT
+# aggregates (see the documented `count_of_series`-is-patient-total caveat). They must
+# never be summed once per study row: a multi-study patient (e.g. 46970, 2 studies)
+# then shows N x the true total (5042 = 2 x 2521). This is unrelated to AcquisitionNumber.
+# When ON (default) the authoritative patient total is used for the table's Images/Series
+# columns; a per-study sum is only used when the server omits the patient-level total.
+# Set AIPACS_PATIENT_COUNT_AUTHORITATIVE=0 to restore the legacy sum-first behaviour.
+_PATIENT_COUNT_AUTHORITATIVE = os.getenv(
+    "AIPACS_PATIENT_COUNT_AUTHORITATIVE", "1"
+).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _resolve_patient_table_counts(unique_study_rows, patient, patient_id=None,
+                                  total_studies=None, authoritative=None):
+    """Resolve the patient-row Series/Images counts WITHOUT multiplying the
+    whole-patient total by the number of studies.
+
+    Root cause of the 46970 "Images 5042 = 2 x 2521" regression: each per-study row
+    fell back to the PATIENT-level ``count_of_instances`` and the rows were summed,
+    so an N-study patient showed N x the true total. (This is unrelated to
+    AcquisitionNumber — that was never in any runtime path.)
+
+    Rule (default, ``authoritative``): the server's per-patient ``count_of_instances`` /
+    ``count_of_series`` are de-duplicated WHOLE-PATIENT aggregates and are used ONCE.
+    A per-study sum is used only when the server omitted the patient-level total
+    (rows must already carry study-OWN counts, 0 when unknown — never the patient
+    fallback). ``authoritative=False`` restores the legacy sum-first behaviour.
+    Returns ``(total_series, total_images)``.
+    """
+    if authoritative is None:
+        authoritative = _PATIENT_COUNT_AUTHORITATIVE
+
+    summed_series = 0
+    summed_images = 0
+    for row_data in (unique_study_rows or []):
+        try:
+            summed_series += int(row_data.get('series_count') or 0)
+        except Exception:
+            pass
+        try:
+            summed_images += int(row_data.get('images_count') or 0)
+        except Exception:
+            pass
+
+    patient = patient if isinstance(patient, dict) else {}
+    try:
+        patient_series_total = int(patient.get('count_of_series') or patient.get('number_of_series') or 0)
+    except Exception:
+        patient_series_total = 0
+    try:
+        patient_images_total = int(patient.get('count_of_instances') or patient.get('number_of_instances') or 0)
+    except Exception:
+        patient_images_total = 0
+
+    if authoritative:
+        total_series = patient_series_total if patient_series_total > 0 else summed_series
+        total_images = patient_images_total if patient_images_total > 0 else summed_images
+    else:
+        total_series = summed_series if summed_series > 0 else patient_series_total
+        total_images = summed_images if summed_images > 0 else patient_images_total
+
+    # Observe-only: a real per-study sum disagreeing with the patient aggregate
+    # distinguishes a genuine SERVER-side double from the client-side per-row
+    # fallback bug (now fixed).
+    try:
+        if summed_images and patient_images_total and summed_images != patient_images_total:
+            _logger.info(
+                "[PATIENT_IMAGE_COUNT] pid=%s studies=%s patient_total=%s summed=%s used=%s",
+                patient_id, total_studies, patient_images_total, summed_images, total_images,
+            )
+    except Exception:
+        pass
+
+    return total_series, total_images
+
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QEasingCurve, QSize
 from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QGroupBox, QPushButton, QGridLayout, QLineEdit, QTableWidget, QAbstractItemView, QHeaderView, QCheckBox, QScrollArea, QToolButton, QTableWidgetItem, QMessageBox, QApplication, QProgressDialog, QTabWidget, QLabel, QFileDialog, QProgressBar, QStatusBar, QSplitter, QDialog, QGraphicsDropShadowEffect, QSizePolicy, QWidget
 
@@ -824,16 +900,19 @@ class _HPSearchMixin:
                         or patient.get('report_status')
                         or 'pending'
                     )
+                    # A study row carries ONLY its own per-study count (0 when the
+                    # server didn't provide one). Do NOT fall back to the patient-level
+                    # total here — summing patient totals across study rows is the
+                    # 46970 "5042 = 2 x 2521" doubling. The patient total is applied
+                    # once, authoritatively, in the aggregation block below.
                     row_series = (
                         study.get('count_of_series')
                         or study.get('total_series')
-                        or patient.get('count_of_series')
                         or 0
                     )
                     row_instances = (
                         study.get('count_of_instances')
                         or study.get('total_instances')
-                        or patient.get('count_of_instances')
                         or 0
                     )
                     study_rows.append({
@@ -864,8 +943,8 @@ class _HPSearchMixin:
                         or patient.get('report_status')
                         or 'pending'
                     ),
-                    'series_count': patient.get('count_of_series', 0),
-                    'images_count': patient.get('count_of_instances', 0),
+                    'series_count': 0,  # placeholder row: per-study count unknown; patient total applied once below
+                    'images_count': 0,  # placeholder row: per-study count unknown; patient total applied once below
                     'comment': self._extract_report_comment_text(patient),
                     'reporting_physician': self._extract_reporting_physician_name(patient),
                 }]
@@ -882,8 +961,8 @@ class _HPSearchMixin:
                         or patient.get('report_status')
                         or 'pending'
                     ),
-                    'series_count': patient.get('count_of_series', 0),
-                    'images_count': patient.get('count_of_instances', 0),
+                    'series_count': 0,  # placeholder row: per-study count unknown; patient total applied once below
+                    'images_count': 0,  # placeholder row: per-study count unknown; patient total applied once below
                     'comment': self._extract_report_comment_text(patient),
                     'reporting_physician': self._extract_reporting_physician_name(patient),
                 })
@@ -904,8 +983,8 @@ class _HPSearchMixin:
                                 or patient.get('report_status')
                                 or 'pending'
                             ),
-                            'series_count': patient.get('count_of_series', 0),
-                            'images_count': patient.get('count_of_instances', 0),
+                            'series_count': 0,  # placeholder row: per-study count unknown; patient total applied once below
+                            'images_count': 0,  # placeholder row: per-study count unknown; patient total applied once below
                             'comment': self._extract_report_comment_text(patient),
                             'reporting_physician': self._extract_reporting_physician_name(patient),
                         })
@@ -990,28 +1069,14 @@ class _HPSearchMixin:
                     pass
 
             total_studies = len(merged_study_uids) or len(unique_study_rows) or 1
-            total_series = 0
-            total_images = 0
-            for row_data in unique_study_rows:
-                try:
-                    total_series += int(row_data.get('series_count') or 0)
-                except Exception:
-                    pass
-                try:
-                    total_images += int(row_data.get('images_count') or 0)
-                except Exception:
-                    pass
 
-            if total_series <= 0:
-                try:
-                    total_series = int(patient.get('count_of_series') or 0)
-                except Exception:
-                    total_series = 0
-            if total_images <= 0:
-                try:
-                    total_images = int(patient.get('count_of_instances') or 0)
-                except Exception:
-                    total_images = 0
+            # Whole-patient totals applied ONCE (never multiplied by the number of
+            # study rows). See _resolve_patient_table_counts — this is the 46970
+            # "Images 5042 = 2 x 2521" doubling fix.
+            total_series, total_images = _resolve_patient_table_counts(
+                unique_study_rows, patient,
+                patient_id=patient_id, total_studies=total_studies,
+            )
 
             primary_desc = primary_study.get('study_description', 'N/A')
             description_parts = []

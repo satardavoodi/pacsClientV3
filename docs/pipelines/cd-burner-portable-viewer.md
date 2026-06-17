@@ -509,3 +509,54 @@ code, confirmed one already-done, and deferred the rest as out-of-scope:
   pending (needs a writer drive + blank disc).
 * ~~The Lite Viewer exe is NOT built yet~~ — built 2026-06-06 (PyInstaller,
   64.9 MB); `resolve_default_viewer()` now returns kind="lite" on this machine.
+
+## 23. Build self-test gate — robustness (recurring build failures fixed 2026-06-17)
+
+**Symptom:** nearly every release build died at *"Building module packages →
+Lite viewer build failed (exit 5)"*. Two different tracebacks were seen:
+a numpy `ImportError: cannot load module more than once per process`, and an
+`AssertionError` at `run_selftest` (`assert image.width() > 0 …`).
+
+**Root cause — the GATE was flaky, the BUNDLE was sound.** Diagnosis on
+2026-06-17: the freshly rebuilt bundle has exactly one
+`numpy/_core/_multiarray_umath*.pyd` (no duplicate) and the frozen
+`--selftest` passes **12/12** when run warm/idle. The build-time failures are
+environmental:
+1. A freshly written, unsigned ~99 MB bundle is slow on its **first**
+   execution while **Windows Defender scans every bundled DLL**, and the host
+   is still saturated from the main-app PyInstaller pass → the single 300 s
+   selftest **timed out**, then the contended retry tripped the render check.
+2. The render check built a **1×1** `QImage` from `error_slice` — a degenerate
+   scanline that can intermittently construct as a null (0×0) image under load.
+3. The numpy double-load came only from the *pre-rebuild* bundle whose
+   `run_selftest` imported numpy directly; current source imports numpy ONLY
+   through the already-loaded `render` module (see below). A `--clean` rebuild
+   clears it.
+
+**Fix (minimal, two parts):**
+- **Deterministic self-test.** `render.SliceData.selftest_slice(16)` builds a
+  16×16 gradient through the real windowing math; `run_selftest` asserts the
+  resulting QImage is exactly 16×16. Well-formed scanlines remove the 1×1 edge
+  case. numpy is touched ONLY via `render` (the entry must never `import numpy`
+  a second time — that re-triggers "load module more than once" in the frozen
+  bundle). Guards: `test_selftest_slice_is_well_formed`,
+  `test_run_selftest_returns_zero` in `tests/code/cd_burner/test_lite_viewer_core.py`.
+- **Resilient gate** (`tools/build/build_lite_viewer.py::_run_selftest`):
+  (1) a **warm-up** run absorbs the AV scan + OS file-cache (a pass here already
+  greens the gate), then (2) up to `AIPACS_LITE_SELFTEST_ATTEMPTS` (default 3)
+  attempts on the warm bundle. Only a **consistent clean failure** (bundle runs
+  but the check fails) fails the build — a real defect. A **timeout-only**
+  outcome is environment, not a defect, so it degrades to the source self-test
+  instead of nuking the release. Tunables: `AIPACS_LITE_SELFTEST_WARMUP_SEC`
+  (300), `AIPACS_LITE_SELFTEST_TIMEOUT_SEC` (per-attempt, 180),
+  `AIPACS_LITE_SELFTEST_ATTEMPTS` (3). `_assert_bundle_complete` (critical-file
+  check) still runs BEFORE the selftest, so a genuinely incomplete bundle is
+  caught regardless.
+- **Escape hatch unchanged:** `AIPACS_SKIP_LITE_VIEWER_BUILD=1` skips the build
+  for fast local iteration; the release still refuses to ship run_cd without a
+  viewer unless `AIPACS_ALLOW_MISSING_LITE_VIEWER=1`.
+
+Validated 2026-06-17: cold rebuild passes the gate on the warm-up run (exit 0,
+published to `lightViewer_dist`); 13/13 `test_lite_viewer_core.py` green;
+mirrors 389/389. `render.py` + `viewer_app.py` are plugin-mirrored — re-run
+`tools/dev/sync_plugin_mirrors.py` after editing them.

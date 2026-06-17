@@ -660,6 +660,32 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         except Exception as e:
             print(f"[MG] failed to save manifest: {e}")
 
+    def _live_dialog_parent(self):
+        """Return image_viewer.vtk_widget as a dialog parent ONLY if its C++ object
+        is still alive, else None (a safe top-level parent).
+
+        The FAST viewer (QtFastContainer) can be deleted between the user triggering
+        Eagle Eye and a dialog being shown (a patient switch / viewer rebuild in
+        between). Parenting a QMessageBox/dialog to the freed widget raised
+        ``RuntimeError: Internal C++ object (QtFastContainer) already deleted`` (seen
+        caught in the live logs) — that is the catchable form of the PySide6
+        use-after-free that hard-crashed the installed build with an access violation
+        (0xc0000005 in pyside6.abi3.dll; other-PC WER, 2026-06-17). Same shiboken6
+        liveness idiom as PacsClient/.../_hp_layout.py::_hide_loading_overlay."""
+        try:
+            vw = getattr(self.image_viewer, 'vtk_widget', None)
+            if vw is None:
+                return None
+            try:
+                import shiboken6
+                if not shiboken6.isValid(vw):
+                    return None
+            except ImportError:
+                pass
+            return vw
+        except Exception:
+            return None
+
     def check_status(self, patient_widget):
         """
         Select behavior based on modality
@@ -679,7 +705,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             existing_csvs = list(csv_dir.glob("updated_csv_with_boxes_*.csv"))
 
             if existing_csvs:
-                msg_box = QMessageBox(self.image_viewer.vtk_widget)
+                msg_box = QMessageBox(self._live_dialog_parent())
                 msg_box.setIcon(QMessageBox.Question)
                 msg_box.setWindowTitle("MG Analysis")
                 msg_box.setText("AI analysis already exists for this study.")
@@ -699,7 +725,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
                     return
 
                 elif clicked == btn_open:
-                    dlg = MGCSVSelectionDialog(self.image_viewer.vtk_widget, study_uid)
+                    dlg = MGCSVSelectionDialog(self._live_dialog_parent(), study_uid)
                     if dlg.exec() == QDialog.Accepted:
                         det_csv, cls_csv = dlg.selected_pair
 
@@ -734,7 +760,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         print(f'[MG] start processing on the server for {study_uid}')
 
         # 1) Threshold dialog
-        dlg = AISettingsDialog(self.image_viewer.vtk_widget, initial=0.45)
+        dlg = AISettingsDialog(self._live_dialog_parent(), initial=0.45)
         if dlg.exec() != QDialog.Accepted:
             return
         det_thr = dlg.value()

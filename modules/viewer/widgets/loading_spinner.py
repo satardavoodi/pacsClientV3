@@ -258,6 +258,24 @@ class ViewportSpinner:
         except Exception:
             pass
 
+    def set_loading_details(self, *, title=None, status=None, detail=None, fraction=None):
+        """Update the rich download-loading fields (identity / status / detail /
+        progress fraction) on whichever indicator is showing.
+
+        Delegates to the branded overlay's structured updater; for the legacy
+        fallback spinner (status text only) it shows the status line. Best-effort
+        and main-thread only — never raises, so a status update can't break a switch.
+        """
+        try:
+            if self.overlay is not None and hasattr(self.overlay, "set_loading_details"):
+                self.overlay.set_loading_details(
+                    title=title, status=status, detail=detail, fraction=fraction
+                )
+            elif self.spinner is not None and status is not None:
+                self.spinner.set_message(status)
+        except Exception:
+            pass
+
     def show_reset(self, message="Applying reset..."):
         """Show spinner during reset operation"""
         self.show_loading(message)

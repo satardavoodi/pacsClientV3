@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time as _time
 from pathlib import Path
 from typing import Optional
@@ -23,6 +24,15 @@ from PySide6.QtWidgets import QTabWidget
 from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.series_identity import resolve_series_identifier as _resolve_series_identifier
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
+
+# Multi-study progressive-binding (2026-06-17, patient 46970): when a viewport is
+# awaiting a secondary-study series under a DISPLAY KEY (offset key e.g. 1000302)
+# but the DM reports progress under the bare resolved number (302), re-key the
+# progress to the awaiting display key — matched by the globally-unique series_uid —
+# so the viewer's progressive machinery binds + grows + loads from the correct
+# per-study folder (instead of an empty viewport until a manual re-drag). Single-
+# study is unaffected (display key == number). Kill switch: AIPACS_PROGRESSIVE_UID_BIND=0.
+_PROGRESSIVE_UID_BIND = (os.getenv("AIPACS_PROGRESSIVE_UID_BIND", "1") or "1").strip() != "0"
 
 try:
     from modules.viewer.fast.slot_timing import time_slot as _g6_time_slot
@@ -386,6 +396,26 @@ class HomeDownloadService:
                 if uid != study_uid:
                     return
                 sn = _resolve_sn(series_uid)
+                # Multi-study disambiguation: if a viewport is awaiting this exact
+                # series (matched by the globally-unique series_uid) under a DISPLAY
+                # KEY, re-key the progress to that display key so the viewer binds +
+                # grows it live and loads from the correct per-study folder. No-op
+                # for single-study (display key == number) and when nothing awaits.
+                if _PROGRESSIVE_UID_BIND and series_uid:
+                    try:
+                        _w_probe = widget_ref()
+                        _vc = getattr(_w_probe, "viewer_controller", None) if _w_probe else None
+                        if _vc is not None and hasattr(_vc, "display_key_awaiting_series_uid"):
+                            _dk = _vc.display_key_awaiting_series_uid(series_uid)
+                            if _dk and str(_dk) != sn:
+                                _logger.debug(
+                                    "[PROGRESSIVE_UID_BIND] re-keyed progress series_uid=%s "
+                                    "resolved_sn=%s -> awaiting_display_key=%s",
+                                    series_uid, sn, _dk,
+                                )
+                                sn = str(_dk)
+                    except Exception:
+                        pass
                 allowed, reason = _progress_normalizer.should_emit_progress(
                     sn,
                     int(current),

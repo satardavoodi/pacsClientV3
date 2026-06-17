@@ -92,22 +92,28 @@ _FAST_PROGRESSIVE_IDLE_FLUSH_DELAY_MS = 400.0
 # Do NOT lower below 0.20 — it causes repeated failed load attempts that spike CPU.
 _PROGRESSIVE_MIN_COMPLETENESS = 0.30
 
-# Viewport download-progress notification (2026-06-17, slow-link drag-drop UX).
-# While a dropped series is still downloading, show a live "Downloading N of M
-# images…" line on the waiting spinner so the user sees motion instead of a bare
-# spinner and does NOT assume it is stuck and re-drag (the thrash trigger). Pure
-# UI status text only — no render/geometry effect. Kill switch:
-# AIPACS_DOWNLOAD_PROGRESS_TEXT=0.
+# Viewport download notification (2026-06-17, slow-link drag-drop UX).
+# While a dropped series is still downloading, the waiting spinner shows a rich,
+# reassuring loading state — series identity, "Downloading N of M · %", a progress
+# bar, speed/ETA/elapsed, and a connection state ("Connecting…", "Waiting for
+# server…", "Slow connection — still trying…") — so the user sees it is working,
+# not frozen, and does NOT re-drag (the thrash trigger). Pure UI only — no
+# render/geometry effect. Kill switch: AIPACS_DOWNLOAD_PROGRESS_TEXT=0.
 import os as _os  # noqa: E402  (module-level constant block)
 _DOWNLOAD_PROGRESS_TEXT = (_os.getenv("AIPACS_DOWNLOAD_PROGRESS_TEXT", "1") or "1").strip() != "0"
+# Connection-state inference thresholds (seconds since the last progress signal /
+# since the wait began). Tuned for a slow/dropping link; env-overridable.
+_DL_SLOW_AFTER_S = max(2.0, float(_os.getenv("AIPACS_DL_SLOW_AFTER_S", "6") or "6"))
+_DL_STALLED_AFTER_S = max(_DL_SLOW_AFTER_S + 1.0, float(_os.getenv("AIPACS_DL_STALLED_AFTER_S", "15") or "15"))
+_DL_WATCHDOG_INTERVAL_MS = max(500, int(_os.getenv("AIPACS_DL_WATCHDOG_INTERVAL_MS", "2000") or "2000"))
 
 
 def _format_download_progress(downloaded, total) -> str:
-    """Pure formatter for the waiting-spinner download line (testable).
+    """Pure formatter for the spinner's main status line (testable).
 
-    ``"Downloading N of M images…"`` while in flight, ``"Finalizing…"`` once the
-    count reaches the total, and a bare ``"Downloading…"`` when the total is not
-    yet known. ``downloaded`` is clamped to ``[0, total]`` so a transient overshoot
+    ``"Downloading N of M · P%"`` while in flight, ``"Finalizing…"`` once the count
+    reaches the total, and a bare ``"Downloading…"`` when the total is not yet
+    known. ``downloaded`` is clamped to ``[0, total]`` so a transient overshoot
     never prints e.g. "26 of 25".
     """
     try:
@@ -120,7 +126,119 @@ def _format_download_progress(downloaded, total) -> str:
     d = max(0, min(d, t))
     if d >= t:
         return "Finalizing…"
-    return f"Downloading {d} of {t} images…"
+    pct = int(d * 100 / t)
+    return f"Downloading {d} of {t} · {pct}%"
+
+
+def _download_fraction(downloaded, total):
+    """Return the 0..1 progress fraction, or None when the total is unknown."""
+    try:
+        d = int(downloaded)
+        t = int(total)
+    except Exception:
+        return None
+    if t <= 0:
+        return None
+    return max(0.0, min(1.0, d / t))
+
+
+def _fmt_secs(seconds) -> str:
+    """Compact seconds → '8s' / '1m 05s'."""
+    try:
+        s = int(round(float(seconds)))
+    except Exception:
+        return ""
+    if s < 0:
+        s = 0
+    if s < 60:
+        return f"{s}s"
+    m, sec = divmod(s, 60)
+    return f"{m}m {sec:02d}s"
+
+
+def _compute_download_rate_eta(first_count, first_ts, count, ts, total):
+    """Pure smoothed rate (images/sec) + ETA (sec) from the wait's start.
+
+    Uses the average since the FIRST observed progress (``first_count``/``first_ts``)
+    rather than an instantaneous delta, so the figures don't jitter on a flaky link.
+    Returns ``(rate_or_None, eta_or_None)``; both None until there is real elapsed
+    time and forward progress.
+    """
+    try:
+        dt = float(ts) - float(first_ts)
+        dc = int(count) - int(first_count)
+        t = int(total)
+    except Exception:
+        return None, None
+    if dt <= 0 or dc <= 0:
+        return None, None
+    rate = dc / dt
+    if rate <= 0:
+        return None, None
+    remaining = max(0, t - int(count))
+    eta = remaining / rate if remaining > 0 else 0.0
+    return rate, eta
+
+
+def _format_download_detail(rate_per_s, eta_s, elapsed_s) -> str:
+    """Pure 'speed · ETA · elapsed' detail line; omits unknown parts."""
+    parts = []
+    try:
+        if rate_per_s and float(rate_per_s) > 0:
+            parts.append(f"{float(rate_per_s):.1f} img/s")
+    except Exception:
+        pass
+    try:
+        if eta_s is not None and float(eta_s) > 0:
+            parts.append(f"~{_fmt_secs(eta_s)} left")
+    except Exception:
+        pass
+    try:
+        if elapsed_s is not None and float(elapsed_s) >= 1:
+            parts.append(f"{_fmt_secs(elapsed_s)} elapsed")
+    except Exception:
+        pass
+    return " · ".join(parts)
+
+
+def _resolve_series_identity_text(modality, series_number, description) -> str:
+    """Pure 'MR · Series 4 · T2 FLAIR' identity line; omits unknown parts."""
+    parts = []
+    m = (str(modality).strip() if modality else "")
+    if m:
+        parts.append(m)
+    sn = str(series_number).strip() if series_number not in (None, "") else ""
+    if sn:
+        parts.append(f"Series {sn}")
+    d = (str(description).strip() if description else "")
+    if d and d.lower() not in ("none", "n/a"):
+        parts.append(d)
+    return " · ".join(parts)
+
+
+def _connection_state_text(age_since_progress_s, has_progress) -> str:
+    """Pure, NEUTRAL loading-state line from progress staleness (inferred).
+
+    The viewer CANNOT tell a slow network from a series queued behind another
+    download (single download slot), or one downloading under a different key, so
+    it must never assert the connection is slow (that was a false alarm on a fast
+    LAN — patient 46970, 2026-06-17). While progress is arriving it returns ""
+    (the normal "Downloading N of M" line shows). Only a genuinely quiet,
+    not-yet-started wait escalates, and only to neutral, non-alarming wording.
+    Real "slow link / retry N" wording must come from an actual download-layer
+    signal, not from this staleness guess.
+    """
+    try:
+        age = float(age_since_progress_s)
+    except Exception:
+        return ""
+    if has_progress:
+        return ""  # images are arriving — let the count line show, don't nag
+    if age < _DL_SLOW_AFTER_S:
+        return ""
+    if age < _DL_STALLED_AFTER_S:
+        return "Preparing images…"
+    return "Still loading… (the series may be queued)"
 
 
 def _h10_log_progressive_mutation(obj, fn_name: str, mutated_sn: str, action: str):
@@ -798,22 +916,114 @@ def _finalize_progressive_series(
 class _VCProgressiveMixin:
     """Auto-split mixin â€” see patient_widget_viewer_controller.py for history."""
 
-    def _update_download_spinner_text(self, sn: str, downloaded: int, total: int) -> None:
-        """Show live download progress on the waiting spinner of any viewport that
-        is awaiting (or progressively showing) this series.
+    def display_key_awaiting_series_uid(self, series_uid) -> str | None:
+        """Return the viewer DISPLAY KEY of a viewport currently awaiting the series
+        with this (globally unique) ``series_uid``, or None.
 
-        Additive, best-effort, main-thread: updates only the spinner status line
-        (``ViewportSpinner.set_status``) of a matching viewport, and no-ops when the
-        feature is off, the counts are unusable, or no viewport is waiting for this
-        series. Never raises — a status update must not disturb the download/grow
-        path or touch rendering/geometry.
+        Used by the download→viewer progress bridge to disambiguate multi-study
+        drops: a secondary-study series carries a display key (e.g. 1000302) as its
+        ``_awaiting_series_number``, while the DM reports progress under the bare
+        resolved number (302). Matching on the unique SeriesInstanceUID lets the
+        bridge re-key the progress to the awaiting display key so the existing
+        progressive machinery binds + grows + loads from the CORRECT per-study disk
+        folder. Series numbers can collide across a patient's studies, so the uid —
+        not the number — is the safe key. Never raises.
+        """
+        su = str(series_uid or "").strip()
+        if not su:
+            return None
+        try:
+            ssi = getattr(self.parent_widget, "_server_series_info", None) or {}
+        except Exception:
+            ssi = {}
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            awaiting = getattr(vtk_w, "_awaiting_series_number", None)
+            if not awaiting:
+                continue
+            awaiting = str(awaiting)
+            # 1) Match via the server-series-info entry for this display key.
+            info = ssi.get(awaiting) or ssi.get(str(awaiting))
+            if isinstance(info, dict):
+                entry_uid = str(info.get("series_uid") or info.get("series_instance_uid") or "").strip()
+                if entry_uid and entry_uid == su:
+                    return awaiting
+            # 2) Fall back to the canonical-identity resolver (handles offset keys).
+            try:
+                _r_study, _r_series, _r_uid = self._resolve_canonical_series_identity(awaiting)
+                if _r_uid and str(_r_uid).strip() == su:
+                    return awaiting
+            except Exception:
+                pass
+        return None
+
+    def _resolve_series_identity(self, vtk_w, sn) -> str:
+        """Best-effort 'MR · Series 4 · T2 FLAIR' identity from viewer metadata,
+        falling back to the home panel's server series info. Never raises."""
+        modality = ""
+        description = ""
+        series_number = sn
+        try:
+            meta = getattr(getattr(vtk_w, "image_viewer", None), "metadata", None) or {}
+            series_meta = meta.get("series", {}) if isinstance(meta, dict) else {}
+            modality = series_meta.get("modality") or (meta.get("modality") if isinstance(meta, dict) else "") or ""
+            description = (series_meta.get("series_description")
+                          or series_meta.get("description") or "")
+            series_number = series_meta.get("series_number") or sn
+        except Exception:
+            pass
+        if not modality or not description:
+            try:
+                ssi = getattr(self.parent_widget, "_server_series_info", None)
+                if isinstance(ssi, dict):
+                    info = ssi.get(sn) or ssi.get(str(sn))
+                    if isinstance(info, dict):
+                        modality = modality or info.get("modality") or ""
+                        description = description or info.get("series_description") or info.get("description") or ""
+                        series_number = series_number or info.get("series_number")
+            except Exception:
+                pass
+        try:
+            return _resolve_series_identity_text(modality, series_number, description)
+        except Exception:
+            return ""
+
+    def _update_download_spinner_text(self, sn: str, downloaded: int, total: int) -> None:
+        """Push the rich download-loading state onto the waiting spinner of any
+        viewport awaiting (or progressively showing) this series: series identity,
+        "Downloading N of M · P%", a progress-bar fraction, and a speed/ETA/elapsed
+        detail line. Records per-series stats for the smoothed rate/ETA and for the
+        connection-state watchdog.
+
+        Additive, best-effort, main-thread: no-ops when the feature is off or no
+        viewport is waiting; never raises — a status update must not disturb the
+        download/grow pipeline or touch rendering/geometry.
         """
         if not _DOWNLOAD_PROGRESS_TEXT:
             return
-        try:
-            text = _format_download_progress(downloaded, total)
-        except Exception:
-            return
+        now = time.monotonic()
+        # Per-series stats: the FIRST observation anchors the smoothed rate/ETA;
+        # last_ts feeds the connection-state watchdog's staleness check.
+        stats = getattr(self, "_dl_progress_stats", None)
+        if stats is None:
+            stats = {}
+            self._dl_progress_stats = stats
+        st = stats.get(sn)
+        if st is None:
+            st = {"first_ts": now, "first_count": int(max(0, downloaded))}
+            stats[sn] = st
+        st["last_ts"] = now
+        st["last_count"] = int(max(0, downloaded))
+
+        status = _format_download_progress(downloaded, total)
+        fraction = _download_fraction(downloaded, total)
+        rate, eta = _compute_download_rate_eta(
+            st["first_count"], st["first_ts"], downloaded, now, total,
+        )
+        detail = _format_download_detail(rate, eta, now - st["first_ts"])
+
         for node in self.lst_nodes_viewer or []:
             vtk_w = getattr(node, "vtk_widget", None)
             if vtk_w is None:
@@ -822,11 +1032,106 @@ class _VCProgressiveMixin:
                     and getattr(vtk_w, "_progressive_series_number", None) != sn):
                 continue
             spinner = getattr(vtk_w, "viewport_spinner", None)
-            if spinner is not None and hasattr(spinner, "set_status"):
+            if spinner is None:
+                continue
+            identity = self._resolve_series_identity(vtk_w, sn)
+            if hasattr(spinner, "set_loading_details"):
                 try:
-                    spinner.set_status(text)
+                    spinner.set_loading_details(
+                        title=identity, status=status, detail=detail, fraction=fraction,
+                    )
                 except Exception:
                     pass
+            elif hasattr(spinner, "set_status"):
+                try:
+                    spinner.set_status(status)
+                except Exception:
+                    pass
+        self._ensure_dl_watchdog()
+
+    def _begin_download_wait(self, vtk_w, sn) -> None:
+        """Seed the 'Connecting…' loading state for a viewport that just started
+        awaiting a not-yet-resident series, and arm the connection-state watchdog so
+        a stalled link is reported even before the first progress signal arrives.
+        Best-effort; never raises."""
+        if not _DOWNLOAD_PROGRESS_TEXT:
+            return
+        try:
+            waits = getattr(self, "_dl_await_since", None)
+            if waits is None:
+                waits = {}
+                self._dl_await_since = waits
+            waits[str(sn)] = time.monotonic()
+            spinner = getattr(vtk_w, "viewport_spinner", None)
+            if spinner is not None:
+                identity = self._resolve_series_identity(vtk_w, sn)
+                if hasattr(spinner, "set_loading_details"):
+                    spinner.set_loading_details(
+                        title=identity, status="Connecting…", detail="", fraction=None,
+                    )
+                elif hasattr(spinner, "set_status"):
+                    spinner.set_status("Connecting…")
+            self._ensure_dl_watchdog()
+        except Exception:
+            pass
+
+    def _ensure_dl_watchdog(self) -> None:
+        """Lazily create + start the repeating connection-state watchdog timer
+        (no-op when already running or the feature is off)."""
+        if not _DOWNLOAD_PROGRESS_TEXT:
+            return
+        try:
+            timer = getattr(self, "_dl_watchdog_timer", None)
+            if timer is not None:
+                if not timer.isActive():
+                    timer.start(_DL_WATCHDOG_INTERVAL_MS)
+                return
+            timer = QTimer(getattr(self, "parent_widget", None))
+            timer.setInterval(_DL_WATCHDOG_INTERVAL_MS)
+            timer.timeout.connect(self._dl_watchdog_tick)
+            self._dl_watchdog_timer = timer
+            timer.start(_DL_WATCHDOG_INTERVAL_MS)
+        except Exception:
+            pass
+
+    def _dl_watchdog_tick(self) -> None:
+        """Repeating: refresh the connection-state line for stale awaiting viewports
+        ("Connecting…" → "Waiting for server…" → "Slow connection — still trying…")
+        and self-stop when nothing is awaiting. Pure UI text; never raises."""
+        try:
+            now = time.monotonic()
+            stats = getattr(self, "_dl_progress_stats", {}) or {}
+            waits = getattr(self, "_dl_await_since", {}) or {}
+            any_awaiting = False
+            for node in self.lst_nodes_viewer or []:
+                vtk_w = getattr(node, "vtk_widget", None)
+                if vtk_w is None:
+                    continue
+                sn = getattr(vtk_w, "_awaiting_series_number", None)
+                if not sn:
+                    continue  # progressive viewers are driven by progress signals
+                any_awaiting = True
+                st = stats.get(sn)
+                has_progress = bool(st and st.get("last_count"))
+                last_ts = (st.get("last_ts") if st else None) or waits.get(str(sn)) or now
+                state = _connection_state_text(now - last_ts, has_progress)
+                if not state:
+                    continue
+                spinner = getattr(vtk_w, "viewport_spinner", None)
+                if spinner is not None and hasattr(spinner, "set_status"):
+                    try:
+                        spinner.set_status(state)
+                    except Exception:
+                        pass
+            if not any_awaiting:
+                timer = getattr(self, "_dl_watchdog_timer", None)
+                if timer is not None:
+                    try:
+                        timer.stop()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
 
     def on_series_images_progress(self, series_number: str, downloaded: int, total: int):
         """Qt signal slot: outer guard so exceptions never escape into Qt dispatch.
