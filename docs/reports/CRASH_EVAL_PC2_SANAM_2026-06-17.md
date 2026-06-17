@@ -66,26 +66,65 @@ exception.
 - A precise fix needs the **exact C++ frame** from the faulthandler dump, which is
   not in the copied logs.
 
-## Action — get the native crash stack (no native_fault.log on this build)
+## RESOLVED — Windows Event Log crash signatures (added 2026-06-17)
+The user supplied the Windows Event Log (`ai-pacs log windows 17.evtx`). It contains
+**exactly two `Application Error` (ID 1000) events today**, matching the timeline
+above to the second, plus their WER (1001) APPCRASH records. **Both are identical:**
+
+```
+Faulting application : AIPacs.exe   version 3.3.2.0   (D:\AIPacs\AIPacs.exe)
+Faulting module      : pyside6.abi3.dll
+Exception code       : 0xc0000005   (ACCESS VIOLATION)
+Fault offset         : 0x000000000001bbd8   (identical both crashes)
+Fault bucket         : 1852635332239126229  (identical both crashes)
+Crash #1  14:18:00   faulting pid 0x42F4 = 17140  (patient open)
+Crash #2  16:04:01   faulting pid 0x1530 = 5424   (MG drag-drop)
+```
+
+**Root cause (now confirmed, unified):** both crashes are the **same** native
+access violation **inside PySide6** (`pyside6.abi3.dll`) at the same offset — i.e.
+a **use-after-free of a Qt object**: PySide6 dereferences a C++ object that has
+already been deleted. The catchable Python form of the very same defect is in the
+app log (`RuntimeError: Internal C++ object (QtFastContainer) already deleted`,
+`ai_chat_interactorstyle.py:check_status`) — when the freed object is touched at the
+C++ level instead of via the Python wrapper, it is a hard `0xc0000005` crash. The
+two triggers are the FAST-viewer lifecycle: rapid viewer build/teardown on a
+14-series open (#1) and the deferred drag-drop series-switch / dialog parenting (#2).
+
+**Fix applied (this session):** `AIChatInteractorStyle._live_dialog_parent()` —
+guards the three Eagle-Eye dialog-parent sites with the established
+`shiboken6.isValid(...)` liveness check (same idiom as
+`_hp_layout.py::_hide_loading_overlay`), so a dialog is never parented to a freed
+viewer widget. This removes the one **corroborated** UAF site (the logged
+RuntimeError) and reuses the proven pattern. Guard test
+`tests/code/viewer/test_eagle_eye_dialog_parent_liveness.py` (3 green).
+`modules/viewer` is not plugin-mirrored. Needs a rebuilt installer to reach that PC.
+
+**Still open (needs the WER minidump to pin exactly):** the two HARD crashes were at
+patient-open (#1) and the MG drag-drop (#2) — different sites from the (caught)
+Eagle-Eye dialog one. Offset `0x1bbd8` resolves to a specific PySide6 call only with
+the crash **minidump** (see below) + PySide6 symbols. The fix above is the same
+*class* but not proven to be the exact #1/#2 site.
+
+## Action — get the exact crashing call (minidump)
 Confirmed (2026-06-17): there is **no `native_fault.log`** on that PC, and the app
 itself does **not** enable `faulthandler`-to-file (main.py only UTF-8-wraps stderr;
 `resolve_viewer_backend`'s "Remapping deprecated" is a **benign** pydicom_2d →
 pydicom_qt FAST remap, not a crash cause). So that build never captured the native
 stack and won't capture future ones either. Two ways forward:
 
-1. **Windows Event Viewer (works right now, no code change).** On that PC open
-   *Event Viewer → Windows Logs → Application* and find the **"Application Error"**
-   (and "Windows Error Reporting") entries at **~14:18** and **~16:04** today. Each
-   records the **faulting module + offset + exception code** (e.g. which DLL — a VTK,
-   Qt, or image-codec module). That names the crashing component for both crashes.
-   (Optional: enable WER LocalDumps for a full minidump on the next crash.)
-2. **Add crash capture to the build (durable fix).** Wire `faulthandler.enable()` +
-   stderr→`native_fault.log` in the startup bootstrap so EVERY future native crash on
-   EVERY PC writes a C++/Python frame automatically. Then a rebuilt installer makes
-   crashes like these self-diagnosing. (Not done yet — offered.)
+WER already wrote **minidumps** for both crashes (referenced in the 1001 records).
+On that PC, copy the two archives (each has a `.mdmp`):
+`C:\ProgramData\Microsoft\Windows\WER\ReportArchive\AppCrash_AIPacs.exe_*` — the
+ones with Report Ids `e3b51d5c-…` (14:18) and `a6b71d3b-…` (16:04). Opening a `.mdmp`
+in WinDbg/Visual Studio with the build's PySide6 symbols resolves `pyside6.abi3.dll
++0x1bbd8` to the exact Qt call, which pins the #1 (open) and #2 (drag) sites so the
+remaining UAF site(s) can be guarded precisely.
 
-Until then the two crashes are confidently **located** (crash #1 = FAST viewer
-construction during a 14-series open; crash #2 = immediately after an MG single-image
-drag-drop render) but not pinned to the exact failing native call. Both are in the
-FAST-viewer open/drag path and are unrelated to this session's source fixes; any code
-fix also needs a rebuilt installer for that PC.
+**Durable diagnosability (recommended):** the app does NOT enable
+`faulthandler`-to-file, so this build never wrote `user_data\logs\native_fault.log`
+(why none was found). Wiring `faulthandler.enable()` + a `native_fault.log` writer in
+startup would make every future native crash self-record a frame on every PC. Offered,
+not yet done.
+
+Any code fix also needs a **rebuilt installer** to reach that 3.3.2.0 PC.
