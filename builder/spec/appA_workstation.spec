@@ -262,7 +262,10 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    # UPX disabled (3.3.2 build): UPX on Qt6/VTK DLLs is a frequent COLLECT
+    # failure + antivirus false-positive source; the size saving isn't worth the
+    # fragility for a clinical installer. Re-enable by setting upx=True.
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     icon=icon_path_app_a(),
@@ -276,6 +279,6 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,  # see EXE() note above — UPX disabled for COLLECT reliability
     name="AIPacs",
 )

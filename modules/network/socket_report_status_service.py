@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 
 import logging
+import os
+import time
+import threading
 from typing import Dict, List, Any, Optional, Callable
 from PySide6.QtCore import QObject, Signal
 
@@ -9,6 +12,27 @@ from .socket_patient_service import get_socket_patient_service
 from modules.network.socket_config import get_socket_config
 
 logger = logging.getLogger(__name__)
+
+
+# --- Report-status circuit breaker (added 2026-06-16) -------------------------
+# The PACS server does not answer the GetReportStatus endpoint (documented as a
+# benign server-side gap). Because report-status calls reuse the SHARED
+# PatientListSocketClient, every unanswered call holds that client's RLock for up
+# to the socket timeout (~30s), blocking GUI-thread patient/thumbnail socket calls
+# (observed 1.3-1.7s main-thread stalls) and emitting ~30s-cadence ERROR spam.
+# After a few consecutive failures we open a breaker and short-circuit
+# get_report_status() for a cooldown, so the shared lock is never held for an
+# endpoint the server isn't answering. Self-heals on the next success.
+# Reversible: set AIPACS_REPORTSTATUS_BREAKER=0 to restore the prior behavior.
+_RS_BREAKER_ENABLED = os.environ.get("AIPACS_REPORTSTATUS_BREAKER", "1") != "0"
+try:
+    _RS_BREAKER_THRESHOLD = max(1, int(os.environ.get("AIPACS_REPORTSTATUS_BREAKER_FAILS", "3")))
+except ValueError:
+    _RS_BREAKER_THRESHOLD = 3
+try:
+    _RS_BREAKER_COOLDOWN_S = max(5.0, float(os.environ.get("AIPACS_REPORTSTATUS_BREAKER_COOLDOWN", "300")))
+except ValueError:
+    _RS_BREAKER_COOLDOWN_S = 300.0
 
 
 # Valid report statuses
@@ -83,6 +107,13 @@ class SocketReportStatusService(QObject):
         # Setup connection pool if enabled
         if self.config.get("use_connection_pool", False):
             self._setup_connection_pool()
+
+        # Circuit-breaker state: protects the SHARED socket client from being held
+        # ~30s on the unanswered GetReportStatus endpoint (see module header).
+        self._rs_breaker_lock = threading.Lock()
+        self._rs_consecutive_failures = 0
+        self._rs_breaker_open_until = 0.0
+        self._rs_breaker_logged = False
     
     def reload_connection(self):
         """Reload connection pool"""
@@ -252,34 +283,76 @@ class SocketReportStatusService(QObject):
             if client:
                 self._return_client(client)
     
+    # --- Circuit-breaker helpers (added 2026-06-16) ---------------------------
+    def _rs_breaker_is_open(self) -> bool:
+        """True while the breaker is open (skip the call, never touch the lock)."""
+        if not _RS_BREAKER_ENABLED:
+            return False
+        with self._rs_breaker_lock:
+            return bool(self._rs_breaker_open_until) and time.monotonic() < self._rs_breaker_open_until
+
+    def _rs_note_success(self) -> None:
+        """Reset the breaker after the server answers GetReportStatus."""
+        if not _RS_BREAKER_ENABLED:
+            return
+        with self._rs_breaker_lock:
+            if self._rs_consecutive_failures or self._rs_breaker_open_until:
+                logger.info("Report-status endpoint answered again; circuit breaker reset")
+            self._rs_consecutive_failures = 0
+            self._rs_breaker_open_until = 0.0
+            self._rs_breaker_logged = False
+
+    def _rs_note_failure(self) -> None:
+        """Count a consecutive failure and open the breaker past the threshold."""
+        if not _RS_BREAKER_ENABLED:
+            return
+        with self._rs_breaker_lock:
+            self._rs_consecutive_failures += 1
+            if self._rs_consecutive_failures >= _RS_BREAKER_THRESHOLD:
+                self._rs_breaker_open_until = time.monotonic() + _RS_BREAKER_COOLDOWN_S
+                if not self._rs_breaker_logged:
+                    logger.warning(
+                        "GetReportStatus unanswered %dx consecutively; opening circuit "
+                        "breaker for %.0fs to protect the shared socket lock "
+                        "(set AIPACS_REPORTSTATUS_BREAKER=0 to disable)",
+                        self._rs_consecutive_failures, _RS_BREAKER_COOLDOWN_S,
+                    )
+                    self._rs_breaker_logged = True
+
     def get_report_status(self, study_uid: str) -> Optional[Dict[str, Any]]:
         """
         Get current report status for a study
-        
+
         Args:
             study_uid: Study Instance UID
-            
+
         Returns:
             Response dict with status or None on error
         """
+        # Circuit breaker: while open, skip the call entirely so the shared socket
+        # client's lock is never held ~30s on an endpoint the server isn't answering.
+        if self._rs_breaker_is_open():
+            return None
+
         client = None
         try:
             client = self._get_client()
             if not client:
                 return None
-            
+
             response = client.get_report_status(study_uid)
-            
+
             if response:
+                self._rs_note_success()
                 # Extract status from response (check multiple possible locations)
                 report_status = (
-                    response.get("report_status") or 
-                    response.get("reportStatus") or 
+                    response.get("report_status") or
+                    response.get("reportStatus") or
                     response.get("data", {}).get("report_status") or
                     response.get("data", {}).get("reportStatus") or
                     "pending"
                 )
-                
+
                 status_data = {
                     "report_status": report_status,
                     "updated_at": response.get("updated_at") or response.get("data", {}).get("updated_at")
@@ -287,9 +360,11 @@ class SocketReportStatusService(QObject):
                 self.statusReceived.emit(study_uid, status_data)
                 return response
             else:
+                self._rs_note_failure()
                 return None
-                
+
         except Exception as e:
+            self._rs_note_failure()
             logger.error(f"Error getting report status: {e}")
             return None
         finally:

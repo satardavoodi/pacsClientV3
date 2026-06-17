@@ -24,6 +24,46 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 
+# ── Pixel-less stub re-fetch (DM-L4, 2026-06-16) ─────────────────────────────
+# A finished .dcm whose header is intact but whose PixelData is EMPTY passes the
+# size>=128 check and the name-based skip, so the missing pixels are never
+# re-fetched (the false-"complete" class — e.g. 46472 DX). Treat such a stub as
+# NOT present so filter_existing_files re-queues it.
+#   SAFE-ON-ERROR: any parse failure falls through to the legacy "present"
+#     result, so this can NEVER make downloads worse than before.
+#   PRECISE: only files below the size cap are parsed (a real image is far
+#     larger) and only a dataset that declares Rows&Columns&BitsAllocated but
+#     carries empty PixelData is flagged → never false-flags a real image.
+#   ANTI-CHURN: after _DM_STUB_REFETCH_CAP attempts on the SAME still-stub path
+#     (the server cannot supply pixels), accept it to stop a re-download loop and
+#     log it for a server-side fix.
+# Disable with AIPACS_DM_REJECT_STUBS=0.
+_DM_REJECT_STUBS = (os.getenv("AIPACS_DM_REJECT_STUBS", "1") or "1").strip() != "0"
+_DM_STUB_PROBE_MAX_BYTES = 32768
+try:
+    _DM_STUB_REFETCH_CAP = max(1, int(os.getenv("AIPACS_DM_STUB_REFETCH_CAP", "2") or "2"))
+except (TypeError, ValueError):
+    _DM_STUB_REFETCH_CAP = 2
+_DM_STUB_ATTEMPTS: Dict[str, int] = {}
+
+
+def _is_pixelless_image_stub(file_path: Path) -> bool:
+    """True iff ``file_path`` is a header-only image stub: declares image pixels
+    (Rows & Columns & BitsAllocated) but carries an empty/absent PixelData. Only
+    small files reach here (size-gated by the caller); never raises."""
+    try:
+        import pydicom
+        ds = pydicom.dcmread(str(file_path), force=True)
+        declares_image = (
+            bool(getattr(ds, "Rows", None))
+            and bool(getattr(ds, "Columns", None))
+            and bool(getattr(ds, "BitsAllocated", None))
+        )
+        return declares_image and not bool(ds.get("PixelData", None))
+    except Exception:
+        return False
+
+
 class ResumeRules:
     """
     Resume validation rules
@@ -175,12 +215,42 @@ class ResumeRules:
         """
         if not file_path.exists():
             return False
-        
+
         # Validate file size (must be > 128 bytes for valid DICOM)
-        if file_path.stat().st_size < 128:
+        try:
+            _size = file_path.stat().st_size
+        except OSError:
+            return False
+        if _size < 128:
             logger.warning(f"⚠️ Corrupt file detected: {file_path} (too small)")
             return False
-        
+
+        # DM-L4: re-fetch a pixel-less stub (intact header, EMPTY PixelData) by
+        # reporting it as NOT present, so filter_existing_files re-queues it.
+        # Bounded (only small files parsed) + safe-on-error (any failure falls
+        # through to 'present' = legacy behaviour, so downloads can't regress) +
+        # anti-churn (give up after the cap to avoid a re-download loop when the
+        # server itself has no pixels).
+        if _DM_REJECT_STUBS and _size < _DM_STUB_PROBE_MAX_BYTES:
+            try:
+                if _is_pixelless_image_stub(file_path):
+                    _k = str(file_path)
+                    _n = _DM_STUB_ATTEMPTS.get(_k, 0)
+                    if _n < _DM_STUB_REFETCH_CAP:
+                        _DM_STUB_ATTEMPTS[_k] = _n + 1
+                        logger.warning(
+                            "[DM][stub-refetch] %s — empty PixelData, re-downloading "
+                            "(attempt %d/%d)", file_path.name, _n + 1, _DM_STUB_REFETCH_CAP,
+                        )
+                        return False
+                    logger.warning(
+                        "[DM][stub-unrecoverable] %s still empty after %d attempts — "
+                        "accepting to stop re-download churn; pixel data must be re-sent "
+                        "server-side", file_path.name, _n,
+                    )
+            except Exception:
+                pass  # safe-on-error: behave exactly like before
+
         return True
     
     def check_series_complete(

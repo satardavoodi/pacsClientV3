@@ -505,6 +505,121 @@ See `docs/reports/AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical ima
   min batch on a fresh socket. Guards: `tests/code/download_manager/test_large_batch_stability.py`
   + `test_response_too_large_u1.py`.
 
+### Patient attachment local-first persistence (2026-06-16)
+Every generated patient attachment (voice `REC_*.wav`, viewport/MPR screenshots, AI
+output, notes/reports) is saved to `ATTACHMENT_PATH/<study_uid>/`
+(`ATTACHMENTS_DIR = user_data/patients/attachments`) **before** any server contact, and the
+attachment UI panels (`attachments_dropdown.py`) read straight from that folder — so display
+never depends on the server. **Local save must stay authoritative; server sync is a later,
+retryable, NON-destructive step.** Before editing `PacsClient/pacs/patient_tab/utils/patient_sync_service.py`,
+`modules/network/upload_download_attchments.py`, or `modules/network/attachment_pending_sync.py`,
+know the invariants (regression test: `tests/code/network/test_attachment_local_first_persistence.py`):
+- **Sync must NEVER delete the local attachment folder.** The old `_sync_worker` did
+  `shutil.rmtree(ATTACHMENT_PATH/study_uid)` then re-downloaded — a partial-batch upload or a
+  failed re-download then lost the not-yet-synced files permanently (the "attachment gone after
+  sync" bug). It is replaced by `reconcile_attachments_from_server()` =
+  `download_attachments_for_study(..., overwrite=False)` (pulls only server files missing
+  locally; never overwrites or deletes). Do not reintroduce `rmtree` here — the guard test fails
+  if `rmtree` reappears in that module.
+- **`upload_attachments_for_study` only READS local files**; it must never delete on failure. A
+  `client.connect()` failure (offline/server-down) marks every discovered file PendingSync and
+  returns a structured `failed` summary instead of raising — the files stay on disk for the next
+  sync. Failed/partial uploads keep their files in the pending manifest (`.pending_sync.json`).
+- Statuses are derived from the manifest via `attachment_pending_sync.get_status()`
+  (Synced / LocalOnly / PendingSync); disk is the source of truth for existence.
+- `download_attachments_for_study` (default `overwrite=False`) is the bidirectional pull on both
+  patient-open (`_hp_patient_open._start_attachment_download_in_background`) and post-sync; keep
+  it non-destructive. These three files are NOT plugin-mirrored.
+
+### Unified patient-study-set pipeline + 46630 late-study back-fill (2026-06-17)
+The recurring multi-study bug (a second/DOC study shows on single-click but is lost on
+double-click open, returning only on reopen — patient 46630) is fixed by a shared
+study-set authority plus an in-session open-tab back-fill. Before editing
+`PacsClient/utils/patient_study_set.py`, the home-panel study-resolution/open/back-fill
+paths (`_hp_patient_open.py`, `_hp_series.py`), or the viewer canonical series resolver
+(`_vc_load.py::_resolve_canonical_series_identity`), **read
+`docs/pipelines/unified-patient-study-pipeline.md`** (as-built; implemented + live-verified
+on 46630 2026-06-17).
+
+Key invariants that must not be broken:
+- **`patient_study_set.py` is PURE** (stdlib only — no Qt/VTK/pydicom/numpy). It is the
+  single shared authority (`merge_study_uids` / `diff_study_uids` / `resolve_study_uids` /
+  `build_download_payload` / `PatientStudySetService`) and must stay unit-testable in
+  isolation. The wiring guard `tests/code/ui_services/test_unified_pipeline_wiring.py`
+  fails if the flags/functions/caller-routing are removed.
+- **The pipeline TERMINATES at the metadata sink `set_server_series_info`**
+  (`_pw_thumbnails.py:86`, merge-aware). It must NEVER reach pixel loading, IPP/IOP
+  geometry, slice ordering, orientation, VTK/MPR — those are DOWNSTREAM and clinically
+  protected. The back-fill's only viewer call is `set_server_series_info`.
+- **Legacy = kill switch, not deletion.** Every behavior change is gated default-on with
+  the legacy path preserved: `AIPACS_PSS_MERGE_RESOLVE` (resolver tail→`merge_study_uids`;
+  `=0` restores the byte-identical legacy owner-guard tail — pinned by
+  `tests/code/ui_services/test_resolve_patient_study_uids_scope.py`),
+  `AIPACS_OPEN_TAB_STUDYSET_BACKFILL` (open-tab back-fill), `AIPACS_OPEN_TAB_LATE_DOWNLOAD`
+  (open-intent missing-only late download), `AIPACS_PATIENT_STUDY_SET_SHADOW` (default OFF
+  diagnostic). Flip a flag to revert; do not delete the legacy path.
+- **The resolver study-source GATHER is unchanged** — only the owner-filter TAIL routes
+  through the authority. Converting the gather is deferred (Qt-table path not unit-coverable;
+  needs a live multi-study GUI pass).
+- **Cross-patient isolation is centralized AND kept at the sinks.** `merge_study_uids`
+  drops positively-foreign studies (keeps selected + unknown-owner); the back-fill, resync,
+  and reconcile ALSO re-validate the server owner (`*_cross_patient_skip`). Keep both.
+- **Open intent vs preview:** the back-fill/late-download run ONLY when a viewer tab is
+  open for the patient; a single-click preview with no open tab must never download. The
+  back-fill is fire-and-forget (`_schedule_ui_coro`) and must not block the grouped render.
+- **No unnecessary duplicate path:** callers were consolidated onto the shared authority +
+  the existing `set_server_series_info` sink; the only net-new path is the open-tab
+  back-fill (gap-filling). Extend the shared authority — never fork a parallel
+  resolver/payload/enqueue variant.
+- Tests: `tests/code/ui_services/test_patient_study_set.py`,
+  `test_open_tab_studyset_backfill.py`, `test_resolve_patient_study_uids_scope.py`,
+  `test_unified_pipeline_wiring.py`. None of these source files are plugin-mirrored. The
+  larger consolidation (full `PatientStudySetService.resolve()`, typed `DownloadPlan`,
+  catalog, mode policy) is staged — do it before the prior-study / National-ID feature.
+
+### Drag-drop first-image prime + view-intent coalescing (slow-link thrash — 2026-06-17)
+On a very slow / frequently-dropping link, an impatient user re-drags series repeatedly and
+the single download slot thrashes until nothing completes. Two reinforcing causes were
+fixed (as-built + validation steps: `docs/reports/DRAGDROP_SLOW_INTERNET_PRIORITY_THRASH_2026-06-17.md`
+§6; history [[dragdrop-slow-internet-thrash-2026-06-17]]). Before editing the
+`download_series` batch loop in `modules/download_manager/network/socket_client.py` or the
+viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
+
+- **First-image prime** (`socket_client.py`, **plugin-mirrored**): `_first_image_prime_size(...)`
+  fetches the FIRST batch of a **fresh** series (`skipped_count == 0`, batch > 1, not a
+  force-single modality) as **one image**, then restores the full adaptive size **after
+  batch 0** (the advance uses the old size, so `batch_start` is exactly 1 — alignment with
+  the server's batch_index mapping preserved). It must stay **skipped on resume**
+  (`skipped_count > 0`) so the R19b leading-batch skip is untouched, and must restore the
+  size after the first batch (don't ramp from 1 — that re-adds round-trips on fast LAN).
+  Flag `AIPACS_FIRST_IMAGE_PRIME` (default on, `=0` = byte-identical legacy). Mirror any
+  edit; guard `tests/code/download_manager/test_first_image_prime.py`.
+- **Global view-intent coalescing** (`_vc_load.py` + `_vc_switch.py`, **NOT mirrored**): the
+  drop's `_notify_dm_viewed_series` + the two `_trigger_download_if_needed` sites route
+  through `_coalesce_dm_view_intent(...)` → a single **last-write-wins** target
+  (`_merge_drag_view_intent`) dispatched by a (re)started single-shot QTimer
+  (`AIPACS_DRAGDROP_DEBOUNCE`, default on; `_MS` default 350). Only the FINAL drop's intent
+  fires, so alternating drops can't preempt/tear-down the one slot per drop. **The view
+  switch is NOT debounced** — it runs immediately in `change_series_on_viewer`; only the DM
+  priority/download intent waits. Keep the downstream per-`(study,series)` cooldowns (500 ms
+  notify / 2 s retry) and the `:691` token guard (`_is_request_current`). Guard
+  `tests/code/viewer/test_dragdrop_coalesce.py`.
+- **Live download notification** (`_vc_progressive.py` + `loading_spinner.py` (mirrored) +
+  `loading_overlay.py`, NOT all mirrored): the waiting spinner shows "Downloading N of M
+  images…" via `_update_download_spinner_text` (fed by `on_series_images_progress`) →
+  `ViewportSpinner.set_status` → the minimal `AiPacsLoadingOverlay` status line. **The call
+  is wrapped in try/except in the progress impl** — a status update must NEVER abort the
+  progressive-display/grow pipeline (tests drive that impl on partial stubs; production
+  hardening). `AIPACS_DOWNLOAD_PROGRESS_TEXT`. Guard
+  `tests/code/viewer/test_download_progress_text.py`.
+- **Clinical guardrail:** download/priority/perception only. No VTK/MPR geometry, slice
+  order, orientation, or render change. No data-loss risk (atomic `.part` + resume). All
+  three pieces are flag-gated default-on with the legacy path preserved as a kill switch.
+  Drag-drop is now folded into the unified pipeline plan as a view-intent (see
+  `docs/pipelines/unified-patient-study-pipeline.md` §8). Staged next (need live validation):
+  settle-then-switch cross-study preemption (batch-boundary yield not kill), and converging
+  the drop onto the shared `PatientStudySetService` / typed `DownloadPlan`.
+
 
 ## VS Code Agent Mode environment (configured 2026-06-02)
 

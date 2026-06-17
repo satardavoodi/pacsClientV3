@@ -33,11 +33,25 @@ Split from database/core.py (v2.2.9.0).
 
 import json
 import logging
+import os
 import sqlite3
 
 from database._pool import get_db_connection
 
 logger = logging.getLogger(__name__)
+
+# Ownership-reassignment guard (P1). insert_study / insert_series UPDATE the owning
+# patient_fk / study_fk on a UID conflict. That is correct for a genuine metadata
+# refresh, but a mis-routed caller could otherwise SILENTLY move a study to the
+# wrong patient (or a series to the wrong study) and make the bad link durable. We
+# always LOG such an owner change ([CrossPatientReassignment] /
+# [CrossStudyReassignment]) so it is auditable. When AIPACS_DB_ENFORCE_OWNER=1 we
+# additionally REFUSE the owner change (keep the original owner; still refresh the
+# other metadata). Default OFF (observe-only) so legitimate corrections/imports are
+# unaffected — the upstream server-owner guards already block known bad routes.
+_DB_ENFORCE_OWNER = os.environ.get(
+    "AIPACS_DB_ENFORCE_OWNER", "0"
+).strip().lower() not in ("0", "false", "no", "off", "")
 
 
 # ---------------------------------------------------------------------------
@@ -342,6 +356,24 @@ def init_database():
         except Exception as e:
             logger.warning("Instance migration warning: %s", e)
 
+        # Series metadata-index status (P0, 2026-06-16): lets the viewer's DB-first
+        # metadata path trust a series ONLY when it is fully indexed (indexed ==
+        # expected) so it can skip the per-slice disk header rescan safely. Additive
+        # / idempotent — existing rows default to NotIndexed and keep the disk path.
+        try:
+            cur.execute("PRAGMA table_info(series)")
+            series_columns = [col[1] for col in cur.fetchall()]
+            if 'metadata_index_status' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN metadata_index_status TEXT DEFAULT 'NotIndexed'")
+            if 'indexed_instance_count' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN indexed_instance_count INTEGER DEFAULT 0")
+            if 'expected_instance_count' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN expected_instance_count INTEGER DEFAULT 0")
+            if 'last_indexed_at' not in series_columns:
+                cur.execute("ALTER TABLE series ADD COLUMN last_indexed_at TEXT DEFAULT NULL")
+        except Exception as e:
+            logger.warning("Series metadata-index migration warning: %s", e)
+
         cur.execute("""
             CREATE TABLE IF NOT EXISTS slides (
                 slide_pk INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -465,6 +497,30 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
             )
             study_pk = cur.lastrowid
         except sqlite3.IntegrityError:
+            # Ownership-reassignment guard (P1): detect (and optionally refuse) a
+            # SILENT move of this existing study to a DIFFERENT patient.
+            effective_patient_fk = patient_fk
+            try:
+                cur.execute("SELECT patient_fk FROM studies WHERE study_uid = ?", (study_uid,))
+                _row = cur.fetchone()
+                _existing_fk = _row[0] if _row else None
+                if (_existing_fk is not None and patient_fk is not None
+                        and int(_existing_fk) != int(patient_fk)):
+                    if _DB_ENFORCE_OWNER:
+                        logger.error(
+                            "[CrossPatientReassignment] BLOCKED study=%s owner patient_fk %s -> %s "
+                            "(AIPACS_DB_ENFORCE_OWNER=1): keeping original owner, metadata-only refresh",
+                            study_uid, _existing_fk, patient_fk,
+                        )
+                        effective_patient_fk = _existing_fk
+                    else:
+                        logger.warning(
+                            "[CrossPatientReassignment] study=%s owner patient_fk %s -> %s "
+                            "(observe-only; set AIPACS_DB_ENFORCE_OWNER=1 to block)",
+                            study_uid, _existing_fk, patient_fk,
+                        )
+            except Exception:
+                effective_patient_fk = patient_fk
             cur.execute(
                 """
                 UPDATE studies
@@ -475,7 +531,7 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
                 WHERE study_uid = ?
                 """,
                 (
-                    patient_fk, study_date, study_time, study_description,
+                    effective_patient_fk, study_date, study_time, study_description,
                     institution_name, modality, body_part,
                     number_of_series, number_of_instances,
                     study_path, study_uid,
@@ -605,6 +661,30 @@ def insert_series(series_uid: str, study_fk: int, series_name: str = None, serie
             )
             series_pk = cur.lastrowid
         except sqlite3.IntegrityError:
+            # Ownership-reassignment guard (P1): detect (and optionally refuse) a
+            # SILENT move of this existing series to a DIFFERENT study.
+            effective_study_fk = study_fk
+            try:
+                cur.execute("SELECT study_fk FROM series WHERE series_uid = ?", (series_uid,))
+                _row = cur.fetchone()
+                _existing_study_fk = _row[0] if _row else None
+                if (_existing_study_fk is not None and study_fk is not None
+                        and int(_existing_study_fk) != int(study_fk)):
+                    if _DB_ENFORCE_OWNER:
+                        logger.error(
+                            "[CrossStudyReassignment] BLOCKED series=%s owner study_fk %s -> %s "
+                            "(AIPACS_DB_ENFORCE_OWNER=1): keeping original study, metadata-only refresh",
+                            series_uid, _existing_study_fk, study_fk,
+                        )
+                        effective_study_fk = _existing_study_fk
+                    else:
+                        logger.warning(
+                            "[CrossStudyReassignment] series=%s owner study_fk %s -> %s "
+                            "(observe-only; set AIPACS_DB_ENFORCE_OWNER=1 to block)",
+                            series_uid, _existing_study_fk, study_fk,
+                        )
+            except Exception:
+                effective_study_fk = study_fk
             cur.execute(
                 """
                 UPDATE series
@@ -616,7 +696,7 @@ def insert_series(series_uid: str, study_fk: int, series_name: str = None, serie
                 WHERE series_uid = ?
                 """,
                 (
-                    study_fk, series_name, series_number, series_thk, series_description, orientation,
+                    effective_study_fk, series_name, series_number, series_thk, series_description, orientation,
                     modality, image_count, protocol_name, body_part_examined, manufacturer,
                     institution_name, int(main_thumbnail), thumbnail_path, series_path, series_uid,
                 ),
@@ -965,6 +1045,215 @@ def find_study_pk_with_study_uid(study_uid: str) -> int:
         cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
         result = cur.fetchone()
         return result[0] if result else None
+
+
+def mark_series_indexed(series_pk: int, indexed_count: int, expected_count: int = None,
+                        status: str = None) -> None:
+    """Stamp the metadata-index status for a series (P0, 2026-06-16).
+
+    Called at download/import completion AFTER instance rows are written. The
+    series is marked ``Indexed`` ONLY when ``indexed_count >= expected_count`` (and
+    expected > 0) — a fully-indexed series whose DB metadata the viewer's DB-first
+    path may trust to skip the per-slice disk header rescan. Otherwise it stays
+    ``NotIndexed`` and the disk path remains authoritative. Pass an explicit
+    ``status`` to force one (e.g. ``FailedIndexing`` / ``NeedsReindex``).
+    Best-effort: a stamp failure must never break download/import.
+    """
+    import datetime as _dt
+    try:
+        exp = int(expected_count) if expected_count is not None else int(indexed_count or 0)
+    except Exception:
+        exp = int(indexed_count or 0)
+    idx = int(indexed_count or 0)
+    if status is None:
+        status = 'Indexed' if (exp > 0 and idx >= exp) else 'NotIndexed'
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "UPDATE series SET metadata_index_status = ?, indexed_instance_count = ?, "
+                "expected_instance_count = ?, last_indexed_at = ? WHERE series_pk = ?",
+                (status, idx, exp, _dt.datetime.now().isoformat(timespec='seconds'), int(series_pk)),
+            )
+            conn.commit()
+    except Exception as e:
+        logger.debug("mark_series_indexed failed for series_pk=%s: %s", series_pk, e)
+
+
+def get_series_metadata_index(series_pk: int) -> dict:
+    """Return {'status','indexed','expected','last_indexed_at'} for a series, or a
+    NotIndexed default if the row/columns are absent (back-compat / pre-migration)."""
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT metadata_index_status, indexed_instance_count, "
+                "expected_instance_count, last_indexed_at FROM series WHERE series_pk = ?",
+                (int(series_pk),),
+            )
+            row = cur.fetchone()
+            if not row:
+                return {'status': 'NotIndexed', 'indexed': 0, 'expected': 0, 'last_indexed_at': None}
+            return {'status': row[0] or 'NotIndexed', 'indexed': int(row[1] or 0),
+                    'expected': int(row[2] or 0), 'last_indexed_at': row[3]}
+    except Exception:
+        return {'status': 'NotIndexed', 'indexed': 0, 'expected': 0, 'last_indexed_at': None}
+
+
+def _series_has_disk_files(folder) -> bool:
+    """True if ``folder`` exists and holds at least one .dcm (case-insensitive)."""
+    try:
+        if not folder or not os.path.isdir(folder):
+            return False
+        for fn in os.listdir(folder):
+            if fn.lower().endswith('.dcm'):
+                return True
+        return False
+    except Exception:
+        return True  # uncertain → assume present (fail-safe: never prune on doubt)
+
+
+def prune_orphan_series_for_study(study_uid: str, source_root: str = None,
+                                  dry_run: bool = False) -> list:
+    """Self-heal: drop series rows of a study whose downloaded files are GONE.
+
+    An ORPHAN series has instance ROWS in the DB (it WAS downloaded) but its
+    on-disk folder is missing/empty — e.g. a re-split / re-download replaced it and
+    left the old series row dangling (POKORA 562346 series 3, 2026-06-17), so the
+    sidebar shows a broken count for a series that can't display. This removes ONLY
+    such rows; it never touches files (already gone) and never prunes a
+    NOT-yet-downloaded series (those have ZERO instance rows).
+
+    SAFETY:
+      * Prunes a series ONLY when it has >0 instance rows AND 0 on-disk .dcm files.
+      * Skips entirely if the SOURCE_PATH root is unreachable (drive offline) so a
+        transiently-unmounted store can never trigger deletion.
+      * Gated by AIPACS_PRUNE_ORPHAN_SERIES (default on); ``dry_run`` lists without
+        deleting; a missing series_path falls back to SOURCE_PATH/<study_uid>/<num>.
+    Returns a list of (series_number, instance_rows) pruned (or that WOULD be).
+    """
+    if str(os.environ.get("AIPACS_PRUNE_ORPHAN_SERIES", "1")).strip().lower() in (
+        "0", "false", "no", "off"
+    ):
+        return []
+    if source_root is None:
+        try:
+            from PacsClient.utils.config import SOURCE_PATH
+            source_root = str(SOURCE_PATH)
+        except Exception:
+            return []
+    # Store reachable? If the root itself is missing, do NOT prune (offline drive).
+    if not source_root or not os.path.isdir(source_root):
+        return []
+
+    pruned = []
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            srow = cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,)).fetchone()
+            if not srow:
+                return []
+            study_pk = srow[0]
+            study_dir = os.path.join(source_root, str(study_uid))
+            rows = cur.execute(
+                "SELECT s.series_pk, s.series_number, s.series_path, "
+                "(SELECT COUNT(*) FROM instances i WHERE i.series_fk = s.series_pk) "
+                "FROM series s WHERE s.study_fk = ?", (study_pk,)
+            ).fetchall()
+
+            def _folder_for(series_number, series_path):
+                return series_path or os.path.join(study_dir, str(series_number))
+
+            # CRITICAL guard: prune a file-less series ONLY when OTHER series of the
+            # SAME study still have files on disk (the study is PARTIALLY present, so
+            # this one series' files truly vanished — the POKORA series-3 / re-split
+            # orphan). If the WHOLE study has no files, it was cache-EVICTED (or never
+            # downloaded) and its rows are a legitimate re-downloadable record — NEVER
+            # prune those (that would delete the history of evicted studies).
+            study_has_files = any(
+                _series_has_disk_files(_folder_for(sn, sp)) for (_pk, sn, sp, _nr) in rows
+            )
+            if not study_has_files:
+                return []
+            for series_pk, series_number, series_path, n_rows in rows:
+                if not n_rows:
+                    continue  # never downloaded (no rows) → pending, keep
+                folder = _folder_for(series_number, series_path)
+                if _series_has_disk_files(folder):
+                    continue  # files present → valid, keep
+                pruned.append((str(series_number), int(n_rows)))
+                if not dry_run:
+                    cur.execute("DELETE FROM instances WHERE series_fk = ?", (series_pk,))
+                    cur.execute("DELETE FROM series WHERE series_pk = ?", (series_pk,))
+                    logger.warning(
+                        "[ORPHAN_SERIES_PRUNED] study=%s series=%s instance_rows=%d folder_missing=%s",
+                        study_uid, series_number, n_rows, folder,
+                    )
+            if pruned and not dry_run:
+                nser = cur.execute("SELECT COUNT(*) FROM series WHERE study_fk = ?", (study_pk,)).fetchone()[0]
+                cur.execute("UPDATE studies SET number_of_series = ? WHERE study_pk = ?", (nser, study_pk))
+                conn.commit()
+    except Exception as e:
+        logger.debug("prune_orphan_series_for_study(%s) failed: %s", study_uid, e)
+    return pruned
+
+
+def find_orphan_series(source_root: str = None) -> list:
+    """Scan the WHOLE DB for orphan series (>0 instance rows, 0 on-disk .dcm files).
+
+    Read-only diagnostic (no deletion). Returns a list of dicts:
+    {patient_id, study_uid, series_number, series_pk, instance_rows, folder}.
+    Skips when the SOURCE_PATH root is unreachable (avoids flagging an offline store)."""
+    if source_root is None:
+        try:
+            from PacsClient.utils.config import SOURCE_PATH
+            source_root = str(SOURCE_PATH)
+        except Exception:
+            return []
+    if not source_root or not os.path.isdir(source_root):
+        return []
+    out = []
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            rows = cur.execute(
+                "SELECT p.patient_id, st.study_uid, s.series_number, s.series_pk, s.series_path, "
+                "(SELECT COUNT(*) FROM instances i WHERE i.series_fk = s.series_pk) AS nr "
+                "FROM series s JOIN studies st ON st.study_pk = s.study_fk "
+                "JOIN patients p ON p.patient_pk = st.patient_fk"
+            ).fetchall()
+            from collections import defaultdict
+            by_study = defaultdict(list)
+            for r in rows:
+                by_study[r[1]].append(r)  # key by study_uid
+
+            def _folder_for(study_uid, series_number, series_path):
+                return series_path or os.path.join(source_root, str(study_uid), str(series_number))
+
+            for study_uid, srows in by_study.items():
+                # Same guard as the pruner: only a PARTIALLY-present study (some
+                # series have files) can have a true orphan. A whole study with no
+                # files was cache-evicted / not downloaded — skip it entirely.
+                study_has_files = any(
+                    _series_has_disk_files(_folder_for(study_uid, sn, sp))
+                    for (_pid, _su, sn, _spk, sp, _nr) in srows
+                )
+                if not study_has_files:
+                    continue
+                for patient_id, _su, series_number, series_pk, series_path, nr in srows:
+                    if not nr:
+                        continue
+                    folder = _folder_for(study_uid, series_number, series_path)
+                    if _series_has_disk_files(folder):
+                        continue
+                    out.append({
+                        "patient_id": patient_id, "study_uid": study_uid,
+                        "series_number": series_number, "series_pk": series_pk,
+                        "instance_rows": int(nr), "folder": folder,
+                    })
+    except Exception as e:
+        logger.debug("find_orphan_series failed: %s", e)
+    return out
 
 
 def find_series_pk(series_uid: str) -> int:

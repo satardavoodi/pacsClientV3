@@ -296,8 +296,10 @@ class _VCSwitchMixin:
                             series_number, displayed_count, disk_count, expected_instances,
                         )
                         # Reassert critical download request for repeated drag/drop.
-                        # _trigger_download_if_needed has its own short dedup window.
-                        self._trigger_download_if_needed(series_number)
+                        # Routed through the global last-write-wins coalescer so rapid
+                        # alternating drops collapse to one intent (no slot thrash);
+                        # _trigger_download_if_needed still has its own dedup window.
+                        self._coalesce_dm_view_intent(series_number, want_trigger=True)
                     # Same series re-drop with growth: if a lazy loader is present,
                     # grow it in-place instead of doing an expensive full reload
                     # that would restart the volume from scratch.
@@ -373,8 +375,11 @@ class _VCSwitchMixin:
 
                 # Notify DM of viewed series so priority updates in the DM UI.
                 # This ensures the drag-dropped / clicked series becomes CRITICAL
-                # and other downloading series show their adjusted state.
-                self._notify_dm_viewed_series(series_number)
+                # and other downloading series show their adjusted state. Routed
+                # through the global coalescer: rapid drops of different series
+                # collapse to the FINAL viewed series, so only it is promoted to
+                # CRITICAL (the single download slot is no longer thrashed).
+                self._coalesce_dm_view_intent(series_number, want_notify=True)
 
             self._arm_spinner_timeout(vtk_widget, timeout_ms=20000)
             expected_token = self._next_request_token(vtk_widget)
@@ -688,7 +693,13 @@ class _VCSwitchMixin:
                         return
 
                     if not ok:
-                        self._trigger_download_if_needed(series_number)
+                        # Routed through the global coalescer (last-write-wins) so a
+                        # burst of drops on this viewport starts a download only for
+                        # the final series. This callback is already token-guarded
+                        # above (_is_request_current), so only the current series
+                        # reaches here; the coalescer additionally collapses cross-
+                        # viewport / cross-study bursts onto the single download slot.
+                        self._coalesce_dm_view_intent(series_number, want_trigger=True)
                         # Not a hard failure: this is the normal "switched to a
                         # series that isn't downloaded yet" path.  The block below
                         # shows the 'Downloading…' spinner and marks the viewer
@@ -707,6 +718,14 @@ class _VCSwitchMixin:
                                 vtk_widget.viewport_spinner.show_loading(
                                     f"Downloading series {series_number}..."
                                 )
+                                # Immediate status line before the first progress
+                                # signal arrives, so the spinner never reads as a
+                                # blank "is it stuck?" wait. Live "N of M" replaces
+                                # this as batches land (on_series_images_progress).
+                                try:
+                                    vtk_widget.viewport_spinner.set_status("Downloading…")
+                                except Exception:
+                                    pass
                             print(
                                 f"⏳ [AWAIT] viewer marked awaiting series={series_number} "
                                 f"(spinner kept visible)"

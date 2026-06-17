@@ -38,6 +38,17 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# Immutable progress denominator (P0). Freeze total_images / total_series at
+# download start, BEFORE any runtime reorder or critical-yield mutation of
+# series_list. The download ORDER may change (viewed series first; a yield-and-
+# resume re-inserts the current series), but the progress DENOMINATOR must never
+# move — otherwise an invalid/repeated critical intent turns "X / N images" into
+# an impossible total. Disable with AIPACS_DM_IMMUTABLE_TOTALS=0 (legacy: totals
+# recomputed live from the mutated list).
+_DM_IMMUTABLE_TOTALS = os.environ.get(
+    "AIPACS_DM_IMMUTABLE_TOTALS", "1"
+).strip().lower() not in ("0", "false", "no", "off")
+
 
 class SeriesDownloader:
     """
@@ -144,6 +155,17 @@ class SeriesDownloader:
         except Exception:
             pass
 
+    def _progress_totals(self, study_uid: str, series_list):
+        """Authoritative (total_images, total_series) for progress/results — the
+        FROZEN baseline captured at download start when available, else a live sum
+        (legacy / flag off / out-of-band call). Keeps the denominator stable
+        against runtime series_list reorder/yield mutation (P0)."""
+        _f = getattr(self, '_frozen_progress_totals', {}).get(study_uid)
+        if _DM_IMMUTABLE_TOTALS and _f and _f[0] > 0:
+            return _f[0], _f[1]
+        _sl = series_list or []
+        return sum(int(getattr(s, 'image_count', 0) or 0) for s in _sl), len(_sl)
+
     def _build_preempted_result(
         self,
         *,
@@ -163,15 +185,16 @@ class SeriesDownloader:
             status=DownloadStatus.PAUSED,
             is_auto_paused=True,
         )
+        _tot_img, _tot_ser = self._progress_totals(study_uid, series_list)
         return DownloadResult(
             success=False,
             study_uid=study_uid,
             downloaded_series=len(completed_series),
             skipped_series=len(skipped_series),
             failed_series=len(failed_series),
-            total_series=len(series_list),
+            total_series=_tot_ser,
             downloaded_images=total_downloaded,
-            total_images=sum(s.image_count for s in series_list),
+            total_images=_tot_img,
             elapsed_seconds=(datetime.now() - start_time).total_seconds(),
             error_message=error_message,
         )
@@ -221,7 +244,20 @@ class SeriesDownloader:
         logger.info(f"   Total Series: {len(series_list)}")
         logger.info(f"   Total Images: {sum(s.image_count for s in series_list)}")
         logger.info(f"   Authentication: ✅ Token available")
-        
+
+        # ── Immutable progress denominator (P0) ─────────────────────────
+        # Freeze the authoritative totals ONCE, before the viewed-series reorder
+        # below and before any in-loop critical-yield re-insertion mutates
+        # series_list. All progress math (_update_progress, result builders)
+        # reads these frozen values, so a reorder/yield can never move the
+        # "X / N images" denominator.
+        if not hasattr(self, '_frozen_progress_totals'):
+            self._frozen_progress_totals = {}
+        self._frozen_progress_totals[study_uid] = (
+            sum(int(getattr(s, 'image_count', 0) or 0) for s in series_list),
+            len(series_list),
+        )
+
         # ── Series-level priority: put the viewed series first ──────────
         # If a specific series is being viewed (CRITICAL), download it
         # before the other HIGH series.  This is re-checked before each
@@ -665,20 +701,26 @@ class SeriesDownloader:
 
             # Calculate elapsed time
             elapsed = (datetime.now() - start_time).total_seconds()
-        
-            # Determine overall success (R21: skipped series count as success)
+
+            # Authoritative, reorder/yield-proof totals (P0).
+            _tot_img, _tot_ser = self._progress_totals(study_uid, series_list)
+
+            # Determine overall success (R21: skipped series count as success).
+            # Compare against the FROZEN series count so a runtime yield-and-resume
+            # re-insertion of the current series cannot make a complete study look
+            # incomplete (len(series_list) can transiently exceed the real count).
             successful_series = len(completed_series) + len(skipped_series)
-            overall_success = successful_series == len(series_list) and len(failed_series) == 0
-        
+            overall_success = successful_series >= _tot_ser and len(failed_series) == 0
+
             result = DownloadResult(
                 success=overall_success,
                 study_uid=study_uid,
                 downloaded_series=len(completed_series),
                 skipped_series=len(skipped_series),
                 failed_series=len(failed_series),
-                total_series=len(series_list),
+                total_series=_tot_ser,
                 downloaded_images=total_downloaded,
-                total_images=sum(s.image_count for s in series_list),
+                total_images=_tot_img,
                 elapsed_seconds=elapsed
             )
         
@@ -729,14 +771,25 @@ class SeriesDownloader:
             total_downloaded: Total images downloaded
             total_skipped: Total images skipped
         """
-        total_images = sum(s.image_count for s in series_list)
+        # Use the FROZEN denominator captured at download start so a runtime
+        # reorder / critical-yield re-insertion of series_list cannot inflate the
+        # total (P0). Fall back to the live sum only when no frozen value exists
+        # (legacy / flag off / out-of-band call).
+        _frozen = getattr(self, '_frozen_progress_totals', {}).get(study_uid)
+        if _DM_IMMUTABLE_TOTALS and _frozen and _frozen[0] > 0:
+            total_images, total_series_for_log = _frozen[0], _frozen[1]
+        else:
+            total_images = sum(s.image_count for s in series_list)
+            total_series_for_log = len(series_list)
         total_done = total_downloaded + total_skipped
-        
-        progress_pct = (total_done / total_images * 100) if total_images > 0 else 0
-        
+
+        # Clamp to [0, 100] — downloaded can momentarily look ahead of a frozen
+        # denominator across a resume boundary; never display >100%.
+        progress_pct = min(100.0, (total_done / total_images * 100)) if total_images > 0 else 0
+
         t_progress = now_ms()
         # Clean progress logging
-        logger.info(f"    📊 Progress: {completed_series_count}/{len(series_list)} series | {progress_pct:.1f}% ({total_done}/{total_images} images)")
+        logger.info(f"    📊 Progress: {completed_series_count}/{total_series_for_log} series | {progress_pct:.1f}% ({total_done}/{total_images} images)")
         
         # Update state store
         self.state.update(
@@ -979,6 +1032,25 @@ class SeriesDownloader:
                             ps_json = _json.dumps([float(v) for v in raw_ps])
                     except Exception:
                         pass
+                    # P0 (2026-06-16): also persist SliceThickness / SpacingBetweenSlices.
+                    # Geometry/order is derived from IPP deltas (NOT these tags), so they
+                    # are non-geometry-critical, but storing them completes the instance
+                    # row so the DB-first path needs no disk re-read for thickness display.
+                    # insert_instances_batch reads these via dict.get → safe to add.
+                    slice_thickness_val = None
+                    spacing_between_val = None
+                    try:
+                        _st = dcm.get('SliceThickness', None)
+                        if _st is not None:
+                            slice_thickness_val = float(_st)
+                    except Exception:
+                        pass
+                    try:
+                        _sbs = dcm.get('SpacingBetweenSlices', None)
+                        if _sbs is not None:
+                            spacing_between_val = float(_sbs)
+                    except Exception:
+                        pass
                     return {
                         'sop_uid': str(sop_uid),
                         'series_fk': _series_pk_ref,
@@ -992,6 +1064,8 @@ class SeriesDownloader:
                         'image_position_patient': ipp_json,
                         'pixel_spacing': ps_json,
                         'direction': direction_json,
+                        'slice_thickness': slice_thickness_val,
+                        'spacing_between_slices': spacing_between_val,
                     }
                 except Exception as dcm_err:
                     logger.debug(f"    ⚠️ Error reading DICOM {dcm_file.name}: {dcm_err}")
@@ -1080,6 +1154,15 @@ class SeriesDownloader:
                 logger.warning(f"    ⚠️ Skipped {skipped_count} DICOM files with read errors")
 
             logger.info(f"    💾 [DB-INSERT] Series {series_info.series_number or series_info.series_uid[:20]}: {inserted_count} instances saved to database")
+            # P0 (2026-06-16): stamp the series metadata-index status so the viewer's
+            # DB-first path may trust this series and skip the per-slice disk header
+            # rescan. Indexed ONLY when every local file got a DB row (inserted ==
+            # files on disk); a partial/failed index stays NotIndexed → disk path.
+            try:
+                from database.dicom_db import mark_series_indexed
+                mark_series_indexed(series_pk, inserted_count, expected_count=len(dicom_files))
+            except Exception:
+                pass
             log_stage_timing(
                 logger,
                 component="db",

@@ -28,6 +28,13 @@ emergencies only) and is also runnable stand-alone:
 Checks
 ------
 PRE-BUILD
+    * source_freshness        — the build tree IS the current release source:
+      not behind its upstream and on a release branch. Catches a build PC parked
+      on a stale/old branch, or one that forgot ``git pull`` (the 2026-06-16
+      incident: a secondary build PC sitting on an old ``DR.vahid`` (v2.2.x)
+      branch froze pre-v3.2.0 MPR bytecode while all dev lands on
+      beta-version/main — only the post-stage MPR gate caught it, after a full
+      build). This fails FAST, before PyInstaller runs.
     * plugin_mirrors          — payload mirrors SHA-equal to canonical sources.
 POST-STAGE
     * frozen_runtime_pyz      — the staged AIPacs.exe's embedded PYZ carries the
@@ -51,6 +58,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import os
 import sys
 import tempfile
 from dataclasses import dataclass, field
@@ -154,6 +162,149 @@ def _warned(name: str, *details: str) -> GateCheck:
 
 def _failed(name: str, *details: str) -> GateCheck:
     return GateCheck(name, "FAIL", list(details))
+
+
+# ---------------------------------------------------------------------------
+# PRE-BUILD: source freshness (the "built from a stale checkout" failure mode)
+# ---------------------------------------------------------------------------
+# 2026-06-16: a release build run on a secondary build PC produced an installer
+# whose frozen MPR bytecode predated the v3.2.0 geometry fixes — because that
+# clone was parked on an OLD branch (the p2 remote's default 'DR.vahid', v2.2.x)
+# while all development lands on beta-version/main. PyInstaller faithfully froze
+# the stale source; only the post-stage MPR gate caught it, after a full build.
+# This pre-build check fails FAST when the working tree is not current release
+# source, so "I changed the code but the build shipped old code" cannot recur
+# silently. Deliberately conservative — it FAILS only on unambiguous staleness
+# (definitely behind upstream / definitely a non-release branch); anything
+# uncertain (no git, no upstream, offline, dirty tree) is a non-blocking WARN.
+
+_DEFAULT_RELEASE_BRANCHES = ("beta-version", "main")
+
+
+def _sf_env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _release_branches() -> set[str]:
+    """Release branch allow-list (override via AIPACS_RELEASE_BRANCHES, a
+    comma/semicolon separated list). Empty override disables the branch check."""
+    raw = os.environ.get("AIPACS_RELEASE_BRANCHES")
+    if raw is not None and raw.strip() == "":
+        return set()
+    if raw:
+        return {b.strip() for b in raw.replace(";", ",").split(",") if b.strip()}
+    return set(_DEFAULT_RELEASE_BRANCHES)
+
+
+def check_source_freshness(repo_root: Path | None = None) -> GateCheck:
+    """Fail the build when the working tree is not the current release source.
+
+    Catches the two real "stale source shipped" mechanisms:
+      * the checkout is BEHIND its upstream (someone forgot ``git pull``), and
+      * the checkout is parked on a non-release branch (e.g. an old ``DR.vahid``
+        / ``32bit`` clone on the build PC) while releases live on
+        beta-version/main.
+
+    Opt out entirely with ``AIPACS_SKIP_SOURCE_FRESHNESS=1`` (or the build's
+    ``--skip-release-gate``). Deliberate off-branch builds: set
+    ``AIPACS_ALLOW_OFFBRANCH_BUILD=1`` or ``AIPACS_RELEASE_BRANCHES``. Offline
+    builds that should not hit the network: ``AIPACS_SKIP_GIT_FETCH=1``.
+    """
+    import shutil
+    import subprocess
+
+    name = "source_freshness"
+    root = repo_root or PROJECT_ROOT
+
+    if _sf_env_flag("AIPACS_SKIP_SOURCE_FRESHNESS"):
+        return _warned(name, "skipped via AIPACS_SKIP_SOURCE_FRESHNESS")
+
+    git = shutil.which("git")
+    if git is None:
+        return _warned(name, "git not on PATH — cannot verify the build source is current")
+
+    def _git(*args: str, timeout: float = 30.0) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            [git, "-C", str(root), *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+
+    try:
+        inside = _git("rev-parse", "--is-inside-work-tree")
+        if inside.returncode != 0 or inside.stdout.strip() != "true":
+            return _warned(
+                name,
+                f"{root} is not a git work tree — freshness cannot be verified; "
+                "ensure this is the intended, up-to-date release source.",
+            )
+
+        head = _git("rev-parse", "HEAD").stdout.strip()
+        branch = _git("rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+        details = [f"HEAD={head[:10]} branch={branch or '(detached)'}"]
+
+        dirty = [
+            ln
+            for ln in _git("status", "--porcelain", "--untracked-files=no").stdout.splitlines()
+            if ln.strip()
+        ]
+        if dirty:
+            details.append(
+                f"working tree has {len(dirty)} uncommitted change(s) — they WILL be "
+                "built but are recorded in no commit"
+            )
+
+        fetched = False
+        if not _sf_env_flag("AIPACS_SKIP_GIT_FETCH"):
+            try:
+                fetched = _git("fetch", "--quiet", timeout=90.0).returncode == 0
+            except Exception:
+                fetched = False
+
+        upstream = _git("rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        upstream_name = upstream.stdout.strip() if upstream.returncode == 0 else ""
+        behind: int | None = None
+        if upstream_name:
+            rc = _git("rev-list", "--count", "HEAD..@{u}")
+            if rc.returncode == 0 and rc.stdout.strip().isdigit():
+                behind = int(rc.stdout.strip())
+
+        problems: list[str] = []
+
+        if behind:  # not None and > 0
+            msg = (
+                f"build tree is {behind} commit(s) BEHIND {upstream_name or 'upstream'} — "
+                "run 'git pull' before building (you are about to freeze stale source)."
+            )
+            if fetched:
+                problems.append(msg)
+            else:
+                details.append("WARN: " + msg + " [upstream ref may be stale: fetch skipped/failed]")
+
+        allowed = _release_branches()
+        if (
+            allowed
+            and branch
+            and branch not in allowed
+            and not _sf_env_flag("AIPACS_ALLOW_OFFBRANCH_BUILD")
+        ):
+            problems.append(
+                f"current branch '{branch}' is not a release branch {sorted(allowed)} — a "
+                "release must build from the release branch (e.g. 'git checkout main && "
+                "git pull'). Override a deliberate off-branch build with "
+                "AIPACS_ALLOW_OFFBRANCH_BUILD=1, or set AIPACS_RELEASE_BRANCHES."
+            )
+
+        if not upstream_name:
+            details.append("no upstream tracking branch — 'behind' could not be checked")
+
+        if problems:
+            return _failed(name, *(problems + details))
+        return _passed(name, *details)
+    except Exception as exc:  # pragma: no cover - never let the gate crash the build
+        return _warned(name, f"source-freshness check error (non-fatal): {exc}")
 
 
 # ---------------------------------------------------------------------------
@@ -527,7 +678,7 @@ def check_education_payload_set() -> GateCheck:
 # ---------------------------------------------------------------------------
 
 def run_pre_build_gate() -> list[GateCheck]:
-    return [check_plugin_mirrors()]
+    return [check_source_freshness(), check_plugin_mirrors()]
 
 
 def run_post_stage_gate(stage_dir: Path | None = None) -> list[GateCheck]:

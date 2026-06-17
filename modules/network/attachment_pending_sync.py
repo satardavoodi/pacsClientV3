@@ -203,3 +203,33 @@ def clear_all_pending(study_uid: str) -> None:
             data = _load_manifest(path)
             data["pending"] = {}
             _save_manifest(path, data)
+
+
+# ─────────────────────────────────────────
+# Derived sync-status labels
+# ─────────────────────────────────────────
+# The manifest stores only the *pending* set; these labels are derived from it
+# so callers get the attachment lifecycle states the product spec asks for
+# (PendingSync / Synced / FailedSync / LocalOnly) without a schema change. Disk
+# is always the source of truth for whether the file *exists*; these labels only
+# describe its upload/sync state.
+STATUS_SYNCED = "Synced"            # not in the pending manifest -> uploaded & confirmed
+STATUS_LOCAL_ONLY = "LocalOnly"     # pending, never attempted (saved while offline)
+STATUS_PENDING_SYNC = "PendingSync"  # pending, attempted at least once, awaiting confirmation
+STATUS_FAILED_SYNC = "FailedSync"   # reserved: a pending file whose attempts exceed the cap
+
+
+def get_status(study_uid: str, filename: str) -> str:
+    """Return the sync-lifecycle status of one locally-saved attachment.
+
+      - not pending          -> ``STATUS_SYNCED``      (already uploaded / not tracked)
+      - pending, 0 attempts   -> ``STATUS_LOCAL_ONLY``  (saved, not yet sent)
+      - pending, attempts>0   -> ``STATUS_PENDING_SYNC`` (sent, awaiting/​retrying)
+    """
+    if not study_uid or not filename:
+        return STATUS_SYNCED
+    entry = get_pending_info(study_uid).get(filename)
+    if entry is None:
+        return STATUS_SYNCED
+    attempts = int(entry.get("attempts", 0) or 0)
+    return STATUS_PENDING_SYNC if attempts > 0 else STATUS_LOCAL_ONLY

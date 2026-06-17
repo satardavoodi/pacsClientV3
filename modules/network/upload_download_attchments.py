@@ -264,7 +264,35 @@ def upload_attachments_for_study(
     # اتصال
     if client is None:
         client = SocketClient()
-        client.connect()
+        try:
+            client.connect()
+        except Exception as conn_exc:
+            # Server unreachable / offline. The attachment files are ALREADY
+            # saved locally (this function only ever reads them); record each
+            # one as PendingSync so the next sync retries it, and return a
+            # structured failure WITHOUT raising and WITHOUT touching any local
+            # file. Local persistence must never depend on server availability.
+            for _p in paths:
+                try:
+                    mark_pending(study_uid, Path(_p).name)
+                except Exception:
+                    pass
+            logger.warning(
+                "[UPLOAD] server unreachable for study=%s; %d file(s) kept local "
+                "and marked PendingSync: %s",
+                study_uid, len(paths), conn_exc,
+            )
+            return {
+                "study_uid": study_uid,
+                "total": len(paths),
+                "success": 0,
+                "failed": len(paths),
+                "results": [
+                    {"file": str(_p), "status": "error",
+                     "error": f"server unreachable: {conn_exc}"}
+                    for _p in paths
+                ],
+            }
         created_client = True
 
     try:

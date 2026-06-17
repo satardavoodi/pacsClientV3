@@ -97,9 +97,11 @@ def test_study_not_in_db_falls_back(vcload, monkeypatch):
     assert not s.parent_widget.metadata_fixed.get("study_pk")
 
 
-def test_default_is_off(vcload, monkeypatch):
-    # With no env var set, H1 is dormant (default OFF, 2026-06-08) until the
-    # series_pk<->instances linkage gap is fixed.
+def test_default_is_auto(vcload, monkeypatch):
+    # Default re-enabled to "auto" (self-verifying, 2026-06-16) after the SOP-dedup
+    # fix: with no env var, study_pk IS stamped so the DB-first attempt is reachable.
+    # load_single_series_by_number then self-verifies DB-vs-disk geometry once per
+    # study and falls back to disk on any mismatch. Rollback: AIPACS_VIEWER_DB_METADATA=0.
     import PacsClient.utils as _pu
     monkeypatch.delenv("AIPACS_VIEWER_DB_METADATA", raising=False)
     called = []
@@ -107,5 +109,13 @@ def test_default_is_off(vcload, monkeypatch):
                         lambda uid: called.append(uid) or 42, raising=False)
     s = _make_self()
     vcload._VCLoadMixin._ensure_study_pk_for_db_metadata(s)
+    assert s.parent_widget.metadata_fixed.get("study_pk") == 42
+    assert called == ["1.2.840.3"]
+
+
+def test_flag_zero_disables(vcload, monkeypatch):
+    # AIPACS_VIEWER_DB_METADATA=0 is the rollback switch — disk path, no stamping.
+    s = _make_self()
+    calls = _run(vcload, s, monkeypatch, returns=42, env="0")
     assert "study_pk" not in s.parent_widget.metadata_fixed
-    assert called == []  # short-circuits before touching the DB
+    assert calls == []

@@ -33,6 +33,57 @@ SERIES_RETRY_BASE_DELAY = 3.0     # seconds, base delay between series retries
 REQUEST_MAX_RETRIES = 3            # max retries for a single request
 REQUEST_RETRY_BASE_DELAY = 1.0    # seconds, base delay for request retry
 
+# ── Unstable-internet retry policy (2026-06-16) ──────────────────────────────
+# Auto-retry budget by failure KIND. A flaky connection drops repeatedly, so a
+# TEMPORARY/network failure must retry many times (overnight batch must keep
+# making progress) instead of getting stuck after MAX_RETRIES (3). PERMANENT
+# failures still stop at MAX_RETRIES and are reported. See
+# _dm_workers._check_auto_retry.
+MAX_RETRIES_TEMPORARY = 10         # network/timeout/disconnect failures
+
+# Substrings (lowercased) that mark a failure as TEMPORARY (network) → retry up
+# to MAX_RETRIES_TEMPORARY. Kept broad: an unstable connection is the common
+# real-world case.
+TEMPORARY_ERROR_SIGNATURES = (
+    "timeout", "timed out", "connection lost", "connection closed",
+    "connection reset", "connection aborted", "broken pipe", "disconnect",
+    "reconnect", "unreachable", "no route", "getaddrinfo", "name resolution",
+    "temporarily unavailable", "reset by peer", "eof occurred", "winerror",
+    "10054", "10053", "10060", "10061", "10065",
+    "too large", "no response", "invalid response length",
+    "failed to fetch metadata", "no error message",
+)
+
+# Substrings that mark a failure as PERMANENT → do NOT extend retries (fail fast,
+# report). Deliberately narrow so a genuine network blip is never misfiled as
+# permanent.
+PERMANENT_ERROR_SIGNATURES = (
+    "not found", "404", "401", "403", "unauthorized", "forbidden",
+    "no such study", "no such series", "invalid study", "decode error",
+    "unsupported transfer", "permission denied", "disk full", "no space",
+)
+
+
+def classify_download_failure(error_message) -> str:
+    """Classify a download failure as ``'temporary'`` (network — retry a lot) or
+    ``'permanent'`` (report, retry little).
+
+    Unknown / blank messages → ``'temporary'`` so an unstable connection (the
+    common case) keeps retrying rather than getting stuck. Permanent signatures
+    are checked first so an explicit server rejection wins. Pure and Qt-free, so
+    it is unit-testable in isolation.
+    """
+    msg = str(error_message or "").lower()
+    if not msg:
+        return "temporary"
+    for sig in PERMANENT_ERROR_SIGNATURES:
+        if sig in msg:
+            return "permanent"
+    for sig in TEMPORARY_ERROR_SIGNATURES:
+        if sig in msg:
+            return "temporary"
+    return "temporary"
+
 # Concurrency Configuration
 MAX_CONCURRENT_STUDIES = 1  # Only 1 study at a time (R11)
 MAX_PARALLEL_SERIES_CRITICAL = 1  # Critical priority: sequential

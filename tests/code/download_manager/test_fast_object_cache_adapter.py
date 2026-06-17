@@ -29,7 +29,9 @@ class _IntentStub:
     def __init__(self):
         self.calls = []
 
-    def request_critical_series(self, study_uid: str, series_number: str) -> bool:
+    def request_critical_series(self, study_uid: str, series_number: str, series_uid: str = None) -> bool:
+        # Production passes series_uid= since the 2026-06-16 canonical-identity work;
+        # the stub must accept it (3-arg) or request_object's call raises TypeError.
         self.calls.append((study_uid, series_number))
         return True
 

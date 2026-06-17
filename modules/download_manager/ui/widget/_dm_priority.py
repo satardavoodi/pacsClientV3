@@ -95,7 +95,7 @@ class _DMPriorityMixin:
         last_map[key] = now
 
         try:
-            self.intent_coordinator.request_critical_series(study_uid, series_number)
+            _accepted = self.intent_coordinator.request_critical_series(study_uid, series_number, series_uid=series_uid)
         except Exception as exc:
             logger.debug(
                 "[FAST-OBJECT] critical-series intent failed study=%s series=%s slice=%s: %s",
@@ -104,6 +104,10 @@ class _DMPriorityMixin:
                 slice_index,
                 exc,
             )
+            return False
+        if not _accepted:
+            # P0 bypass closure: series not a member of the study's task (e.g. a
+            # multi-study display key) — do not chase it via the retry/intent path.
             return False
 
         try:
@@ -262,6 +266,13 @@ class _DMPriorityMixin:
                 # Ensure the latest task is available for the worker
                 self._tasks[study_uid] = task
                 logger.info(f"💾 [DATABASE] Updated study {study_uid[:40]}... priority to {priority}, status to PENDING")
+                # Idempotent: an already-queued study is PROMOTED in place (priority
+                # raised / reset to re-evaluate), never duplicated into a second
+                # competing task. TaskIdentity = (patient, StudyInstanceUID).
+                logger.info(
+                    "[DownloadTaskPromoted] patient=%s study=%s priority=%s QueueExpectedCount=%d",
+                    task.patient_id, study_uid, priority, task.total_image_count,
+                )
             else:
                 # Create new download state
                 logger.info(f"➕ [PRIORITY-DOWNLOAD] Creating new download task")
@@ -284,6 +295,11 @@ class _DMPriorityMixin:
                 
                 self.state_store.create(task)
                 logger.info(f"💾 [DATABASE] Created new study {study_uid[:40]}... with priority {priority}")
+                # QueueExpectedCount = de-duplicated, manifest-derived series total.
+                logger.info(
+                    "[DownloadTaskCreated] patient=%s study=%s priority=%s series=%d QueueExpectedCount=%d",
+                    task.patient_id, study_uid, priority, task.series_count, task.total_image_count,
+                )
 
             # ========== STEP 4b: SET VIEWED SERIES IF SPECIFIED ==========
             # If a specific series was clicked (not just patient double-click),
@@ -426,8 +442,17 @@ class _DMPriorityMixin:
                 )
                 self._pause_all_active_downloads()
 
-            self.intent_coordinator.request_critical_series(study_uid, str(series_number))
-            self._on_series_retry(study_uid, series_number, series_uid)
+            _accepted = self.intent_coordinator.request_critical_series(
+                study_uid, str(series_number), series_uid=series_uid)
+            if _accepted:
+                self._on_series_retry(study_uid, series_number, series_uid)
+            else:
+                # P0 bypass closure: the coordinator rejected the request (series
+                # not in this study's task — e.g. a multi-study display key). Do
+                # NOT run the retry / intent-file path on a rejected request.
+                logger.info(
+                    "⛔ [VIEWED-SERIES] critical-series request rejected by coordinator "
+                    "study=%s series=%s — skipping retry/intent", str(study_uid)[:40], series_number)
         except Exception as e:
             logger.error(f"❌ [VIEWED-SERIES] Error requesting critical series download: {e}")
 

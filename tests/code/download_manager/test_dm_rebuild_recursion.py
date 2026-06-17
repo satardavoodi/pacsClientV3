@@ -57,7 +57,7 @@ from modules.download_manager.coordinator.series_intent_coordinator import (
     SeriesIntentCoordinator,
 )
 from modules.download_manager.core.enums import DownloadPriority, DownloadStatus
-from modules.download_manager.core.models import DownloadTask
+from modules.download_manager.core.models import DownloadTask, SeriesInfo
 from modules.download_manager.state.state_store import DownloadStateStore
 from modules.download_manager.ui.widget import _dm_details
 
@@ -104,7 +104,13 @@ def _make_task(study_uid: str = "study-rebuild") -> DownloadTask:
         study_time="08:30:00",
         modality="CT",
         description="Rebuild Test",
-        series_list=[],
+        # Series 1 must exist in the task: the 2026-06-16 DM membership validation
+        # rejects a critical-series request whose series is not in series_list.
+        # (This test exercises priority preservation, not membership.)
+        series_list=[SeriesInfo(
+            series_uid="series-rebuild-1", series_number=1,
+            series_description="d", modality="CT", image_count=1,
+        )],
         priority=DownloadPriority.HIGH,
         output_dir=Path("."),
     )

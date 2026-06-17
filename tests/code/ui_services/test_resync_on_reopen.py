@@ -212,7 +212,11 @@ def test_throttle_blocks_second_auto_call():
     # second auto reselect within the TTL is throttled — no duplicate work
     _run(obj._resync_patient_studies_from_server("45611", "X", ["UID_MR"], force=False))
     assert rec["saved"] == ["UID_MR"]
-    assert rec["enqueued"] == ["UID_MR"]
+    # Single-click (auto, force=False) is SELECT/preview only — it persists the
+    # refreshed metadata and reveals the grown series, but must NOT start a
+    # download (regression fix: single-click was starting downloads). The
+    # download happens on OPEN (double-click) / manual Refresh. So: no enqueue.
+    assert rec["enqueued"] == []
 
 
 def test_env_gate_blocks_auto_but_manual_force_runs(monkeypatch):
@@ -240,6 +244,45 @@ def test_inactive_selection_syncs_data_but_does_not_render():
     assert rec["rendered"] == []
 
 
+# ── single-click = SELECT/preview only (NO download); OPEN/manual downloads ──
+def test_auto_resync_single_click_saves_and_reveals_but_no_download(monkeypatch):
+    # force=False = the AUTO resync fired by a single-click reselect. With the
+    # default (fix) it persists the refreshed metadata (for display) and reveals
+    # the grown series, but must NOT enqueue a download.
+    monkeypatch.setattr(mod, "_SINGLE_CLICK_DOWNLOAD_ENABLED", False)
+    obj, rec = _panel_stub(
+        server_by_uid={"UID_MR": {"1": 30, "2": 30, "3": 30, "4": 30}},
+        local_by_uid={"UID_MR": {"1": 30, "2": 30, "3": 30}},
+    )
+    _run(obj._resync_patient_studies_from_server("45611", "X", ["UID_MR"], force=False))
+    assert rec["saved"] == ["UID_MR"]      # metadata persists (display refresh)
+    assert rec["enqueued"] == []           # single-click must NOT download
+    assert any(a[1] == "resync_enqueue_skipped_single_click" for (a, k) in rec["traces"])
+
+
+def test_manual_force_resync_still_downloads():
+    # The explicit "Refresh / Sync from server" (force=True) DOES download.
+    obj, rec = _panel_stub(
+        server_by_uid={"UID_MR": {"1": 30, "2": 30, "3": 30, "4": 30}},
+        local_by_uid={"UID_MR": {"1": 30, "2": 30, "3": 30}},
+    )
+    _run(obj._resync_patient_studies_from_server("45611", "X", ["UID_MR"], force=True))
+    assert rec["enqueued"] == ["UID_MR"]
+    assert any(a[1] == "DownloadEnqueued" for (a, k) in rec["traces"])
+
+
+def test_legacy_flag_restores_auto_single_click_download(monkeypatch):
+    # Reversibility: AIPACS_SINGLE_CLICK_DOWNLOAD=1 restores the legacy
+    # enqueue-on-single-click behaviour for an auto (force=False) resync.
+    monkeypatch.setattr(mod, "_SINGLE_CLICK_DOWNLOAD_ENABLED", True)
+    obj, rec = _panel_stub(
+        server_by_uid={"UID_MR": {"1": 30, "2": 30, "3": 30, "4": 30}},
+        local_by_uid={"UID_MR": {"1": 30, "2": 30, "3": 30}},
+    )
+    _run(obj._resync_patient_studies_from_server("45611", "X", ["UID_MR"], force=False))
+    assert rec["enqueued"] == ["UID_MR"]
+
+
 # ── source wiring guards ─────────────────────────────────────────────────────
 def test_source_wiring_present():
     series = (HOME_UI / "home_panel" / "_hp_series.py").read_text(encoding="utf-8")
@@ -248,6 +291,17 @@ def test_source_wiring_present():
     assert "resync_cross_patient_skip" in series                # isolation guard
     assert "force_server_merge=True" in series                  # reveal re-render
     assert "_detect_study_growth" in series                     # per-study compare
+    # Single-click-no-download regression guard: the resync + reconcile enqueues
+    # must be gated so a single-click SELECT never starts a full download.
+    assert "AIPACS_SINGLE_CLICK_DOWNLOAD" in series             # env flag (default off)
+    assert "_SINGLE_CLICK_DOWNLOAD_ENABLED" in series           # gate symbol
+    assert "if force or _SINGLE_CLICK_DOWNLOAD_ENABLED" in series  # resync enqueue gated
+    assert "resync_enqueue_skipped_single_click" in series      # auto-skip trace
+    assert "reconcile_enqueue_skipped_single_click" in series   # discovery-skip trace
+    assert "PatientSelectedSingleClick" in series               # single-click marker
+    open_src = (HOME_UI / "home_panel" / "_hp_patient_open.py").read_text(encoding="utf-8")
+    assert "PatientOpenDoubleClick" in open_src                 # double-click open marker
+    assert "DownloadEnqueued" in open_src                       # open enqueue trace
     modules = (HOME_UI / "home_panel" / "_hp_modules.py").read_text(encoding="utf-8")
     assert "force_server_merge" in modules                      # grouped merge param
     table = (HOME_UI / "patient_table_widget.py").read_text(encoding="utf-8")

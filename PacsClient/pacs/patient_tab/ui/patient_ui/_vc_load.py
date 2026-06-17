@@ -36,6 +36,47 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+# Canonical viewer→DM series identity (P0 — multi-study display-key leak guard).
+# The multi-study viewer uses synthetic display keys (study_slot*1_000_000 +
+# original_series_number) for the sidebar; those keys must NEVER reach the
+# Download Manager as real series numbers. When ON, viewer→DM notifications
+# resolve the display key back to the ACTUAL (study_uid, original_series_number)
+# via _server_series_info before notifying, so a secondary-study drag prioritises
+# the correct study/series instead of a phantom one under the primary study.
+# Disable with AIPACS_DM_CANON_IDENTITY=0.
+_DM_CANON_IDENTITY = os.environ.get(
+    "AIPACS_DM_CANON_IDENTITY", "1"
+).strip().lower() not in ("0", "false", "no", "off")
+
+# Global drag view-intent coalescing (2026-06-17, slow-link drag-drop thrash).
+# The per-(study,series) cooldowns (500 ms notify, 2 s retry) absorb hammering the
+# SAME series, but a user impatiently alternating between DIFFERENT series/studies
+# produces a new key each time and bypasses them — every drop fires a fresh
+# set_viewed_series (→ coordinator preempt) and per-series retry (→ pause-all +
+# subprocess teardown) for the single download slot, so nothing finishes. This adds
+# ONE study-agnostic, last-write-wins "current view target": rapid drops collapse to
+# the FINAL target, whose DM intent is dispatched after a short quiet window. The
+# VIEW SWITCH itself is NOT debounced (it runs immediately in change_series_on_viewer)
+# — only the DM priority/download intent waits. Kill switch: AIPACS_DRAGDROP_DEBOUNCE=0.
+_DRAGDROP_COALESCE = (os.getenv("AIPACS_DRAGDROP_DEBOUNCE", "1") or "1").strip() != "0"
+_DRAGDROP_DEBOUNCE_MS = max(0, int(os.getenv("AIPACS_DRAGDROP_DEBOUNCE_MS", "350") or "350"))
+
+
+def _merge_drag_view_intent(prev, series, want_notify, want_trigger):
+    """Pure last-write-wins merge for drag view-intent coalescing (testable).
+
+    Return the new pending-intent dict ``{'series', 'notify', 'trigger'}``. When the
+    incoming target is the SAME series as the pending one, the notify/trigger flags
+    are OR-merged (so a notify-only call then a trigger-only call for the same final
+    series both take effect). A DIFFERENT series REPLACES the pending target entirely
+    (last-write-wins) so only the final drop's intent survives the debounce window.
+    """
+    series = str(series)
+    if prev is not None and str(prev.get("series")) == series:
+        want_notify = want_notify or bool(prev.get("notify"))
+        want_trigger = want_trigger or bool(prev.get("trigger"))
+    return {"series": series, "notify": bool(want_notify), "trigger": bool(want_trigger)}
+
 # Redirect print() to logger to avoid synchronous console I/O on Windows.
 _print_logger = _logging.getLogger(__name__)
 def print(*args, **_kw):  # noqa: A001
@@ -236,12 +277,21 @@ class _VCLoadMixin:
         """
         try:
             import os
-            # Default OFF (2026-06-08): live runs showed the DB series row is found
-            # but has no retrievable instances (series_pk<->instances linkage gap on
-            # server-opened studies), so the load still fell through to the disk
-            # scan and the DB lookup only added ~1-10 ms. Kept dormant until that
-            # linkage is fixed; re-enable for testing with AIPACS_VIEWER_DB_METADATA=1.
-            if os.getenv("AIPACS_VIEWER_DB_METADATA", "0") != "1":
+            # DEFAULT = "auto" (ACTIVE, SELF-VERIFYING — re-enabled 2026-06-16 after the
+            # SOP-dedup fix). The earlier 802-vs-401 was duplicate-SOP files from a
+            # multi-source import; _dedupe_instances_by_sop now collapses them in BOTH
+            # the disk and DB paths. "auto" is self-verifying: per study, the first
+            # series it loads is compared DB-vs-disk; a geometry match trusts the DB
+            # for the rest of the study, any mismatch/error falls back to disk (fail-safe,
+            # in load_single_series_by_number). Modes:
+            #   auto   = self-verifying DB-first (DEFAULT)
+            #   verify = build DB + disk maps, log a golden compare, DISPLAY disk
+            #   1      = force the legacy DB attempt (no per-study verify)
+            #   0      = OFF — always the legacy disk header path (rollback switch)
+            # 1/verify/auto stamp study_pk so the DB attempt is reachable.
+            if (os.getenv("AIPACS_VIEWER_DB_METADATA", "auto") or "auto").strip().lower() not in (
+                "1", "verify", "auto", "on", "true"
+            ):
                 return
             pw = self.parent_widget
             mf = getattr(pw, 'metadata_fixed', None)
@@ -1626,6 +1676,104 @@ class _VCLoadMixin:
     # ── DM priority notification on viewer interaction ────────────────
     _DM_VIEWED_NOTIFY_COOLDOWN_MS = 500  # min interval between notifications per series
 
+    def _resolve_canonical_series_identity(self, series_number):
+        """Translate a (possibly synthetic multi-study DISPLAY) series number into
+        the canonical ``(study_uid, original_series_number, series_uid)`` that
+        disk / server / Download-Manager APIs require.
+
+        Multi-study secondary entries in ``parent_widget._server_series_info`` are
+        keyed by a display offset key (study_slot*1_000_000 + original_number) and
+        carry the real ``study_uid`` / ``_orig_series_number`` / ``series_uid``. A
+        primary-study or single-study series resolves to itself under the tab's
+        ``study_uid``. Returns ``(study_uid, series_number, series_uid_or_None)``.
+        """
+        pw = getattr(self, 'parent_widget', None)
+        primary_study = str(getattr(pw, 'study_uid', '') or '')
+        sn = str(series_number)
+        entry = None
+        try:
+            info = getattr(pw, '_server_series_info', {}) or {}
+            if isinstance(info, dict):
+                entry = info.get(series_number)
+                if entry is None:
+                    entry = info.get(sn)
+        except Exception:
+            entry = None
+        if isinstance(entry, dict):
+            ent_study = str(entry.get('study_uid') or '').strip()
+            ent_orig = entry.get('_orig_series_number')
+            ent_uid = str(entry.get('series_uid') or entry.get('series_instance_uid') or '').strip() or None
+            study_uid = ent_study or primary_study
+            orig = str(ent_orig).strip() if ent_orig not in (None, '') else sn
+            return study_uid, orig, ent_uid
+        return primary_study, sn, None
+
+    def _coalesce_dm_view_intent(self, series_number, *, want_notify=False, want_trigger=False):
+        """Globally coalesce the DM priority/download intent for a viewed series.
+
+        Routes the drop's ``_notify_dm_viewed_series`` / ``_trigger_download_if_needed``
+        calls through a single last-write-wins target so rapid drops of DIFFERENT
+        series/studies collapse to ONE intent (the single download slot is no longer
+        thrashed by alternating per-key preempts). The view switch is unaffected — it
+        already ran in ``change_series_on_viewer`` before this is called; only the DM
+        intent waits the short debounce window. Default on; ``AIPACS_DRAGDROP_DEBOUNCE=0``
+        restores the immediate per-key path (the downstream cooldown guards still apply).
+        """
+        if not _DRAGDROP_COALESCE:
+            # Legacy: dispatch immediately. The per-(study,series) cooldown inside
+            # _notify_dm_viewed_series and the 2 s in-flight guard inside
+            # _trigger_download_if_needed still de-dupe same-series repeats.
+            if want_notify:
+                self._notify_dm_viewed_series(series_number)
+            if want_trigger:
+                self._trigger_download_if_needed(series_number)
+            return
+        try:
+            prev = getattr(self, "_dragdrop_pending_intent", None)
+            self._dragdrop_pending_intent = _merge_drag_view_intent(
+                prev, series_number, want_notify, want_trigger
+            )
+            timer = getattr(self, "_dragdrop_intent_timer", None)
+            if timer is None:
+                parent = getattr(self, "parent_widget", None)
+                timer = QTimer(parent if parent is not None else None)
+                timer.setSingleShot(True)
+                timer.timeout.connect(self._dispatch_coalesced_dm_view_intent)
+                self._dragdrop_intent_timer = timer
+            # (Re)starting a single-shot timer cancels any pending fire, so only the
+            # FINAL drop within the window survives — the coalescing guarantee.
+            timer.start(_DRAGDROP_DEBOUNCE_MS)
+        except Exception as exc:
+            # Never let coalescing break the drop — fall back to immediate dispatch.
+            self.logger.debug("dragdrop-coalesce: failed (%s) — dispatching immediately", exc)
+            if want_notify:
+                self._notify_dm_viewed_series(series_number)
+            if want_trigger:
+                self._trigger_download_if_needed(series_number)
+
+    def _dispatch_coalesced_dm_view_intent(self):
+        """Dispatch the settled (last-write-wins) drag view-intent. Main-thread slot."""
+        intent = getattr(self, "_dragdrop_pending_intent", None)
+        self._dragdrop_pending_intent = None
+        if not intent:
+            return
+        try:
+            # Guard: the tab/widget may have been closed during the debounce window.
+            parent = getattr(self, "parent_widget", None)
+            if parent is not None:
+                try:
+                    if not parent.isVisible():
+                        return
+                except RuntimeError:
+                    return  # widget deleted
+            sn = intent.get("series")
+            if intent.get("notify"):
+                self._notify_dm_viewed_series(sn)
+            if intent.get("trigger"):
+                self._trigger_download_if_needed(sn)
+        except Exception as exc:
+            self.logger.debug("dragdrop-coalesce: dispatch failed: %s", exc)
+
     def _notify_dm_viewed_series(self, series_number: str):
         """Notify the Download Manager that a series is being actively viewed.
 
@@ -1645,19 +1793,34 @@ class _VCLoadMixin:
             if not study_uid:
                 return
 
-            # Per-series cooldown (fast check — stays on main thread)
+            # Canonical identity (P0): translate a multi-study DISPLAY key into the
+            # ACTUAL (study_uid, original_series_number) so the DM never receives a
+            # synthetic offset key. No-op for primary / single-study series.
+            _sn_resolved = str(series_number)
+            if _DM_CANON_IDENTITY:
+                try:
+                    _r_study, _r_series, _r_uid = self._resolve_canonical_series_identity(series_number)
+                    if _r_study:
+                        study_uid = _r_study
+                    _sn_resolved = str(_r_series)
+                except Exception:
+                    pass
+
+            # Per-series cooldown (fast check — stays on main thread). Key by the
+            # RESOLVED (study_uid, series) so two studies' "series 3" never collide.
+            _cooldown_key = (study_uid, _sn_resolved)
             now = time.monotonic() * 1000
             cooldown_map = getattr(self, '_dm_viewed_notify_ts', None)
             if cooldown_map is None:
                 self._dm_viewed_notify_ts = {}
                 cooldown_map = self._dm_viewed_notify_ts
-            last_ts = cooldown_map.get(series_number, 0)
+            last_ts = cooldown_map.get(_cooldown_key, 0)
             if (now - last_ts) < self._DM_VIEWED_NOTIFY_COOLDOWN_MS:
                 return
-            cooldown_map[series_number] = now
+            cooldown_map[_cooldown_key] = now
 
             # Defer the heavy DM work so the series switch isn't blocked
-            _sn = str(series_number)
+            _sn = _sn_resolved
             _uid = study_uid
 
             def _deferred_dm_notify():
@@ -1740,32 +1903,46 @@ class _VCLoadMixin:
     def _trigger_download_if_needed(self, series_number: str):
         """Trigger server download if series not available locally"""
         try:
-            series_number = self.parent_widget.resolve_series_key(series_number)
+            # Canonical identity (P0): a multi-study DISPLAY key must resolve to the
+            # ACTUAL (study_uid, original_series_number, series_uid) so the retry /
+            # critical request targets the CORRECT study — never the primary study
+            # with a phantom series number.
+            target_study_uid = str(getattr(self.parent_widget, 'study_uid', '') or '')
             series_uid = None
-            if hasattr(self.parent_widget, '_server_series_info') and self.parent_widget._server_series_info:
-                series_info = self.parent_widget._server_series_info.get(series_number)
-                if isinstance(series_info, dict):
-                    series_uid = str(series_info.get('series_uid') or series_info.get('series_instance_uid') or '') or None
+            if _DM_CANON_IDENTITY:
+                _r_study, _r_series, series_uid = self._resolve_canonical_series_identity(series_number)
+                series_number = _r_series
+                if _r_study:
+                    target_study_uid = _r_study
+            else:
+                series_number = self.parent_widget.resolve_series_key(series_number)
+                if hasattr(self.parent_widget, '_server_series_info') and self.parent_widget._server_series_info:
+                    series_info = self.parent_widget._server_series_info.get(series_number)
+                    if isinstance(series_info, dict):
+                        series_uid = str(series_info.get('series_uid') or series_info.get('series_instance_uid') or '') or None
 
             logger.debug(f"   ًں“¥ Triggering server download for series {series_number}")
 
-            # Fallback: trigger per-series retry via Download Manager
+            # Fallback: trigger per-series retry via Download Manager.
+            # In-flight key is (study_uid, series) so two studies' "series 3" do
+            # not suppress each other's retry.
             inflight = getattr(self.parent_widget, '_retry_series_inflight', None)
             if inflight is None:
                 inflight = set()
                 self.parent_widget._retry_series_inflight = inflight
-            if series_number in inflight:
+            _inflight_key = (target_study_uid, str(series_number))
+            if _inflight_key in inflight:
                 return
-            inflight.add(series_number)
+            inflight.add(_inflight_key)
 
             try:
                 self.parent_widget._on_retry_series_download(
                     series_number=str(series_number),
-                    study_uid=str(getattr(self.parent_widget, 'study_uid', '') or ''),
+                    study_uid=str(target_study_uid),
                     series_uid=series_uid,
                 )
             finally:
-                QTimer.singleShot(2000, lambda: inflight.discard(series_number))
+                QTimer.singleShot(2000, lambda: inflight.discard(_inflight_key))
         except Exception as e:
             logger.error(f"   âڑ ï¸ڈ Error triggering download: {e}")
 

@@ -67,6 +67,17 @@ from modules.viewer.fast.ui_throttle import (
     should_admit,
     should_emit_fast_hotpath_diag,
 )
+from modules.viewer.fast.dicom_overlay import (
+    extract_overlay_mask,
+    has_overlay as _ds_has_overlay,
+    overlay_color,
+    overlay_enabled,
+)
+from modules.viewer.fast.dicom_color import (
+    color_enabled,
+    decode_color_for_display,
+    has_embedded_palette,
+)
 from modules.zeta_boost.cache_engine import _zb_globals
 from PacsClient.utils.runtime_correlation import (
     count_events_between as _corr_count_events_between,
@@ -74,6 +85,41 @@ from PacsClient.utils.runtime_correlation import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+# ── DICOM "extras": overlay planes (group 60xx) + palette / embedded colour ──
+# Derived / secondary-capture frames (e.g. Siemens BREAST dynaVIEWS mean-curve
+# charts, ROI-annotation result images) carry their visible graphics in a 1-bit
+# DICOM *overlay plane* while PixelData is black; parametric maps (TTP / WO)
+# embed an RGB Palette Colour LUT on a MONOCHROME image.  The live FAST
+# "pydicom_qt" pipeline historically rendered only PixelData, so those frames
+# showed as black / grayscale.  We now reuse the shared dicom_overlay /
+# dicom_color modules (already used by the lazy backend) to composite them.
+# Master kill-switch keeps the grayscale hot path byte-identical when disabled.
+_FAST_DICOM_EXTRAS_ENABLED = str(
+    os.environ.get("AIPACS_FAST_DICOM_EXTRAS", "1")
+).strip().lower() not in ("0", "false", "no", "off")
+_EXTRAS_CACHE_MAX = 1024
+
+
+def _dataset_has_dicom_extras(ds) -> bool:
+    """Cheap header probe: does this dataset carry an overlay plane or a colour
+    representation the grayscale path would drop?  Two-to-three tag look-ups."""
+    try:
+        if overlay_enabled() and _ds_has_overlay(ds):
+            return True
+        if color_enabled():
+            photometric = str(getattr(ds, "PhotometricInterpretation", "") or "").upper()
+            samples = int(getattr(ds, "SamplesPerPixel", 1) or 1)
+            if samples < 3 and (
+                photometric.startswith("PALETTE")
+                or "YBR" in photometric
+                or has_embedded_palette(ds)
+            ):
+                return True
+    except Exception:
+        return False
+    return False
 
 
 def _ignore_unknown_encoding_warning() -> None:
@@ -601,6 +647,14 @@ class Lightweight2DPipeline(QObject):
         self._frame_cache: "OrderedDict[Tuple[int, float, float, bool], QImage]" = OrderedDict()
         self._geometry_cache_signature: Optional[Tuple[str, ...]] = None
         self._geometry_cache: Dict[str, Any] = {}
+        # DICOM overlay-plane (60xx) masks + decoded palette/colour frames for
+        # derived / secondary-capture slices (mean-curve charts, ROI
+        # annotations, parametric colour maps). Populated lazily at render time;
+        # a no-op for ordinary grayscale series (see _series_has_extras).
+        self._overlay_cache: "OrderedDict[int, np.ndarray]" = OrderedDict()
+        self._color_cache: "OrderedDict[int, np.ndarray]" = OrderedDict()
+        self._extras_checked: set = set()
+        self._dicom_extras_series: Optional[bool] = None  # per-series probe cache
 
         # Prefetch
         self._prefetch_pending: set = set()
@@ -902,6 +956,11 @@ class Lightweight2DPipeline(QObject):
         self._pending_grow_entries.clear()  # discard buffered-but-not-applied entries
         self._pixel_cache.clear()
         self._frame_cache.clear()
+        self._ensure_extras_state()
+        self._overlay_cache.clear()
+        self._color_cache.clear()
+        self._extras_checked.clear()
+        self._dicom_extras_series = None
         with self._prefetch_lock:
             self._prefetch_pending.clear()
             self._frame_prefetch_pending.clear()
@@ -1989,6 +2048,107 @@ class Lightweight2DPipeline(QObject):
             self._surrogate_repeat_count = 1
         return False
 
+    # ── DICOM extras: overlay planes (60xx) + palette / embedded colour ──────
+    def _ensure_extras_state(self) -> None:
+        """Lazily create the extras caches so the render path is safe even on
+        pipeline instances built via ``__new__`` (test doubles) that bypass
+        ``__init__``. A normal instance already has these from ``__init__``."""
+        if not hasattr(self, "_extras_checked"):
+            self._overlay_cache = OrderedDict()
+            self._color_cache = OrderedDict()
+            self._extras_checked = set()
+            self._dicom_extras_series = None
+
+    def _series_has_extras(self, idx: int) -> bool:
+        """One-time per-series probe: does this series carry overlay planes or
+        palette / embedded colour?  Returns a cached bool — ordinary grayscale
+        series resolve to ``False`` after up to four header reads at first
+        render and pay nothing thereafter.  Gated by ``AIPACS_FAST_DICOM_EXTRAS``
+        so the hot path stays byte-identical when disabled."""
+        if not _FAST_DICOM_EXTRAS_ENABLED:
+            return False
+        self._ensure_extras_state()
+        flag = self._dicom_extras_series
+        if flag is not None:
+            return flag
+        found = False
+        try:
+            n = len(self._slices)
+            if n:
+                for pi in sorted({0, n // 2, n - 1, int(self._clamp(idx))}):
+                    try:
+                        sm = self._slices[pi]
+                        with warnings.catch_warnings():
+                            _ignore_unknown_encoding_warning()
+                            ds = pydicom.dcmread(sm.path, stop_before_pixels=True, force=True)
+                    except Exception:
+                        continue
+                    if _dataset_has_dicom_extras(ds):
+                        found = True
+                        break
+        except Exception:
+            found = False
+        self._dicom_extras_series = found
+        return found
+
+    def _ensure_extras(self, idx: int, sm: "SliceMeta", arr: Optional[np.ndarray]) -> None:
+        """Populate the overlay / colour caches for *idx* (extras series only).
+        No-op for ordinary grayscale series and for already-checked slices, so
+        the common render path is unaffected.  Reads the dataset once per slice;
+        results are cached and survive window/level changes."""
+        self._ensure_extras_state()
+        if idx in self._extras_checked:
+            return
+        if not self._series_has_extras(idx):
+            return
+        self._extras_checked.add(idx)
+        try:
+            with warnings.catch_warnings():
+                _ignore_unknown_encoding_warning()
+                ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
+        except Exception:
+            return
+        # Overlay plane (group 60xx) — chart graphics / ROI annotation.
+        try:
+            mask = extract_overlay_mask(ds, int(sm.rows or 0), int(sm.cols or 0))
+        except Exception:
+            mask = None
+        if mask is not None:
+            self._overlay_cache[idx] = mask
+            self._overlay_cache.move_to_end(idx)
+            while len(self._overlay_cache) > _EXTRAS_CACHE_MAX:
+                self._overlay_cache.popitem(last=False)
+        # Colour: palette / embedded-palette / YBR on <3 samples.  True RGB
+        # (samples>=3) stays on the existing samples-based branch, untouched.
+        color = None
+        try:
+            if int(getattr(sm, "samples_per_pixel", 1) or 1) < 3 and arr is not None:
+                color = decode_color_for_display(ds, arr)
+        except Exception:
+            color = None
+        if color is not None:
+            self._color_cache[idx] = color
+            self._color_cache.move_to_end(idx)
+            while len(self._color_cache) > _EXTRAS_CACHE_MAX:
+                self._color_cache.popitem(last=False)
+
+    def _compose_overlay_onto(self, rgb: np.ndarray, mask) -> np.ndarray:
+        """Paint a 1-bit overlay mask onto an HxWx3 uint8 image in the overlay
+        highlight colour.  Shape-guarded; returns the base image on mismatch."""
+        try:
+            if mask is None:
+                return rgb
+            if rgb.ndim == 2:
+                rgb = np.repeat(rgb[..., None], 3, axis=2)
+            rgb = np.ascontiguousarray(rgb, dtype=np.uint8)
+            m = np.asarray(mask).astype(bool)
+            if m.shape != rgb.shape[:2]:
+                return rgb
+            rgb[m] = np.asarray(overlay_color(), dtype=np.uint8)
+            return rgb
+        except Exception:
+            return rgb
+
     def _render_frame_uncached(
         self,
         idx: int,
@@ -2016,8 +2176,35 @@ class Lightweight2DPipeline(QObject):
                 wl_ms=0.0, total_ms=(time.perf_counter() - t_start) * 1000.0,
             )
 
+        # DICOM extras (overlay planes + palette/embedded colour) for derived /
+        # secondary-capture frames. _ensure_extras is a no-op for ordinary
+        # grayscale series, so overlay_mask / color_rgb stay None there.
+        self._ensure_extras(idx, sm, arr)
+        overlay_mask = self._overlay_cache.get(idx)
+        color_rgb = self._color_cache.get(idx)
+
+        if color_rgb is not None:
+            rgb = (
+                self._compose_overlay_onto(np.array(color_rgb, dtype=np.uint8, copy=True), overlay_mask)
+                if overlay_mask is not None
+                else np.ascontiguousarray(color_rgb, dtype=np.uint8)
+            )
+            qimg = _numpy_to_qimage_rgb(rgb, sm.cols, sm.rows)
+            self._put_frame_cache(cache_key, qimg)
+            return RenderedFrame(
+                qimage=qimg, width=qimg.width(), height=qimg.height(),
+                slice_index=idx, window_width=ww, window_center=wc,
+                photometric=sm.photometric, decode_ms=decode_ms, filter_ms=0.0,
+                wl_ms=0.0, total_ms=(time.perf_counter() - t_start) * 1000.0,
+            )
+
         if sm.samples_per_pixel >= 3 or sm.is_rgb:
-            qimg = _numpy_to_qimage_rgb(arr, sm.cols, sm.rows)
+            rgb = (
+                self._compose_overlay_onto(np.array(arr, dtype=np.uint8, copy=True), overlay_mask)
+                if overlay_mask is not None
+                else arr
+            )
+            qimg = _numpy_to_qimage_rgb(rgb, sm.cols, sm.rows)
             self._put_frame_cache(cache_key, qimg)
             return RenderedFrame(
                 qimage=qimg, width=qimg.width(), height=qimg.height(),
@@ -2110,7 +2297,15 @@ class Lightweight2DPipeline(QObject):
                 idx, filter_is_first, filter_ms, wl_ms, decode_ms, _filter_sig,
             )
 
-        qimg = _numpy_to_qimage_gray(disp, sm.cols, sm.rows)
+        if overlay_mask is not None:
+            # Composite the overlay graphics (chart / ROI annotation) in the
+            # highlight colour onto the windowed grayscale frame. Only
+            # overlay-bearing slices pay the RGB conversion; the common
+            # grayscale path below stays Format_Grayscale8.
+            rgb = self._compose_overlay_onto(np.repeat(disp[..., None], 3, axis=2), overlay_mask)
+            qimg = _numpy_to_qimage_rgb(rgb, sm.cols, sm.rows)
+        else:
+            qimg = _numpy_to_qimage_gray(disp, sm.cols, sm.rows)
         self._put_frame_cache(cache_key, qimg)
         if record_metrics:
             self._record_decode(decode_ms, filter_ms, wl_ms)

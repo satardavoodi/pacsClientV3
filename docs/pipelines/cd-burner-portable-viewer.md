@@ -459,7 +459,46 @@ as a resolution backstop, so the viewer resolves regardless of which channel
 loads cd_burner. Guard tests: `test_installed_payload_root_resolves_viewer`,
 engine-datas-has-0-viewer assertion. cd_burner 111 green, mirrors 389.
 
-## 21. Known limitations / deferred
+## 21. Adopted from external lite-viewer eval report (2026-06-16)
+
+Reviewed an external eval report; adopted the two points that apply to our
+code, confirmed one already-done, and deferred the rest as out-of-scope:
+
+* **ADOPTED — hermetic frozen sys.path** (`portable_viewer/_hermetic.py`,
+  called from `aipacs_lite_viewer.py` BEFORE importing the viewer). On a
+  customer PC a host Python / `PYTHONPATH` / user site-packages could leak
+  onto `sys.path` and load a *different* numpy whose compiled extension
+  clashes with the bundled one → startup crash. When frozen we now keep only
+  bundle-internal `sys.path` entries (drop `''`/CWD and any external dir).
+  Pure filter `compute_hermetic_path` is unit-tested; `_hermetic` is a build
+  hidden-import; frozen `--selftest` still passes after the change.
+* **ADOPTED — shadow validators ignore non-Python folders.** Both
+  `_validate_*_no_namespace_shadow` (build_release + materialize) now count a
+  dir as a subpackage only if it has `__init__.py` or a `.py` file. Pure data
+  folders (`lightViewer_dist`, `assets`) no longer trip a false "partial
+  shadow" when present in one tree but not the other — the principled fix for
+  the 2026-06 lightViewer case (we'd previously worked around it by deleting
+  the legacy dir). Real missing Python subpackages are still caught (tested).
+* **ALREADY PRESENT — windowed self-test fallback.** `run_selftest` already
+  writes `%TEMP%\aipacs_lite_selftest_failed.txt` for no-console diagnosis.
+* **ADOPTED (2026-06-16, after investigation) — DM image-count
+  normalization.** Our `grpc_client.py` DID have the bug: line ~113 read
+  only `series.get("image_count")`, so a server variant key collapsed the
+  series to 0 images. Added `_normalize_image_count()` (tries image_count /
+  ImageCount / number_of_instances / NumberOfInstances / instance_count /
+  num_images …, safe non-negative int, default 0 = same as before so it can
+  only fix, never regress). Tests: `test_image_count_normalization.py` (7).
+  File is plugin-mirrored (download_manager payload) — synced.
+* **NOT APPLICABLE — MPR PYZ-gate markers.** Investigated: every marker the
+  report calls "missing" (`_view_axes`, `_anat_look_axis`,
+  `_anatomical_camera`, `_force_crosshair_on_top`,
+  `_apply_native_plane_interpolation`, `layout_views`, `slab_mode`) is
+  ALREADY present in our `modules/mpr/zeta_mpr/mpr_viewer/*` source, and
+  `builder/audit/scripts/verify_mpr_in_pyz.py` checks exactly those — our
+  gate passes. The report's MPR fix was for its own divergent branch;
+  re-adding markers to our source would be wrong. No change.
+
+## 22. Known limitations / deferred
 
 * IMAPI2 `Write()` is synchronous — no fine-grained burn % (progress jumps
   50→95) and mid-write cancel is not possible. Event-sink progress is a

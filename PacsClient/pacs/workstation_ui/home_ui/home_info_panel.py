@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.2.8",
-    "build_date": "2026-06-06",
-    "release_date": "2026-06-06",
+    "version": "3.3.3",
+    "build_date": "2026-06-16",
+    "release_date": "2026-06-16",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
+        "Reliable downloads on weak/unstable internet (auto-retry + resume)",
+        "Faster downloads via adaptive batch sizing",
+        "Voice notes save reliably on multi-study patients",
+        "Unified, content-aware Study state (no false 'downloaded')",
         "Download Manager optimization",
-        "MPR orientation fixes",
-        "Progressive loading improvements",
-        "EchoMind enhancements",
-        "EagleEye stability improvements",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.2.8",
+        "AI-PACS Version 3.3.3",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۲.۸",
+        "AI-PACS نسخهٔ ۳.۳.۳",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

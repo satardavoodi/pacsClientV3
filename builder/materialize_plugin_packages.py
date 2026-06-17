@@ -169,10 +169,21 @@ def _validate_plugin_no_namespace_shadow(package_dir: Path, module_id: str) -> N
 
         # Only compare real Python subpackages (dirs with __init__.py or that could
         # be namespace packages). Exclude bytecode caches and tool artefacts.
+        # Only compare real PYTHON subpackages (dir with __init__.py or a .py
+        # file). Pure DATA folders (lightViewer_dist, assets) cannot shadow an
+        # import — counting them caused a false positive when excluded from a
+        # payload (2026-06 lightViewer). Mirror of build_release.py. See R24.
         _NON_PACKAGE_DIRS = frozenset({"__pycache__", ".git", ".mypy_cache", ".pytest_cache"})
 
         def _is_python_subpkg(d: Path) -> bool:
-            return d.is_dir() and d.name not in _NON_PACKAGE_DIRS and not d.name.startswith(".")
+            if not d.is_dir() or d.name in _NON_PACKAGE_DIRS or d.name.startswith("."):
+                return False
+            if (d / "__init__.py").exists():
+                return True
+            try:
+                return any(child.suffix == ".py" for child in d.iterdir() if child.is_file())
+            except OSError:
+                return False
 
         plugin_subdirs = {d.name for d in subpkg_dir.iterdir() if _is_python_subpkg(d)}
         engine_subdirs = {d.name for d in engine_subpkg.iterdir() if _is_python_subpkg(d)}

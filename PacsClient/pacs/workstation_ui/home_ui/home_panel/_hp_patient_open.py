@@ -46,6 +46,35 @@ _OPEN_REFRESH_ALREADY_OPEN = str(
     os.environ.get('AIPACS_OPEN_REFRESH_ALREADY_OPEN', '1')
 ).strip().lower() not in ('0', 'false', 'no', 'off')
 
+# Phase-2 shadow (default OFF; AIPACS_PATIENT_STUDY_SET_SHADOW=1): observe-only
+# diagnostic for the unified pipeline. Records the open-time resolved study set so
+# a later single-click/deferred reconcile that discovers MORE studies (the 46630
+# class) is logged as `patient_study_set_late_growth`. Changes NO behaviour and
+# never raises (see docs/reports/UNIFIED_PIPELINE_EVALUATION_2026-06-17.md).
+_PSS_SHADOW = str(
+    os.environ.get('AIPACS_PATIENT_STUDY_SET_SHADOW', '0')
+).strip().lower() in ('1', 'true', 'yes', 'on')
+
+# Phase-3 follow-up (open-intent late download; default ON,
+# AIPACS_OPEN_TAB_LATE_DOWNLOAD=0 to disable): when the open-viewer back-fill
+# discovers a late study (e.g. a DOC study) for a patient that already has an OPEN
+# tab, also enqueue that study's MISSING/partial series (disk-aware, via the sync
+# manifest) so its files download — not just its metadata. Open intent ONLY: the
+# back-fill runs solely when a viewer tab exists, so pure single-click preview (no
+# tab) still never downloads.
+_OPEN_TAB_LATE_DOWNLOAD = str(
+    os.environ.get('AIPACS_OPEN_TAB_LATE_DOWNLOAD', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+
+# P1 unification (default ON, AIPACS_PSS_MERGE_RESOLVE=0 restores legacy): route
+# _resolve_patient_study_uids's fallback-first ordering + cross-patient owner-guard
+# through the shared merge_study_uids authority so the isolation rule lives in ONE
+# place. The study-source GATHER is unchanged; behaviour is byte-equivalent to the
+# legacy tail (pinned by tests/code/ui_services/test_resolve_patient_study_uids_scope.py).
+_PSS_MERGE_RESOLVE = str(
+    os.environ.get('AIPACS_PSS_MERGE_RESOLVE', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+
 # Redirect print() to logger to avoid synchronous console I/O on Windows.
 _print_logger = _logging.getLogger(__name__)
 def print(*args, **_kw):  # noqa: A001
@@ -224,25 +253,40 @@ class _HPPatientOpenMixin:
             except Exception:
                 pass
 
+        # ── Unified owner-filter authority (P1) ───────────────────────────────
+        # The fallback-first ordering + cross-patient guard route through the
+        # shared merge_study_uids so the isolation rule lives in ONE place. This is
+        # byte-equivalent to the legacy tail below (pinned by
+        # tests/code/ui_services/test_resolve_patient_study_uids_scope.py); the
+        # study-source GATHER above is unchanged. AIPACS_PSS_MERGE_RESOLVE=0
+        # restores the legacy tail.
+        if _PSS_MERGE_RESOLVE:
+            from PacsClient.utils.patient_study_set import merge_study_uids as _merge
+            resolved, _dropped = _merge(
+                [resolved], fallback,
+                owner_of=self._study_owner_patient_id, patient_id=pid)
+            for _uid in _dropped:
+                try:
+                    self._log_open_trace(
+                        _uid, 'study_uid_cross_patient_dropped', level='warning',
+                        requested_patient_id=pid,
+                        owner_patient_id=self._study_owner_patient_id(_uid))
+                except Exception:
+                    pass
+            return resolved
+
         if fallback:
             if fallback in resolved:
                 resolved.remove(fallback)
             resolved.insert(0, fallback)
 
-        # ── Cross-patient safety guard (clinical data isolation) ──────────────
-        # A patient tab must ONLY ever contain studies that belong to THIS
-        # patient_id. The fallbacks above (right-panel payload, search caches,
-        # grouped table rows) can occasionally surface a study UID that actually
-        # belongs to a different, previously-viewed patient. Left unchecked that
-        # opens the tab as a bogus "multi-study" patient and mixes the other
-        # patient's thumbnails AND download-queue jobs in — because both the
-        # grouped sidebar and open STEP 3.5 (download queueing) consume this
-        # list. Drop any resolved study we can POSITIVELY attribute to a
-        # DIFFERENT patient via the local DB. Studies we cannot attribute (not
-        # yet in the DB — e.g. a fresh server patient) are KEPT so normal opens
-        # never break; the clicked study (`fallback`) is always kept. The guard
-        # only runs for multi-study candidates (len > 1), so the common
-        # single-study open does zero extra DB work.
+        # ── Cross-patient safety guard (clinical data isolation) — LEGACY tail ──
+        # Kept as a kill-switch fallback (AIPACS_PSS_MERGE_RESOLVE=0). A patient tab
+        # must ONLY ever contain studies that belong to THIS patient_id. The
+        # fallbacks above can occasionally surface a study UID that actually belongs
+        # to a different, previously-viewed patient; drop any study we can POSITIVELY
+        # attribute to a DIFFERENT patient via the local DB. Unknown-owner studies
+        # (fresh server patient) and the clicked study (`fallback`) are kept.
         if pid and len(resolved) > 1:
             guarded = []
             for uid in resolved:
@@ -344,7 +388,178 @@ class _HPPatientOpenMixin:
                 _logger.warning("[multi-study] modality enumeration failed for %s: %s", patient_id, e)
             except Exception:
                 pass
+        if _PSS_SHADOW:
+            try:
+                self._pss_record_open_studyset(patient_id, resolved, fallback_study_uid)
+            except Exception:
+                pass
         return resolved
+
+    def _pss_record_open_studyset(self, patient_id, resolved, selected_study_uid):
+        """Phase-2 shadow (observe-only): record the open-time resolved study set
+        and emit a `patient_study_set_open` trace. Lets a later reconcile that
+        discovers MORE studies be flagged as late growth (the 46630 class).
+        Behaviour-neutral; never raises. Gated by AIPACS_PATIENT_STUDY_SET_SHADOW."""
+        pid = str(patient_id or '').strip()
+        store = getattr(self, '_pss_open_studyset', None)
+        if store is None:
+            store = {}
+            self._pss_open_studyset = store
+        uids = [str(u or '').strip() for u in (resolved or []) if str(u or '').strip()]
+        store[pid] = uids
+        try:
+            self._log_open_trace(
+                str(selected_study_uid or (uids[0] if uids else '')),
+                'patient_study_set_open', patient_id=pid, intent='open_viewer',
+                studies=len(uids))
+        except Exception:
+            pass
+
+    async def _backfill_open_viewer_studyset(self, patient_id, patient_name, study_uids):
+        """Phase-3 (46630 FIX): when the patient's study set is discovered to have
+        GROWN after the viewer tab was already built (e.g. a late DOC study the
+        compact open-time resolution missed), push the full set's series into the
+        OPEN viewer tab via the merge-aware ``set_server_series_info`` so the new
+        study appears WITHOUT a close/reopen.
+
+        No-op when no tab is open for the patient or the tab already shows every
+        study. Cross-patient guarded (a foreign study is never attached). This is
+        METADATA-ONLY: ``set_server_series_info`` builds the series index + grouped
+        sidebar; geometry/VTK/MPR/slice-order are downstream and are NOT touched.
+        Never raises. Gated by AIPACS_OPEN_TAB_STUDYSET_BACKFILL (see _hp_series)."""
+        from PacsClient.utils.patient_study_set import diff_study_uids
+        pid = str(patient_id or '').strip()
+        uids = [str(u or '').strip() for u in (study_uids or []) if str(u or '').strip()]
+        if len(uids) <= 1:
+            return
+        # Patient-level tab lookup: the open tab is keyed by its PRIMARY study_uid,
+        # usually uids[0] but not guaranteed (a secondary/DOC study can be the one
+        # the user selected). Try EVERY study in the set so back-fill finds the open
+        # patient tab regardless of which UID leads the discovered list. Additive —
+        # uids[0] is still tried first, so the common case is unchanged.
+        widget = None
+        if hasattr(self, '_find_widget_by_study_uid'):
+            for _u in uids:
+                _w = self._find_widget_by_study_uid(_u)
+                if _w and is_widget_alive(_w) and hasattr(_w, 'set_server_series_info'):
+                    widget = _w
+                    break
+        if widget is None:
+            return  # no open tab for this patient -> nothing to back-fill
+
+        # Which study UIDs does the open tab already show?
+        existing = set()
+        try:
+            for _s in (getattr(widget, '_server_series_info', None) or {}).values():
+                _su = str((_s or {}).get('study_uid') or '').strip()
+                if _su:
+                    existing.add(_su)
+            existing |= {str(k).strip() for k in (getattr(widget, '_studies_series', None) or {}).keys() if str(k).strip()}
+        except Exception:
+            pass
+        missing_studies = diff_study_uids(list(existing), uids)
+        if not missing_studies:
+            return  # the tab already has every discovered study
+
+        # Aggregate series for the missing studies only (owner-guarded), then push.
+        aggregated = []
+        valid_studies = []  # (study_uid, study_info) kept after owner validation
+        for su in missing_studies:
+            try:
+                info = await asyncio.wait_for(
+                    asyncio.to_thread(self._get_or_fetch_series_info, su, pid, True), timeout=45.0)
+            except Exception:
+                info = None
+            if not info:
+                continue
+            owner = str((info or {}).get('patient_id') or '').strip()
+            if owner and owner != pid:
+                try:
+                    self._log_open_trace(
+                        su, 'viewer_backfill_cross_patient_skip', level='warning',
+                        requested_patient_id=pid, owner_patient_id=owner)
+                except Exception:
+                    pass
+                continue  # clinical isolation: never attach a foreign study
+            valid_studies.append((su, info))
+            for s in (info.get('series') or []):
+                if isinstance(s, dict) and not str(s.get('study_uid') or '').strip():
+                    s = dict(s)
+                    s['study_uid'] = su
+                aggregated.append(s)
+        if not aggregated:
+            return
+        try:
+            widget._is_multistudy_hint = True
+        except Exception:
+            pass
+        widget.set_server_series_info(aggregated)
+        try:
+            self._log_open_trace(
+                uids[0], 'patient_study_set_viewer_backfill', patient_id=pid,
+                new_studies=len(valid_studies), series=len(aggregated))
+        except Exception:
+            pass
+
+        # Open-intent missing-only DOWNLOAD for the late studies. A viewer tab is
+        # OPEN for this patient (proven above), so this is open intent — NOT a
+        # single-click preview — and only the series missing/partial on disk are
+        # queued (disk-aware). This closes the half of the 46630 fix where the late
+        # (DOC) study became visible but its files stayed unqueued.
+        if _OPEN_TAB_LATE_DOWNLOAD:
+            for su, info in valid_studies:
+                try:
+                    self._enqueue_missing_series_for_open_study(patient_id, patient_name, su, info)
+                except Exception:
+                    pass
+
+    def _enqueue_missing_series_for_open_study(self, patient_id, patient_name, study_uid, study_info):
+        """Open-intent, missing/partial-only download for ONE late-discovered study
+        (used by the open-viewer back-fill). Disk-aware via the sync manifest: a
+        study already complete on disk is NOT re-queued. A stale terminal DM state
+        (COMPLETED/CANCELLED) is reset first so the new series are accepted; the DM
+        resume scan still skips already-local files (no duplicate downloads). The
+        caller guarantees an OPEN viewer tab exists for the patient (open intent)
+        and the study owner is validated. Never raises; returns True if a download
+        was enqueued. Gated by AIPACS_OPEN_TAB_LATE_DOWNLOAD (caller)."""
+        try:
+            server_series = (study_info or {}).get('series') or []
+            if not server_series:
+                return False
+            # Disk-aware gate: only enqueue when something is missing/partial.
+            try:
+                from modules.storage.sync_manifest import evaluate_sync as _eval_sync
+                _dec = _eval_sync(study_uid, server_series=server_series)
+                _missing = list(_dec.get('missing_series') or []) + list(_dec.get('partial_series') or [])
+                if not _missing:
+                    return False  # already complete on disk -> nothing to download
+            except Exception:
+                pass  # manifest unavailable -> fall through; DM resume scan still dedups
+            dm = self._get_or_create_download_manager_tab(activate_tab=False)
+            if not dm:
+                return False
+            # Reset a stale terminal state so add_downloads accepts the new series
+            # (mirrors the open / resync stale-COMPLETED unblock).
+            try:
+                _ss = getattr(dm, 'state_store', None)
+                _st = _ss.get(study_uid) if _ss is not None else None
+                _stn = getattr(getattr(_st, 'status', None), 'name', '') if _st else ''
+                if _stn in ('COMPLETED', 'CANCELLED') and _ss is not None:
+                    _ss.reset(study_uid)
+            except Exception:
+                pass
+            pid = str(patient_id or '').strip()
+            from PacsClient.utils.patient_study_set import build_download_payload as _bdp
+            dm.add_downloads([_bdp(study_uid, pid, patient_name, study_info)], start_immediately=True)
+            try:
+                self._log_open_trace(
+                    study_uid, 'patient_study_set_late_download_enqueued',
+                    patient_id=pid, source='viewer_backfill')
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
 
     async def _enumerate_studies_for_row(self, patient_id, base_row, already_have=None):
         """Discover same-patient studies that a ``GetPatientList`` row omitted.
@@ -601,6 +816,33 @@ class _HPPatientOpenMixin:
             all_studies=len(all_study_uids),
         )
         self._log_open_trace(study_uid, 'open_request', report_status=report_status, all_studies=len(all_study_uids))
+        # Explicit double-click OPEN marker — the open path is the ONLY path that
+        # may start a full patient/study download (single-click is select + preview
+        # only). Pairs with the DownloadEnqueued markers logged when this open
+        # actually enqueues missing series.
+        try:
+            self._log_open_trace(study_uid, 'PatientOpenDoubleClick', patient_id=str(patient_id or ''), all_studies=len(all_study_uids))
+        except Exception:
+            pass
+
+        # Self-heal (2026-06-17): drop any series rows of the opening studies whose
+        # downloaded files are GONE — orphans left behind by a re-split / re-download
+        # (e.g. POKORA 562346 series 3: 802 dangling rows pointing at a deleted
+        # folder). Only prunes a series that HAS instance rows but 0 on-disk .dcm
+        # files, and only when the store root is reachable; never a pending (0-row)
+        # series, never any file. Gated by AIPACS_PRUNE_ORPHAN_SERIES; best-effort so
+        # it can never break the open.
+        try:
+            from database.dicom_db import prune_orphan_series_for_study
+            for _su in (list(all_study_uids) if all_study_uids else [study_uid]):
+                _pruned = prune_orphan_series_for_study(str(_su))
+                if _pruned:
+                    self._log_open_trace(
+                        str(_su), 'orphan_series_pruned', patient_id=str(patient_id or ''),
+                        pruned=','.join(f"{n}({r})" for n, r in _pruned),
+                    )
+        except Exception:
+            pass
 
         # The OPENED patient is, by definition, the user's latest selection.
         # Without this, the stale-response guard (_is_active_patient_selection,
@@ -1040,6 +1282,15 @@ class _HPPatientOpenMixin:
                                 server_info=server,
                                 priority="High"
                             )
+                            try:
+                                self._log_open_trace(
+                                    current_study_uid, 'DownloadEnqueued',
+                                    patient_id=patient_id, source='open',
+                                    trigger='double_click_open',
+                                    series_count=len(_download_series_list),
+                                )
+                            except Exception:
+                                pass
 
                         # Ensure viewer receives full patient-level series map for thumbnail metadata.
                         if widget and aggregated_series:
@@ -1322,6 +1573,10 @@ class _HPPatientOpenMixin:
                             study_dict['series_count'] = study_info.get('count_of_series', len(study_dict.get('series', [])))
                         # Add to Zeta with high priority
                         zeta_manager.add_downloads([study_dict], start_immediately=True)
+                        try:
+                            self._log_open_trace(study_uid, 'DownloadEnqueued', patient_id=str(patient_id or ''), source='open_legacy', trigger='double_click_open')
+                        except Exception:
+                            pass
                     else:
                         _logger.error("Failed to create Zeta Download Manager")
                 else:

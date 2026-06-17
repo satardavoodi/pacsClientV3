@@ -442,14 +442,27 @@ class _DMRetryMixin:
                     # file (legacy subprocess image), the study simply
                     # completes in normal order — no hang, no lost state.
                     if target_num and self._worker_is_active_for_study(study_uid):
-                        if self._write_critical_intent_file(study_uid, target_num):
-                            self.intent_coordinator.request_critical_series(
-                                study_uid, str(target_num))
-                            self.refresh_table_order()
-                            logger.info(
-                                f"⚡ [SERIES RETRY] Critical series {target_num} signalled to the "
-                                f"RUNNING worker via intent file (batch-boundary yield) — "
-                                f"no worker teardown."
+                        # P0 (display-key leak guard): VALIDATE membership via the
+                        # coordinator BEFORE writing the .critical_intent.json the
+                        # running downloader chases. request_critical_series returns
+                        # False for a series not in this study's task (e.g. a
+                        # multi-study display key) → no intent file is written and no
+                        # phantom series is signalled to the worker.
+                        if self.intent_coordinator.request_critical_series(
+                                study_uid, str(target_num), series_uid=target_uid):
+                            if self._write_critical_intent_file(study_uid, target_num):
+                                self.refresh_table_order()
+                                logger.info(
+                                    f"⚡ [SERIES RETRY] Critical series {target_num} signalled to the "
+                                    f"RUNNING worker via intent file (batch-boundary yield) — "
+                                    f"no worker teardown."
+                                )
+                                return
+                        else:
+                            logger.warning(
+                                f"⛔ [SERIES RETRY] Critical series {target_num} rejected by "
+                                f"coordinator (not in study {study_uid[:40]} task) — no intent "
+                                f"file written."
                             )
                             return
 
@@ -466,7 +479,7 @@ class _DMRetryMixin:
 
             # Promote priority to CRITICAL and latch viewed series via coordinator.
             if target_num:
-                self.intent_coordinator.request_critical_series(study_uid, str(target_num))
+                self.intent_coordinator.request_critical_series(study_uid, str(target_num), series_uid=target_uid)
             else:
                 self.intent_coordinator.request_study_priority(study_uid, DownloadPriority.CRITICAL)
 

@@ -1456,10 +1456,13 @@ def run_selftest() -> int:
         # DICOM + codec availability
         import pydicom  # noqa: F401
         report.append(f"pydicom: {pydicom.__version__}")
+        import importlib.util as _ilu
+
         for codec in ("pylibjpeg", "openjpeg", "rle", "libjpeg"):
             try:
-                __import__(codec)
-                report.append(f"codec {codec}: ok")
+                report.append(
+                    f"codec {codec}: {'ok' if _ilu.find_spec(codec) is not None else 'MISSING'}"
+                )
             except Exception as exc:
                 report.append(f"codec {codec}: MISSING ({exc})")
 

@@ -872,33 +872,52 @@ class _DMWorkersMixin:
         except Exception as e:
             logger.error(f"❌ Error in auto-resume check: {e}")
 
+    def _effective_retry_cap(self, state) -> int:
+        """Auto-retry budget for a FAILED state, by failure KIND.
+
+        Temporary/network failures (timeout, disconnect, reconnect, "response
+        too large", WinError 10054/10053, …) get ``MAX_RETRIES_TEMPORARY`` so an
+        overnight batch on a flaky connection keeps retrying instead of getting
+        stuck after 3. Permanent failures keep the original ``MAX_RETRIES``.
+        """
+        from ...core.constants import (
+            MAX_RETRIES, MAX_RETRIES_TEMPORARY, classify_download_failure,
+        )
+        kind = classify_download_failure(getattr(state, 'error_message', None))
+        return MAX_RETRIES_TEMPORARY if kind == 'temporary' else MAX_RETRIES
+
     def _check_auto_retry(self) -> None:
         """
-        Check for failed downloads that should auto-retry (Rule R28)
-        
-        Failed downloads with retry_count < MAX_RETRIES should automatically
-        be re-queued for another attempt. This ensures forward progress.
-        
-        The system must not get stuck - failed downloads should retry until:
-        1. They succeed (reach COMPLETED)
-        2. They exceed MAX_RETRIES (then stay FAILED for manual intervention)
+        Check for failed downloads that should auto-retry (Rule R28).
+
+        Failed downloads are re-queued (PENDING, retry_count+1) with an
+        exponential, capped backoff until they succeed or exhaust their retry
+        budget. The queue stays non-blocking — a failed study never holds up the
+        rest; this only governs whether the failed study is re-queued.
+
+        Unstable-internet hardening (2026-06-16): the budget now depends on the
+        failure KIND (see ``_effective_retry_cap``). TEMPORARY/network failures
+        retry up to ``MAX_RETRIES_TEMPORARY`` (10) instead of ``MAX_RETRIES`` (3);
+        PERMANENT failures still stop at 3 and are reported. When a
+        temporary/network task finally exhausts its (raised) budget, surface ONE
+        throttled, non-modal "internet unstable" message to the user.
         """
-        from ...core.constants import MAX_RETRIES
-        
         try:
             # Get all failed downloads
             failed = self.state_store.get_by_status(DownloadStatus.FAILED)
-            
+
             auto_retry_count = 0
+            newly_exhausted = []
             for state in failed:
+                cap = self._effective_retry_cap(state)
                 # Check if retry count allows another attempt
-                if state.retry_count < MAX_RETRIES:
+                if state.retry_count < cap:
                     auto_retry_count += 1
                     logger.info(
                         f"🔄 Auto-retrying {state.patient_name} "
-                        f"(retry {state.retry_count + 1}/{MAX_RETRIES})"
+                        f"(retry {state.retry_count + 1}/{cap})"
                     )
-                    
+
                     # Defer the re-queue with an exponential, capped backoff so a
                     # persistently failing server cannot hot-loop worker respawns.
                     from PySide6.QtCore import QTimer as _QTimer
@@ -918,18 +937,96 @@ class _DMWorkersMixin:
                             logger.exception("auto-retry deferred re-queue failed for %s", suid[:40])
                     _QTimer.singleShot(_delay_ms, _requeue)
                 else:
+                    from ...core.constants import classify_download_failure
+                    _kind = classify_download_failure(getattr(state, 'error_message', None))
                     logger.warning(
-                        f"⚠️ {state.patient_name} exceeded max retries ({MAX_RETRIES}), "
-                        f"requires manual intervention"
+                        f"⚠️ {state.patient_name} exceeded max retries "
+                        f"({cap}, kind={_kind}), requires manual intervention"
                     )
-            
+                    if _kind == 'temporary' and state.study_uid:
+                        newly_exhausted.append(state.study_uid)
+
             if auto_retry_count > 0:
                 logger.info(f"✅ Auto-queued {auto_retry_count} failed downloads for retry")
-                
+
+            # Only AFTER a temporary/network task exhausts its raised budget do we
+            # tell the user the connection looks unstable (throttled + coalesced;
+            # the DM table already exposes per-patient Retry + the failed list).
+            if newly_exhausted:
+                self._note_network_exhausted_studies(newly_exhausted)
+
         except Exception as e:
             logger.error(f"❌ Error in auto-retry check: {e}")
             import traceback
             logger.error(traceback.format_exc())
+
+    def _note_network_exhausted_studies(self, study_uids) -> None:
+        """Record temporary/network studies that exhausted their retry budget and
+        surface ONE throttled, non-modal user message (the connection looks
+        unstable). The log line + the DM failed-list are always present; the
+        popup is throttled to once / 2 min and disable-able with
+        ``AIPACS_DM_NET_POPUP=0``. Never raises (best-effort UX)."""
+        try:
+            import os as _os
+            import time as _time
+            store = getattr(self, '_net_exhausted_studies', None)
+            if store is None:
+                store = set()
+                self._net_exhausted_studies = store
+            before = len(store)
+            for u in study_uids:
+                if u:
+                    store.add(u)
+            # Prune to studies that are STILL failed, so the count stays accurate
+            # after a later manual retry / success.
+            try:
+                still_failed = {
+                    s.study_uid for s in self.state_store.get_by_status(DownloadStatus.FAILED)
+                }
+                store &= still_failed
+            except Exception:
+                pass
+            if not store:
+                return
+            grew = len(store) > before
+            try:
+                self.log_message(
+                    f"⚠️ {len(store)} download(s) could not complete — the internet "
+                    f"connection looks unstable or was interrupted. Open the "
+                    f"Download Manager to retry or view the failed list."
+                )
+            except Exception:
+                pass
+            # Structured, credential-free trace for diagnostics.
+            logger.warning(
+                "[DM][net-exhausted] incomplete=%d grew=%s — temporary/network "
+                "failures exhausted retry budget", len(store), grew,
+            )
+            if not grew or _os.environ.get('AIPACS_DM_NET_POPUP', '1') == '0':
+                return
+            now = _time.monotonic()
+            if now - getattr(self, '_last_net_popup_mono', 0.0) < 120.0:
+                return
+            self._last_net_popup_mono = now
+            try:
+                from PySide6.QtWidgets import QMessageBox
+                box = QMessageBox(self)
+                box.setIcon(QMessageBox.Warning)
+                box.setWindowTitle("Some downloads could not be completed")
+                box.setText(
+                    "Some downloads could not be completed because the internet "
+                    "connection was interrupted or unstable.\n\n"
+                    f"Incomplete: {len(store)} patient(s)/study(ies).\n\n"
+                    "Please check your internet connection. Open the Download "
+                    "Manager to retry or view the failed list."
+                )
+                box.setStandardButtons(QMessageBox.Ok)
+                box.setModal(False)
+                box.show()  # non-modal — must never block clinical work
+            except Exception:
+                logger.exception("[DM] network-exhaustion popup failed (non-fatal)")
+        except Exception:
+            logger.exception("[DM] _note_network_exhausted_studies failed (non-fatal)")
 
     def _pipeline_health_check(self) -> None:
         """
@@ -981,9 +1078,11 @@ class _DMWorkersMixin:
                 QTimer.singleShot(100, self._start_next_pending)
                 return
             
-            # STUCK STATE 3: Failed downloads that can retry but no workers running
-            from ...core.constants import MAX_RETRIES
-            retryable = [f for f in failed if f.retry_count < MAX_RETRIES]
+            # STUCK STATE 3: Failed downloads that can retry but no workers running.
+            # Use the per-failure budget (temporary/network = MAX_RETRIES_TEMPORARY)
+            # so the anti-stuck backup keeps network failures alive as long as
+            # _check_auto_retry does — not just to MAX_RETRIES (3).
+            retryable = [f for f in failed if f.retry_count < self._effective_retry_cap(f)]
             if retryable and active_count == 0:
                 logger.warning(
                     f"⚠️ Health check: {len(retryable)} retryable failed downloads! "

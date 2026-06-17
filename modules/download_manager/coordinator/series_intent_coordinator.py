@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 _INTENT_TRACE_ENABLED = os.environ.get("AIPACS_INTENT_PRIORITY_TRACE", "0") == "1"
 _INTENT_VERBOSE_TAGS = {"tick", "defer"}
 
+# Membership validation (P0 — multi-study display-key leak guard). A critical-series
+# request whose series is NOT in the study's task series_list is rejected, so a
+# synthetic multi-study DISPLAY key (study_slot*1_000_000 + original_number) or any
+# stale/foreign series can never flip viewed_series_number to a phantom series or
+# write a `.critical_intent.json` the downloader would chase. Match by
+# SeriesInstanceUID first, then original series_number. FAIL-OPEN when the task is
+# not yet known (cannot prove invalid → never block a legitimate race). Disable with
+# AIPACS_DM_MEMBERSHIP_VALIDATION=0.
+_DM_MEMBERSHIP_VALIDATION = os.environ.get(
+    "AIPACS_DM_MEMBERSHIP_VALIDATION", "1"
+).strip().lower() not in ("0", "false", "no", "off")
+
 
 def _intent_handoff_v2_enabled() -> bool:
     """Return True if the F3.5.2 wall-clock retry path is enabled.
@@ -282,11 +294,62 @@ class SeriesIntentCoordinator:
             logger.warning("[INTENT] Could not write critical-intent file: %s", exc)
             return False
 
-    def request_critical_series(self, study_uid: str, series_number: str) -> bool:
+    def request_critical_series(
+        self, study_uid: str, series_number: str, series_uid: str = None
+    ) -> bool:
         state = self.state_store.get(study_uid)
         if not state:
             logger.warning("[INTENT] Study state not found for critical series request: %s", study_uid)
             return False
+
+        # ── Membership validation (P0 — display-key leak guard) ──────────────
+        # The requested series MUST belong to this study's task. A synthetic
+        # multi-study DISPLAY key (study_slot*1_000_000 + original_number) or any
+        # stale/foreign series is rejected here, BEFORE we flip
+        # viewed_series_number or write a .critical_intent.json the downloader
+        # would chase (which is how a phantom series inflated progress and
+        # mis-prioritised downloads). Match by SeriesInstanceUID first, then the
+        # original series_number. FAIL-OPEN when the task is not yet registered
+        # (cannot prove invalid → never block a legitimate open/drag race).
+        if _DM_MEMBERSHIP_VALIDATION:
+            _mtask = self._tasks.get(study_uid)
+            if _mtask is not None:
+                _req_uid = str(series_uid or "").strip()
+                _req_num = str(series_number or "").strip()
+                _is_member = False
+                _norm_num = None
+                for _si in (getattr(_mtask, "series_list", None) or []):
+                    _si_num = str(getattr(_si, "series_number", "") or "").strip()
+                    if _req_uid and str(getattr(_si, "series_uid", "") or "").strip() == _req_uid:
+                        # A SeriesInstanceUID match is AUTHORITATIVE for the series
+                        # NUMBER: a synthetic multi-study DISPLAY key (or any wrong
+                        # number) supplied alongside the real UID is corrected back
+                        # to the task's real series_number here — before it is ever
+                        # written to viewed_series_number or a .critical_intent.json.
+                        _is_member = True
+                        _norm_num = _si_num or _req_num
+                        break
+                    if _si_num and _si_num == _req_num:
+                        _is_member = True
+                        _norm_num = _si_num
+                        break
+                if not _is_member:
+                    logger.error(
+                        "[CriticalIntentRejected] study=%s requested series_number=%s "
+                        "series_uid=%s not in task series_list (%d series) — refusing to set "
+                        "viewed/critical intent (likely a multi-study display key reached the DM)",
+                        str(study_uid)[:40], _req_num, _req_uid or "-",
+                        len(getattr(_mtask, "series_list", None) or []),
+                    )
+                    return False
+                if _norm_num and _norm_num != str(series_number):
+                    logger.info(
+                        "[CriticalIntent] study=%s normalized series_number %s -> %s "
+                        "(matched task by %s)",
+                        str(study_uid)[:40], str(series_number), _norm_num,
+                        "series_uid" if _req_uid else "series_number",
+                    )
+                    series_number = _norm_num
 
         updates = {"viewed_series_number": str(series_number)}
         if state.priority != DownloadPriority.CRITICAL:

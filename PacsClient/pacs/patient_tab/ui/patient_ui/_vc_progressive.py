@@ -92,6 +92,36 @@ _FAST_PROGRESSIVE_IDLE_FLUSH_DELAY_MS = 400.0
 # Do NOT lower below 0.20 — it causes repeated failed load attempts that spike CPU.
 _PROGRESSIVE_MIN_COMPLETENESS = 0.30
 
+# Viewport download-progress notification (2026-06-17, slow-link drag-drop UX).
+# While a dropped series is still downloading, show a live "Downloading N of M
+# images…" line on the waiting spinner so the user sees motion instead of a bare
+# spinner and does NOT assume it is stuck and re-drag (the thrash trigger). Pure
+# UI status text only — no render/geometry effect. Kill switch:
+# AIPACS_DOWNLOAD_PROGRESS_TEXT=0.
+import os as _os  # noqa: E402  (module-level constant block)
+_DOWNLOAD_PROGRESS_TEXT = (_os.getenv("AIPACS_DOWNLOAD_PROGRESS_TEXT", "1") or "1").strip() != "0"
+
+
+def _format_download_progress(downloaded, total) -> str:
+    """Pure formatter for the waiting-spinner download line (testable).
+
+    ``"Downloading N of M images…"`` while in flight, ``"Finalizing…"`` once the
+    count reaches the total, and a bare ``"Downloading…"`` when the total is not
+    yet known. ``downloaded`` is clamped to ``[0, total]`` so a transient overshoot
+    never prints e.g. "26 of 25".
+    """
+    try:
+        d = int(downloaded)
+        t = int(total)
+    except Exception:
+        return "Downloading…"
+    if t <= 0:
+        return "Downloading…"
+    d = max(0, min(d, t))
+    if d >= t:
+        return "Finalizing…"
+    return f"Downloading {d} of {t} images…"
+
 
 def _h10_log_progressive_mutation(obj, fn_name: str, mutated_sn: str, action: str):
     """[H10-4] Module-level helper â€” log progressive lifecycle mutation with context."""
@@ -768,6 +798,36 @@ def _finalize_progressive_series(
 class _VCProgressiveMixin:
     """Auto-split mixin â€” see patient_widget_viewer_controller.py for history."""
 
+    def _update_download_spinner_text(self, sn: str, downloaded: int, total: int) -> None:
+        """Show live download progress on the waiting spinner of any viewport that
+        is awaiting (or progressively showing) this series.
+
+        Additive, best-effort, main-thread: updates only the spinner status line
+        (``ViewportSpinner.set_status``) of a matching viewport, and no-ops when the
+        feature is off, the counts are unusable, or no viewport is waiting for this
+        series. Never raises — a status update must not disturb the download/grow
+        path or touch rendering/geometry.
+        """
+        if not _DOWNLOAD_PROGRESS_TEXT:
+            return
+        try:
+            text = _format_download_progress(downloaded, total)
+        except Exception:
+            return
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            if (getattr(vtk_w, "_awaiting_series_number", None) != sn
+                    and getattr(vtk_w, "_progressive_series_number", None) != sn):
+                continue
+            spinner = getattr(vtk_w, "viewport_spinner", None)
+            if spinner is not None and hasattr(spinner, "set_status"):
+                try:
+                    spinner.set_status(text)
+                except Exception:
+                    pass
+
     def on_series_images_progress(self, series_number: str, downloaded: int, total: int):
         """Qt signal slot: outer guard so exceptions never escape into Qt dispatch.
 
@@ -808,6 +868,15 @@ class _VCProgressiveMixin:
         sn = str(series_number)
         if total <= 0 or downloaded <= 0:
             return
+        # Live "Downloading N of M images…" on the waiting spinner. Best-effort and
+        # fully isolated — a status-text update must NEVER disturb the progressive
+        # display / grow pipeline below (nor abort this Qt slot). Done before the
+        # Advanced-mode return and the grow throttle so the user always sees motion
+        # while a dropped series downloads — pure status text, no render/geometry.
+        try:
+            self._update_download_spinner_text(sn, downloaded, total)
+        except Exception:
+            pass
         fanout_event = _corr_record_event(
             "SIGNAL_FANOUT",
             source="series_images_progress",

@@ -806,6 +806,39 @@ def _normalize_metadata_instances(metadata):
     return changed
 
 
+# Per-study DB-geometry trust cache (self-verifying "auto" mode, 2026-06-16):
+# study_pk -> True (DB geometry confirmed == disk on the study's first series, trust
+# the DB for the rest) / False (mismatch, use disk for the whole study). Plain dict;
+# a benign double-verify under a race is harmless and the value is idempotent.
+_db_geom_trust_cache: dict = {}
+
+
+def _compare_geometry_signature(meta_a, meta_b):
+    """True when two NORMALIZED metadata maps share the same geometry signature —
+    same instance count and the same per-instance (ImagePositionPatient,
+    ImageOrientationPatient) in the same order. Used by the DB-metadata verify
+    mode (P1, 2026-06-16) to prove the DB-first path reproduces the disk path's
+    clinically-verified geometry + slice order before the DB path is trusted.
+    Tolerant float compare (2 decimals). Robust to JSON-string or list storage."""
+    import json as _json_cmp
+
+    def _vec(v):
+        try:
+            if isinstance(v, str):
+                v = _json_cmp.loads(v)
+            return tuple(round(float(x), 2) for x in (v or []))
+        except Exception:
+            return ()
+
+    def _sig(meta):
+        return [
+            (_vec(inst.get("image_position_patient")), _vec(inst.get("image_orientation_patient")))
+            for inst in ((meta or {}).get("instances", []) or [])
+        ]
+
+    return _sig(meta_a) == _sig(meta_b)
+
+
 # ── Diagnostics ──────────────────────────────────────────────────────────────
 
 def _read_dicom_header_audit(path: str) -> dict:
@@ -1613,7 +1646,8 @@ def _reconcile_db_instances_with_disk(series_path: Path, instances):
             and disk_count == len(instances)
             and all(inst.get("instance_path") for inst in instances)
         ):
-            return list(instances), False
+            _fp = _dedupe_instances_by_sop(list(instances))
+            return _fp, (len(_fp) != len(instances))
     except Exception:
         pass
 
@@ -1643,6 +1677,7 @@ def _reconcile_db_instances_with_disk(series_path: Path, instances):
             changed = True
         merged.append(inst)
 
+    merged = _dedupe_instances_by_sop(merged)
     if len(merged) != len(instances):
         changed = True
     return merged, changed
@@ -1667,8 +1702,16 @@ def _metadata_needs_geometry_backfill(metadata) -> bool:
 #   AIPACS_HEADER_SCAN_PARALLEL = auto (default) | 0/off (legacy sequential)
 #                                 | 1/force (always parallel)
 _HEADER_SCAN_MIN_FILES = 24      # below this, sequential is always fine
-_HEADER_SCAN_PROBE_FILES = 6     # files timed sequentially to detect a slow disk
-_HEADER_SCAN_SLOW_MS = 12.0      # per-file ms above which the disk is I/O-bound
+# Probe MORE files (was 6) and lower the slow-disk threshold (was 12.0). A
+# freshly-imported study's first files are often warm in the OS cache while the
+# bulk is cold, so a 6-file probe under-measured and a borderline-slow/contended
+# disk stayed SEQUENTIAL — patient POKORA (2026-06-16): 401 files × 12.5 ms = 5.0 s
+# on the disk fallback because the probe read just under 12 ms/file. A 12-file
+# probe + 8 ms threshold catches that disk and overlaps the I/O. Order-neutral
+# (stubs keep their 1-based index; caller re-sorts + geometry-normalizes), so the
+# displayed slice order / geometry are unchanged. Both env-tunable for the field.
+_HEADER_SCAN_PROBE_FILES = int(os.getenv("AIPACS_HEADER_SCAN_PROBE_FILES", "12") or 12)
+_HEADER_SCAN_SLOW_MS = float(os.getenv("AIPACS_HEADER_SCAN_SLOW_MS", "8.0") or 8.0)
 _HEADER_SCAN_MAX_WORKERS = 8
 
 
@@ -1739,6 +1782,45 @@ def _read_header_stubs(dicom_files):
     return stubs_by_index
 
 
+def _dedupe_instances_by_sop(instances, series_number=None):
+    """Drop instances that share a SOPInstanceUID — two files with the same
+    SOPInstanceUID are the SAME DICOM object, e.g. a multi-source / re-run import
+    that copied each slice under two filenames (patient POKORA: 802 files for 401
+    real slices). ``_list_unique_dicom_files`` de-dups by FILENAME only, so such
+    copies slip through and inflate the slice count + corrupt scrolling. Keeps the
+    FIRST occurrence per SOP (identical SOPs are identical slices → order between
+    them is immaterial); instances with an empty SOP UID are kept (cannot prove a
+    duplicate). No-op for a clean series. Disable with AIPACS_VIEWER_DEDUP_SOP=0."""
+    try:
+        if os.getenv("AIPACS_VIEWER_DEDUP_SOP", "1").strip().lower() in ("0", "false", "no", "off"):
+            return instances
+    except Exception:
+        pass
+    if not isinstance(instances, list) or len(instances) < 2:
+        return instances
+    seen = set()
+    out = []
+    removed = 0
+    for inst in instances:
+        sop = str((inst or {}).get("sop_uid", "") or "").strip()
+        if sop and sop in seen:
+            removed += 1
+            continue
+        if sop:
+            seen.add(sop)
+        out.append(inst)
+    if removed:
+        try:
+            logger.warning(
+                "[DICOM_DEDUP] series=%s dropped %d duplicate-SOP instances "
+                "(kept %d unique) — multi-source / duplicate import",
+                series_number, removed, len(out),
+            )
+        except Exception:
+            pass
+    return out
+
+
 def _build_metadata_headers_only(series_path: Path, series_number):
     dicom_files = _list_unique_dicom_files(series_path)
     if not dicom_files:
@@ -1754,6 +1836,8 @@ def _build_metadata_headers_only(series_path: Path, series_number):
         return None
 
     instances = [stubs_by_index[i] for i in sorted(stubs_by_index)]
+    # Collapse duplicate-SOP files (multi-source import) before geometry sort.
+    instances = _dedupe_instances_by_sop(instances, series_number)
 
     _normalize_instances_geometry_order(instances)
 
@@ -2726,6 +2810,89 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     "pydicom_qt fast-path DB metadata failed (%s); falling back to ITK pipeline",
                     _qt_err,
                 )
+        # ── P1 DB-metadata gate + verify (2026-06-16) ────────────────────────
+        # Opt-in only — default ("0") and force ("1") leave _qt_meta exactly as
+        # built (no behavior change). "verify": build the disk map too, log a
+        # golden geometry/order compare, and DISPLAY THE DISK MAP (observe-only) so
+        # the DB path can be validated on real studies. "auto": trust the DB map
+        # ONLY when it is geometry-complete (every instance has IOP+IPP after
+        # backfill); an incomplete DB is discarded so the disk rescan below stays
+        # authoritative — geometry never comes from holes.
+        if _qt_meta is not None:
+            _db_meta_mode = (os.getenv("AIPACS_VIEWER_DB_METADATA", "auto") or "auto").strip().lower()
+            if _db_meta_mode == "verify":
+                try:
+                    _disk_meta_v = _build_metadata_headers_only(series_path, series_number)
+                    try:
+                        _normalize_metadata_instances(_disk_meta_v)
+                    except Exception:
+                        pass
+                    try:
+                        _db_complete_v = not _metadata_needs_geometry_backfill(_qt_meta)
+                    except Exception:
+                        _db_complete_v = False
+                    logger.warning(
+                        "[DB_METADATA_VERIFY] series=%s db_complete=%s geometry_match=%s "
+                        "db_instances=%d disk_instances=%d",
+                        series_number, _db_complete_v,
+                        _compare_geometry_signature(_qt_meta, _disk_meta_v),
+                        len(_qt_meta.get('instances', []) or []),
+                        len((_disk_meta_v or {}).get('instances', []) or []),
+                    )
+                    _qt_meta = _disk_meta_v if _disk_meta_v else _qt_meta
+                except Exception as _vfy_err:
+                    logger.warning("[DB_METADATA_VERIFY] compare failed series=%s: %s", series_number, _vfy_err)
+                    _qt_meta = None
+            elif _db_meta_mode == "auto":
+                # Self-verifying auto: trust the DB map only when geometry-complete
+                # AND its geometry/order matches the disk build. The compare runs
+                # ONCE per study (first series loaded): a match trusts the DB for the
+                # rest of the study (fast, no further disk header reads); a mismatch
+                # distrusts the whole study and uses disk. Fail-safe — incompleteness,
+                # mismatch, or any error all fall back to the disk header path, so a
+                # wrong DB geometry can never reach the viewer.
+                try:
+                    _db_complete = not _metadata_needs_geometry_backfill(_qt_meta)
+                except Exception:
+                    _db_complete = False
+                if not _db_complete:
+                    logger.info(
+                        "[DB_METADATA_GATE] series=%s DB metadata incomplete (geometry holes) "
+                        "-> disk header path", series_number,
+                    )
+                    _qt_meta = None
+                else:
+                    _trust = _db_geom_trust_cache.get(study_pk)
+                    if _trust is False:
+                        _qt_meta = None  # study already proven divergent → disk
+                    elif _trust is None:
+                        # First series of this study under auto → verify against disk.
+                        try:
+                            _disk_chk = _build_metadata_headers_only(series_path, series_number)
+                            try:
+                                _normalize_metadata_instances(_disk_chk)
+                            except Exception:
+                                pass
+                            if _disk_chk and _compare_geometry_signature(_qt_meta, _disk_chk):
+                                _db_geom_trust_cache[study_pk] = True
+                                logger.info(
+                                    "[DB_METADATA_AUTOVERIFY] series=%s study_pk=%s geometry_match=True "
+                                    "-> DB trusted for study", series_number, study_pk,
+                                )
+                            else:
+                                _db_geom_trust_cache[study_pk] = False
+                                logger.error(
+                                    "[DB_METADATA_AUTOVERIFY] series=%s study_pk=%s geometry_match=False "
+                                    "-> disk (study distrusted)", series_number, study_pk,
+                                )
+                                _qt_meta = None
+                        except Exception as _av_err:
+                            logger.warning(
+                                "[DB_METADATA_AUTOVERIFY] series=%s failed (%s) -> disk",
+                                series_number, _av_err,
+                            )
+                            _qt_meta = None
+                    # _trust is True → keep _qt_meta (use DB; no disk read this load)
         if _qt_meta is None:
             _t_hdr = now_ms()
             try:

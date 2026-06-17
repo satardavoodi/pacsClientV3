@@ -23,8 +23,8 @@ def _stub(active_uids):
     s = types.SimpleNamespace()
     s.calls = {"request_critical": 0, "pause_all": 0, "on_retry": 0}
     s.intent_coordinator = types.SimpleNamespace(
-        request_critical_series=lambda u, sn: s.calls.__setitem__(
-            "request_critical", s.calls["request_critical"] + 1))
+        request_critical_series=lambda u, sn, series_uid=None: (s.calls.__setitem__(
+            "request_critical", s.calls["request_critical"] + 1) or True))
     s.worker_pool = types.SimpleNamespace(
         get_all_workers=lambda: [(u, object()) for u in active_uids])
     s._pause_all_active_downloads = lambda: s.calls.__setitem__(
@@ -55,3 +55,18 @@ def test_drag_does_not_preempt_when_slot_idle():
     s.request_critical_series_download("THIS_STUDY", "3")
     assert s.calls["pause_all"] == 0
     assert s.calls["request_critical"] == 1 and s.calls["on_retry"] == 1
+
+
+def test_drag_skips_retry_when_coordinator_rejects():
+    """P0 bypass guard (2026-06-17): when the coordinator REJECTS a critical-series
+    request (series not in the study's task — e.g. a multi-study display key), the
+    viewer-drag entry point must NOT run the series-retry / intent-file path. Before
+    the fix, ``_on_series_retry`` ran unconditionally and wrote a .critical_intent.json
+    for the phantom series."""
+    s = _stub([])
+    s.intent_coordinator.request_critical_series = (
+        lambda u, sn, series_uid=None: (s.calls.__setitem__(
+            "request_critical", s.calls["request_critical"] + 1) or False))
+    s.request_critical_series_download("THIS_STUDY", "1000003")
+    assert s.calls["request_critical"] == 1
+    assert s.calls["on_retry"] == 0

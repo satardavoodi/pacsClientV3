@@ -44,7 +44,18 @@ class _HPPriorityMixin:
             widget (PatientWidget, optional): Patient widget. Will be found if not provided.
         """
         print(f"🔥 [PRIORITY] Thumbnail clicked: series={series_number}, study={study_uid}")
-        
+        # Drag-drop / thumbnail priority request marker. TaskIdentity =
+        # (StudyInstanceUID, series_number); the DM keeps exactly ONE task per
+        # study and reuses/promotes it on repeated rapid requests (never a
+        # duplicate competing task). Multi-study context is preserved because the
+        # request is scoped to this study_uid only.
+        try:
+            if hasattr(self, '_log_open_trace'):
+                self._log_open_trace(study_uid, 'DragDropRequestedSeries',
+                                     series_number=str(series_number), source='thumbnail_priority')
+        except Exception:
+            pass
+
         try:
             from pathlib import Path
             from PacsClient.utils.config import SOURCE_PATH
@@ -110,6 +121,16 @@ class _HPPriorityMixin:
                     if hasattr(download_manager, 'set_viewed_series'):
                         download_manager.set_viewed_series(study_uid, str(series_number))
                         print(f"✅ Download Manager notified: series {series_number} is now CRITICAL")
+                        # Reuse, don't duplicate: the study is already queued, so we
+                        # only PROMOTE the dragged series' priority on the existing
+                        # task (no new download task is created).
+                        try:
+                            if hasattr(self, '_log_open_trace'):
+                                self._log_open_trace(study_uid, 'DownloadTaskPromoted',
+                                                     series_number=str(series_number),
+                                                     reason='already_downloading_reuse_existing_task')
+                        except Exception:
+                            pass
                     else:
                         print(f"⚠️ Download Manager does not have set_viewed_series method")
                 except Exception as e:

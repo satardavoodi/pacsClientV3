@@ -242,6 +242,22 @@ class ViewportSpinner:
             except Exception:
                 pass
         
+    def set_status(self, text):
+        """Update the status line on whichever loading indicator is showing.
+
+        Used for live drag-drop download progress ("Downloading N of M images…").
+        Best-effort and main-thread only: updates the branded overlay's status
+        label, or the legacy fallback spinner's message, and no-ops if neither is
+        currently showing. Never raises — a status update must not break a switch.
+        """
+        try:
+            if self.overlay is not None and hasattr(self.overlay, "set_status"):
+                self.overlay.set_status(text)
+            elif self.spinner is not None:
+                self.spinner.set_message(text)
+        except Exception:
+            pass
+
     def show_reset(self, message="Applying reset..."):
         """Show spinner during reset operation"""
         self.show_loading(message)

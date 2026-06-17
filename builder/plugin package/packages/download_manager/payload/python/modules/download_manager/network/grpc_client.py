@@ -18,6 +18,43 @@ from modules.network.socket_client import PatientListSocketClient
 logger = logging.getLogger(__name__)
 
 
+# Per-series image count may arrive under different server key names depending
+# on the payload variant (some studies/modalities collapsed to 0 because the
+# count sat under an alternate key). Try the known variants, newest-style
+# first, and convert safely to a non-negative int.
+_IMAGE_COUNT_KEYS = (
+    "image_count",
+    "ImageCount",
+    "number_of_instances",
+    "NumberOfInstances",
+    "instance_count",
+    "InstanceCount",
+    "num_images",
+    "numberOfImages",
+)
+
+
+def _normalize_image_count(series: Dict[str, Any]) -> int:
+    """Per-series image count, tolerant of server key-name variants.
+
+    Returns a non-negative int (0 when no usable value is present — same
+    default as before, so this can only fix zero-collapse, never regress).
+    """
+    if not isinstance(series, dict):
+        return 0
+    for key in _IMAGE_COUNT_KEYS:
+        value = series.get(key)
+        if value in (None, ""):
+            continue
+        try:
+            count = int(float(str(value).strip()))
+        except (TypeError, ValueError):
+            continue
+        if count >= 0:
+            return count
+    return 0
+
+
 class GrpcMetadataClient:
     """
     Socket-backed thumbnail and metadata retrieval compatibility layer
@@ -110,7 +147,7 @@ class GrpcMetadataClient:
                 series_number=int(str(series.get("series_number") or 0)),
                 series_description=str(series.get("series_description") or ""),
                 modality=str(series.get("modality") or ""),
-                image_count=int(series.get("image_count") or 0),
+                image_count=_normalize_image_count(series),
                 protocol_name=series.get("protocol_name"),
                 body_part_examined=series.get("body_part_examined"),
                 manufacturer=series.get("manufacturer"),

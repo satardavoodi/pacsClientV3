@@ -5,6 +5,7 @@ All models use dataclasses for clean, immutable data structures with validation.
 """
 
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import List, Optional, Dict, Any
@@ -14,6 +15,28 @@ from .enums import DownloadPriority, DownloadStatus, ResumeAction
 from .exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
+
+# ── Series-identity de-duplication (impossible-image-count guard; 46271/46912) ──
+# A rapid multi-study drag-preempt enqueue can hand DownloadTask a series_list with
+# the SAME series repeated many times; total_image_count (sum over the list) then
+# balloons to an impossible value (e.g. 423988 for a 247-image patient, or 373322
+# for 46912) and the Download Manager chases a phantom total. De-duping collapses
+# the repeats. Identity prefers SeriesInstanceUID and falls back to series_number
+# so repeats that carry NO SeriesInstanceUID (the viewer drag payload) still
+# collapse. Set AIPACS_DM_DEDUP_BY_NUMBER=0 to restore legacy series_uid-only.
+_DM_DEDUP_BY_NUMBER = str(
+    os.environ.get('AIPACS_DM_DEDUP_BY_NUMBER', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+# A single study with more images/series than these bounds is almost certainly a
+# contaminated/accumulated enqueue, not real data → logged as CriticalCountMismatch.
+try:
+    _DM_IMPLAUSIBLE_TOTAL_IMAGES = int(os.environ.get('AIPACS_DM_IMPLAUSIBLE_TOTAL', '50000') or 50000)
+except Exception:
+    _DM_IMPLAUSIBLE_TOTAL_IMAGES = 50000
+try:
+    _DM_IMPLAUSIBLE_SERIES = int(os.environ.get('AIPACS_DM_IMPLAUSIBLE_SERIES', '2000') or 2000)
+except Exception:
+    _DM_IMPLAUSIBLE_SERIES = 2000
 
 
 @dataclass(frozen=True)
@@ -145,17 +168,30 @@ class DownloadTask:
         deduped: List['SeriesInfo'] = []
         for s in original:
             uid = str(getattr(s, 'series_uid', '') or '').strip()
-            if not uid:
-                # No UID to de-dupe on — keep as-is (can't prove it's a duplicate).
+            num = str(getattr(s, 'series_number', '') or '').strip()
+            # Composite identity: prefer SeriesInstanceUID; fall back to the
+            # series_number so empty-uid repeats (the viewer drag payload often
+            # has no SeriesInstanceUID) still collapse. A real study never has two
+            # series sharing a SeriesInstanceUID *or* a series_number, so this is a
+            # no-op for clean tasks. Identity is NEVER shared across studies:
+            # different studies' series carry distinct SeriesInstanceUIDs, so the
+            # ``uid:`` branch keeps them separate (the ``num:`` fallback only runs
+            # for a row that has NO uid at all).
+            if uid:
+                key = 'uid:' + uid
+            elif num and _DM_DEDUP_BY_NUMBER:
+                key = 'num:' + num
+            else:
+                # No stable identity to de-dupe on — keep as-is.
                 deduped.append(s)
                 continue
-            if uid in seen:
+            if key in seen:
                 # Duplicate: keep the richer row (largest image_count).
-                idx = seen[uid]
+                idx = seen[key]
                 if int(getattr(s, 'image_count', 0) or 0) > int(getattr(deduped[idx], 'image_count', 0) or 0):
                     deduped[idx] = s
                 continue
-            seen[uid] = len(deduped)
+            seen[key] = len(deduped)
             deduped.append(s)
         removed = len(original) - len(deduped)
         if removed > 0:
@@ -170,12 +206,17 @@ class DownloadTask:
                     self.study_uid, self.patient_id, len(original), len(deduped),
                     total, removed,
                 )
-            elif total > 50000 or len(deduped) > 2000:
-                logger.warning(
-                    "[DM_COUNT_SANITY] implausible DownloadTask size study=%s patient=%s "
-                    "series=%d total_images=%d (no duplicate series_uids — suspect inflated "
-                    "per-series count upstream)",
-                    self.study_uid, self.patient_id, len(deduped), total,
+            if total > _DM_IMPLAUSIBLE_TOTAL_IMAGES or len(deduped) > _DM_IMPLAUSIBLE_SERIES:
+                # Even after de-dup the size is implausible: either a per-series
+                # image_count is wrong or series from several studies were merged
+                # into one task. The expected count MUST be validated against the
+                # authoritative server/local manifest — flag it loudly (the worker
+                # and UI clamp the displayed total to this task's own series).
+                logger.error(
+                    "[CriticalCountMismatch] implausible DownloadTask size study=%s patient=%s "
+                    "series=%d total_images=%d (dedup_removed=%d) — counts must be validated "
+                    "against the server/local manifest before download",
+                    self.study_uid, self.patient_id, len(deduped), total, removed,
                 )
         except Exception:
             pass

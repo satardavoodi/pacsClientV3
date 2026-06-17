@@ -464,10 +464,33 @@ class VoiceWidget(QWidget):
 
     # ---------- Internals ----------
     def _resolve_study_uid(self, selected_widget) -> str | None:
+        """Resolve the study a new recording attaches to.
+
+        MUST match the toolbar's DISPLAY resolution
+        (``ToolbarManager._get_study_uid``): primary = ``patient_widget.study_uid``
+        (the tab's study), fallback = the active series'
+        ``image_viewer.metadata_fixed['study_uid']``.
+
+        Bugfix (voice "never appears after save", multi-study patients): the two
+        resolutions were INVERTED. The recorder saved the WAV under the *active
+        series'* study while the mic counter / audio dropdown read
+        ``patient_widget.study_uid``. For a multi-study patient (e.g. 46472: DX +
+        MR) recording while viewing a NON-primary series wrote the file to a
+        different study's attachment folder than the UI lists, so the recording
+        reached disk but never showed up. Resolving primary-first here puts the
+        file where the counter/dropdown look. Single-study patients are unchanged
+        (both UIDs are identical), so the common path is byte-identical.
         """
-        تلاش برای گرفتن study_uid از ویجت انتخاب‌شده یا patient_widget
-        """
-        # اول از selected_widget.image_viewer.metadata_fixed
+        # Primary: the tab's study UID (set on PatientWidget at construction;
+        # stable across series switches; the value the attachments UI reads).
+        try:
+            uid = getattr(self.patient_widget, "study_uid", None)
+            if uid:
+                return uid
+        except Exception:
+            pass
+
+        # Fallback: the active series' study, once a series is loaded into a layout.
         try:
             if hasattr(selected_widget, "image_viewer") and selected_widget.image_viewer:
                 md = getattr(selected_widget.image_viewer, "metadata_fixed", None)
@@ -476,12 +499,7 @@ class VoiceWidget(QWidget):
         except Exception:
             pass
 
-        # fallback: خود patient_widget
-        try:
-            uid = getattr(self.patient_widget, "study_uid", None)
-            return uid
-        except Exception:
-            return None
+        return None
 
     def _callback_capture(self, indata, frames, time_info, status):
         if status:

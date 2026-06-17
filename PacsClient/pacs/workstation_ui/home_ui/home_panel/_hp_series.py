@@ -70,6 +70,36 @@ _RESYNC_DISK_AWARE = str(
 _RESYNC_USE_CONTENT_VERSION = str(
     _os.environ.get('AIPACS_CONTENT_VERSION_SYNC', '1')
 ).strip().lower() not in ('0', 'false', 'no', 'off')
+# Single-click = SELECT + thumbnail/preview ONLY; it must NEVER start a full
+# patient/study download (regression: single-clicking a not-yet-downloaded patient
+# enqueued it). With this OFF (default), the single-click reconcile (missing-study
+# discovery) and the AUTO resync (force=False) refresh display/metadata but SKIP
+# add_downloads — the download happens on OPEN (double-click) via the patient-open
+# pipeline, and on the manual "Refresh / Sync from server" (force=True). Set
+# AIPACS_SINGLE_CLICK_DOWNLOAD=1 to restore the legacy enqueue-on-single-click.
+_SINGLE_CLICK_DOWNLOAD_ENABLED = str(
+    _os.environ.get('AIPACS_SINGLE_CLICK_DOWNLOAD', '0')
+).strip().lower() not in ('0', 'false', 'no', 'off', '')
+
+# Phase-2 shadow (default OFF; AIPACS_PATIENT_STUDY_SET_SHADOW=1): see _hp_patient_open.
+# The single-click / deferred-open reconcile reports when it discovers MORE studies
+# than the double-click OPEN path recorded (the 46630 open-vs-late divergence).
+# Observe-only; never raises; changes no behaviour.
+_PSS_SHADOW = str(
+    _os.environ.get('AIPACS_PATIENT_STUDY_SET_SHADOW', '0')
+).strip().lower() in ('1', 'true', 'yes', 'on')
+
+# Phase-3 (46630 FIX; default ON, AIPACS_OPEN_TAB_STUDYSET_BACKFILL=0 to disable):
+# when the single-click/deferred reconcile discovers the study set GREW after the
+# viewer tab was already built (e.g. a late DOC study the compact open-time
+# resolution missed), push the full set's series into the OPEN viewer tab via the
+# merge-aware set_server_series_info so it appears WITHOUT a close/reopen. No-op on
+# single-click with no open tab and when the tab already has every study; cross-
+# patient guarded. METADATA-ONLY: geometry/VTK/MPR/slice-order live downstream of
+# set_server_series_info and are NOT touched.
+_OPEN_TAB_BACKFILL = str(
+    _os.environ.get('AIPACS_OPEN_TAB_STUDYSET_BACKFILL', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
 
 
 class _HPSeriesMixin:
@@ -476,9 +506,14 @@ class _HPSeriesMixin:
                             pass
                     continue
 
-                # Persist the refreshed series rows, then enqueue the study for
-                # background download (DM resume scan pulls only the missing
-                # series/instances — never re-downloads existing files).
+                # Persist the refreshed series rows + refresh the thumbnail preview
+                # (reveal new/grown series). The DOWNLOAD is enqueued ONLY on an
+                # explicit, forced action — the manual "Refresh / Sync from server"
+                # (force=True) — NEVER on the single-click AUTO resync (force=False).
+                # Regression fix: a single-click auto resync was starting a full
+                # download for a not-yet-downloaded / grown study. Display still
+                # refreshes either way. Restore legacy auto-enqueue with
+                # AIPACS_SINGLE_CLICK_DOWNLOAD=1.
                 try:
                     self.save_complete_study_info(study_uid, pid, study_info=study_info)
                 except Exception:
@@ -487,45 +522,46 @@ class _HPSeriesMixin:
                     clear_study_cache(study_uid)
                 except Exception:
                     pass
-                if dm is None:
-                    dm = self._get_or_create_download_manager_tab(activate_tab=False)
-                if dm:
-                    # The study GREW, so a terminal (COMPLETED/CANCELLED) DM state
-                    # is stale and would make add_downloads reject the new series
-                    # ("Download already exists"). Reset it first (idle state only;
-                    # resume still skips already-local files). Mirrors the open
-                    # path's stale-COMPLETED unblock (FIX-010, 46640).
-                    if _RESYNC_RESET_STALE_COMPLETE:
+                changed_any = True  # display always refreshes; download gated below
+                if force or _SINGLE_CLICK_DOWNLOAD_ENABLED:
+                    if dm is None:
+                        dm = self._get_or_create_download_manager_tab(activate_tab=False)
+                    if dm:
+                        # The study GREW, so a terminal (COMPLETED/CANCELLED) DM state
+                        # is stale and would make add_downloads reject the new series
+                        # ("Download already exists"). Reset it first (idle state only;
+                        # resume still skips already-local files). Mirrors the open
+                        # path's stale-COMPLETED unblock (FIX-010, 46640).
+                        if _RESYNC_RESET_STALE_COMPLETE:
+                            try:
+                                _ss = getattr(dm, 'state_store', None)
+                                _st = _ss.get(study_uid) if _ss is not None else None
+                                _stn = getattr(getattr(_st, 'status', None), 'name', '') if _st else ''
+                                if _stn in ('COMPLETED', 'CANCELLED'):
+                                    _ss.reset(study_uid)
+                                    try:
+                                        self._log_open_trace(
+                                            study_uid, 'resync_reset_stale_complete',
+                                            patient_id=pid, prior_status=_stn,
+                                            new_series=(','.join(new_series[:12]) or '-'))
+                                    except Exception:
+                                        pass
+                            except Exception:
+                                pass
                         try:
-                            _ss = getattr(dm, 'state_store', None)
-                            _st = _ss.get(study_uid) if _ss is not None else None
-                            _stn = getattr(getattr(_st, 'status', None), 'name', '') if _st else ''
-                            if _stn in ('COMPLETED', 'CANCELLED'):
-                                _ss.reset(study_uid)
-                                try:
-                                    self._log_open_trace(
-                                        study_uid, 'resync_reset_stale_complete',
-                                        patient_id=pid, prior_status=_stn,
-                                        new_series=(','.join(new_series[:12]) or '-'))
-                                except Exception:
-                                    pass
+                            from PacsClient.utils.patient_study_set import build_download_payload as _bdp
+                            dm.add_downloads([_bdp(study_uid, pid, patient_name, study_info)], start_immediately=True)
+                            try:
+                                self._log_open_trace(study_uid, 'DownloadEnqueued', patient_id=pid, source='resync', trigger=('manual_refresh' if force else 'legacy_single_click'))
+                            except Exception:
+                                pass
                         except Exception:
                             pass
+                else:
                     try:
-                        dm.add_downloads([{
-                            'patient_id': pid,
-                            'patient_name': patient_name,
-                            'study_uid': study_uid,
-                            'study_date': study_info.get('study_date', ''),
-                            'modality': study_info.get('modality', ''),
-                            'description': study_info.get('study_description', ''),
-                            'series_count': study_info.get('count_of_series', len(server_series)),
-                            'images_count': sum(int(s.get('image_count', 0) or 0) for s in server_series),
-                            'series': server_series,
-                        }], start_immediately=True)
+                        self._log_open_trace(study_uid, 'resync_enqueue_skipped_single_click', patient_id=pid, reason='single_click_auto_no_download')
                     except Exception:
                         pass
-                changed_any = True
 
             # Reveal: re-render with a server-thumbnail merge so the newly-added
             # series appear immediately (their full images keep downloading in the
@@ -769,27 +805,63 @@ class _HPSeriesMixin:
                             if check_study_complete(missing_uid):
                                 continue
 
-                            if dm:
-                                dm_study_data = {
-                                    'patient_id': pid,
-                                    'patient_name': patient_name,
-                                    'study_uid': missing_uid,
-                                    'study_date': study_info.get('study_date', ''),
-                                    'modality': study_info.get('modality', ''),
-                                    'description': study_info.get('study_description', ''),
-                                    'series_count': study_info.get('count_of_series', len(study_info.get('series', []))),
-                                    'images_count': sum(s.get('image_count', 0) for s in study_info.get('series', [])),
-                                    'series': study_info.get('series', []),
-                                }
-                                dm.add_downloads([dm_study_data], start_immediately=True)
+                            # Single-click is SELECT + preview ONLY: discovering a
+                            # not-local study must NOT start a full download
+                            # (regression fix). The study downloads when the patient
+                            # is OPENED (double-click) via the patient-open pipeline.
+                            # Restore legacy enqueue-on-single-click with
+                            # AIPACS_SINGLE_CLICK_DOWNLOAD=1.
+                            if dm and _SINGLE_CLICK_DOWNLOAD_ENABLED:
+                                from PacsClient.utils.patient_study_set import build_download_payload as _bdp
+                                dm.add_downloads([_bdp(missing_uid, pid, patient_name, study_info)], start_immediately=True)
+                                try:
+                                    self._log_open_trace(missing_uid, 'DownloadEnqueued', patient_id=pid, source='reconcile', trigger='legacy_single_click')
+                                except Exception:
+                                    pass
+                            else:
+                                try:
+                                    self._log_open_trace(missing_uid, 'reconcile_enqueue_skipped_single_click', patient_id=pid, reason='single_click_select_only')
+                                except Exception:
+                                    pass
                         except Exception:
                             continue
 
+                if _PSS_SHADOW:
+                    try:
+                        self._pss_check_late_growth(pid, merged or local_uids)
+                    except Exception:
+                        pass
                 return merged or local_uids
             finally:
                 inflight.discard(pid)
         except Exception:
             return [fallback_uid] if fallback_uid else []
+
+    def _pss_check_late_growth(self, patient_id, discovered_uids):
+        """Phase-2 shadow (observe-only): if this reconcile discovered studies the
+        double-click OPEN path missed (recorded in `_pss_open_studyset`), log a
+        `patient_study_set_late_growth` trace — the 46630 signature, quantified.
+        Uses the canonical merge authority to owner-filter the discovered set so a
+        leaked foreign study is never counted as growth. Behaviour-neutral; never
+        raises. Gated by AIPACS_PATIENT_STUDY_SET_SHADOW."""
+        from PacsClient.utils.patient_study_set import merge_study_uids, diff_study_uids
+        pid = str(patient_id or '').strip()
+        store = getattr(self, '_pss_open_studyset', None) or {}
+        open_uids = store.get(pid)
+        if not open_uids:
+            return  # no open record this session -> nothing to compare
+        canonical, _dropped = merge_study_uids(
+            [list(discovered_uids or [])], '',
+            owner_of=getattr(self, '_study_owner_patient_id', None), patient_id=pid)
+        new_uids = diff_study_uids(open_uids, canonical)
+        if new_uids:
+            try:
+                self._log_open_trace(
+                    str(open_uids[0]), 'patient_study_set_late_growth', level='warning',
+                    patient_id=pid, open_studies=len(open_uids),
+                    discovered_studies=len(canonical), new_studies=len(new_uids))
+            except Exception:
+                pass
 
     async def _load_and_display_series_info(self, patient_id, patient_name, study_uid):
         """Load and display detailed series information in right panel - Optimized for speed"""
@@ -803,6 +875,17 @@ class _HPSeriesMixin:
                         patient_id=str(patient_id or ''),
                         source=str(getattr(self, 'source_of_patient_load', '')),
                     )
+                except Exception:
+                    pass
+            # Single-click intent markers (SELECT + preview only; NO full download).
+            # These make the single- vs double-click path unambiguous in the trace:
+            # a single-click run logs PatientSelectedSingleClick + the
+            # *_enqueue_skipped_single_click markers and NO DownloadEnqueued, while a
+            # double-click open logs PatientOpenDoubleClick + DownloadEnqueued.
+            if hasattr(self, '_log_open_trace'):
+                try:
+                    self._log_open_trace(study_uid, 'PatientSelectedSingleClick', patient_id=str(patient_id or ''))
+                    self._log_open_trace(study_uid, 'ThumbnailPreviewRequested', patient_id=str(patient_id or ''))
                 except Exception:
                     pass
 
@@ -829,6 +912,20 @@ class _HPSeriesMixin:
                     self._schedule_ui_coro(
                         self._resync_patient_studies_from_server(
                             patient_id, patient_name, list(study_uids), force=False))
+                except Exception:
+                    pass
+
+            # Phase-3 (46630): if a viewer tab is OPEN for this patient and the study
+            # set just grew (e.g. a late-discovered DOC study), back-fill the OPEN tab
+            # with the full set via the merge-aware set_server_series_info so it shows
+            # without a close/reopen. No-op on single-click (no tab) / already-complete.
+            if _OPEN_TAB_BACKFILL and len(study_uids) > 1 and hasattr(self, '_backfill_open_viewer_studyset'):
+                # Fire-and-forget so a slow per-study fetch never delays the grouped
+                # right-panel render below. The back-fill updates the OPEN viewer tab
+                # independently and enqueues the late study's missing series.
+                try:
+                    self._schedule_ui_coro(
+                        self._backfill_open_viewer_studyset(patient_id, patient_name, study_uids))
                 except Exception:
                     pass
 

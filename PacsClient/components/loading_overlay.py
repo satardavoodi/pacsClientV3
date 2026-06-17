@@ -268,7 +268,25 @@ class AiPacsLoadingOverlay(QWidget):
             outer.addWidget(spinner, alignment=Qt.AlignCenter)
             self._dots_n = 0
             self._status_base = status or ""
-            self._lbl_status = None
+            # Optional one-line status under the spinner — used for the drag-drop
+            # "Downloading N of M images…" progress text. It stays empty/hidden
+            # unless set_status() is called, so the plain waiting spinner looks
+            # exactly as before when there is no status (no dots timer in minimal
+            # mode: a live count reads better than animated dots).
+            self._lbl_status = QLabel(self._status_base, self)
+            self._lbl_status.setObjectName("AiPacsLoaderStatusMinimal")
+            self._lbl_status.setAlignment(Qt.AlignCenter)
+            self._lbl_status.setStyleSheet("""
+                QLabel#AiPacsLoaderStatusMinimal {
+                    font-size: 13px; font-weight: 600; color: #e2e8f0;
+                    font-family: 'Segoe UI', 'Roboto', sans-serif;
+                    background: transparent; border: none;
+                    letter-spacing: 0.3px;
+                }
+            """)
+            self._lbl_status.setVisible(bool(self._status_base))
+            outer.addSpacing(10)
+            outer.addWidget(self._lbl_status, alignment=Qt.AlignCenter)
             return
 
         # ── Card ─────────────────────────────────────────────────────
@@ -383,6 +401,13 @@ class AiPacsLoadingOverlay(QWidget):
         self._status_base = text
         if self._lbl_status is not None:
             self._lbl_status.setText(text)
+            if self._minimal:
+                # Minimal overlay only reveals its status line when it has text,
+                # so the plain waiting spinner is visually unchanged when idle.
+                try:
+                    self._lbl_status.setVisible(bool(text))
+                except Exception:
+                    pass
 
     # ── class-level show / hide API ──────────────────────────────────
     @classmethod

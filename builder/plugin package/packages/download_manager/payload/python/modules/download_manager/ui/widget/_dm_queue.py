@@ -63,6 +63,15 @@ class _DMQueueMixin:
                 if existing:
                     reason = f"Download already exists (Status: {existing.status.value})"
                     logger.warning(f"⚠️ {reason}: {task.study_uid[:40]}...")
+                    # Idempotent enqueue: a study already in the queue is REUSED,
+                    # never duplicated into a competing task (multi-study / rapid
+                    # drag-drop safety). TaskIdentity = (patient, StudyInstanceUID).
+                    logger.info(
+                        "[DownloadTaskReused] patient=%s study=%s status=%s expected_images=%d "
+                        "incoming_series=%d (duplicate study enqueue ignored — existing task kept)",
+                        task.patient_id, task.study_uid, existing.status.value,
+                        int(getattr(existing, 'total_count', 0) or 0), task.series_count,
+                    )
                     skipped_studies.append((task.study_uid, task.patient_name, reason))
                     continue
 
@@ -81,6 +90,12 @@ class _DMQueueMixin:
                 state = self.state_store.create(task)
                 added_studies.append(task.study_uid)
 
+                # QueueExpectedCount comes from the de-duplicated, manifest-derived
+                # series_list (task.total_image_count) — never an accumulating queue.
+                logger.info(
+                    "[DownloadTaskCreated] patient=%s study=%s series=%d QueueExpectedCount=%d",
+                    task.patient_id, task.study_uid, task.series_count, task.total_image_count,
+                )
                 logger.info(f"   ✅ Successfully added to queue")
                 logger.info(f"   💾 Saved to database with status: {state.status.value}")
                 logger.info(f"   ⭐ Priority: {state.priority.display_name}")

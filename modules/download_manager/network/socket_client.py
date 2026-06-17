@@ -152,6 +152,55 @@ _SERIES_FORCE_BATCH_ONE_MODALITIES = {
 # only — never persisted to the global adaptive batch size.
 _BATCH_BYTES_SOFT_CAP = 64 * 1024 * 1024
 
+# First-image prime (2026-06-17, slow/unstable-link drag-drop perception).
+# On a freshly-viewed / drag-dropped series (nothing on disk yet) fetch the FIRST
+# batch as a single image so the progressive feed can paint one slice in a single
+# round-trip instead of waiting for a whole 10-image batch — the dominant perceived
+# latency on a slow/dropping link (where first-batch time is dominated by the socket
+# timeout, not transfer). After that first image is written the full adaptive batch
+# size is restored, so a healthy LAN pays at most one extra round-trip for the whole
+# series and bulk transfer speed is unchanged. Default on; kill switch = set
+# AIPACS_FIRST_IMAGE_PRIME=0. Skipped on resume (skipped_count>0, so the R19b
+# leading-batch skip is unaffected) and when batches are already forced to 1.
+_FIRST_IMAGE_PRIME = (os.getenv("AIPACS_FIRST_IMAGE_PRIME", "1") or "1").strip() != "0"
+
+
+def _grow_batch_size(current, max_size, consecutive_ok, growth_after, step):
+    """Pure helper for adaptive batch GROWTH (2026-06-16, download speed).
+
+    On a stable connection the download is round-trip-bound (telemetry: ~90% of
+    per-series time on a LAN is request/response wait, not transfer/disk/decode),
+    so fewer, larger batches = fewer round-trips = faster. Given a just-completed
+    CLEAN batch, return ``(new_batch_size, new_consecutive_ok)``: after
+    ``growth_after`` consecutive clean batches, grow ``current`` by ``step`` up to
+    ``max_size`` and reset the streak; otherwise keep ``current`` and carry the
+    incremented streak. Never exceeds ``max_size``. The caller resets the streak
+    on any shrink (server "Response too large" or the 64 MB byte budget), so this
+    is self-tuning and safe on a flaky link (it simply never ramps up there).
+    """
+    consecutive_ok += 1
+    if consecutive_ok >= growth_after and current < max_size:
+        return min(max_size, current + step), 0
+    return current, consecutive_ok
+
+
+def _first_image_prime_size(enabled, skipped_count, batch_size, force_single):
+    """Pure helper for the first-image prime (2026-06-17, slow-link drag-drop).
+
+    Return ``(first_batch_size, restore_size)``. On a freshly-viewed series (nothing
+    on disk) with a multi-image batch, return ``(1, batch_size)`` so the first batch
+    fetches a single slice — the viewer paints one image in one round-trip instead of
+    waiting for a whole batch on a slow/dropping link — and the caller restores
+    ``restore_size`` after that batch. Otherwise return ``(batch_size, None)`` (no
+    prime): on resume (``skipped_count > 0`` → the R19b leading-batch skip is
+    unaffected), when the modality already forces single-image batches, when the batch
+    is already 1, or when disabled. ``restore_size is None`` means "no restore needed".
+    """
+    if enabled and skipped_count == 0 and batch_size > 1 and not force_single:
+        return 1, batch_size
+    return batch_size, None
+
+
 _SERIES_FORCE_BATCH_ONE_DESC_KEYWORDS = (
     "PANORAM",
     "MAMMO",
@@ -263,6 +312,22 @@ class SocketDicomClient:
         # Reversible load-shaping knobs (weak-hardware friendly).
         # Set to 0 to disable pacing behavior immediately.
         self._batch_size_cap = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP", "10") or "10"))
+        # Adaptive batch GROWTH (2026-06-16, download speed). The batch size used
+        # to start at BATCH_SIZE (10) and only ever SHRINK (on "Response too large"
+        # or the 64 MB byte budget) — so even a rock-solid link kept paying the
+        # round-trip overhead of tiny batches (the dominant cost). Now it ramps UP
+        # toward _batch_size_max after consecutive clean batches and shrinks back
+        # on any error, i.e. fast on good links and safe on the flaky client.
+        # Disable: AIPACS_DOWNLOAD_BATCH_GROWTH=0. Ceiling: AIPACS_DOWNLOAD_BATCH_SIZE_MAX
+        # (default 40). Cadence: AIPACS_DOWNLOAD_BATCH_GROWTH_AFTER (default 2). An
+        # explicitly-set AIPACS_DOWNLOAD_BATCH_SIZE_CAP still hard-caps growth.
+        self._batch_growth_enabled = (os.getenv("AIPACS_DOWNLOAD_BATCH_GROWTH", "1") or "1").strip() != "0"
+        _bmax = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_MAX", "40") or "40"))
+        if os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP") is not None:
+            _bmax = min(_bmax, self._batch_size_cap)  # honor an explicit operator cap
+        self._batch_size_max = max(1, _bmax)
+        self._batch_growth_after = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_GROWTH_AFTER", "2") or "2"))
+        self._consecutive_ok_batches = 0
         self._inter_batch_pause_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_INTER_BATCH_PAUSE_MS", "3") or "3") / 1000.0)
         self._post_request_yield_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_POST_REQUEST_YIELD_MS", "5") or "5") / 1000.0)
         self._last_resource_probe_ts = 0.0
@@ -1124,8 +1189,10 @@ class SocketDicomClient:
         skipped_count = len(existing_files)
         logger.info(f"📊 Found {skipped_count} existing files")
         
-        # Calculate batches (adaptive + configurable cap)
-        batch_size = min(self._adaptive_batch_size, self._batch_size_cap)
+        # Calculate batches (adaptive + configurable cap). Ceiling is
+        # _batch_size_max so a stable connection can ramp UP (see _grow_batch_size);
+        # _adaptive_batch_size still starts conservative and shrinks on errors.
+        batch_size = min(self._adaptive_batch_size, self._batch_size_max)
         if _should_force_single_instance_batches(series_info):
             batch_size = 1
             logger.info(
@@ -1133,6 +1200,25 @@ class SocketDicomClient:
                 f"(series={series_number}, modality={series_info.modality or 'N/A'})"
             )
         min_batch_size = 1
+        # First-image prime: on a fresh series (nothing on disk) fetch slice 1 as a
+        # single-image batch so the viewer paints one image in one round-trip, then
+        # restore the full adaptive size after that batch (see the advance below).
+        # Skipped on resume (skipped_count>0 → R19b leading-batch skip unaffected) and
+        # when the modality already forces single-image batches. _prime_restore_size is
+        # the size to jump back to; None means "no prime active for this series".
+        # _prime_restore_size is the size to jump back to after the size-1 first
+        # batch; None means "no prime active for this series" (see the advance below).
+        batch_size, _prime_restore_size = _first_image_prime_size(
+            _FIRST_IMAGE_PRIME,
+            skipped_count,
+            batch_size,
+            _should_force_single_instance_batches(series_info),
+        )
+        if _prime_restore_size is not None:  # total_batches is computed from batch_size below
+            logger.info(
+                f"⚡ First-image prime: fetching slice 1 of series {series_number} as a "
+                f"single-image batch, then resuming batch size {_prime_restore_size}"
+            )
         # U1: bounded same-size retries once the batch can't shrink further.
         # An implausible declared length (>500MB) usually means the socket
         # stream desynchronized, not real payload size — the socket has been
@@ -1306,6 +1392,7 @@ class SocketDicomClient:
                         batch_size = max(min_batch_size, batch_size // 2)
                         self._adaptive_batch_size = batch_size
                         SocketDicomClient._global_adaptive_batch_size = batch_size
+                        self._consecutive_ok_batches = 0  # reset growth streak on shrink
                         total_batches = (expected_count + batch_size - 1) // batch_size
                         logger.warning(
                             f"⚠️ Response too large - reducing batch size to {batch_size} and retrying batch"
@@ -1424,7 +1511,45 @@ class SocketDicomClient:
                     batch_write_bytes += len(dicom_bytes)
                     total_write_bytes += len(dicom_bytes)
                     batch_files_written += 1
-                    
+
+                    # ── Issue A (46472 DX) — surface header-only image stubs ──────
+                    # The server can return a DICOM whose header is intact but whose
+                    # PixelData element is EMPTY. It decodes to non-empty bytes (so the
+                    # `if not dicom_data_b64` guard above misses it), is written as a
+                    # normal .dcm, and the name+128B resume scan (DM-L4) then treats it
+                    # as a COMPLETE instance — so it is never re-fetched and renders
+                    # blank, which makes the study look "missing". Surface it loudly so
+                    # the condition is never silent again; the actual display fix is
+                    # server-side (the pixel data must be re-sent). LOGGING ONLY — no
+                    # change to download/resume control flow. Bounded + precise: only
+                    # inspect small payloads (real images are far larger) and only flag
+                    # a dataset that DECLARES image pixels but carries none (SR/PDF/PR
+                    # have no Rows/Columns and are never flagged). Disable with
+                    # AIPACS_PIXELLESS_STUB_PROBE=0.
+                    try:
+                        if (os.environ.get('AIPACS_PIXELLESS_STUB_PROBE', '1') != '0'
+                                and len(dicom_bytes) < 32768):
+                            import pydicom as _pydicom
+                            from io import BytesIO as _BytesIO
+                            _ds = _pydicom.dcmread(_BytesIO(dicom_bytes), force=True)
+                            _rows = getattr(_ds, 'Rows', None)
+                            _cols = getattr(_ds, 'Columns', None)
+                            _bits = getattr(_ds, 'BitsAllocated', None)
+                            _declares_image = bool(_rows) and bool(_cols) and bool(_bits)
+                            _pixels_present = bool(_ds.get('PixelData', None))
+                            if _declares_image and not _pixels_present:
+                                logger.warning(
+                                    "[DOWNLOAD][pixelless-stub] header-only image written "
+                                    "(empty PixelData) — renders blank and the name/128B "
+                                    "resume scan treats it as complete (DM-L4); pixel data "
+                                    "must be re-sent server-side. file=%s series=%s "
+                                    "instance=%s bytes=%d dims=%sx%sx%s",
+                                    file_path, series_number, instance_number,
+                                    len(dicom_bytes), _rows, _cols, _bits,
+                                )
+                    except Exception:
+                        pass
+
                 except Exception as e:
                     logger.error(f"❌ Error saving instance {instance_number}: {e}")
                     # Log the full path for debugging
@@ -1510,23 +1635,60 @@ class SocketDicomClient:
             batch_idx += 1
             batch_start += batch_size
 
+            # First-image prime restore: the priming size-1 batch (batch_idx 0) has
+            # now been written and its progress emitted, so restore the full adaptive
+            # batch size for the remainder — bulk transfer speed is unchanged. The
+            # advance above used the OLD size (1), so batch_start is now exactly 1 and
+            # the next request is correctly aligned to slice index 1. Run before the
+            # shrink/grow block below so adaptive tuning continues from the full size.
+            if _prime_restore_size is not None and batch_idx == 1:
+                batch_size = _prime_restore_size
+                total_batches = (expected_count + batch_size - 1) // batch_size
+                _prime_restore_size = None
+
             # Byte-budget soft cap: halve the NEXT batches when this one's
             # payload was oversized. Applied AFTER the advance so the just-
             # received window is never re-requested; halving keeps
             # batch_start aligned to the new size (start = k*old = 2k*new),
             # so the server's batch_index mapping stays exact.
-            if (
-                _batch_payload_bytes > _BATCH_BYTES_SOFT_CAP
-                and batch_size > min_batch_size
-            ):
+            _payload_oversized = _batch_payload_bytes > _BATCH_BYTES_SOFT_CAP
+            if _payload_oversized and batch_size > min_batch_size:
                 batch_size = max(min_batch_size, batch_size // 2)
                 total_batches = (expected_count + batch_size - 1) // batch_size
+                self._consecutive_ok_batches = 0  # reset growth streak on shrink
                 logger.warning(
                     f"📉 Batch payload {_batch_payload_bytes / (1024*1024):.0f} MB "
                     f"exceeds {_BATCH_BYTES_SOFT_CAP // (1024*1024)} MB soft cap — "
                     f"halving subsequent batches of series {series_number} to "
                     f"{batch_size} instance(s)"
                 )
+            elif _payload_oversized:
+                # Already at the minimum batch size — cannot shrink further, but a
+                # large payload means we must NOT grow either.
+                self._consecutive_ok_batches = 0
+            elif (
+                self._batch_growth_enabled
+                and batch_size < self._batch_size_max
+                and not _should_force_single_instance_batches(series_info)
+            ):
+                # Adaptive batch GROWTH (2026-06-16, download speed): on a stable
+                # connection ramp the batch size UP so a healthy link pays fewer
+                # round-trips (the dominant cost). Bounded by _batch_size_max and
+                # reset by either shrink path above, so it is self-tuning and safe
+                # on the flaky client.
+                _new, self._consecutive_ok_batches = _grow_batch_size(
+                    batch_size, self._batch_size_max, self._consecutive_ok_batches,
+                    self._batch_growth_after, BATCH_SIZE,
+                )
+                if _new != batch_size:
+                    batch_size = _new
+                    self._adaptive_batch_size = batch_size
+                    SocketDicomClient._global_adaptive_batch_size = batch_size
+                    total_batches = (expected_count + batch_size - 1) // batch_size
+                    logger.info(
+                        f"⏫ Stable connection — grew batch size to {batch_size} "
+                        f"(max {self._batch_size_max}) for series {series_number}"
+                    )
 
         # Download diagnostics default to WARNING threshold. Emit one summary
         # write-stage sample per series at WARNING so KPI parsers can

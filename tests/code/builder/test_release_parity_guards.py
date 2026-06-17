@@ -253,3 +253,56 @@ def test_release_gate_pyz_probe_against_current_stage():
 def test_release_gate_stage_config_parity_against_current_stage():
     check = release_gate.check_stage_config_parity()
     assert check.ok, "\n".join([check.status] + check.details)
+
+
+# ---------------------------------------------------------------------------
+# C — source-freshness gate (2026-06-16): the "built from a stale checkout"
+# guard. A secondary build PC parked on an OLD branch (the p2 remote's default
+# 'DR.vahid', v2.2.x) froze pre-v3.2.0 MPR bytecode while all dev lands on
+# beta-version/main. release_gate.check_source_freshness() now fails the build
+# FAST (pre-build) when the working tree is not current release source.
+# ---------------------------------------------------------------------------
+
+_IS_GIT_WORKTREE = (REPO_ROOT / ".git").exists()
+
+
+def test_source_freshness_skip_flag_is_non_blocking(monkeypatch):
+    """AIPACS_SKIP_SOURCE_FRESHNESS opts out without failing the build (WARN)."""
+    monkeypatch.setenv("AIPACS_SKIP_SOURCE_FRESHNESS", "1")
+    check = release_gate.check_source_freshness()
+    assert check.status == "WARN"
+    assert check.ok  # WARN never blocks a build
+
+
+def test_release_branches_env_parsing(monkeypatch):
+    """_release_branches(): default set, comma/semicolon override, empty disables."""
+    monkeypatch.delenv("AIPACS_RELEASE_BRANCHES", raising=False)
+    assert release_gate._release_branches() == set(release_gate._DEFAULT_RELEASE_BRANCHES)
+
+    monkeypatch.setenv("AIPACS_RELEASE_BRANCHES", "main, release/x ; hotfix")
+    assert release_gate._release_branches() == {"main", "release/x", "hotfix"}
+
+    monkeypatch.setenv("AIPACS_RELEASE_BRANCHES", "")
+    assert release_gate._release_branches() == set()  # branch check disabled
+
+
+@pytest.mark.skipif(not _IS_GIT_WORKTREE, reason="not a git work tree")
+def test_source_freshness_offbranch_fails_then_override(monkeypatch):
+    """An off-release branch FAILS the gate; AIPACS_ALLOW_OFFBRANCH_BUILD clears it.
+
+    Offline (AIPACS_SKIP_GIT_FETCH) so the 'behind upstream' signal can't add a
+    second, network-dependent failure and make the assertion flaky.
+    """
+    monkeypatch.setenv("AIPACS_SKIP_GIT_FETCH", "1")
+    monkeypatch.delenv("AIPACS_SKIP_SOURCE_FRESHNESS", raising=False)
+    monkeypatch.delenv("AIPACS_ALLOW_OFFBRANCH_BUILD", raising=False)
+    # No real branch is named this, so the current branch is never allow-listed.
+    monkeypatch.setenv("AIPACS_RELEASE_BRANCHES", "__no_such_release_branch__")
+
+    failed = release_gate.check_source_freshness()
+    # If the probe could not evaluate git it returns WARN — only assert the FAIL
+    # contract when it actually reached the branch check.
+    if failed.status == "FAIL":
+        assert any("not a release branch" in d for d in failed.details)
+        monkeypatch.setenv("AIPACS_ALLOW_OFFBRANCH_BUILD", "1")
+        assert release_gate.check_source_freshness().ok

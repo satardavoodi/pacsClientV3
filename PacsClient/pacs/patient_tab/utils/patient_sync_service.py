@@ -6,6 +6,7 @@ Patient Data Synchronization Service
 """
 
 import os
+import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
 import threading
@@ -13,6 +14,39 @@ from PySide6.QtCore import QObject, Signal
 
 from modules.network.upload_download_attchments import upload_attachments_for_study
 from PacsClient.utils.db_manager import get_attachments_uploaded
+
+logger = logging.getLogger(__name__)
+
+
+def reconcile_attachments_from_server(study_uid: str, *, verbose: bool = False) -> Dict[str, Any]:
+    """Pull server-side attachments that are missing locally — WITHOUT ever
+    deleting local files.
+
+    SAFE replacement for the previous "delete the whole local attachment folder,
+    then re-download" reconcile. That approach permanently lost locally-saved
+    (and not-yet-uploaded) attachments whenever the re-download failed or the
+    batch only partially uploaded. ``download_attachments_for_study`` runs with
+    ``overwrite=False`` so existing local files are preserved and only files
+    present on the server but absent locally are fetched (bidirectional pull).
+    Any failure is logged, never fatal, and never removes local data.
+    """
+    if not study_uid:
+        return {}
+    try:
+        from modules.network.upload_download_attchments import download_attachments_for_study
+        summary = download_attachments_for_study(study_uid, overwrite=False, verbose=verbose)
+        logger.info(
+            "[SYNC] reconcile (non-destructive) study=%s pulled=%s skipped=%s failed=%s",
+            study_uid, summary.get("saved"), summary.get("skipped"), summary.get("failed"),
+        )
+        return summary
+    except Exception as exc:
+        # Server unreachable / transient error: keep ALL local files intact.
+        logger.warning(
+            "[SYNC] reconcile skipped for study=%s (local files kept intact): %s",
+            study_uid, exc,
+        )
+        return {}
 
 
 class PatientSyncService(QObject):
@@ -135,19 +169,16 @@ class PatientSyncService(QObject):
             except Exception as e:
                 result['errors'].append(f"Error updating report status: {str(e)}")
             
-            # Re-sync local attachments with server
+            # Bidirectional pull: fetch any server-side attachments that are
+            # missing locally. NON-DESTRUCTIVE — local files (including
+            # not-yet-synced ones) are never deleted here, so a server hiccup,
+            # a partial-batch upload, or a failed re-download can never lose an
+            # approved attachment. (The previous implementation deleted the
+            # whole local attachment folder and re-downloaded, which lost any
+            # file that had not yet reached the server — the root cause of
+            # "the attachment is gone after sync".)
             if result['attachments_uploaded'] > 0:
-                try:
-                    from PacsClient.utils.config import ATTACHMENT_PATH
-                    from modules.network.upload_download_attchments import download_attachments_for_study
-                    import shutil
-                    
-                    local_attachment_path = ATTACHMENT_PATH / study_uid
-                    if local_attachment_path.exists():
-                        shutil.rmtree(local_attachment_path)
-                    download_attachments_for_study(study_uid, verbose=False)
-                except Exception:
-                    pass
+                reconcile_attachments_from_server(study_uid, verbose=verbose)
             
             self.sync_completed.emit(study_uid, result)
             

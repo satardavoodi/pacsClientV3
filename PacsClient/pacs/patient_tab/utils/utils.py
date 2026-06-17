@@ -1417,6 +1417,23 @@ def check_study_complete(study_uid, expected_series_count=None):
     Returns:
         bool: True if study download is complete
     """
+    # Phase 1 (single-source-of-truth, default OFF): delegate the UI "downloaded"
+    # verdict to the disk-first manifest authority so the badge agrees with the
+    # open-skip / resync paths AND shares their cached, content-aware verdict
+    # (no separate series-folder count, no "assume complete when count unknown").
+    # Enable with AIPACS_STUDY_STATE_FROM_MANIFEST=1 after golden-comparing badge
+    # states on the build. Any failure falls through to the legacy logic below.
+    try:
+        import os as _os
+        # Default ON (2026-06-16, activation): the UI "downloaded" badge now reads
+        # the single disk-first, content-aware authority (shared cached verdict),
+        # so it agrees with open/resync and never shows false-green. Revert with
+        # AIPACS_STUDY_STATE_FROM_MANIFEST=0 (falls back to the legacy count).
+        if (_os.getenv("AIPACS_STUDY_STATE_FROM_MANIFEST", "1") or "1").strip() != "0":
+            from modules.storage.sync_manifest import evaluate_sync, STATE_DOWNLOADED
+            return evaluate_sync(study_uid).get("state") == STATE_DOWNLOADED
+    except Exception:
+        pass
     try:
         from PacsClient.utils.db_manager import get_study_by_study_uid
         from PacsClient.utils.config import SOURCE_PATH
