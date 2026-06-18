@@ -291,3 +291,49 @@ Guardrails:
 - **The two triggers are intentionally left in place** (each covers a different
   open-completion path); the coalescing is at the render layer, so neither correctness
   path is removed. Reducing to one trigger is a deeper change and not required.
+
+## 10. Main Page ↔ Patient Viewer unification — verified (2026-06-17)
+
+A bug/architecture check asked whether the patient-viewer sidebar reuses the home
+page's thumbnails or runs a separate/old path (it "seemed" to load slowly, one by one).
+
+**Finding — the pipeline IS unified; there is no separate active legacy path.**
+- Both consumers resolve through the SAME `ThumbnailStore` singleton (memory, keyed
+  `(study_uid, series_number)`) + canonical disk cache + `ThumbnailImageSourceService`.
+  The viewer sidebar's live builder is `_pw_panels.add_thumbnail_to_thumbnail_layout`
+  → `ThumbnailImageSourceService.load_pixmap` (store → disk). The legacy
+  `thumbnail_panel.py` (`ThumbnailPanel`, with its `ThumbnailBatchRunner` drip) is
+  **never instantiated** — do not attribute viewer behavior to it.
+- On open, `_pw_thumbnails._load_server_thumbnails_async` calls
+  `check_and_get_thumbnails` (disk) FIRST; on a **cache hit it renders directly with
+  no server call and no regeneration** (the cache reuse return precedes the
+  `get_study_thumbnails` fetch — pinned by
+  `tests/code/ui_services/test_thumbnail_unified_pipeline.py`). It only fetches on a
+  genuine miss, and never DICOM-re-decodes in the live path.
+
+**Real causes of the *perceived* slowness (not a separate path):**
+1. **Multi-study / non-primary study cache warmth.** The single-click home page warms
+   the cache for the study/studies it displays; the viewer's primary loader fetches
+   only `self.study_uid`, and other studies go through
+   `_schedule_multistudy_thumbnail_prefetch` (per-study fetch on a daemon thread). A
+   secondary study the home page did not pre-warm is a cache MISS on open → fetched
+   fresh → slower/progressive. (Matches "especially second/non-primary study".)
+2. **Cache miss during an active download** defers the (uncached) sidebar load behind
+   the download and polls (150 ms ×8 then 700 ms, §4.4) → thumbnails trickle in.
+3. Render cadence: the home page renders all-at-once (`progressive=False`,
+   repaint-suppressed, §9); the cache-hit sidebar render is a synchronous loop and
+   should also appear together (it is not the legacy drip).
+
+**Structured logging added (2026-06-17)** for empirical validation on the next run —
+`MainPageThumbnailRequested` (`_hp_search.py`), `PatientViewerThumbnailRequested` /
+`ThumbnailCacheHit` / `ThumbnailReusedFromUnifiedPipeline` / `ThumbnailCacheMiss` /
+`ThumbnailFetchedFromServer` (`_pw_thumbnails.py`), and `ThumbnailLoadedFromMemory` /
+`ThumbnailLoadedFromDisk` (DEBUG, `thumbnail_image_source_service.py`). A
+`ThumbnailCacheHit`+`ThumbnailReusedFromUnifiedPipeline` on open (no
+`ThumbnailFetchedFromServer`) confirms reuse.
+
+**Proposed follow-up (NOT yet implemented — needs live validation):** pre-warm ALL of a
+multi-study patient's per-study thumbnail caches on the home page (so the viewer hits
+cache for every study), and/or have the viewer reuse cached studies and fetch only the
+genuinely-missing ones. This closes cause #1 — the dominant multi-study case. The
+unification itself (shared store/service/keys) is already in place.

@@ -1445,6 +1445,11 @@ class _HPSearchMixin:
 
             # Fast path: if local thumbnails exist, always show them immediately.
             # This keeps main-page thumbnails stable even when socket fetch is delayed or fails.
+            if hasattr(self, '_log_open_trace'):
+                try:
+                    self._log_open_trace(study_uid, 'MainPageThumbnailRequested')
+                except Exception:
+                    pass
             local_payload = self._build_cached_thumbnail_payload(study_uid)
             _local_thumbs = len(local_payload.get('thumbnails', []) or [])
             # Bugfix 44113 — when the server now reports MORE series than the local
@@ -1486,8 +1491,14 @@ class _HPSearchMixin:
                 self.display_thumbnails(local_payload.get('thumbnails', []), progressive=False)
                 self._right_panel_render_study_uid = study_uid_str
                 if hasattr(self, '_log_open_trace'):
+                    self._log_open_trace(study_uid, 'ThumbnailCacheHit', thumbnail_count=len(local_payload.get('thumbnails', [])))
                     self._log_open_trace(study_uid, 'right_panel_cache_hit', thumbnail_count=len(local_payload.get('thumbnails', [])))
                 return
+            if hasattr(self, '_log_open_trace'):
+                try:
+                    self._log_open_trace(study_uid, 'ThumbnailCacheMiss', local_thumbs=_local_thumbs, server_series=_server_series)
+                except Exception:
+                    pass
 
             # Prevent rapid retry storms for the same study when server/socket is degraded.
             retry_block_until = getattr(self, '_right_panel_retry_block_until', None)

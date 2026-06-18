@@ -632,6 +632,38 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   (display key == number). No Qt signal-signature change (the 3-arg `series_images_progress` + the
   3-arg `diagnostic_hooks/hooks.py` wrapper stay intact). Flag `AIPACS_PROGRESSIVE_UID_BIND`
   (default on). Guard `tests/code/viewer/test_progressive_uid_bind.py`.
+- **Viewport loading-state lifecycle** (`_vc_switch.py` + `_vc_progressive.py`, NOT mirrored —
+  patient 46970, 2026-06-17): `_arm_spinner_timeout` used to hide the spinner UNCONDITIONALLY after
+  20 s → blanked the viewport while a slow/queued/second-study series was still downloading (re-drag
+  recovered it). Now it is **persistent**: the pure `_spinner_timeout_action(awaiting, waited_ms,
+  hard_fail_ms)` returns `wait`/`error`/`hide`; while the viewport is still `_awaiting_series_number`
+  the loading state STAYS (re-checks, never blanks) and hides only when no longer awaiting
+  (loaded/cleared/replaced). A per-viewer `_loading_timeout_gen` generation counter prevents timer
+  pile-up and gives clean replacement; the opt-in hard cap (`AIPACS_VIEWPORT_LOADING_HARD_FAIL_MS`,
+  default 0=keep-visible) shows `_enter_viewport_load_error` ("Still loading — check the Download
+  Manager") instead of a blank viewport. Auto-load when ready needs no re-drag (relies on the
+  series_uid re-key above). Structured logging via `_log_viewport_lifecycle` (ViewportLoadRequested /
+  RemoteSeriesDownloadAttached / ViewportLoadWaitingForDownload / ViewportLoadingStateCleared /
+  ViewportLoadSucceeded / ViewportLoadFailed / ViewportLoadCancelledByReplacement + viewer id +
+  canonical study/series uid). Flags `AIPACS_VIEWPORT_LOADING_PERSIST` (default on) /
+  `AIPACS_VIEWPORT_LIFECYCLE_LOG`. A true download-FAILURE error (vs the timeout hint) still needs a
+  real DM failure signal (future). Guard `tests/code/viewer/test_viewport_loading_lifecycle.py`.
+- **Disk-readiness resume for unbridged (secondary-study) downloads** (`_vc_progressive.py`,
+  NOT mirrored — patient 46713, Study 2, DOC series 100000, 2026-06-18): the home-download
+  progress bridge (`home_download_service.on_series_progress`) filters by `study_uid`, so a
+  NON-opened study's download progress/completion never reaches `on_series_images_progress` —
+  a dropped secondary-study series would download fully yet spin forever (no progress → no
+  uid-bind → no load). The watchdog now also runs `_maybe_resume_awaiting_from_disk`: while a
+  viewport is awaiting, it resolves the series' OWN per-study folder
+  (`_resolve_canonical_series_identity` → `SOURCE_PATH/<study_uid>/<orig_series>`), and once the
+  files are complete (`_disk_ready_complete`: server expected-count met, else on-disk count
+  stable across two ticks) resumes the load ONCE via the proven `change_series_on_viewer(display_key)`
+  path (= an automated re-drag). Guard `_disk_ready_resume_done` (reset per awaiting episode at
+  the `:716` awaiting-set site). Watchdog gate is now `(_DOWNLOAD_PROGRESS_TEXT or
+  _LOADING_DISK_READY_RESUME)` so the resume works even if progress-text is off. Flag
+  `AIPACS_VIEWPORT_DISK_READY_RESUME` (default on). Deeper follow-up (not done): bridge the
+  secondary study's progress so it binds progressively DURING download, not only on completion.
+  Guard `tests/code/viewer/test_viewport_loading_lifecycle.py`.
 - **Clinical guardrail:** download/priority/perception only. No VTK/MPR geometry, slice
   order, orientation, or render change. No data-loss risk (atomic `.part` + resume). All
   three pieces are flag-gated default-on with the legacy path preserved as a kill switch.

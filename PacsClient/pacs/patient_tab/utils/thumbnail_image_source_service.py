@@ -27,8 +27,20 @@ class ThumbnailImageSourceService:
     def load_pixmap(self, parent_widget, series_number: str, file_path_thumbnail: str) -> QPixmap:
         pixmap = self._load_from_store(parent_widget, str(series_number))
         if pixmap is not None and not pixmap.isNull():
+            # Served from the shared in-memory ThumbnailStore (warmed from the
+            # canonical disk PNG on first access) — the same store the home page
+            # uses, so this is a true unified-pipeline reuse. DEBUG: per-series.
+            try:
+                logger.debug("[THUMB-SRC] ThumbnailLoadedFromMemory series=%s", series_number)
+            except Exception:
+                pass
             return pixmap
         disk = QPixmap(file_path_thumbnail)
+        if not disk.isNull():
+            try:
+                logger.debug("[THUMB-SRC] ThumbnailLoadedFromDisk series=%s path=%s", series_number, file_path_thumbnail)
+            except Exception:
+                pass
         if disk.isNull():
             # Neither the in-memory/disk store nor the explicit file yielded a
             # thumbnail — the caller falls back to a placeholder. Log at DEBUG so

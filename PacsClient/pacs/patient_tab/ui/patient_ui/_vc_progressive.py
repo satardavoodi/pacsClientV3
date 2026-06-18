@@ -106,6 +106,15 @@ _DOWNLOAD_PROGRESS_TEXT = (_os.getenv("AIPACS_DOWNLOAD_PROGRESS_TEXT", "1") or "
 _DL_SLOW_AFTER_S = max(2.0, float(_os.getenv("AIPACS_DL_SLOW_AFTER_S", "6") or "6"))
 _DL_STALLED_AFTER_S = max(_DL_SLOW_AFTER_S + 1.0, float(_os.getenv("AIPACS_DL_STALLED_AFTER_S", "15") or "15"))
 _DL_WATCHDOG_INTERVAL_MS = max(500, int(_os.getenv("AIPACS_DL_WATCHDOG_INTERVAL_MS", "2000") or "2000"))
+# Disk-readiness resume (2026-06-18, patient 46713 DOC/Study-2). A secondary-study
+# series whose download progress is NOT bridged to this viewer (the home-download
+# progress bridge filters by study_uid, so a non-opened study's progress never
+# reaches on_series_images_progress) would await FOREVER even though its files are
+# already complete on disk. While a viewport is awaiting, the watchdog resolves the
+# series' OWN disk folder and, once the files are present + complete, resumes the
+# load via the proven display-key path — no manual re-drag. Kill switch:
+# AIPACS_VIEWPORT_DISK_READY_RESUME=0.
+_LOADING_DISK_READY_RESUME = (_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME", "1") or "1").strip() != "0"
 
 
 def _format_download_progress(downloaded, total) -> str:
@@ -214,6 +223,31 @@ def _resolve_series_identity_text(modality, series_number, description) -> str:
     if d and d.lower() not in ("none", "n/a"):
         parts.append(d)
     return " · ".join(parts)
+
+
+def _disk_ready_complete(count, expected, prev_count) -> bool:
+    """Pure completeness decision for the disk-readiness resume (testable).
+
+    The awaited series' on-disk files are considered ready to load when the server's
+    expected count is known and met (``count >= expected``), or — when the expected
+    count is unknown — when the on-disk count is STABLE across two watchdog ticks
+    (``prev_count == count``, i.e. the download has stopped adding files), so a
+    partial mid-download series is never loaded prematurely. ``count <= 0`` is never
+    complete.
+    """
+    try:
+        c = int(count)
+    except Exception:
+        return False
+    if c <= 0:
+        return False
+    try:
+        exp = int(expected)
+    except Exception:
+        exp = 0
+    if exp > 0:
+        return c >= exp
+    return prev_count is not None and int(prev_count) == c
 
 
 def _connection_state_text(age_since_progress_s, has_progress) -> str:
@@ -1051,10 +1085,11 @@ class _VCProgressiveMixin:
 
     def _begin_download_wait(self, vtk_w, sn) -> None:
         """Seed the 'Connecting…' loading state for a viewport that just started
-        awaiting a not-yet-resident series, and arm the connection-state watchdog so
-        a stalled link is reported even before the first progress signal arrives.
-        Best-effort; never raises."""
-        if not _DOWNLOAD_PROGRESS_TEXT:
+        awaiting a not-yet-resident series, and arm the watchdog (connection-state
+        text + disk-readiness resume) so a stalled link is reported and a completed
+        series is auto-loaded even before/without a progress signal. Best-effort;
+        never raises."""
+        if not (_DOWNLOAD_PROGRESS_TEXT or _LOADING_DISK_READY_RESUME):
             return
         try:
             waits = getattr(self, "_dl_await_since", None)
@@ -1076,9 +1111,11 @@ class _VCProgressiveMixin:
             pass
 
     def _ensure_dl_watchdog(self) -> None:
-        """Lazily create + start the repeating connection-state watchdog timer
-        (no-op when already running or the feature is off)."""
-        if not _DOWNLOAD_PROGRESS_TEXT:
+        """Lazily create + start the repeating watchdog timer (connection-state text
+        AND disk-readiness resume). Runs if EITHER feature is on, so the disk-ready
+        resume (the anti-forever-spin guarantee) works even when progress-text is
+        disabled."""
+        if not (_DOWNLOAD_PROGRESS_TEXT or _LOADING_DISK_READY_RESUME):
             return
         try:
             timer = getattr(self, "_dl_watchdog_timer", None)
@@ -1111,6 +1148,16 @@ class _VCProgressiveMixin:
                 if not sn:
                     continue  # progressive viewers are driven by progress signals
                 any_awaiting = True
+                # Disk-readiness resume: if the awaited series' files are already
+                # complete on disk (e.g. a secondary-study series whose download
+                # progress was never bridged to this viewer), resume the load now —
+                # the viewport must not spin forever once the files are present.
+                if _LOADING_DISK_READY_RESUME:
+                    try:
+                        if self._maybe_resume_awaiting_from_disk(vtk_w, sn):
+                            continue
+                    except Exception:
+                        pass
                 st = stats.get(sn)
                 has_progress = bool(st and st.get("last_count"))
                 last_ts = (st.get("last_ts") if st else None) or waits.get(str(sn)) or now
@@ -1132,6 +1179,71 @@ class _VCProgressiveMixin:
                         pass
         except Exception:
             pass
+
+    def _maybe_resume_awaiting_from_disk(self, vtk_w, display_key) -> bool:
+        """If the awaited series' files are already complete on disk, resume the
+        load via the proven display-key path and return True.
+
+        Robust fallback for the case where the download completed but its progress
+        was never delivered to this viewer (e.g. a secondary-study series — the
+        home-download progress bridge filters by study_uid, so a non-opened study's
+        completion never reaches on_series_images_progress, leaving the viewport
+        spinning forever — patient 46713, Study 2, DOC series 100000). Resolves the
+        series' OWN per-study disk folder (canonical identity → SOURCE_PATH/
+        <study_uid>/<orig_series>), checks completeness, and resumes ONCE per
+        awaiting episode via change_series_on_viewer(display_key) — exactly what a
+        manual re-drag does. Never raises.
+        """
+        try:
+            if getattr(vtk_w, "_disk_ready_resume_done", False):
+                return False
+            study_uid, orig_series, _series_uid = self._resolve_canonical_series_identity(display_key)
+            if not study_uid or orig_series in (None, ""):
+                return False
+            import os as _os2
+            from PacsClient.utils.config import SOURCE_PATH as _SRC
+            folder = _os2.path.join(str(_SRC), str(study_uid), str(orig_series))
+            if not _os2.path.isdir(folder):
+                return False
+            count = 0
+            with _os2.scandir(folder) as it:
+                for e in it:
+                    if e.is_file(follow_symlinks=False) and (e.name.endswith(".dcm") or e.name.endswith(".dicom")):
+                        count += 1
+            if count <= 0:
+                return False
+            # Completeness: prefer the server's expected count; otherwise require the
+            # on-disk count to be STABLE across two ticks (download finished, no new
+            # files), so a partial mid-download series is not loaded prematurely.
+            expected = 0
+            try:
+                _res = self._resolve_series_expected_count(display_key)
+                expected = int(getattr(_res, "expected_count", 0) or 0)
+            except Exception:
+                expected = 0
+            counts = getattr(self, "_disk_ready_counts", None)
+            if counts is None:
+                counts = {}
+                self._disk_ready_counts = counts
+            prev = counts.get(str(display_key))
+            counts[str(display_key)] = count
+            if not _disk_ready_complete(count, expected, prev):
+                return False
+            # Files are ready — resume the load ONCE via the proven path.
+            vtk_w._disk_ready_resume_done = True
+            try:
+                self._log_viewport_lifecycle(
+                    "ViewportLoadResumedFromDisk", vtk_w, display_key, files=count, expected=expected,
+                )
+            except Exception:
+                pass
+            try:
+                self.change_series_on_viewer(display_key)
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
 
     def on_series_images_progress(self, series_number: str, downloaded: int, total: int):
         """Qt signal slot: outer guard so exceptions never escape into Qt dispatch.
@@ -3579,6 +3691,12 @@ class _VCProgressiveMixin:
                 slider=slider,
                 progressive_total=total,
             )
+
+            # The awaited drop is now displayed in its viewport — log success.
+            try:
+                self._log_viewport_lifecycle("ViewportLoadSucceeded", vtk_widget, series_number)
+            except Exception:
+                pass
 
             # Enter progressive mode on this viewer
             avail = vtk_widget.get_count_of_slices()

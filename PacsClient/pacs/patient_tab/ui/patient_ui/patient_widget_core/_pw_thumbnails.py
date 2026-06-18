@@ -215,9 +215,15 @@ class _PWThumbnailsMixin:
             if not self.study_uid:
                 return
 
+            self._log_open_thumbnail_trace('PatientViewerThumbnailRequested', study_uid=self.study_uid)
             thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid)
             if thumbnails:
                 self._reset_thumbnail_retry_state()
+                # Cache hit: the unified disk cache (THUMBNAIL_PATH/<study_uid>/...)
+                # — warmed by the home page / download write-through — is reused
+                # directly; no server fetch, no regeneration.
+                self._log_open_thumbnail_trace('ThumbnailCacheHit', thumbnail_count=len(thumbnails))
+                self._log_open_thumbnail_trace('ThumbnailReusedFromUnifiedPipeline', thumbnail_count=len(thumbnails))
                 self._log_open_thumbnail_trace('patient_tab_thumb_cache_hit', thumbnail_count=len(thumbnails))
                 # Store result then dispatch to main thread via QMetaObject.
                 # QTimer.singleShot from a non-Qt thread has no Qt event loop
@@ -226,6 +232,11 @@ class _PWThumbnailsMixin:
                 self._pending_thumbnails_files = thumbnails
                 QMetaObject.invokeMethod(self, "_render_thumbnails_from_files_slot", Qt.QueuedConnection)
                 return
+
+            # Cache miss for this study — nothing on disk yet (e.g. a multi-study
+            # secondary study the home page did not pre-warm). Will defer behind an
+            # active download or fetch from the server.
+            self._log_open_thumbnail_trace('ThumbnailCacheMiss', study_uid=self.study_uid)
 
             try:
                 from modules.viewer.fast.ui_throttle import should_defer_noncritical_open_network
@@ -322,6 +333,7 @@ class _PWThumbnailsMixin:
 
             if series_entries:
                 self._reset_thumbnail_retry_state()
+                self._log_open_thumbnail_trace('ThumbnailFetchedFromServer', thumbnail_count=len(series_entries))
                 self._log_open_thumbnail_trace('patient_tab_thumb_socket_done', thumbnail_count=len(series_entries))
                 self._pending_thumbnails_entries = series_entries
                 QMetaObject.invokeMethod(self, "_render_thumbnails_from_entries_slot", Qt.QueuedConnection)

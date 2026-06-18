@@ -38,6 +38,44 @@ def print(*args, **_kw):  # noqa: A001
     _print_logger.debug(' '.join(str(a) for a in args))
 
 
+# Viewport loading-state lifecycle (2026-06-17, patient 46970 — "loading indicator
+# disappears before the remote series finishes loading"). The fail-safe spinner
+# timeout used to hide the loading state UNCONDITIONALLY after 20 s, blanking the
+# viewport while a slow / queued / second-study series was still downloading. The
+# loading state must instead persist while the viewport is still awaiting its
+# dropped series, and end only on success, an explicit error, or replacement.
+_LOADING_STATE_PERSIST = (os.getenv("AIPACS_VIEWPORT_LOADING_PERSIST", "1") or "1").strip() != "0"
+# Re-check interval for the persistent timeout (ms). Each tick re-evaluates whether
+# the viewport is still awaiting; it never blanks a viewport that is still waiting.
+_LOADING_RECHECK_MS = max(1000, int(os.getenv("AIPACS_VIEWPORT_LOADING_RECHECK_MS", "20000") or "20000"))
+# Optional hard cap (ms): after this long still awaiting with no success, show an
+# explicit "still loading / check Download Manager" state instead of spinning
+# forever. 0 = disabled (keep the loading state visible indefinitely — the safe
+# default, since the viewer has no reliable download-failure signal yet).
+_LOADING_HARD_FAIL_MS = max(0, int(os.getenv("AIPACS_VIEWPORT_LOADING_HARD_FAIL_MS", "0") or "0"))
+# Structured viewport load lifecycle logging.
+_LOADING_LIFECYCLE_LOG = (os.getenv("AIPACS_VIEWPORT_LIFECYCLE_LOG", "1") or "1").strip() != "0"
+
+
+def _spinner_timeout_action(awaiting, waited_ms, hard_fail_ms) -> str:
+    """Pure decision for a persistent spinner-timeout tick (testable).
+
+    Returns ``"wait"`` (still awaiting the dropped series — keep the loading state
+    visible and re-check later), ``"error"`` (awaited past the opt-in hard cap with
+    no success — surface an explicit error state, never a blank viewport), or
+    ``"hide"`` (no longer awaiting: loaded, cleared, or replaced — safe to hide).
+    """
+    if awaiting:
+        try:
+            cap = int(hard_fail_ms)
+        except Exception:
+            cap = 0
+        if cap > 0 and int(waited_ms) >= cap:
+            return "error"
+        return "wait"
+    return "hide"
+
+
 class _VCSwitchMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
 
@@ -170,7 +208,9 @@ class _VCSwitchMixin:
 
             target_widget_for_spinner = vtk_widget
 
-            # Fail-safe: never let spinner run forever if switching stalls.
+            self._log_viewport_lifecycle("ViewportLoadRequested", target_widget_for_spinner, series_number)
+            # Fail-safe: never let spinner run forever if switching stalls — but
+            # (persistent mode) never blank a viewport still awaiting its series.
             self._arm_spinner_timeout(target_widget_for_spinner, timeout_ms=20000)
             
             # Initialize parent structures once
@@ -224,9 +264,17 @@ class _VCSwitchMixin:
                     )
 
             # Clear any previous awaiting marker from a prior drag-drop that
-            # targeted this viewer.  A new series switch supersedes the old one.
+            # targeted this viewer.  A new series switch supersedes the old one —
+            # the previous pending request is cancelled so it can never later
+            # overwrite this viewport (only the active request may update it).
             try:
+                _prev_awaiting = getattr(vtk_widget, "_awaiting_series_number", None)
                 vtk_widget._awaiting_series_number = None
+                if _prev_awaiting and str(_prev_awaiting) != str(series_number):
+                    self._log_viewport_lifecycle(
+                        "ViewportLoadCancelledByReplacement", vtk_widget, _prev_awaiting,
+                        replaced_by=series_number,
+                    )
             except Exception:
                 pass
 
@@ -714,6 +762,12 @@ class _VCSwitchMixin:
                         # it once the first batch arrives from the DM.
                         try:
                             vtk_widget._awaiting_series_number = str(series_number)
+                            # Fresh awaiting episode → allow exactly one disk-ready
+                            # resume for this series (reset the once-per-episode guard).
+                            vtk_widget._disk_ready_resume_done = False
+                            self._log_viewport_lifecycle(
+                                "RemoteSeriesDownloadAttached", vtk_widget, series_number,
+                            )
                             if hasattr(vtk_widget, 'viewport_spinner'):
                                 vtk_widget.viewport_spinner.show_loading(
                                     f"Downloading series {series_number}..."
@@ -1410,6 +1464,10 @@ class _VCSwitchMixin:
             spinner = getattr(vtk_widget, 'viewport_spinner', None)
             if spinner:
                 spinner.hide_loading()
+                self._log_viewport_lifecycle(
+                    "ViewportLoadingStateCleared", vtk_widget,
+                    getattr(vtk_widget, "_awaiting_series_number", None),
+                )
         except Exception:
             pass
 
@@ -1438,11 +1496,108 @@ class _VCSwitchMixin:
         return int(self._viewer_request_token.get(viewer_id, 0)) == int(expected_token)
 
     def _arm_spinner_timeout(self, vtk_widget, timeout_ms=20000):
-        """Auto-hide spinner after timeout to avoid indefinite UI busy state."""
+        """Fail-safe spinner timeout that NEVER blanks a viewport still awaiting its
+        dropped series.
+
+        Legacy behavior (``AIPACS_VIEWPORT_LOADING_PERSIST=0``) hid the spinner
+        unconditionally after ``timeout_ms`` — which blanked the viewport while a
+        slow / queued / second-study series was still downloading (patient 46970).
+        The persistent path instead re-checks: while the viewport is still awaiting
+        its series the loading state stays visible (the connection-state watchdog
+        keeps the message fresh); it hides only once the viewport is no longer
+        awaiting (loaded / cleared / replaced); and an opt-in hard cap surfaces an
+        explicit error state rather than a blank viewport. A per-viewer generation
+        counter ensures only the latest arm's chain runs (no timer pile-up, clean
+        replacement).
+        """
         try:
             if vtk_widget is None:
                 return
-            QTimer.singleShot(timeout_ms, lambda: self._hide_spinner_for_widget(vtk_widget))
+            if not _LOADING_STATE_PERSIST:
+                QTimer.singleShot(timeout_ms, lambda: self._hide_spinner_for_widget(vtk_widget))
+                return
+            recheck_ms = max(1000, int(timeout_ms or _LOADING_RECHECK_MS))
+            try:
+                gen = int(getattr(vtk_widget, "_loading_timeout_gen", 0)) + 1
+                vtk_widget._loading_timeout_gen = gen
+            except Exception:
+                gen = 0
+
+            def _check(waited_ms):
+                try:
+                    # Superseded by a newer arm (a new switch/drop on this viewport).
+                    if int(getattr(vtk_widget, "_loading_timeout_gen", 0)) != gen:
+                        return
+                    awaiting = getattr(vtk_widget, "_awaiting_series_number", None)
+                    action = _spinner_timeout_action(awaiting, waited_ms, _LOADING_HARD_FAIL_MS)
+                    if action == "wait":
+                        self._log_viewport_lifecycle(
+                            "ViewportLoadWaitingForDownload", vtk_widget, awaiting,
+                            waited_ms=waited_ms,
+                        )
+                        QTimer.singleShot(recheck_ms, lambda: _check(waited_ms + recheck_ms))
+                        return
+                    if action == "error":
+                        self._enter_viewport_load_error(vtk_widget, awaiting, reason="timeout_no_progress")
+                        return
+                    self._hide_spinner_for_widget(vtk_widget)
+                except Exception:
+                    pass
+
+            QTimer.singleShot(recheck_ms, lambda: _check(recheck_ms))
+        except Exception:
+            pass
+
+    def _log_viewport_lifecycle(self, event, vtk_widget=None, series_number=None, **extra):
+        """Structured viewport load-lifecycle log (best-effort; never raises).
+
+        Emits the requested events (ViewportLoadRequested / ...StateStarted /
+        RemoteSeriesDownloadAttached / ...WaitingForDownload / ...StateCleared /
+        ...Succeeded / ...Failed / ...CancelledByReplacement) with the viewport id
+        and the active StudyInstanceUID / SeriesInstanceUID (canonical-resolved so
+        multi-study display keys log the real study/series).
+        """
+        if not _LOADING_LIFECYCLE_LOG:
+            return
+        try:
+            viewer_id = self._get_viewer_id(vtk_widget)
+            study_uid = str(getattr(self.parent_widget, "study_uid", "") or "")
+            series_uid = ""
+            if series_number is not None:
+                try:
+                    _rs, _rn, _ru = self._resolve_canonical_series_identity(series_number)
+                    if _rs:
+                        study_uid = str(_rs)
+                    if _ru:
+                        series_uid = str(_ru)
+                except Exception:
+                    pass
+            extra_str = "".join(f" {k}={v}" for k, v in extra.items())
+            self.logger.info(
+                "[VIEWPORT_LIFECYCLE] event=%s viewer=%s series=%s study_uid=%s series_uid=%s%s",
+                event, viewer_id, series_number, study_uid[:48], series_uid[:48], extra_str,
+            )
+        except Exception:
+            pass
+
+    def _enter_viewport_load_error(self, vtk_widget, series_number=None, reason="error"):
+        """Show an explicit, non-blank error/waiting state in the viewport instead of
+        silently clearing the spinner. Keeps the awaiting marker so a late download
+        can still bind. Best-effort; never raises."""
+        try:
+            spinner = getattr(vtk_widget, "viewport_spinner", None)
+            if spinner is not None:
+                msg = "Still loading — check the Download Manager"
+                try:
+                    if hasattr(spinner, "set_loading_details"):
+                        spinner.set_loading_details(status=msg, detail=str(reason), fraction=None)
+                    elif hasattr(spinner, "set_status"):
+                        spinner.set_status(msg)
+                except Exception:
+                    pass
+            self._log_viewport_lifecycle(
+                "ViewportLoadFailed", vtk_widget, series_number, reason=reason,
+            )
         except Exception:
             pass
 
