@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.3.3",
+    "version": "3.3.4",
     "build_date": "2026-06-16",
     "release_date": "2026-06-16",
     "status": "Stable",          # Stable | Beta | Internal Testing
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.3.3",
+        "AI-PACS Version 3.3.4",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۳.۳",
+        "AI-PACS نسخهٔ ۳.۳.۴",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "
