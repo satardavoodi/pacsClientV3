@@ -1215,7 +1215,10 @@ class SocketDicomClient:
             _should_force_single_instance_batches(series_info),
         )
         if _prime_restore_size is not None:  # total_batches is computed from batch_size below
-            logger.info(
+            # WARNING level (not info) so this is captured in download_diagnostics.log:
+            # socket_client INFO is filtered there, which previously made the prime
+            # impossible to observe at runtime (2026-06-18 review). Behaviour unchanged.
+            logger.warning(
                 f"⚡ First-image prime: fetching slice 1 of series {series_number} as a "
                 f"single-image batch, then resuming batch size {_prime_restore_size}"
             )

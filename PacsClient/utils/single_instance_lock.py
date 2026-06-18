@@ -50,6 +50,86 @@ import logging
 from pathlib import Path
 from typing import Optional, Callable
 
+
+# Fast Windows process enumeration for the single-instance sweep (2026-06-18).
+# On Windows, psutil's Process.name() is os.path.basename(self.exe()), so
+# psutil.process_iter(["pid", "name"]) pays an OpenProcess + PEB read
+# (cext.proc_exe) for EVERY process on the machine. Stack-confirmed ~9.5 s at
+# startup for ~300 processes on a busy workstation — the 2026-06-08 "cheap name
+# pre-filter" assumed name() was cheap (true on Linux, NOT on Windows). A
+# Toolhelp32 snapshot returns the image basename for all processes in one cheap
+# syscall (no per-process handle). Matching/kill logic is unchanged; this only
+# makes the (pid, name) pre-filter cheap. Kill switch: AIPACS_FAST_PROC_SCAN=0
+# restores the psutil-only enumeration.
+_FAST_PROC_SCAN = (os.getenv("AIPACS_FAST_PROC_SCAN", "1") or "1").strip() != "0"
+
+
+def _toolhelp_pid_names():
+    """Yield (pid, image_basename) for every process via a Windows Toolhelp32
+    snapshot — one cheap syscall, no per-process OpenProcess. Windows only;
+    raises on any failure so the caller falls back to psutil."""
+    import ctypes
+    from ctypes import wintypes
+
+    TH32CS_SNAPPROCESS = 0x00000002
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [
+            ("dwSize", wintypes.DWORD),
+            ("cntUsage", wintypes.DWORD),
+            ("th32ProcessID", wintypes.DWORD),
+            ("th32DefaultHeapID", ctypes.POINTER(ctypes.c_ulong)),
+            ("th32ModuleID", wintypes.DWORD),
+            ("cntThreads", wintypes.DWORD),
+            ("th32ParentProcessID", wintypes.DWORD),
+            ("pcPriClassBase", ctypes.c_long),
+            ("dwFlags", wintypes.DWORD),
+            ("szExeFile", wintypes.WCHAR * 260),
+        ]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    k32.Process32FirstW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    k32.Process32NextW.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+
+    invalid = wintypes.HANDLE(-1).value
+    snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0)
+    if not snap or snap == invalid:
+        raise OSError("CreateToolhelp32Snapshot failed")
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
+        ok = k32.Process32FirstW(snap, ctypes.byref(entry))
+        while ok:
+            yield int(entry.th32ProcessID), str(entry.szExeFile)
+            ok = k32.Process32NextW(snap, ctypes.byref(entry))
+    finally:
+        k32.CloseHandle(snap)
+
+
+def _iter_pid_name_cheap():
+    """Yield (pid, image_basename) for every process as cheaply as the platform
+    allows. Windows: Toolhelp snapshot (avoids psutil name()->exe() per process);
+    otherwise / on any failure: psutil.process_iter(["pid", "name"])."""
+    if _FAST_PROC_SCAN and os.name == "nt":
+        try:
+            for pid, name in _toolhelp_pid_names():
+                yield pid, name
+            return
+        except Exception:
+            pass  # fall through to the psutil enumeration
+    try:
+        import psutil
+    except Exception:
+        return
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            yield proc.pid, (proc.info.get("name") or "")
+        except Exception:
+            continue
+
 logger = logging.getLogger(__name__)
 
 # Message a second launch sends to the running instance to ask it to come forward.
@@ -319,14 +399,20 @@ class SingleInstanceLock:
         # process whose squashed name contains "aipacs" (frozen exe) or "python"
         # (source/worker run), so use the name as a cheap pre-filter and fetch the
         # expensive fields only for that handful.  Same matches, ~25 s -> <1 s.
-        for proc in psutil.process_iter(["pid", "name"]):
+        # Cheap (pid, name) enumeration first (Toolhelp on Windows; see
+        # _iter_pid_name_cheap), name pre-filter, then the expensive exe/cmdline
+        # only for the handful of aipacs/python candidates.
+        for pid, name in _iter_pid_name_cheap():
             try:
-                if proc.pid in protected:
+                if pid in protected:
                     continue
-                name = proc.info.get("name") or ""
-                nm = name.lower().replace(" ", "")
+                nm = (name or "").lower().replace(" ", "")
                 if ("aipacs" not in nm) and ("python" not in nm):
                     continue  # cannot match _proc_is_aipacs — skip the slow fields
+                try:
+                    proc = psutil.Process(pid)
+                except Exception:
+                    continue
                 try:
                     exe = proc.exe() or ""
                 except Exception:
@@ -343,7 +429,7 @@ class SingleInstanceLock:
                     except Exception:
                         cwd = ""
                 if self._proc_is_aipacs(name, exe, cmdline, cwd):
-                    candidates[proc.pid] = proc
+                    candidates[pid] = proc
             except Exception:
                 continue
 

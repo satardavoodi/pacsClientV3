@@ -49,6 +49,15 @@ from modules.EchoMind.secretary.stt.router import SttRouter
 from modules.EchoMind.settings_store import get_secretary_stt_route, load_settings, get_echomind_api_key
 
 
+# Lazy orb-frame build (2026-06-18 perceived-latency work). The orb pre-renders
+# 72 active + 48 error animation frames; doing that synchronously on the first
+# home-page paint blocked the GUI thread ~3.5 s every launch. With this on, only
+# the inactive + first frame are built up front and the rest stream in on an idle
+# timer (the orb is inactive at startup, so the active/error frames aren't needed
+# yet). Kill switch: AIPACS_ORB_LAZY_FRAMES=0 restores the synchronous build.
+_ORB_LAZY_FRAMES = (os.getenv("AIPACS_ORB_LAZY_FRAMES", "1") or "1").strip() != "0"
+
+
 class SecretaryOrbButton(QToolButton):
     activeChanged = Signal(bool)
 
@@ -85,6 +94,15 @@ class SecretaryOrbButton(QToolButton):
         self._error_timer = QTimer(self)
         self._error_timer.setInterval(90)
         self._error_timer.timeout.connect(self._advance_error_frame)
+
+        # Lazy frame-build state (see _ORB_LAZY_FRAMES). The chunked builder fills
+        # the remaining active/error frames a few per tick after first paint.
+        self._lazy_build_side = -1
+        self._lazy_active_done = 0
+        self._lazy_error_done = 0
+        self._lazy_frame_timer = QTimer(self)
+        self._lazy_frame_timer.setInterval(15)
+        self._lazy_frame_timer.timeout.connect(self._build_more_frames)
 
         self.toggled.connect(self._on_toggled)
 
@@ -292,6 +310,9 @@ class SecretaryOrbButton(QToolButton):
         self._texture_cache[side] = scaled
         return scaled
 
+    _ACTIVE_FRAME_COUNT = 72
+    _ERROR_FRAME_COUNT = 48  # ≈ 4.3 s slow red pulse
+
     def _rebuild_frames(self):
         side = max(160, min(self.width(), self.height()))
         if side == self._cached_side:
@@ -299,31 +320,83 @@ class SecretaryOrbButton(QToolButton):
 
         self._cached_side = side
         self._inactive_frame = self._render_frame(side, active=False, phase=0.0, error=False)
-
-        frame_count = 72
-        self._active_frames = [
-            self._render_frame(
-                side,
-                active=True,
-                phase=(2.0 * math.pi * idx) / float(frame_count),
-                error=False,
-            )
-            for idx in range(frame_count)
-        ]
         self._frame_index = 0
-
-        # Error state: 48 frames ≈ 4.3 s slow red pulse
-        error_frame_count = 48
-        self._error_frames = [
-            self._render_frame(
-                side,
-                active=False,
-                phase=(2.0 * math.pi * idx) / float(error_frame_count),
-                error=True,
-            )
-            for idx in range(error_frame_count)
-        ]
         self._error_frame_index = 0
+        frame_count = self._ACTIVE_FRAME_COUNT
+        error_frame_count = self._ERROR_FRAME_COUNT
+
+        if not _ORB_LAZY_FRAMES:
+            # Legacy: build every frame synchronously (≈3.5 s on first paint).
+            self._active_frames = [
+                self._render_frame(
+                    side, active=True,
+                    phase=(2.0 * math.pi * idx) / float(frame_count), error=False,
+                )
+                for idx in range(frame_count)
+            ]
+            self._error_frames = [
+                self._render_frame(
+                    side, active=False,
+                    phase=(2.0 * math.pi * idx) / float(error_frame_count), error=True,
+                )
+                for idx in range(error_frame_count)
+            ]
+            return
+
+        # Lazy: build the inactive (above) + first active + first error frame now so
+        # the animation can start immediately, then stream the rest in chunks (see
+        # _build_more_frames). paintEvent / _advance_frame use len(_active_frames),
+        # so a growing list animates smoothly (briefly fewer frames, then full).
+        self._active_frames = [self._render_frame(side, active=True, phase=0.0, error=False)]
+        self._error_frames = [self._render_frame(side, active=False, phase=0.0, error=True)]
+        self._lazy_build_side = side
+        self._lazy_active_done = 1
+        self._lazy_error_done = 1
+        self._lazy_frame_timer.start()
+
+    def _build_more_frames(self):
+        """Idle-time chunked builder for the remaining active/error frames.
+
+        Runs only under _ORB_LAZY_FRAMES. QPixmap/QPainter are main-thread only, so
+        this builds a few frames per tick on the GUI thread — no single tick blocks.
+        Stops when both sets are complete or the widget size changed (a new
+        _rebuild_frames will restart it for the new size).
+        """
+        side = self._lazy_build_side
+        if side != self._cached_side:
+            self._lazy_frame_timer.stop()
+            return
+        frame_count = self._ACTIVE_FRAME_COUNT
+        error_frame_count = self._ERROR_FRAME_COUNT
+        chunk = 8
+        built = 0
+        try:
+            while self._lazy_active_done < frame_count and built < chunk:
+                idx = self._lazy_active_done
+                self._active_frames.append(
+                    self._render_frame(
+                        side, active=True,
+                        phase=(2.0 * math.pi * idx) / float(frame_count), error=False,
+                    )
+                )
+                self._lazy_active_done += 1
+                built += 1
+            while self._lazy_error_done < error_frame_count and built < chunk:
+                idx = self._lazy_error_done
+                self._error_frames.append(
+                    self._render_frame(
+                        side, active=False,
+                        phase=(2.0 * math.pi * idx) / float(error_frame_count), error=True,
+                    )
+                )
+                self._lazy_error_done += 1
+                built += 1
+        except Exception:
+            self._lazy_frame_timer.stop()
+            return
+        if (self._lazy_active_done >= frame_count
+                and self._lazy_error_done >= error_frame_count):
+            self._lazy_frame_timer.stop()
 
     def _secretary_icon(self, size, active, error=False):
         """Return a QPixmap for the secretary icon.  Cached by (size, color) to prevent

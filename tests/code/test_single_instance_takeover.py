@@ -125,20 +125,33 @@ def test_graceful_disconnect_still_used_never_abort():
 
 # ── startup-sweep perf: cheap name pre-filter (2026-06-08) ────────────────
 def test_force_close_enumerates_cheap_name_only():
-    """The orphan sweep must enumerate with only the cheap pid+name attrs and
-    pre-filter by name before fetching the slow exe/cmdline.  Root cause of the
-    ~25 s cold-start (every launch): psutil fetched exe + ppid for EVERY process
-    on the machine (slow OpenProcess / O(n^2) ppid-map)."""
+    """The orphan sweep must enumerate (pid, name) cheaply and pre-filter by name
+    before fetching the slow exe/cmdline. Root cause of the startup freeze: on
+    Windows psutil name()==basename(exe()), so process_iter(["pid","name"]) pays
+    proc_exe()/OpenProcess for EVERY process (~9.5 s for ~300 procs, stack-
+    confirmed 2026-06-18) — so the sweep now enumerates via _iter_pid_name_cheap
+    (Toolhelp snapshot on Windows) and fetches exe/cmdline only for candidates."""
     i = _SRC.index("def _force_close_other_instances")
-    block = _SRC[i:i + 3200]
-    # cheap enumeration only — no eager exe/cmdline/ppid for every process
-    assert 'process_iter(["pid", "name"])' in block
+    block = _SRC[i:i + 3600]
+    # cheap enumeration via the helper — no eager exe/cmdline/ppid for every process
+    assert "_iter_pid_name_cheap()" in block
     assert '"exe", "cmdline"' not in block
     assert '"ppid", "name"' not in block
     # the name pre-filter must precede the expensive field fetch
     i_filter = block.index('("aipacs" not in nm) and ("python" not in nm)')
     i_exe = block.index("proc.exe()")
     assert i_filter < i_exe
+
+
+def test_cheap_enumeration_has_windows_fast_path_and_psutil_fallback():
+    """Windows-cheap (pid, name): Toolhelp snapshot fast path + psutil fallback,
+    flag-gated (AIPACS_FAST_PROC_SCAN) so it can be reverted instantly."""
+    assert "def _iter_pid_name_cheap" in _SRC
+    assert "def _toolhelp_pid_names" in _SRC
+    assert "CreateToolhelp32Snapshot" in _SRC
+    # psutil enumeration retained as the cross-platform / failure fallback
+    assert 'process_iter(["pid", "name"])' in _SRC
+    assert "AIPACS_FAST_PROC_SCAN" in _SRC
 
 
 def test_force_close_prefilter_is_superset_of_matcher():
