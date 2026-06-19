@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QPushButton, QMessageBox, QScrollArea, QSpinBox,
-    QAbstractItemView, QFrame, QSizePolicy,
+    QAbstractItemView, QFrame, QSizePolicy, QCheckBox,
 )
 
 from pynetdicom import AE
@@ -311,6 +311,23 @@ class ServerSettingsWidget(QWidget):
         form.addWidget(self.port_edit, 1, 1)
         form.addWidget(lbl_ae, 1, 2)
         form.addWidget(self.ae_title_edit, 1, 3)
+
+        # Per-server "Poor Connectivity" mode (servers.json `poor_connectivity`).
+        # When enabled for THIS server, downloads from it fetch one image per batch
+        # and retry at the image level (keeping images already on disk) instead of
+        # failing/re-fetching a whole multi-image batch — for slow/unstable links.
+        self.poor_conn_check = QCheckBox(
+            "Poor connectivity / unstable internet (download one image at a time)"
+        )
+        self.poor_conn_check.setObjectName("PoorConnCheck")
+        self.poor_conn_check.setToolTip(
+            "Enable for a server on a slow or unreliable connection.\n"
+            "Downloads from this server use single-image batches and retry each\n"
+            "image individually, so a dropped connection keeps the images already\n"
+            "received and resumes from the next missing one. Leave off for servers\n"
+            "on a fast, stable link (normal adaptive batching is faster there)."
+        )
+        form.addWidget(self.poor_conn_check, 2, 1, 1, 3)
 
         form.setColumnStretch(1, 1)
         form.setColumnStretch(3, 1)
@@ -712,7 +729,11 @@ class ServerSettingsWidget(QWidget):
             'name': name,
             'host': host,
             'port': port,
-            'ae_title': ae_title
+            'ae_title': ae_title,
+            # Per-server "Poor Connectivity" download mode (single-image batches).
+            # Saved with the edited record; absent/false on untouched records means
+            # normal adaptive batching (the resolver treats absent == False).
+            'poor_connectivity': self.poor_conn_check.isChecked(),
         }
 
         selected_items = self.server_list.selectedItems()
@@ -811,6 +832,8 @@ class ServerSettingsWidget(QWidget):
         self.host_edit.clear()
         self.port_edit.clear()
         self.ae_title_edit.clear()
+        if hasattr(self, "poor_conn_check"):
+            self.poor_conn_check.setChecked(False)
         self.server_list.clearSelection()
         self.delete_btn.setEnabled(False)
         UpdaterDataFromServerToHome().update()
@@ -906,6 +929,15 @@ class ServerSettingsWidget(QWidget):
             self.host_edit.setText(self.server_list.item(row, 1).text())
             self.port_edit.setText(self.server_list.item(row, 2).text())
             self.ae_title_edit.setText(self.server_list.item(row, 3).text())
+            # The table doesn't carry the poor-connectivity flag (config-only),
+            # so read it from the backing servers.json record by row index
+            # (load_servers fills rows in get_all_servers() order).
+            try:
+                _servers = get_all_servers()
+                _rec = _servers[row] if 0 <= row < len(_servers) else {}
+            except Exception:
+                _rec = {}
+            self.poor_conn_check.setChecked(bool(_rec.get('poor_connectivity', False)))
             self.delete_btn.setEnabled(True)
         else:
             self.delete_btn.setEnabled(False)

@@ -204,7 +204,57 @@ class SocketConfig:
     def get_keep_alive_interval(self) -> int:
         """Get keep-alive interval in seconds"""
         return self.get("keep_alive_interval", 30)
-    
+
+    def is_poor_connectivity_enabled(self, host: Optional[str] = None) -> bool:
+        """Per-server "Poor Connectivity" / unstable-internet download mode.
+
+        When enabled for the active download server, the download pipeline fetches
+        ONE image per batch and disables adaptive batch growth
+        (see ``SocketDicomClient.download_series``). On a flaky link this makes the
+        downloader retry at the single-image level and keep every image already on
+        disk, instead of failing/re-fetching a whole multi-image batch.
+
+        This is a *server-specific* setting persisted in ``config/servers.json``
+        (key ``"poor_connectivity": true``). It is resolved against the host the
+        download subprocess actually connects to — ``socket_host`` from
+        ``socket_config.json`` — which is the same host the server's DICOM record
+        uses, so the flag follows whichever server is active.
+
+        Resolution order (first decisive wins):
+          1. Env ``AIPACS_POOR_CONNECTIVITY``: ``1``/``true`` forces it ON (manual
+             override for a bad link right now), ``0``/``false`` forces it OFF
+             (master kill switch / legacy adaptive batching).
+          2. The ``poor_connectivity`` flag on the ``servers.json`` record whose
+             ``host`` matches the active socket host.
+          3. Default: ``False`` (normal adaptive batching).
+
+        Any unexpected error resolves to ``False`` so a config/import problem can
+        never break downloading.
+        """
+        env = os.environ.get("AIPACS_POOR_CONNECTIVITY")
+        if env is not None:
+            return str(env).strip().lower() in ("1", "true", "yes", "on")
+        try:
+            active_host = str(
+                host if host is not None else (self.get_socket_host() or "")
+            ).strip()
+            if not active_host:
+                return False
+            # Lazy import: avoids an import-time cycle and keeps this resolvable
+            # from the download subprocess (which already imports modules.network).
+            from PacsClient.utils.utils import get_all_servers
+            for rec in (get_all_servers() or []):
+                try:
+                    if (str(rec.get("host", "")).strip() == active_host
+                            and bool(rec.get("poor_connectivity", False))):
+                        return True
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug(f"poor-connectivity resolve skipped: {e}")
+            return False
+        return False
+
     def get_batch_timeout(self) -> int:
         """Get batch timeout in seconds"""
         return self.get("batch_timeout", 600)
@@ -363,13 +413,26 @@ def get_socket_config() -> SocketConfig:
 def update_socket_server_settings(host: str, port: int):
     """
     Update global Socket server settings
-    
+
     Args:
         host (str): Server host
         port (int): Server port
     """
     config = get_socket_config()
     config.update_server_settings(host, port)
+
+
+def is_poor_connectivity_enabled() -> bool:
+    """Module-level convenience: is the active download server flagged for
+    "Poor Connectivity" / unstable-internet single-image download mode?
+
+    See ``SocketConfig.is_poor_connectivity_enabled()``. Resolves to ``False`` on
+    any error so it can never break the download path.
+    """
+    try:
+        return get_socket_config().is_poor_connectivity_enabled()
+    except Exception:
+        return False
 
 
 def get_socket_server_settings() -> Dict[str, Any]:

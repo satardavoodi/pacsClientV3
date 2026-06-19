@@ -1145,9 +1145,36 @@ class SocketDicomClient:
                 logger.info(f"⏸️ download_batch cancelled before response")
             else:
                 logger.warning(f"📥 download_batch: No response received!")
-        
+
         return response
-    
+
+    def _poor_connectivity_active(self) -> bool:
+        """Is the active download server in "Poor Connectivity" / unstable-internet
+        single-image download mode?
+
+        Resolved from ``config/servers.json`` (per-server ``poor_connectivity`` flag,
+        matched by the active socket host) or the ``AIPACS_POOR_CONNECTIVITY`` env
+        override — see ``modules.network.socket_config.is_poor_connectivity_enabled``.
+
+        Cached per client instance: the flag is per-server and the client is built
+        per download task, so it is stable for this client's lifetime and this avoids
+        re-reading config on every series. Any failure resolves to ``False`` so a
+        config/import problem can never break downloading.
+        """
+        cached = getattr(self, "_poor_conn_cached", None)
+        if cached is not None:
+            return cached
+        val = False
+        try:
+            from modules.network.socket_config import (
+                is_poor_connectivity_enabled as _ipc,
+            )
+            val = bool(_ipc())
+        except Exception:
+            val = False
+        self._poor_conn_cached = val
+        return val
+
     async def download_series(
         self,
         study_uid: str,
@@ -1193,12 +1220,30 @@ class SocketDicomClient:
         # _batch_size_max so a stable connection can ramp UP (see _grow_batch_size);
         # _adaptive_batch_size still starts conservative and shrinks on errors.
         batch_size = min(self._adaptive_batch_size, self._batch_size_max)
-        if _should_force_single_instance_batches(series_info):
+        _modality_force_single = _should_force_single_instance_batches(series_info)
+        if _modality_force_single:
             batch_size = 1
             logger.info(
                 "📦 Using single-image batches for large-frame modality/series type "
                 f"(series={series_number}, modality={series_info.modality or 'N/A'})"
             )
+        # Per-server "Poor Connectivity" mode (config/servers.json `poor_connectivity`,
+        # resolved by the active socket host): force single-image batches and disable
+        # adaptive growth so a flaky/unstable link retries at the IMAGE level and keeps
+        # every image already on disk, instead of failing/re-fetching a whole batch.
+        # Same proven mechanism as the large-frame modality force above.
+        _poor_conn = self._poor_connectivity_active()
+        if _poor_conn:
+            batch_size = 1
+            logger.warning(
+                "🐢 [POOR_CONN] server flagged poor-connectivity/unstable-internet → "
+                "single-image batches (batch_size=1), adaptive growth disabled, "
+                "image-level retry + resume "
+                f"(series={series_number}, modality={series_info.modality or 'N/A'}, "
+                f"expected={expected_count})"
+            )
+        # Either condition pins the series to one image per batch (no ramp-up below).
+        _force_single = _modality_force_single or _poor_conn
         min_batch_size = 1
         # First-image prime: on a fresh series (nothing on disk) fetch slice 1 as a
         # single-image batch so the viewer paints one image in one round-trip, then
@@ -1212,7 +1257,7 @@ class SocketDicomClient:
             _FIRST_IMAGE_PRIME,
             skipped_count,
             batch_size,
-            _should_force_single_instance_batches(series_info),
+            _force_single,
         )
         if _prime_restore_size is not None:  # total_batches is computed from batch_size below
             # WARNING level (not info) so this is captured in download_diagnostics.log:
@@ -1672,7 +1717,7 @@ class SocketDicomClient:
             elif (
                 self._batch_growth_enabled
                 and batch_size < self._batch_size_max
-                and not _should_force_single_instance_batches(series_info)
+                and not _force_single
             ):
                 # Adaptive batch GROWTH (2026-06-16, download speed): on a stable
                 # connection ramp the batch size UP so a healthy link pays fewer
