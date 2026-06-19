@@ -123,7 +123,9 @@ def test_viewer_keeps_both_colliding_series():
         _REPO_ROOT
         / "PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_thumbnails.py"
     ).read_text(encoding="utf-8")
-    assert "resolve_series_folder_name" in src
+    # routed through the shared authority (not reaching into download_manager directly)
+    assert "from PacsClient.utils.patient_study_set import" in src
+    assert "resolve_series_folder_key" in src
     assert "entry_key" in src
     # the entry + uid-map are keyed by entry_key (not the bare number), so the loser
     # of a collision is added rather than merged/dropped
@@ -131,3 +133,33 @@ def test_viewer_keeps_both_colliding_series():
     assert "self._series_uid_to_number[series_uid] = entry_key" in src
     # and the disambiguated entry records its real on-disk folder for the load path
     assert "series['series_path']" in src
+
+
+def test_authority_resolves_series_folder_key():
+    # The shared authority (patient_study_set) is the named facade for the series→disk
+    # folder identity; SeriesDescriptor models it as folder_key. Both download + viewer
+    # resolve through one rule. patient_study_set is pure → importable in isolation.
+    try:
+        import PacsClient.utils.patient_study_set as pss
+    except Exception as exc:
+        pytest.skip(f"patient_study_set unavailable: {exc}")
+    study = [(203, "uidA", 24), (203, "uidB", 156), (201, "x", 52)]
+    assert pss.resolve_series_folder_key(201, "x", study) == "201"            # unique → bare
+    assert pss.resolve_series_folder_key(203, "uidB", study) == "203"          # largest keeps bare
+    assert pss.resolve_series_folder_key(203, "uidA", study).startswith("203__")  # loser suffixed
+    # contract field + service facade
+    assert hasattr(pss.SeriesDescriptor(study_uid="s"), "folder_key")
+    assert pss.PatientStudySetService.resolve_series_folder_key(203, "uidA", study).startswith("203__")
+
+
+def test_authority_matches_download_impl():
+    # The authority facade and the download impl must produce IDENTICAL keys (one rule).
+    try:
+        import PacsClient.utils.patient_study_set as pss
+        import modules.download_manager.core.series_folder as impl
+    except Exception as exc:
+        pytest.skip(f"modules unavailable: {exc}")
+    study = [(203, "uidA", 24), (203, "uidB", 156)]
+    for num, uid in ((201, "z"), (203, "uidA"), (203, "uidB")):
+        assert pss.resolve_series_folder_key(num, uid, study) == \
+            impl.resolve_series_folder_name(num, uid, study)

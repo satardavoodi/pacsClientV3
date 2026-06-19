@@ -77,7 +77,14 @@ class PatientStudySetRequest:
 @dataclass(frozen=True)
 class SeriesDescriptor:
     """One series, identified by its OWN study_uid + series_uid. ``series_number``
-    is study-local only and must never be treated as globally unique."""
+    is study-local only and must never be treated as globally unique.
+
+    ``folder_key`` is the canonical on-disk folder name for this series within its
+    study — normally ``series_number``, but when two distinct ``series_uid`` share a
+    ``series_number`` in one study the non-largest get a stable disambiguated key
+    (``"<num>__<uid8>"``) so neither is overwritten. It is the single identity the
+    downloader (disk write) and the viewer sink (load) must agree on; compute it via
+    ``resolve_series_folder_key`` so there is exactly one rule. Empty = bare number."""
 
     study_uid: str
     series_uid: str = ""
@@ -87,6 +94,7 @@ class SeriesDescriptor:
     image_count: int = 0
     thumbnail_path: str = ""
     is_document: bool = False
+    folder_key: str = ""
 
 
 @dataclass(frozen=True)
@@ -309,6 +317,34 @@ def build_download_payload(study_uid, patient_id, patient_name, study_info) -> d
     }
 
 
+def resolve_series_folder_key(series_number, series_uid, study_series) -> str:
+    """Canonical on-disk folder name for ONE series within its study — the single
+    series→disk identity the downloader (disk write) and the viewer sink (load) must
+    agree on.
+
+    Bare ``str(series_number)`` when the number is unique within the study (the common
+    case, byte-identical to the legacy ``{study_uid}/{series_number}/`` layout); a stable
+    disambiguated ``"<num>__<uid8>"`` for the non-largest of a same-number collision so
+    neither series is overwritten (two distinct SeriesInstanceUIDs can legitimately share
+    one series_number — see ``SeriesDescriptor.folder_key``).
+
+    ``study_series`` is an iterable of ``(series_number, series_uid, image_count)`` for
+    ALL series in the study. The RULE lives in one pure, plugin-mirrored impl,
+    ``modules.download_manager.core.series_folder.resolve_series_folder_name`` — that is
+    where the frozen download subprocess reaches it (the download payload ships
+    ``modules.download_manager``, not ``PacsClient``). This accessor is the shared
+    authority's facade for PacsClient-side callers (the viewer metadata sink). One impl,
+    one rule. Falls back to the bare number on any error so it can never break a caller.
+    """
+    try:
+        from modules.download_manager.core.series_folder import (
+            resolve_series_folder_name,
+        )
+        return resolve_series_folder_name(series_number, series_uid, study_series)
+    except Exception:
+        return str(series_number)
+
+
 class PatientStudySetService:
     """Facade — the single named API for patient study-set resolution and download
     planning that workflows should migrate to. Thin by design: the logic lives in
@@ -320,3 +356,4 @@ class PatientStudySetService:
     diff_study_uids = staticmethod(diff_study_uids)
     resolve_study_uids = staticmethod(resolve_study_uids)
     build_download_payload = staticmethod(build_download_payload)
+    resolve_series_folder_key = staticmethod(resolve_series_folder_key)

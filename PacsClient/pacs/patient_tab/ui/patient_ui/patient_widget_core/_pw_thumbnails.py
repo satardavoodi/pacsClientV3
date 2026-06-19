@@ -120,10 +120,13 @@ class _PWThumbnailsMixin:
             # ("<num>__<uid8>") — the SAME name the downloader writes on disk, so the
             # viewer load (study_path/<key>) reads each series' own folder. The common
             # (unique-number) case keeps the ORIGINAL key object unchanged → byte-identical.
+            # The collision-aware key comes from the shared authority
+            # (PatientStudySet.resolve_series_folder_key → SeriesDescriptor.folder_key
+            # rule), so the downloader and this viewer sink agree on one identity.
             entry_key = series_number
             try:
-                from modules.download_manager.core.series_folder import (
-                    resolve_series_folder_name,
+                from PacsClient.utils.patient_study_set import (
+                    resolve_series_folder_key,
                 )
                 _su_cur = str((series or {}).get('study_uid') or '')
                 _grp = [
@@ -132,7 +135,7 @@ class _PWThumbnailsMixin:
                     for s in series_list
                     if (not _su_cur) or str((s or {}).get('study_uid') or '') == _su_cur
                 ]
-                _resolved = resolve_series_folder_name(series_number, series_uid, _grp)
+                _resolved = resolve_series_folder_key(series_number, series_uid, _grp)
                 if str(_resolved) != str(series_number):
                     entry_key = _resolved  # collision loser → disambiguated string key
                     if _su_cur and not series.get('series_path'):
