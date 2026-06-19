@@ -113,3 +113,21 @@ def test_plugin_mirror_carries_helper_and_wiring():
         pytest.skip("download_manager plugin mirror not present")
     assert "resolve_series_folder_name" in helper.read_text(encoding="utf-8")
     assert "[SERIES_NUMBER_COLLISION]" in dl.read_text(encoding="utf-8")
+
+
+def test_viewer_keeps_both_colliding_series():
+    # The viewer's set_server_series_info must NOT drop the 2nd series that shares a
+    # series_number: it keys colliding entries by the same collision-aware name the
+    # downloader uses, so both are listed and each resolves to its own folder.
+    src = (
+        _REPO_ROOT
+        / "PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_thumbnails.py"
+    ).read_text(encoding="utf-8")
+    assert "resolve_series_folder_name" in src
+    assert "entry_key" in src
+    # the entry + uid-map are keyed by entry_key (not the bare number), so the loser
+    # of a collision is added rather than merged/dropped
+    assert "self._server_series_info[entry_key] = series" in src
+    assert "self._series_uid_to_number[series_uid] = entry_key" in src
+    # and the disambiguated entry records its real on-disk folder for the load path
+    assert "series['series_path']" in src

@@ -111,18 +111,48 @@ class _PWThumbnailsMixin:
             if not series_number:
                 continue
             series_uid = _get_series_uid(series)
-            if is_first_call or series_number not in self._server_series_info:
+            # Series-number collision disambiguation (2026-06-19, data completeness).
+            # Two distinct SeriesInstanceUIDs can legitimately share one series_number
+            # within a study (verified: study …86503 series 203 = a 24-image + a
+            # 156-image series). Keying _server_series_info by the bare series_number
+            # dropped the second one (the "series that isn't connected"). For a real
+            # collision, the non-largest series is kept under a disambiguated key
+            # ("<num>__<uid8>") — the SAME name the downloader writes on disk, so the
+            # viewer load (study_path/<key>) reads each series' own folder. The common
+            # (unique-number) case keeps the ORIGINAL key object unchanged → byte-identical.
+            entry_key = series_number
+            try:
+                from modules.download_manager.core.series_folder import (
+                    resolve_series_folder_name,
+                )
+                _su_cur = str((series or {}).get('study_uid') or '')
+                _grp = [
+                    (_get_series_number(s), _get_series_uid(s),
+                     (s or {}).get('image_count') or 0)
+                    for s in series_list
+                    if (not _su_cur) or str((s or {}).get('study_uid') or '') == _su_cur
+                ]
+                _resolved = resolve_series_folder_name(series_number, series_uid, _grp)
+                if str(_resolved) != str(series_number):
+                    entry_key = _resolved  # collision loser → disambiguated string key
+                    if _su_cur and not series.get('series_path'):
+                        from PacsClient.utils.config import SOURCE_PATH as _SRC
+                        from pathlib import Path as _P
+                        series['series_path'] = str(_P(_SRC) / _su_cur / str(_resolved))
+            except Exception:
+                entry_key = series_number
+            if is_first_call or entry_key not in self._server_series_info:
                 # Add the series unconditionally on first call; add only missing
                 # series on subsequent calls so gRPC-fetched image counts are
                 # not clobbered by potentially stale local data.
-                self._server_series_info[series_number] = series
+                self._server_series_info[entry_key] = series
                 if series_uid:
-                    self._series_uid_to_number[series_uid] = series_number
+                    self._series_uid_to_number[series_uid] = entry_key
                 new_count += 1
             else:
                 # Merge: fill in fields that are absent or empty in the
                 # existing record without overwriting authoritative gRPC data.
-                existing_entry = self._server_series_info[series_number]
+                existing_entry = self._server_series_info[entry_key]
                 for field in ('series_description', 'modality', 'protocol_name', 'body_part_examined'):
                     if not existing_entry.get(field) and series.get(field):
                         existing_entry[field] = series[field]
@@ -131,7 +161,7 @@ class _PWThumbnailsMixin:
                     existing_entry['image_count'] = series['image_count']
                 # Update UID map if missing (handles case where first call lacked UIDs).
                 if series_uid and series_uid not in self._series_uid_to_number:
-                    self._series_uid_to_number[series_uid] = series_number
+                    self._series_uid_to_number[series_uid] = entry_key
 
         # --- Multi-study grouping index (Phase 1: additive only) ----------
         # Build an extra {study_uid: [series, ...]} index alongside the
