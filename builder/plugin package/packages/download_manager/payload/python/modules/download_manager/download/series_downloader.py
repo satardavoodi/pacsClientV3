@@ -375,8 +375,38 @@ class SeriesDownloader:
                         logger.info(f"   ⚡ Reordered remaining series: {new_viewed} moved to next slot (CRITICAL)")
             
                 series_number = str(series_info.series_number)
-                series_output_dir = study_output_dir / series_number
-            
+                # Series-number collision disambiguation (2026-06-19, data loss):
+                # a study can contain two distinct SeriesInstanceUIDs that share one
+                # series_number; both resolve to {study}/{series_number} and the second
+                # download silently OVERWRITES the first. Resolve a collision-aware
+                # folder name — byte-identical to the bare number when there is no
+                # collision (the common case). On a real collision the series with the
+                # most images keeps the bare folder (so the viewer's display is
+                # unchanged) and the other(s) are preserved in a stable suffixed folder
+                # instead of being lost.
+                _folder_name = series_number
+                try:
+                    from modules.download_manager.core.series_folder import (
+                        resolve_series_folder_name,
+                    )
+                    _folder_name = resolve_series_folder_name(
+                        series_info.series_number,
+                        series_info.series_uid,
+                        [(s.series_number, s.series_uid, getattr(s, 'image_count', 0))
+                         for s in series_list],
+                    )
+                except Exception:
+                    _folder_name = series_number
+                if _folder_name != series_number:
+                    logger.warning(
+                        "[SERIES_NUMBER_COLLISION] study=%s series_number=%s "
+                        "series_uid=%s shares its number with another series; writing "
+                        "to disambiguated folder '%s' to preserve both (no overwrite)",
+                        study_uid, series_number, series_info.series_uid, _folder_name,
+                        extra={"component": "download", "study_uid": study_uid},
+                    )
+                series_output_dir = study_output_dir / _folder_name
+
                 # Enhanced sequential progress logging
                 logger.info("")
                 logger.info(f"═══ Starting Series {idx + 1}/{len(series_list)}: {series_number} ═══")
