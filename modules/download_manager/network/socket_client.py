@@ -164,6 +164,23 @@ _BATCH_BYTES_SOFT_CAP = 64 * 1024 * 1024
 # leading-batch skip is unaffected) and when batches are already forced to 1.
 _FIRST_IMAGE_PRIME = (os.getenv("AIPACS_FIRST_IMAGE_PRIME", "1") or "1").strip() != "0"
 
+# Pagination safety (2026-06-19, data-completeness fix).
+# The server pages by batch_index = batch_start // batch_size (see download_batch),
+# which only tiles a series correctly when batch_size stays CONSTANT. Adaptive
+# mid-series GROWTH changes batch_size while batch_start advances additively, so
+# batch_start stops being a multiple of the new size and batch_index can repeat or
+# stick at 0 — the client re-fetches the series HEAD and silently drops the TAIL.
+# Verified live: patient 47221 series 202 wrote 40/52 to disk (missing the contiguous
+# tail, instances 41-52) at batch=10, while batch=1 wrote 52/52. When this is on
+# (default) mid-series batch growth is disabled so the index tiling stays exact; the
+# first-image prime (size 1 -> full) and the byte-cap halve are alignment-safe and stay.
+# Kill switch: AIPACS_DOWNLOAD_PAGINATION_SAFE=0 (restores legacy grow-while-paging).
+_PAGINATION_SAFE = (os.getenv("AIPACS_DOWNLOAD_PAGINATION_SAFE", "1") or "1").strip() != "0"
+# Per-batch trace: one WARNING line per batch (batch_index / size / received / has_more)
+# so a pagination gap is visible directly in download_diagnostics.log. Default on;
+# disable with AIPACS_DOWNLOAD_BATCH_TRACE=0.
+_BATCH_TRACE = (os.getenv("AIPACS_DOWNLOAD_BATCH_TRACE", "1") or "1").strip() != "0"
+
 
 def _grow_batch_size(current, max_size, consecutive_ok, growth_after, step):
     """Pure helper for adaptive batch GROWTH (2026-06-16, download speed).
@@ -1671,6 +1688,26 @@ class SocketDicomClient:
             
             # Check if more batches are needed (server pagination)
             has_more = data.get('has_more', False)
+
+            # Per-batch pagination trace (2026-06-19): make the actual batch_index /
+            # size / received / has_more visible in download_diagnostics.log (WARNING)
+            # so a pagination gap (index stuck/repeating, tail dropped) is observable
+            # at runtime instead of only as a short on-disk count.
+            if _BATCH_TRACE:
+                logger.warning(
+                    "[BATCH_TRACE] series=%s batch_index=%d size=%d received=%d "
+                    "has_more=%s downloaded=%d skipped=%d expected=%d",
+                    series_number,
+                    (batch_start // batch_size if batch_size > 0 else 0),
+                    batch_size,
+                    len(instances),
+                    has_more,
+                    downloaded_count,
+                    skipped_count,
+                    expected_count,
+                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                )
+
             if not has_more:
                 logger.info(f"📦 Server indicates no more batches")
                 break
@@ -1716,6 +1753,7 @@ class SocketDicomClient:
                 self._consecutive_ok_batches = 0
             elif (
                 self._batch_growth_enabled
+                and not _PAGINATION_SAFE
                 and batch_size < self._batch_size_max
                 and not _force_single
             ):
@@ -1775,7 +1813,95 @@ class SocketDicomClient:
             total_decompress_ms,
             extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
         )
-        
+
+        # ── Completeness guard (2026-06-19, data-completeness fix) ──────────────────
+        # The server's batch pagination can finish early (premature has_more=False) or,
+        # with legacy grow-while-paging, leave a gap — silently dropping the TAIL of a
+        # series so the viewer shows "N/N" while disk holds fewer files. Compare the
+        # on-disk unique-instance count against the server's expected_count; if short,
+        # fill the gap with explicit, correctly-tiled batch requests (batch_index k at a
+        # CONSTANT size, so batch_start = k*size is always a clean multiple → exact
+        # tiling, immune to the index-stick bug) and log the outcome loudly. The
+        # [SERIES_COMPLETE] / [INCOMPLETE_SERIES] markers make completeness observable in
+        # download_diagnostics.log; the atomic-write + file-level dedup are reused, so a
+        # present file is never re-written. Runs only for a genuine short series.
+        if expected_count > 0 and not self.is_cancelled():
+            try:
+                _on_disk = set(self._scan_existing_files(output_dir))
+            except Exception:
+                _on_disk = set()
+            if len(_on_disk) < expected_count:
+                logger.error(
+                    "[INCOMPLETE_SERIES] series=%s on_disk=%d expected=%d missing=%d "
+                    "study=%s pagination_safe=%s — filling pagination gap",
+                    series_number, len(_on_disk), expected_count,
+                    expected_count - len(_on_disk), study_uid, _PAGINATION_SAFE,
+                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                )
+                _fill_size = 1 if _force_single else max(
+                    1, min(self._adaptive_batch_size, self._batch_size_max)
+                )
+                _n_batches = (expected_count + _fill_size - 1) // _fill_size
+                for _bi in range(_n_batches):
+                    if self.is_cancelled():
+                        break
+                    # Skip a batch only when every expected instance file in its
+                    # contiguous range already exists (optimization; file-level dedup
+                    # below keeps it correct even when instance numbers are sparse).
+                    _lo, _hi = _bi * _fill_size + 1, min(_bi * _fill_size + _fill_size, expected_count)
+                    if all(f"Instance_{i:04d}.dcm" in _on_disk for i in range(_lo, _hi + 1)):
+                        continue
+                    _resp = await self._download_batch_with_retry(
+                        study_uid, series_uid, _bi * _fill_size, _fill_size
+                    )
+                    if not _resp or _resp.get('status') != 'success':
+                        continue
+                    for _inst in (_resp.get('data', {}) or {}).get('instances', []):
+                        try:
+                            _num = int(_inst.get('instance_number', 0))
+                        except (ValueError, TypeError):
+                            continue
+                        _fn = f"Instance_{_num:04d}.dcm"
+                        _b64 = _inst.get('dicom_data', '')
+                        if not _num or _fn in _on_disk or not _b64:
+                            continue
+                        try:
+                            _raw = base64.b64decode(_b64)
+                            if _inst.get('is_compressed', False):
+                                _raw = gzip.decompress(_raw)
+                            _fp = output_dir / _fn
+                            _tmp = _fp.with_name(_fp.name + '.part')
+                            with open(_tmp, 'wb') as _fh:
+                                _fh.write(_raw)
+                            os.replace(_tmp, _fp)
+                            _on_disk.add(_fn)
+                            downloaded_count += 1
+                        except Exception as _e:
+                            logger.error(
+                                "[INCOMPLETE_SERIES] gap-fill write failed series=%s instance=%s: %s",
+                                series_number, _num, _e,
+                            )
+                _final_on_disk = len(_on_disk)
+                if _final_on_disk >= expected_count:
+                    logger.warning(
+                        "[SERIES_COMPLETE] series=%s on_disk=%d expected=%d study=%s (gap-fill resolved)",
+                        series_number, _final_on_disk, expected_count, study_uid,
+                        extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                    )
+                else:
+                    logger.error(
+                        "[INCOMPLETE_SERIES] series=%s STILL SHORT after gap-fill: on_disk=%d "
+                        "expected=%d study=%s — server may not hold all instances",
+                        series_number, _final_on_disk, expected_count, study_uid,
+                        extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                    )
+            else:
+                logger.warning(
+                    "[SERIES_COMPLETE] series=%s on_disk=%d expected=%d study=%s",
+                    series_number, len(_on_disk), expected_count, study_uid,
+                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+                )
+
         return SeriesDownloadResult(
             success=True,
             series_uid=series_uid,
