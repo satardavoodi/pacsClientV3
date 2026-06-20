@@ -145,29 +145,54 @@ None are plugin-mirrored. Feature flag: **`AIPACS_PREVIOUS_EXAMS`** (default ON;
   drop) re-colors immediately without changing which viewport is active. NOT applied
   to thumbnails/study-cards/labels — only the active viewport highlight.
 
-## UI refinement — two-row thumbnail header (2026-06-21)
+## UI redesign — bordered header card + series-card header row (2026-06-21)
 
-The panel header is now **two rows** instead of one (`_pw_panels.py`,
-`header_v = QVBoxLayout`), because the single line overlapped / truncated when the
-counts grew, the width was limited, or DPI / localized labels were larger:
+Evolved from the earlier two-row header into a clean, **icon-free, width-aligned**
+card matching the requested target. Two areas changed:
 
-* **Row 1** — `Series Thumbnails` title + an `N series` count pill beside it.
-* **Row 2** — the `Previous Exam` button + an `N exams` count pill beside it.
+**Header card (`_pw_panels.py`).** The two sections live inside ONE rounded bordered
+`QFrame#thumbHeaderCard` (soft blue border, consistent with the series cards), with
+**no icons**:
 
-Each row groups its count **right next to** the label (`label → addSpacing(8) →
-count → addStretch()`), so the count stays close to its title rather than being
-pushed to the far right edge; the trailing stretch fills the remaining width. Labels
-size to content (no fixed widths) so longer localized text stays readable and
-responsive. The panel column itself was narrowed (`default_panel_width` 260 → 234 in
-`widget.py`, thumbnail left margin 20 → 10) so it sits snugly around the fixed 190px
-cards (234 − margins − scrollbar ≈ 202 ≥ 190); the Reception view keeps its previous
-width. The previous-exam
-count moved **out of the button label** (it used to be `Previous Exam (N)`) into its
-own pill `self.prev_exam_count_label`, styled by `_previous_exam_count_style(active)`
-(neutral gray when 0 exams; red-tinted when prior exams exist, matching the active
-button). Count text pluralizes: `0 exams` / `1 exam` / `N exams`. Count pills use a
-slightly smaller font (9px) than the section titles (10px). Row 2 is only built when
-the previous-exams feature is enabled; when disabled, only Row 1 shows (unchanged).
+* **Row 1** — `Series Thumbnails` (flat **clickable** button → returns to the series
+  grid, page 0) + stretch + `N series` (flat **blue** count, right-aligned).
+* *horizontal divider* (`QFrame.HLine`) separating the two sections.
+* **Row 2** — `Previous Exam` (flat **clickable** button → previous-exams list,
+  page 1) + stretch + `N exams` (flat count, right-aligned).
+
+Key revision points (2026-06-21, after live screenshot review):
+1. **Width-aligned with the cards.** The header card is `setFixedWidth(190)` (== the
+   thumbnail card width), wrapped in a `header_align` HBox with left margin 8 (==
+   `thumb_grid` left margin) and left-aligned; `thumb_scroll` is made frameless
+   (`QFrame.NoFrame`) so the header and the cards share the same left edge + width.
+2. **No icons** before the labels (the `qtawesome` header icons were removed).
+3. **Divider** between the two sections.
+4. **Both sections feel clickable** — flat buttons with `PointingHandCursor` and a
+   subtle hover highlight. Series Thumbnails is now a real button
+   (`series_thumb_btn` → `_show_series_thumbnails_view`, no-op when the stack is
+   absent); Previous Exam keeps its toggle.
+5. **Previous Exam text state** — `_previous_exam_button_style(active)` is **red
+   (`#ef4444`)** when prior exams exist and **gray (`#6b7280`)** when none (the
+   button is also disabled when none). The count still pluralizes (`0 exams` /
+   `1 exam` / `N exams`) and lives in `prev_exam_count_label`, not the button label.
+
+The column stays narrowed (`default_panel_width` 234). Row 2 + divider are only built
+when the previous-exams feature is enabled.
+
+**Series cards (`thumbnail_manager.py`).** Each card's header is now a ROW —
+`[image icon] Series N` on the left, `N images` (blue accent) on the right —
+instead of a centered title with a separate centered count at the bottom. The
+image and the description caption (e.g. `Ankle AP`) follow below. The count label
+is ALWAYS created in this header row and stored as `widget.count_label`, so the
+existing count updaters (`_set_series_count_label_text` and the status path) set
+its text **in place** and never re-add a centered bottom count. A single
+`qtawesome` icon pixmap is built once and cached (`_series_card_icon_pixmap`) and
+reused by every card — no per-card icon cost on the thumbnail hot path. All card
+functionality is preserved (drag button, progress border / origin color, retry
+button, `content_layout` / `image_button` / `count_label` contracts).
+
+Because the card builder is the shared `ThumbnailManager`, the home-page right-panel
+thumbnails get the same refreshed card look (consistent across the app).
 
 ## Tests
 

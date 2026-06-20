@@ -1,6 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.3.4 (2026-06-18) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.4_RELEASE.md`.
+**Current Stable Version:** v3.3.5 (2026-06-21) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.5_RELEASE.md`.
+
+**Previous Stable:** v3.3.4 (2026-06-18) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.4_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 

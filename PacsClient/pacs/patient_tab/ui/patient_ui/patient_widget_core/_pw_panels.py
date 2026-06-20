@@ -319,67 +319,55 @@ class _PWPanelsMixin:
         thumbnail_layout.setContentsMargins(10, 6, 6, 6)
         thumbnail_layout.setSpacing(6)
 
-        # Enhanced header — TWO rows so the Series-Thumbnails title + count and the
-        # Previous-Exam button + count never crowd onto one line. The old single-row
-        # layout overlapped / truncated when counts grew, the width was limited, or
-        # DPI/localized labels were larger. Row 1 = Series Thumbnails | N series;
-        # Row 2 = Previous Exam | N exams. Each row right-aligns its count via a
-        # stretch, so it stays readable and responsive at any width.
-        header_widget = QWidget()
-        header_v = QVBoxLayout(header_widget)
-        header_v.setContentsMargins(0, 0, 0, 0)
-        header_v.setSpacing(4)
-
-        # Title
-        title_label = QLabel("Series Thumbnails")
-        title_label.setStyleSheet("""
-            QLabel {
-                font-size: 10px;
-                font-family: 'Roboto', sans-serif;
-                color: #f7fafc;
-                padding: 6px 10px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #7c3aed, stop:1 #5b21b6);
-                border: 1px solid #7c3aed;
-                border-radius: 8px;
+        # Header — a rounded bordered "card" (NO icons) holding two CLICKABLE
+        # sections separated by a horizontal divider, WIDTH-ALIGNED with the
+        # thumbnail cards below (revised 2026-06-21):
+        #   Series Thumbnails  ............  N series   (blue)   -> show series grid
+        #   ------------------------------------------------------ (divider)
+        #   Previous Exam      ............  N exams    (red/gray) -> show prev list
+        # The card is FIXED to the card width (190) and left-offset to match the
+        # thumbnail grid, so its left/right edges line up with the cards.
+        header_widget = QFrame()
+        header_widget.setObjectName("thumbHeaderCard")
+        header_widget.setFixedWidth(190)  # == thumbnail card width
+        header_widget.setStyleSheet("""
+            QFrame#thumbHeaderCard {
+                background: rgba(20, 28, 42, 0.45);
+                border: 1px solid rgba(59, 130, 246, 0.45);
+                border-radius: 10px;
             }
+            QFrame#thumbHeaderCard QLabel { background: transparent; border: none; }
         """)
-        # V2 parallel design (opt-in, default OFF): real accent header (fixes the
-        # off-palette purple). No-op unless ui_variant('viewer')=='v2'.
+        header_v = QVBoxLayout(header_widget)
+        header_v.setContentsMargins(10, 8, 10, 8)
+        header_v.setSpacing(6)
+
+        # Row 1: "Series Thumbnails" (clickable -> series grid) + blue count
+        self.series_thumb_btn = QPushButton("Series Thumbnails")
+        self.series_thumb_btn.setCursor(Qt.PointingHandCursor)
         try:
-            from PacsClient.utils.v2_style import apply_thumbnail_header_v2
-            apply_thumbnail_header_v2(title_label)
+            self.series_thumb_btn.setStyleSheet(self._series_thumbnails_button_style())
         except Exception:
             pass
-
-        # Count indicator (compact; sits right next to the title, slightly smaller pill)
+        try:
+            self.series_thumb_btn.clicked.connect(self._show_series_thumbnails_view)
+        except Exception:
+            pass
         self.thumb_count_label = QLabel("0 series")
-        self.thumb_count_label.setStyleSheet("""
-            QLabel {
-                font-size: 9px;
-                font-family: 'Roboto', sans-serif;
-                color: #a0aec0;
-                padding: 4px 6px;
-                background: rgba(160, 174, 192, 0.1);
-                border: 1px solid rgba(160, 174, 192, 0.2);
-                border-radius: 8px;
-            }
-        """)
+        self.thumb_count_label.setStyleSheet(
+            "QLabel{font-size:11px;font-weight:bold;font-family:'Roboto',sans-serif;"
+            "color:#3b82f6;background:transparent;border:none;}")
 
-        # Row 1: Series Thumbnails  |  N series
         row1 = QHBoxLayout()
         row1.setContentsMargins(0, 0, 0, 0)
         row1.setSpacing(6)
-        row1.addWidget(title_label)
-        row1.addSpacing(8)
-        row1.addWidget(self.thumb_count_label)
+        row1.addWidget(self.series_thumb_btn)
         row1.addStretch()
+        row1.addWidget(self.thumb_count_label)
         header_v.addLayout(row1)
 
-        # Previous Exam toggle button (gray/inactive by default; turns red/active
-        # when the server reports prior exams of the same real person). Clicking
-        # switches the thumbnail area in-place to the previous-exams list. It lives
-        # on its OWN row (Row 2) with its own count pill, so it never crowds Row 1.
+        # Previous Exam section (feature-gated): a divider then a CLICKABLE label
+        # that is RED when prior exams exist and GRAY when none.
         try:
             from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_previous_exams import (
                 previous_exams_enabled,
@@ -388,6 +376,13 @@ class _PWPanelsMixin:
         except Exception:
             _pe_on = False
         if _pe_on:
+            # Horizontal divider visually separating the two sections.
+            _divider = QFrame()
+            _divider.setFrameShape(QFrame.HLine)
+            _divider.setFixedHeight(1)
+            _divider.setStyleSheet("background: rgba(148,163,184,0.30); border: none;")
+            header_v.addWidget(_divider)
+
             self.prev_exam_btn = QPushButton("Previous Exam")
             self.prev_exam_btn.setCheckable(True)
             self.prev_exam_btn.setCursor(Qt.PointingHandCursor)
@@ -403,9 +398,6 @@ class _PWPanelsMixin:
             except Exception:
                 pass
 
-            # Previous-exam count pill (right-aligned). Neutral gray when none;
-            # red-tinted when prior exams exist (set in
-            # _apply_previous_exam_button_state).
             self.prev_exam_count_label = QLabel("0 exams")
             try:
                 self.prev_exam_count_label.setStyleSheet(
@@ -413,17 +405,23 @@ class _PWPanelsMixin:
             except Exception:
                 pass
 
-            # Row 2: Previous Exam  |  N exams
             row2 = QHBoxLayout()
             row2.setContentsMargins(0, 0, 0, 0)
             row2.setSpacing(6)
             row2.addWidget(self.prev_exam_btn)
-            row2.addSpacing(8)
-            row2.addWidget(self.prev_exam_count_label)
             row2.addStretch()
+            row2.addWidget(self.prev_exam_count_label)
             header_v.addLayout(row2)
 
-        thumbnail_layout.addWidget(header_widget)
+        # Width-align the header card with the thumbnail grid below: same left
+        # margin (8, == thumb_grid left margin) and left-aligned (the grid is
+        # AlignLeft), at the 190px card width, so left+right edges line up.
+        header_align = QHBoxLayout()
+        header_align.setContentsMargins(8, 0, 0, 0)
+        header_align.setSpacing(0)
+        header_align.addWidget(header_widget)
+        header_align.addStretch()
+        thumbnail_layout.addLayout(header_align)
 
         # thumb_title = QLabel("Thumb")
         # thumb_title.setStyleSheet("""
@@ -441,6 +439,7 @@ class _PWPanelsMixin:
         thumb_scroll = QScrollArea()
         self.thumb_scroll = thumb_scroll  # store for scroll-to-top after batch add
         thumb_scroll.setWidgetResizable(True)
+        thumb_scroll.setFrameShape(QFrame.NoFrame)  # no frame -> card left edge == header left edge
         # thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         thumb_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         thumb_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)

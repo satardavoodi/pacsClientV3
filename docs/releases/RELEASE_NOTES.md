@@ -1,9 +1,24 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.3.4 (2026-06-18)
-**Previous Stable:** v3.3.3 (2026-06-17)
-**Release Date:** 2026-06-18
+**Current Stable Version:** v3.3.5 (2026-06-21)
+**Previous Stable:** v3.3.4 (2026-06-18)
+**Release Date:** 2026-06-21
 **Branch:** beta-version
+
+---
+
+## v3.3.5 (2026-06-21) - Minor release: fresh stable build under 3.3.5
+
+### Summary
+
+Minor release to advance the stable version line to 3.3.5 and generate a
+fresh release build from the current beta-version state.
+
+### Included
+
+- Canonical version markers advanced to v3.3.5
+- Release documentation updated for the v3.3.5 stable line
+- Fresh release build generated from the latest local source state
 
 ---
 

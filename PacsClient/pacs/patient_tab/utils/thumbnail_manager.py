@@ -1085,6 +1085,24 @@ class ThumbnailManager(QObject):
         count_label.update()
         widget.update()
 
+    def _series_card_icon_pixmap(self):
+        """Cached small image-type icon (qtawesome) for the series-card header row.
+        Built ONCE and reused across all cards (no per-card icon construction on the
+        thumbnail hot path). Returns an empty QPixmap if qtawesome is unavailable —
+        the icon label then stays blank, which is harmless."""
+        px = getattr(self, '_series_card_icon_px', None)
+        if px is not None:
+            return px
+        try:
+            import qtawesome as _qta
+            color = (self._theme.get('accent', '#3b82f6')
+                     if getattr(self, '_theme', None) else '#3b82f6')
+            px = _qta.icon('fa5s.image', color=color).pixmap(15, 15)
+        except Exception:
+            px = QPixmap()
+        self._series_card_icon_px = px
+        return px
+
     def _apply_thumbnail_image(self, series_number: str, image: QImage):
         """Apply image to existing thumbnail widget on GUI thread."""
         try:
@@ -1493,10 +1511,30 @@ class ThumbnailManager(QObject):
             content_layout.setContentsMargins(6, 6, 6, 6)
             content_layout.setSpacing(3)
             
-            # Simple header - text only with REAL series number
+            # Header ROW (redesigned 2026-06-21): [icon] "Series N" on the LEFT, the
+            # image-count accent label on the RIGHT — matching the requested card
+            # layout. The count label is ALWAYS created here (empty until known) and
+            # stored as widget.count_label, so the count updaters
+            # (_set_series_count_label_text / the status path) update it IN PLACE on
+            # this row and never re-add a centered count at the bottom.
+            header_row = QWidget()
+            header_row.setFixedHeight(20)
+            header_row_layout = QHBoxLayout(header_row)
+            header_row_layout.setContentsMargins(0, 0, 0, 0)
+            header_row_layout.setSpacing(4)
+
+            _card_icon = QLabel()
+            try:
+                _icpx = self._series_card_icon_pixmap()
+                if _icpx is not None and not _icpx.isNull():
+                    _card_icon.setPixmap(_icpx)
+            except Exception:
+                pass
+            _card_icon.setFixedSize(15, 15)
+            _card_icon.setStyleSheet("background: transparent; border: none;")
+            header_row_layout.addWidget(_card_icon)
+
             header_label = QLabel(f"Series {display_series}")
-            header_label.setFixedHeight(18)
-            header_label.setAlignment(Qt.AlignCenter)
             header_label.setStyleSheet(f"""
                 QLabel {{
                     font-size: 12px;
@@ -1504,10 +1542,27 @@ class ThumbnailManager(QObject):
                     color: {self._theme.get('text_primary', '#ffffff')};
                     background: transparent;
                     border: none;
-                    padding: 2px;
+                    padding: 0px;
                 }}
             """)
-            content_layout.addWidget(header_label)
+            header_row_layout.addWidget(header_label)
+            header_row_layout.addStretch()
+
+            count_label = QLabel("")
+            count_label.setStyleSheet(f"""
+                QLabel {{
+                    font-size: 11px;
+                    font-weight: bold;
+                    color: {self._theme.get('accent', '#3b82f6')};
+                    background: transparent;
+                    border: none;
+                    padding: 0px;
+                }}
+            """)
+            header_row_layout.addWidget(count_label)
+            widget.count_label = count_label
+
+            content_layout.addWidget(header_row)
             
             # Create draggable button for the image
             scaled_pixmap = pixmap.scaled(160, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
@@ -1557,24 +1612,15 @@ class ThumbnailManager(QObject):
                     """)
                     content_layout.addWidget(desc_label)
                 
-                # Image count label
+                # Image count -> populate the header-row count label created above
+                # (redesigned 2026-06-21: the count shows top-right next to
+                # "Series N", not as a separate centered label at the bottom).
                 image_count = series_info.get('image_count', 0)
                 if image_count is not None and image_count > 0:
-                    count_label = QLabel(f"{image_count} images")
-                    count_label.setFixedHeight(20)
-                    count_label.setAlignment(Qt.AlignCenter)
-                    count_label.setStyleSheet(f"""
-                        QLabel {{
-                            font-size: 12px;
-                            font-weight: bold;
-                            color: {self._theme.get('accent', '#3b82f6')};
-                            background: transparent;
-                            border: none;
-                            padding: 2px;
-                        }}
-                    """)
-                    content_layout.addWidget(count_label)
-                    widget.count_label = count_label
+                    try:
+                        widget.count_label.setText(f"{image_count} images")
+                    except Exception:
+                        pass
                 elif not desc or not desc.strip():
                     # If no count and no desc, show series number
                     # ✅ Get series_number from nested 'series' dict first

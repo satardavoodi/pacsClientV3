@@ -167,38 +167,56 @@ class _PWPreviousExamsMixin:
 
     # ── button + list UI ─────────────────────────────────────────────────────
     def _previous_exam_button_style(self, *, active: bool) -> str:
+        # FLAT clickable label (no pill, no icon). Point 5: the text is RED when
+        # prior exams exist (active) and GRAY when none (inactive/disabled). Pointer
+        # cursor + subtle hover highlight make it read as clickable. Checked =
+        # brighter red (the previous-exams list is showing).
         if active:
-            # red/active — prior exams exist
             return (
-                "QPushButton{font-size:10px;font-family:'Roboto',sans-serif;"
-                "color:#ffffff;padding:4px 8px;background:qlineargradient("
-                "x1:0,y1:0,x2:1,y2:0,stop:0 #dc2626,stop:1 #991b1b);"
-                "border:1px solid #ef4444;border-radius:8px;}"
-                "QPushButton:checked{background:qlineargradient(x1:0,y1:0,x2:1,y2:0,"
-                "stop:0 #ef4444,stop:1 #b91c1c);border:1px solid #fca5a5;}"
+                "QPushButton{font-size:12px;font-weight:bold;font-family:'Roboto',sans-serif;"
+                "color:#ef4444;background:transparent;border:none;padding:2px 4px;"
+                "text-align:left;border-radius:4px;}"
+                "QPushButton:hover{background:rgba(239,68,68,0.14);}"
+                "QPushButton:checked{color:#fca5a5;}"
             )
-        # gray/inactive — no prior exams
         return (
-            "QPushButton{font-size:10px;font-family:'Roboto',sans-serif;"
-            "color:#6b7280;padding:4px 8px;background:rgba(107,114,128,0.10);"
-            "border:1px solid rgba(107,114,128,0.25);border-radius:8px;}"
+            "QPushButton{font-size:12px;font-weight:bold;font-family:'Roboto',sans-serif;"
+            "color:#6b7280;background:transparent;border:none;padding:2px 4px;"
+            "text-align:left;border-radius:4px;}"
         )
 
-    def _previous_exam_count_style(self, *, active: bool) -> str:
-        """Count pill for the Previous Exam row (slightly smaller than the section
-        title, per the two-row header design). Neutral gray when there are no prior
-        exams; red-tinted to match the active button + the previous-exam red theme
-        when prior exams exist."""
-        if active:
-            return (
-                "QLabel{font-size:9px;font-family:'Roboto',sans-serif;"
-                "color:#fca5a5;padding:3px 6px;background:rgba(239,68,68,0.12);"
-                "border:1px solid rgba(239,68,68,0.30);border-radius:8px;}"
-            )
+    def _series_thumbnails_button_style(self) -> str:
+        """Flat, clickable 'Series Thumbnails' header label (no pill). Bold white with
+        a subtle hover highlight + pointer cursor so it reads as clickable (it returns
+        the panel to the current series grid)."""
         return (
-            "QLabel{font-size:9px;font-family:'Roboto',sans-serif;"
-            "color:#a0aec0;padding:3px 6px;background:rgba(160,174,192,0.10);"
-            "border:1px solid rgba(160,174,192,0.20);border-radius:8px;}"
+            "QPushButton{font-size:12px;font-weight:bold;font-family:'Roboto',sans-serif;"
+            "color:#f7fafc;background:transparent;border:none;padding:2px 4px;"
+            "text-align:left;border-radius:4px;}"
+            "QPushButton:hover{background:rgba(255,255,255,0.08);}"
+        )
+
+    def _show_series_thumbnails_view(self):
+        """Header 'Series Thumbnails' click: return to the current series grid
+        (stack page 0). No-op when the previous-exams stack is absent (feature off /
+        single-page panel)."""
+        try:
+            stack = getattr(self, "thumb_content_stack", None)
+            if stack is not None:
+                stack.setCurrentIndex(0)
+            btn = getattr(self, "prev_exam_btn", None)
+            if btn is not None:
+                btn.setChecked(False)
+        except Exception:
+            pass
+
+    def _previous_exam_count_style(self, *, active: bool) -> str:
+        """FLAT accent count (no pill) for the redesigned header card: red when prior
+        exams exist, muted gray when none. Matches the blue series count opposite it."""
+        color = "#ef4444" if active else "#a0aec0"
+        return (
+            "QLabel{font-size:11px;font-weight:bold;font-family:'Roboto',sans-serif;"
+            "color:" + color + ";background:transparent;border:none;padding:0px;}"
         )
 
     def _apply_previous_exam_button_state(self):
