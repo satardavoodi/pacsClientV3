@@ -116,6 +116,15 @@ _DL_WATCHDOG_INTERVAL_MS = max(500, int(_os.getenv("AIPACS_DL_WATCHDOG_INTERVAL_
 # AIPACS_VIEWPORT_DISK_READY_RESUME=0.
 _LOADING_DISK_READY_RESUME = (_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME", "1") or "1").strip() != "0"
 
+# Disk-ready resume RETRY (2026-06-20, slow Mehr server). The original resume was
+# one-shot (`_disk_ready_resume_done`): if that single attempt didn't actually
+# display (e.g. a cache-miss right after a slow/delayed completion re-armed the
+# awaiting marker), the viewport spun FOREVER and the user had to re-drag. The
+# watchdog now retries the resume — capped + throttled — while the viewport is
+# still awaiting the SAME series, so a delayed completion always loads on its own.
+_DISK_READY_RESUME_MAX_ATTEMPTS = max(1, int(_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME_MAX", "6") or "6"))
+_DISK_READY_RESUME_RETRY_S = max(1.0, float(_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME_RETRY_S", "3") or "3"))
+
 
 def _format_download_progress(downloaded, total) -> str:
     """Pure formatter for the spinner's main status line (testable).
@@ -1195,8 +1204,24 @@ class _VCProgressiveMixin:
         manual re-drag does. Never raises.
         """
         try:
+            now = time.monotonic()
+            key_str = str(display_key)
+            # New awaiting episode (a different series is now awaited) → reset the
+            # retry state so the attempt cap applies per-series, not per-widget.
+            if getattr(vtk_w, "_disk_ready_resume_key", None) != key_str:
+                vtk_w._disk_ready_resume_key = key_str
+                vtk_w._disk_ready_resume_attempts = 0
+                vtk_w._disk_ready_resume_done = False
+                vtk_w._disk_ready_resume_done_ts = 0.0
+            _attempts = int(getattr(vtk_w, "_disk_ready_resume_attempts", 0) or 0)
             if getattr(vtk_w, "_disk_ready_resume_done", False):
-                return False
+                # A prior resume did NOT clear the awaiting state (slow/cache-missed
+                # completion re-armed it). Retry after a grace period, capped, so the
+                # viewport loads on its own instead of spinning forever.
+                _done_ts = float(getattr(vtk_w, "_disk_ready_resume_done_ts", 0.0) or 0.0)
+                if not (_attempts < _DISK_READY_RESUME_MAX_ATTEMPTS
+                        and _done_ts and (now - _done_ts) >= _DISK_READY_RESUME_RETRY_S):
+                    return False
             study_uid, orig_series, _series_uid = self._resolve_canonical_series_identity(display_key)
             if not study_uid or orig_series in (None, ""):
                 return False
@@ -1229,16 +1254,31 @@ class _VCProgressiveMixin:
             counts[str(display_key)] = count
             if not _disk_ready_complete(count, expected, prev):
                 return False
-            # Files are ready — resume the load ONCE via the proven path.
+            # Files are ready — resume the load via the proven path (retriable:
+            # if it doesn't display, the watchdog retries until the cap).
             vtk_w._disk_ready_resume_done = True
+            vtk_w._disk_ready_resume_done_ts = now
+            vtk_w._disk_ready_resume_attempts = _attempts + 1
             try:
                 self._log_viewport_lifecycle(
-                    "ViewportLoadResumedFromDisk", vtk_w, display_key, files=count, expected=expected,
+                    "ViewportLoadResumedFromDisk", vtk_w, display_key,
+                    files=count, expected=expected, attempt=_attempts + 1,
                 )
             except Exception:
                 pass
             try:
-                self.change_series_on_viewer(display_key)
+                # Load into the EXACT viewport that is awaiting this series (the
+                # layout cell the user dropped into) — NOT the default/selected
+                # viewport. Mirror the manual drag-drop call so the delayed load
+                # lands in the right cell: flag_change_selected_widget=False,
+                # vtk_widget=<the awaiting target>, force_reload=True.
+                self.change_series_on_viewer(
+                    display_key,
+                    flag_change_selected_widget=False,
+                    vtk_widget=vtk_w,
+                    slider=getattr(vtk_w, "slider", None),
+                    force_reload=True,
+                )
             except Exception:
                 pass
             return True

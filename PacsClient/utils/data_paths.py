@@ -33,8 +33,25 @@ logger = logging.getLogger(__name__)
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 USER_DATA_ROOT: Path = user_data_root()
 
+# ━━ Per-server clinical-data partition (multi-server profiles) ━━━━━━━━━━━━━━━
+# When the multi-server feature is OFF (default) ``CLINICAL_DATA_ROOT`` ==
+# ``USER_DATA_ROOT`` so the layout below is byte-identical to the original
+# single-server tree.  When ON, the *clinical* subtrees (patients + database)
+# live under ``USER_DATA_ROOT/servers/<active_profile_id>/`` so two centers can
+# never collide on a shared PatientID / StudyInstanceUID and a center's data can
+# be deleted on its own.  Logs / config / education / cache stay shared under
+# ``USER_DATA_ROOT``.  Wrapped so a profile-resolution error can NEVER prevent
+# application startup.
+try:
+    from PacsClient.utils.server_profiles import clinical_data_root as _clinical_data_root
+
+    CLINICAL_DATA_ROOT: Path = _clinical_data_root(USER_DATA_ROOT)
+except Exception as _cdr_exc:  # pragma: no cover - defensive: never block startup
+    logger.warning("Per-server clinical root unavailable; using default root: %s", _cdr_exc)
+    CLINICAL_DATA_ROOT = USER_DATA_ROOT
+
 # ━━ Patients ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-PATIENTS_DIR:    Path = USER_DATA_ROOT / "patients"
+PATIENTS_DIR:    Path = CLINICAL_DATA_ROOT / "patients"
 DICOM_IMAGES_DIR: Path = PATIENTS_DIR / "dicom"          # DICOM files by study_uid
 ATTACHMENTS_DIR: Path = PATIENTS_DIR / "attachments"      # voice / AI results / filming
 THUMBNAILS_DIR:  Path = PATIENTS_DIR / "thumbnails"       # series thumbnail images
@@ -82,7 +99,10 @@ BROWSER_SCREENSHOTS_DIR: Path = BROWSER_DIR / "screenshots"
 LOGS_DIR: Path = USER_DATA_ROOT / "logs"
 
 # ━━ Database ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-DATABASE_DIR:  Path = USER_DATA_ROOT / "database"
+# Per-server when the feature is on (each center gets its own dicom.db); the live
+# DB pool reads PacsClient.utils.data_paths.DATABASE_FILE, so setting it here at
+# import time is sufficient for the active profile.
+DATABASE_DIR:  Path = CLINICAL_DATA_ROOT / "database"
 DATABASE_FILE: Path = DATABASE_DIR / "dicom.db"
 
 
@@ -243,3 +263,44 @@ def _migrate_study_paths_in_db() -> None:
                 logger.info("Migrated %d stale study_path entries → %s", fixed, DICOM_IMAGES_DIR)
     except Exception as exc:
         logger.warning("DB study_path migration skipped: %s", exc)
+
+
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+#  Per-server clinical data helpers (multi-server profiles)
+# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+def active_server_clinical_root() -> Path:
+    """The clinical-data root for the *active* profile (== USER_DATA_ROOT when off)."""
+    return CLINICAL_DATA_ROOT
+
+
+def server_clinical_root(profile_id: str) -> Path:
+    """Clinical-data root for a SPECIFIC profile (used for per-server delete/inspect)."""
+    from PacsClient.utils.server_profiles import server_data_root
+
+    return server_data_root(USER_DATA_ROOT, profile_id)
+
+
+def delete_server_clinical_data(profile_id: str) -> bool:
+    """Delete ONE server's clinical data (db + dicom + thumbnails + attachments).
+
+    Returns True if the tree is gone afterwards. NEVER raises. The caller must
+    ensure *profile_id* is not the currently-active server with open DB handles
+    (delete after switching away / on next start) — a locked ``dicom.db`` on
+    Windows would otherwise survive.
+    """
+    from PacsClient.utils.server_profiles import delete_server_data
+
+    return delete_server_data(USER_DATA_ROOT, profile_id)
+
+
+def migrate_clinical_data_to_active_profile() -> bool:
+    """No-op kept for API/startup-call stability.
+
+    Under the **primary-center** data model the original center keeps the legacy
+    ``user_data`` root (``CLINICAL_DATA_ROOT == USER_DATA_ROOT`` for the primary),
+    so enabling multi-server moves NO existing data and there is nothing to
+    migrate — secondary centers simply start fresh under ``user_data/servers/<id>/``.
+    Retained so ``main.py`` can call it unconditionally. Always returns False.
+    """
+    return False

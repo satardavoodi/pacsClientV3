@@ -665,8 +665,28 @@ class _HPPatientOpenMixin:
 
     def _start_attachment_download_in_background(self, study_uid: str, trigger: str = 'immediate') -> None:
         def _worker():
+            # [ATTACH-TRACE] Snapshot the on-disk attachment folder around the
+            # open-time server pull. This brackets the "voice gone after reopen"
+            # report (47183/46838): if a local-only file is present at
+            # attachments_start but missing at attachments_done, the open pull is
+            # destructive; if it is already missing at attachments_start, it was
+            # removed during the previous close/teardown; if present at done but
+            # the panel shows nothing, it is a study_uid mismatch. Read-only.
+            def _att_state():
+                try:
+                    import os as _os
+                    from PacsClient.utils.config import ATTACHMENT_PATH as _ATT
+                    d = _ATT / study_uid
+                    return sorted(
+                        p.name for p in d.iterdir()
+                        if p.is_file() and not p.name.startswith('.')
+                    )
+                except Exception:
+                    return None
             _t0 = _time.perf_counter()
-            self._log_open_trace(study_uid, 'attachments_start', trigger=trigger)
+            _att_before = _att_state()
+            self._log_open_trace(study_uid, 'attachments_start', trigger=trigger,
+                                 att_files=_att_before)
             try:
                 loop = asyncio.new_event_loop()
                 asyncio.set_event_loop(loop)
@@ -679,6 +699,8 @@ class _HPPatientOpenMixin:
                     'attachments_done',
                     trigger=trigger,
                     worker_ms=round((_time.perf_counter() - _t0) * 1000.0, 1),
+                    att_files=_att_state(),
+                    att_before=_att_before,
                 )
             except Exception as e:
                 self._log_open_trace(
@@ -1324,6 +1346,19 @@ class _HPPatientOpenMixin:
                 except Exception as e:
                     self._log_open_trace(study_uid, 'download_manager_error', level='error', error=str(e))
                     _logger.error("Error adding to Download Manager: %s", e, exc_info=True)
+
+            # --- Previous Exams: fetch prior-study metadata in the background.
+            # Linked to the SAME real person via National ID / reception history,
+            # this only loads the LIST (metadata) and turns the "Previous Exam"
+            # header button red/active when prior exams exist. No previous-exam
+            # images are downloaded just because the current patient was opened —
+            # download happens only when the user selects + drags a series.
+            try:
+                if widget is not None and hasattr(widget, 'init_previous_exams'):
+                    widget.init_previous_exams(patient_id, patient_name)
+                    self._log_open_trace(study_uid, 'previous_exams_init', patient_id=str(patient_id))
+            except Exception as _pe_err:
+                self._log_open_trace(study_uid, 'previous_exams_init_error', level='warning', error=str(_pe_err))
 
             # --- STEP 3.6: UI-bound async tasks must run on main thread/event loop ---
             try:

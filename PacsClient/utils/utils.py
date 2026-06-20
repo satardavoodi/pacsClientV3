@@ -140,7 +140,26 @@ def get_server_url(name: str) -> str | None:
       1) {"services": {"breast": "...", "boneage": "..."}}
       2) [{"name":"breast","url":"..."} , ...]
     Adds http:// prefix automatically if missing.
+
+    Multi-server: when server profiles are enabled, the AI service endpoints
+    follow the ACTIVE center's profile (breast/boneage/segmentation), falling
+    through to the global ``servers_address.json`` below when the feature is off
+    or the slot is unset (byte-identical legacy behaviour).
     """
+    try:
+        from PacsClient.utils.server_profiles import active_module_endpoint
+
+        _slot = {"breast": "ai_breast", "boneage": "ai_boneage",
+                 "segmentation": "ai_segmentation"}.get(name, name)
+        _ep = active_module_endpoint(_slot)
+        if _ep:
+            _ep = _ep.strip()
+            if not (_ep.startswith("http://") or _ep.startswith("https://")):
+                _ep = "http://" + _ep
+            return _ep
+    except Exception:
+        pass
+
     global _SERVERS_FILE_MISSING_WARNED
     if not SERVERS_FILE.exists():
         if not _SERVERS_FILE_MISSING_WARNED:

@@ -488,6 +488,99 @@ class PatientListSocketClient:
             logger.error(f"❌ Error getting study info via socket: {e}")
             return None
 
+    def get_patient_status(self, patient_id) -> Optional[Dict[str, Any]]:
+        """Fetch the FULL past-study list for one PatientID via ``GetPatientStatus``.
+
+        The server returns every study of that patient_id (newest→oldest) with
+        per-study date/modality/series/instance counts and report status — the
+        "Previous Exams" feature consumes ``data['studies']``. Returns the
+        normalized ``data`` payload on success, otherwise ``None`` (tolerant).
+        See docs server doc §1.2.
+        """
+        try:
+            pid = str(patient_id or "").strip()
+            if not pid:
+                return None
+
+            response = None
+            for attempt in range(2):
+                response = self.send_request("GetPatientStatus", {"patient_id": pid})
+                if response:
+                    break
+                if attempt == 0:
+                    time.sleep(0.2)
+            if not response:
+                return None
+
+            status = str(response.get("status", "") or "").lower()
+            if status not in {"success", "ok"} and not bool(response.get("success")):
+                return None
+
+            data = response.get("data")
+            return data if isinstance(data, dict) else None
+        except Exception as e:
+            logger.error(f"❌ Error getting patient status via socket: {e}")
+            return None
+
+    def get_patient_reception_history(
+        self,
+        patient_id=None,
+        *,
+        reception_id=None,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch the cross-PatientID reception history via ``GetPatientReceptionHistory``.
+
+        This is the National-ID / RIS path: given the current ``patient_id``
+        (which the server treats as an alias for ``reception_id``), the server
+        resolves the same real person by ``nationalCode`` / ``risPatientId`` and
+        returns every PRIOR reception — each of which may carry a DIFFERENT
+        PatientID and its own ``studies[]``. Returns the normalized ``data``
+        payload (``patientId`` / ``nationalCode`` / ``history[]``) on success,
+        otherwise ``None``. See docs server doc §1.3.
+        """
+        try:
+            params: Dict[str, Any] = {}
+            rid = str(reception_id or "").strip()
+            pid = str(patient_id or "").strip()
+            if rid:
+                params["reception_id"] = rid
+            # patient_id is a documented alias for reception_id — send it too so
+            # the server can resolve via either key.
+            if pid:
+                params["patient_id"] = pid
+                params.setdefault("reception_id", pid)
+            if not params:
+                return None
+
+            response = None
+            for attempt in range(2):
+                response = self.send_request("GetPatientReceptionHistory", params)
+                if response:
+                    break
+                if attempt == 0:
+                    time.sleep(0.2)
+            if not response:
+                return None
+
+            status = str(response.get("status", "") or "").lower()
+            if status not in {"success", "ok"} and not bool(response.get("success")):
+                # Some HTTP-style deployments omit the status wrapper and return
+                # the history fields at the top level; accept that shape too.
+                if isinstance(response.get("history"), list):
+                    return response
+                return None
+
+            data = response.get("data")
+            if isinstance(data, dict):
+                return data
+            # Tolerate a top-level history payload under a success wrapper.
+            if isinstance(response.get("history"), list):
+                return response
+            return None
+        except Exception as e:
+            logger.error(f"❌ Error getting patient reception history via socket: {e}")
+            return None
+
     def query_series_thumbnails(
         self,
         *,

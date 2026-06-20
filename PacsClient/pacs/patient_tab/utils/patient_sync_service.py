@@ -18,6 +18,19 @@ from PacsClient.utils.db_manager import get_attachments_uploaded
 logger = logging.getLogger(__name__)
 
 
+def _list_attachment_files(study_uid: str):
+    """[ATTACH-TRACE] Read-only snapshot of the on-disk attachment filenames for
+    a study (non-hidden). Used to bracket the sync window so a vanishing
+    approved voice can be pinned to the exact step. Returns None on error."""
+    try:
+        from PacsClient.utils.config import ATTACHMENT_PATH
+        d = ATTACHMENT_PATH / study_uid
+        return sorted(p.name for p in d.iterdir()
+                      if p.is_file() and not p.name.startswith('.'))
+    except Exception:
+        return None
+
+
 def reconcile_attachments_from_server(study_uid: str, *, verbose: bool = False) -> Dict[str, Any]:
     """Pull server-side attachments that are missing locally — WITHOUT ever
     deleting local files.
@@ -34,11 +47,23 @@ def reconcile_attachments_from_server(study_uid: str, *, verbose: bool = False) 
         return {}
     try:
         from modules.network.upload_download_attchments import download_attachments_for_study
+        _before = _list_attachment_files(study_uid)
         summary = download_attachments_for_study(study_uid, overwrite=False, verbose=verbose)
+        _after = _list_attachment_files(study_uid)
         logger.info(
-            "[SYNC] reconcile (non-destructive) study=%s pulled=%s skipped=%s failed=%s",
+            "[SYNC] reconcile (non-destructive) study=%s pulled=%s skipped=%s failed=%s before=%s after=%s",
             study_uid, summary.get("saved"), summary.get("skipped"), summary.get("failed"),
+            _before, _after,
         )
+        # Defensive audit: a non-destructive reconcile must NEVER reduce the local
+        # file set. If after < before, a local-only (e.g. unsynced voice) file was
+        # lost here — pin it loudly instead of failing silently.
+        if _before and _after is not None and len(_after) < len(_before):
+            lost = sorted(set(_before) - set(_after))
+            logger.error(
+                "[ATTACH-AUDIT] reconcile REDUCED local attachments study=%s lost=%s before=%s after=%s",
+                study_uid, lost, _before, _after,
+            )
         return summary
     except Exception as exc:
         # Server unreachable / transient error: keep ALL local files intact.
@@ -108,8 +133,11 @@ class PatientSyncService(QObject):
                 "errors": []
             }
             
+            logger.info("[ATTACH-TRACE] sync_start study=%s files=%s",
+                        study_uid, _list_attachment_files(study_uid))
+
             attachment_files = self._find_attachment_files(study_uid, attachment_folder_path)
-            
+
             if attachment_files:
                 # دریافت لیست فایل‌های آپلود‌شده
                 uploaded_files_str = get_attachments_uploaded(study_uid)
@@ -180,8 +208,11 @@ class PatientSyncService(QObject):
             if result['attachments_uploaded'] > 0:
                 reconcile_attachments_from_server(study_uid, verbose=verbose)
             
+            logger.info("[ATTACH-TRACE] sync_end study=%s files=%s",
+                        study_uid, _list_attachment_files(study_uid))
+
             self.sync_completed.emit(study_uid, result)
-            
+
         except Exception as e:
             self.sync_failed.emit(study_uid, f"Sync failed: {str(e)}")
         

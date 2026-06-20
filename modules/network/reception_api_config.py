@@ -226,7 +226,23 @@ def get_reception_api_base_url() -> str:
         if value:
             return value.rstrip("/")
 
-    # 2) Configured value.
+    # 2) Active server profile (multi-server): the Reception / Workflow API
+    #    follows the active center when profiles are enabled and the slot is
+    #    configured. Falls through to the shared config file when off / unset.
+    try:
+        from PacsClient.utils.server_profiles import active_module_endpoint
+
+        endpoint = active_module_endpoint("reception_api")
+        if endpoint:
+            endpoint = endpoint.strip().rstrip("/")
+            if endpoint and "://" not in endpoint:
+                endpoint = "http://" + endpoint
+            if endpoint:
+                return endpoint
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Per-profile reception endpoint unavailable: %s", exc)
+
+    # 3) Configured value.
     try:
         configured = get_reception_api_config().get_base_url()
         if configured:
@@ -234,7 +250,7 @@ def get_reception_api_base_url() -> str:
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Reception API config unavailable, using default: %s", exc)
 
-    # 3) Hard-coded default.
+    # 4) Hard-coded default.
     return _DEFAULT_BASE_URL
 
 

@@ -490,9 +490,33 @@ class _PWThumbnailsMixin:
             source_root = None
 
         primary = str(getattr(self, 'study_uid', '') or '')
-        ordered = ([primary] if primary in studies_index else []) + sorted(
-            su for su in studies_index.keys() if su != primary
-        )
+        # STABLE per-study slot assignment (2026-06-20). The offset key
+        # (slot*1_000_000 + orig) MUST NOT change when another previous exam is
+        # merged later. The old ``sorted(others)`` re-sorted on every rebuild, so a
+        # study's slot — and thus its keys — shifted whenever a previous exam that
+        # sorts earlier was added. Proven in download_diagnostics: the SAME key
+        # 1000005 resolved to two different studies over time, so a drag could load
+        # the WRONG (previous) study. Fix: assign each study a PERMANENT slot in
+        # first-seen order (primary always slot 0); append newly-seen studies, never
+        # reorder survivors. Fail-safe: any error falls back to the legacy order.
+        try:
+            slot_order = getattr(self, '_multistudy_slot_order', None)
+            if not isinstance(slot_order, list):
+                slot_order = []
+            if primary and primary in studies_index:
+                if primary in slot_order:
+                    slot_order.remove(primary)
+                slot_order.insert(0, primary)  # primary is always slot 0
+            for su in sorted(s for s in studies_index.keys() if s != primary):
+                if su not in slot_order:
+                    slot_order.append(su)  # new study -> next free slot, stable
+            slot_order = [su for su in slot_order if su in studies_index]  # prune gone
+            self._multistudy_slot_order = slot_order
+            ordered = list(slot_order)
+        except Exception:
+            ordered = ([primary] if primary in studies_index else []) + sorted(
+                su for su in studies_index.keys() if su != primary
+            )
 
         def _series_order_key(s):
             """Numeric series-number sort key so each study's series render
@@ -545,8 +569,43 @@ class _PWThumbnailsMixin:
         except Exception as e:
             self.logger.debug(f"Multi-study grouped render slot error: {e}")
 
+    def _study_date_display(self, study_uid: str) -> str:
+        """Best-effort ``YYYY-MM-DD`` exam date for a study.
+
+        Sources, in order: the previous-exam set (authoritative for both the
+        current and prior studies once loaded from GetPatientStatus / reception
+        history), then any series carrying a ``study_date`` (stamped at fetch).
+        Returns '' when unknown. Non-8-digit values are returned as-is."""
+        raw = ''
+        try:
+            pes = getattr(self, '_previous_exam_set', None)
+            if pes is not None and hasattr(pes, 'study'):
+                st = pes.study(study_uid)
+                if st is not None and getattr(st, 'study_date', ''):
+                    raw = str(st.study_date)
+        except Exception:
+            raw = ''
+        if not raw:
+            try:
+                for series in (getattr(self, '_studies_series', {}) or {}).get(study_uid, []) or []:
+                    d = str((series or {}).get('study_date') or (series or {}).get('StudyDate') or '').strip()
+                    if d:
+                        raw = d
+                        break
+            except Exception:
+                pass
+        s = str(raw).strip()
+        if len(s) == 8 and s.isdigit():
+            return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+        return s
+
     def _make_study_header_widget(self, slot: int, study_uid: str, series_count: int):
-        """Build a non-selectable 'Study N' divider row for the thumbnail grid."""
+        """Build a non-selectable 'Study N — <date> — <body parts>' divider row
+        for the thumbnail grid. A PREVIOUS exam (a prior study of the same real
+        person) gets a RED-tinted header + a '· PREVIOUS' tag + its own (prior)
+        Patient ID, so the whole group reads as a prior exam at a glance; the
+        current/main exam keeps the neutral header. Compact series-count + word
+        wrap keep the date fitting the narrow sidebar without overflow."""
         try:
             from PySide6.QtWidgets import QLabel
             body_parts = []
@@ -554,15 +613,60 @@ class _PWThumbnailsMixin:
                 bp = str((series or {}).get('body_part_examined') or '').strip()
                 if bp and bp not in body_parts:
                     body_parts.append(bp)
-            suffix = f" — {', '.join(body_parts)}" if body_parts else ""
-            label = QLabel(f"Study {slot + 1}{suffix}   ({series_count} series)")
-            label.setObjectName("multiStudyHeader")
-            label.setStyleSheet(
-                "QLabel#multiStudyHeader {"
-                " color: #cbd5e1; font-size: 12px; font-weight: bold;"
-                " background: #1e293b; border-radius: 4px;"
-                " padding: 6px 8px; margin: 2px 0px; }"
+
+            # Origin: a sanctioned previous exam is red; current/main is neutral.
+            is_prev = False
+            try:
+                checker = getattr(self, '_is_sanctioned_previous_exam', None)
+                if callable(checker):
+                    is_prev = bool(checker(study_uid))
+            except Exception:
+                is_prev = False
+
+            # For a previous exam, surface its OWN Patient ID (differs from the
+            # current patient) so the prior study is unambiguous.
+            prev_pid = ''
+            if is_prev:
+                try:
+                    pes = getattr(self, '_previous_exam_set', None)
+                    st = pes.study(study_uid) if (pes is not None and hasattr(pes, 'study')) else None
+                    if st is not None:
+                        prev_pid = str(getattr(st, 'patient_id', '') or '').strip()
+                except Exception:
+                    prev_pid = ''
+
+            date_disp = self._study_date_display(study_uid)
+            id_part = f" — ID {prev_pid}" if (is_prev and prev_pid) else ""
+            date_part = f" — {date_disp}" if date_disp else ""
+            bp_part = f" — {', '.join(body_parts)}" if body_parts else ""
+            tag = (" <span style=\"font-size:9px; color:#fecaca; font-weight:normal;\">"
+                   "· PREVIOUS</span>") if is_prev else ""
+            # Rich text keeps the series count visible but smaller/dimmer; word
+            # wrap guarantees no horizontal overflow on a long line.
+            label = QLabel(
+                f"Study {slot + 1}{id_part}{date_part}{bp_part}{tag}"
+                f" <span style=\"font-size:9px; color:#94a3b8; font-weight:normal;\">"
+                f"({series_count} series)</span>"
             )
+            label.setObjectName("multiStudyHeader")
+            label.setTextFormat(Qt.RichText)
+            label.setWordWrap(True)
+            if is_prev:
+                label.setStyleSheet(
+                    "QLabel#multiStudyHeader {"
+                    " color: #fecaca; font-size: 12px; font-weight: bold;"
+                    " background: rgba(239,68,68,0.12);"
+                    " border: 1px solid rgba(239,68,68,0.45);"
+                    " border-left: 4px solid #ef4444;"
+                    " border-radius: 4px; padding: 6px 8px; margin: 2px 0px; }"
+                )
+            else:
+                label.setStyleSheet(
+                    "QLabel#multiStudyHeader {"
+                    " color: #cbd5e1; font-size: 12px; font-weight: bold;"
+                    " background: #1e293b; border-radius: 4px;"
+                    " padding: 6px 8px; margin: 2px 0px; }"
+                )
             return label
         except Exception:
             return None

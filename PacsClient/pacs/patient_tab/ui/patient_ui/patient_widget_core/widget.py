@@ -123,9 +123,10 @@ from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_pipeline 
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_thumbnails import _PWThumbnailsMixin
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_metadata import _PWMetadataMixin
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_lifecycle import _PWLifecycleMixin
+from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_previous_exams import _PWPreviousExamsMixin
 
 
-class PatientWidget(_PWSyncMixin, _PWAdvancedMixin, _PWPanelsMixin, _PWViewersMixin, _PWSeriesMixin, _PWPipelineMixin, _PWThumbnailsMixin, _PWMetadataMixin, _PWLifecycleMixin, QWidget):
+class PatientWidget(_PWSyncMixin, _PWAdvancedMixin, _PWPanelsMixin, _PWViewersMixin, _PWSeriesMixin, _PWPipelineMixin, _PWThumbnailsMixin, _PWMetadataMixin, _PWLifecycleMixin, _PWPreviousExamsMixin, QWidget):
     # Signal for progressive series loading
     series_downloaded = Signal(str)  # series_number as string
     # Signal for per-batch download progress (incremental viewing)
@@ -290,8 +291,13 @@ class PatientWidget(_PWSyncMixin, _PWAdvancedMixin, _PWPanelsMixin, _PWViewersMi
 
         # Right panel layouts
         self.right_panel = QStackedWidget()
-        self.default_panel_width = 260
-        self.reception_panel_width = int(self.default_panel_width * 1.7)
+        # Narrowed from 260 (2026-06-21): the Series/thumbnail column read too wide
+        # around the fixed 190px cards. 234 keeps the card + margins + scrollbar
+        # fitting (234 - 10 left - 6 right - ~16 scrollbar ≈ 202 >= 190).
+        self.default_panel_width = 234
+        # Reception view keeps its previous absolute width (was 260*1.7) — it has
+        # wider tables; only the Series column is being narrowed here.
+        self.reception_panel_width = int(260 * 1.7)
         self.right_panel.setFixedWidth(self.default_panel_width)
 
         self.thumb_panel = self.thumbnail_layout_ui()

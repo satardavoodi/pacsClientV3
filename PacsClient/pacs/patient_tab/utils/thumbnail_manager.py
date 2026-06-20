@@ -46,6 +46,10 @@ class CircularProgressborder(QFrame):
         # active series (purple while active). In-memory only; the
         # authoritative set lives on ThumbnailManager.viewed_series.
         self._viewed = False
+        # Study origin: when True this series belongs to a PREVIOUS exam (a prior
+        # study of the same real person) and its single border is painted in a
+        # SPECTRUM OF RED keyed by state, instead of the normal palette.
+        self._is_previous = False
         self._theme = theme if theme else get_theme_manager().current_theme()
         self.theme_manager = get_theme_manager()
         
@@ -355,7 +359,29 @@ class CircularProgressborder(QFrame):
         # This keeps the SEMANTIC palette (accent=current, success=done,
         # info=available) but lets it shift with the workstation theme so
         # the thumbnail badges stop fighting non-Blue palettes.
-        if self._is_selected:
+        if self._is_previous:
+            # PREVIOUS exam: one border, painted in a SPECTRUM OF RED keyed by
+            # the SAME states as the normal palette, so a prior study reads as
+            # red throughout while still showing status at a glance:
+            #   currently open (selected) → bright/light red
+            #   viewed (no longer active) → medium red
+            #   downloaded (ready)        → solid red
+            #   downloading               → solid red (progress arc)
+            #   pending (not downloaded)  → dark dim red (dashed)
+            if self._is_selected:
+                _rc = '#fca5a5'
+            elif self._viewed and not self._downloading:
+                _rc = '#f87171'
+            elif self._is_ready:
+                _rc = '#ef4444'
+            elif self._downloading and self._progress > 0:
+                _rc = '#ef4444'
+            else:
+                _rc = '#7f1d1d'
+            border_color = QColor(_rc)
+            bg_color = QColor(_rc)
+            bg_color.setAlpha(34 if (self._is_selected or self._is_ready) else 16)
+        elif self._is_selected:
             border_color = QColor(self._theme.get('accent', '#8b5cf6'))
             bg_color = QColor(self._theme.get('accent', '#8b5cf6'))
             bg_color.setAlpha(30)
@@ -1363,6 +1389,32 @@ class ThumbnailManager(QObject):
             btn.setChecked(btn is selected_button)
 
 
+    # Study-origin border colors for series cards.
+    ORIGIN_BORDER_CURRENT = '#3b82f6'   # blue  = current / main patient exam
+    ORIGIN_BORDER_PREVIOUS = '#ef4444'  # red   = a previous exam (prior study, same real person)
+
+    def _origin_border_color(self, series_info):
+        """Return the card border color encoding a series' STUDY ORIGIN.
+
+        Red when the series' ``study_uid`` is a sanctioned PREVIOUS exam on the
+        parent patient widget (a prior study of the same real person, merged in
+        for comparison); blue otherwise (the current/main exam). Defaults to blue
+        for unknown/missing study — the current patient is the safe default and
+        previous exams are only ever the explicitly-sanctioned set."""
+        try:
+            su = ''
+            if isinstance(series_info, dict):
+                su = str(series_info.get('study_uid') or '').strip()
+                if not su and isinstance(series_info.get('series'), dict):
+                    su = str(series_info['series'].get('study_uid') or '').strip()
+            pw = getattr(self, 'parent_widget', None)
+            if su and pw is not None and hasattr(pw, '_is_sanctioned_previous_exam'):
+                if pw._is_sanctioned_previous_exam(su):
+                    return self.ORIGIN_BORDER_PREVIOUS
+        except Exception:
+            pass
+        return self.ORIGIN_BORDER_CURRENT
+
     def create_thumbnail_widget(self, pixmap: QPixmap, label_text: str, sop_instance_uid='test uid', thumbnail_index=0, series_info=None, show_progress=False):
         """Create unified and consistent thumbnail widget for all scenarios"""
         try:
@@ -1408,17 +1460,30 @@ class ThumbnailManager(QObject):
             main_layout.setContentsMargins(0, 0, 0, 0)
             main_layout.setSpacing(0)
             
-            # Create circular progress border frame
+            # Create circular progress border frame — the SINGLE border around the
+            # card. Study origin is encoded in THIS border (not a second ring):
+            # a PREVIOUS exam paints it in a red spectrum keyed by state; the
+            # current/main exam uses the normal status palette.
             progress_border = CircularProgressborder(theme=self._theme)
             progress_border.setFixedSize(190, 215)  # mirrors widget height
+            try:
+                progress_border._is_previous = (
+                    self._origin_border_color(series_info) == self.ORIGIN_BORDER_PREVIOUS
+                )
+            except Exception:
+                pass
             border_layout = QVBoxLayout(progress_border)
             border_layout.setContentsMargins(8, 8, 8, 8)
             border_layout.setSpacing(3)
-            
-            # Inner content widget
+
+            # Inner content widget — NO border of its own (a second ring here was
+            # the "double line"); the single visible border is the
+            # CircularProgressborder above. Scoped #seriesCard so the background
+            # never bleeds onto child labels/buttons.
             content_widget = QWidget()
+            content_widget.setObjectName("seriesCard")
             content_widget.setStyleSheet(f"""
-                QWidget {{
+                QWidget#seriesCard {{
                     background: {self._theme.get('panel_alt_bg', '#2d3748')};
                     border: none;
                     border-radius: 6px;

@@ -395,10 +395,42 @@ class SocketConfig:
 _socket_config = None
 
 
+def _seed_from_active_profile(config: "SocketConfig") -> None:
+    """Point the socket layer at the ACTIVE server profile at startup.
+
+    When multi-server profiles are enabled, the active profile is the single
+    source of truth for which center the app talks to — so login, patient
+    search, and downloads all start from the active profile's host + per-server
+    socket port.  No-op (byte-identical legacy behaviour, uses socket_config.json
+    only) when the feature is off.  Never raises — a seeding failure must not
+    break socket creation.
+    """
+    try:
+        from PacsClient.utils.server_profiles import (
+            server_profiles_enabled,
+            get_active_profile,
+        )
+
+        if not server_profiles_enabled():
+            return
+        prof = get_active_profile()
+        if not prof or not prof.host:
+            return
+        # save_to_file=False: the profile is authoritative; don't overwrite the
+        # socket_config.json fallback with the seeded value.
+        config.update_server_settings(prof.host, int(prof.socket_port), save_to_file=False)
+        logger.info(
+            "🔧 Socket seeded from active server profile: %s (%s:%s)",
+            prof.display_name, prof.host, prof.socket_port,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Socket profile seeding skipped: %s", exc)
+
+
 def get_socket_config() -> SocketConfig:
     """
     Get global Socket configuration instance
-    
+
     Returns:
         SocketConfig: Global configuration instance
     """
@@ -406,6 +438,7 @@ def get_socket_config() -> SocketConfig:
     if _socket_config is None:
         logger.info("🔧 Creating new SocketConfig")
         _socket_config = SocketConfig()
+        _seed_from_active_profile(_socket_config)
         logger.info("✅ SocketConfig created successfully")
     return _socket_config
 

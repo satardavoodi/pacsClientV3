@@ -26,6 +26,101 @@ from .report_status_dialog import ReportStatusDialog
 logger = logging.getLogger(__name__)
 
 
+# ── Safe local-delete of attachments ────────────────────────────────────────
+# Deleting a study's local DICOM (to free disk) must NEVER destroy an approved
+# recording that has not yet been confirmed on the server. The server is the
+# authority: only attachments the server already has (uploaded, or previously
+# downloaded from it — recorded in ``studies.attachments_uploaded``) are safe to
+# remove locally. Anything else (e.g. a freshly approved, not-yet-synced voice
+# note) is KEPT on disk so a later sync can still upload it, and so the user
+# never loses an approved recording that only exists locally. The pure helpers
+# below are unit-tested in
+# ``tests/code/home/test_delete_keeps_unsynced_attachments.py``.
+def _server_confirmed_attachment_paths(study_uid: str) -> set:
+    """Path strings the SERVER already has for *study_uid* (from
+    ``studies.attachments_uploaded``), both as-stored and resolved so a local
+    file can be matched reliably. Returns an empty set on any error — the safe
+    direction (nothing is treated as confirmed, so nothing is deleted)."""
+    get_uploaded = None
+    try:
+        from database.manager import get_attachments_uploaded as get_uploaded
+    except Exception:
+        try:
+            from PacsClient.utils.db_manager import get_attachments_uploaded as get_uploaded
+        except Exception:
+            get_uploaded = None
+    if get_uploaded is None:
+        return set()
+    try:
+        raw = get_uploaded(study_uid) or ""
+    except Exception:
+        return set()
+    confirmed = set()
+    for part in str(raw).split(","):
+        p = part.strip()
+        if not p:
+            continue
+        confirmed.add(p)
+        try:
+            confirmed.add(str(Path(p).resolve()))
+        except Exception:
+            pass
+    return confirmed
+
+
+def _partition_attachments_for_delete(files, confirmed_paths):
+    """Split *files* into ``(deletable, kept)``. A file is deletable ONLY if its
+    path (as-given or resolved) is in *confirmed_paths* — i.e. the server has a
+    copy and it can be re-downloaded. Everything else is KEPT; this is what
+    prevents an approved, not-yet-synced recording from being lost during a
+    local-study delete."""
+    confirmed = set(confirmed_paths or ())
+    deletable, kept = [], []
+    for f in files:
+        candidates = {str(f)}
+        try:
+            candidates.add(str(Path(f).resolve()))
+        except Exception:
+            pass
+        (deletable if (candidates & confirmed) else kept).append(f)
+    return deletable, kept
+
+
+def _delete_synced_attachments_only(study_uid: str, attachment_dir) -> tuple:
+    """Delete only the attachments the server already has; keep not-yet-synced
+    ones. If there is nothing to keep, the whole folder (incl. the pending-sync
+    manifest) is removed. Returns ``(deleted_count, kept_count)``."""
+    import shutil as _shutil
+    attachment_dir = Path(attachment_dir)
+    try:
+        files = [p for p in attachment_dir.iterdir()
+                 if p.is_file() and not p.name.startswith(".")]
+    except Exception:
+        return (0, 0)
+    deletable, kept = _partition_attachments_for_delete(
+        files, _server_confirmed_attachment_paths(study_uid)
+    )
+    deleted = 0
+    for f in deletable:
+        try:
+            f.unlink()
+            deleted += 1
+        except Exception as exc:
+            logger.warning("[ATTACH-DELETE] could not remove synced attachment %s: %s", f, exc)
+    if not kept:
+        # No unsynced files to protect — remove the folder and its manifest too.
+        try:
+            _shutil.rmtree(attachment_dir, ignore_errors=True)
+        except Exception:
+            pass
+    logger.info(
+        "[ATTACH-DELETE] study=%s deleted_synced=%d kept_unsynced=%d "
+        "(approved/unsynced recordings are never deleted)",
+        study_uid, deleted, len(kept),
+    )
+    return (deleted, len(kept))
+
+
 class CustomHeaderView(QHeaderView):
     """Custom header view to paint centered icons"""
     
@@ -2561,7 +2656,8 @@ class PatientTableWidget(QWidget):
         success_count = 0
         error_count = 0
         errors = []
-        
+        kept_unsynced_total = 0  # approved / not-yet-synced attachments preserved
+
         # Create progress dialog
         progress = QProgressDialog("Deleting local studies...", "Cancel", 0, len(studies_to_delete), self)
         progress.setWindowTitle("Delete Studies")
@@ -2582,7 +2678,8 @@ class PatientTableWidget(QWidget):
             try:
                 deleted_dicom = False
                 deleted_attachments = False
-                
+                kept_this_study = 0  # not-yet-synced attachments preserved for this study
+
                 # Delete DICOM files
                 study_path = SOURCE_PATH / study_uid
                 if study_path.exists():
@@ -2590,16 +2687,46 @@ class PatientTableWidget(QWidget):
                     print(f"✓ Deleted DICOM files for {study_uid}")
                     deleted_dicom = True
                 
-                # Delete attachments
+                # Delete attachments — but NEVER delete an approved recording the
+                # server has not confirmed yet. Only attachments the server
+                # already has (uploaded, or previously downloaded from it) are
+                # removed locally; a freshly approved, not-yet-synced voice note
+                # is KEPT so it can never be lost by this cleanup. Set
+                # AIPACS_DELETE_KEEPS_UNSYNCED_ATTACHMENTS=0 to restore the legacy
+                # blanket delete.
                 attachment_path = ATTACHMENT_PATH / study_uid
                 if attachment_path.exists():
-                    shutil.rmtree(attachment_path)
-                    print(f"✓ Deleted attachments for {study_uid}")
-                    deleted_attachments = True
-                
+                    keep_unsynced = os.getenv(
+                        "AIPACS_DELETE_KEEPS_UNSYNCED_ATTACHMENTS", "1"
+                    ).strip().lower() not in ("0", "false", "no")
+                    if not keep_unsynced:
+                        shutil.rmtree(attachment_path)
+                        print(f"✓ Deleted attachments for {study_uid}")
+                        deleted_attachments = True
+                    else:
+                        deleted_n, kept_n = _delete_synced_attachments_only(
+                            study_uid, attachment_path
+                        )
+                        if deleted_n:
+                            deleted_attachments = True
+                        if kept_n:
+                            kept_this_study = kept_n
+                            kept_unsynced_total += kept_n
+                            print(
+                                f"⚠️ Kept {kept_n} not-yet-synced attachment(s) for "
+                                f"{study_uid} — approved recordings are preserved "
+                                f"until the server confirms them"
+                            )
+                        elif deleted_n:
+                            print(f"✓ Deleted attachments for {study_uid}")
+
                 # Update database - mark as not downloaded
                 if deleted_dicom or deleted_attachments:
                     self._update_study_as_not_downloaded(study_uid)
+                    success_count += 1
+                elif kept_this_study:
+                    # Nothing was removable (everything was unsynced and is being
+                    # kept on purpose) — that is a success, not an error.
                     success_count += 1
                 else:
                     print(f"⚠️ No local files found for {study_uid}")
@@ -2624,6 +2751,16 @@ class PatientTableWidget(QWidget):
             # Clear checkboxes
             self.clear_all_selections()
         
+        # Note about preserved (not-yet-synced) attachments, if any.
+        kept_note = ""
+        if kept_unsynced_total > 0:
+            kept_note = (
+                f"\n\n🛡️ Kept {kept_unsynced_total} not-yet-synced attachment"
+                f"{'' if kept_unsynced_total == 1 else 's'} (e.g. approved voice "
+                "recordings) on this computer — they are uploaded the next time "
+                "you sync and are never deleted before the server confirms them."
+            )
+
         # Show summary
         if error_count == 0:
             QMessageBox.information(
@@ -2631,18 +2768,20 @@ class PatientTableWidget(QWidget):
                 "Deletion Complete",
                 f"✓ Successfully deleted {success_count} local {'study' if success_count == 1 else 'studies'}.\n\n"
                 "The studies remain on the server and can be re-downloaded if needed."
+                + kept_note
             )
         else:
             error_text = "\n".join(errors[:5])
             if len(errors) > 5:
                 error_text += f"\n... and {len(errors) - 5} more errors"
-            
+
             QMessageBox.warning(
                 self,
                 "Deletion Completed with Errors",
                 f"✓ Successfully deleted: {success_count}\n"
                 f"✗ Failed: {error_count}\n\n"
                 f"Errors:\n{error_text}"
+                + kept_note
             )
     
     def _update_study_as_not_downloaded(self, study_uid: str):

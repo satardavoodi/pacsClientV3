@@ -14,7 +14,7 @@ from functools import partial
 from pathlib import Path
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QPixmap
-from PySide6.QtWidgets import QApplication, QButtonGroup, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QToolBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QButtonGroup, QFrame, QGridLayout, QGroupBox, QHBoxLayout, QLabel, QMessageBox, QPushButton, QScrollArea, QStackedWidget, QToolBar, QVBoxLayout, QWidget
 from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar import ToolbarManager
 from PacsClient.pacs.patient_tab.utils import ThumbnailImageSourceService, VerticalButton, create_attachment_folder, get_name_file_from_path, get_quickly_series_info, open_folder
 from PacsClient.utils.scroll_style import get_scroll_area_style
@@ -314,13 +314,21 @@ class _PWPanelsMixin:
         thumbnail_layout = QVBoxLayout(thumbnail_panel)
 
         # thumbnail_layout.setContentsMargins(10, 10, 10, 10)
-        thumbnail_layout.setContentsMargins(20, 6, 6, 6)
+        # Tighter left margin (was 20) so the 190px cards sit closer to the edge and
+        # the column reads narrower (2026-06-21 width refinement).
+        thumbnail_layout.setContentsMargins(10, 6, 6, 6)
         thumbnail_layout.setSpacing(6)
 
-        # Enhanced header
+        # Enhanced header — TWO rows so the Series-Thumbnails title + count and the
+        # Previous-Exam button + count never crowd onto one line. The old single-row
+        # layout overlapped / truncated when counts grew, the width was limited, or
+        # DPI/localized labels were larger. Row 1 = Series Thumbnails | N series;
+        # Row 2 = Previous Exam | N exams. Each row right-aligns its count via a
+        # stretch, so it stays readable and responsive at any width.
         header_widget = QWidget()
-        header_layout = QHBoxLayout(header_widget)
-        header_layout.setContentsMargins(0, 0, 0, 0)
+        header_v = QVBoxLayout(header_widget)
+        header_v.setContentsMargins(0, 0, 0, 0)
+        header_v.setSpacing(4)
 
         # Title
         title_label = QLabel("Series Thumbnails")
@@ -344,11 +352,11 @@ class _PWPanelsMixin:
         except Exception:
             pass
 
-        # Count indicator
+        # Count indicator (compact; sits right next to the title, slightly smaller pill)
         self.thumb_count_label = QLabel("0 series")
         self.thumb_count_label.setStyleSheet("""
             QLabel {
-                font-size: 10px;
+                font-size: 9px;
                 font-family: 'Roboto', sans-serif;
                 color: #a0aec0;
                 padding: 4px 6px;
@@ -358,9 +366,63 @@ class _PWPanelsMixin:
             }
         """)
 
-        header_layout.addWidget(title_label)
-        header_layout.addStretch()
-        header_layout.addWidget(self.thumb_count_label)
+        # Row 1: Series Thumbnails  |  N series
+        row1 = QHBoxLayout()
+        row1.setContentsMargins(0, 0, 0, 0)
+        row1.setSpacing(6)
+        row1.addWidget(title_label)
+        row1.addSpacing(8)
+        row1.addWidget(self.thumb_count_label)
+        row1.addStretch()
+        header_v.addLayout(row1)
+
+        # Previous Exam toggle button (gray/inactive by default; turns red/active
+        # when the server reports prior exams of the same real person). Clicking
+        # switches the thumbnail area in-place to the previous-exams list. It lives
+        # on its OWN row (Row 2) with its own count pill, so it never crowds Row 1.
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.patient_widget_core._pw_previous_exams import (
+                previous_exams_enabled,
+            )
+            _pe_on = previous_exams_enabled()
+        except Exception:
+            _pe_on = False
+        if _pe_on:
+            self.prev_exam_btn = QPushButton("Previous Exam")
+            self.prev_exam_btn.setCheckable(True)
+            self.prev_exam_btn.setCursor(Qt.PointingHandCursor)
+            try:
+                self.prev_exam_btn.setStyleSheet(
+                    self._previous_exam_button_style(active=False))
+            except Exception:
+                pass
+            self.prev_exam_btn.setEnabled(False)
+            self.prev_exam_btn.setToolTip("No previous exams found for this patient")
+            try:
+                self.prev_exam_btn.clicked.connect(self._toggle_previous_exams_view)
+            except Exception:
+                pass
+
+            # Previous-exam count pill (right-aligned). Neutral gray when none;
+            # red-tinted when prior exams exist (set in
+            # _apply_previous_exam_button_state).
+            self.prev_exam_count_label = QLabel("0 exams")
+            try:
+                self.prev_exam_count_label.setStyleSheet(
+                    self._previous_exam_count_style(active=False))
+            except Exception:
+                pass
+
+            # Row 2: Previous Exam  |  N exams
+            row2 = QHBoxLayout()
+            row2.setContentsMargins(0, 0, 0, 0)
+            row2.setSpacing(6)
+            row2.addWidget(self.prev_exam_btn)
+            row2.addSpacing(8)
+            row2.addWidget(self.prev_exam_count_label)
+            row2.addStretch()
+            header_v.addLayout(row2)
+
         thumbnail_layout.addWidget(header_widget)
 
         # thumb_title = QLabel("Thumb")
@@ -405,7 +467,22 @@ class _PWPanelsMixin:
         self.thumb_grid.setVerticalSpacing(6)  # Reduced spacing for better fit
         self.thumb_grid.setAlignment(Qt.AlignTop | Qt.AlignLeft)  # Align thumbnails to the left
         thumb_scroll.setWidget(thumb_container)
-        thumbnail_layout.addWidget(thumb_scroll)
+
+        # Content stack: page 0 = current series grid (unchanged), page 1 =
+        # previous-exams list. The "Previous Exam" header button toggles between
+        # them in place. When the feature is disabled the scroll area is added
+        # directly so behaviour is byte-identical to before.
+        if _pe_on:
+            self.thumb_content_stack = QStackedWidget()
+            self.thumb_content_stack.addWidget(thumb_scroll)  # index 0
+            try:
+                prev_list_page = self._build_previous_exams_list_widget()
+                self.thumb_content_stack.addWidget(prev_list_page)  # index 1
+            except Exception:
+                pass
+            thumbnail_layout.addWidget(self.thumb_content_stack)
+        else:
+            thumbnail_layout.addWidget(thumb_scroll)
 
         # thumbnail_panel.setFixedWidth(250)
         #

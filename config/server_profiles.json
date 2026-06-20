@@ -1,0 +1,54 @@
+{
+  "schema_version": 1,
+  "enabled": true,
+  "primary_profile_id": "razi",
+  "active_profile_id": "razi",
+  "profiles": [
+    {
+      "id": "razi",
+      "display_name": "razi",
+      "host": "192.168.2.222",
+      "socket_port": 50052,
+      "dicom_port": 105,
+      "ae_title": "aipacs",
+      "poor_connectivity": false,
+      "enabled": true,
+      "server_type": "ai_pacs",
+      "modules": {
+        "ai_breast": "192.168.2.222:8002",
+        "ai_boneage": "192.168.2.222:8003",
+        "ai_segmentation": "192.168.2.222:9000",
+        "reception_api": "http://81.16.117.196:8080",
+        "mammography": null,
+        "bonj": null
+      },
+      "status": {
+        "last_checked": null,
+        "reachable": null
+      }
+    },
+    {
+      "id": "mehr",
+      "display_name": "mehr",
+      "host": "5.57.36.202",
+      "socket_port": 50052,
+      "dicom_port": 104,
+      "ae_title": "aipacs",
+      "poor_connectivity": true,
+      "enabled": true,
+      "server_type": "ai_pacs",
+      "modules": {
+        "ai_breast": "5.57.36.202:8002",
+        "ai_boneage": "5.57.36.202:8003",
+        "ai_segmentation": "5.57.36.202:9000",
+        "reception_api": "http://5.57.36.202:8800",
+        "mammography": null,
+        "bonj": null
+      },
+      "status": {
+        "last_checked": null,
+        "reachable": null
+      }
+    }
+  ]
+}

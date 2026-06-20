@@ -77,6 +77,37 @@ def _merge_drag_view_intent(prev, series, want_notify, want_trigger):
         want_trigger = want_trigger or bool(prev.get("trigger"))
     return {"series": series, "notify": bool(want_notify), "trigger": bool(want_trigger)}
 
+
+def resolve_entry_study_location(entry, tab_study_path=None):
+    """Entry-authority disk resolution for a dragged multi-study series (pure, testable).
+
+    A multi-study series' own ``_server_series_info`` entry is the single source of
+    truth for which study + disk folder it lives in: the multi-study index builder
+    (``_rebuild_multistudy_series_index``) stamps EVERY entry — primary slot 0
+    INCLUDED — with ``series_path = SOURCE_PATH/<study_uid>/<orig_no>`` and
+    ``_orig_series_number``. Loading from the entry (NOT the tab-level study_path,
+    which a previous-exam / sibling-study load can leave pointing at another study)
+    guarantees a dragged series ALWAYS loads from its own study — the
+    "drag current -> viewport shows previous series" fix (2026-06-21).
+
+    Returns ``(study_dir, disk_series_number)`` when the entry resolves
+    authoritatively, else ``(None, None)`` so the caller falls through to the
+    slot-recompute / plain-key fallbacks. Requires BOTH ``series_path`` AND
+    ``_orig_series_number``; only the multi-study rebuild sets the latter, so a
+    single-study tab returns ``(None, None)`` here and keeps its original tab-path
+    behaviour, byte-identical. ``tab_study_path`` is accepted for signature
+    symmetry; when the entry is authoritative it always wins. Pure: stdlib only —
+    no Qt / widget access (so it is unit-testable in isolation).
+    """
+    if not isinstance(entry, dict):
+        return (None, None)
+    orig = entry.get('_orig_series_number')
+    path = entry.get('series_path')
+    if orig and path:
+        return (str(_Path(path).parent), str(orig))
+    return (None, None)
+
+
 # Redirect print() to logger to avoid synchronous console I/O on Windows.
 _print_logger = _logging.getLogger(__name__)
 def print(*args, **_kw):  # noqa: A001
@@ -218,36 +249,46 @@ class _VCLoadMixin:
         ``_server_series_info`` entry is the disk authority per the
         multi-study invariant (use each entry's series_path for disk access).
 
-        Fail-open: returns None when the passed path already contains the
-        series folder (common case — one exists() check), when no entry /
-        entry path exists, or when the entry's parent folder is absent.
+        The series' OWN entry ``series_path`` is the DISK AUTHORITY and is checked
+        FIRST. The passed tab-level ``study_path`` (from import_folder_path) can be
+        POISONED to a sibling / previous-exam study after that study is viewed;
+        because a previous exam often ALSO has this series number,
+        ``study_path/<key>/`` exists and the old "tab path is fine" short-circuit
+        kept the WRONG study — loading a CURRENT series from the PREVIOUS study's
+        folder (the "switch shows previous series" bug, 2026-06-21; confirmed in
+        VIEWPORT-LOAD-TRACE: key=2 resolved_study=44030 but study_path=43373).
+
+        Fix: whenever the entry has a usable ``series_path`` whose study folder
+        differs from ``study_path``, return the ENTRY's folder even if
+        ``study_path/<key>/`` happens to exist. Returns None (keep ``study_path``)
+        only when the entry already matches or there is no usable entry path.
+        Single-study patients have no offset-key entry ``series_path`` here, so the
+        zero-cost original behaviour (keep the tab path) is preserved for them.
         """
         from pathlib import Path as _Path
-        try:
-            if study_path and (_Path(study_path) / str(series_key)).exists():
-                return None  # tab path is fine — zero-cost common case
-        except Exception:
-            return None
         try:
             entry = ms_entry
             if entry is None:
                 info = getattr(self.parent_widget, '_server_series_info', {}) or {}
                 entry = info.get(str(series_key)) if isinstance(info, dict) else None
             entry_path = str((entry or {}).get('series_path') or '')
-            if not entry_path:
+            if entry_path:
+                parent = _Path(entry_path).parent
+                if study_path and str(parent) == str(study_path):
+                    return None  # already the correct study folder
+                if parent.exists():
+                    logger.info(
+                        "[MULTI-STUDY LOAD] key=%s -> study_path=%s "
+                        "(plain-key ENTRY authority; passed study_path=%s)",
+                        series_key, parent, study_path,
+                    )
+                    return str(parent)  # the entry's study is authoritative
+            # No usable entry path: keep the tab path if it actually has the series
+            # (single-study common case — zero-cost).
+            if study_path and (_Path(study_path) / str(series_key)).exists():
                 return None
-            parent = _Path(entry_path).parent
-            if study_path and str(parent) == str(study_path):
-                return None  # same folder; nothing to correct
-            if parent.exists():
-                logger.info(
-                    "[MULTI-STUDY LOAD] key=%s -> study_path=%s "
-                    "(plain-key entry series_path; tab path lacked series)",
-                    series_key, parent,
-                )
-                return str(parent)
         except Exception:
-            pass
+            return None
         return None
 
     def _ensure_study_pk_for_db_metadata(self) -> None:
@@ -387,17 +428,28 @@ class _VCLoadMixin:
             try:
                 _ms_info = getattr(self.parent_widget, '_server_series_info', {}) or {}
                 _ms_entry = _ms_info.get(series_key) if isinstance(_ms_info, dict) else None
-                if isinstance(_ms_entry, dict) and int(_ms_entry.get('_study_slot', 0) or 0) > 0:
-                    _ms_orig = _ms_entry.get('_orig_series_number')
-                    _ms_path = _ms_entry.get('series_path')
-                    if _ms_orig and _ms_path:
-                        ms_disk_series_number = str(_ms_orig)
-                        study_path = str(Path(_ms_path).parent)
-                        _ms_resolved = True
-                        logger.info(
-                            "[MULTI-STUDY LOAD] key=%s -> study_path=%s disk_series=%s (entry)",
-                            series_key, study_path, ms_disk_series_number,
-                        )
+                # ENTRY AUTHORITY (any study, any key — primary INCLUDED): the
+                # dragged thumbnail's own _server_series_info entry encodes the exact
+                # study folder + original series number for THIS series
+                # (series_path = SOURCE_PATH/<study_uid>/<orig_no>, set for EVERY slot
+                # incl. primary slot 0 in _rebuild_multistudy_series_index). Load from
+                # it for every key so a dragged series ALWAYS loads from its own study
+                # — never from a tab study_path that a previous-exam / sibling-study
+                # load may have left pointing elsewhere (the "drag current -> see
+                # previous series" bug, 2026-06-21). The gate requires BOTH series_path
+                # AND _orig_series_number, which only the multi-study rebuild sets, so
+                # single-study tabs (series_path only, no _orig_series_number) fall
+                # through to the original tab-path behaviour, byte-identical.
+                _auth_dir, _auth_disk = resolve_entry_study_location(_ms_entry, study_path)
+                if _auth_dir:
+                    study_path = _auth_dir
+                    ms_disk_series_number = _auth_disk
+                    _ms_resolved = True
+                    logger.info(
+                        "[MULTI-STUDY LOAD] key=%s -> study_path=%s disk_series=%s (entry-authority slot=%s)",
+                        series_key, study_path, ms_disk_series_number,
+                        (_ms_entry or {}).get('_study_slot', 0),
+                    )
                 # Robust fallback: an offset key whose _server_series_info entry was
                 # dropped/rebuilt (e.g. by a later set_server_series_info) would otherwise
                 # fall back to the PRIMARY study path and silently fail to load — the
@@ -416,9 +468,17 @@ class _VCLoadMixin:
                         _orig = _key_int % 1_000_000
                         _studies = getattr(self.parent_widget, '_studies_series', {}) or {}
                         _primary = str(getattr(self.parent_widget, 'study_uid', '') or '')
-                        _ordered = ([_primary] if _primary in _studies else []) + sorted(
-                            _su for _su in _studies.keys() if _su != _primary
-                        )
+                        # Use the SAME stable slot order the index builder assigned
+                        # (``_multistudy_slot_order``) so this fallback resolves a key
+                        # to the identical study even after previous exams are merged;
+                        # only fall back to the legacy sorted order if it is absent.
+                        _stable = getattr(self.parent_widget, '_multistudy_slot_order', None)
+                        if isinstance(_stable, list) and _stable:
+                            _ordered = [_su for _su in _stable if _su in _studies]
+                        else:
+                            _ordered = ([_primary] if _primary in _studies else []) + sorted(
+                                _su for _su in _studies.keys() if _su != _primary
+                            )
                         if 0 <= _slot < len(_ordered):
                             from PacsClient.utils.config import SOURCE_PATH as _SRC
                             _su = _ordered[_slot]
@@ -456,6 +516,47 @@ class _VCLoadMixin:
                         _ms_resolved = True
             except Exception:
                 ms_disk_series_number = series_number
+
+            # Drag-drop / series-load resolution trace. OPT-IN (default OFF) —
+            # enable with AIPACS_VIEWPORT_LOAD_TRACE=1 when investigating a
+            # wrong-series load. The concise "[MULTI-STUDY LOAD] ... (entry-authority
+            # slot=N)" INFO line above is the always-on production diagnostic
+            # (key -> study_path/disk_series); this heavier trace adds the canonical
+            # resolved_study + series_uid + is_previous cross-check. Routed to
+            # component="ui" so it lands in app.log (the viewer_diagnostics.log
+            # channel was observed to stall). Per drop it reveals whether a CURRENT
+            # key resolved to a PREVIOUS study (the 2026-06-21 bug).
+            try:
+                import os as _os_tr
+                if _os_tr.environ.get("AIPACS_VIEWPORT_LOAD_TRACE", "0") == "1":
+                    _prim = str(getattr(self.parent_widget, 'study_uid', '') or '')
+                    _res_study = ''
+                    _res_uid = ''
+                    try:
+                        _rid = self._resolve_canonical_series_identity(series_key)
+                        if _rid:
+                            _res_study = str(_rid[0] or '')
+                            _res_uid = str(_rid[2] or '')
+                    except Exception:
+                        pass
+                    _is_prev = False
+                    try:
+                        _chk = getattr(self.parent_widget, '_is_sanctioned_previous_exam', None)
+                        if callable(_chk):
+                            _is_prev = bool(_chk(_res_study or _prim))
+                    except Exception:
+                        pass
+                    self.logger.warning(
+                        "[VIEWPORT-LOAD-TRACE] dropped_key=%s resolved_study=...%s series_uid=...%s "
+                        "disk_series=%s ms_resolved=%s is_previous=%s primary=...%s study_path=...%s",
+                        series_key, _res_study[-24:], _res_uid[-16:], ms_disk_series_number,
+                        _ms_resolved, _is_prev, _prim[-24:], str(study_path or '')[-40:],
+                        extra={"component": "ui",
+                               "function": "ViewerController._load_single_series_on_demand",
+                               "stage": "load_trace"},
+                    )
+            except Exception:
+                pass
 
             # Fast no-op: same series already displayed in target viewport.
             # Prevents duplicate full ITK pipeline when a second request arrives

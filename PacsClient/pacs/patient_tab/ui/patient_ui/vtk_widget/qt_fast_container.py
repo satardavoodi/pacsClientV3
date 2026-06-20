@@ -174,6 +174,9 @@ class QtFastContainer(QWidget):
         self.apply_default_filter = True
         self.method_change_series_on_viewer = None
         self.method_change_container_border = None
+        # Selection-preserving border refresh (origin-aware red/blue) — called
+        # after a drop so a previous-exam series turns its viewport red at once.
+        self.method_refresh_viewport_borders = None
 
         # ── Overlay / drag-drop state ─────────────────────────────────────────
         self._overlay = {}
@@ -281,6 +284,18 @@ class QtFastContainer(QWidget):
 
     def set_method_change_container_border(self, fn) -> None:
         self.method_change_container_border = fn
+
+    def set_method_refresh_viewport_borders(self, fn) -> None:
+        self.method_refresh_viewport_borders = fn
+
+    def refresh_viewport_borders(self) -> None:
+        """Re-color all viewport borders by study origin WITHOUT changing the
+        active selection (used after a drop loads a previous-exam series)."""
+        if self.method_refresh_viewport_borders is not None:
+            try:
+                self.method_refresh_viewport_borders()
+            except Exception:
+                pass
 
     def change_container_border(self) -> None:
         """Mirror VTKWidget selection callback contract.
@@ -623,6 +638,10 @@ class QtFastContainer(QWidget):
         try:
             self._start_qt_viewer(metadata, metadata_fixed or {})
             self.last_series_show = series_index
+            # Now that this viewport is bound to a (possibly previous-exam) series,
+            # re-color borders by origin (covers thumbnail-click + programmatic
+            # loads; the drop path also refreshes). Selection is unchanged.
+            self.refresh_viewport_borders()
             logger.info(
                 "[QtFastContainer] switch_series: complete series=%s slices=%d",
                 series_number, self.get_count_of_slices(),
@@ -880,6 +899,11 @@ class QtFastContainer(QWidget):
                     slider=_slider,
                     force_reload=True,
                 )
+                # Re-color borders by origin now that this viewport's series (and
+                # its study_uid) is bound — a previous-exam series turns the
+                # viewport red without waiting for the next activation. Does not
+                # change the active selection (the drop kept it unchanged).
+                self.refresh_viewport_borders()
             except Exception as _err:
                 logger.error(
                     "[QtFastContainer DROP] series load FAILED — dropped series=%s target_viewer=%s: %s",

@@ -16,6 +16,9 @@ import qtawesome as qta
 
 from PacsClient.utils.config import ATTACHMENT_PATH, ICON_PATH
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 # ============================================================
 # V2 design-system overrides (2026-06-05, readability redesign)
@@ -214,6 +217,11 @@ class ImageAttachmentsPanel(QWidget):
         self.items.clear()
 
         files = self._iter_files()
+        try:
+            logger.info("[ATTACH-TRACE] panel=image study=%s n=%d files=%s",
+                        self.study_uid, len(files), sorted(p.name for p in files))
+        except Exception:
+            pass
         if not files:
             empty = QLabel("No images found")
             empty.setStyleSheet("QLabel { color:#9ca3af; font-size:13px; padding:20px; }")
@@ -512,6 +520,11 @@ class AudioAttachmentsPanel(QWidget):
         self.items.clear()
 
         files = self._iter_files()
+        try:
+            logger.info("[ATTACH-TRACE] panel=audio study=%s n=%d files=%s",
+                        self.study_uid, len(files), sorted(p.name for p in files))
+        except Exception:
+            pass
         if not files:
             empty = QLabel("No audios found")
             empty.setStyleSheet("QLabel { color:#9ca3af; font-size:13px; padding:20px; }")

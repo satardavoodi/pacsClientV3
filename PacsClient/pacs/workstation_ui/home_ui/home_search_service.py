@@ -337,6 +337,70 @@ class HomeSearchService:
     # Server (Socket) search
     # ------------------------------------------------------------------
 
+    def _maybe_switch_profile_and_restart(self, home, server) -> bool:
+        """Multi-server: if *server* is a DIFFERENT center than the active profile,
+        set it active and restart.
+
+        The clinical database, the download engine (subprocess) and the per-server
+        data folder all resolve the ACTIVE profile at startup. A live "half switch"
+        (repointing only the in-memory socket) makes the patient list show the new
+        center but the download subprocess still binds to the OLD active profile —
+        so downloads fail ("Failed to fetch metadata") or land in the wrong data
+        folder. A proper switch therefore requires a restart.
+
+        Returns True if the switch flow was triggered (caller must stop).
+        """
+        try:
+            from PacsClient.utils import server_profiles as _sp
+            if not _sp.server_profiles_enabled():
+                return False
+            prof = _sp.find_profile_for_server(server)
+            if not prof or prof.id == _sp.get_active_profile_id():
+                return False  # unknown, or same center — normal live search
+            reply = QMessageBox.question(
+                home, "Switch Server",
+                f"Switch to {prof.display_name}?\n\nAI-PACS will reload to load "
+                f"{prof.display_name}'s patients, downloads and its own data folder. "
+                f"This takes a few seconds.",
+                QMessageBox.Yes | QMessageBox.No,
+            )
+            if reply != QMessageBox.Yes:
+                return True  # declined — do NOT perform a half-switch search
+            _sp.set_active_profile_id(prof.id)
+            # Controlled in-app reload: spawn a fresh instance (single-instance
+            # takeover replaces this one) so the new center's data root, DB,
+            # download engine and module endpoints rebind cleanly — the user does
+            # NOT have to close + reopen manually.
+            self._relaunch_application()
+            from PySide6.QtWidgets import QApplication
+            QApplication.quit()
+            return True
+        except Exception as exc:
+            print(f"[home] profile switch failed: {exc}")
+            return False
+
+    @staticmethod
+    def _relaunch_application() -> None:
+        """Spawn a fresh AI-PACS instance, then the caller quits this one.
+
+        Single-instance takeover means the new process replaces the old, so the
+        user gets a clean reload (data root / DB / download engine / endpoints all
+        rebind to the newly-active server) without manually closing the app. Works
+        for both the frozen build and the source run; never raises.
+        """
+        import os
+        import sys
+        try:
+            from PySide6.QtCore import QProcess
+            if getattr(sys, "frozen", False):
+                QProcess.startDetached(sys.executable, list(sys.argv[1:]))
+            else:
+                script = os.path.abspath(sys.argv[0]) if sys.argv else ""
+                args = [script, *sys.argv[1:]] if script else list(sys.argv)
+                QProcess.startDetached(sys.executable, args, os.getcwd())
+        except Exception as exc:  # pragma: no cover - defensive
+            print(f"[home] relaunch failed (user can reopen manually): {exc}")
+
     async def search_server(self) -> None:
         """Search the remote PACS via Socket — cancellable."""
         home = self._home
@@ -427,8 +491,23 @@ class HomeSearchService:
                 QMessageBox.warning(home, "Server Not Selected", "Please select a PACS server first.")
                 return
 
+            # Multi-server: selecting a DIFFERENT center is a deliberate switch.
+            # The database, download engine and data folder all bind to the active
+            # profile at STARTUP, so a live half-switch (socket only) downloads from
+            # the wrong server / writes to the wrong data root. Set it active and
+            # restart instead.
+            if self._maybe_switch_profile_and_restart(home, server):
+                return
+
             from modules.network.socket_config import update_socket_server_settings, get_socket_server_settings
-            socket_port = get_socket_server_settings()['port']
+            # Multi-server: use the SELECTED server's own socket port when server
+            # profiles are enabled; otherwise keep the historical single global
+            # socket port (byte-identical legacy behaviour when the feature is off).
+            from PacsClient.utils.server_profiles import server_profiles_enabled, socket_port_for_server
+            if server_profiles_enabled():
+                socket_port = socket_port_for_server(server)
+            else:
+                socket_port = get_socket_server_settings()['port']
             update_socket_server_settings(host=server['host'], port=int(socket_port))
 
             server_name = server.get('name', server['host'])
@@ -586,8 +665,23 @@ class HomeSearchService:
                                     "Advanced search runs on the PACS server — please select a server first.")
                 return
 
+            # Multi-server: selecting a DIFFERENT center is a deliberate switch.
+            # The database, download engine and data folder all bind to the active
+            # profile at STARTUP, so a live half-switch (socket only) downloads from
+            # the wrong server / writes to the wrong data root. Set it active and
+            # restart instead.
+            if self._maybe_switch_profile_and_restart(home, server):
+                return
+
             from modules.network.socket_config import update_socket_server_settings, get_socket_server_settings
-            socket_port = get_socket_server_settings()['port']
+            # Multi-server: use the SELECTED server's own socket port when server
+            # profiles are enabled; otherwise keep the historical single global
+            # socket port (byte-identical legacy behaviour when the feature is off).
+            from PacsClient.utils.server_profiles import server_profiles_enabled, socket_port_for_server
+            if server_profiles_enabled():
+                socket_port = socket_port_for_server(server)
+            else:
+                socket_port = get_socket_server_settings()['port']
             update_socket_server_settings(host=server['host'], port=int(socket_port))
 
             home.show_loading("Advanced Search",

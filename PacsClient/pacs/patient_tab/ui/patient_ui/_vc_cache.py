@@ -216,6 +216,41 @@ class _VCCacheMixin:
         study_uid = str(getattr(self.parent_widget, 'study_uid', '') or '')
         return (study_uid, str(series_number))
 
+    def _cache_entry_study_matches(self, series_number, metadata) -> bool:
+        """True when a cached entry's study_uid agrees with the study that this
+        (possibly multi-study offset) key currently resolves to — or when it
+        cannot be determined (safe default: keep the entry). Guards against a
+        display/offset key being re-mapped to a different study after previous
+        exams are merged (slots re-sort), which would otherwise let the cache
+        return another study's pixels."""
+        try:
+            if not isinstance(metadata, dict):
+                return True
+            _s = metadata.get('series')
+            series = _s if isinstance(_s, dict) else {}
+            cached_study = str(series.get('study_uid') or metadata.get('study_uid') or '').strip()
+            if not cached_study:
+                return True  # no study on the cached entry -> cannot prove a mismatch
+            resolver = getattr(self, '_resolve_canonical_series_identity', None)
+            if not callable(resolver):
+                return True
+            exp_study = ''
+            try:
+                rid = resolver(str(series_number))
+                if rid and rid[0]:
+                    exp_study = str(rid[0]).strip()
+            except Exception:
+                exp_study = ''
+            if not exp_study or cached_study == exp_study:
+                return True
+            logger.warning(
+                "[CACHE-STUDY-MISMATCH] key=%s cached_study=...%s expected=...%s — dropping stale entry",
+                str(series_number), cached_study[-14:], exp_study[-14:],
+            )
+            return False
+        except Exception:
+            return True
+
     def _estimate_vtk_bytes(self, vtk_image_data):
         try:
             if vtk_image_data is None:
@@ -245,6 +280,21 @@ class _VCCacheMixin:
                     vtk_data, meta = val[0], val[1]
                 except Exception:
                     vtk_data, meta = None, None
+                # ── Multi-study / previous-exam cache-safety guard ──
+                # The ZetaBoost cache is keyed by the bare display series number,
+                # which is NOT study-scoped. On a multi-study tab (current exam +
+                # merged previous exams) a display/offset key can be re-mapped to a
+                # DIFFERENT study when previous exams are merged (slots re-sort), so
+                # a stale entry would return another study's pixels — the reported
+                # "viewport shows the previous series after multiple drag-and-drops".
+                # Never return cached data whose study_uid disagrees with the study
+                # this key currently resolves to; drop it and force a clean reload.
+                if not self._cache_entry_study_matches(key_sn, meta):
+                    try:
+                        self.zeta_boost.invalidate_series(key_sn, clear_disk=True)
+                    except Exception:
+                        pass
+                    return None
                 if not self._is_full_volume_cache_candidate(key_sn, vtk_data, meta):
                     try:
                         self.zeta_boost.invalidate_series(key_sn, clear_disk=True)

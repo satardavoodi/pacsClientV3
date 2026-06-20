@@ -723,10 +723,17 @@ if __name__ == "__main__":
 
     # Migrate data from old flat layout to user_data/ (safe to call multiple times)
     try:
-        from PacsClient.utils.data_paths import migrate_legacy_data
+        from PacsClient.utils.data_paths import (
+            migrate_clinical_data_to_active_profile,
+            migrate_legacy_data,
+        )
+        # Multi-server: relocate the existing single-root clinical data into the
+        # ACTIVE profile namespace FIRST (before any DB open), so the per-server
+        # database/patient folders are populated. No-op when the feature is off.
+        migrate_clinical_data_to_active_profile()
         migrate_legacy_data()
     except Exception as _mig_exc:
-        logging.getLogger(__name__).warning("Legacy data migration skipped: %s", _mig_exc)
+        logging.getLogger(__name__).warning("Data migration skipped: %s", _mig_exc)
     
     # Set Qt attributes BEFORE creating QApplication
     if GRAPHICS_PROFILE.get("use_gpu", False):
@@ -1156,7 +1163,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.3.4")
+    app.setApplicationVersion("3.3.5")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

@@ -240,6 +240,17 @@ class _VCSwitchMixin:
                 self._hide_spinner_for_widget(target_widget_for_spinner)
                 return
 
+            # STAMP the viewport's ORIGIN (Current vs Previous exam) on the target
+            # container before loading, so its active-highlight border is BLUE
+            # (current) or RED (previous) and updates every time the viewport's
+            # content changes (replacing a previous-exam series with a current one
+            # flips it back to blue, and vice-versa). The active-border repaint
+            # (change_container_border / refresh_viewport_borders) reads this stamp.
+            try:
+                vtk_widget._origin_is_previous = self._series_is_previous_exam(series_number)
+            except Exception:
+                pass
+
             # FAST drag/drop can arrive before the per-viewer slider reference is
             # wired on some layout transitions. Series switching itself does not
             # depend on slider presence, so resolve it best-effort and continue.

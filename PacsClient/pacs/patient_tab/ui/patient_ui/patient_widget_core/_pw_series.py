@@ -841,6 +841,19 @@ class _PWSeriesMixin:
             # Avoid scroll-to-top on thumbnail refresh for retry downloads
             self._suppress_thumb_scroll_reset = True
 
+            # Previous-exam safety net: a sanctioned previous-exam study (a prior
+            # study of the SAME real person, different PatientID) must be
+            # registered with the Download Manager before request_critical_series_*
+            # — the coordinator rejects a series whose study has no task. This is
+            # idempotent (start_immediately=False, no download) and only fires for
+            # an explicitly-selected previous exam; normal studies are unaffected.
+            try:
+                if hasattr(self, '_is_sanctioned_previous_exam') and \
+                        self._is_sanctioned_previous_exam(study_uid):
+                    self._register_previous_exam_with_dm(study_uid)
+            except Exception:
+                pass
+
             # Get the download manager widget from home_ui
             try:
                 from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget

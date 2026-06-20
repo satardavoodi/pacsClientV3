@@ -154,6 +154,7 @@ def merge_study_uids(
     *,
     owner_of: Optional[Callable[[str], Optional[str]]] = None,
     patient_id: str = "",
+    sanctioned_uids: Optional[Iterable[str]] = None,
 ) -> tuple[list[str], list[str]]:
     """Canonical union of a patient's study UIDs from all discovery sources.
 
@@ -177,6 +178,15 @@ def merge_study_uids(
             treated as "unknown owner" (kept) and never propagate.
         patient_id: the target patient. Owner filtering is applied only when BOTH
             ``owner_of`` and ``patient_id`` are provided.
+        sanctioned_uids: optional allow-list of study_uids that must be KEPT even
+            when their owner is positively a different patient_id. This is the
+            cross-identity escape hatch for the "Previous Exams" feature: studies
+            the server linked to the SAME real person (by National ID / reception
+            history) and that the user EXPLICITLY selected. Default empty => the
+            owner filter behaves byte-identically (nothing is sanctioned, so no
+            foreign study is ever silently admitted). Never auto-populate this
+            from caller/current context — only from server-verified previous-exam
+            identity (see ``previous_exams.sanctioned_study_uids``).
 
     Returns:
         ``(ordered_uids, dropped_foreign)``:
@@ -208,11 +218,19 @@ def merge_study_uids(
     if not (owner_of and pid):
         return ordered, []
 
+    sanctioned = {_clean(u) for u in (sanctioned_uids or []) if _clean(u)}
+
     kept: list[str] = []
     dropped: list[str] = []
     for uid in ordered:
         if uid == selected:
             # The explicitly-selected study is always kept (the user chose it).
+            kept.append(uid)
+            continue
+        if uid in sanctioned:
+            # Server-verified previous exam of the SAME real person, explicitly
+            # selected by the user — admitted despite a different owner. Each such
+            # study still preserves its own study_uid / patient_id downstream.
             kept.append(uid)
             continue
         try:
@@ -253,6 +271,7 @@ def resolve_study_uids(
     selected_study_uid="",
     owner_of: Optional[Callable[[str], Optional[str]]] = None,
     patient_id: str = "",
+    sanctioned_uids: Optional[Iterable[str]] = None,
 ) -> tuple[list[str], list[str]]:
     """Conditional-fallback gather + canonical owner-filter — the resolution logic
     of the home-panel ``_resolve_patient_study_uids``, extracted as a pure function
@@ -281,7 +300,8 @@ def resolve_study_uids(
     if len(raw) <= 1:
         _add(cache_uids)
     return merge_study_uids(
-        [raw], selected_study_uid, owner_of=owner_of, patient_id=patient_id)
+        [raw], selected_study_uid, owner_of=owner_of, patient_id=patient_id,
+        sanctioned_uids=sanctioned_uids)
 
 
 def build_download_payload(study_uid, patient_id, patient_name, study_info) -> dict:

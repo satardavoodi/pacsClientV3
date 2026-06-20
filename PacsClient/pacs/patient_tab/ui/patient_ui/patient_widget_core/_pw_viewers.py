@@ -223,6 +223,8 @@ class _PWViewersMixin:
                 vtk_widget.set_method_change_series_on_drop(self.change_series_on_viewer)
             if hasattr(vtk_widget, 'set_method_change_container_border'):
                 vtk_widget.set_method_change_container_border(self.change_container_border)
+            if hasattr(vtk_widget, 'set_method_refresh_viewport_borders'):
+                vtk_widget.set_method_refresh_viewport_borders(self.viewer_controller.refresh_viewport_borders)
             print("   ✅ Methods set")
         except Exception as e:
             print(f"   ⚠️ Warning: Could not set VTK widget methods: {e}")

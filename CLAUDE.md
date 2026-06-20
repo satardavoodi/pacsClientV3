@@ -531,6 +531,37 @@ know the invariants (regression test: `tests/code/network/test_attachment_local_
   patient-open (`_hp_patient_open._start_attachment_download_in_background`) and post-sync; keep
   it non-destructive. These three files are NOT plugin-mirrored.
 
+### Approved voice must survive patient/tab close — close never deletes it (2026-06-20)
+Closing a patient (tab "X", patient close, or full app close) must **NEVER delete an approved /
+saved voice** — once the green check is pressed it is a permanent local attachment. Only an
+**explicit user delete** may remove it: the red-X on the active recording
+(`cancel_recording_inline`), the voice dropdown/menu delete, or the voice popup delete button.
+"Server sync state is irrelevant" — an unsynced/LocalOnly/PendingSync voice must persist across
+close and app restart. Before editing
+`PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/voice_tool_ui.py` (the soundbox
+`VoiceWidget`), know the invariants (guard test:
+`tests/code/system/test_voice_not_deleted_on_close.py` — source-pin, no PySide6/audio dependency):
+- **Root cause it guards (46838 / 47183):** `__init__` captures
+  `self._main_window = self.patient_widget.window()`, and the widget is built in
+  `ToolbarManager.__init__` (`toolbar_manager.py`) DURING patient-tab construction — *before* the
+  patient widget is reparented into the main window's tab area — so `.window()` returns the
+  **patient widget itself**. The `eventFilter` then receives `QEvent.Close` when the patient TAB
+  closes and used to call `self._on_delete_clicked()` UNCONDITIONALLY →
+  `os.remove(self._file_path)`. Approve (`_on_save_clicked` → `_on_stop_internal`) writes the WAV
+  but never clears `_file_path`, so the approved file was still pointed at and deleted on close.
+- **The `eventFilter` Close branch must pass `user_initiated=False`** (`reason="window_close"`):
+  it may stop the stream/timer/playback but must not delete. Do **not** restore a bare
+  `self._on_delete_clicked()` in the Close branch.
+- **`_on_delete_clicked(..., *, user_initiated=True, reason=...)` is the single delete choke
+  point + protective guard.** When `not user_initiated` it KEEPS the saved file and its
+  `_file_path` reference (logs `[VOICE-DELETE-GUARD]`); an explicit user delete logs
+  `[VOICE-DELETE]` before `os.remove`. Every real user-delete caller (red-X / dropdown / delete
+  button) keeps the default `user_initiated=True` — never pass `user_initiated=False` from a user
+  action, and never add a new non-user caller that deletes a saved voice.
+- Kill switch `AIPACS_VOICE_KEEP_ON_CLOSE=0` restores the legacy delete-on-close (emergencies
+  only). `voice_tool_ui.py` is NOT plugin-mirrored. Complements the attachment local-first
+  persistence guard above (local save authoritative; sync non-destructive).
+
 ### Unified patient-study-set pipeline + 46630 late-study back-fill (2026-06-17)
 The recurring multi-study bug (a second/DOC study shows on single-click but is lost on
 double-click open, returning only on reopen — patient 46630) is fixed by a shared
@@ -671,6 +702,63 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   `docs/pipelines/unified-patient-study-pipeline.md` §8). Staged next (need live validation):
   settle-then-switch cross-study preemption (batch-boundary yield not kill), and converging
   the drop onto the shared `PatientStudySetService` / typed `DownloadPlan`.
+
+### Previous Exams — cross-PatientID prior studies (National ID, 2026-06-20)
+A patient may be the SAME real person as other patients imaged before under
+DIFFERENT Patient IDs; the server links them by National ID / RIS reception. A
+"Previous Exam" button in the Series Thumbnails header (gray→red when prior exams
+exist) lists them; selecting one merges it into the open viewer for comparison.
+Before editing `PacsClient/utils/previous_exams.py`, the `_PWPreviousExamsMixin`
+(`patient_widget_core/_pw_previous_exams.py`), or the `sanctioned_uids` path in
+`patient_study_set.py`, **read `docs/pipelines/previous-exams.md`** (as-built).
+- **Clinical isolation is preserved.** A previous exam enters the current
+  patient's grouped viewer ONLY via the `sanctioned_uids` allow-list passed to
+  `merge_study_uids` — populated solely from server-verified previous-exam
+  identity AND the explicit user click. NEVER auto-populate it from caller/current
+  context. The four automatic cross-patient guards (open / reconcile / resync /
+  back-fill) are UNCHANGED and still drop foreign studies.
+- **Each exam keeps its OWN `study_uid` + `patient_id`.** DM payload carries the
+  exam's own patient_id; disk stays `SOURCE_PATH/<study_uid>/...` (patient-blind).
+  Never re-attribute a previous exam to the current Patient ID / DB owner.
+- **Metadata-first; no auto-download on open.** Open fetches only the list
+  (`GetPatientReceptionHistory` + `GetPatientStatus`). Select loads series
+  metadata + thumbnails. Images download only on drag/open of a series
+  (`add_downloads(start_immediately=False)` → PENDING; `request_critical_series_download`
+  promotes the dragged series). Reuses the multi-study offset-key sink
+  `set_server_series_info` + `build_download_payload` — no parallel workflow.
+- Reset `_multistudy_thumbs_rendered` before each merge (run-once render guard).
+- `previous_exams.py` stays pure stdlib. Flag `AIPACS_PREVIOUS_EXAMS` (default on,
+  `=0` = byte-identical legacy). Tests: `tests/code/ui_services/test_previous_exams*.py`.
+  None of these files are plugin-mirrored. NEEDS live GUI verification.
+
+### Drag loads EXACTLY that series — multi-study disk resolution (2026-06-21)
+A dragged series must load from ITS OWN study, never from a sibling/previous-exam study.
+On a multi-study tab (current patient + merged Previous Exams under different Patient IDs /
+Study UIDs) the viewer resolved the right series identity but loaded pixels from the
+tab-level `study_path` (`import_folder_path`), which a prior previous-exam load had
+"poisoned" to that previous study; since the previous study often has a same-numbered
+series, the old `study_path/<key>` folder-exists check kept it → current drag showed the
+previous series (44030 + 43373/47214, live-verified + fixed). Before editing the series
+resolution in `_vc_load.py::_load_single_series_on_demand`,
+`resolve_entry_study_location`, `_resolve_plain_series_study_path`, or
+`_vc_cache._cache_entry_study_matches`, **read
+`docs/reports/DRAG_LOADS_EXACT_SERIES_2026-06-21.md`**.
+- **Resolve disk location from the series' OWN `_server_series_info` entry**
+  (`series_path = SOURCE_PATH/<study_uid>/<orig_no>` + `_orig_series_number`), set for
+  EVERY slot incl. primary by `_rebuild_multistudy_series_index`. The pure
+  `resolve_entry_study_location(entry, tab_study_path)` is the authority and the gate
+  calls it for **every** key. Do **NOT** re-gate it on `_study_slot > 0` (that regresses
+  current/primary keys — the original bug). Keep it pure stdlib (unit-testable).
+- The gate requires BOTH `series_path` AND `_orig_series_number`; only the multi-study
+  rebuild sets the latter, so **single-study tabs stay byte-identical**.
+- Keep all three layers: entry authority → stable-slot/plain-key fallback → cache
+  study-match guard (`[CACHE-STUDY-MISMATCH]`). Each defends a different failure mode.
+- Production diagnostic (INFO, app.log): `[MULTI-STUDY LOAD] key=… -> study_path=…
+  (entry-authority slot=N)` — `study_path` must match the key's study. Deep cross-check
+  `[VIEWPORT-LOAD-TRACE]` is opt-in (`AIPACS_VIEWPORT_LOAD_TRACE=1`); for every drop its
+  `study_path` must equal `resolved_study`. Lesson: when a fix "isn't working", verify the
+  log CHANNEL first — viewer logs route to `viewer_diagnostics.log` (which had stalled),
+  not `app.log`. Guard: `tests/code/viewer/test_drag_loads_exact_series.py`. Not mirrored.
 
 
 ## VS Code Agent Mode environment (configured 2026-06-02)

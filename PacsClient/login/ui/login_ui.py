@@ -4,7 +4,7 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeyEvent, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, \
-    QStackedWidget, QMenuBar, QMenu, QMessageBox, QCheckBox
+    QStackedWidget, QMenuBar, QMenu, QMessageBox, QCheckBox, QComboBox
 from PacsClient.utils import IMAGES_LOGIN_PATH
 from modules.network.socket_service import SocketService
 from modules.network.socket_token_manager import get_socket_token_manager
@@ -42,6 +42,18 @@ class LoginWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.socket_service = SocketService()
+        # Multi-server: remember which center the app STARTED with (its data root
+        # + socket target were resolved from this at startup). Picking a different
+        # center at login requires a restart to re-resolve them cleanly.
+        self.server_combo = None
+        self._profile_ids = []
+        try:
+            from PacsClient.utils import server_profiles as _sp
+            self._startup_active_id = (
+                _sp.get_active_profile_id() if _sp.server_profiles_enabled() else ""
+            )
+        except Exception:
+            self._startup_active_id = ""
         self.setup_ui()
         self.load_saved_credentials()
 
@@ -59,6 +71,9 @@ class LoginWindow(QWidget):
 
         # Create layout
         layout = QVBoxLayout()
+
+        # Server selector (multi-server). Only shown when the feature is enabled.
+        self._build_server_selector(layout)
 
         # Username input
         self.username_label = QLabel("Username:")
@@ -90,6 +105,76 @@ class LoginWindow(QWidget):
         layout.addWidget(self.login_button)
 
         self.setLayout(layout)
+
+    # ── Multi-server selector ────────────────────────────────────────────────
+    def _build_server_selector(self, layout):
+        """Add a 'Server' dropdown listing saved profiles (multi-server feature).
+
+        Hidden entirely when the feature is off → login stays byte-identical.
+        """
+        try:
+            from PacsClient.utils import server_profiles as _sp
+            if not _sp.server_profiles_enabled():
+                return
+            profiles = [p for p in _sp.list_profiles() if p.enabled]
+            if not profiles:
+                return
+            self.server_label = QLabel("Server:")
+            self.server_combo = QComboBox()
+            self._profile_ids = []
+            active = _sp.get_active_profile_id()
+            active_index = 0
+            for i, prof in enumerate(profiles):
+                self.server_combo.addItem(prof.display_name)
+                self._profile_ids.append(prof.id)
+                if prof.id == active:
+                    active_index = i
+            self.server_combo.setCurrentIndex(active_index)
+            layout.addWidget(self.server_label)
+            layout.addWidget(self.server_combo)
+        except Exception as exc:
+            print(f"[login] server selector unavailable: {exc}")
+            self.server_combo = None
+
+    def _selected_profile_id(self) -> str:
+        try:
+            if self.server_combo is not None:
+                idx = self.server_combo.currentIndex()
+                if 0 <= idx < len(self._profile_ids):
+                    return self._profile_ids[idx]
+        except Exception:
+            pass
+        return ""
+
+    def _apply_server_selection_or_restart(self) -> bool:
+        """If the user picked a different center than the app started with, set it
+        active and ask for a restart (data root + socket resolve at startup).
+
+        Returns True if a restart was triggered (caller must stop the login).
+        """
+        try:
+            from PacsClient.utils import server_profiles as _sp
+            if self.server_combo is None or not _sp.server_profiles_enabled():
+                return False
+            picked = self._selected_profile_id()
+            if not picked:
+                return False
+            current = self._startup_active_id or _sp.get_active_profile_id()
+            if picked == current:
+                return False  # same center — proceed with normal login
+            _sp.set_active_profile_id(picked)
+            prof = _sp.get_profile(picked)
+            name = prof.display_name if prof else picked
+            QMessageBox.information(
+                self, "Switch Server",
+                f"Switching to {name}.\n\nAI-PACS will now close — please reopen it "
+                f"to load this center's data and connection.",
+            )
+            QApplication.quit()
+            return True
+        except Exception as exc:
+            print(f"[login] server switch failed: {exc}")
+            return False
 
     def load_saved_credentials(self):
         """Load saved credentials if 'Remember Me' was checked previously"""
@@ -214,6 +299,11 @@ class LoginWindow(QWidget):
         # Validate that both fields are filled
         if not username or not password or not center:
             show_error_message('empty_fields')  # Show error message for empty fields
+            return
+
+        # Multi-server: if the user picked a different center, switch + restart
+        # (data root / socket / endpoints resolve at startup).
+        if self._apply_server_selection_or_restart():
             return
 
         # Authenticate with socket server

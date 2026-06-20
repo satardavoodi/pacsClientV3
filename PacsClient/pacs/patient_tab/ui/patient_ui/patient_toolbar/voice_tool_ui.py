@@ -150,8 +150,11 @@ class VoiceWidget(QWidget):
         if obj is self._main_window:
             if et in (QEvent.WindowDeactivate, QEvent.Hide, QEvent.Close):
                 if et == QEvent.Close:
-                    # برنامه در حال بسته شدن است → همه چیز را تمیز کن و ببند
-                    self._on_delete_clicked()
+                    # The window is closing → tear down cleanly (stop stream /
+                    # timer / playback) but NEVER delete an approved/saved voice.
+                    # user_initiated=False makes the guard in _on_delete_clicked
+                    # keep the file; only an explicit user delete removes a voice.
+                    self._on_delete_clicked(user_initiated=False, reason="window_close")
                 else:
                     # 🔹 حتی در صورت Deactivate هم پنجره نباید بپرد
                     # فقط در صورت minimize یا hide کردن اصلی
@@ -681,7 +684,8 @@ class VoiceWidget(QWidget):
         """
         self._on_stop_internal()
 
-    def _on_delete_clicked(self, inline_override: bool | None = None):
+    def _on_delete_clicked(self, inline_override: bool | None = None,
+                           *, user_initiated: bool = True, reason: str = "user_delete"):
         """
         اگر delete زده شد:
         - اگر در حال ضبط هستیم → ضبط و تایمر فقط متوقف شوند
@@ -689,6 +693,14 @@ class VoiceWidget(QWidget):
         - playback قطع شود
         - UI ریست شود
         - popup بسته شود
+
+        PROTECTIVE GUARD (2026-06-20): an approved/saved voice is a PERMANENT
+        LOCAL ATTACHMENT. It may be removed ONLY by an explicit user delete
+        (the red-X on the active recording or the dropdown delete →
+        ``user_initiated=True``). Patient/app close and any other automatic
+        teardown call this with ``user_initiated=False`` and must NEVER delete
+        the saved file. Set ``AIPACS_VOICE_KEEP_ON_CLOSE=0`` to restore the
+        legacy delete-on-close behaviour.
         """
         inline_mode = self._inline_mode if inline_override is None else inline_override
 
@@ -702,13 +714,39 @@ class VoiceWidget(QWidget):
         # 2) اگر در حال پخش هستیم، قطع کن
         self._stop_playback()
 
-        # 3) اگر فایل قبلاً روی دیسک ذخیره شده بود → آن هم پاک شود
-        if self._file_path and self._file_path.exists():
+        # 3) Remove the on-disk file — but ONLY for an explicit user delete.
+        _keep_on_close = os.getenv(
+            "AIPACS_VOICE_KEEP_ON_CLOSE", "1"
+        ).strip().lower() not in ("0", "false", "no")
+        _protected = (
+            (not user_initiated) and _keep_on_close
+            and bool(self._file_path) and self._file_path.exists()
+        )
+        if _protected:
+            # Forbidden deletion blocked: keep the approved voice + its reference.
             try:
-                os.remove(self._file_path)
+                logger.warning(
+                    "[VOICE-DELETE-GUARD] kept saved voice on non-user teardown "
+                    "path=%s reason=%s recording=%s",
+                    self._file_path, reason, self._is_recording,
+                )
             except Exception:
                 pass
-        self._file_path = None
+        else:
+            if self._file_path and self._file_path.exists():
+                try:
+                    logger.info(
+                        "[VOICE-DELETE] removing voice path=%s reason=%s "
+                        "user_initiated=%s recording=%s",
+                        self._file_path, reason, user_initiated, self._is_recording,
+                    )
+                except Exception:
+                    pass
+                try:
+                    os.remove(self._file_path)
+                except Exception:
+                    pass
+            self._file_path = None
 
         # 4) ریست کامل UI و بافرها
         self._audio_frames = []

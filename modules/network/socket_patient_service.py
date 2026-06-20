@@ -299,7 +299,51 @@ class SocketPatientService(QObject):
         finally:
             if client:
                 self._return_client(client)
-    
+
+    def get_patient_status_sync(self, patient_id: str) -> Optional[Dict[str, Any]]:
+        """Synchronous full past-study list for one PatientID (``GetPatientStatus``).
+
+        Returns the server ``data`` dict (with ``studies[]``) or ``None``. Used by
+        the Previous Exams feature; pooled-client safe, never raises.
+        """
+        client = None
+        try:
+            client = self._get_client()
+            if not client:
+                return None
+            return client.get_patient_status(patient_id)
+        except Exception as e:
+            logger.error(f"❌ Error getting patient status: {e}")
+            return None
+        finally:
+            if client:
+                self._return_client(client)
+
+    def get_reception_history_sync(
+        self,
+        patient_id: str = None,
+        reception_id: str = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Synchronous cross-PatientID reception history (``GetPatientReceptionHistory``).
+
+        Returns the server ``data`` dict (``nationalCode`` / ``history[]``) or
+        ``None``. The National-ID linkage path for Previous Exams; pooled-client
+        safe, never raises.
+        """
+        client = None
+        try:
+            client = self._get_client()
+            if not client:
+                return None
+            return client.get_patient_reception_history(
+                patient_id=patient_id, reception_id=reception_id)
+        except Exception as e:
+            logger.error(f"❌ Error getting reception history: {e}")
+            return None
+        finally:
+            if client:
+                self._return_client(client)
+
     def search_patients_by_name(self, name: str, limit: int = 100) -> List[Dict[str, Any]]:
         """
         Search patients by name

@@ -27,18 +27,35 @@ class _VCLayoutMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
 
     @staticmethod
-    def _viewport_container_styles(active: bool) -> str:
+    def _viewport_container_styles(active: bool, previous: bool = False) -> str:
         """Border + tint for the per-viewport container frame.
 
-        Active viewport now derives its border color from the workstation
-        theme's `accent` token (was hard-coded sky-blue `#60a5fa`). The
-        inner tint is a low-alpha version of the same accent so the cue
-        stays subtle but unambiguously matches whatever palette the user
-        has picked.
+        Study origin drives the color: a viewport showing a PREVIOUS exam (a prior
+        study of the same real person) gets a RED border (solid when active, dim
+        when inactive); the current/main exam keeps the default BLUE accent border
+        (theme `accent`, default sky-blue). This mirrors the series-thumbnail
+        origin coloring so a prior study reads as red in the viewport too.
 
         Imported lazily so this static method doesn't pay the
         theme-manager import cost on module load.
         """
+        if previous:
+            # Previous-exam viewport — red (active solid, inactive dim).
+            if active:
+                return """
+                    QFrame#ViewportContainer {
+                        border: 2px solid #ef4444;
+                        border-radius: 4px;
+                        background-color: rgba(239, 68, 68, 0.10);
+                    }
+                """
+            return """
+                QFrame#ViewportContainer {
+                    border: 2px solid rgba(239, 68, 68, 0.55);
+                    border-radius: 4px;
+                    background-color: rgba(239, 68, 68, 0.04);
+                }
+            """
         try:
             from PacsClient.utils.theme_manager import get_theme_manager
             from PySide6.QtGui import QColor as _QColor
@@ -593,6 +610,8 @@ class _VCLayoutMixin:
                 vtk_widget.set_method_change_series_on_drop(self.parent_widget.change_series_on_viewer)
             if hasattr(vtk_widget, 'set_method_change_container_border'):
                 vtk_widget.set_method_change_container_border(self.change_container_border)
+            if hasattr(vtk_widget, 'set_method_refresh_viewport_borders'):
+                vtk_widget.set_method_refresh_viewport_borders(self.refresh_viewport_borders)
             logger.debug("   âœ… Methods set")
         except Exception as e:
             logger.warning(f"   âڑ ï¸ڈ Warning: Could not set VTK widget methods: {e}")
@@ -815,21 +834,156 @@ class _VCLayoutMixin:
         for node_viewer in self.lst_nodes_viewer:
             node_viewer: NodeViewer
 
-            if node_viewer_selected.widget == node_viewer.widget:
-                # Active viewport - same size border, just different color (blue)
-                node_viewer_selected.widget.setProperty("active", True)
-                node_viewer_selected.widget.setFrameStyle(QFrame.Box | QFrame.Plain)
-                node_viewer_selected.widget.setLineWidth(2)  # Same as inactive
-                node_viewer_selected.widget.setStyleSheet(self._viewport_container_styles(active=True))
+            is_active = (node_viewer_selected.widget == node_viewer.widget)
+            # Origin: a viewport showing a PREVIOUS exam gets a red border; the
+            # current/main exam keeps the default blue accent. Pass the NODE — the
+            # origin stamp / series metadata live on node.vtk_widget (the FAST
+            # container), while node.widget is the bordered frame we style.
+            is_prev = self._node_is_previous_exam(node_viewer)
+            node_viewer.widget.setProperty("active", is_active)
+            node_viewer.widget.setFrameStyle(QFrame.Box | QFrame.Plain)
+            node_viewer.widget.setLineWidth(2)  # Same in both states
+            node_viewer.widget.setStyleSheet(
+                self._viewport_container_styles(active=is_active, previous=is_prev))
+            if is_active:
                 self.set_viewer_to_main_viewer(node_viewer_selected)
 
-            else:
-                # Inactive viewport - same size border, different color (gray)
-                node_viewer.widget.setProperty("active", False)
-                node_viewer.widget.setFrameStyle(QFrame.Box | QFrame.Plain)
-                node_viewer.widget.setLineWidth(2)  # Same as active
-                node_viewer.widget.setStyleSheet(self._viewport_container_styles(active=False))
-
         self.parent_widget.manage_reference_line()
+
+    def refresh_viewport_borders(self) -> None:
+        """Re-apply every viewport's border by (active-state, study-origin) WITHOUT
+        changing the active selection. Lets a freshly-loaded previous-exam series
+        turn its viewport red immediately even when the load did not change the
+        selected viewport (e.g. a drag-and-drop). Best-effort; never raises."""
+        try:
+            for node_viewer in self.lst_nodes_viewer:
+                w = getattr(node_viewer, 'widget', None)
+                if w is None:
+                    continue
+                try:
+                    is_active = bool(w.property("active"))
+                    # Read origin from the NODE (node.vtk_widget holds the stamp /
+                    # series metadata); style node.widget (the bordered frame).
+                    is_prev = self._node_is_previous_exam(node_viewer)
+                    w.setStyleSheet(
+                        self._viewport_container_styles(active=is_active, previous=is_prev))
+                except Exception:
+                    continue
+        except Exception:
+            pass
+
+    def _node_current_study_uid(self, widget) -> str:
+        """Best-effort study_uid of the series currently shown in a viewport.
+
+        The FAST qt-bridge metadata's series dict does not reliably carry
+        ``study_uid``, so the authoritative resolution is the DISPLAYED series
+        number (an offset key for a multi-study / previous-exam series) looked up
+        against the parent widget's ``_server_series_info`` (whose offset-keyed
+        entries carry ``study_uid``), with the canonical-identity resolver and the
+        series_path parent as fallbacks. '' when unknown."""
+        try:
+            md = None
+            br = getattr(widget, '_qt_bridge', None)
+            if br is not None:
+                md = getattr(br, 'metadata', None)
+            if not isinstance(md, dict):
+                md = getattr(widget, 'metadata', None)
+            series = md.get('series', {}) if isinstance(md, dict) else {}
+
+            # 1) direct study_uid on the metadata (rarely present)
+            su = str((series or {}).get('study_uid') or '').strip()
+            if su:
+                return su
+
+            pw = getattr(self, 'parent_widget', None)
+            snum = str((series or {}).get('series_number') or '').strip()
+
+            # 2) resolve the displayed series number against the offset-keyed
+            #    server map (multi-study / previous-exam entries carry study_uid)
+            if snum and pw is not None:
+                ssi = getattr(pw, '_server_series_info', None) or {}
+                entry = ssi.get(snum)
+                if not isinstance(entry, dict):
+                    entry = ssi.get(str(snum))
+                if isinstance(entry, dict):
+                    su = str(entry.get('study_uid') or '').strip()
+                    if su:
+                        return su
+
+            # 3) canonical-identity resolver (handles offset keys)
+            if snum:
+                try:
+                    rid = self._resolve_canonical_series_identity(snum)
+                    if rid and rid[0]:
+                        return str(rid[0]).strip()
+                except Exception:
+                    pass
+
+            # 4) parse series_path: {SOURCE}/{study_uid}/{series_number}
+            sp = str((series or {}).get('series_path') or '').strip()
+            if sp:
+                from pathlib import Path
+                return Path(sp).parent.name
+        except Exception:
+            pass
+        return ''
+
+    def _series_is_previous_exam(self, series_number) -> bool:
+        """True when the series being loaded (by its number / offset key) belongs
+        to a sanctioned PREVIOUS exam. Resolves the number against the offset-keyed
+        server map (carries study_uid), then the canonical-identity resolver.
+        Used to STAMP a viewport's origin at load time (the authoritative signal,
+        independent of paint-time metadata)."""
+        try:
+            pw = getattr(self, 'parent_widget', None)
+            checker = getattr(pw, '_is_sanctioned_previous_exam', None)
+            if not callable(checker):
+                return False
+            snum = str(series_number or '').strip()
+            if not snum:
+                return False
+            su = ''
+            ssi = getattr(pw, '_server_series_info', None) or {}
+            entry = ssi.get(snum)
+            if not isinstance(entry, dict):
+                entry = ssi.get(str(snum))
+            if isinstance(entry, dict):
+                su = str(entry.get('study_uid') or '').strip()
+            if not su:
+                try:
+                    rid = self._resolve_canonical_series_identity(snum)
+                    if rid and rid[0]:
+                        su = str(rid[0]).strip()
+                except Exception:
+                    pass
+            return bool(su) and bool(checker(su))
+        except Exception:
+            return False
+
+    def _node_is_previous_exam(self, node_or_widget) -> bool:
+        """True when the viewport shows a sanctioned PREVIOUS-exam series.
+
+        Accepts a NodeViewer OR a widget. The origin stamp (``_origin_is_previous``,
+        set by change_series_on_viewer) and the series metadata live on the actual
+        viewer widget — a NodeViewer exposes it as ``.vtk_widget`` while ``.widget``
+        is only the bordered frame — so resolve that first. Prefers the stamp;
+        falls back to resolving the displayed series' study_uid (legacy/VTK paths
+        that don't stamp)."""
+        try:
+            # Resolve the actual viewer widget (FAST container) that carries the
+            # stamp / qt-bridge metadata. A NodeViewer has .vtk_widget; a bare
+            # widget is used as-is.
+            vw = getattr(node_or_widget, 'vtk_widget', None) or node_or_widget
+            flag = getattr(vw, '_origin_is_previous', None)
+            if flag is not None:
+                return bool(flag)
+            pw = getattr(self, 'parent_widget', None)
+            checker = getattr(pw, '_is_sanctioned_previous_exam', None)
+            if not callable(checker):
+                return False
+            su = self._node_current_study_uid(vw)
+            return bool(su) and bool(checker(su))
+        except Exception:
+            return False
 
 

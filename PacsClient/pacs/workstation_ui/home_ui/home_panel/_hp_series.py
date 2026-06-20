@@ -1179,6 +1179,18 @@ class _HPSeriesMixin:
             series_items = study_info.get('series') if isinstance(study_info, dict) else None
             if not (isinstance(series_items, list) and series_items):
                 return study_info
+            # Stamp the study-level exam date onto each series so the viewer's
+            # grouped "Study N" header can display it (the thumbnail/series
+            # payloads do not carry study_date themselves). setdefault — never
+            # override an existing per-series value.
+            try:
+                _sd = study_info.get('study_date') or study_info.get('StudyDate') or ''
+                if _sd:
+                    for _s in series_items:
+                        if isinstance(_s, dict):
+                            _s.setdefault('study_date', _sd)
+            except Exception:
+                pass
             self._series_info_cache[study_uid] = study_info
         return study_info
 

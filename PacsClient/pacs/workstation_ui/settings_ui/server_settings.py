@@ -136,6 +136,19 @@ _TABLE_STYLE = """
 """
 
 
+# Per-server service endpoints (multi-server). Each entry:
+#   (profile module key, UI label, default port, is_full_url)
+# The same server host is reused with these default ports; the user can override
+# any field with a custom host:port or full URL.
+_PROFILE_SERVICE_FIELDS = [
+    ("ai_breast",       "AI Service (breast)",       8002, False),
+    ("ai_boneage",      "Bone Age / Bonj",           8003, False),
+    ("ai_segmentation", "Segmentation",              9000, False),
+    ("mammography",     "Mammography",               None, False),
+    ("reception_api",   "Reception / Workflow API",  8800, True),
+]
+
+
 class ServerSettingsWidget(QWidget):
     """Unified Server Settings – AI-PACS, External PACS, and Offline Cloud."""
 
@@ -222,6 +235,20 @@ class ServerSettingsWidget(QWidget):
         self._build_reception_api_card(left_column)
         self._build_right_card(right_column)
         self._build_cloud_card(right_column)
+
+        # Multi-server: AI Service URL + Reception/Workflow API are now nested
+        # inside each AI-PACS Server profile (see the server form), so hide the
+        # standalone global cards. When the feature is off they stay visible and
+        # the page is unchanged.
+        try:
+            from PacsClient.utils.server_profiles import server_profiles_enabled as _spe
+            if _spe():
+                if getattr(self, "_ai_service_card", None) is not None:
+                    self._ai_service_card.setVisible(False)
+                if getattr(self, "_reception_card", None) is not None:
+                    self._reception_card.setVisible(False)
+        except Exception:
+            pass
 
         columns.addLayout(left_column, 1)
         columns.addLayout(right_column, 1)
@@ -333,6 +360,62 @@ class ServerSettingsWidget(QWidget):
         form.setColumnStretch(3, 1)
         pl.addLayout(form)
 
+        # ── Per-server service endpoints (multi-server) ──────────────────────
+        # AI services + Reception/Workflow API belong to THIS server profile (not
+        # global). Same host, default ports (overridable). Hidden when the
+        # multi-server feature is off → the page stays identical for single-server.
+        self._svc_edits = {}
+        self._socket_port_edit = QLineEdit()
+        self._svc_group = QFrame()
+        self._svc_group.setObjectName("FormArea")
+        svc_lay = QVBoxLayout(self._svc_group)
+        svc_lay.setContentsMargins(0, 6, 0, 0)
+        svc_lay.setSpacing(6)
+        svc_hdr = QLabel("Service endpoints for this server (same host, default ports)")
+        svc_hdr.setObjectName("FormLabel")
+        svc_hdr.setWordWrap(True)
+        svc_lay.addWidget(svc_hdr)
+
+        svc_grid = QGridLayout()
+        svc_grid.setHorizontalSpacing(10)
+        svc_grid.setVerticalSpacing(6)
+
+        lbl_sock = QLabel("Socket port:"); lbl_sock.setObjectName("FormLabel")
+        lbl_sock.setMinimumWidth(120)
+        self._socket_port_edit.setPlaceholderText("50052")
+        self._socket_port_edit.setMinimumHeight(28)
+        svc_grid.addWidget(lbl_sock, 0, 0)
+        svc_grid.addWidget(self._socket_port_edit, 0, 1)
+
+        for _r, (_key, _label, _dport, _scheme) in enumerate(_PROFILE_SERVICE_FIELDS, start=1):
+            _l = QLabel(_label + ":"); _l.setObjectName("FormLabel")
+            _l.setMinimumWidth(120)
+            _e = QLineEdit(); _e.setMinimumHeight(28)
+            if _dport and _scheme:
+                _e.setPlaceholderText("http://host:%d" % _dport)
+            elif _dport:
+                _e.setPlaceholderText("host:%d" % _dport)
+            else:
+                _e.setPlaceholderText("host:port (optional)")
+            svc_grid.addWidget(_l, _r, 0)
+            svc_grid.addWidget(_e, _r, 1)
+            self._svc_edits[_key] = _e
+
+        svc_grid.setColumnStretch(1, 1)
+        svc_lay.addLayout(svc_grid)
+
+        self._svc_fill_btn = QPushButton("Fill service URLs from host (default ports)")
+        self._svc_fill_btn.setMinimumHeight(28)
+        self._svc_fill_btn.clicked.connect(self._fill_service_defaults_from_host)
+        svc_lay.addWidget(self._svc_fill_btn)
+
+        pl.addWidget(self._svc_group)
+        try:
+            from PacsClient.utils.server_profiles import server_profiles_enabled as _spe
+            self._svc_group.setVisible(_spe())
+        except Exception:
+            self._svc_group.setVisible(False)
+
         # Button row 1: Save + Verify
         btn_row1 = QHBoxLayout()
         btn_row1.setSpacing(12)
@@ -379,6 +462,7 @@ class ServerSettingsWidget(QWidget):
     def _build_ai_service_url_card(self, parent):
         card = QFrame()
         card.setObjectName("ServiceUrlCard")
+        self._ai_service_card = card  # multi-server: hidden when nested per-profile
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         lay = QVBoxLayout(card)
         lay.setContentsMargins(14, 10, 14, 14)
@@ -744,6 +828,9 @@ class ServerSettingsWidget(QWidget):
             servers.append(new_server)
 
         self.save_to_json(servers)
+        # Multi-server: also persist this server as a profile carrying its own
+        # service endpoints (AI / Bonj / Segmentation / Reception). No-op when off.
+        self._upsert_server_profile(name, host, port, ae_title)
         self.load_servers()
         self.clear_form()
         UpdaterDataFromServerToHome().update()
@@ -834,6 +921,11 @@ class ServerSettingsWidget(QWidget):
         self.ae_title_edit.clear()
         if hasattr(self, "poor_conn_check"):
             self.poor_conn_check.setChecked(False)
+        if hasattr(self, "_socket_port_edit"):
+            self._socket_port_edit.clear()
+        if hasattr(self, "_svc_edits"):
+            for _e in self._svc_edits.values():
+                _e.clear()
         self.server_list.clearSelection()
         self.delete_btn.setEnabled(False)
         UpdaterDataFromServerToHome().update()
@@ -938,9 +1030,87 @@ class ServerSettingsWidget(QWidget):
             except Exception:
                 _rec = {}
             self.poor_conn_check.setChecked(bool(_rec.get('poor_connectivity', False)))
+            self._load_profile_service_fields(
+                self.server_list.item(row, 0).text().strip(),
+                self.server_list.item(row, 1).text().strip(),
+            )
             self.delete_btn.setEnabled(True)
         else:
             self.delete_btn.setEnabled(False)
+
+    # ── Per-server service-endpoint helpers (multi-server) ───────────────────
+    @staticmethod
+    def _svc_default(host: str, dport, scheme: bool) -> str:
+        host = (host or "").strip()
+        if not host or not dport:
+            return ""
+        return f"http://{host}:{dport}" if scheme else f"{host}:{dport}"
+
+    def _fill_service_defaults_from_host(self):
+        """Populate every service field from the current Host using default ports."""
+        host = self.host_edit.text().strip()
+        if not host:
+            QMessageBox.warning(self, "Host required",
+                                "Enter the server Host first, then fill service URLs.")
+            return
+        if hasattr(self, "_socket_port_edit"):
+            self._socket_port_edit.setText("50052")
+        for key, _label, dport, scheme in _PROFILE_SERVICE_FIELDS:
+            edit = self._svc_edits.get(key)
+            if edit is None or dport is None:
+                continue
+            edit.setText(self._svc_default(host, dport, scheme))
+
+    def _load_profile_service_fields(self, name: str, host: str):
+        """Fill the per-server service fields from the matching profile, else from
+        host-derived defaults. No-op when the multi-server feature is off."""
+        try:
+            from PacsClient.utils import server_profiles as _sp
+            if not _sp.server_profiles_enabled() or not hasattr(self, "_svc_edits"):
+                return
+            prof = _sp.find_profile_by_name(name) or _sp.find_profile_by_host(host)
+            if hasattr(self, "_socket_port_edit"):
+                self._socket_port_edit.setText(str(prof.socket_port) if prof else "50052")
+            for key, _label, dport, scheme in _PROFILE_SERVICE_FIELDS:
+                edit = self._svc_edits.get(key)
+                if edit is None:
+                    continue
+                val = (prof.module_endpoint(key) if prof else None) or self._svc_default(host, dport, scheme)
+                edit.setText(val or "")
+        except Exception as exc:
+            print(f"[settings] profile service load failed: {exc}")
+
+    def _upsert_server_profile(self, name: str, host: str, port: str, ae_title: str):
+        """Persist the edited server as a profile (with its service endpoints).
+        No-op / never raises when the multi-server feature is off."""
+        try:
+            from PacsClient.utils import server_profiles as _sp
+            if not _sp.server_profiles_enabled():
+                return
+            socket_port = ((self._socket_port_edit.text().strip()
+                            if hasattr(self, "_socket_port_edit") else "") or "50052")
+            modules = {}
+            if hasattr(self, "_svc_edits"):
+                for key, _label, _dport, _scheme in _PROFILE_SERVICE_FIELDS:
+                    edit = self._svc_edits.get(key)
+                    v = edit.text().strip() if edit else ""
+                    modules[key] = v or None
+            existing = _sp.find_profile_by_name(name)
+            pid = existing.id if existing else _sp.data_segment(name)
+            prof = _sp.ServerProfile(
+                id=pid,
+                display_name=name,
+                host=host,
+                socket_port=int(socket_port) if socket_port.isdigit() else 50052,
+                dicom_port=int(port) if str(port).isdigit() else 104,
+                ae_title=ae_title or "aipacs",
+                poor_connectivity=self.poor_conn_check.isChecked(),
+                enabled=True,
+                modules=modules,
+            )
+            _sp.upsert_profile(prof)
+        except Exception as exc:
+            print(f"[settings] profile upsert failed: {exc}")
 
     def save_to_json(self, servers):
         self.json_file.parent.mkdir(parents=True, exist_ok=True)
@@ -1390,6 +1560,7 @@ class ServerSettingsWidget(QWidget):
         """
         card = QFrame()
         card.setObjectName("ServiceUrlCard")
+        self._reception_card = card  # multi-server: hidden when nested per-profile
         card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         lay = QVBoxLayout(card)
         lay.setContentsMargins(14, 10, 14, 14)
