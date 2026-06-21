@@ -143,5 +143,18 @@ def test_card_count_label_always_created_and_updated_in_place():
     assert 'widget.count_label.setText(f"{image_count} images")' in _TM
 
 
-def test_card_has_cached_icon_helper():
-    assert "def _series_card_icon_pixmap(self)" in _TM
+def test_card_has_no_image_icon():
+    # (Revision 2026-06-21) the extra image icon beside the Series label was removed;
+    # the refresh button is the only iconography on the card.
+    assert "_card_icon" not in _TM
+    assert "_series_card_icon_pixmap" not in _TM
+
+
+def test_card_refresh_button_is_inline_in_header_row():
+    # The refresh/retry button is part of the header row (refresh + Series + count
+    # on one line), not an absolutely-positioned floating button.
+    assert "header_row_layout.insertWidget(0, retry_button)" in _TM
+    assert "retry_button.move(4, 4)" not in _TM
+    assert "retry_button.raise_()" not in _TM
+    # retry behavior preserved
+    assert "retry_button.clicked.connect(on_retry_clicked)" in _TM

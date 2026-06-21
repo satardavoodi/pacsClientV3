@@ -1191,7 +1191,13 @@ class _VCSwitchMixin:
                     print(f"[POST-SWITCH] viewer={getattr(vtk_widget,'id_vtk_widget','?')} "
                           f"image_viewer={'Y' if _iv_ok else 'N'} slider={'Y' if _sl_ok else 'N'} "
                           f"count_slices={_cnt}", flush=True)
-                    self.parent_widget.toolbar_manager.turn_off_all_tools()
+                    # Target-scoped tool reset: a series switched into a NON-active
+                    # viewport (e.g. drag-drop onto viewport 2 while viewport 1 is
+                    # the active MPR host) must NOT run the global turn_off_all_tools
+                    # — that acts on the SELECTED viewport and would tear its MPR
+                    # down. turn_off_all_tools_after_switch preserves MPR/tools on
+                    # the active viewport when the switch target is a different cell.
+                    self.parent_widget.toolbar_manager.turn_off_all_tools_after_switch(vtk_widget)
 
                     # Qt/FAST presentation repair: series switches can complete
                     # before the target viewport finishes its layout pass. When

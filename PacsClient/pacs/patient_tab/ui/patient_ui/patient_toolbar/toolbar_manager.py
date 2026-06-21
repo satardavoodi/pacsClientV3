@@ -3194,12 +3194,14 @@ class ToolbarManager:
             logger.warning(f"[WL_PRESET] Failed to apply default preset: {e}")
 
     def apply_named_window_preset(self, name):
-        """Apply a CT window preset by NAME (lung/abdomen/bone/brain) or
-        'default'/'reset'. Single entry point reused by the WL preset dropdown
-        and the F1–F4 Patient-Tab shortcuts — same backend action either way.
-        Returns True if a known preset was applied."""
+        """Apply a CT window preset by NAME (lung/abdomen/bone/brain) or the
+        reset action ('refreshing'/'refresh'/'default'/'reset'/'dicom'). Single
+        entry point reused by the WL preset dropdown and the F1–F4 Patient-Tab
+        shortcuts — same backend action either way. 'refreshing' is the F4
+        name for restoring the DICOM-default WW/WL. Returns True if a known
+        preset was applied."""
         key = str(name or '').strip().lower()
-        if key in ('default', 'reset', 'dicom'):
+        if key in ('refreshing', 'refresh', 'default', 'reset', 'dicom'):
             self._apply_default_wl_preset()
             return True
         preset = self.WINDOW_PRESETS.get(key)
@@ -6402,6 +6404,17 @@ class ToolbarManager:
             # can use tools on that viewer without unintentionally closing MPR.
             sel = self.patient_widget.selected_widget
             if sel is not None and self.is_mpr_viewer(sel):
+                # Diagnostic: a drop / click onto ANOTHER viewport must NOT reach
+                # here for the MPR host (set_viewer_to_main_viewer preserves MPR on
+                # an active-viewport change). This should now fire only on an
+                # explicit MPR-off or a switch to a different tool while the MPR
+                # cell is the active selection.
+                import logging as _lg
+                _lg.getLogger(__name__).info(
+                    "[MPR-TEARDOWN] check_and_deactivate_tools closing MPR; "
+                    "selected is MPR host viewer=%s",
+                    getattr(sel, "id_vtk_widget", "?"),
+                )
                 self.toggle_zeta_mpr()  # deactivate Zeta MPR (on the active MPR viewer)
             # else: keep MPR alive; tool_selected will be overridden by the caller
 
@@ -8991,6 +9004,42 @@ class ToolbarManager:
     def turn_off_all_tools(self):
         self.check_and_deactivate_tools()
         self.handle_buttons_checked()
+
+    def turn_off_all_tools_after_switch(self, target_widget=None):
+        """Transient-tool reset to run AFTER a series switch — but TARGET-SCOPED.
+
+        ``turn_off_all_tools()`` operates on the ACTIVE (selected) viewport. When
+        a series is switched into a DIFFERENT, non-active viewport (e.g. a series
+        dropped onto viewport 2 while viewport 1 hosts MPR), running it would
+        deactivate the ACTIVE viewport's tools and TEAR DOWN ITS MPR — the
+        "drop on viewport 2 closes viewport 1's MPR" bug (confirmed 2026-06-21
+        logs: switch target=viewer0 → turn_off_all_tools → MPR-TEARDOWN on the
+        selected viewer1). So only reset tools when the switch target IS the
+        active viewport; a switch into any OTHER viewport leaves the active
+        viewport (and any MPR / tool it hosts) completely untouched. When the
+        target IS the active viewport (or unknown) the behaviour is identical to
+        the legacy ``turn_off_all_tools()``.
+
+        Kill-switch: ``AIPACS_SERIES_SWITCH_TOOL_RESET_TARGET_ONLY=0`` restores
+        the legacy always-reset behaviour.
+        """
+        import os as _os
+        target_only = (
+            _os.getenv("AIPACS_SERIES_SWITCH_TOOL_RESET_TARGET_ONLY", "1") or "1"
+        ).strip() != "0"
+        if target_only and target_widget is not None:
+            sel = getattr(self.patient_widget, "selected_widget", None)
+            if sel is not None and target_widget is not sel:
+                import logging as _lg
+                _lg.getLogger(__name__).info(
+                    "[MPR-PRESERVE] series switch into NON-active viewport "
+                    "target=%s selected=%s — skip turn_off_all_tools (preserve "
+                    "the active viewport's tools / MPR)",
+                    getattr(target_widget, "id_vtk_widget", "?"),
+                    getattr(sel, "id_vtk_widget", "?"),
+                )
+                return
+        self.turn_off_all_tools()
     
     def _disconnect_patient_sync_signals(self, sync_service):
         """Disconnect prior sync callbacks to prevent duplicate dialogs and actions."""

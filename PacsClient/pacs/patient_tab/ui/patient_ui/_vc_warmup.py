@@ -830,7 +830,7 @@ class _VCWarmupMixin:
                 
                 if flag_switch:
                     self.parent_widget.reset_slider(target_widget, target_slider)
-                    self.parent_widget.toolbar_manager.turn_off_all_tools()
+                    self.parent_widget.toolbar_manager.turn_off_all_tools_after_switch(target_widget)
                     if (
                         getattr(target_widget, '_qt_bridge_active', False)
                         and hasattr(target_widget, '_sync_qt_viewer_presentation')

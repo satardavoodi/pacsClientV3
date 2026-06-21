@@ -425,6 +425,7 @@ class _VCLoadMixin:
             # dedup / tracking key throughout this method.
             ms_disk_series_number = series_number
             _ms_resolved = False
+            _ms_study_uid = None  # B4: the series' OWN study_uid (multi-study) for per-series DB metadata
             try:
                 _ms_info = getattr(self.parent_widget, '_server_series_info', {}) or {}
                 _ms_entry = _ms_info.get(series_key) if isinstance(_ms_info, dict) else None
@@ -445,6 +446,7 @@ class _VCLoadMixin:
                     study_path = _auth_dir
                     ms_disk_series_number = _auth_disk
                     _ms_resolved = True
+                    _ms_study_uid = str((_ms_entry or {}).get('study_uid') or '') or None
                     logger.info(
                         "[MULTI-STUDY LOAD] key=%s -> study_path=%s disk_series=%s (entry-authority slot=%s)",
                         series_key, study_path, ms_disk_series_number,
@@ -485,6 +487,7 @@ class _VCLoadMixin:
                             ms_disk_series_number = str(_orig)
                             study_path = str(Path(_SRC) / _su)
                             _ms_resolved = True
+                            _ms_study_uid = str(_su) or None
                             logger.info(
                                 "[MULTI-STUDY LOAD] key=%s -> study_path=%s disk_series=%s "
                                 "(offset-key fallback slot=%s entry_present=%s)",
@@ -709,6 +712,43 @@ class _VCLoadMixin:
             except Exception:
                 estimated_file_count = 0
 
+            # B4 (2026-06-21, staged default-off): per-series DB-first metadata for a
+            # MULTI-STUDY series. The legacy guard (_ensure_study_pk_for_db_metadata)
+            # fed the PRIMARY study_pk — wrong for an offset-key series — so multi-study
+            # was excluded and re-scanned every DICOM header off disk on each load. When
+            # AIPACS_VIEWER_DB_METADATA_MULTISTUDY=1 and this series resolved to its OWN
+            # study, resolve THAT study's study_pk so load_single_series_by_number reads
+            # geometry from dicom.db. The existing "auto" self-verify (first series of
+            # each study compared DB-vs-disk; any mismatch/error -> disk) is the geometry
+            # fail-safe. Default OFF; per-widget study_uid->study_pk cache avoids repeat
+            # lookups. study_pk is consumed ONLY as the DB-loader's study_pk argument.
+            _effective_study_pk = self.parent_widget.metadata_fixed.get('study_pk', None)
+            if _ms_study_uid:
+                try:
+                    import os as _os
+                    _dbm = (_os.getenv("AIPACS_VIEWER_DB_METADATA", "auto") or "auto").strip().lower()
+                    if (_os.getenv("AIPACS_VIEWER_DB_METADATA_MULTISTUDY", "0") or "0").strip() == "1" \
+                            and _dbm in ("1", "verify", "auto", "on", "true"):
+                        _pk_cache = getattr(self, '_ms_study_pk_cache', None)
+                        if _pk_cache is None:
+                            _pk_cache = {}
+                            self._ms_study_pk_cache = _pk_cache
+                        if _ms_study_uid in _pk_cache:
+                            _ms_spk = _pk_cache[_ms_study_uid]
+                        else:
+                            from PacsClient.utils import find_study_pk_with_study_uid
+                            _ms_spk = find_study_pk_with_study_uid(_ms_study_uid)
+                            _pk_cache[_ms_study_uid] = _ms_spk
+                        if _ms_spk:
+                            _effective_study_pk = _ms_spk
+                            logger.info(
+                                "[H1_DB_METADATA_MS] key=%s study_uid=%s -> study_pk=%s "
+                                "(per-series DB metadata; self-verify protects geometry)",
+                                series_key, _ms_study_uid, _ms_spk,
+                            )
+                except Exception:
+                    pass  # leave the default study_pk -> unchanged disk header path
+
             max_itk_threads, max_pydicom_workers = self._get_interactive_load_limits(effective_viewer_backend)
             _gate_wait_start = time.perf_counter()
             self.logger.info("[UX_SERIES_LOAD_START] series=%s backend=%s", series_key, effective_viewer_backend)
@@ -729,7 +769,7 @@ class _VCLoadMixin:
                     study_path=study_path,  # Pass correct study path, not series path
                     series_number=ms_disk_series_number,
                     patient_pk=self.parent_widget.metadata_fixed.get('patient_pk', None),
-                    study_pk=self.parent_widget.metadata_fixed.get('study_pk', None),
+                    study_pk=_effective_study_pk,  # B4: per-series study_pk for multi-study (else primary/None)
                     ordering_by_instances_number=self.parent_widget.ordering_by_instances_number,
                     max_itk_threads=max_itk_threads,
                     max_pydicom_workers=max_pydicom_workers,

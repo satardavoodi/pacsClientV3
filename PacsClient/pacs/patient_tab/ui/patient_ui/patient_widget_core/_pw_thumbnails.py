@@ -8,6 +8,7 @@ This is a mixin class — do NOT instantiate directly.
 
 import asyncio
 import base64
+import os
 import re
 import threading
 from pathlib import Path
@@ -20,6 +21,15 @@ from PacsClient.utils.series_identity import (
     get_series_uid as _get_series_uid,
     resolve_series_identifier as _resolve_series_identifier,
 )
+
+# Wrong-study fix (2026-06-21): attribute a series that arrives WITHOUT an explicit
+# study_uid to THIS tab's primary study instead of dropping it from the multi-study
+# studies-index. Dropping it left the primary study's slot-0 entries OUT of the
+# rebuilt _server_series_info, so a primary-key drag could fall back to a
+# previous-exam-poisoned tab study_path and load the WRONG study (analysis:
+# docs/reports/PIPELINE_DRAG_EXACT_SERIES_ANALYSIS_2026-06-21.md). Default ON; kill
+# switch AIPACS_PRIMARY_BUCKET_FALLBACK=0 restores the legacy drop-if-no-study_uid.
+_PRIMARY_BUCKET_FALLBACK = (os.getenv("AIPACS_PRIMARY_BUCKET_FALLBACK", "1") or "1").strip() != "0"
 
 
 class _PWThumbnailsMixin:
@@ -180,7 +190,16 @@ class _PWThumbnailsMixin:
         for series in series_list:
             study_uid = str((series or {}).get('study_uid') or '').strip()
             if not study_uid:
-                continue
+                # Wrong-study fix (2026-06-21): a series with no explicit study_uid
+                # belongs to THIS tab's PRIMARY study (previous-exam / foreign series
+                # always carry their own study_uid). Attribute it to the primary
+                # instead of dropping it — dropping left the primary's slot-0 entries
+                # out of the rebuilt _server_series_info, so a primary-key drag fell
+                # back to the (previous-exam-poisoned) tab study_path → WRONG study.
+                if _PRIMARY_BUCKET_FALLBACK:
+                    study_uid = str(getattr(self, 'study_uid', '') or '').strip()
+                if not study_uid:
+                    continue
             bucket = studies_index.setdefault(study_uid, [])
             this_uid = _get_series_uid(series)
             if this_uid and any(_get_series_uid(s) == this_uid for s in bucket):

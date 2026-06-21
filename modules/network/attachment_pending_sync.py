@@ -27,6 +27,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import threading
 import tempfile
 from datetime import datetime
@@ -233,3 +234,112 @@ def get_status(study_uid: str, filename: str) -> str:
         return STATUS_SYNCED
     attempts = int(entry.get("attempts", 0) or 0)
     return STATUS_PENDING_SYNC if attempts > 0 else STATUS_LOCAL_ONLY
+
+
+# ─────────────────────────────────────────
+# Local ↔ server attachment de-duplication
+# ─────────────────────────────────────────
+# The upload server stores each uploaded attachment under a unique id prepended
+# to the ORIGINAL client filename, e.g.
+#     REC_20260621_145327.wav  ->  0c634fb7_REC_20260621_145327.wav
+# When the study is reopened, ``download_attachments_for_study`` fetches that
+# server copy; because its name differs from the local original, the plain
+# "does this exact filename already exist locally?" check misses and a SECOND
+# file is written — so one synced voice shows up twice (two -> four, etc.).
+# These pure helpers recognise that "<server_id>_<original>" and "<original>"
+# are the SAME logical attachment, so the server copy reconciles against the
+# existing local file instead of duplicating it. Disk stays the source of
+# truth; nothing is ever deleted — duplicates are only avoided / hidden.
+_SERVER_ID_PREFIX_RE = re.compile(r"^[0-9a-fA-F]{8}_")
+
+
+def attachment_dedup_enabled() -> bool:
+    """Master switch for local↔server attachment de-duplication (default ON).
+    Set ``AIPACS_ATTACHMENT_DEDUP=0`` to restore the byte-identical legacy
+    behaviour (one file per server item, keyed by exact filename only)."""
+    val = os.environ.get("AIPACS_ATTACHMENT_DEDUP", "1").strip().lower()
+    return val not in ("0", "false", "no", "off")
+
+
+def strip_server_id_prefix(filename: str) -> str:
+    """Return *filename* (basename) without a leading server-assigned id prefix.
+    The prefix is an 8-char hex token followed by '_' (the server's attachment
+    id). Safe and idempotent for names that have no prefix."""
+    if not filename:
+        return filename or ""
+    base = os.path.basename(str(filename))
+    return _SERVER_ID_PREFIX_RE.sub("", base, count=1)
+
+
+def attachment_identity_key(filename: str) -> str:
+    """Canonical identity used to decide whether two attachment files are the
+    SAME logical attachment regardless of a server id prefix. The original
+    client filename already embeds a per-recording timestamp
+    (``REC_<date>_<time>``), so it is a reliable per-attachment identity.
+    Case-folded for robustness."""
+    return strip_server_id_prefix(filename).casefold()
+
+
+def find_local_duplicate(
+    server_name: str,
+    local_names,
+    *,
+    server_size: Optional[int] = None,
+    local_sizes: Optional[Dict[str, int]] = None,
+) -> Optional[str]:
+    """Return the existing local filename that is the SAME attachment as the
+    server-returned *server_name*, or ``None`` if the server file is genuinely
+    new (and should be downloaded).
+
+    Matching precedence — most reliable signal first:
+      1. exact filename match;
+      2. identity-key match (server-id-prefix-insensitive original name).
+         When BOTH file sizes are known they must be equal — a size conflict
+         rejects the match, so a (vanishingly unlikely) same-second name
+         collision can never hide a genuinely different file.
+    Never raises.
+    """
+    try:
+        if not server_name:
+            return None
+        names = list(local_names or [])
+        sizes = local_sizes or {}
+        if server_name in names:
+            return server_name
+        s_key = attachment_identity_key(server_name)
+        for ln in names:
+            if attachment_identity_key(ln) != s_key:
+                continue
+            if (server_size is not None and sizes.get(ln) is not None
+                    and int(server_size) != int(sizes[ln])):
+                continue  # same name-key but different bytes -> not a duplicate
+            return ln
+        return None
+    except Exception:
+        return None
+
+
+def choose_canonical_attachment_names(filenames) -> set:
+    """Given the attachment filenames in a study folder, return the subset to
+    DISPLAY — exactly one per logical attachment (identity key). Prefers the
+    original (server-id-prefix-free) name; otherwise a stable lexicographic
+    pick. Pure and non-destructive: duplicates are only hidden from the list,
+    no file is deleted. Returns a set of names to keep."""
+    keep: Dict[str, str] = {}
+    for name in filenames or []:
+        try:
+            key = attachment_identity_key(name)
+        except Exception:
+            keep[name] = name
+            continue
+        cur = keep.get(key)
+        if cur is None:
+            keep[key] = name
+            continue
+        cur_is_original = strip_server_id_prefix(cur) == cur
+        new_is_original = strip_server_id_prefix(name) == name
+        if new_is_original and not cur_is_original:
+            keep[key] = name
+        elif new_is_original == cur_is_original and name < cur:
+            keep[key] = name
+    return set(keep.values())

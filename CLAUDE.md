@@ -795,3 +795,26 @@ over a **copy** of `dicom.db` is documented but disabled (never point MCP at the
 `pyproject.toml` but the extension isn't installed yet).
 
 Original `.vscode/*.json` files are backed up at `.vscode/_backup_2026-06-02/`.
+
+## Agent control & testing abilities (2026-06-21)
+
+The single capability overview for an agent that needs to **control and test** the app is
+`docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md` — it maps every ability (desktop
+control + tiers, the offscreen sandbox test lane, logs, file tools) to how it's used here, and
+cross-links the runbook and `.github/prompts/`. There are **two testing lanes**:
+
+- **Verify lane (fast, agent-autonomous) — offscreen pytest in the Linux sandbox.** Recreate the
+  env with `bash tools/dev/sandbox_setup.sh`, then `source tools/dev/sandbox_env.sh` (sets the
+  vendored `libEGL`/PortAudio `LD_LIBRARY_PATH` + `QT_QPA_PLATFORM=offscreen`), then
+  `python3 -m pytest tests/code/<target> -p no:debugging -q`. Installs every `requirements.txt`
+  package (all import except Windows-only `comtypes`); ~1955 tests collect; pure-Python **and**
+  Qt-offscreen suites run. Sandbox installs **do not persist** — re-run the setup each session.
+  As-built: `tools/dev/SANDBOX_TESTING.md`.
+- **Clinical lane (real) — the Windows source build.** The only lane that proves GUI / rendering
+  / clinical behaviour. **Human-assisted bootstrap stays the default** (human launches the source
+  build + logs in + positions on Monitor 1; the agent tests from the open app). Procedure:
+  `docs/AIPACS_LAUNCH_CONTROL_RUNBOOK.md`. Source build only — never the frozen exe, never the
+  black taskbar icon, never multiple instances.
+
+The Verify lane is a pre-filter for the Clinical lane, not a substitute. It does NOT run the real
+GUI, VTK render windows, or anything Windows-only.

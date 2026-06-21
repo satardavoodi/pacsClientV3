@@ -51,9 +51,9 @@ def reconcile_attachments_from_server(study_uid: str, *, verbose: bool = False) 
         summary = download_attachments_for_study(study_uid, overwrite=False, verbose=verbose)
         _after = _list_attachment_files(study_uid)
         logger.info(
-            "[SYNC] reconcile (non-destructive) study=%s pulled=%s skipped=%s failed=%s before=%s after=%s",
-            study_uid, summary.get("saved"), summary.get("skipped"), summary.get("failed"),
-            _before, _after,
+            "[SYNC] reconcile (non-destructive) study=%s pulled=%s skipped=%s deduped=%s failed=%s before=%s after=%s",
+            study_uid, summary.get("saved"), summary.get("skipped"), summary.get("deduped"),
+            summary.get("failed"), _before, _after,
         )
         # Defensive audit: a non-destructive reconcile must NEVER reduce the local
         # file set. If after < before, a local-only (e.g. unsynced voice) file was

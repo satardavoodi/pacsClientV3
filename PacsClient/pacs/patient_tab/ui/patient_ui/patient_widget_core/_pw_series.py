@@ -167,7 +167,7 @@ class _PWSeriesMixin:
                 
                 if flag_switch:
                     self.reset_slider(vtk_widget, slider)
-                    self.toolbar_manager.turn_off_all_tools()
+                    self.toolbar_manager.turn_off_all_tools_after_switch(vtk_widget)
                     
                     # Update corners if method exists
                     if vtk_widget.image_viewer:
@@ -713,7 +713,7 @@ class _PWSeriesMixin:
 
             if flag_switch is True:
                 self.reset_slider(vtk_widget, slider)
-                self.toolbar_manager.turn_off_all_tools()
+                self.toolbar_manager.turn_off_all_tools_after_switch(vtk_widget)
                 vtk_widget.resizeEvent(None)
                 # Check if image_viewer exists before updating
                 if vtk_widget.image_viewer is not None:

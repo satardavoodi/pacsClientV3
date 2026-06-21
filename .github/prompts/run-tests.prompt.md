@@ -12,6 +12,10 @@ description: Run AI-PACS tests the correct way and report pass/fail with the fai
 - **Direct pytest** (fast, for pure unit tests) via the venv:
   `\.venv\Scripts\python.exe -m pytest <args>`. VS Code tasks:
   **"Pytest: Collect only (sanity)"** and **"Pytest: Run tests/code (fast unit)"**.
+- **Offscreen sandbox lane** (Linux agents, no Windows GUI): `bash tools/dev/sandbox_setup.sh`
+  → `source tools/dev/sandbox_env.sh` → `python3 -m pytest <args> -p no:debugging -q`. Fast
+  pre-verification for pure-Python + Qt-offscreen tests (real GUI/rendering still needs Windows).
+  See [`docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md`](../../docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md) §4.1.
 - pytest config is in `pyproject.toml`. The `addopts` include **`-p no:debugging`** —
   required because `tests/code/` shadows the stdlib `code` module under prepend import
   mode. Never strip that flag.

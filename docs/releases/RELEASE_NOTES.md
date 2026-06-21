@@ -1,9 +1,31 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.3.5 (2026-06-21)
-**Previous Stable:** v3.3.4 (2026-06-18)
+**Current Stable Version:** v3.3.6 (2026-06-21)
+**Previous Stable:** v3.3.5 (2026-06-21)
 **Release Date:** 2026-06-21
 **Branch:** beta-version
+
+---
+
+## v3.3.6 (2026-06-21) - Minor release: viewer/MPR + download reliability + study grouping
+
+### Summary
+
+Minor release advancing the stable line to 3.3.6 and publishing the full current
+beta-version working state. Focus areas: MPR preservation during series/viewport
+changes, voice-attachment de-duplication, correct multi-study series-to-study
+bucketing, and download reliability (oversize fast-fail + first-image alignment),
+plus offscreen sandbox testing tooling and a comprehensive audit pass.
+
+### Included
+
+- MPR stays active when a series is switched or loaded into another viewport
+- Fixed duplicate voice notes after reopening a synced patient (attachment dedup)
+- Correct series-to-study assignment (wrong-study bucketer fix + primary fallback)
+- Download reliability: oversize fast-fail and first-image pagination alignment
+- DB-first metadata for multi-study patients
+- Offscreen sandbox test lane tooling (tools/dev/sandbox_*) and audit reports
+- Canonical version markers advanced to v3.3.6; full local state published to all remotes
 
 ---
 

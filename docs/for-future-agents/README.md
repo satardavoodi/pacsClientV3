@@ -18,6 +18,11 @@ If your change doesn't fit this pattern, you're probably making a refactor rathe
 
 ## 1. First five minutes — what to read
 
+> **Need to control or test the running app?** Read
+> [`AGENT_CONTROL_AND_TESTING_GUIDE.md`](./AGENT_CONTROL_AND_TESTING_GUIDE.md) — the single
+> overview of every ability (desktop control, the offscreen **sandbox test lane**, logs, file
+> tools) and how to use each one here.
+
 In this order:
 
 1. **[`../../CLAUDE.md`](../../CLAUDE.md)** — the project rules (which build to run, never use the frozen exe, the regression-sensitive subsystems, the human-assisted bootstrap mode).

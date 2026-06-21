@@ -815,10 +815,47 @@ class _VCLayoutMixin:
         if self.selected_widget == node_viewer.vtk_widget:
             return False
 
-        # save tool activated
-        tool_activated_method = self.parent_widget.toolbar_manager.get_tool_activated_method()
+        tb = self.parent_widget.toolbar_manager
 
-        self.parent_widget.toolbar_manager.check_and_deactivate_tools()
+        # ── MPR is a PER-VIEWPORT mode, not a transient tool ──────────────────
+        # Merely changing the ACTIVE viewport (clicking — or drag-dropping a
+        # series — onto another cell) must NOT tear MPR down on its host cell and
+        # must NOT re-open MPR on the newly-active cell. Only the explicit MPR
+        # button (toggle_zeta_mpr) or a layout change may end MPR.
+        #
+        # Root cause of "drop on viewport 2 exits viewport 1's MPR": this method
+        # runs check_and_deactivate_tools() BELOW *before* `selected_widget` is
+        # reassigned, so its MPR guard still sees the MPR-hosting cell as the
+        # selection and calls toggle_zeta_mpr(), which scans every node and closes
+        # whichever cell hosts MPR. So when MPR is the active mode we just move the
+        # active selection and leave MPR (and tool_selected) completely intact.
+        _preserve_mpr = (
+            os.getenv("AIPACS_MPR_PRESERVE_ON_VIEWPORT_CHANGE", "1") or "1"
+        ).strip() != "0"
+        _tool_is_mpr = False
+        try:
+            _tool_is_mpr = (
+                getattr(tb, "tool_selected", None) is not None
+                and tb.tool_selected == tb.tool_access.MPR
+            )
+        except Exception:
+            _tool_is_mpr = False
+
+        if _preserve_mpr and _tool_is_mpr:
+            logger.info(
+                "[MPR-PRESERVE] active-viewport change old_viewer=%s new_viewer=%s "
+                "— MPR kept intact (no teardown, no re-apply)",
+                getattr(self.selected_widget, "id_vtk_widget", "?"),
+                getattr(node_viewer.vtk_widget, "id_vtk_widget", "?"),
+            )
+            self.selected_widget: VTKWidget = node_viewer.vtk_widget
+            self.slider = node_viewer.slider
+            return
+
+        # save tool activated
+        tool_activated_method = tb.get_tool_activated_method()
+
+        tb.check_and_deactivate_tools()
 
         # set new vtk_widget to main vtk_widget
         self.selected_widget: VTKWidget = node_viewer.vtk_widget
@@ -826,7 +863,7 @@ class _VCLayoutMixin:
 
         if tool_activated_method:
             # apply activated tool on new vtk_widget
-            self.parent_widget.toolbar_manager.tool_selected = None
+            tb.tool_selected = None
             tool_activated_method(self.selected_widget)
 
     def change_container_border(self, id_vtk_widget):

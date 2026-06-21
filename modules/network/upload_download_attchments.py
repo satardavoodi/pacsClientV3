@@ -12,6 +12,7 @@ from PacsClient.utils.config import ATTACHMENT_PATH
 from typing import List, Union, Iterable, Optional
 from PacsClient.utils import list_files_in_folder, append_attachments_uploaded
 from .attachment_pending_sync import mark_pending, mark_synced, record_attempt
+from .attachment_pending_sync import attachment_dedup_enabled, find_local_duplicate
 
 logger = logging.getLogger(__name__)
 
@@ -499,6 +500,32 @@ def download_attachments_for_study(
         results: List[Dict[str, Any]] = []
         saved_count = 0
         error_count = 0
+        dedup_count = 0
+
+        # ── Local ↔ server de-duplication snapshot ───────────────────────────
+        # The server stores each uploaded file under a unique id prefix
+        # ("<id>_<original>"), so a server item can be the SAME attachment as a
+        # locally-saved original under a different name. Snapshot the existing
+        # local files (name + size) so we can recognise that and skip writing a
+        # duplicate (the "one synced voice shows up twice / two -> four" bug).
+        # Disk stays authoritative — nothing here deletes a local file.
+        dedup_on = attachment_dedup_enabled()
+        local_names: List[str] = []
+        local_sizes: Dict[str, int] = {}
+        try:
+            for _lp in out_dir.iterdir():
+                if _lp.is_file() and not _lp.name.startswith('.'):
+                    local_names.append(_lp.name)
+                    try:
+                        local_sizes[_lp.name] = _lp.stat().st_size
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        logger.info(
+            "[ATTACH-DEDUP] download study=%s server_attachments=%d local_files=%d dedup=%s",
+            study_uid, len(items), len(local_names), "on" if dedup_on else "off",
+        )
 
         for it in items:
             entry = {
@@ -509,6 +536,7 @@ def download_attachments_for_study(
                 "file_exists_on_server": bool(it.get("file_exists", False)),
                 "status": "pending",
                 "saved_path": None,
+                "dedup_match": None,
                 "error": None
             }
 
@@ -521,9 +549,33 @@ def download_attachments_for_study(
                     raise ValueError("attachment_data is missing (include_data may be False on server)")
 
                 raw = base64.b64decode(b64)
-                target_path = out_dir / it["file_name"]
+                server_name = it["file_name"]
+                target_path = out_dir / server_name
 
-                if target_path.exists() and not overwrite:
+                # Reconcile against existing local files FIRST: if this server
+                # item already exists locally (possibly under the original,
+                # prefix-free name), do NOT write a second copy — point at the
+                # existing local file. Never deletes; only avoids the duplicate.
+                dup_local = None
+                if dedup_on:
+                    dup_local = find_local_duplicate(
+                        server_name, local_names,
+                        server_size=it.get("file_size"),
+                        local_sizes=local_sizes,
+                    )
+
+                if dup_local is not None and dup_local != server_name:
+                    entry["status"] = "skipped"
+                    entry["saved_path"] = str(out_dir / dup_local)
+                    entry["dedup_match"] = dup_local
+                    dedup_count += 1
+                    logger.info(
+                        "[ATTACH-DEDUP] study=%s server='%s' matches local='%s' "
+                        "(server_size=%s local_size=%s) -> skip, no duplicate written",
+                        study_uid, server_name, dup_local,
+                        it.get("file_size"), local_sizes.get(dup_local),
+                    )
+                elif target_path.exists() and not overwrite:
                     entry["status"] = "skipped"
                     entry["saved_path"] = str(target_path)
                 else:
@@ -532,6 +584,14 @@ def download_attachments_for_study(
                     entry["status"] = "saved"
                     entry["saved_path"] = str(target_path)
                     saved_count += 1
+                    # Keep the snapshot current so a later item in THIS batch can
+                    # dedup against a file we just wrote.
+                    if server_name not in local_names:
+                        local_names.append(server_name)
+                    try:
+                        local_sizes[server_name] = len(raw)
+                    except Exception:
+                        pass
 
                 append_attachments_uploaded(study_uid=study_uid, value=entry["saved_path"])  # add path file to db
 
@@ -548,9 +608,14 @@ def download_attachments_for_study(
             "total": len(items),
             "saved": saved_count,
             "skipped": sum(1 for r in results if r["status"] == "skipped"),
+            "deduped": dedup_count,
             "failed": error_count,
             "results": results
         }
+        logger.info(
+            "[ATTACH-DEDUP] download done study=%s saved=%d skipped=%d deduped=%d failed=%d",
+            study_uid, saved_count, summary["skipped"], dedup_count, error_count,
+        )
 
         return summary
 

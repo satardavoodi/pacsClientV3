@@ -1085,24 +1085,6 @@ class ThumbnailManager(QObject):
         count_label.update()
         widget.update()
 
-    def _series_card_icon_pixmap(self):
-        """Cached small image-type icon (qtawesome) for the series-card header row.
-        Built ONCE and reused across all cards (no per-card icon construction on the
-        thumbnail hot path). Returns an empty QPixmap if qtawesome is unavailable —
-        the icon label then stays blank, which is harmless."""
-        px = getattr(self, '_series_card_icon_px', None)
-        if px is not None:
-            return px
-        try:
-            import qtawesome as _qta
-            color = (self._theme.get('accent', '#3b82f6')
-                     if getattr(self, '_theme', None) else '#3b82f6')
-            px = _qta.icon('fa5s.image', color=color).pixmap(15, 15)
-        except Exception:
-            px = QPixmap()
-        self._series_card_icon_px = px
-        return px
-
     def _apply_thumbnail_image(self, series_number: str, image: QImage):
         """Apply image to existing thumbnail widget on GUI thread."""
         try:
@@ -1508,31 +1490,23 @@ class ThumbnailManager(QObject):
                 }}
             """)
             content_layout = QVBoxLayout(content_widget)
-            content_layout.setContentsMargins(6, 6, 6, 6)
+            content_layout.setContentsMargins(6, 3, 6, 6)  # top 3 -> header sits higher
             content_layout.setSpacing(3)
             
-            # Header ROW (redesigned 2026-06-21): [icon] "Series N" on the LEFT, the
-            # image-count accent label on the RIGHT — matching the requested card
-            # layout. The count label is ALWAYS created here (empty until known) and
-            # stored as widget.count_label, so the count updaters
+            # Header ROW (revised 2026-06-21): ONE clean line —
+            #   [refresh button]  Series N  ..........  N images
+            # The refresh/retry button is inserted at position 0 below (where it is
+            # created), so refresh + Series label + image count are all on the same
+            # horizontal line. NO extra image icon (removed — the refresh button is
+            # the only iconography). The count label is ALWAYS created here (empty
+            # until known) and stored as widget.count_label, so the count updaters
             # (_set_series_count_label_text / the status path) update it IN PLACE on
             # this row and never re-add a centered count at the bottom.
             header_row = QWidget()
-            header_row.setFixedHeight(20)
+            header_row.setFixedHeight(24)  # fits the inline 22px refresh button
             header_row_layout = QHBoxLayout(header_row)
             header_row_layout.setContentsMargins(0, 0, 0, 0)
             header_row_layout.setSpacing(4)
-
-            _card_icon = QLabel()
-            try:
-                _icpx = self._series_card_icon_pixmap()
-                if _icpx is not None and not _icpx.isNull():
-                    _card_icon.setPixmap(_icpx)
-            except Exception:
-                pass
-            _card_icon.setFixedSize(15, 15)
-            _card_icon.setStyleSheet("background: transparent; border: none;")
-            header_row_layout.addWidget(_card_icon)
 
             header_label = QLabel(f"Series {display_series}")
             header_label.setStyleSheet(f"""
@@ -1756,19 +1730,23 @@ class ThumbnailManager(QObject):
 
             image_button.clicked.connect(on_thumb_clicked)
             
-            # ✅ ADD RETRY BUTTON (emoji style) at top-right corner
-            retry_button = QPushButton(widget)
+            # Refresh / retry button — now the FIRST element of the header row
+            # (revised 2026-06-21: was an absolutely-positioned floating button at
+            # top-left; inlined so refresh + Series + count form one clean header
+            # line, aligned on the same row). Sized to fit the 24px row.
+            retry_button = QPushButton()
             retry_button.setText("🔄")
-            retry_button.setFixedSize(28, 28)
+            retry_button.setFixedSize(22, 22)
+            retry_button.setCursor(Qt.PointingHandCursor)
             retry_button.setStyleSheet("""
                 QPushButton {
                     background-color: #2d3748;
                     border: 1px solid #4a5568;
                     border-radius: 4px;
                     color: #ffffff;
-                    font-size: 14px;
+                    font-size: 11px;
                     font-weight: bold;
-                    padding: 2px;
+                    padding: 0px;
                 }
                 QPushButton:hover {
                     background-color: #3d4758;
@@ -1780,10 +1758,12 @@ class ThumbnailManager(QObject):
                 }
             """)
             retry_button.setToolTip("Retry download for this series")
-            
-            # Position retry button at top-left corner
-            retry_button.move(4, 4)  # 4px padding from top-left
-            retry_button.raise_()  # Ensure it's on top
+
+            # Place it at the LEFT of the header row (before "Series N").
+            try:
+                header_row_layout.insertWidget(0, retry_button)
+            except Exception:
+                pass
             
             # Extract series_uid from series_info
             series_uid = None

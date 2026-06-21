@@ -179,20 +179,27 @@ Key revision points (2026-06-21, after live screenshot review):
 The column stays narrowed (`default_panel_width` 234). Row 2 + divider are only built
 when the previous-exams feature is enabled.
 
-**Series cards (`thumbnail_manager.py`).** Each card's header is now a ROW —
-`[image icon] Series N` on the left, `N images` (blue accent) on the right —
-instead of a centered title with a separate centered count at the bottom. The
-image and the description caption (e.g. `Ankle AP`) follow below. The count label
-is ALWAYS created in this header row and stored as `widget.count_label`, so the
-existing count updaters (`_set_series_count_label_text` and the status path) set
-its text **in place** and never re-add a centered bottom count. A single
-`qtawesome` icon pixmap is built once and cached (`_series_card_icon_pixmap`) and
-reused by every card — no per-card icon cost on the thumbnail hot path. All card
-functionality is preserved (drag button, progress border / origin color, retry
-button, `content_layout` / `image_button` / `count_label` contracts).
+**Series cards (`thumbnail_manager.py`).** Each card's header is ONE clean line:
+`[refresh button] Series N` on the left, `N images` (blue accent) on the right —
+instead of a centered title with a separate centered count at the bottom. The image
+and the description caption (e.g. `Ankle AP`) follow below.
 
-Because the card builder is the shared `ThumbnailManager`, the home-page right-panel
-thumbnails get the same refreshed card look (consistent across the app).
+Revision (2026-06-21, after live screenshot): the **extra image icon** beside the
+Series label was **removed** (the refresh button is the only iconography). The
+**refresh / retry button is now inline** — it is `insertWidget(0, ...)` into the
+header row (was an absolutely-positioned floating button at `(4,4)`), sized 22px to
+fit the 24px row, so refresh + Series + count are aligned on the same horizontal
+line. The header sits slightly higher (`content_layout` top margin 6 → 3). The
+count label is ALWAYS created in this header row and stored as `widget.count_label`,
+so the existing count updaters (`_set_series_count_label_text` and the status path)
+set its text **in place** and never re-add a centered bottom count. All card
+functionality is preserved: drag button, progress border / origin color, and the
+retry button's tooltip / `series_*` attributes / `clicked → on_retry_clicked`
+signal, plus the `content_layout` / `image_button` / `count_label` contracts.
+
+Because the card builder is the shared `ThumbnailManager`, this applies to BOTH the
+Patient-tab thumbnails and the Main-page right-panel thumbnails (consistent across
+the app).
 
 ## Tests
 

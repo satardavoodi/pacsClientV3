@@ -88,7 +88,8 @@ class ShortcutManager(QObject):
         # when the current tab isn't a Patient Viewer — so they never disturb
         # the Home page or other modules. They reuse the toolbar's own button
         # logic (no duplicated preset/recording/capture code).
-        #   F1–F4 = CT window presets (Lung / Abdomen / Bone / Default)
+        #   F1–F4 = CT window presets (Lung / Abdomen / Bone / Refreshing,
+        #           where "Refreshing" restores the DICOM-default WW/WL)
         #   F9    = voice record toggle (start → pause → resume)
         #   F10   = save / approve the current voice recording
         #   F11   = total-layout screenshot (all viewers)
@@ -97,7 +98,7 @@ class ShortcutManager(QObject):
             (Qt.Key_F1, lambda: self._on_patient_window_preset('lung')),
             (Qt.Key_F2, lambda: self._on_patient_window_preset('abdomen')),
             (Qt.Key_F3, lambda: self._on_patient_window_preset('bone')),
-            (Qt.Key_F4, lambda: self._on_patient_window_preset('default')),
+            (Qt.Key_F4, lambda: self._on_patient_window_preset('refreshing')),
             (Qt.Key_F9, self._on_patient_voice_toggle),
             (Qt.Key_F10, self._on_patient_voice_save),
             (Qt.Key_F11, self._on_patient_total_layout_capture),
@@ -453,9 +454,11 @@ class ShortcutManager(QObject):
         return None
 
     def _on_patient_window_preset(self, name):
-        """F1–F4: apply a CT window preset (lung/abdomen/bone/default) to the
+        """F1–F4: apply a CT window preset (lung/abdomen/bone/refreshing) to the
         active patient viewport — reuses the toolbar's own preset action, so it
-        is identical to picking the preset from the WL preset UI."""
+        is identical to picking the preset from the WL preset UI. 'refreshing'
+        (F4) restores the DICOM-default WW/WL — the same reset the WL preset
+        dropdown's 'Default Preset' button performs."""
         pw = self._active_patient_tab()
         if pw is None:
             return

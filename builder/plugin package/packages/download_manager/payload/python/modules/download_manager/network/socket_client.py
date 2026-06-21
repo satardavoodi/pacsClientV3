@@ -180,6 +180,27 @@ _PAGINATION_SAFE = (os.getenv("AIPACS_DOWNLOAD_PAGINATION_SAFE", "1") or "1").st
 # so a pagination gap is visible directly in download_diagnostics.log. Default on;
 # disable with AIPACS_DOWNLOAD_BATCH_TRACE=0.
 _BATCH_TRACE = (os.getenv("AIPACS_DOWNLOAD_BATCH_TRACE", "1") or "1").strip() != "0"
+# B2 prime/pagination alignment (2026-06-21, perf — staged, default OFF).
+# After the size-1 first-image prime, realign batch_start to the restored tile size
+# so the main loop fetches the final tile instead of leaving a 1-instance tail to the
+# INCOMPLETE_SERIES gap-fill. Every series whose instance count ≡ 1 (mod batch_size)
+# otherwise paid a guaranteed extra full disk re-scan + gap-fill round-trip (observed
+# 16×/day: expected=11 and expected=21 series). Pure perf: NO data-loss risk — the
+# gap-fill backstop is unchanged, so completeness is still guaranteed if this ever
+# mis-aligns. Default ON (live-validated 2026-06-21 on an expected=41 series: clean
+# tiling 0→1→2→3→4, no INCOMPLETE_SERIES); kill switch AIPACS_PRIME_ALIGN=0 restores
+# the legacy off-by-one + gap-fill.
+_PRIME_ALIGN = (os.getenv("AIPACS_PRIME_ALIGN", "1") or "1").strip() != "0"
+# B6 oversized-single-instance fast-fail (2026-06-21, perf — staged, default OFF).
+# A "Response too large" at a single-instance batch is the server's HARD payload cap
+# on one oversized instance — deterministic, so the inner exponential-backoff retry
+# (+ the coordinator's series re-attempts) just burns minutes before the series fails
+# anyway (observed ~8 min on a 558 MB instance). A genuine stream-DESYNC (the 4 length
+# bytes were really payload) still recovers on ONE fresh-socket reconnect, so allow
+# exactly one quick reconnect then fail fast. Scope: ONLY single-instance
+# (batch_size<=1) "Response too large"; normal multi-image batches and every other
+# error keep the full R27/R28 backoff-retry unchanged. Enable: AIPACS_FASTFAIL_OVERSIZE=1.
+_FASTFAIL_OVERSIZE = (os.getenv("AIPACS_FASTFAIL_OVERSIZE", "0") or "0").strip() == "1"
 
 
 def _grow_batch_size(current, max_size, consecutive_ok, growth_after, step):
@@ -1728,6 +1749,19 @@ class SocketDicomClient:
             # shrink/grow block below so adaptive tuning continues from the full size.
             if _prime_restore_size is not None and batch_idx == 1:
                 batch_size = _prime_restore_size
+                if _PRIME_ALIGN:
+                    # B2 (2026-06-21): realign batch_start to the restored tile size.
+                    # The size-1 prime consumed only instance index 0; the legacy
+                    # advance left batch_start at 1, so batch_index = 1//size = 0 still
+                    # re-requested tile 0 and batch_start then stepped 1, size+1,
+                    # 2*size+1, … — never a clean tile boundary. For any series whose
+                    # count ≡ 1 (mod size) the final tile (its last instance) was never
+                    # requested in the main loop and fell to the INCOMPLETE_SERIES
+                    # gap-fill (an extra full disk re-scan + fetch). Resetting to 0
+                    # resumes clean tiling (0, size, 2*size, …); instance 0 is re-sent
+                    # in tile 0 and file-skipped (already primed) so no tile is dropped.
+                    # The gap-fill below is UNCHANGED and still backstops completeness.
+                    batch_start = 0
                 total_batches = (expected_count + batch_size - 1) // batch_size
                 _prime_restore_size = None
 
@@ -1975,7 +2009,8 @@ class SocketDicomClient:
         """
         logger.debug(f"🔄 _download_batch_with_retry called: series={series_uid[:30]}..., start={batch_start}, size={batch_size}")
         self._last_retry_count = 0
-        
+        _oversize_seen = 0  # B6: count of single-instance "Response too large" hits this call
+
         for attempt in range(MAX_RETRIES):
             # R25: Check for cancellation before each attempt
             if self.is_cancelled():
@@ -2029,7 +2064,31 @@ class SocketDicomClient:
                 
                 # R30: Record failure
                 self.health_monitor.record_failure()
-                
+
+                # B6 (2026-06-21, staged default-off): bound a deterministic
+                # single-instance "Response too large" (server hard payload cap on one
+                # oversized instance). Retrying the SAME instance with escalating
+                # backoff just burns minutes; a genuine stream-DESYNC still recovers on
+                # ONE fresh-socket reconnect, so allow exactly one quick reconnect then
+                # fail fast. Untouched: normal batches (size>1) and all other errors
+                # keep the full R27/R28 backoff-retry below.
+                if _FASTFAIL_OVERSIZE and batch_size <= 1 and "Response too large" in str(e):
+                    _oversize_seen += 1
+                    if _oversize_seen >= 2 or attempt >= MAX_RETRIES - 1:
+                        logger.error(
+                            "❌ Single-instance payload exceeds the server cap even "
+                            "after a fresh-socket retry — failing series fast "
+                            "(no further doomed retries)"
+                        )
+                        return None
+                    logger.warning(
+                        "⚠️ Response too large at single-instance batch — one quick "
+                        "reconnect (stream-desync recovery) then fail fast"
+                    )
+                    self.disconnect()
+                    self.connect_with_retry(max_retries=3)
+                    continue
+
                 if attempt < MAX_RETRIES - 1:
                     # R27, R31: Exponential backoff with jitter
                     jitter = random.uniform(0, 0.5)

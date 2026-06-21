@@ -20,6 +20,29 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _collapse_duplicate_attachment_files(files: list[Path]) -> list[Path]:
+    """Collapse local+server duplicates of the SAME logical attachment so the
+    list shows each voice/image exactly once.
+
+    The upload server stores each file under an id-prefixed name, so the same
+    recording can exist on disk twice (``REC_x.wav`` + ``<id>_REC_x.wav``) after
+    a reopen reconcile — that is the "one voice shows up twice / two -> four"
+    bug. This is NON-DESTRUCTIVE: duplicates are only hidden from the list,
+    never deleted, so an unsynced local file is always still shown. No-op when
+    de-dup is disabled (``AIPACS_ATTACHMENT_DEDUP=0``) or the helper is missing.
+    """
+    try:
+        from modules.network.attachment_pending_sync import (
+            attachment_dedup_enabled, choose_canonical_attachment_names,
+        )
+        if not attachment_dedup_enabled() or not files:
+            return files
+        keep = choose_canonical_attachment_names([p.name for p in files])
+        return [p for p in files if p.name in keep]
+    except Exception:
+        return files
+
+
 # ============================================================
 # V2 design-system overrides (2026-06-05, readability redesign)
 #
@@ -217,9 +240,11 @@ class ImageAttachmentsPanel(QWidget):
         self.items.clear()
 
         files = self._iter_files()
+        raw_n = len(files)
+        files = _collapse_duplicate_attachment_files(files)
         try:
-            logger.info("[ATTACH-TRACE] panel=image study=%s n=%d files=%s",
-                        self.study_uid, len(files), sorted(p.name for p in files))
+            logger.info("[ATTACH-TRACE] panel=image study=%s n_raw=%d n=%d files=%s",
+                        self.study_uid, raw_n, len(files), sorted(p.name for p in files))
         except Exception:
             pass
         if not files:
@@ -520,9 +545,11 @@ class AudioAttachmentsPanel(QWidget):
         self.items.clear()
 
         files = self._iter_files()
+        raw_n = len(files)
+        files = _collapse_duplicate_attachment_files(files)
         try:
-            logger.info("[ATTACH-TRACE] panel=audio study=%s n=%d files=%s",
-                        self.study_uid, len(files), sorted(p.name for p in files))
+            logger.info("[ATTACH-TRACE] panel=audio study=%s n_raw=%d n=%d files=%s",
+                        self.study_uid, raw_n, len(files), sorted(p.name for p in files))
         except Exception:
             pass
         if not files:

@@ -94,3 +94,53 @@ def test_full_size_restored_after_first_batch():
     # the series downloads at the full adaptive size (bulk speed unchanged).
     assert "_prime_restore_size is not None and batch_idx == 1" in _SRC
     assert "batch_size = _prime_restore_size" in _SRC
+
+
+# ---- B2 prime/pagination alignment (2026-06-21, staged default-off) ----------
+
+def test_prime_align_flag_defaults_on_after_validation():
+    # Promoted to default-ON after live validation (2026-06-21: an expected=41 series
+    # completed with clean tiling and no INCOMPLETE_SERIES). Kill switch is
+    # AIPACS_PRIME_ALIGN=0; the legacy default-off form must be gone.
+    assert 'AIPACS_PRIME_ALIGN", "1"' in _SRC          # default ON
+    assert 'AIPACS_PRIME_ALIGN", "0"' not in _SRC      # no longer staged default-off
+
+
+def test_prime_align_realign_wired_in_restore_block():
+    # The realign must live INSIDE the prime-restore block (after the size is
+    # restored) and reset batch_start so the main loop re-tiles cleanly.
+    assert "if _PRIME_ALIGN:" in _SRC
+    assert "batch_start = 0" in _SRC
+
+
+def test_prime_align_keeps_gapfill_backstop():
+    # Safety invariant: the INCOMPLETE_SERIES gap-fill is NOT removed by this
+    # change — it remains the completeness backstop if the realign ever mis-tiles.
+    assert "INCOMPLETE_SERIES" in _SRC
+
+
+def test_prime_align_tile_coverage_math():
+    """Lock the arithmetic the fix relies on: with the legacy post-prime advance
+    (batch_start -> 1, then += size) a series whose count ≡ 1 (mod size) drops its
+    final tile from the main loop (recovered only by gap-fill); resetting
+    batch_start -> 0 covers every tile in the loop. Mirrors the real loop's
+    `while batch_start < expected: ... batch_start += size` progression."""
+    size = 10
+
+    def tiles_fetched(expected, first_start):
+        seen, start = set(), first_start
+        while start < expected:
+            seen.add(start // size)        # server: batch_index = batch_start // size
+            start += size
+        return seen
+
+    def tiles_needed(expected):
+        return set(range((expected + size - 1) // size))
+
+    # expected ≡ 1 (mod size): legacy drops the last tile; aligned covers all.
+    for expected in (11, 21, 31):
+        assert tiles_fetched(expected, 1) != tiles_needed(expected)   # legacy gap
+        assert tiles_fetched(expected, 0) == tiles_needed(expected)   # aligned: complete
+    # other residues are already complete under BOTH (no behavior change there).
+    for expected in (10, 12, 15, 20, 25):
+        assert tiles_fetched(expected, 0) == tiles_needed(expected)

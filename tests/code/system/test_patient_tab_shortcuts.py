@@ -1,6 +1,6 @@
 """Guards for the Patient-Tab keyboard shortcuts (2026-06-09).
 
-F1–F4 = CT window presets (Lung/Abdomen/Bone/Default), F9 = voice record
+F1–F4 = CT window presets (Lung/Abdomen/Bone/Refreshing), F9 = voice record
 toggle (start→pause→resume), F10 = save/approve the voice recording, F11 =
 total-layout screenshot. All are scoped to the active Patient Viewer and reuse
 the toolbar's own button logic (no duplicated preset/recording/capture code).
@@ -51,7 +51,7 @@ def test_fkeys_registered_and_mapped():
     assert "_on_patient_window_preset('lung')" in code
     assert "_on_patient_window_preset('abdomen')" in code
     assert "_on_patient_window_preset('bone')" in code
-    assert "_on_patient_window_preset('default')" in code
+    assert "_on_patient_window_preset('refreshing')" in code
     assert "self._on_patient_voice_toggle" in code
     assert "self._on_patient_voice_save" in code
     assert "self._on_patient_total_layout_capture" in code
@@ -108,6 +108,9 @@ def test_apply_named_window_preset_maps_correctly():
     assert t.applied == [(1500, -600), (400, 40), (2000, 500)]
     assert t.apply_named_window_preset('default') is True
     assert t.default_called == 1
+    # 'refreshing' is the F4 user-facing name; it aliases the DICOM reset.
+    assert t.apply_named_window_preset('refreshing') is True
+    assert t.default_called == 2
     # unknown preset → no-op, returns False
     assert t.apply_named_window_preset('not-a-modality') is False
     assert t.applied == [(1500, -600), (400, 40), (2000, 500)]
