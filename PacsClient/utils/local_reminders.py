@@ -94,11 +94,16 @@ def get_reminder(patient_id) -> dict:
     return base
 
 
-def set_reminder(patient_id, *, pinned=None, alarm=None, note=None, study_uid="") -> bool:
+def set_reminder(patient_id, *, pinned=None, alarm=None, note=None, study_uid="", row=None) -> bool:
     """Merge-update a patient's local reminder. Local file only — no server I/O.
 
+    ``row`` (optional) is a snapshot of the patient's Main-Page list-row fields,
+    persisted so a PINNED patient can be rendered as a search-list overlay even
+    when the current query would not return them (and across app restarts). It
+    is stored only as context; it never changes the pin/alarm/note state.
+
     Entries that end up all-default (no pin, no alarm, empty note) are
-    removed from the store to keep it tidy.
+    removed from the store to keep it tidy (the row snapshot goes with them).
     """
     key = _normalize_key(patient_id)
     if not key:
@@ -114,6 +119,8 @@ def set_reminder(patient_id, *, pinned=None, alarm=None, note=None, study_uid=""
             entry["note"] = str(note)
         if study_uid:
             entry["study_uid"] = str(study_uid)
+        if isinstance(row, dict) and row:
+            entry["row"] = dict(row)
         entry["updated_at"] = datetime.now().isoformat(timespec="seconds")
 
         if not entry.get("pinned") and not entry.get("alarm") and not str(entry.get("note", "")).strip():
@@ -121,6 +128,33 @@ def set_reminder(patient_id, *, pinned=None, alarm=None, note=None, study_uid=""
         else:
             data[key] = entry
         return _save_unlocked(data)
+
+
+def get_pinned_rows() -> dict:
+    """Return ``{patient_id: row_snapshot}`` for every PINNED patient that has a
+    stored row snapshot — the persistent source for the Main-Page search-list
+    "pinned overlay". Local only; survives app restart (read from the JSON
+    store). Patients pinned without a snapshot are omitted (nothing to render).
+    """
+    out: dict = {}
+    with _LOCK:
+        data = _load_unlocked()
+        for k, v in data.items():
+            if isinstance(v, dict) and v.get("pinned") and isinstance(v.get("row"), dict) and v.get("row"):
+                out[str(k)] = dict(v["row"])
+    return out
+
+
+def get_pinned_patient_ids() -> set:
+    """Return the set of ALL pinned patient_ids (regardless of whether a row
+    snapshot exists). The Main-Page list uses this to know which currently-shown
+    rows must be floated to the pinned/top section. Local only."""
+    out = set()
+    with _LOCK:
+        for k, v in _load_unlocked().items():
+            if isinstance(v, dict) and v.get("pinned"):
+                out.add(str(k))
+    return out
 
 
 def has_flags(patient_id) -> bool:

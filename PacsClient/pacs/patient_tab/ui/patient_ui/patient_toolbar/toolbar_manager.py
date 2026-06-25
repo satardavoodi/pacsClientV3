@@ -836,7 +836,7 @@ class ToolbarManager:
     def _show_curved_mpr_panel(self):
         """Show Curved MPR control panel"""
         try:
-            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget
+            from PySide6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QListWidget, QSlider
             from PySide6.QtCore import Qt
             
             selected_widget = self.patient_widget.selected_widget
@@ -850,7 +850,34 @@ class ToolbarManager:
                 from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(self.patient_widget, "Error", "No image loaded in viewer.")
                 return
-            
+
+            # Unified pipeline: when AIPACS_CURVED_MPR_VTK_PICK is enabled, pick points on
+            # a real VTK host (standard-MPR layout) so Dental Curve MPR works on the FAST
+            # viewer (whose enable_curved_mpr_mode is a no-op). Falls back to the legacy
+            # image_viewer path (works only on the VTK ImageViewer2D). See
+            # docs/plans/architecture/UNIFIED_MPR_3D_PIPELINE_DIRECTION_2026-06-22.md.
+            import os as _os
+            self._dental_curve_host = None
+            self._dental_curve_result_source = None
+            curved_viewer = None
+            # The legacy picking path only works on the real VTK ImageViewer2D. On the
+            # FAST/Qt viewer (the DEFAULT) enable_curved_mpr_mode is a no-op stub and the
+            # mock vtk_image_data has no scalars, so clicks register NO points — the
+            # reported bug ("the series doesn't import to the vtk module to put points").
+            # Route picking to a real VTK host (StandardMPRViewer) when the active viewer
+            # can't pick natively. Forced always by AIPACS_CURVED_MPR_VTK_PICK=1; the
+            # auto-on-FAST routing is the default and is disabled by
+            # AIPACS_CURVED_MPR_VTK_PICK_AUTO=0 (restores the legacy default-off path). A
+            # real VTK viewer keeps the legacy in-place picking unchanged.
+            _force_vtk_pick = _os.environ.get("AIPACS_CURVED_MPR_VTK_PICK", "0") != "0"
+            _auto_vtk_pick = _os.environ.get("AIPACS_CURVED_MPR_VTK_PICK_AUTO", "1") != "0"
+            if _force_vtk_pick or (
+                _auto_vtk_pick and not self._viewer_supports_native_curve_picking(selected_widget)
+            ):
+                curved_viewer = self._launch_dental_curve_vtk_host(selected_widget)
+            if curved_viewer is None:
+                curved_viewer = selected_widget.image_viewer
+
             # Create panel
             self._curved_mpr_panel = QDialog(self.patient_widget)
             self._curved_mpr_panel.setWindowTitle("Curved MPR")
@@ -858,38 +885,33 @@ class ToolbarManager:
             self._curved_mpr_panel.setMinimumSize(280, 350)
             self._curved_mpr_panel.setStyleSheet("""
                 QDialog {
-                    background: #1f2937;
-                    border: 2px solid #7c3aed;
+                    background: #0f172a;
+                    border: 1px solid #334155;
                     border-radius: 10px;
                 }
-                QLabel {
-                    color: #f3f4f6;
-                    font-size: 13px;
-                }
+                QLabel { color: #e2e8f0; font-size: 12px; }
                 QListWidget {
-                    background: #111827;
-                    color: #fbbf24;
-                    border: 1px solid #374151;
+                    background: #0b1220;
+                    color: #93c5fd;
+                    border: 1px solid #1e293b;
                     border-radius: 6px;
-                    font-size: 12px;
-                    font-family: 'Consolas', monospace;
+                    font-size: 11px;
+                    font-family: 'Consolas','Courier New',monospace;
+                    padding: 2px;
                 }
                 QPushButton {
-                    background: #374151;
-                    color: #f3f4f6;
-                    border: 1px solid #4b5563;
+                    background: #1e293b;
+                    color: #e2e8f0;
+                    border: 1px solid #334155;
                     border-radius: 6px;
-                    padding: 8px 16px;
-                    font-size: 13px;
-                    font-weight: 500;
+                    padding: 7px 12px;
+                    font-size: 12px;
                 }
-                QPushButton:hover {
-                    background: #4b5563;
-                    border-color: #6b7280;
-                }
-                QPushButton:checked {
-                    background: #7c3aed;
-                    border-color: #8b5cf6;
+                QPushButton:hover { background: #334155; border-color: #475569; }
+                QPushButton:checked { background: #0ea5e9; border-color: #38bdf8; color: #0b1220; }
+                QSlider::groove:horizontal { background: #1e293b; height: 5px; border-radius: 3px; }
+                QSlider::handle:horizontal {
+                    background: #38bdf8; width: 14px; margin: -5px 0; border-radius: 7px;
                 }
             """)
             
@@ -898,13 +920,18 @@ class ToolbarManager:
             layout.setSpacing(10)
             
             # Header
-            header = QLabel("Curved MPR Path Builder")
-            header.setStyleSheet("font-size: 16px; font-weight: bold; color: #8b5cf6;")
+            header = QLabel("Dental Curve MPR")
+            header.setStyleSheet("font-size: 15px; font-weight: 700; color: #38bdf8;")
             layout.addWidget(header)
-            
+
+            subtitle = QLabel("Trace the dental arch on the axial view, then generate the panoramic.")
+            subtitle.setStyleSheet("color: #94a3b8; font-size: 10px;")
+            subtitle.setWordWrap(True)
+            layout.addWidget(subtitle)
+
             # Instructions
-            instructions = QLabel("1. Click 'Start Adding Points'\n2. Click on image to add points\n3. Click 'Generate' when done")
-            instructions.setStyleSheet("color: #9ca3af; font-size: 11px;")
+            instructions = QLabel("1.  Click “Start Adding Points”\n2.  Click along the arch on the axial pane\n3.  Click “Generate” when done")
+            instructions.setStyleSheet("color: #64748b; font-size: 11px;")
             layout.addWidget(instructions)
             
             # Points list
@@ -945,13 +972,46 @@ class ToolbarManager:
             self._add_points_btn.clicked.connect(self._toggle_point_adding)
             btn_layout.addWidget(self._add_points_btn)
             
+            # Undo last point button
+            undo_btn = QPushButton("Undo Last")
+            undo_btn.clicked.connect(self._undo_last_curved_mpr_point)
+            btn_layout.addWidget(undo_btn)
+
             # Clear button
             clear_btn = QPushButton("Clear")
             clear_btn.clicked.connect(self._clear_curved_mpr_points)
             btn_layout.addWidget(clear_btn)
             
             layout.addLayout(btn_layout)
-            
+
+            # Panoramic thickness (trough width) control — feeds generate_panoramic_view.
+            # Default lowered 10 -> 5 mm (2026-06-23): a thinner slab averages less, so
+            # tooth roots / apices / cortical margins / lamina dura stay sharp. Still
+            # user-adjustable via the slider (2-30 mm); AIPACS_CURVED_MPR_SLAB_MM overrides.
+            try:
+                _default_slab = float(os.environ.get("AIPACS_CURVED_MPR_SLAB_MM", "5"))
+            except (TypeError, ValueError):
+                _default_slab = 5.0
+            _default_slab = max(2.0, min(30.0, _default_slab))
+            self._curved_mpr_thickness_mm = _default_slab
+            thick_row = QHBoxLayout()
+            thick_row.addWidget(QLabel("Panoramic thickness"))
+            self._thickness_slider = QSlider(Qt.Horizontal)
+            self._thickness_slider.setMinimum(2)
+            self._thickness_slider.setMaximum(30)
+            self._thickness_slider.setValue(int(round(_default_slab)))
+            self._thickness_value_label = QLabel(f"{int(round(_default_slab))} mm")
+            self._thickness_value_label.setStyleSheet("color:#38bdf8; font-weight:600; min-width:44px;")
+
+            def _on_thickness_changed(v):
+                self._curved_mpr_thickness_mm = float(v)
+                self._thickness_value_label.setText(f"{int(v)} mm")
+
+            self._thickness_slider.valueChanged.connect(_on_thickness_changed)
+            thick_row.addWidget(self._thickness_slider, stretch=1)
+            thick_row.addWidget(self._thickness_value_label)
+            layout.addLayout(thick_row)
+
             # Generate button
             generate_btn = QPushButton("Generate Curved MPR")
             generate_btn.setStyleSheet("""
@@ -976,15 +1036,39 @@ class ToolbarManager:
             close_btn.clicked.connect(self._close_curved_mpr_panel)
             layout.addWidget(close_btn)
             
-            # Store reference to viewer
-            self._curved_mpr_viewer = selected_widget.image_viewer
+            # Store reference to viewer (VTK host picker when enabled, else the viewer)
+            self._curved_mpr_viewer = curved_viewer
             
             # Clear any previous points
             self._curved_mpr_viewer.curved_mpr_points = []
             self._curved_mpr_viewer._clear_curved_mpr_visuals()
-            
+
+            # Closing the panel must restore the default patient view — via the Close
+            # button OR the window's X / Escape. The X/Escape bypass the Close button,
+            # so route the dialog's finished signal to the SAME idempotent teardown
+            # (disable picking + restore the original viewport, incl. the FAST VTK
+            # host that replaced the cell). Kill switch: AIPACS_CURVED_MPR_CLOSE_RESTORE=0.
+            self._curved_mpr_panel_cleaned = False
+            if _os.environ.get("AIPACS_CURVED_MPR_CLOSE_RESTORE", "1") != "0":
+                try:
+                    self._curved_mpr_panel.finished.connect(self._cleanup_curved_mpr_panel)
+                except Exception:
+                    pass
+
             self._curved_mpr_panel.show()
-            
+
+            # Position as a compact tool palette near the top-right of the patient area
+            # (out of the main axial picking zone) instead of centred over the panes.
+            try:
+                from PySide6.QtCore import QPoint
+                pw = self.patient_widget
+                panel_w = self._curved_mpr_panel.width() or 300
+                self._curved_mpr_panel.move(
+                    pw.mapToGlobal(QPoint(max(0, pw.width() - panel_w - 16), 72))
+                )
+            except Exception:
+                pass
+
         except Exception as e:
             print(f"[CURVED MPR] Error showing panel: {e}")
             import traceback
@@ -1035,6 +1119,30 @@ class ToolbarManager:
             self._update_points_list()
         except Exception as e:
             print(f"[CURVED MPR] Clear error: {e}")
+
+    def _undo_last_curved_mpr_point(self):
+        """Remove the most recently added curve control point (Undo Last)."""
+        try:
+            viewer = getattr(self, '_curved_mpr_viewer', None)
+            if viewer is None:
+                return
+            if hasattr(viewer, 'remove_last_point'):
+                # DentalCurvePicker: removes the last marker/label + rebuilds the spline.
+                viewer.remove_last_point()
+            else:
+                # Legacy viewer: pop the last point and redraw the remaining markers.
+                pts = list(getattr(viewer, 'curved_mpr_points', None) or [])
+                if pts:
+                    pts.pop()
+                    if hasattr(viewer, '_clear_curved_mpr_visuals'):
+                        viewer._clear_curved_mpr_visuals()
+                    viewer.curved_mpr_points = []
+                    if hasattr(viewer, '_add_curved_mpr_point'):
+                        for p in pts:
+                            viewer._add_curved_mpr_point(p)
+            self._update_points_list()
+        except Exception as e:
+            print(f"[CURVED MPR] Undo error: {e}")
     
     def _generate_curved_mpr(self):
         """Generate curved MPR from collected points"""
@@ -1064,19 +1172,62 @@ class ToolbarManager:
             traceback.print_exc()
     
     def _close_curved_mpr_panel(self):
-        """Close curved MPR panel"""
+        """Close button → close the dialog and run teardown.
+
+        Teardown is idempotent and ALSO runs from the dialog's ``finished`` signal,
+        so closing via the window X / Escape restores the default patient view
+        identically to this button.
+        """
+        panel = getattr(self, '_curved_mpr_panel', None)
+        if panel is not None:
+            try:
+                panel.close()
+            except Exception:
+                pass
+        self._cleanup_curved_mpr_panel()
+
+    def _cleanup_curved_mpr_panel(self, *args):
+        """Idempotent teardown for the Dental Curve MPR point-selection panel.
+
+        Stops point-picking and restores the ORIGINAL patient viewport — including
+        the FAST ``StandardMPRViewer`` host that ``_launch_dental_curve_vtk_host``
+        put in the cell for picking — so the view returns to the default patient
+        page. Runs once whether the panel is closed via the Close button, the window
+        X, or Escape (wired to the dialog's ``finished`` signal). Does nothing if a
+        generated result already consumed the host (``_dental_curve_host`` is None).
+        """
+        if getattr(self, '_curved_mpr_panel_cleaned', False):
+            return
+        self._curved_mpr_panel_cleaned = True
         try:
-            # Disable point adding mode
-            if hasattr(self, '_curved_mpr_viewer'):
-                self._curved_mpr_viewer.enable_curved_mpr_mode(False)
-            
-            # Close panel
-            if hasattr(self, '_curved_mpr_panel'):
-                self._curved_mpr_panel.close()
-                self._curved_mpr_panel = None
-                
+            # Disable point-adding mode on whichever viewer/picker was active.
+            viewer = getattr(self, '_curved_mpr_viewer', None)
+            if viewer is not None and hasattr(viewer, 'enable_curved_mpr_mode'):
+                viewer.enable_curved_mpr_mode(False)
         except Exception as e:
-            print(f"[CURVED MPR] Close error: {e}")
+            print(f"[CURVED MPR] Cleanup (disable picking) error: {e}")
+
+        # Restore the original viewport if a VTK host replaced it for picking and was
+        # not consumed by a generated result (_show_curved_mpr_result clears the host).
+        host = getattr(self, '_dental_curve_host', None)
+        if host is not None:
+            try:
+                self._restore_selected_viewer(getattr(host, '_original_widget', None) or host)
+            except Exception as e:
+                print(f"[CURVED MPR] Cleanup (restore viewport) error: {e}")
+            self._dental_curve_host = None
+
+        # If a generated result is in the viewport (placed in-place), restore the
+        # original cell so closing the panel returns to the default patient view.
+        result_source = getattr(self, '_dental_curve_result_source', None)
+        if result_source is not None:
+            try:
+                self._restore_selected_viewer(result_source)
+            except Exception as e:
+                print(f"[CURVED MPR] Cleanup (restore result) error: {e}")
+            self._dental_curve_result_source = None
+
+        self._curved_mpr_panel = None
     
     def _show_orthogonal_mpr_viewer(self):
         """Show the new Orthogonal MPR Viewer with three synchronized views"""
@@ -1184,7 +1335,12 @@ class ToolbarManager:
         """Generate curved MPR from points and display it"""
         from PySide6.QtWidgets import QMessageBox, QApplication
         from PySide6.QtCore import Qt
-        # Import from zeta mpr (primary MPR implementation)
+        # Import from zeta mpr (primary MPR implementation).
+        # NOTE: there are TWO classes named CurvedMPRGenerator. This MUST stay the
+        # one in modules/mpr/zeta_mpr/curved_mpr.py (it exposes
+        # generate_panoramic_view); the namesake in
+        # modules/mpr/curved_mpr/curved_mpr_module.py is the legacy advanced-viewer
+        # generator. See docs/pipelines/dental-curve-mpr.md.
         from modules.mpr.zeta_mpr.curved_mpr import CurvedMPRGenerator
         
         print(f"[CURVED MPR] Starting generation with {len(points)} points...")
@@ -1194,9 +1350,30 @@ class ToolbarManager:
         QApplication.processEvents()
         
         try:
+            # --- Geometry alignment (unified-pipeline step A0, flag-gated default-off) ---
+            # When AIPACS_CURVED_MPR_GEOMETRY_CONTRACT is enabled, reslice the SAME
+            # radiologically-prepared volume standard MPR builds (vtkImageFlip on X) and
+            # mirror the picked points into that frame, so the curved/panoramic output is
+            # in the same patient orientation (L/R) as standard MPR. Default OFF =
+            # byte-identical legacy (raw volume + raw points). NEEDS source-build
+            # validation (compare curved L/R vs standard MPR) before flipping on. See
+            # docs/plans/architecture/UNIFIED_MPR_3D_PIPELINE_DIRECTION_2026-06-22.md.
+            import os as _os
+            if _os.environ.get("AIPACS_CURVED_MPR_GEOMETRY_CONTRACT", "0") != "0":
+                try:
+                    from modules.mpr.zeta_mpr.mpr_volume_prep import (
+                        prepare_radiological_volume, volume_center_x, mirror_point_x,
+                    )
+                    _center_x = volume_center_x(image_data)
+                    image_data = prepare_radiological_volume(image_data)
+                    points = [mirror_point_x(p, _center_x) for p in points]
+                    print("[CURVED MPR] Geometry contract ON: standard-MPR-prepared volume (X-flip) + mirrored points")
+                except Exception as _geo_err:
+                    print(f"[CURVED MPR] Geometry-contract prep failed, using raw volume: {_geo_err}")
+
             generator = CurvedMPRGenerator(image_data)
             generator.set_centerline(points)
-            
+
             # Use reasonable values for speed
             slice_size = 150.0
             num_slices = min(len(points) * 15, 60)
@@ -1255,10 +1432,13 @@ class ToolbarManager:
                     QApplication.processEvents()
                     
                     panoramic_image = generator.generate_panoramic_view(
-                        slice_thickness_mm=10.0,  # Radial thickness: 10mm
+                        slice_thickness_mm=float(getattr(self, '_curved_mpr_thickness_mm', 5.0)),  # trough width (panel control)
                         slice_height_mm=80.0,     # Vertical extent: 80mm (reduced for wider panoramic)
                         num_positions=None,       # Auto-determine based on path length
-                        projection_type='mean'    # Mean intensity projection
+                        # 'weighted' = Gaussian-center slab projection (sharper roots/cortex,
+                        # faithful weighted-mean). AIPACS_CURVED_MPR_PROJECTION overrides
+                        # (mean|max|weighted); 'mean' restores the legacy projection.
+                        projection_type=os.environ.get("AIPACS_CURVED_MPR_PROJECTION", "weighted"),
                     )
                     
                     if panoramic_image is not None:
@@ -1272,37 +1452,66 @@ class ToolbarManager:
                     traceback.print_exc()
                     panoramic_image = None
             
+            # Inherit the source CT viewer's current Window/Level so the Dental
+            # Curve MPR opens matching the CT (and respects any WL the user set
+            # before opening). The reslice/curved volume preserves the CT's
+            # intensity domain, so the same W/L is meaningful. Falls back to the
+            # legacy auto W/L when unavailable or disabled
+            # (AIPACS_CURVED_MPR_INHERIT_WL=0).
+            import os as _os_wl
+            src_window = src_level = None
+            if _os_wl.environ.get("AIPACS_CURVED_MPR_INHERIT_WL", "1") != "0":
+                try:
+                    src_iv = getattr(self, '_curved_mpr_viewer', None)
+                    if src_iv is not None and hasattr(src_iv, 'get_window_level'):
+                        src_window, src_level = src_iv.get_window_level()
+                        print(f"[CURVED MPR] Inheriting source CT W/L: {src_window}/{src_level}")
+                except Exception as _wl_e:
+                    print(f"[CURVED MPR] Could not read source CT W/L: {_wl_e}")
+
             # Create the viewer widget
             viewer_widget = CurvedMPRPanoramicView(
-                curved_image, 
-                num_points, 
+                curved_image,
+                num_points,
                 panoramic_image=panoramic_image,
-                parent=self.patient_widget
+                parent=self.patient_widget,
+                source_window=src_window,
+                source_level=src_level,
             )
             
-            # Add to patient widget's viewer grid (replace current layout with 1x1)
-            # First, cleanup existing viewers
-            self.patient_widget.cleanup_all_viewers()
-            self.patient_widget.lst_nodes_viewer.clear()
-            
-            # Add the curved MPR viewer to the grid
-            self.patient_widget.vtk_layout.addWidget(viewer_widget, 0, 0)
-            
-            # Store reference using NodeViewer (correct import)
+            # --- Viewport placement ---
+            # DEFAULT (2026-06-23): place the result IN PLACE — mirror standard MPR
+            # (toggle_zeta_mpr): swap ONLY the source cell and PRESERVE every other
+            # viewport, cross-linking `_curved_mpr_widget` so closing the panel can
+            # restore the original cell (the "reset to default" fix). The legacy
+            # destructive path (replace the whole grid with a 1x1, wiping the layout —
+            # which left the result STUCK after close) is now opt-in via
+            # AIPACS_CURVED_MPR_INPLACE_VIEWPORT=0. See
+            # docs/plans/architecture/UNIFIED_MPR_3D_PIPELINE_DIRECTION_2026-06-22.md.
             from PacsClient.pacs.patient_tab.utils import NodeViewer
-            
-            # Create a dummy NodeViewer wrapper
-            node_viewer = NodeViewer(
-                main_widget=viewer_widget,
-                vtk_widget=viewer_widget.active_viewport,  # The active viewport acts as vtk_widget
-                slider=None  # No slider for curved MPR
-            )
-            self.patient_widget.lst_nodes_viewer.append(node_viewer)
-            
-            # Set active viewport as selected widget for toolbar
-            self.patient_widget.selected_widget = viewer_widget.active_viewport
-            
-            print("[CURVED MPR] Viewer added to main grid successfully")
+            import os as _os
+
+            placed_inplace = False
+            if _os.environ.get("AIPACS_CURVED_MPR_INPLACE_VIEWPORT", "1") != "0":
+                placed_inplace = self._place_curved_mpr_inplace(viewer_widget)
+
+            if not placed_inplace:
+                # Legacy path — byte-identical to the pre-2026-06-22 behaviour.
+                self.patient_widget.cleanup_all_viewers()
+                self.patient_widget.lst_nodes_viewer.clear()
+                self.patient_widget.vtk_layout.addWidget(viewer_widget, 0, 0)
+                node_viewer = NodeViewer(
+                    main_widget=viewer_widget,
+                    vtk_widget=viewer_widget.active_viewport,  # active viewport acts as vtk_widget
+                    slider=None  # No slider for curved MPR
+                )
+                self.patient_widget.lst_nodes_viewer.append(node_viewer)
+                self.patient_widget.viewer_controller.selected_widget = viewer_widget.active_viewport
+
+            # The VTK picking host (if any) has been consumed/replaced by the result.
+            self._dental_curve_host = None
+
+            print(f"[CURVED MPR] Viewer added to grid (inplace={placed_inplace})")
             print(f"[CURVED MPR] Active viewport set to: {type(viewer_widget.active_viewport).__name__}")
             
         except Exception as e:
@@ -1312,7 +1521,242 @@ class ToolbarManager:
             
             # Fallback to old simple view
             self._show_curved_mpr_result_simple(curved_image, num_points)
-    
+
+    def _place_curved_mpr_inplace(self, viewer_widget):
+        """Place the curved-MPR result in the SOURCE viewport's grid cell IN PLACE,
+        preserving every other viewport — mirroring standard MPR (toggle_zeta_mpr).
+
+        Returns True on success; False (caller falls back to the legacy 1x1 wipe) when
+        the source cell can't be resolved. Flag-gated by the caller
+        (AIPACS_CURVED_MPR_INPLACE_VIEWPORT). First step of the unified-pipeline
+        alignment — see docs/plans/architecture/UNIFIED_MPR_3D_PIPELINE_DIRECTION_2026-06-22.md
+        and docs/reports/DENTAL_CURVE_MPR_VS_STANDARD_MPR_ALIGNMENT_2026-06-22.md.
+        """
+        try:
+            from PySide6.QtWidgets import QGridLayout
+            from PacsClient.pacs.patient_tab.utils import NodeViewer
+
+            source = self.patient_widget.selected_widget
+
+            # If the FAST picking host (StandardMPRViewer) occupies the source cell,
+            # remove it FIRST and target the TRUE original cell — so the result
+            # replaces the original viewport, NOT nested on top of the host (which
+            # would otherwise re-appear when the original is restored on close).
+            host = getattr(self, '_dental_curve_host', None)
+            if host is not None:
+                true_original = getattr(host, '_original_widget', None)
+                try:
+                    hp = host.parent()
+                    if hp is not None and hp.layout() is not None:
+                        hp.layout().removeWidget(host)
+                    if hasattr(host, 'cleanup'):
+                        host.cleanup()
+                    host.hide()
+                    host.setParent(None)
+                    host.deleteLater()
+                except Exception as _he:
+                    print(f"[CURVED MPR] host handoff cleanup skipped: {_he}")
+                self._dental_curve_host = None
+                if true_original is not None and self.is_vtk_widget(true_original):
+                    source = true_original
+
+            if source is None or not self.is_vtk_widget(source):
+                return False
+            parent_widget = source.parent()
+            parent_layout = parent_widget.layout() if parent_widget is not None else None
+            if not isinstance(parent_layout, QGridLayout):
+                return False
+
+            # Find + save the source cell position (same mechanics as toggle_zeta_mpr).
+            grid_position = None
+            for i in range(parent_layout.count()):
+                item = parent_layout.itemAt(i)
+                if item and item.widget() == source:
+                    grid_position = parent_layout.getItemPosition(i)
+                    break
+            if not grid_position:
+                return False
+            source._mpr_grid_position = grid_position
+
+            # Hide the source and add the curved viewer at the SAME cell. Every other
+            # viewport/cell is left untouched (no cleanup_all_viewers, no grid wipe).
+            source.setVisible(False)
+            viewer_widget.setParent(parent_widget)
+            row, col, row_span, col_span = grid_position
+            parent_layout.addWidget(viewer_widget, row, col, row_span, col_span)
+
+            # Cross-link so _restore_selected_viewer can bring the source viewport back
+            # (same convention standard MPR uses with _zeta_mpr_widget/_original_widget).
+            source._curved_mpr_widget = viewer_widget
+            source._original_visible = True
+            viewer_widget._original_widget = source
+
+            # Track the curved cell with its own NodeViewer; do NOT clear the others.
+            node_viewer = NodeViewer(
+                main_widget=viewer_widget,
+                vtk_widget=viewer_widget.active_viewport,
+                slider=None,
+            )
+            self.patient_widget.lst_nodes_viewer.append(node_viewer)
+            self.patient_widget.viewer_controller.selected_widget = viewer_widget.active_viewport
+            # Track the source cell so closing the panel restores the original view.
+            self._dental_curve_result_source = source
+            return True
+        except Exception as e:
+            print(f"[CURVED MPR] In-place placement failed, falling back to legacy: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+
+    def _launch_dental_curve_vtk_host(self, selected_widget):
+        """Open a StandardMPRViewer VTK host for Dental Curve MPR point picking (the
+        same way toggle_new_curve_mpr / toggle_zeta_mpr do) and return a
+        DentalCurvePicker bound to it — or None on failure (caller uses the legacy
+        FAST/ImageViewer2D path). Flag-gated by the caller (AIPACS_CURVED_MPR_VTK_PICK).
+
+        Reuses _resolve_mpr_volume_for_route so it works on the FAST-default app (loads
+        the full scalar volume from disk). The picker reslices the host's OWN displayed
+        volume (host.image_data, already radiologically X-flipped by StandardMPRViewer),
+        so picked points and the reconstructed volume share one frame — do NOT also
+        enable AIPACS_CURVED_MPR_GEOMETRY_CONTRACT with this path (it would double-flip).
+        See docs/plans/architecture/UNIFIED_MPR_3D_PIPELINE_DIRECTION_2026-06-22.md.
+        """
+        try:
+            from PySide6.QtWidgets import QGridLayout, QMessageBox
+            from modules.mpr.zeta_mpr import StandardMPRViewer
+            from modules.mpr.curved_mpr.dental_curve_vtk_host import DentalCurvePicker
+
+            # --- series resolution (mirror toggle_new_curve_mpr) ---
+            iv = getattr(selected_widget, 'image_viewer', None)
+            meta = getattr(iv, 'metadata', None) if iv is not None else None
+            if not isinstance(meta, dict):
+                return None
+            series_number = str((meta.get('series', {}) or {}).get('series_number', ''))
+            if not series_number:
+                return None
+            series_data = None
+            for thumb_data in self.patient_widget.lst_thumbnails_data:
+                tmeta = thumb_data.get('metadata', {}) or {}
+                if str((tmeta.get('series', {}) or {}).get('series_number', '')) == series_number:
+                    series_data = thumb_data
+                    break
+            if series_data is None:
+                return None
+
+            # --- real scalar volume (loads from disk on FAST) ---
+            vtk_image_data, route = self._resolve_mpr_volume_for_route(
+                series_data=series_data, series_number=series_number, mpr_path="curved",
+            )
+            if vtk_image_data is None:
+                QMessageBox.warning(
+                    self.patient_widget, "Curved MPR Not Available",
+                    self._mpr_route_block_message(route.get("reason")),
+                )
+                return None
+
+            # --- W/L from source viewer, DICOM default fallback ---
+            window_width = window_center = None
+            try:
+                if iv is not None and hasattr(iv, 'get_window_level'):
+                    window_width, window_center = iv.get_window_level()
+            except Exception:
+                pass
+            if window_width is None or window_center is None:
+                try:
+                    window_width, window_center = self._dicom_default_window_level(series_data)
+                except Exception:
+                    window_width = window_center = None
+
+            # --- in-place host placement (mirror toggle_zeta_mpr) ---
+            parent_widget = selected_widget.parent()
+            parent_layout = parent_widget.layout() if parent_widget is not None else None
+            grid_position = None
+            if isinstance(parent_layout, QGridLayout):
+                for i in range(parent_layout.count()):
+                    item = parent_layout.itemAt(i)
+                    if item and item.widget() == selected_widget:
+                        grid_position = parent_layout.getItemPosition(i)
+                        break
+            if grid_position is None:
+                return None
+
+            selected_widget._mpr_grid_position = grid_position
+            selected_widget.setVisible(False)
+            # 3-viewport startup layout (dominant axial + smaller coronal/sagittal, NO VRT):
+            # use StandardMPRViewer's existing subset mode (layout_views) — the same mechanism
+            # the MIP/MinIP/Thick-Slab dropdown uses, which proves the viewer runs correctly
+            # WITHOUT the 3D pane. Layout-only; VTK/geometry/volume/reconstruction unchanged.
+            # VRT code stays in the module (just not built at startup).
+            # AIPACS_CURVED_MPR_3PANE_LAYOUT=0 restores the full 4-pane host.
+            import os as _os3
+            three_pane = _os3.environ.get("AIPACS_CURVED_MPR_3PANE_LAYOUT", "1") != "0"
+            host = StandardMPRViewer(
+                vtk_image_data=vtk_image_data, parent=parent_widget,
+                window_width=window_width, window_center=window_center,
+                layout_views=(['axial', 'coronal', 'sagittal'] if three_pane else None),
+            )
+            if three_pane:
+                try:
+                    self._apply_dental_curve_layout(host)
+                except Exception as _layout_err:
+                    print(f"[CURVED MPR] Dental layout tweak skipped: {_layout_err}")
+            row, col, row_span, col_span = grid_position
+            parent_layout.addWidget(host, row, col, row_span, col_span)
+
+            selected_widget._curved_mpr_widget = host
+            selected_widget._original_visible = True
+            host._original_widget = selected_widget
+
+            # Picker reslices the host's OWN (flipped) volume → points + volume share a frame.
+            picker = DentalCurvePicker(host, getattr(host, 'image_data', vtk_image_data))
+            self._dental_curve_host = host
+            print(f"[CURVED MPR] VTK host launched for picking (series={series_number}, reason={route.get('reason')})")
+            return picker
+        except Exception as e:
+            print(f"[CURVED MPR] VTK host launch failed, using legacy path: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
+    def _apply_dental_curve_layout(self, host):
+        """Dental Curve startup layout: dominant axial + smaller coronal/sagittal (no VRT).
+
+        Re-arranges ONLY the host's existing panes — axial large on the left (spans both
+        rows, where curve points are placed), coronal top-right, sagittal bottom-right — and
+        biases the column stretch so the axial pane gets most of the space. Layout-only: no
+        VTK render-window, geometry, volume, reconstruction or MPR-sync change (the panes and
+        their cameras were already built by StandardMPRViewer). The 3D/VRT pane was simply not
+        built (layout_views excluded it); VRT functionality stays in the module. Gated by
+        AIPACS_CURVED_MPR_3PANE_LAYOUT (default on). See the unified-pipeline direction doc.
+        """
+        from PySide6.QtWidgets import QGridLayout
+        grid = getattr(host, '_views_layout', None)
+        viewers = getattr(host, 'viewers', None) or {}
+        if not isinstance(grid, QGridLayout):
+            return
+
+        def _container(name):
+            entry = viewers.get(name) or {}
+            widget = entry.get('widget')
+            return widget.parent() if widget is not None else None
+
+        axial = _container('axial')
+        coronal = _container('coronal')
+        sagittal = _container('sagittal')
+        if not (axial and coronal and sagittal):
+            return  # leave the default subset row as-is if anything is missing
+
+        for container in (axial, coronal, sagittal):
+            grid.removeWidget(container)
+        grid.addWidget(axial, 0, 0, 2, 1)     # dominant axial (left, spans both rows)
+        grid.addWidget(coronal, 0, 1, 1, 1)   # coronal (top-right, smaller)
+        grid.addWidget(sagittal, 1, 1, 1, 1)  # sagittal (bottom-right, smaller)
+        grid.setColumnStretch(0, 3)           # axial column ~75% width
+        grid.setColumnStretch(1, 1)           # reference column ~25% width
+        grid.setColumnStretch(2, 0)
+        grid.setRowStretch(0, 1)
+        grid.setRowStretch(1, 1)
+
     def _show_curved_mpr_result_simple(self, curved_image, num_points):
         """Fallback: Show curved MPR result using simple single-panel view"""
         try:
@@ -1483,6 +1927,32 @@ class ToolbarManager:
         
         # Accept VTKWidget, QtFastContainer (FAST mode), or CurvedMPRViewport
         return isinstance(widget, (VTKWidget, QtFastContainer, CurvedMPRViewport))
+
+    def _viewer_supports_native_curve_picking(self, selected_widget) -> bool:
+        """True only when Dental Curve MPR point-picking can run on the active
+        viewer's OWN VTK ``ImageViewer2D`` (whose ``enable_curved_mpr_mode`` adds the
+        LeftButtonPress + ``vtkWorldPointPicker`` observer).
+
+        The FAST/Qt container's ``enable_curved_mpr_mode`` is a no-op stub over a
+        scalar-less mock volume, so it cannot collect points → return ``False`` and
+        the caller routes picking to a real VTK host (``StandardMPRViewer`` via
+        ``_launch_dental_curve_vtk_host``). A real VTK viewer returns ``True`` and
+        keeps the unchanged legacy in-place picking.
+        """
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget.qt_fast_container import QtFastContainer
+            if isinstance(selected_widget, QtFastContainer):
+                return False
+        except Exception:
+            pass
+        iv = getattr(selected_widget, 'image_viewer', None)
+        if iv is None:
+            return False
+        # Defensive: a FAST bridge image_viewer (by class name) also can't pick.
+        cls_name = type(iv).__name__.lower()
+        if 'fast' in cls_name or 'bridge' in cls_name:
+            return False
+        return True
 
     def is_mpr_viewer(self, widget):
         """Check if widget is an MPR viewer"""
@@ -5956,16 +6426,23 @@ class ToolbarManager:
         mpr_widget = None
         original_widget = selected_widget
         
+        # Use `is not None` (not bare hasattr): a widget may carry a stale/None
+        # attribute from a prior session that would otherwise shadow the real
+        # in-place cross-link (e.g. _curved_mpr_widget) and skip the removal.
         # Case 1: selected_widget has _mpr_widget attribute (MprViewerWrapper)
-        if hasattr(selected_widget, '_mpr_widget'):
+        if getattr(selected_widget, '_mpr_widget', None) is not None:
             mpr_widget = selected_widget._mpr_widget
-            
+
         # Case 2: selected_widget has _zeta_mpr_widget attribute (StandardMPRViewer/Zeta)
-        elif hasattr(selected_widget, '_zeta_mpr_widget'):
+        elif getattr(selected_widget, '_zeta_mpr_widget', None) is not None:
             mpr_widget = selected_widget._zeta_mpr_widget
-            
+
+        # Case 2b: selected_widget has _curved_mpr_widget (Dental Curve MPR, in-place)
+        elif getattr(selected_widget, '_curved_mpr_widget', None) is not None:
+            mpr_widget = selected_widget._curved_mpr_widget
+
         # Case 3: selected_widget itself is the MPR widget (toolbar_integration pattern)
-        elif hasattr(selected_widget, '_original_widget'):
+        elif getattr(selected_widget, '_original_widget', None) is not None:
             mpr_widget = selected_widget
             original_widget = selected_widget._original_widget
         
@@ -5992,16 +6469,29 @@ class ToolbarManager:
             except Exception as e:
                 logger.error(f"Error removing MPR from layout: {e}", exc_info=True)
             
-            # Hide and schedule deletion
-            mpr_widget.hide()
-            mpr_widget.setParent(None)  # Remove parent to ensure complete cleanup
-            mpr_widget.deleteLater()
+            # Hide and schedule deletion — GUARDED: if the widget's C++ object was
+            # already destroyed (a teardown / patient-close race, e.g. Curved MPR
+            # whose QVTKRenderWindowInteractor was deleted), these raise
+            # "Internal C++ object already deleted". That must NOT break the close
+            # path — the widget is already gone, so just log and continue to the
+            # reference cleanup below (which restores the original viewer).
+            try:
+                mpr_widget.hide()
+                mpr_widget.setParent(None)  # Remove parent to ensure complete cleanup
+                mpr_widget.deleteLater()
+            except RuntimeError as _del_exc:
+                logger.warning(
+                    "[RESTORE] MPR widget already deleted during teardown (%s); "
+                    "continuing close + reference cleanup", _del_exc,
+                )
             
             # Clean up references
             if hasattr(original_widget, '_mpr_widget'):
                 delattr(original_widget, '_mpr_widget')
             if hasattr(original_widget, '_zeta_mpr_widget'):
                 delattr(original_widget, '_zeta_mpr_widget')
+            if hasattr(original_widget, '_curved_mpr_widget'):
+                delattr(original_widget, '_curved_mpr_widget')
             if hasattr(original_widget, '_new_mpr_zeta_widget'):
                 delattr(original_widget, '_new_mpr_zeta_widget')
             if hasattr(mpr_widget, '_original_widget'):
@@ -8479,6 +8969,145 @@ class ToolbarManager:
             )
             
 
+    def _patient_tab_local_reminder_enabled(self) -> bool:
+        """Kill-switch for the Patient-Tab Local Physician Reminder section
+        (default ON). ``AIPACS_PATIENT_TAB_LOCAL_REMINDER=0`` hides it, leaving
+        the status dropdown byte-identical to its pre-reminder form."""
+        import os as _os
+        return (_os.getenv("AIPACS_PATIENT_TAB_LOCAL_REMINDER", "1") or "1").strip() != "0"
+
+    def _build_patient_tab_local_reminder(self, layout):
+        """Local Physician Reminder section for the Patient-Tab status dropdown.
+
+        This is a SECOND UI ENTRY POINT to the SAME local reminder store the
+        Main-Page Report popup uses (``PacsClient.utils.local_reminders``, keyed
+        by ``patient_id``) — NOT a duplicate model/storage/service. Strictly
+        local (never sent to the server) and conceptually separate from the
+        server status/comment above it. Mirrors
+        ``ReportStatusDialog._build_local_reminder_section`` so the two entry
+        points stay consistent. Pin & alarm persist immediately on toggle; the
+        note persists on a short idle debounce via a timer parented to the
+        patient widget, so edits survive however the popup closes (no close
+        hook needed) and never create a second record.
+        """
+        from PySide6.QtWidgets import QFrame, QToolButton, QTextEdit, QLabel, QHBoxLayout
+        from PySide6.QtCore import Qt, QTimer
+        import qtawesome as _qta
+
+        try:
+            pid = self.patient_widget._resolve_patient_id_for_comment()
+        except Exception:
+            pid = ''
+        self._pt_reminder_pid = str(pid or '')
+        self._pt_reminder_study_uid = str(getattr(self.patient_widget, 'study_uid', '') or '')
+
+        try:
+            from PacsClient.utils.local_reminders import get_reminder
+            reminder = get_reminder(self._pt_reminder_pid)
+        except Exception:
+            reminder = {"pinned": False, "alarm": False, "note": ""}
+        self._pt_note_pending = str(reminder.get("note") or "")
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet("QFrame { background:#2d3748; border:none; min-height:1px; max-height:1px; }")
+        layout.addWidget(sep)
+
+        header = QLabel("🔒 Local Physician Reminder")
+        header.setStyleSheet(
+            "color:#93c5fd; font-size:11px; font-weight:700; background:transparent; padding:2px 2px 0 2px;")
+        layout.addWidget(header)
+        subtitle = QLabel("Local to this workstation — never sent to the server.")
+        subtitle.setStyleSheet("color:#64748b; font-size:10px; background:transparent; padding:0 2px 2px 2px;")
+        layout.addWidget(subtitle)
+
+        toggles = QHBoxLayout()
+        toggles.setSpacing(6)
+        toggles.setContentsMargins(0, 2, 0, 2)
+
+        def _toggle(text, icon_name, color, tip, checked):
+            b = QToolButton()
+            b.setText(" " + text)
+            b.setCheckable(True)
+            b.setChecked(bool(checked))
+            b.setToolTip(tip)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+            try:
+                b.setIcon(_qta.icon(icon_name, color=color))
+            except Exception:
+                pass
+            b.setStyleSheet(
+                "QToolButton { background:#1a202c; color:#cbd5e1; border:1px solid #4a5568;"
+                " border-radius:6px; padding:4px 10px; font-size:11px; }"
+                "QToolButton:hover { border-color:#3182ce; }"
+                "QToolButton:checked { background:#1e3a5f; color:#ffffff; border-color:#3b82f6; }"
+            )
+            toggles.addWidget(b)
+            return b
+
+        self._pt_pin_toggle = _toggle(
+            "Pin", 'fa5s.thumbtack', '#3b82f6',
+            "Pin this patient to the TOP of future searches (local only)",
+            reminder.get("pinned"))
+        self._pt_alarm_toggle = _toggle(
+            "Alarm", 'fa5s.exclamation-triangle', '#ef4444',
+            "Flag as important — red warning in the patient list (local only)",
+            reminder.get("alarm"))
+        toggles.addStretch()
+        layout.addLayout(toggles)
+
+        note = QTextEdit()
+        note.setPlaceholderText("Private note for this patient (this workstation only)...")
+        note.setFixedHeight(48)
+        note.setPlainText(self._pt_note_pending)
+        note.setStyleSheet(
+            "QTextEdit { background:#131a24; border:1px dashed #3b5371; border-radius:6px;"
+            " padding:6px; color:#bfdbfe; font-size:11px; }"
+            "QTextEdit:focus { border:1px solid #3b82f6; }"
+        )
+        layout.addWidget(note)
+
+        # Save wiring — reuse local_reminders.set_reminder (merge-update, local
+        # file only). Toggles persist immediately so the Main-Page pin/alarm
+        # state matches at once; the note persists on idle so we don't write the
+        # file on every keystroke. The note text is captured into a plain string
+        # in the textChanged handler (widget still alive) and the timer flushes
+        # that string, so a note typed and then dismissed within the debounce
+        # window is never lost even after the popup widget is destroyed.
+        self._pt_pin_toggle.toggled.connect(lambda v: self._pt_save_reminder(pinned=bool(v)))
+        self._pt_alarm_toggle.toggled.connect(lambda v: self._pt_save_reminder(alarm=bool(v)))
+        if getattr(self, '_pt_note_timer', None) is None:
+            self._pt_note_timer = QTimer(self.patient_widget)
+            self._pt_note_timer.setSingleShot(True)
+            self._pt_note_timer.timeout.connect(self._pt_flush_reminder_note)
+        note.textChanged.connect(lambda b=note: self._pt_on_reminder_note_changed(b.toPlainText()))
+
+    def _pt_on_reminder_note_changed(self, text):
+        self._pt_note_pending = str(text)
+        t = getattr(self, '_pt_note_timer', None)
+        if t is not None:
+            t.start(600)
+
+    def _pt_flush_reminder_note(self):
+        self._pt_save_reminder(note=str(getattr(self, '_pt_note_pending', '') or '').strip())
+
+    def _pt_save_reminder(self, **fields):
+        """Persist Patient-Tab reminder fields via the SHARED local store
+        (merge-update; never touches the server). Patient id is captured when
+        the section is built."""
+        try:
+            from PacsClient.utils.local_reminders import set_reminder
+            set_reminder(
+                getattr(self, '_pt_reminder_pid', '') or '',
+                study_uid=getattr(self, '_pt_reminder_study_uid', '') or '',
+                **fields,
+            )
+        except Exception:
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                "[local-reminder] patient-tab save failed", exc_info=True)
+
     def _show_status_upload_dropdown(self, button):
         """Show dropdown menu for report status selection - 6 status states"""
         try:
@@ -8508,8 +9137,8 @@ class ToolbarManager:
             """)
             
             layout = QVBoxLayout(dropdown)
-            layout.setContentsMargins(12, 12, 12, 12)
-            layout.setSpacing(6)
+            layout.setContentsMargins(10, 10, 10, 10)
+            layout.setSpacing(4)
             
             # Header
             header = QLabel("📊 Change Report Status")
@@ -8585,7 +9214,7 @@ class ToolbarManager:
                 
                 btn_container = QWidget()
                 btn_layout = QHBoxLayout(btn_container)
-                btn_layout.setContentsMargins(8, 6, 8, 6)
+                btn_layout.setContentsMargins(8, 3, 8, 3)
                 btn_layout.setSpacing(8)
                 
                 # Icon label
@@ -8664,7 +9293,7 @@ class ToolbarManager:
                 
                 layout.addWidget(btn_container)
             
-            layout.addSpacing(8)
+            layout.addSpacing(4)
 
             # ── Comment (2026-06-06): rides the SAME server mechanism as the
             # Main-Page Report popup (_change_report_status's comment arg —
@@ -8734,6 +9363,18 @@ class ToolbarManager:
             layout.addWidget(comment_box)
 
             layout.addSpacing(6)
+
+            # ── Local Physician Reminder (2026-06-21) ──────────────────────
+            # New section: a SECOND entry point to the Main-Page Report popup's
+            # local reminder (pin / alarm / private note) — the SAME shared store
+            # (local_reminders, keyed by patient_id), local-only, kept visually
+            # separated from the server status/comment above. Gated default-on.
+            try:
+                if self._patient_tab_local_reminder_enabled():
+                    self._build_patient_tab_local_reminder(layout)
+                    layout.addSpacing(6)
+            except Exception as _rem_err:
+                print(f"[STATUS-DROPDOWN] local reminder section skipped: {_rem_err}")
 
             # Sync-only button at bottom
             sync_btn = create_dropdown_tool('🔄 Sync', 'fa5s.cloud-upload-alt', '#10b981')
@@ -9208,8 +9849,15 @@ class ToolbarManager:
                     if hasattr(self, 'sync_button'):
                         self.sync_button.setEnabled(True)
                     
-                    # Update patient_widget report_status to awaiting_secretary_approval
-                    self.patient_widget.report_status = 'awaiting_secretary_approval'
+                    # Update patient_widget report_status to match exactly what
+                    # the sync service sent (physician_approved by default).
+                    # Reads the single shared constant so this never drifts from
+                    # the value persisted to the server.
+                    try:
+                        from modules.network.socket_report_status_service import SYNC_REPORT_STATUS as _synced_status
+                    except Exception:
+                        _synced_status = 'physician_approved'
+                    self.patient_widget.report_status = _synced_status
                     
                     # Update visited status to synced (green underline)
                     try:
@@ -9330,15 +9978,19 @@ class ToolbarManager:
             
             # Choose simple indicator based on status
             # Use single character or symbol for compact display
+            # Awaiting (…) vs Approved (✓) must be visually distinct, and
+            # physician (MD) vs secretary (SC) must be distinct — otherwise an
+            # "Awaiting Secretary" report reads on the badge like "Secretary
+            # Approved". Four separate glyphs, no collisions.
             status_indicator_map = {
                 'pending': 'P',
-                'awaiting_physician_approval': 'MD',
-                'awaiting_secretary_approval': 'SC',
-                'awaiting_approval': 'A',
-                'physician_approved': 'MD',  # Medical Doctor approved - different from secretary
-                'secretary_approved': 'SC',  # Secretary approved - different from physician
+                'awaiting_physician_approval': 'MD…',   # awaiting physician — not yet approved
+                'awaiting_secretary_approval': 'SC…',   # awaiting secretary — not yet approved
+                'awaiting_approval': 'A…',
+                'physician_approved': 'MD✓',            # physician HAS approved
+                'secretary_approved': 'SC✓',            # secretary HAS approved — distinct from physician
                 'completed': '✓✓',
-                'archived': 'A'
+                'archived': '📦'
             }
             indicator_text = status_indicator_map.get(current_status, '?')
             

@@ -118,6 +118,35 @@ def _parse_action_plan(raw: str) -> SecretaryActionPlan | None:
         return None
 
 
+def _workflows_enabled() -> bool:
+    """Multi-step execution is gated by AIPACS_SECRETARY_WORKFLOWS (default off)."""
+    import os
+    return os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "").strip() == "1"
+
+
+def _normalize_multistep(parsed):
+    """Handle a Phase-2 plan that contains multiple sequential steps.
+
+    - workflows ENABLED + >=2 steps → a ``__workflow__`` plan (the orchestrator
+      runs the workflow engine);
+    - otherwise → collapse to the FIRST action (legacy single-action behavior,
+      byte-identical to today, e.g. "download and open" → download). This makes
+      the multi-step prompt safe regardless of the flag.
+    """
+    if parsed is None:
+        return None
+    try:
+        from .multistep import extract_steps, to_brain_plan
+        steps = extract_steps(parsed)
+        if not steps:
+            return parsed
+        if _workflows_enabled() and len(steps) >= 2:
+            return to_brain_plan(parsed)
+        return dict(steps[0])
+    except Exception:
+        return parsed
+
+
 class AgentBrain:
     """
     Two-phase LLM agent brain for the AIPacs workstation.
@@ -198,6 +227,17 @@ class AgentBrain:
             return None
 
         # ── Validate ─────────────────────────────────────────────────────────
+        from .multistep import WORKFLOW_ACTION as _WF_ACTION
+        if isinstance(plan, dict) and plan.get("action") == _WF_ACTION:
+            # Multi-step plan: validate each step (not the single-plan schema).
+            from ..validator import validate_steps
+            norm_steps, step_errors = validate_steps(plan.get("steps") or [])
+            if step_errors:
+                log.warning("Multi-step plan validation errors: %s", step_errors)
+                return None
+            plan = dict(plan)
+            plan["steps"] = norm_steps
+            return plan
         normalized, errors = validate_plan(plan)
         if errors:
             log.warning("Phase 2 plan has validation errors: %s", errors)
@@ -384,6 +424,7 @@ class AgentBrain:
             _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — Phase 3 LLM RESPONSE")
             _elog(f"  raw        : {raw[:500]}")
             parsed = _parse_action_plan(raw)
+            parsed = _normalize_multistep(parsed)
             if parsed:
                 _elog(f"  action     : {parsed.get('action')}")
                 _elog(f"  entities   : {parsed.get('entities')}")

@@ -24,6 +24,10 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 
+def print(*args, **_kwargs):  # noqa: A001 - route legacy print() diagnostics to the logger
+    logger.debug(" ".join(str(a) for a in args))
+
+
 # =============================================================================
 # CurvedMPRGenerator: True Curved MPR Image Generator
 # =============================================================================
@@ -31,7 +35,13 @@ logger = logging.getLogger(__name__)
 class CurvedMPRGenerator:
     """
     Generates a straightened Curved MPR image from a 3D volume and control points.
-    
+
+    LEGACY / namesake warning: this class is used by the advanced 2D viewer
+    (modules/viewer/advanced/viewer_2d.py via CurvedMPRModule). It is NOT the
+    generator behind the Patient-Tab "Dental Curve MPR" button — that one is the
+    same-named class in modules/mpr/zeta_mpr/curved_mpr.py (different constructor,
+    and it exposes generate_panoramic_view). See docs/pipelines/dental-curve-mpr.md.
+
     This class:
     1. Builds a smooth spline from control points
     2. Samples positions uniformly along the spline

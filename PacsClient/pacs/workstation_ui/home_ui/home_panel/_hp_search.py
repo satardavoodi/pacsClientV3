@@ -99,7 +99,10 @@ from PacsClient.utils.structured_logging import emit_ui_event, emit_download_eve
 
 from ..home_search_service import HomeSearchService
 from modules.network.socket_client import PatientListSocketClient
-from modules.network.reception_api_config import get_reception_api_base_url, get_reception_api_timeout
+from modules.network.reception_api_config import (
+    get_reception_api_base_url, get_reception_api_timeout,
+    reception_api_breaker_open, record_reception_api_failure, record_reception_api_success,
+)
 from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes, save_series_json, check_study_exists, get_all_series_thumbnail_from_study_folder, load_json_as_dict, get_study_source_path, get_name_file_from_path, check_study_complete, validate_thumbnail_files, clear_study_cache, get_count_dicom_files_exist, save_image_as_png
 from modules.offline_cloud_server.service import export_studies_to_offline_cloud, get_all_offline_cloud_servers, list_offline_cloud_studies, record_offline_cloud_sync_event, sync_offline_cloud_study_preview_to_local, sync_offline_cloud_study_to_local, validate_offline_cloud_package
 
@@ -407,6 +410,20 @@ class _HPSearchMixin:
         timeout = get_reception_api_timeout()
         url = f"{base_url}/api/pacs/patients/{pid}"
 
+        # Circuit breaker: when this center's Reception/API has been failing (e.g. an
+        # unreachable endpoint on a poor link — Mehr 8800), skip the doomed REST call so
+        # repeated searches don't re-hammer a dead endpoint with timeouts. Self-heals via the
+        # half-open probe below. Background/non-clinical only — never touches imaging.
+        try:
+            if reception_api_breaker_open(base_url):
+                emit_download_event(
+                    _logger, 'reporter-hydration', phase='breaker_open',
+                    pid=pid, base_url=base_url,
+                )
+                return {}
+        except Exception:
+            pass
+
         # The Reception/Workflow API is authenticated and shares the logged-in
         # user's token with the PACS socket channel (see the reception_api_config
         # module docstring). The reporting-physician / `report` block is gated
@@ -426,6 +443,11 @@ class _HPSearchMixin:
             response = requests.get(url, timeout=timeout, headers=headers)
             status_code = response.status_code
             response.raise_for_status()
+            # The endpoint answered (2xx) → it is reachable; close the breaker (self-heal).
+            try:
+                record_reception_api_success(base_url)
+            except Exception:
+                pass
             payload = response.json()
             if not isinstance(payload, dict):
                 emit_download_event(
@@ -443,6 +465,19 @@ class _HPSearchMixin:
                 pid=pid, base_url=base_url,
                 error=type(exc).__name__, detail=str(exc),
             )
+            # Trip the breaker ONLY on a connection-level failure (the endpoint is
+            # unreachable). An HTTP error status (4xx/5xx) means the server IS reachable, so
+            # it must not open the breaker.
+            try:
+                _en = type(exc).__name__
+                if _en in (
+                    "ConnectionError", "ConnectTimeout", "ReadTimeout", "Timeout",
+                    "ConnectTimeoutError", "ReadTimeoutError", "ConnectionRefusedError",
+                    "MaxRetryError", "NewConnectionError", "ProxyError", "SSLError",
+                ):
+                    record_reception_api_failure(base_url)
+            except Exception:
+                pass
             return {}
 
     @staticmethod

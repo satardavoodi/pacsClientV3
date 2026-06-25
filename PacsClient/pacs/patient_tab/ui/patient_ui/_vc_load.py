@@ -759,6 +759,34 @@ class _VCLoadMixin:
                 _gate_wait_ms = (time.perf_counter() - _gate_wait_start) * 1000.0
             try:
                 if target_vtk_widget is not None and not self._is_request_current(target_vtk_widget, expected_token):
+                    # STALE request (the viewport switched series/patient while this
+                    # load waited on the serialized-load gate). RELEASE OWNERSHIP
+                    # before returning. The `finally` below releases the SEMAPHORE,
+                    # but the interactive-load ownership (series_key in
+                    # `_loading_series_numbers` + its `_series_load_events` entry) is
+                    # taken at line ~644/692 and only discarded on the result paths
+                    # (None / success) below — NOT on this early return. Leaking it
+                    # means EVERY future load of this series sees "already loading"
+                    # at line 640 and bails, so the series can NEVER full-load again
+                    # and stays on its 1-slice preview (patient 47855 series 203 "1
+                    # image"; UX_SERIES_LOAD_START never fires for it). This happens
+                    # constantly under rapid series/patient switching (the concurrent
+                    # scenario). Release ownership + wake any waiters so the series
+                    # remains loadable. Kill switch restores the legacy (leaking) path.
+                    if (os.getenv("AIPACS_LOAD_OWNERSHIP_RELEASE_ON_STALE", "1") or "1").strip() != "0":
+                        try:
+                            with self._series_load_lock:
+                                _evt_stale = self._series_load_events.pop(series_key, None)
+                                self._loading_series_numbers.discard(series_key)
+                            if _evt_stale is not None:
+                                _evt_stale.set()
+                            self.logger.info(
+                                "[LOAD-OWNERSHIP] released stale ownership series=%s "
+                                "(request superseded at load gate) — series stays loadable",
+                                series_key,
+                            )
+                        except Exception:
+                            pass
                     return False
 
                 # Load full series with correct path (preview path disabled by design).
@@ -2218,19 +2246,53 @@ class _VCLoadMixin:
             # Exit progressive mode for this series (fully downloaded now)
             self.on_series_download_fully_complete(series_number_str)
 
+            # The download just finished, so disk now holds EVERY file for this
+            # series.  ``_count_series_files_on_disk`` has a 1 s TTL cache and
+            # counts only finished ``.dcm`` files, so a probe that ran moments
+            # earlier (the same-series "retry incomplete" check, or a concurrent
+            # re-download mid ``.part``-write) can leave a STALE-LOW value cached
+            # (observed: 3 cached while 24 were actually on disk — patient 47804
+            # series 6, Razi).  Feeding that low number in as the completeness
+            # TARGET made a viewer showing a partial stack (8 of 24) look "fully
+            # visible" (8 >= 3) and SKIP the grow-to-full reload, freezing the
+            # left viewport on a partial series.  Bust the cache for a true count
+            # and gate the skip on the AUTHORITATIVE expected count (server
+            # series-info / metadata), not the raw disk count.  The skip then
+            # fires only when the viewer genuinely shows every expected slice;
+            # otherwise we fall through and reload (the safe direction — it can
+            # only ADD the missing slices, never drop any).  The fresh count also
+            # primes the 1 s cache for the downstream stale-data guard, which
+            # likewise read the stale value.  Kill switch restores the legacy gate.
+            _postcomplete_expected_gate = (
+                os.getenv("AIPACS_POSTCOMPLETE_EXPECTED_GATE", "1") or "1"
+            ).strip() != "0"
+            if _postcomplete_expected_gate:
+                try:
+                    self._invalidate_disk_count_cache(series_number_str)
+                except Exception:
+                    pass
             try:
                 _completed_disk_count = int(self._count_series_files_on_disk(series_number_str) or 0)
             except Exception:
                 _completed_disk_count = 0
-            if _completed_disk_count > 0 and self._viewer_has_series_fully_visible(
+            _gate_expected = _completed_disk_count
+            if _postcomplete_expected_gate:
+                try:
+                    _resolution = self._resolve_series_expected_count(series_number_str)
+                    _resolved_expected = int(getattr(_resolution, "expected_count", 0) or 0)
+                except Exception:
+                    _resolved_expected = 0
+                _gate_expected = max(_completed_disk_count, _resolved_expected)
+            if _gate_expected > 0 and self._viewer_has_series_fully_visible(
                 series_number_str,
-                _completed_disk_count,
+                _gate_expected,
             ):
                 _mark_series_ready_only()
                 self.logger.info(
                     "load_series_on_demand: series=%s already fully visible "
-                    "(viewer_count>=%d) -- skipping redundant post-complete reload",
+                    "(visible>=expected=%d disk=%d) -- skipping redundant post-complete reload",
                     series_number_str,
+                    _gate_expected,
                     _completed_disk_count,
                 )
                 return

@@ -264,16 +264,16 @@ class _PWAdvancedMixin:
         models_container_layout.setSpacing(8)
         models_container_layout.setAlignment(Qt.AlignTop)
 
-        # Advanced MPR Button
-        self.btn_advanced_mpr = QPushButton("Advanced MPR and AI segmentation")
-        self.btn_advanced_mpr.setCursor(Qt.PointingHandCursor)
-        self.btn_advanced_mpr.setMinimumHeight(48)
-        self.btn_advanced_mpr.setStyleSheet("""
+        # Advanced-Analysis module buttons — ONE shared blue style so Advanced MPR,
+        # Stitching and Dental Imaging look identical and fit cleanly in the sidebar.
+        # Compact sizing (smaller than before) + 2-line text for long labels so
+        # nothing overflows or is clipped. Rounded corners + consistent spacing kept.
+        _MODULE_BTN_STYLE = """
             QPushButton {
-                font-size: 12px;
+                font-size: 11px;
                 font-family: 'Roboto', sans-serif;
                 color: #f7fafc;
-                padding: 10px 16px;
+                padding: 7px 10px;
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #2563eb, stop:1 #1e40af);
                 border: 1px solid #1e40af;
@@ -289,38 +289,34 @@ class _PWAdvancedMixin:
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #1e40af, stop:1 #1e3a8a);
             }
-        """)
+        """
+
+        def _module_button(text):
+            b = QPushButton(text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setMinimumHeight(38)
+            b.setStyleSheet(_MODULE_BTN_STYLE)
+            return b
+
+        # Advanced MPR (long label → 2 lines so it fits without clipping)
+        self.btn_advanced_mpr = _module_button("Advanced MPR and\nAI segmentation")
         self.btn_advanced_mpr.clicked.connect(self._on_advanced_mpr_clicked)
         models_container_layout.addWidget(self.btn_advanced_mpr)
 
-        # Stitching Module Button
-        self.btn_stitching = QPushButton("Stitching")
-        self.btn_stitching.setCursor(Qt.PointingHandCursor)
-        self.btn_stitching.setMinimumHeight(48)
-        self.btn_stitching.setStyleSheet("""
-            QPushButton {
-                font-size: 12px;
-                font-family: 'Roboto', sans-serif;
-                color: #f7fafc;
-                padding: 10px 16px;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #2563eb, stop:1 #1e40af);
-                border: 1px solid #1e40af;
-                border-radius: 6px;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1d4ed8, stop:1 #1e3a8a);
-                border: 1px solid #1e3a8a;
-            }
-            QPushButton:pressed {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #1e40af, stop:1 #1e3a8a);
-            }
-        """)
+        # Stitching
+        self.btn_stitching = _module_button("Stitching")
         self.btn_stitching.clicked.connect(self._on_stitching_clicked)
         models_container_layout.addWidget(self.btn_stitching)
+
+        # Dental Imaging (Advanced Analysis level) — flag-gated, purely additive;
+        # SAME blue module style as the others (no separate purple). Opens the
+        # professional dental workspace pop-up. This is the ADVANCED level ONLY; the
+        # simple Patient-Tab "Dental Curve MPR" (MPR dropdown) is a separate,
+        # lightweight viewer and is NOT touched here. Kill switch: AIPACS_DENTAL_IMAGING=0.
+        if os.environ.get("AIPACS_DENTAL_IMAGING", "1") != "0":
+            self.btn_dental_imaging = _module_button("Dental Imaging")
+            self.btn_dental_imaging.clicked.connect(self._on_dental_imaging_clicked)
+            models_container_layout.addWidget(self.btn_dental_imaging)
 
         # Add stretch to push buttons to the top
         models_container_layout.addStretch()
@@ -1065,4 +1061,191 @@ class _PWAdvancedMixin:
             window_level=window_level,
             series_uid=series_uid
         ))
+
+    # ----------------------------------------------------------------- Dental
+    def _resolve_dental_series_context(self):
+        """Resolve the currently active series into a ``DentalSeriesContext``.
+
+        Uses the SAME active-viewer-first resolution as Advanced MPR / Stitching
+        (active viewer metadata → ``series_path`` dicom dir + ids + W/L), so the
+        Dental Imaging module receives the series the user is actually viewing,
+        through the existing safe infrastructure — it does NOT build a volume or
+        any geometry here."""
+        from modules.dental_imaging import DentalSeriesContext
+
+        sm: dict = {}
+        first: dict = {}
+        sw = getattr(self, 'selected_widget', None)
+        if sw is not None and getattr(sw, 'image_viewer', None) is not None:
+            md = getattr(sw.image_viewer, 'metadata', None)
+            if md:
+                sm = md.get('series', {}) or {}
+                instances = md.get('instances', []) or []
+                first = instances[0] if instances else {}
+
+        dicom_dir = sm.get('series_path')
+        if not dicom_dir:
+            sn = sm.get('series_number')
+            if sn is not None and getattr(self, 'import_folder_path', None):
+                candidate = os.path.join(str(self.import_folder_path), str(sn))
+                if os.path.isdir(candidate):
+                    dicom_dir = candidate
+        if not dicom_dir and first.get('instance_path'):
+            dicom_dir = os.path.dirname(first.get('instance_path'))
+
+        return DentalSeriesContext(
+            dicom_dir=dicom_dir,
+            series_uid=sm.get('series_uid'),
+            series_number=sm.get('series_number'),
+            window_width=first.get('window_width'),
+            window_level=first.get('window_center'),
+            patient_id=getattr(self, 'patient_id', None),
+            patient_name=getattr(self, 'patient_name', None),
+            study_uid=getattr(self, 'study_uid', None),
+        )
+
+    def _on_dental_imaging_clicked(self) -> None:
+        """Open the professional Dental Imaging workspace (Advanced Analysis level).
+
+        Purely additive and isolated: opens a dedicated pop-up and passes the
+        active series. Does NOT touch the simple Patient-Tab Dental Curve MPR
+        viewer, standard MPR, or the active viewports."""
+        print("[PatientWidget] Dental Imaging button clicked")
+        try:
+            from modules.dental_imaging import (
+                open_dental_imaging_workspace, dental_imaging_enabled,
+            )
+            if not dental_imaging_enabled():
+                return
+            # Series source order: (1) active viewport series, (2) selected thumbnail,
+            # (3) none → the workspace shows a clear empty-state.
+            context = self._resolve_dental_series_context()
+            # Reuse the active viewer's already-built shared volume (single source
+            # of truth) — never rebuild a volume or fork a geometry pipeline.
+            volume = None
+            try:
+                from modules.dental_imaging.core import bind_active_viewer_volume
+                volume = bind_active_viewer_volume(self, series_uid=context.series_uid)
+            except Exception as ve:
+                print(f"[PatientWidget] Dental volume bind skipped: {ve}")
+
+            # Fallback: no active viewport series → use the selected thumbnail series.
+            if context is None or not context.is_loadable():
+                sel = getattr(self, '_selected_advanced_series', None)
+                sel_num = sel.get('series_number') if isinstance(sel, dict) else None
+                if sel_num is not None:
+                    ctx2, vol2 = self._resolve_dental_series_by_number(sel_num)
+                    if ctx2 is not None and ctx2.is_loadable():
+                        context, volume = ctx2, vol2
+
+            # Pass the resolver so a thumbnail dropped onto the workspace reloads that
+            # exact series through this same safe resolution path.
+            ws = open_dental_imaging_workspace(
+                parent=self, context=context, volume=volume,
+                resolver=self._resolve_dental_series_by_number,
+            )
+            if ws is None:
+                QMessageBox.information(
+                    self, "Dental Imaging", "Dental Imaging module is disabled."
+                )
+        except Exception as e:
+            print(f"[PatientWidget] Error opening Dental Imaging: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self, "Error", f"Failed to open Dental Imaging:\n{str(e)}"
+            )
+
+    def _resolve_dental_series_by_number(self, series_number):
+        """Resolve a series NUMBER → (DentalSeriesContext, DentalVolume|None).
+
+        Used for the selected-thumbnail fallback and for a series DROPPED onto the
+        Dental Imaging workspace. Reuses the existing Advanced-Analysis series
+        resolution (`_collect_advanced_analysis_series_entries`) for identity, and the
+        shared volume infrastructure for pixels (active-viewer reuse, else
+        `PyDicomLazyVolume.from_series` from disk). Returns (None, None) if unknown."""
+        from modules.dental_imaging import DentalSeriesContext
+        try:
+            target = str(series_number)
+        except Exception:
+            return None, None
+
+        entry = None
+        try:
+            for e in self._collect_advanced_analysis_series_entries():
+                if str(e.get('series_number')) == target:
+                    entry = e
+                    break
+        except Exception:
+            entry = None
+        if entry is None:
+            return None, None
+
+        dicom_dir = entry.get('series_path')
+        if not dicom_dir and getattr(self, 'import_folder_path', None):
+            candidate = os.path.join(str(self.import_folder_path), target)
+            if os.path.isdir(candidate):
+                dicom_dir = candidate
+
+        context = DentalSeriesContext(
+            dicom_dir=dicom_dir,
+            series_uid=entry.get('series_uid'),
+            series_number=entry.get('series_number'),
+            window_width=entry.get('window_width'),
+            window_level=entry.get('window_level'),
+            patient_id=getattr(self, 'patient_id', None),
+            patient_name=getattr(self, 'patient_name', None),
+            study_uid=getattr(self, 'study_uid', None),
+        )
+        return context, self._bind_dental_volume_for(context)
+
+    def _bind_dental_volume_for(self, context):
+        """Get a ``DentalVolume`` for a resolved series. Reuses the active viewer's
+        already-built shared volume when the series IS the one on screen (single
+        source of truth); otherwise builds it from disk via the SHARED
+        ``PyDicomLazyVolume.from_series`` (the proper load/prepare path). Heavily
+        guarded — returns None on any failure (the workspace then shows identity only)."""
+        if context is None:
+            return None
+        # 1) Reuse the active viewer's shared volume when it matches the request.
+        try:
+            from modules.dental_imaging.core import bind_active_viewer_volume, get_active_image_data
+            sw = getattr(self, 'selected_widget', None)
+            iv = getattr(sw, 'image_viewer', None) if sw is not None else None
+            md = getattr(iv, 'metadata', None) if iv is not None else None
+            active_num = str(((md or {}).get('series', {}) or {}).get('series_number', '')) if md else ''
+            if active_num and active_num == str(context.series_number) and get_active_image_data(self) is not None:
+                return bind_active_viewer_volume(self, series_uid=context.series_uid)
+        except Exception:
+            pass
+        # 2) Build the volume from disk (shared infra) for a non-active series.
+        try:
+            if context.dicom_dir and os.path.isdir(str(context.dicom_dir)):
+                from modules.viewer.fast.pydicom_lazy_volume import PyDicomLazyVolume
+                from modules.dental_imaging.core import DentalVolume, materialize_lazy_volume
+                metadata = {'series': {
+                    'series_number': context.series_number,
+                    'series_uid': context.series_uid,
+                    'series_path': context.dicom_dir,
+                }}
+                lazy = PyDicomLazyVolume.from_series(str(context.dicom_dir), metadata)
+                # from_series returns a LAZY volume (zero-filled memmap, slices decoded
+                # on demand by the viewer). The dental previews read the middle slices
+                # immediately, so without a full decode the Axial preview is blank and
+                # the volume is ~all zeros ("series not imported correctly"). Force a
+                # synchronous full decode + VTK refresh before wrapping. (The active-
+                # viewer reuse path above is already decoded, so it is untouched.)
+                if os.environ.get('AIPACS_DENTAL_FORCE_DECODE', '1') != '0':
+                    n = materialize_lazy_volume(lazy)
+                    print(f"[PatientWidget] Dental volume force-decoded {n} slices "
+                          f"for series {context.series_number}")
+                dvol = DentalVolume(getattr(lazy, 'vtk_image_data', None),
+                                    modality='', series_uid=context.series_uid)
+                # Keep the lazy volume alive — its mmap backs the vtk_image_data.
+                dvol._lazy_owner = lazy
+                if dvol.image_data is not None and dvol.is_valid():
+                    return dvol
+        except Exception as e:
+            print(f"[PatientWidget] Dental volume from_series skipped: {e}")
+        return None
 

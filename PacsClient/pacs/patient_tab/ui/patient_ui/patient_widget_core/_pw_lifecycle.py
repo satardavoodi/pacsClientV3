@@ -326,15 +326,22 @@ class _PWLifecycleMixin:
                         except:
                             pass
 
-            # Belt-and-suspenders: stop the progressive grow timer on the viewer
-            # controller.  clear_all_caches_for_close() already does this, but
-            # if it throws early the timer would keep firing into a dead widget.
+            # Belt-and-suspenders: stop the per-tab viewer-controller timers on
+            # teardown.  A queued tick — especially `_dl_watchdog_timer`, which
+            # calls `change_series_on_viewer` via `_maybe_resume_awaiting_from_disk`
+            # — could otherwise fire into a half-deleted widget after the nodes are
+            # cleared, a use-after-free window on patient switch / tab close (only
+            # `_progressive_grow_timer` was being stopped here).  `stop()` is
+            # idempotent and never raises; `getattr(..., None)` skips timers that
+            # were never created.
             if hasattr(self, 'viewer_controller') and self.viewer_controller:
-                try:
-                    if hasattr(self.viewer_controller, '_progressive_grow_timer'):
-                        self.viewer_controller._progressive_grow_timer.stop()
-                except Exception:
-                    pass
+                for _tname in ('_progressive_grow_timer', '_dl_watchdog_timer', '_warmup_result_timer'):
+                    try:
+                        _t = getattr(self.viewer_controller, _tname, None)
+                        if _t is not None and hasattr(_t, 'stop'):
+                            _t.stop()
+                    except Exception:
+                        pass
 
             # Force garbage collection for VTK objects
             import gc as garbage_collector

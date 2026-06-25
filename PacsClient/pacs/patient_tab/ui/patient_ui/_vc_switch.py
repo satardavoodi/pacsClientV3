@@ -15,6 +15,11 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import QApplication, QSlider
 from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_number
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
+from PacsClient.utils.series_display_state import (
+    DisplayAction,
+    build_series_display_state,
+    decide_display_action,
+)
 from modules.viewer.fast.lazy_volume_registry import get_loader as get_lazy_loader
 from modules.viewer.viewer_backend_config import BACKEND_VTK, BACKEND_PYDICOM
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
@@ -340,6 +345,71 @@ class _VCSwitchMixin:
                         series_incomplete = completeness.is_incomplete
                     except Exception:
                         pass
+                    # §7 UNIFIED DECISION AUTHORITY — never-downgrade guard.
+                    # The legacy branching below reasons from the canonical-metadata
+                    # count (`displayed_count`) and the disk count, but NOT from the
+                    # viewer's ACTUAL visible slice count.  When a staler/smaller
+                    # source (a stub, or a transient-low disk read) would rebuild over
+                    # a viewport that already shows MORE slices, the rebuild SHRINKS it
+                    # — the 47793/47842 resume-watchdog "99 → 8" reset.  Route the
+                    # gathered counts + the real `get_count_of_slices()` through the one
+                    # shared `decide_display_action`; if it says SKIP_DOWNGRADE, keep the
+                    # fuller volume.  Purely ADDITIVE: every other action falls through to
+                    # the existing (tested) branching unchanged.  Kill switch =0 = legacy.
+                    if (os.getenv("AIPACS_UNIFIED_SERIES_DISPLAY", "1") or "1").strip() != "0":
+                        try:
+                            _viewer_visible = int(vtk_widget.get_count_of_slices() or 0)
+                        except Exception:
+                            _viewer_visible = 0
+                        try:
+                            _gf_loader = getattr(vtk_widget, "_lazy_loader", None)
+                            _gf_has_loader = _gf_loader is not None and hasattr(_gf_loader, "grow")
+                        except Exception:
+                            _gf_has_loader = False
+                        try:
+                            _disp_state = build_series_display_state(
+                                series_number,
+                                disk_count=disk_count,
+                                canonical_metadata_count=displayed_count,
+                                viewer_visible_count=_viewer_visible,
+                                expected_count=expected_instances,
+                                has_lazy_loader=_gf_has_loader,
+                                backend_mismatch=backend_mismatch,
+                                rebuild_needed=rebuild_needed,
+                                force_reload=False,
+                            )
+                            _disp_action = decide_display_action(_disp_state)
+                        except Exception:
+                            _disp_action = None
+                        if _disp_action is DisplayAction.SKIP_DOWNGRADE:
+                            if hasattr(vtk_widget, '_finalize_pending_action'):
+                                try:
+                                    vtk_widget._finalize_pending_action(series_index, phase="switch_series_skip_downgrade")
+                                except Exception:
+                                    pass
+                            self._hide_spinner_for_widget(target_widget_for_spinner)
+                            self.logger.info(
+                                "change-series: skip-downgrade series=%s viewer_visible=%d disk=%d expected=%d "
+                                "(keeping fuller volume; not rebuilding from a smaller source)",
+                                series_number, _viewer_visible, disk_count, expected_instances,
+                            )
+                            return
+                        # §7 2A — the authority is the SINGLE decision source. Map its
+                        # (viewer-aware) verdict onto the legacy operation flags so the
+                        # proven grow / grow-fallback / incomplete blocks below run on
+                        # whether the VIEWPORT is behind disk — catching a viewer that is
+                        # behind even when the canonical metadata already caught up (the
+                        # case the canonical-only `completeness` flags could not see, e.g.
+                        # a viewer stuck at a partial volume while metadata-refresh already
+                        # synced lst_thumbnails_data to disk). Legacy flags are used when
+                        # the kill switch is off.
+                        if _disp_action is DisplayAction.GROW_IN_PLACE or _disp_action is DisplayAction.REFRESH_AND_REBUILD:
+                            series_grew = True
+                        elif _disp_action is DisplayAction.AWAIT_DOWNLOAD:
+                            series_incomplete = True
+                        elif _disp_action is DisplayAction.NOOP:
+                            series_grew = False
+                            series_incomplete = False
                     if (not backend_mismatch) and (not rebuild_needed) and (not series_grew) and (not series_incomplete):
                         if hasattr(vtk_widget, '_finalize_pending_action'):
                             try:
@@ -396,6 +466,74 @@ class _VCSwitchMixin:
                         if _grew_ok:
                             self._hide_spinner_for_widget(target_widget_for_spinner)
                             return
+                        # In-place grow could not run — e.g. the viewport holds a
+                        # preview / offline-cloud volume with no lazy loader
+                        # (_lazy_loader=None) — yet the series HAS grown on disk well
+                        # beyond what the viewport shows.  ROOT CAUSE of the 47793 /
+                        # 47842 "series 203 stuck at 8 of 120" freeze: for these
+                        # progressively-loaded secondary studies the CANONICAL
+                        # lst_thumbnails_data metadata is never synced to disk
+                        # (metadata-refresh was never called for 203), so it stays a
+                        # 1-8 instance stub.  _get_series_by_number_fast then serves that
+                        # stub on every reload and the resume watchdog rebuilds the
+                        # viewport DOWN to it — forcing the reload alone just re-reads the
+                        # same stub.  Fix: sync the canonical metadata to the true on-disk
+                        # file count FIRST (scans the series folder, extends
+                        # metadata['instances'] to disk, bumps the caches in place), THEN
+                        # force the reload so the container no-op is bypassed and the
+                        # rebuild — which re-fetches via _get_series_by_number_fast at the
+                        # backend-route below — reads the FULL list.  This also permanently
+                        # repairs the canonical metadata so a later resume / layout switch
+                        # can no longer downgrade the viewport.  Kill switch restores legacy.
+                        if (os.getenv("AIPACS_GROW_FALLBACK_FORCE_RELOAD", "1") or "1").strip() != "0":
+                            try:
+                                # Bust the 1 s disk-count cache so the refresh's internal
+                                # "already up-to-date" guard sees the true file count.
+                                self._invalidate_disk_count_cache(series_number)
+                                _fresh_disk = int(self._count_series_files_on_disk(series_number) or 0)
+                                # ALWAYS re-sync — the refresh's internal guard reads the REAL
+                                # canonical lst_thumbnails_data count and no-ops cheaply when it
+                                # already covers disk. Gating on displayed_count (the VIEWER's
+                                # metadata) was wrong: a separate writer can clobber the canonical
+                                # back to a small server stub AFTER the viewer metadata grew, so
+                                # displayed_count(126) >= disk(126) skipped the re-sync while the
+                                # canonical was actually 8 — the rebuild then read the 8-stub and
+                                # the viewport dropped 126 -> 8/1 (patient 47855 series 203).
+                                if _fresh_disk > 0:
+                                    self._refresh_and_sync_metadata(series_number, _fresh_disk)
+                                    disk_count = _fresh_disk
+                            except Exception:
+                                pass
+                            # Only REBUILD when the viewport is genuinely BEHIND disk. When it
+                            # already shows every on-disk slice (displayed >= disk), the canonical
+                            # re-sync above has already repaired any stub for the future, so a
+                            # force-reload would only churn — and on a COMPLETE multi-study series
+                            # the resume watchdog re-arms `_awaiting_series_number` on every rebuild,
+                            # producing a 1 Hz livelock that rebuilds 48/99-slice volumes forever and
+                            # never lets the viewport settle (patient 47084 series 202/203,
+                            # ViewportLoadResumedFromDisk attempt=243). The 47855 downgrade repair
+                            # still force-reloads because there the viewport had dropped BELOW disk
+                            # (8/1 < 126 → behind). Kill switch AIPACS_GROW_FALLBACK_ONLY_WHEN_BEHIND=0
+                            # restores the always-reload behaviour.
+                            _only_when_behind = (
+                                os.getenv("AIPACS_GROW_FALLBACK_ONLY_WHEN_BEHIND", "1") or "1"
+                            ).strip() != "0"
+                            _true_disk = int(_fresh_disk if _fresh_disk > 0 else (disk_count or 0))
+                            _behind = _true_disk > int(displayed_count or 0)
+                            if (not _only_when_behind) or _behind:
+                                force_reload = True
+                                self.logger.info(
+                                    "change-series: grow-fallback metadata-sync + force-reload series=%s "
+                                    "displayed=%d disk=%d (canonical metadata synced to disk; rebuilding full volume)",
+                                    series_number, displayed_count, disk_count,
+                                )
+                            else:
+                                self.logger.info(
+                                    "change-series: grow-fallback metadata-synced, NO reload series=%s "
+                                    "displayed=%d disk=%d (viewport already shows the full on-disk set; "
+                                    "skipping rebuild to avoid the resume-watchdog livelock)",
+                                    series_number, displayed_count, disk_count,
+                                )
                     self.logger.debug(
                         "change-series: backend-reload series=%s current=%s requested=%s rebuild_needed=%s",
                         series_number, getattr(vtk_widget, '_active_backend', BACKEND_VTK),
@@ -584,6 +722,44 @@ class _VCSwitchMixin:
                     total_start=_t0,
                     viewer_backend=requested_backend,
                     force_reload=force_reload or (requested_backend == BACKEND_PYDICOM),
+                )
+                return
+
+            # ── Off-thread decode for force_reload (2026-06-24, shared file→render
+            # responsiveness — application-wide) ──────────────────────────────────
+            # The cached/sync path below re-decodes SYNCHRONOUSLY when
+            # force_reload=True: the cached payload is invalidated, so
+            # _perform_series_switch_optimized's recovery re-loads from disk on the
+            # CALLING (UI) thread. For a large / multi-frame series that froze the
+            # GUI thread ~1.9 s (observed live: multi-frame US, cache_hit=True 1934
+            # ms). The UNCACHED path already routes through
+            # _schedule_async_load_and_switch, which decodes on a WORKER thread with
+            # a fast first-slice preview — so send force_reload there too. This is
+            # the shared import/decode layer, so it benefits Poor / Fast / Active-
+            # Node equally (the decode is server-independent). The non-force_reload
+            # cached path is unchanged (it only APPLIES a cached payload — no decode).
+            # Default OFF pending live validation; enable with
+            # AIPACS_FORCE_RELOAD_ASYNC_DECODE=1.
+            if force_reload and (os.getenv("AIPACS_FORCE_RELOAD_ASYNC_DECODE", "0") or "0").strip() == "1":
+                _frad_study_path = self._get_correct_study_path()
+                try:
+                    if hasattr(vtk_widget, 'viewport_spinner'):
+                        vtk_widget.viewport_spinner.show_loading(
+                            f"Loading series {series_number}..."
+                        )
+                except Exception:
+                    pass
+                self._schedule_async_load_and_switch(
+                    series_number=series_number,
+                    study_path=_frad_study_path,
+                    vtk_widget=vtk_widget,
+                    slider=slider,
+                    allow_paired=allow_paired,
+                    expected_token=expected_token,
+                    target_widget_for_spinner=target_widget_for_spinner,
+                    total_start=_t0,
+                    viewer_backend=requested_backend,
+                    force_reload=True,
                 )
                 return
 
@@ -1379,7 +1555,24 @@ class _VCSwitchMixin:
                         _corr_session_id(),
                         now_mono,
                     )
-        
+
+                    # KPI (2026-06-24): TTSSD = Time To Series Switch Display — ms
+                    # from the user drop/select (switch start) to the first visible
+                    # image of the requested series. Headline series-switch metric
+                    # (review areas #4/#5B). Anchored to the SELECTED series only —
+                    # never a series the user did not request. WARNING so it is always
+                    # captured; additive, no behaviour change.
+                    try:
+                        if (os.getenv("AIPACS_POOR_NETWORK_KPIS", "1") or "1").strip() != "0":
+                            logger.warning(
+                                "[KPI] kind=TTSSD scope=viewer series=%s series_uid=%s "
+                                "ttssd_ms=%.1f widget_creation_ms=%.1f first_render_request_ms=%.1f",
+                                series_number, series_uid, first_image_visible_ms,
+                                widget_create_ms, first_render_request_ms,
+                            )
+                    except Exception:
+                        pass
+
         except Exception as e:
             self.logger.error(f"Error in series switch: {e}", exc_info=True)
 
@@ -1496,12 +1689,87 @@ class _VCSwitchMixin:
         except Exception:
             return None
 
+    def _viewer_handle_for(self, vtk_widget):
+        """Lazily attach + return a STABLE ViewerHandle for this viewer cell (unified-pipeline
+        S1, the identity keystone — docs/plans/architecture/VIEWER_UNIFICATION_STAGED_PLAN_2026-06-25.md).
+
+        Additive and shadow-only for now: the live request token still uses the grid index
+        (`id_vtk_widget`); the handle is observed to validate that the grid-index namespace
+        collides across patient/layout switches (hazard A1). Identity is stable across the
+        series switches that happen IN this cell; the grid slot is a diagnostic hint only, so
+        moving the viewport between slots does not change identity. Only invoked from the
+        shadow helpers, so when the shadow is OFF no handle is attached (zero cost)."""
+        if vtk_widget is None:
+            return None
+        try:
+            handle = getattr(vtk_widget, '_viewer_handle', None)
+            slot = self._get_viewer_id(vtk_widget)
+            if handle is None:
+                from PacsClient.utils.viewer_identity import ViewerHandle
+                handle = ViewerHandle.new(slot_hint=slot)
+                try:
+                    setattr(vtk_widget, '_viewer_handle', handle)
+                except Exception:
+                    pass
+            elif slot is not None and getattr(handle, 'slot_hint', None) != slot:
+                handle = handle.with_slot(slot)   # same identity, refreshed diagnostic slot
+                try:
+                    setattr(vtk_widget, '_viewer_handle', handle)
+                except Exception:
+                    pass
+            return handle
+        except Exception:
+            return None
+
+    def _shadow_record_token(self, vtk_widget, viewer_id, token):
+        """READ-ONLY: record which stable handle owns the latest token at this grid slot, and
+        flag when a grid slot is reused by a DIFFERENT cell identity (the raw A1 signal)."""
+        try:
+            from PacsClient.utils.series_state_store import shadow_enabled
+            if not shadow_enabled():
+                return
+            store = getattr(self, '_viewer_token_handle', None)
+            if store is None:
+                store = {}
+                self._viewer_token_handle = store
+            huuid = getattr(self._viewer_handle_for(vtk_widget), 'uuid', None)
+            prev = store.get(viewer_id)
+            if prev is not None and huuid is not None and prev != huuid:
+                self.logger.info(
+                    "[VIEWER-IDENTITY-SHADOW] event=grid_slot_reused viewer_id=%s old=%s new=%s"
+                    " (grid-index token namespace collides; a stable ViewerHandle isolates it)",
+                    viewer_id, prev[:8], huuid[:8],
+                )
+            store[viewer_id] = huuid
+        except Exception:
+            pass
+
+    def _shadow_check_token(self, vtk_widget, viewer_id, expected_token, current):
+        """READ-ONLY: when grid-index says 'current' but the cell identity differs from the one
+        that issued the token, log the A1 false-positive the stable handle would have caught."""
+        try:
+            from PacsClient.utils.series_state_store import shadow_enabled
+            if not shadow_enabled() or not current:
+                return
+            store = getattr(self, '_viewer_token_handle', None)
+            token_handle = store.get(viewer_id) if store else None
+            huuid = getattr(self._viewer_handle_for(vtk_widget), 'uuid', None)
+            if token_handle and huuid and token_handle != huuid:
+                self.logger.info(
+                    "[VIEWER-IDENTITY-SHADOW] event=token_match_handle_mismatch viewer_id=%s "
+                    "token=%s token_handle=%s current_handle=%s (A1 false-positive avoided by "
+                    "stable identity)", viewer_id, expected_token, token_handle[:8], huuid[:8],
+                )
+        except Exception:
+            pass
+
     def _next_request_token(self, vtk_widget):
         viewer_id = self._get_viewer_id(vtk_widget)
         if viewer_id is None:
             return None
         token = int(self._viewer_request_token.get(viewer_id, 0)) + 1
         self._viewer_request_token[viewer_id] = token
+        self._shadow_record_token(vtk_widget, viewer_id, token)  # read-only diagnostic
         return token
 
     def _is_request_current(self, vtk_widget, expected_token):
@@ -1510,7 +1778,9 @@ class _VCSwitchMixin:
         viewer_id = self._get_viewer_id(vtk_widget)
         if viewer_id is None:
             return True
-        return int(self._viewer_request_token.get(viewer_id, 0)) == int(expected_token)
+        current = int(self._viewer_request_token.get(viewer_id, 0)) == int(expected_token)
+        self._shadow_check_token(vtk_widget, viewer_id, expected_token, current)  # read-only
+        return current
 
     def _arm_spinner_timeout(self, vtk_widget, timeout_ms=20000):
         """Fail-safe spinner timeout that NEVER blanks a viewport still awaiting its

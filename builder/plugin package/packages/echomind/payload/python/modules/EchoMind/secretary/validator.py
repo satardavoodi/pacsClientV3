@@ -97,6 +97,39 @@ _BUS_CONFIRM_REQUIRED_ACTIONS = {
     "send_report_to_pacs",
 }
 
+
+def validate_steps(steps: list) -> tuple[list, list]:
+    """Validate each step of a multi-step (workflow) plan (2026-06-23).
+
+    Reuses :func:`validate_plan` per step, so steps obey the SAME allowlist,
+    entity-key, source and date rules as a single plan. Side-effect steps
+    (``open_patient`` / ``download_patient``) are normalized to
+    ``needs_confirmation=True`` because a workflow confirms ONCE up front and
+    then runs its steps. Returns ``(normalized_steps, errors)``; ``errors`` are
+    the same ``ValidationError`` objects ``validate_plan`` produces (so callers
+    can ``e.to_dict()`` them).
+    """
+    norm: list = []
+    errors: list = []
+    for st in (steps or []):
+        st2 = dict(st) if isinstance(st, dict) else {}
+        # Normalize to the full single-plan shape validate_plan expects, so a
+        # terse LLM step ({"action","entities"}) still validates.
+        if not st2.get("action") and st2.get("tool"):
+            st2["action"] = st2["tool"]
+        st2.setdefault("entities", {})
+        st2.setdefault("confidence", 1.0)
+        st2.setdefault("reason", "")
+        if str(st2.get("action") or "") in ("open_patient", "download_patient"):
+            st2["needs_confirmation"] = True  # workflow confirms once up front
+        else:
+            st2.setdefault("needs_confirmation", False)
+        normalized, errs = validate_plan(st2)
+        norm.append(normalized if normalized is not None else st2)
+        if errs:
+            errors.extend(errs)
+    return norm, errors
+
 _ALLOWED_ENTITY_KEYS_BY_ACTION: dict[str, set[str]] = {
     "list_patients": {"source", "date", "modality", "patient_name", "patient_code"},
     "open_patient": {"source", "patient_code", "resolved_patient"},

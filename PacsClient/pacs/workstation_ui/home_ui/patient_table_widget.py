@@ -1864,6 +1864,13 @@ class PatientTableWidget(QWidget):
                     study_uid_item.text(),
                 )
                 self.thumbnailRequested.emit(row)
+                # Clicking a pinned patient must NOT let a downstream list
+                # refresh drop it from the top (bug 2.2). Re-assert pinned-top
+                # shortly after (debounced; a no-op when nothing is pinned).
+                try:
+                    self._arm_pin_overlay_refresh()
+                except Exception:
+                    pass
         except Exception as e:
             print(f"Error emitting patient selection: {str(e)}")
 
@@ -3101,6 +3108,29 @@ class PatientTableWidget(QWidget):
         patient_id = kwargs.get('patient_id', '') or ''
         patient_name = kwargs.get('patient_name', '') or ''
 
+        # ── Pinned-patient dedup (STABLE top section) ───────────────────────
+        # `_pin_overlay` (internal) marks a row replayed from a pinned patient's
+        # snapshot. When a REAL result arrives for a patient who is PINNED and
+        # ALREADY shown, keep that pinned row fixed at the top and refresh it
+        # IN PLACE — never add a second (lower) row and never reposition it.
+        # This is what keeps the pinned section stable (no jump/flicker) and
+        # dedups the pinned vs normal-result copies (only the pinned row is
+        # kept). When the pinned patient has no row yet, just arm the overlay so
+        # it gets added (boosted-at-insert, so it lands at the top directly).
+        _is_pin_overlay = bool(kwargs.pop('_pin_overlay', False))
+        if not _is_pin_overlay and self._pin_overlay_enabled():
+            try:
+                _pinned_row = self._find_pinned_row_for_patient(patient_id)
+            except Exception:
+                _pinned_row = None
+            if _pinned_row is not None:
+                try:
+                    self._refresh_existing_study_row(_pinned_row, kwargs)
+                except Exception:
+                    pass
+                return
+            self._arm_pin_overlay_refresh()
+
         # ── Per-study dedup guard ───────────────────────────────────────
         # The home-search paths (LOCAL DB search in home_search_service.py
         # line ~267 and OFFLINE_CLOUD search at line ~348) call this
@@ -3360,9 +3390,28 @@ class PatientTableWidget(QWidget):
         self._decorate_name_item_with_reminder(patient_name_item, _reminder)
         if _reminder.get("pinned"):
             date_key = date_key + self._PIN_SORT_BOOST
+            # Persist a row snapshot so this pinned patient can be re-rendered as
+            # a search-list overlay even when a later query excludes them (and
+            # across restarts). Local only; reuses the reminder store. Skipped for
+            # overlay replays (their snapshot is already stored).
+            if self._pin_overlay_enabled() and not _is_pin_overlay:
+                try:
+                    from PacsClient.utils.local_reminders import set_reminder as _set_rem
+                    _set_rem(patient_id, row=self._pin_snapshot_from_kwargs(kwargs))
+                except Exception:
+                    pass
 
         self.results_table.setItem(row, COL['patient_name'], patient_name_item)
         self.results_table.setItem(row, COL['patient_id'], _mk(patient_id, patient_id.lower()))
+        if _is_pin_overlay:
+            # Mark this as a provisional pinned-overlay row so a real streaming
+            # result for the same patient can supersede it (see top of method).
+            try:
+                _pid_it = self.results_table.item(row, COL['patient_id'])
+                if _pid_it is not None:
+                    _pid_it.setData(self._PIN_OVERLAY_ROLE, True)
+            except Exception:
+                pass
         self.results_table.setItem(row, COL['body_part'], _mk(body_part, body_part.lower()))
         self.results_table.setItem(row, COL['time'], _mk(time_text, time_key))  # ←
         self.results_table.setItem(row, COL['date'], _mk(date_text, date_key))  # ←
@@ -4390,6 +4439,232 @@ class PatientTableWidget(QWidget):
             name_item = self.results_table.item(row, COL['patient_name'])
             if name_item is not None:
                 self._decorate_name_item_with_reminder(name_item, reminder)
+        # When a pin toggles from the Main-Page Report dialog: snapshot the
+        # patient's live row (if present + now pinned) so the overlay can render
+        # them later, then re-assert the overlay (adds a newly-pinned absent
+        # patient / drops the overlay row of one just unpinned). Debounced.
+        try:
+            if self._pin_overlay_enabled():
+                if reminder.get('pinned'):
+                    for row in range(self.results_table.rowCount()):
+                        id_item = self.results_table.item(row, COL['patient_id'])
+                        if id_item is not None and str(id_item.text()).strip() == pid:
+                            snap = self._extract_row_data(row) or {}
+                            snap.pop('study_uids', None)   # keep the single-study replay path
+                            if snap:
+                                from PacsClient.utils.local_reminders import set_reminder as _set_rem
+                                _set_rem(pid, row=snap)
+                            break
+                # Float IMMEDIATELY (synchronous) so a patient pinned from the
+                # current/today list jumps to the top at once (bug 2.1), not
+                # after the debounce. Reentrancy-guarded inside.
+                self._apply_pinned_overlay()
+        except Exception:
+            pass
+
+    # ── Pinned-patient persistent overlay (local-only) ───────────────────────
+    # A PINNED patient stays visible in the search list even when the current
+    # query would exclude them: their list row is persisted as a snapshot
+    # (reusing the local_reminders store) and re-rendered as a provisional
+    # "overlay" row whenever the live results don't already contain that patient.
+    # Dedup is by patient_id; a real streaming result supersedes the provisional
+    # overlay row (see add_patient_data). Local only; survives restart. The
+    # overlay never syncs to the server. Kill-switch: AIPACS_PIN_OVERLAY=0.
+    _PIN_OVERLAY_ROLE = Qt.UserRole + 60
+    _PIN_SNAPSHOT_KEYS = (
+        'patient_name', 'patient_id', 'body_part', 'date', 'time',
+        'study_date', 'study_time', 'images_count', 'modality', 'age',
+        'description', 'study_uid', 'is_downloaded', 'is_reported',
+    )
+
+    @staticmethod
+    def _pin_overlay_enabled() -> bool:
+        import os as _os
+        return (_os.getenv("AIPACS_PIN_OVERLAY", "1") or "1").strip() != "0"
+
+    def _pin_snapshot_from_kwargs(self, kwargs: dict) -> dict:
+        return {k: kwargs.get(k) for k in self._PIN_SNAPSHOT_KEYS
+                if kwargs.get(k) is not None}
+
+    def _present_patient_ids(self) -> set:
+        ids = set()
+        for row in range(self.results_table.rowCount()):
+            it = self.results_table.item(row, COL['patient_id'])
+            if it is not None:
+                pid = str(it.text()).strip()
+                if pid:
+                    ids.add(pid)
+        return ids
+
+    def _remove_provisional_pin_overlay_row(self, patient_id: str) -> None:
+        """Drop any provisional pinned-overlay row for this patient (a real
+        result is taking its place). Iterates in reverse so removals are safe."""
+        pid = str(patient_id or '').strip()
+        if not pid:
+            return
+        for row in range(self.results_table.rowCount() - 1, -1, -1):
+            it = self.results_table.item(row, COL['patient_id'])
+            if it is None or str(it.text()).strip() != pid:
+                continue
+            if bool(it.data(self._PIN_OVERLAY_ROLE)):
+                self.results_table.removeRow(row)
+
+    def _arm_pin_overlay_refresh(self, delay_ms: int = 350) -> None:
+        """(Re)start the debounced overlay pass — it runs once after the result
+        stream settles, regardless of which async search path populated it."""
+        if not self._pin_overlay_enabled() or getattr(self, '_applying_pin_overlay', False):
+            return
+        from PySide6.QtCore import QTimer
+        t = getattr(self, '_pin_overlay_timer', None)
+        if t is None:
+            t = QTimer(self)
+            t.setSingleShot(True)
+            t.timeout.connect(self._apply_pinned_overlay)
+            self._pin_overlay_timer = t
+        t.start(int(delay_ms))
+
+    def _apply_pinned_overlay(self) -> None:
+        """Add a provisional row for every pinned patient ABSENT from the current
+        results (dedup by patient_id), then float them to the top via the
+        existing pin sort-boost. Idempotent and reentrancy-guarded."""
+        if getattr(self, '_applying_pin_overlay', False):
+            return
+        if not self._pin_overlay_enabled():
+            logger.info("[PIN-OVERLAY] apply skipped: disabled (AIPACS_PIN_OVERLAY=0)")
+            return
+        try:
+            from PacsClient.utils.local_reminders import (
+                get_pinned_rows, get_pinned_patient_ids,
+            )
+            pinned_ids = get_pinned_patient_ids()
+            pinned = get_pinned_rows()
+        except Exception as _imp_err:
+            logger.warning("[PIN-OVERLAY] pinned-reminder API unavailable: %s", _imp_err)
+            return
+        # No pinned patients AND no leftover boosted row → never touch list
+        # ordering, so normal (unpinned) usage is completely unaffected. We must
+        # still proceed when a row is left boosted after the LAST unpin, so its
+        # boost gets stripped and it returns to normal order (acceptance #8).
+        if not pinned_ids and not self._any_row_boosted():
+            return
+        present = self._present_patient_ids()
+        missing = {pid: snap for pid, snap in pinned.items()
+                   if pid and pid not in present and isinstance(snap, dict)}
+        self._applying_pin_overlay = True
+        try:
+            # 1. Add a provisional overlay row for every pinned patient ABSENT
+            #    from the current results (dedup by patient_id).
+            added = 0
+            for pid, snap in missing.items():
+                try:
+                    kw = dict(snap)
+                    kw['patient_id'] = pid
+                    kw.pop('study_uids', None)
+                    kw['_pin_overlay'] = True
+                    self.add_patient_data(**kw)
+                    added += 1
+                except Exception as _add_err:
+                    logger.warning(
+                        "[PIN-OVERLAY] overlay row add FAILED pid=%s: %s",
+                        pid, _add_err, exc_info=True,
+                    )
+                    continue
+            # 2. Enforce the pin sort-boost on EVERY pinned row currently shown.
+            #    A patient pinned AFTER its row was rendered, or a row soft-
+            #    refreshed by a click, otherwise keeps an UN-boosted date key and
+            #    would NOT float (bugs 2.1 / 2.2). This also STRIPS the boost from
+            #    unpinned rows so an unpin returns them to normal order.
+            self._enforce_pin_boost_on_rows(pinned_ids)
+            # 3. Re-apply the EFFECTIVE sort so pinned rows rise to the TOP (under
+            #    the default/active date-descending sort the boost floats them);
+            #    pinnedFirst + the normal order for everyone else.
+            _col = getattr(self, '_active_sort_col', None)
+            if _col is None:
+                self._programmatic_sort(COL['date'], Qt.DescendingOrder)
+            else:
+                _states = getattr(self, '_sort_states', {}) or {}
+                _state = _states.get(_col, 2)
+                _order = Qt.AscendingOrder if _state == 1 else Qt.DescendingOrder
+                self._programmatic_sort(_col, _order)
+            self._update_results_count()
+            logger.info(
+                "[PIN-OVERLAY] apply done: pinned=%d present=%d added=%d active_sort_col=%s",
+                len(pinned_ids), len(present), added, getattr(self, '_active_sort_col', None),
+            )
+        finally:
+            self._applying_pin_overlay = False
+
+    def _enforce_pin_boost_on_rows(self, pinned_ids) -> None:
+        """Set the pin sort-boost on the DATE sort-key of every PINNED row and
+        strip it from every other row (idempotent). The boost (``_PIN_SORT_BOOST``)
+        dwarfs any real yyyymmdd date key, so under the date-descending sort the
+        pinned rows lead — pinnedFirst, then the normal order. Re-applied on every
+        overlay pass so a row (re)rendered without the boost still floats."""
+        boost = self._PIN_SORT_BOOST
+        try:
+            pinned_ids = {str(p) for p in (pinned_ids or set())}
+        except Exception:
+            pinned_ids = set()
+        for row in range(self.results_table.rowCount()):
+            pid_item = self.results_table.item(row, COL['patient_id'])
+            date_item = self.results_table.item(row, COL['date'])
+            if pid_item is None or date_item is None:
+                continue
+            cur = getattr(date_item, '_sort_key', None)
+            if not isinstance(cur, (int, float)):
+                continue
+            base = cur - boost if cur >= boost else cur   # idempotent un-boost
+            pinned = str(pid_item.text()).strip() in pinned_ids
+            try:
+                date_item._sort_key = (base + boost) if pinned else base
+            except Exception:
+                continue
+            self._apply_pinned_row_tint(row, pinned)
+
+    def _find_pinned_row_for_patient(self, patient_id):
+        """Return the table row index of an already-shown PINNED patient, else
+        None. Used to dedup a search result against the stable pinned section:
+        the pinned row stays put and is refreshed in place, never duplicated."""
+        pid = str(patient_id or '').strip()
+        if not pid:
+            return None
+        try:
+            from PacsClient.utils.local_reminders import get_pinned_patient_ids
+            if pid not in get_pinned_patient_ids():
+                return None
+        except Exception:
+            return None
+        for row in range(self.results_table.rowCount()):
+            it = self.results_table.item(row, COL['patient_id'])
+            if it is not None and str(it.text()).strip() == pid:
+                return row
+        return None
+
+    def _apply_pinned_row_tint(self, row: int, pinned: bool) -> None:
+        """Subtle background tint marking a row as part of the pinned (top)
+        section — a quiet visual separation from the dynamic results below.
+        Cleared when the row is no longer pinned. Best-effort; never raises."""
+        try:
+            from PySide6.QtGui import QBrush, QColor
+            brush = QBrush(QColor(59, 130, 246, 26)) if pinned else QBrush()
+            for col in range(self.results_table.columnCount()):
+                it = self.results_table.item(row, col)
+                if it is not None:
+                    it.setBackground(brush)
+        except Exception:
+            pass
+
+    def _any_row_boosted(self) -> bool:
+        """True if any visible row still carries the pin sort-boost on its date
+        key. Lets the overlay normalise a just-unpinned row even when no pins
+        remain, while staying a no-op for users who never pinned anything."""
+        boost = self._PIN_SORT_BOOST
+        for row in range(self.results_table.rowCount()):
+            it = self.results_table.item(row, COL['date'])
+            k = getattr(it, '_sort_key', None) if it is not None else None
+            if isinstance(k, (int, float)) and k >= boost:
+                return True
+        return False
 
     def _update_report_status_in_table(self, study_uid: str, new_status: str):
         """Update report status display in table"""
@@ -4643,8 +4918,30 @@ class PatientTableWidget(QWidget):
             print(f"auto_resize_columns error: {e}")
 
     def clear_table(self):
-        """Clear all data from the table"""
-        self.results_table.setRowCount(0)
+        """Clear the table for a new search.
+
+        Pinned patients are a STABLE top section: when pin-overlay is on and
+        pinned rows are present, only the NORMAL (non-pinned) rows below are
+        removed — the pinned rows stay physically in place, so they never blink
+        out and re-appear during a refresh (the jump/flicker). A full clear runs
+        only when nothing is pinned.
+        """
+        pinned_rows_kept = False
+        try:
+            if self._pin_overlay_enabled():
+                from PacsClient.utils.local_reminders import get_pinned_patient_ids
+                pinned_ids = get_pinned_patient_ids()
+                if pinned_ids:
+                    for row in range(self.results_table.rowCount() - 1, -1, -1):
+                        pid_item = self.results_table.item(row, COL['patient_id'])
+                        pid = str(pid_item.text()).strip() if pid_item is not None else ''
+                        if pid not in pinned_ids:
+                            self.results_table.removeRow(row)
+                    pinned_rows_kept = True
+        except Exception:
+            pinned_rows_kept = False
+        if not pinned_rows_kept:
+            self.results_table.setRowCount(0)
         self._last_checked_checkbox = None  # anchor widget no longer exists after clear
         # Drop any progressive-loading buffer so a stale scroll can never render
         # the previous search's rows into the freshly cleared table.
@@ -4661,6 +4958,12 @@ class PatientTableWidget(QWidget):
         if select_header:
             select_header.setText("⬜")
         self._update_results_count()
+        # Re-assert the pinned overlay after the stream settles (the table was
+        # just cleared for a new search). Debounced; no-op when disabled.
+        try:
+            self._arm_pin_overlay_refresh()
+        except Exception:
+            pass
 
     def _extract_row_data(self, row: int):
         if not (0 <= row < self.results_table.rowCount()):

@@ -88,6 +88,74 @@ class SecretaryOrchestrator:
             out["entities"]["source"] = source_scope
         return out
 
+    @staticmethod
+    def _workflows_enabled() -> bool:
+        """Multi-step workflow execution is gated by AIPACS_SECRETARY_WORKFLOWS
+        (default OFF). When off, the brain never emits a ``__workflow__`` plan
+        (it collapses to the first action), so this whole path is inert."""
+        import os
+        return os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "").strip() == "1"
+
+    # ── Multi-step workflow execution (flag-gated; 2026-06-23) ─────────────────
+    _WORKFLOW_ACTION = "__workflow__"
+
+    def _handle_workflow_plan(self, plan, state):
+        """Entry for a brain ``__workflow__`` plan. Confirms ONCE up front for a
+        side-effecting workflow (reusing the existing yes/no turn), then runs."""
+        steps = plan.get("steps") or []
+        goal = str(plan.get("goal") or "the requested steps")
+        if bool(plan.get("needs_confirmation")):
+            state["pending"] = {"type": "confirm_workflow", "workflow": plan}
+            summary = " then ".join(
+                str(s.get("action") or s.get("tool") or "?").replace("_", " ")
+                for s in steps
+            )
+            return {
+                "ok": False, "action": self._WORKFLOW_ACTION,
+                "message": f"I'll {summary} ({goal}). Reply yes to proceed or no to cancel.",
+                "data": {"steps": [s.get("action") for s in steps]},
+                "error_code": "CONFIRM_REQUIRED",
+            }
+        return self._execute_workflow(plan, state)
+
+    def _execute_workflow(self, plan, state):
+        from .workflow import WorkflowExecutor
+        from .brain.multistep import to_workflow_plan
+        wp = to_workflow_plan(plan)
+        result = WorkflowExecutor(self._workflow_runner(state)).run(wp)
+        steps_payload = [
+            {"tool": s.tool, "ok": s.ok, "verified": s.verified, "error_code": s.error_code}
+            for s in result.steps
+        ]
+        return {
+            "ok": bool(result.ok),
+            "action": self._WORKFLOW_ACTION,
+            "message": result.message or ("Done." if result.ok else "Workflow stopped."),
+            "data": {"goal": result.goal, "steps": steps_payload,
+                     "failed_index": result.failed_index},
+            "error_code": None if result.ok else "WORKFLOW_FAILED",
+        }
+
+    def _workflow_runner(self, state):
+        """Bind a run_step(action, entities) → result dict over the executor.
+
+        Each step runs the SAME executor path a single command uses, confirmed
+        (the workflow was confirmed once up front). Verify probes (read actions)
+        also route here. Adapters only read state, so it is shared safely."""
+        def run_step(action, entities):
+            step_plan = {
+                "action": action, "entities": dict(entities or {}),
+                "confidence": 1.0, "needs_confirmation": False,
+                "reason": "workflow step",
+            }
+            try:
+                res = self.executor.execute(step_plan, state, confirmed=True)
+            except Exception as exc:  # never crash the workflow
+                return {"ok": False, "action": action,
+                        "error_code": "STEP_EXC", "message": str(exc)}
+            return res if isinstance(res, dict) else {"ok": True, "action": action, "data": res}
+        return run_step
+
     def _get_brain(self):
         """Lazy-load the AgentBrain (avoids circular import at module load time)."""
         if self._brain is None:
@@ -413,6 +481,19 @@ class SecretaryOrchestrator:
                 )
                 return result
 
+            if pending and pending.get("type") == "confirm_workflow":
+                wf_plan = pending.get("workflow") or {}
+                if is_no(text):
+                    state["pending"] = None
+                    return {"ok": True, "action": self._WORKFLOW_ACTION,
+                            "message": "Workflow cancelled.", "data": None, "error_code": None}
+                if not is_yes(text):
+                    return {"ok": False, "action": self._WORKFLOW_ACTION,
+                            "message": "Please answer yes to run the steps, or no to cancel.",
+                            "data": None, "error_code": "CONFIRM_REQUIRED"}
+                state["pending"] = None
+                return self._execute_workflow(wf_plan, state)
+
             if pending and pending.get("type") == "confirm":
                 plan = copy.deepcopy(pending.get("plan"))
                 action_name = str(plan.get("action") or "unknown")
@@ -501,6 +582,14 @@ class SecretaryOrchestrator:
             )
             if not plan:
                 return self._unparsed_result()
+
+            # ── Multi-step workflow plan (brain emitted ≥2 sequential steps) ──
+            # Gated; when off the brain never produces a ``__workflow__`` plan,
+            # so the single-action flow below is byte-identical to today.
+            if (self._workflows_enabled() and isinstance(plan, dict)
+                    and plan.get("action") == self._WORKFLOW_ACTION):
+                _session.add_plan(dict(plan))
+                return self._handle_workflow_plan(plan, state)
 
             validated_plan, validation_errors = validate_plan(plan)
             if validation_errors:

@@ -27,6 +27,55 @@ STRICT OUTPUT RULES:
   }
 - The Orchestrator that reads your JSON has NO intelligence.  It executes your
   output literally.  Every field must be correct, complete, and unambiguous.
+- Your single JSON object is EITHER one action (the keys above) OR a multi-step
+  plan (see the MULTI-STEP section below) — never prose, never an array at the
+  top level unless it is the "steps" value.
+
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+MULTI-STEP (SEQUENTIAL) REQUESTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Most commands are ONE action. But when the user clearly asks for SEVERAL
+sequential actions in one sentence — e.g. "download this patient AND open it",
+"open it and load the third series", "دانلودش کن و بازش کن" — return a
+MULTI-STEP plan instead of a single action:
+
+  {
+    "goal": "<short English summary>",
+    "steps": [
+      { ... one action object (same 5 keys) ... },
+      { ... next action object ... }
+    ]
+  }
+
+RULES:
+- Each step is a FULL action object with the same keys (action, entities,
+  confidence, needs_confirmation, reason).
+- Steps run IN ORDER; the system automatically verifies each step succeeded
+  before starting the next, so you do NOT add steps for reading/verifying.
+- Only create steps for real, distinct USER actions (e.g. download, open, load
+  a series). Read/lookup actions are not steps.
+- When a later step acts on the patient from an earlier step ("download X and
+  open IT"), put the SAME patient_code on both steps. If you cannot resolve the
+  ID for the later step, set its patient_code to "$patient_id" — the system
+  fills it in from the previous step's result.
+- Side-effect steps (download_patient, open_patient) keep
+  "needs_confirmation": true. The user confirms the WHOLE sequence ONCE.
+- series_index is 0-based: "first series" → 0, "third series" → 2.
+- If the request is a SINGLE action, DO NOT use "steps" — return the single
+  action object exactly as before.
+
+EXAMPLE — "download this patient and open it" (ID 47734 resolved from memory):
+  {"goal":"download then open patient 47734","steps":[
+    {"action":"download_patient","entities":{"patient_code":"47734"},"confidence":0.9,"needs_confirmation":true,"reason":"first action of the compound request"},
+    {"action":"open_patient","entities":{"patient_code":"47734"},"confidence":0.9,"needs_confirmation":true,"reason":"open the same patient after download"}
+  ]}
+
+EXAMPLE — "open it and load the third series":
+  {"goal":"open patient then load series 3","steps":[
+    {"action":"open_patient","entities":{"patient_code":"47734"},"confidence":0.9,"needs_confirmation":true,"reason":"open the referenced patient"},
+    {"action":"change_series","entities":{"series_index":2,"viewport":0},"confidence":0.8,"needs_confirmation":false,"reason":"load the 3rd series into the active viewport"}
+  ]}
 
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

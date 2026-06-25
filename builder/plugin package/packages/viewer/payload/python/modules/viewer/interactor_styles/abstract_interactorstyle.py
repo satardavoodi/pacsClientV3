@@ -225,7 +225,8 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         try:
             # Prevent default VTK middle-button behavior from interfering
             # with custom zoom/stack interaction state.
-            obj.AbortFlagOn()
+            if hasattr(obj, "AbortFlagOn"):
+                obj.AbortFlagOn()
         except Exception:
             pass
         self.emit_interaction()  # send signal for interaction
@@ -236,7 +237,8 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         try:
             # Keep VTK style state deterministic even if middle press/release
             # overlaps with custom interaction handlers.
-            obj.AbortFlagOn()
+            if hasattr(obj, "AbortFlagOn"):
+                obj.AbortFlagOn()
         except Exception:
             pass
         # self.emit_interaction()  # send signal for interaction
@@ -328,7 +330,8 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         Do nothing here - let Qt wheelEvent handle slice navigation.
         """
         # ✅ Critical: Abort processing to prevent default zoom
-        obj.AbortFlagOn()
+        if hasattr(obj, "AbortFlagOn"):
+            obj.AbortFlagOn()
         pass
 
     def on_mouse_wheel_backward(self, obj, event):
@@ -337,7 +340,8 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         Do nothing here - let Qt wheelEvent handle slice navigation.
         """
         # ✅ Critical: Abort processing to prevent default zoom
-        obj.AbortFlagOn()
+        if hasattr(obj, "AbortFlagOn"):
+            obj.AbortFlagOn()
         pass
     
     def on_mouse_wheel_event(self, obj, event):
@@ -345,7 +349,8 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
         Generic mouse wheel event handler to catch any wheel events.
         """
         # ✅ Critical: Abort processing to prevent any zoom
-        obj.AbortFlagOn()
+        if hasattr(obj, "AbortFlagOn"):
+            obj.AbortFlagOn()
         pass
     
     def OnMouseWheelForward(self):

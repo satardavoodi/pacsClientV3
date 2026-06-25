@@ -164,6 +164,16 @@ _BATCH_BYTES_SOFT_CAP = 64 * 1024 * 1024
 # leading-batch skip is unaffected) and when batches are already forced to 1.
 _FIRST_IMAGE_PRIME = (os.getenv("AIPACS_FIRST_IMAGE_PRIME", "1") or "1").strip() != "0"
 
+# Poor-network KPI telemetry (2026-06-24, slow-link first-image review).
+# Emit explicit, parseable [KPI] markers anchored to the series-download start so
+# the slow-link experience is measurable directly from download_diagnostics.log:
+#   TTFI = ms from series-download start to the FIRST image written to disk.
+#   TTFS = ms to the SECOND image (a minimally scrollable 2-slice stack).
+#   TTFC = ms to the FULL series on disk (download complete) + avg slice ms.
+# Pure additive WARNING logs with NO effect on download control-flow, so they are
+# safe to leave on by default. Kill switch: AIPACS_POOR_NETWORK_KPIS=0.
+_POOR_NET_KPIS = (os.getenv("AIPACS_POOR_NETWORK_KPIS", "1") or "1").strip() != "0"
+
 # Pagination safety (2026-06-19, data-completeness fix).
 # The server pages by batch_index = batch_start // batch_size (see download_batch),
 # which only tiles a series correctly when batch_size stays CONSTANT. Adaptive
@@ -1598,6 +1608,23 @@ class SocketDicomClient:
                     total_write_bytes += len(dicom_bytes)
                     batch_files_written += 1
 
+                    # KPI (2026-06-24): TTFI / TTFS anchored to the series-download
+                    # start. Only on a freshly-fetched series (skipped_count == 0) so
+                    # the number is the true time-to-first-image and not a resume
+                    # artifact (a resumed series already had earlier images on disk).
+                    # Additive WARNING — no effect on the download loop.
+                    if _POOR_NET_KPIS and skipped_count == 0 and downloaded_count in (1, 2):
+                        _kpi_ms = (time.time() - start_time) * 1000.0
+                        logger.warning(
+                            "[KPI] kind=%s scope=download study=%s series=%s "
+                            "ms_since_series_start=%.1f images=%d/%d batch_size=%d poor_conn=%s",
+                            "TTFI" if downloaded_count == 1 else "TTFS",
+                            study_uid, series_number, _kpi_ms,
+                            downloaded_count, expected_count, batch_size, _poor_conn,
+                            extra={"component": "download", "study_uid": study_uid,
+                                   "series_uid": series_uid},
+                        )
+
                     # ── Issue A (46472 DX) — surface header-only image stubs ──────
                     # The server can return a DICOM whose header is intact but whose
                     # PixelData element is EMPTY. It decodes to non-empty bytes (so the
@@ -1847,6 +1874,21 @@ class SocketDicomClient:
             total_decompress_ms,
             extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
         )
+
+        # KPI (2026-06-24): TTFC (time-to-full-cache) for this series, anchored to the
+        # series-download start, plus the average per-slice download time. For a
+        # from-scratch series (skipped=0) this IS the full first-load time; on resume
+        # `skipped` shows how many were already cached. Additive WARNING only.
+        if _POOR_NET_KPIS:
+            _avg_slice_ms = (elapsed * 1000.0 / downloaded_count) if downloaded_count > 0 else 0.0
+            logger.warning(
+                "[KPI] kind=TTFC scope=download study=%s series=%s "
+                "ms_since_series_start=%.1f downloaded=%d skipped=%d expected=%d "
+                "avg_slice_ms=%.1f poor_conn=%s",
+                study_uid, series_number, elapsed * 1000.0,
+                downloaded_count, skipped_count, expected_count, _avg_slice_ms, _poor_conn,
+                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
+            )
 
         # ── Completeness guard (2026-06-19, data-completeness fix) ──────────────────
         # The server's batch pagination can finish early (premature has_more=False) or,

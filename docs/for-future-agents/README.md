@@ -19,9 +19,10 @@ If your change doesn't fit this pattern, you're probably making a refactor rathe
 ## 1. First five minutes — what to read
 
 > **Need to control or test the running app?** Read
-> [`AGENT_CONTROL_AND_TESTING_GUIDE.md`](./AGENT_CONTROL_AND_TESTING_GUIDE.md) — the single
-> overview of every ability (desktop control, the offscreen **sandbox test lane**, logs, file
-> tools) and how to use each one here.
+> [`AGENT_CONTROL_AND_TESTING_GUIDE.md`](./AGENT_CONTROL_AND_TESTING_GUIDE.md). **The fastest way to
+> control the app is the in-app command surface (`aipacs-control` MCP → EchoMind CommandBus), not
+> pixel-clicking — see §3.1.** The guide also covers the offscreen **sandbox test lane**, logs, the
+> tool tiers, and the hard rules.
 
 In this order:
 

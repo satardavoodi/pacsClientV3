@@ -25,6 +25,7 @@ and includes animated status text.
 from __future__ import annotations
 
 import math
+import os
 import contextlib
 from pathlib import Path
 from typing import Optional
@@ -198,9 +199,45 @@ class _LogoSpinner(QWidget):
 # ═══════════════════════════════════════════════════════════════════════════
 #  AiPacsLoadingOverlay  (public API)
 # ═══════════════════════════════════════════════════════════════════════════
+def _anchor_has_native_render_window(anchor) -> bool:
+    """True when the anchor hosts a NATIVE OS render surface (VTK / OpenGL) that a
+    Qt child overlay cannot paint over.
+
+    The FAST (pydicom / QPainter) viewport — the default — is pure Qt and returns
+    False, so its loading overlay can be a normal CHILD widget (clipped to the
+    viewport, correctly layered, never floating above other apps). Only a real
+    VTK/Advanced viewport needs the legacy top-level always-on-top window. Any
+    failure → False (prefer the child overlay; it is the common case)."""
+    try:
+        if anchor is None:
+            return False
+        candidates = [anchor]
+        try:
+            candidates += list(anchor.findChildren(QWidget))
+        except Exception:
+            pass
+        for w in candidates:
+            try:
+                _cn = type(w).__name__
+                if ("VTK" in _cn or "vtk" in _cn or "GLWidget" in _cn
+                        or "OpenGL" in _cn):
+                    return True
+                # VTK/OpenGL surfaces paint on a native window handle.
+                if w.testAttribute(Qt.WA_PaintOnScreen):
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
 class AiPacsLoadingOverlay(QWidget):
-    """Full-screen loading overlay rendered as a **top-level frameless window**
-    so it floats above native/heavyweight widgets (VTK/OpenGL viewports).
+    """Loading overlay. In FAST mode it is a **child of the target viewport** (so it
+    is clipped, correctly layered above the image/metadata/annotations, and never
+    floats above other apps). Only when the anchor hosts a native VTK/OpenGL surface
+    does it fall back to a **top-level frameless always-on-top window** to paint
+    above that native surface.
 
     Regular child-widget overlays are always painted *behind* VTK render
     windows because VTK uses native OS window handles.  Making the overlay
@@ -224,30 +261,53 @@ class AiPacsLoadingOverlay(QWidget):
         subtitle: str = "",
         minimal: bool = False,
         pass_through: bool = False,
+        child_mode: Optional[bool] = None,
     ):
-        # Top-level frameless tool window — floats above VTK surfaces
-        super().__init__(
-            None,
-            Qt.Tool
-            | Qt.FramelessWindowHint
-            | Qt.WindowStaysOnTopHint,
-        )
+        # ── Layering fix (2026-06-24) ─────────────────────────────────────────
+        # Be a CHILD of the viewport when possible. The overlay used to be a
+        # top-level Qt.Tool + WindowStaysOnTopHint window — the only way to paint
+        # above a NATIVE VTK/OpenGL render window — but that made it a separate OS
+        # window: it floated above OTHER apps (Chrome) and was never a real layer
+        # in the viewport stack (so the gif / black box / metadata / image /
+        # annotations layered wrongly). In FAST mode (the default — NO native VTK
+        # window) the viewport is pure Qt, so the overlay is just a CHILD widget of
+        # the anchor: clipped to it, raised above its content, hidden/destroyed
+        # with it. Fall back to the legacy top-level window ONLY when the anchor
+        # actually hosts a native render surface. Kill switch (force legacy
+        # top-level): AIPACS_OVERLAY_CHILD_MODE=0.
+        if child_mode is None:
+            _child_enabled = (os.getenv("AIPACS_OVERLAY_CHILD_MODE", "1") or "1").strip() != "0"
+            child_mode = bool(_child_enabled) and not _anchor_has_native_render_window(anchor)
+        self._child_mode = bool(child_mode)
+
+        if self._child_mode:
+            # Child overlay — a real layer inside the viewport.
+            super().__init__(anchor)
+        else:
+            # Legacy top-level frameless tool window — floats above VTK surfaces.
+            super().__init__(
+                None,
+                Qt.Tool
+                | Qt.FramelessWindowHint
+                | Qt.WindowStaysOnTopHint,
+            )
+            self.setAttribute(Qt.WA_ShowWithoutActivating)
         self.setObjectName("AiPacsLoadingOverlay")
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
         self._minimal = bool(minimal)
         self._pass_through = bool(pass_through)
 
         if self._pass_through:
             self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            _transparent_input_flag = _window_transparent_for_input_flag()
-            if _transparent_input_flag is not None:
-                self.setWindowFlag(_transparent_input_flag, True)
+            if not self._child_mode:
+                _transparent_input_flag = _window_transparent_for_input_flag()
+                if _transparent_input_flag is not None:
+                    self.setWindowFlag(_transparent_input_flag, True)
 
         # Keep a reference to the widget we're covering
         self._anchor = anchor
 
-        # Position over the anchor using global screen coords
+        # Cover the anchor (local rect as a child; global coords as a top-level).
         self._sync_geometry()
 
         # Watch the anchor (and its top window) for move / resize
@@ -255,6 +315,33 @@ class AiPacsLoadingOverlay(QWidget):
         top = anchor.window()
         if top and top is not anchor:
             top.installEventFilter(self)
+
+        # ── Overlay scoping (2026-06-24, Issue 1) ─────────────────────────────
+        # This overlay is a TOP-LEVEL Qt.Tool + WindowStaysOnTopHint window — the
+        # only reliable way to paint above native VTK/OpenGL viewports. Left
+        # unscoped, that also made it float above OTHER applications (e.g. Chrome)
+        # and linger after a patient-tab switch. Scope it to the app + anchor:
+        # hide whenever the APPLICATION loses focus to another app (so it never
+        # covers another program), and whenever the anchor viewport hides (tab
+        # switch / dispose); restore when focus + anchor return and loading is
+        # still intended. ``_intended_visible`` is the loading state the show/hide
+        # API drives. Intra-app window/tab changes do NOT fire
+        # applicationStateChanged, so this never self-hides on activateWindow().
+        # Kill switch: AIPACS_OVERLAY_SCOPED=0.
+        self._intended_visible = True
+        # A CHILD overlay is already clipped to the viewport, so it can never float
+        # above another app or linger on a tab switch — no app-state scoping needed.
+        # Only the top-level (VTK) fallback needs it.
+        self._scoped = (not self._child_mode) and (
+            os.getenv("AIPACS_OVERLAY_SCOPED", "1") or "1"
+        ).strip() != "0"
+        if self._scoped:
+            try:
+                _app = QApplication.instance()
+                if _app is not None:
+                    _app.applicationStateChanged.connect(self._on_app_state_changed)
+            except Exception:
+                pass
 
         # Semi-transparent dark backdrop (painted via paintEvent for
         # true translucent background on a top-level window)
@@ -425,6 +512,15 @@ class AiPacsLoadingOverlay(QWidget):
         a = self._anchor
         if a is None or not a.isVisible():
             return
+        if getattr(self, "_child_mode", False):
+            # Child of the anchor: cover its full client rect in LOCAL coords and
+            # stay raised above the anchor's image / metadata / annotation layers.
+            self.setGeometry(0, 0, a.width(), a.height())
+            try:
+                self.raise_()
+            except Exception:
+                pass
+            return
         global_pos = a.mapToGlobal(a.rect().topLeft())
         self.setGeometry(global_pos.x(), global_pos.y(), a.width(), a.height())
 
@@ -437,11 +533,44 @@ class AiPacsLoadingOverlay(QWidget):
 
     # ── resize / move tracking via event filter ──────────────────────
     def eventFilter(self, obj, event):
-        """Follow anchor widget moves and resizes."""
+        """Follow anchor widget moves/resizes; scope visibility to the anchor so
+        the overlay is dropped on a patient-tab switch / viewport dispose
+        (2026-06-24, Issue 1)."""
         etype = event.type()
         if etype in (QEvent.Resize, QEvent.Move):
             self._sync_geometry()
+        elif getattr(self, "_scoped", False) and obj is self._anchor:
+            if etype == QEvent.Hide:
+                # Anchor viewport hidden (tab switch / dispose) → don't linger.
+                try:
+                    self.hide()
+                except Exception:
+                    pass
+            elif etype == QEvent.Show and getattr(self, "_intended_visible", True):
+                try:
+                    self._sync_geometry()
+                    self.show()
+                    self.raise_()
+                except Exception:
+                    pass
         return super().eventFilter(obj, event)
+
+    def _on_app_state_changed(self, state):
+        """Hide while another APPLICATION is in front (a top-level always-on-top
+        overlay must never float above other apps), restore when AI-PACS regains
+        focus and loading is still intended (2026-06-24, Issue 1)."""
+        if not getattr(self, "_scoped", False):
+            return
+        try:
+            if state != Qt.ApplicationActive:
+                self.hide()
+            elif getattr(self, "_intended_visible", True) \
+                    and self._anchor is not None and self._anchor.isVisible():
+                self._sync_geometry()
+                self.show()
+                self.raise_()
+        except Exception:
+            pass
 
     # ── helpers ──────────────────────────────────────────────────────
     def _tick_dots(self):
@@ -548,6 +677,13 @@ class AiPacsLoadingOverlay(QWidget):
         """
         if overlay is None:
             return
+
+        # Mark the loading state as ended so the app-state / anchor scoping
+        # (Issue 1) does not re-show the overlay during/after the fade-out.
+        try:
+            overlay._intended_visible = False
+        except Exception:
+            pass
 
         def _start_fade():
             # Production-crash guard (other-PC frozen build, 2026-06-05

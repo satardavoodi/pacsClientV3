@@ -1222,6 +1222,25 @@ class QtViewerBridge:
                 "[UX_FIRST_IMAGE_VISIBLE] series=%s slice=%d decode_ms=%.1f total_ms=%.1f",
                 _series_no, idx, frame.decode_ms, total_ms,
             )
+            # KPI (2026-06-24): viewer-side TTFI — the first image is now actually
+            # PAINTED in the viewport (vs the download-side TTFI = first file on
+            # disk). Fires once per series (guarded by _first_image_logged above).
+            # Pure additive log; kill switch AIPACS_POOR_NETWORK_KPIS=0.
+            try:
+                if (os.getenv("AIPACS_POOR_NETWORK_KPIS", "1") or "1").strip() != "0":
+                    # TTD = decode (DICOM pixel decode, network-independent);
+                    # TTR = render (decoded → painted); total = file→visible.
+                    # Decomposes the file-arrival-to-render path (review area #6) so a
+                    # decode/render bottleneck is visible even on a fast network.
+                    _ttd_ms = float(frame.decode_ms)
+                    _ttr_ms = max(0.0, float(total_ms) - _ttd_ms)
+                    logger.warning(
+                        "[KPI] kind=TTFI scope=viewer series=%s slice=%d "
+                        "ttd_ms=%.1f ttr_ms=%.1f total_ms=%.1f frame_cached=%s",
+                        _series_no, idx, _ttd_ms, _ttr_ms, total_ms, _frame_cached,
+                    )
+            except Exception:
+                pass
             switch_id = str(getattr(self, '_corr_switch_id', '') or '')
             first_visible_event = _corr_record_event(
                 'VIEWER_SWITCH',

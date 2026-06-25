@@ -260,3 +260,97 @@ def get_reception_api_timeout() -> int:
         return get_reception_api_config().get_request_timeout()
     except Exception:
         return _DEFAULT_TIMEOUT
+
+
+# ---------------------------------------------------------------------------
+# Reception/API circuit breaker (added 2026-06-26)
+# ---------------------------------------------------------------------------
+# When a center's Reception/Workflow REST API is unreachable (e.g. the Mehr
+# server has no reception service on its configured port, or a poor link drops
+# the connection), the post-search reporting-physician hydration and report
+# lookups re-hit the dead endpoint on EVERY search — hundreds of ConnectionError
+# / timeout failures that waste the (already thin, on a poor link) bandwidth and
+# spam the logs (observed: 426 reporter-hydration rest_errors against
+# http://5.57.36.202:8800 in one Mehr session). The breaker short-circuits REST
+# callers after a few consecutive failures for a cooldown, then half-opens to
+# probe once and self-heals on the next success. It is keyed by base_url, so
+# switching centers (Razi <-> Mehr) keeps independent breaker state and a healthy
+# center is never penalised for a sick sibling. Background/non-clinical only —
+# this NEVER touches the imaging socket channel or the download path. Reversible:
+# AIPACS_RECEPTION_BREAKER=0 restores the prior always-try behavior.
+_RECEPTION_BREAKER_ENABLED = (os.environ.get("AIPACS_RECEPTION_BREAKER", "1") or "1").strip() != "0"
+try:
+    _RECEPTION_BREAKER_THRESHOLD = max(1, int(os.environ.get("AIPACS_RECEPTION_BREAKER_FAILS", "3")))
+except ValueError:
+    _RECEPTION_BREAKER_THRESHOLD = 3
+try:
+    _RECEPTION_BREAKER_COOLDOWN_S = max(5.0, float(os.environ.get("AIPACS_RECEPTION_BREAKER_COOLDOWN", "180")))
+except ValueError:
+    _RECEPTION_BREAKER_COOLDOWN_S = 180.0
+
+import threading as _threading
+import time as _time
+
+_reception_breaker_lock = _threading.Lock()
+# base_url -> {"failures": int, "open_until": float, "logged": bool}
+_reception_breaker_state: Dict[str, Dict[str, Any]] = {}
+
+
+def _breaker_key(base_url: Optional[str]) -> str:
+    if base_url:
+        return str(base_url).strip().rstrip("/")
+    try:
+        return get_reception_api_base_url()
+    except Exception:
+        return _DEFAULT_BASE_URL
+
+
+def reception_api_breaker_open(base_url: Optional[str] = None) -> bool:
+    """Return True when REST callers should SKIP this center's Reception/API
+    (the breaker is open during its cooldown). Returns False — i.e. allow the
+    call — when the breaker is disabled, has never tripped, or is half-open
+    (cooldown elapsed) so exactly one probe gets through to self-heal."""
+    if not _RECEPTION_BREAKER_ENABLED:
+        return False
+    key = _breaker_key(base_url)
+    now = _time.monotonic()
+    with _reception_breaker_lock:
+        st = _reception_breaker_state.get(key)
+        if not st:
+            return False
+        return now < float(st.get("open_until", 0.0) or 0.0)
+
+
+def record_reception_api_failure(base_url: Optional[str] = None) -> None:
+    """Record a failed Reception/API REST call. Opens the breaker once
+    consecutive failures reach the threshold."""
+    if not _RECEPTION_BREAKER_ENABLED:
+        return
+    key = _breaker_key(base_url)
+    now = _time.monotonic()
+    with _reception_breaker_lock:
+        st = _reception_breaker_state.setdefault(
+            key, {"failures": 0, "open_until": 0.0, "logged": False})
+        st["failures"] = int(st.get("failures", 0)) + 1
+        if st["failures"] >= _RECEPTION_BREAKER_THRESHOLD:
+            st["open_until"] = now + _RECEPTION_BREAKER_COOLDOWN_S
+            if not st.get("logged"):
+                st["logged"] = True
+                logger.warning(
+                    "[reception-breaker] OPEN for %s after %d consecutive failures — "
+                    "skipping Reception/API REST calls for %.0fs (set AIPACS_RECEPTION_BREAKER=0 "
+                    "to disable)", key, st["failures"], _RECEPTION_BREAKER_COOLDOWN_S,
+                )
+
+
+def record_reception_api_success(base_url: Optional[str] = None) -> None:
+    """Record a successful Reception/API REST call — closes the breaker (self-heal)."""
+    if not _RECEPTION_BREAKER_ENABLED:
+        return
+    key = _breaker_key(base_url)
+    with _reception_breaker_lock:
+        st = _reception_breaker_state.get(key)
+        if st and (st.get("failures") or st.get("open_until")):
+            if st.get("logged"):
+                logger.info("[reception-breaker] CLOSED for %s (Reception/API reachable again)", key)
+            _reception_breaker_state[key] = {"failures": 0, "open_until": 0.0, "logged": False}

@@ -125,6 +125,30 @@ _LOADING_DISK_READY_RESUME = (_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME", "1
 _DISK_READY_RESUME_MAX_ATTEMPTS = max(1, int(_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME_MAX", "6") or "6"))
 _DISK_READY_RESUME_RETRY_S = max(1.0, float(_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME_RETRY_S", "3") or "3"))
 
+# S2b — per-series STATE AUTHORITY as a settled signal (unified viewer pipeline,
+# docs/plans/architecture/VIEWER_UNIFICATION_STAGED_PLAN_2026-06-25.md). The
+# SeriesStateStore keeps a MONOTONIC high-water mark of displayed slices, so once a
+# viewport has shown the full on-disk set the authority stays settled even when a
+# later get_count_of_slices() momentarily reads low mid-rebuild — the exact race that
+# let the 47084 resume loop spin. When ON, the authority's structural `is_settled` is
+# an ADDITIONAL stop condition in the resume settled-stop (it never removes the live
+# `_settled_visible`/`_exhausted` checks — strictly more-likely-to-stop, never less).
+# Default OFF until live-validated; flip with AIPACS_VIEWER_STATE_AUTHORITY=1.
+_STATE_AUTHORITY_ENABLED = (_os.getenv("AIPACS_VIEWER_STATE_AUTHORITY", "0") or "0").strip() == "1"
+
+# Progressive FIRST-IMAGE start for an AWAITING viewport (2026-06-24, mehr poor
+# network — the core "see the first usable image as early as possible" goal). When
+# a series is dragged BEFORE its download finishes, the disk-ready resume above
+# otherwise waits for the FULL series ("a partial mid-download series is never
+# loaded prematurely"), so the user watches the spinner while early images already
+# sit on disk (observed live: 6/10 downloaded, viewport still blank). This starts
+# the progressive display on the FIRST on-disk image; the load paints image 1 and
+# the normal in-place on_series_images_progress GROW expands the stack as the rest
+# arrive (NOT a re-load per image). Start ONCE per awaiting episode. The
+# complete-resume path (secondary-study completion backfill) is unchanged. Kill
+# switch: AIPACS_PROGRESSIVE_AWAIT_FIRST_IMAGE=0.
+_PROGRESSIVE_AWAIT_FIRST_IMAGE = (_os.getenv("AIPACS_PROGRESSIVE_AWAIT_FIRST_IMAGE", "1") or "1").strip() != "0"
+
 
 def _format_download_progress(downloaded, total) -> str:
     """Pure formatter for the spinner's main status line (testable).
@@ -1189,6 +1213,60 @@ class _VCProgressiveMixin:
         except Exception:
             pass
 
+    def _feed_state_authority(self, vtk_w, display_key, study_uid, series_uid,
+                              disk, expected, visible):
+        """Feed the unified per-series STATE AUTHORITY (``SeriesStateStore``, S0) at the resume
+        settled-stop and RETURN its record (or None). Runs when EITHER the shadow
+        (``AIPACS_VIEWER_SPINE_SHADOW``) OR the authority (``AIPACS_VIEWER_STATE_AUTHORITY``) is
+        on; otherwise no store is created and it returns None (zero cost). The store keeps a
+        MONOTONIC high-water mark of ``displayed``, so its ``is_settled`` (displayed >= target =
+        max(disk, expected)) survives a ``get_count_of_slices()`` that momentarily reads low
+        mid-rebuild — the race that let the 47084 loop spin. Under the shadow it also logs
+        divergence vs the live check; the authority READ (the additional stop signal) happens in
+        the caller. NOT plugin-mirrored."""
+        try:
+            from PacsClient.utils.series_state_store import (
+                shadow_enabled, SeriesState, SeriesStateStore,
+            )
+            if not (shadow_enabled() or _STATE_AUTHORITY_ENABLED):
+                return None
+            if not study_uid or not series_uid:
+                return None
+            from PacsClient.utils.viewer_identity import SeriesRequest
+            store = getattr(self, "_series_state_store", None)
+            if store is None:
+                store = SeriesStateStore()
+                self._series_state_store = store
+            pid = str(getattr(getattr(self, "parent_widget", None), "patient_id", "") or "")
+            try:
+                handle = self._viewer_handle_for(vtk_w)
+            except Exception:
+                handle = None
+            req = SeriesRequest.create(
+                patient_id=pid, study_uid=study_uid, series_uid=series_uid,
+                display_key=display_key, viewer_handle=handle,
+            )
+            store.request(req, expected=(expected or None))
+            store.transition(
+                study_uid, series_uid, SeriesState.DISPLAYED,
+                disk=disk, expected=(expected or None), displayed=visible,
+            )
+            rec = store.get(study_uid, series_uid)
+            if shadow_enabled() and rec is not None:
+                authority_settled = bool(rec.is_settled)
+                live_settled = visible > 0 and visible >= disk
+                if authority_settled != live_settled:
+                    self.logger.info(
+                        "[STATE-AUTHORITY-SHADOW] series=%s authority_settled=%s live_settled=%s "
+                        "displayed=%d disk=%d target=%d (the unified state authority would %s)",
+                        display_key, authority_settled, live_settled, visible, disk,
+                        rec.target_count,
+                        "STOP the resume loop" if authority_settled else "keep awaiting",
+                    )
+            return rec
+        except Exception:
+            return None
+
     def _maybe_resume_awaiting_from_disk(self, vtk_w, display_key) -> bool:
         """If the awaited series' files are already complete on disk, resume the
         load via the proven display-key path and return True.
@@ -1213,6 +1291,9 @@ class _VCProgressiveMixin:
                 vtk_w._disk_ready_resume_attempts = 0
                 vtk_w._disk_ready_resume_done = False
                 vtk_w._disk_ready_resume_done_ts = 0.0
+                # New awaiting episode → allow exactly one progressive first-image
+                # start for this series (see _PROGRESSIVE_AWAIT_FIRST_IMAGE).
+                vtk_w._progressive_await_started = False
             _attempts = int(getattr(vtk_w, "_disk_ready_resume_attempts", 0) or 0)
             if getattr(vtk_w, "_disk_ready_resume_done", False):
                 # A prior resume did NOT clear the awaiting state (slow/cache-missed
@@ -1252,8 +1333,79 @@ class _VCProgressiveMixin:
                 self._disk_ready_counts = counts
             prev = counts.get(str(display_key))
             counts[str(display_key)] = count
-            if not _disk_ready_complete(count, expected, prev):
+            _complete = _disk_ready_complete(count, expected, prev)
+            # SETTLED-STATE STOP (2026-06-24, fresh-run 47801/47836 series 6 =
+            # 145+ live resume attempts). The resume rebuilds via change_series,
+            # which does NOT clear _awaiting_series_number — only the
+            # progressive-target apply path (_apply_progressive_to_target_viewer)
+            # emits ViewportLoadSucceeded + clears the flag. So once the viewport
+            # already shows the FULL on-disk set, the stale awaiting flag keeps
+            # this watchdog re-firing every tick forever (CPU churn + main-thread
+            # stalls; only 1 ViewportLoadSucceeded across 153 ViewportLoadRequested
+            # in the live run). Detect the genuinely-settled viewport (disk is
+            # complete AND the viewport shows every on-disk slice — robust to a
+            # wrong-high expected because `_complete` also covers a stable disk),
+            # clear the stale flag, emit the settled signal, and STOP. This is the
+            # settled-state the unified ensure_series_displayed chokepoint (Phase 2B,
+            # docs/plans/architecture/UNIFIED_SERIES_DISPLAY_AUTHORITY_PLAN_2026-06-24.md)
+            # will eventually own. Kill switch restores the legacy (loop) behaviour.
+            if (_os2.getenv("AIPACS_RESUME_STOP_WHEN_SETTLED", "1") or "1").strip() != "0" and _complete:
+                try:
+                    _vis_settled = int(vtk_w.get_count_of_slices() or 0)
+                except Exception:
+                    _vis_settled = 0
+                # The series is COMPLETE on disk. Stop when the viewport already shows the full
+                # on-disk set, OR when we have already resumed it the capped number of times.
+                # Re-resuming a fully-downloaded series forever is pure churn (the data is on
+                # disk; if the capped change_series calls did not stick, another will not
+                # either), and the attempt-exhaustion clause GUARANTEES termination even when
+                # get_count_of_slices() momentarily reads low mid-rebuild — the 47084 202/203
+                # livelock that climbed to attempt=243 despite MAX=6.
+                _attempts_now = int(getattr(vtk_w, "_disk_ready_resume_attempts", 0) or 0)
+                _settled_visible = _vis_settled > 0 and _vis_settled >= count
+                _exhausted = _attempts_now >= _DISK_READY_RESUME_MAX_ATTEMPTS
+                # S2b: feed the unified per-series state authority at this exact livelock site
+                # and read its STRUCTURAL is_settled (monotonic high-water mark of displayed) as
+                # an ADDITIONAL stop signal — it survives a get_count race the live check loses.
+                # Shadow-only feed logs divergence; the authority READ is gated default-off.
+                _auth_rec = self._feed_state_authority(
+                    vtk_w, display_key, study_uid, _series_uid, count, expected, _vis_settled)
+                _authority_settled = bool(
+                    _STATE_AUTHORITY_ENABLED and _auth_rec is not None and _auth_rec.is_settled)
+                if _settled_visible or _exhausted or _authority_settled:
+                    vtk_w._awaiting_series_number = None
+                    vtk_w._disk_ready_resume_done = True
+                    vtk_w._disk_ready_resume_done_ts = now
+                    try:
+                        self._hide_spinner_for_widget(vtk_w)
+                    except Exception:
+                        pass
+                    try:
+                        self._log_viewport_lifecycle("ViewportLoadSucceeded", vtk_w, display_key)
+                    except Exception:
+                        pass
+                    self.logger.info(
+                        "disk-ready resume: series=%s settled (visible=%d disk=%d attempts=%d "
+                        "settled_visible=%s exhausted=%s authority=%s) — cleared stale awaiting "
+                        "flag, stopping resume loop", display_key, _vis_settled, count,
+                        _attempts_now, _settled_visible, _exhausted, _authority_settled,
+                    )
+                    return False
+            # Progressive first-image start: if the series is NOT complete yet but at
+            # least one image is on disk, START the display now (once) so the user
+            # sees image 1 immediately; the in-place on_series_images_progress grow
+            # then expands the stack as the rest arrive. The complete path below is
+            # unchanged (secondary-study completion backfill).
+            _prog_start = (
+                _PROGRESSIVE_AWAIT_FIRST_IMAGE
+                and (not _complete)
+                and count >= 1
+                and not bool(getattr(vtk_w, "_progressive_await_started", False))
+            )
+            if (not _complete) and (not _prog_start):
                 return False
+            if _prog_start:
+                vtk_w._progressive_await_started = True
             # Files are ready — resume the load via the proven path (retriable:
             # if it doesn't display, the watchdog retries until the cap).
             vtk_w._disk_ready_resume_done = True
@@ -1261,7 +1413,9 @@ class _VCProgressiveMixin:
             vtk_w._disk_ready_resume_attempts = _attempts + 1
             try:
                 self._log_viewport_lifecycle(
-                    "ViewportLoadResumedFromDisk", vtk_w, display_key,
+                    "ViewportProgressiveFirstImage" if _prog_start
+                    else "ViewportLoadResumedFromDisk",
+                    vtk_w, display_key,
                     files=count, expected=expected, attempt=_attempts + 1,
                 )
             except Exception:
@@ -1269,15 +1423,33 @@ class _VCProgressiveMixin:
             try:
                 # Load into the EXACT viewport that is awaiting this series (the
                 # layout cell the user dropped into) — NOT the default/selected
-                # viewport. Mirror the manual drag-drop call so the delayed load
-                # lands in the right cell: flag_change_selected_widget=False,
-                # vtk_widget=<the awaiting target>, force_reload=True.
+                # viewport. Correct-cell targeting is set by vtk_widget=vtk_w +
+                # flag_change_selected_widget=False (independent of force_reload).
+                #
+                # force_reload MUST be False here (2026-06-24, mehr 14965 mammo).
+                # This resume fires ONLY after the files are CONFIRMED complete on
+                # disk (_disk_ready_complete above), so the job is to LOAD them from
+                # disk. force_reload=True invalidates the full-series / ZetaBoost
+                # disk cache (clear_disk=True) AND, on any load miss, re-triggers a
+                # full network RE-DOWNLOAD of data already on disk. On a slow link
+                # (mehr) that made the viewport spin for minutes re-fetching tens of
+                # MB it already had — and the watchdog repeated it every retry
+                # (observed live: a 54 MB mammo series re-downloaded as 72 MB at
+                # ~465 KB/s while the complete file sat on disk). force_reload=False
+                # lets a warm full-series cache serve instantly and otherwise loads
+                # straight from the on-disk DICOM, with no invalidation and no
+                # redundant re-download. The awaiting viewport shows a spinner (0
+                # slices) so the same-series no-op skip cannot trigger. Kill switch
+                # (restore legacy force_reload): AIPACS_DISK_RESUME_NO_REDOWNLOAD=0.
+                _resume_force_reload = (
+                    _os2.getenv("AIPACS_DISK_RESUME_NO_REDOWNLOAD", "1") or "1"
+                ).strip() == "0"
                 self.change_series_on_viewer(
                     display_key,
                     flag_change_selected_widget=False,
                     vtk_widget=vtk_w,
                     slider=getattr(vtk_w, "slider", None),
-                    force_reload=True,
+                    force_reload=_resume_force_reload,
                 )
             except Exception:
                 pass

@@ -34,6 +34,21 @@ from modules.download_manager.ui.main_widget import DownloadManagerWidget
 # study is unaffected (display key == number). Kill switch: AIPACS_PROGRESSIVE_UID_BIND=0.
 _PROGRESSIVE_UID_BIND = (os.getenv("AIPACS_PROGRESSIVE_UID_BIND", "1") or "1").strip() != "0"
 
+# Multi-study real-time THUMBNAIL status (2026-06-25, patient 47084): the DM→widget
+# bridge is bound to ONE (primary) study_uid, so on_series_started/on_series_completed
+# hard-return on `uid != study_uid`. For a multi-study patient the SECONDARY study's
+# series download events were dropped, so those thumbnails never turned
+# downloading/ready in real time (only after a tab-switch rebuild). When the event's
+# globally-unique series_uid resolves to a thumbnail ALREADY shown for THIS patient
+# (cross-patient safe — the offset-key widgets + _series_uid_to_number are built only
+# from this patient's server_series_info), admit it into the THUMBNAIL lane ONLY
+# (start/complete_series_download). The viewport / progress / series_downloaded lanes
+# stay primary-study-only (no load is triggered). Kill switch:
+# AIPACS_THUMB_SIBLING_STUDY_STATUS=0 restores the byte-identical legacy filter.
+_THUMB_SIBLING_STUDY = (
+    os.getenv("AIPACS_THUMB_SIBLING_STUDY_STATUS", "1") or "1"
+).strip() != "0"
+
 try:
     from modules.viewer.fast.slot_timing import time_slot as _g6_time_slot
 except Exception:  # pragma: no cover
@@ -289,6 +304,75 @@ class HomeDownloadService:
                 except Exception:
                     return False
 
+            def _sibling_total(uid, series_uid) -> int:
+                """DICOM image_count for a sibling-study series, looked up from that
+                study's OWN DM task (the primary-scoped _resolve_series_total cannot see
+                a secondary study)."""
+                try:
+                    task = dm._tasks.get(uid)
+                    if task:
+                        s_uid = str(series_uid)
+                        for s in getattr(task, 'series_list', []) or []:
+                            if str(getattr(s, 'series_uid', '')) == s_uid:
+                                return int(getattr(s, 'image_count', 0))
+                except Exception:
+                    pass
+                return 0
+
+            def _belongs_to_open_thumbnails(series_uid) -> bool:
+                """Cross-patient-safe admission test for sibling-study (uid != the
+                bridge's primary study_uid) status updates: True only when series_uid
+                is in THIS multi-study patient's uid→number map — which is built solely
+                from this patient's server_series_info. A foreign patient's UID can
+                never resolve here, so the clinical cross-patient isolation invariant is
+                preserved. Single-study patients never reach here (uid == study_uid)."""
+                if not series_uid:
+                    return False
+                w = widget_ref()
+                if not w:
+                    return False
+                try:
+                    is_multi = (len(getattr(w, '_studies_series', {}) or {}) > 1
+                                or bool(getattr(w, '_is_multistudy_hint', False)))
+                except Exception:
+                    is_multi = False
+                if not is_multi:
+                    return False
+                s = str(series_uid)
+                tm = getattr(w, 'thumbnail_manager', None)
+                for m in (getattr(tm, '_series_uid_to_number', {}) if tm is not None else {},
+                          getattr(w, '_series_uid_to_number', {}) or {}):
+                    try:
+                        if m and (s in m or series_uid in m):
+                            return True
+                    except Exception:
+                        continue
+                return False
+
+            def _project_sibling_thumbnail(uid, series_uid, completed: bool) -> None:
+                """Project a sibling-study series' download state onto its OWN thumbnail
+                (resolved to the offset/display key via _resolve_sn). Touches ONLY the
+                thumbnail-border lane — never series_downloaded, viewport progress, or a
+                load trigger (those stay primary-study-only by design)."""
+                w = widget_ref()
+                if not w or not hasattr(w, "thumbnail_manager"):
+                    return
+                sn = _resolve_sn(series_uid)
+                total = _sibling_total(uid, series_uid)
+                try:
+                    if completed:
+                        w.thumbnail_manager.complete_series_download(
+                            sn, total_images=total if total > 0 else None)
+                    else:
+                        w.thumbnail_manager.start_series_download(
+                            sn, total_images=total if total > 0 else None)
+                    _logger.info(
+                        "[FAST-THUMB-SIBLING] %s study=%s series_uid=%s key=%s",
+                        "complete" if completed else "start", uid, series_uid, sn,
+                    )
+                except Exception:
+                    pass
+
             def _flush():
                 batch = list(_pending_completed)
                 _pending_completed.clear()
@@ -367,6 +451,9 @@ class HomeDownloadService:
 
             def on_series_started(uid, series_uid, series_desc):
                 if uid != study_uid:
+                    # Multi-study sibling study: real-time "downloading" border only.
+                    if _THUMB_SIBLING_STUDY and _belongs_to_open_thumbnails(series_uid):
+                        _project_sibling_thumbnail(uid, series_uid, completed=False)
                     return
                 sn = _resolve_sn(series_uid)
                 _progress_normalizer.mark_started(sn)
@@ -468,7 +555,13 @@ class HomeDownloadService:
                     _progress_timer.start()
 
             def on_series_completed(uid, series_uid):
-                if uid != study_uid or not widget_ref():
+                if not widget_ref():
+                    return
+                if uid != study_uid:
+                    # Multi-study sibling study: real-time "ready" border only (no
+                    # series_downloaded / viewport progress / load trigger).
+                    if _THUMB_SIBLING_STUDY and _belongs_to_open_thumbnails(series_uid):
+                        _project_sibling_thumbnail(uid, series_uid, completed=True)
                     return
                 sn = _resolve_sn(series_uid)
                 with _g6_time_slot("home_download.on_series_completed", series=str(sn)):

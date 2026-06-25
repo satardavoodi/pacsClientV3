@@ -20,6 +20,21 @@ def _bus_bridge_enabled() -> bool:
     )
 
 
+def _assistant_bus_mode() -> "str | None":
+    """Session mode to stamp on voice-assistant CommandBus calls, or ``None``.
+
+    Default OFF → ``None`` → no ``agent_mode`` is set, so the registry permission
+    gate (permissions.py) stays INERT for the voice path — byte-identical to
+    today. ``AIPACS_AGENT_ASSISTANT_MODE=1`` runs the voice assistant in
+    'assistant' mode: server-write actions require a confirm turn (reusing the
+    existing CONFIRM_REQUIRED machinery) and destructive actions are denied.
+    This is a BEHAVIOR CHANGE for the voice assistant — enable only after live
+    verification on the source build.
+    """
+    return "assistant" if os.environ.get(
+        "AIPACS_AGENT_ASSISTANT_MODE", "").strip() == "1" else None
+
+
 class SecretaryExecutor:
     def __init__(
         self,
@@ -404,7 +419,19 @@ class SecretaryExecutor:
                 needs_confirmation=bool(plan.get("needs_confirmation")),
                 reason=str(plan.get("reason") or "secretary bus bridge"),
             )
-            result = bus.execute(cmd_plan, state)
+            # Per-call state for the bus: propagate the confirmation flag so the
+            # registry permission gate (permissions.py) can clear a
+            # CONFIRM_REQUIRED on the user's "yes" re-run, and stamp the
+            # assistant session mode only when explicitly enabled (default off →
+            # no agent_mode → gate inert, byte-identical to today). Adapters only
+            # READ state, so a shallow copy is safe and keeps these transient keys
+            # out of the cross-turn session state.
+            bus_state = dict(state or {})
+            bus_state["confirmed"] = bool(confirmed)
+            _amode = _assistant_bus_mode()
+            if _amode and "agent_mode" not in bus_state:
+                bus_state["agent_mode"] = _amode
+            result = bus.execute(cmd_plan, bus_state)
         except Exception as exc:  # noqa: BLE001 — degrade to a typed error
             return {
                 "ok": False,

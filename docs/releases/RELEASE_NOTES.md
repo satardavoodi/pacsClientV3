@@ -1,9 +1,37 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.3.6 (2026-06-21)
-**Previous Stable:** v3.3.5 (2026-06-21)
-**Release Date:** 2026-06-21
+**Current Stable Version:** v3.3.7 (2026-06-26)
+**Previous Stable:** v3.3.6 (2026-06-21)
+**Release Date:** 2026-06-26
 **Branch:** beta-version
+
+---
+
+## v3.3.7 (2026-06-26) - Minor release: dental imaging, MPR quality + stability, viewer pipeline unification
+
+### Summary
+
+Minor release advancing the stable line to 3.3.7 and publishing the full current
+beta-version working state. Highlights: a new professional Dental Imaging workspace,
+substantial Dental Curve MPR quality and stability work, viewer pipeline unification
+groundwork (shared series-display state authority + stable viewer identity), download
+resilience on poor networks, and EchoMind agent-control (permissions + multi-step
+workflows).
+
+### Included
+
+- Dental Imaging professional module (CBCT workspace) and improved Dental Curve MPR:
+  sharper panoramic, robust windowing, normal 2D mouse/Window-Level, VTK point-picking,
+  in-place viewport, and teardown/close crash fixes
+- Viewer pipeline unification groundwork: shared series-display state authority and
+  stable viewer identity (reduces multi-study keying hazards)
+- Poor-network progressive-load KPIs, reception-API circuit breaker, disk-resume
+  without re-downloading, and a resume-livelock fix on multi-study patients
+- Real-time multi-study thumbnail status, history series sorted first, pin overlay,
+  and patient-tab local reminder
+- EchoMind agent-control: permission gate and multi-step workflow engine
+- Ruler renders on completion; deleted-object teardown crash guard
+- Canonical version markers advanced to v3.3.7; full local state published to all remotes
 
 ---
 

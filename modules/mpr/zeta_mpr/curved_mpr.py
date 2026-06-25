@@ -26,12 +26,88 @@ References:
 - Kanitsar et al., "CPR - Curved Planar Reformation" (2002)
 - Bishop, "There is More than One Way to Frame a Curve" (1975)
 - Hatcher et al., "Dental CBCT Reformatting" (2010)
+
+AI-PACS wiring (read before editing)
+------------------------------------
+This module is the generation engine for the Patient-Tab "Dental Curve MPR"
+button. ToolbarManager._generate_curved_mpr_from_points() imports
+``CurvedMPRGenerator`` from THIS module and calls ``set_centerline()`` +
+``generate_curved_mpr()`` + ``generate_panoramic_view()``; the result is shown
+by modules/mpr/curved_mpr/curved_mpr_panoramic_view.py.
+
+Name collision: there is a SECOND, unrelated class also named
+``CurvedMPRGenerator`` in modules/mpr/curved_mpr/curved_mpr_module.py. That one
+is the LEGACY generator used by the advanced 2D viewer
+(modules/viewer/advanced/viewer_2d.py); it has a different constructor and no
+``generate_panoramic_view``. The Dental button uses the one in THIS file — keep
+the import path ``modules.mpr.zeta_mpr.curved_mpr`` intact. See
+docs/pipelines/dental-curve-mpr.md.
 """
 
 import vtkmodules.all as vtk
 from typing import List, Tuple, Optional
 import numpy as np
 import math
+import logging
+
+# Module logger. Diagnostics in this file were written as bare print() calls
+# (synchronous stdout, and crash-prone on a cp1252 Windows console because of
+# the Unicode glyphs in the messages). Shadow print() at module scope so the
+# existing call sites are preserved byte-for-byte but routed into the logging
+# subsystem (and user_data/logs/) instead of stdout. Mirrors the pattern in
+# PacsClient/pacs/patient_tab/ui/patient_ui/patient_widget_core/_pw_viewers.py.
+logger = logging.getLogger(__name__)
+
+
+def print(*args, **_kwargs):  # noqa: A001 - intentional builtin shadow, see above
+    logger.debug(" ".join(str(a) for a in args))
+
+
+import os
+
+# Panoramic post-projection sharpening (display enhancement, default ON). The mean/
+# thick-slab projection softens fine dental detail; a mild UNSHARP MASK on the final
+# 2-D panoramic restores apparent sharpness of roots / lamina dura / apices. This is
+# APPEARANCE ONLY — it does not change geometry, spacing, origin, orientation, the
+# reslice (still cubic), or the world coordinates measurements use. A conservative
+# amount avoids oversharpening / fabricated edges. Kill switch
+# AIPACS_CURVED_MPR_SHARPEN=0; tunables *_AMOUNT (0..1.5) and *_SIGMA (px).
+_PANO_SHARPEN = os.environ.get("AIPACS_CURVED_MPR_SHARPEN", "1") != "0"
+try:
+    _PANO_SHARPEN_AMOUNT = max(0.0, min(1.5, float(os.environ.get("AIPACS_CURVED_MPR_SHARPEN_AMOUNT", "0.5"))))
+except ValueError:
+    _PANO_SHARPEN_AMOUNT = 0.5
+try:
+    _PANO_SHARPEN_SIGMA = max(0.3, float(os.environ.get("AIPACS_CURVED_MPR_SHARPEN_SIGMA", "1.0")))
+except ValueError:
+    _PANO_SHARPEN_SIGMA = 1.0
+
+
+def _apply_panoramic_unsharp(array):
+    """Mild unsharp mask on the final 2-D panoramic (appearance only).
+
+    ``sharp = img + amount * (img - gaussian(img, sigma))`` clipped to the input
+    range. Geometry / spacing / orientation are untouched and measurements use world
+    coordinates, not these pixel values, so accuracy is unaffected. Returns the input
+    unchanged when disabled or if scipy is unavailable (never raises into the
+    reconstruction).
+    """
+    if not _PANO_SHARPEN or _PANO_SHARPEN_AMOUNT <= 0.0:
+        return array
+    try:
+        from scipy.ndimage import gaussian_filter
+        a = array.astype(np.float32, copy=False)
+        lo = float(a.min())
+        hi = float(a.max())
+        if hi - lo < 1e-6:
+            return array
+        blurred = gaussian_filter(a, sigma=_PANO_SHARPEN_SIGMA)
+        sharp = a + _PANO_SHARPEN_AMOUNT * (a - blurred)
+        np.clip(sharp, lo, hi, out=sharp)
+        return sharp.astype(array.dtype, copy=False)
+    except Exception as _e:  # pragma: no cover - defensive
+        logger.debug("[PANORAMIC] unsharp skipped: %s", _e)
+        return array
 
 
 # =============================================================================
@@ -930,6 +1006,23 @@ class ResliceEngine:
         elif projection_type == 'max':
             # Maximum Intensity Projection
             panoramic_array = np.max(straightened_volume, axis=2)
+        elif projection_type == 'weighted':
+            # Gaussian-weighted mean across the radial slab: the CENTRAL plane (the
+            # arch curve itself) dominates, so tooth roots / apices / cortical margins
+            # / lamina dura stay sharp while the slab still spans enough depth to
+            # include them. Sharper than a flat mean, far less noisy than max, and
+            # still a faithful weighted average (monotonic, fabricates no intensities,
+            # spacing/geometry untouched → measurements unaffected).
+            _n = straightened_volume.shape[2]
+            if _n <= 1:
+                panoramic_array = straightened_volume[:, :, 0]
+            else:
+                _center = (_n - 1) / 2.0
+                _idx = np.arange(_n, dtype=np.float32)
+                _sigma = max(1.0, _n / 4.0)
+                _w = np.exp(-0.5 * ((_idx - _center) / _sigma) ** 2).astype(np.float32)
+                _w /= float(_w.sum())
+                panoramic_array = np.tensordot(straightened_volume, _w, axes=([2], [0]))
         else:
             raise ValueError(f"Unknown projection type: {projection_type}")
         
@@ -1033,7 +1126,13 @@ class ResliceEngine:
         print(f"      X spacing (along arch): {spacing_x:.4f} mm/pixel")
         print(f"      Y spacing (vertical): {spacing_y:.4f} mm/pixel")
         print(f"      Aspect ratio: {spacing_x/spacing_y:.2f}")
-        
+
+        # Post-projection sharpening — appearance-only display enhancement (default
+        # on). Recovers fine dental detail (roots / lamina dura / apices) softened by
+        # the slab projection, WITHOUT touching geometry, spacing, orientation, or the
+        # world coordinates measurements use. See _apply_panoramic_unsharp.
+        panoramic_flipped = _apply_panoramic_unsharp(panoramic_flipped)
+
         output = vtk.vtkImageData()
         # VTK dimensions: (X=positions, Y=height, Z=1) - use cropped dimensions
         output.SetDimensions(num_positions_cropped, height_pixels_cropped, 1)
@@ -1382,7 +1481,13 @@ class ResliceEngine:
 class CurvedMPRGenerator:
     """
     Main class for generating Curved Planar Reformation.
-    
+
+    This is the engine wired to the Patient-Tab "Dental Curve MPR" button
+    (imported as ``from modules.mpr.zeta_mpr.curved_mpr import CurvedMPRGenerator``).
+    Do not confuse it with the namesake legacy class in
+    modules/mpr/curved_mpr/curved_mpr_module.py — only THIS one exposes
+    ``generate_panoramic_view`` and takes just ``image_data`` in its constructor.
+
     This is the primary interface for curved MPR. It coordinates:
     - Path3D for spline interpolation
     - PlaneGenerator for stable frame computation
@@ -1540,9 +1645,16 @@ class CurvedMPRGenerator:
         
         # Determine number of positions
         if num_positions is None:
-            # Use higher sampling for panoramic (wider image)
-            # Approximately 3-4 positions per mm for better resolution
-            num_positions = max(100, min(500, int(self.path.total_length * 3)))
+            # Sampling density along the arch (~3 positions/mm). AIPACS_CURVED_MPR_PANO_DENSITY
+            # (default 1.0) scales it for sharper along-arch detail; it does NOT change spacing
+            # (spacing_x = path_length/(num_positions-1), so more positions just = finer
+            # columns), so measurements stay correct.
+            try:
+                _density = max(0.5, min(4.0, float(os.environ.get("AIPACS_CURVED_MPR_PANO_DENSITY", "1.0"))))
+            except (TypeError, ValueError):
+                _density = 1.0
+            _cap = int(500 * _density)
+            num_positions = max(100, min(_cap, int(self.path.total_length * 3.0 * _density)))
         
         print(f"[PANORAMIC] Generating panoramic view (Slicer method)...")
         print(f"      Path length: {self.path.total_length:.1f} mm")

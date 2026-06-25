@@ -31,7 +31,7 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "preLaunchTask": "Setup Python Environment",
-            "env": { "AIPACS_UI_VARIANT": "v1" }
+            "env": { "AIPACS_UI_VARIANT": "v1", "AIPACS_CURVED_MPR_VTK_PICK": "1" }
         },
         {
             "name": "Run AIPacs (main.py, .venv)",
@@ -42,7 +42,8 @@
             "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
             "console": "integratedTerminal",
             "justMyCode": true,
-            "preLaunchTask": "Setup Python Environment"
+            "preLaunchTask": "Setup Python Environment",
+            "env": { "AIPACS_CURVED_MPR_VTK_PICK": "1" }
         },
         {
             "name": "Run AIPacs (main.py, no terminal)",
@@ -53,7 +54,8 @@
             "python": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
             "console": "internalConsole",
             "justMyCode": true,
-            "preLaunchTask": "Setup Python Environment"
+            "preLaunchTask": "Setup Python Environment",
+            "env": { "AIPACS_CURVED_MPR_VTK_PICK": "1" }
         }
     ]
 }

@@ -24,6 +24,10 @@ this folder's [`README.md`](./README.md), and the
 
 Most fixes should pass the **Verify lane first**, then get a **Clinical lane** GUI check.
 
+**To drive the live app, prefer the in-app command surface — the `aipacs-control` MCP (§3.1) —
+over pixel-clicking.** It is the path the maintainers built specifically to control the
+workstation faster and more reproducibly than Windows-MCP / computer-use.
+
 ---
 
 ## 2. Your toolbelt — what each tool can and cannot do here
@@ -43,8 +47,17 @@ terminal directly (see [`../VSCODE_AGENT_MODE_SETUP_2026-06-02.md`](../VSCODE_AG
   each call has a **~45 s limit** (for long jobs, start them and poll; see
   [`../../tools/dev/SANDBOX_TESTING.md`](../../tools/dev/SANDBOX_TESTING.md)).
 
-- **Desktop control** (computer-use: screenshot + mouse/keyboard on the real desktop) — how you
-  drive and observe the running GUI. Apps are granted at a **tier**:
+- **In-app command surface — the FASTEST way to drive the GUI** (preferred over pixel-clicking,
+  and the path the maintainers built to beat Windows-MCP). The app exposes its real functions via
+  the EchoMind **CommandBus**; with `AIPACS_TEST_SERVER=1` (source build only) that bus is
+  reachable over a `QLocalServer` pipe wrapped by the **`aipacs-control` MCP**
+  (`tools/testing/aipacs_control_mcp/`). Call tools like `open_patient`, `drag_series`, `open_mpr`,
+  `query_viewport_state`, `burst`, `run_scenario` — each runs the *same production code path* a
+  click/drop would, at ms-latency. Full how-to in §3.1.
+
+- **Desktop control** (computer-use: screenshot + mouse/keyboard on the real desktop) — the
+  **fallback**: visual verification (screenshots of what actually rendered) and actions outside
+  the command vocabulary. Apps are granted at a **tier**:
   - **Browsers → "read"**: visible in screenshots, no clicks/typing.
   - **Terminals & IDEs (VS Code, terminal) → "click"**: you can *see* and *click* (e.g. a Run
     button) but **cannot type** into them. So you cannot type a launch command into a terminal.
@@ -66,20 +79,62 @@ open the frozen exe. This is why **human-assisted bootstrap is the default** (§
 
 ## 3. Controlling the running app
 
-**Default workflow = human-assisted bootstrap** ([`../../CLAUDE.md`](../../CLAUDE.md) → "Human-assisted
-bootstrap mode"). The human handles launch, login, popups, and moving the app to Monitor 1; you
-**test from the already-open app**.
+Two ways to drive the live app. **Prefer the command surface; fall back to pixel control only for
+what it can't do.**
 
-- **Procedure & monitor mechanics:** [Launch & Control Runbook](../AIPACS_LAUNCH_CONTROL_RUNBOOK.md)
-  (source-build launch, login = click **Sign In**, deterministic monitor switching via
-  `Win+Shift+←/→`, the "what the middle title-bar button really does" investigation).
-- **Layout:** AI-PACS on **Monitor 1** (larger), VS Code/terminal/logs on **Monitor 2**.
-- **Drive it:** screenshot first → tick **MR/CT** → set the date (last 2–3 days) →
-  **Search Patients** → single-click several patients (thumbnails should auto-load in the
-  sidebar) → open a patient / study to verify the viewer. Identify the **source build by its
-  Python (snake) taskbar icon**, not the black AI-PACS icon.
-- **If the GUI stops responding to control:** stop and ask the user for a short, specific action.
-  Do **not** do random relaunches and do **not** open the installed exe.
+### 3.1 Fastest path — the in-app command surface (`aipacs-control` MCP)
+Built specifically to control the workstation faster and more reproducibly than mouse automation.
+Reference: [`../../tools/testing/aipacs_control_mcp/README.md`](../../tools/testing/aipacs_control_mcp/README.md)
+· architecture [`../reports/TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md`](../reports/TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md)
+· fidelity [`../reports/MCP_VS_REAL_WORKFLOW_FIDELITY_2026-06-04.md`](../reports/MCP_VS_REAL_WORKFLOW_FIDELITY_2026-06-04.md).
+
+**Chain:** MCP tool → in-app **Test Control Server** (`QLocalServer`, `modules/EchoMind/secretary/test_server.py`)
+→ EchoMind **CommandBus** → the real application function. Every command runs the production code
+path, so cross-patient isolation and multi-study guards stay enforced (fidelity tier **T1**;
+commands queue one-per-event-loop-turn — impatient-user pressure a human can't reproduce).
+
+**Enable (source build only — NEVER during clinical reading):**
+1. `& "<repo>\.venv\Scripts\python.exe" -m pip install mcp` (once).
+2. Launch the source build with `AIPACS_TEST_SERVER=1` (restore the full env first so the per-user
+   socket name resolves — see the README's PowerShell block). Banner confirms
+   `[TEST_SERVER] LISTENING on local socket 'AIPACS_TEST_<user>'`.
+3. Register the MCP (stdio) in your client (`aipacs-control` → the `.venv` python running
+   `tools/testing/aipacs_control_mcp/server.py`) — works for Claude Desktop, Cowork, and Claude
+   Code. Or skip MCP and use the CLI:
+   `& "<repo>\.venv\Scripts\python.exe" tools\testing\aipacs_control_mcp\client.py open_patient '{\"patient_id\": \"44704\"}'`.
+
+**Tool vocabulary** (each = a real UI action):
+- *Lifecycle:* `launch_app` (launches the source build with the test server, dismisses startup
+  dialogs, clicks Sign In, moves to a monitor, waits ready), `stop_app`, `app_status`,
+  `wait_app_ready`, `login`, `list_monitors`, `move_app_to_monitor`.
+- *Workflow:* `list_patients`, `select_patient` (single-click + thumbnails), `open_patient`
+  (double-click open), `drag_series` (the exact `change_series_on_viewer` a real drop defers to),
+  `open_mpr`, `switch_tab`, `close_patient_tab`, `trigger_download`, `query_download_state`,
+  `wait_for_download`, `query_viewport_state`, `query_thumbnail_state`, `snapshot_health`.
+- *Pressure / repro:* `burst` (N commands as fast as the pipe allows), `run_scenario` (seeded JSON
+  timelines + JSONL session recording). `list_actions` / `raw_command` reach anything else the bus
+  exposes.
+
+In a **normal** clinical run (no test server) only read + safe-navigation actions exist; the full
+write surface (`change_series`, `close_patient_tab`, …) is registered **only** when the test
+server is on. `change_layout` is a typed NOT_IMPLEMENTED stub for now. Contract guard:
+`tests/code/echomind/test_adapter_contracts.py` — run it whenever adapters change.
+
+### 3.2 Fallback — desktop control (computer-use)
+Use pixel control only for what the command surface can't do: **visual verification** (screenshot
+the viewport to confirm what actually rendered) and actions not in the vocabulary. Tiers + the
+"look before you assert" rule are in §2. Manual sanity loop: tick **MR/CT** → set the date →
+**Search Patients** → single-click patients (thumbnails auto-load) → open a study. Identify the
+source build by its **Python (snake) taskbar icon**, not the black AI-PACS icon.
+
+### 3.3 Launch & positioning
+**Default = human-assisted bootstrap** ([`../../CLAUDE.md`](../../CLAUDE.md) → "Human-assisted bootstrap
+mode"): the human launches the source build, logs in, and moves it to **Monitor 1**; you drive
+from the open app. When the test server is enabled, the `aipacs-control`
+`launch_app` / `login` / `move_app_to_monitor` tools can do this end-to-end; otherwise follow the
+[Launch & Control Runbook](../AIPACS_LAUNCH_CONTROL_RUNBOOK.md) (deterministic monitor switch =
+`Win+Shift+←/→`). **If the GUI stops responding, ask the user** — never random-relaunch and never
+open the frozen exe.
 
 ---
 
@@ -154,8 +209,9 @@ Primary directory: `user_data/logs/` — inventory and scan guidance in
    [Launch & Control Runbook](../AIPACS_LAUNCH_CONTROL_RUNBOOK.md).
 2. **Code/logic change?** Verify lane: `bash tools/dev/sandbox_setup.sh` →
    `source tools/dev/sandbox_env.sh` → run the **targeted** suite for what you changed.
-3. **GUI/workflow change?** Ask the human to bootstrap the app (or confirm it's open on
-   Monitor 1), then drive + observe via desktop control (§3) and confirm via logs (§5).
+3. **GUI/workflow change?** Confirm the app is open on Monitor 1 (human-assisted bootstrap, or
+   `aipacs-control launch_app` when the test server is on), then drive it via the **command
+   surface (§3.1)** — falling back to desktop control for visual checks — and confirm via logs (§5).
 4. Ship the fix the framework's way: minimal edit **+ guard test + catalog row**, tasks tracked.
 
 ---
@@ -165,6 +221,7 @@ Primary directory: `user_data/logs/` — inventory and scan guidance in
 - [`../../CLAUDE.md`](../../CLAUDE.md) — project rules, subsystem regression guards, bootstrap mode.
 - [`./README.md`](./README.md) — first-five-minutes onboarding + the four rituals.
 - [Launch & Control Runbook](../AIPACS_LAUNCH_CONTROL_RUNBOOK.md) — launch / login / monitor control.
+- [`../../tools/testing/aipacs_control_mcp/README.md`](../../tools/testing/aipacs_control_mcp/README.md) — **the in-app control surface** (`aipacs-control` MCP / CommandBus / Test Control Server). Architecture: [`../reports/TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md`](../reports/TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md); fidelity vs. real clicks: [`../reports/MCP_VS_REAL_WORKFLOW_FIDELITY_2026-06-04.md`](../reports/MCP_VS_REAL_WORKFLOW_FIDELITY_2026-06-04.md).
 - [`../../tools/dev/SANDBOX_TESTING.md`](../../tools/dev/SANDBOX_TESTING.md) — Verify-lane setup (this session's addition).
 - `.github/prompts/` — [`root-cause-fix`](../../.github/prompts/root-cause-fix.prompt.md),
   [`debug-thumbnails`](../../.github/prompts/debug-thumbnails.prompt.md),
@@ -173,4 +230,5 @@ Primary directory: `user_data/logs/` — inventory and scan guidance in
   [`regression-guard`](../../.github/prompts/regression-guard.prompt.md).
 - [`../../tests/QUICKSTART.md`](../../tests/QUICKSTART.md) · [`../INDEX_BY_SUBSYSTEM.md`](../INDEX_BY_SUBSYSTEM.md) · [`../../tests/INDEX_BY_GUARD.md`](../../tests/INDEX_BY_GUARD.md).
 
-*Created 2026-06-21 alongside the sandbox Verify-lane setup.*
+*Created 2026-06-21 alongside the sandbox Verify-lane setup; the in-app command-surface control
+path (§3.1) was documented the same day.*

@@ -181,7 +181,14 @@ class TestControlServer:
 
         from .command_envelope import CommandPlan
         plan = CommandPlan(action=action, entities=dict(entities))
-        result = bus.execute(plan)
+        # Stamp the control channel's session mode so the registry permission
+        # gate (permissions.py) sees an explicit mode. Default 'qa' = the
+        # developer/QA-harness session: every action allowed with no confirmation
+        # pause — behaviourally identical to the pre-gate test server, now
+        # audited as mode=qa. A client MAY request a narrower mode per request
+        # (e.g. {"mode": "read_only"}) for safe read-only exploration.
+        mode = str(req.get("mode") or "qa").strip() or "qa"
+        result = bus.execute(plan, {"agent_mode": mode})
         return _result_to_wire(result, req_id)
 
     def close(self) -> None:

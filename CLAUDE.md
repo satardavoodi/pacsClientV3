@@ -126,6 +126,28 @@ Key invariants that must not be broken:
   `series.thumbnail_path` column is a hint only — never the sole source.
 - `make_pixmap_from_bytes` is Qt-main-thread only.
 
+### Patient-Tab thumbnail real-time download status — multi-study siblings (47084, 2026-06-25)
+The side-panel thumbnail border (downloading → ready) is driven by the DM→widget bridge
+`HomeDownloadService.connect_dm_to_widget(dm, widget, study_uid)`
+(`PacsClient/pacs/workstation_ui/home_ui/home_download_service.py`, NOT plugin-mirrored).
+Before editing `on_series_started` / `on_series_completed` / `_resolve_sn` / the
+sibling-study helpers, **read `docs/reports/THUMBNAIL_REALTIME_STATUS_MULTISTUDY_47084_2026-06-25.md`**.
+- The bridge is bound to ONE (primary) `study_uid`; every handler returns on
+  `uid != study_uid`. For a **multi-study** patient this dropped the SECONDARY study's
+  series events → those thumbnails never turned ready in real time (only after a tab-switch
+  rebuild replayed disk state). Single-study is unaffected (`uid` always == `study_uid`).
+- Fix (flag `AIPACS_THUMB_SIBLING_STUDY_STATUS`, default on; `=0` = byte-identical legacy):
+  a sibling event (`uid != study_uid`) is admitted into the **THUMBNAIL lane only** when
+  `_belongs_to_open_thumbnails(series_uid)` confirms its `series_uid` is in **this** patient's
+  `_series_uid_to_number` map — then `_project_sibling_thumbnail` resolves the OFFSET/display
+  key via `_resolve_sn` and calls only `start_/complete_series_download`.
+- **Cross-patient isolation is preserved**: admission requires the UID to already map to a
+  thumbnail of THIS patient (the map is built solely from this patient's `server_series_info`).
+  Never admit a sibling from caller/current context. **Never** emit `series_downloaded` /
+  viewport progress / a load trigger from the sibling path — those stay primary-study-only
+  (the deferred secondary-progress bridge). Failure→red still needs a real DM failure signal
+  (future). Guard `tests/code/ui_services/test_thumb_sibling_study_status.py`.
+
 ### Right-panel refresh / server-grew gate (44113 → 44323/44534, 2026-06-01→02)
 The main-page right-panel thumbnails render via the **fast-cache-first gate in
 `show_patient_studies` (`_hp_search.py` ~:1230)** — it shows the local PNG cache without
@@ -760,6 +782,257 @@ resolution in `_vc_load.py::_load_single_series_on_demand`,
   log CHANNEL first — viewer logs route to `viewer_diagnostics.log` (which had stalled),
   not `app.log`. Guard: `tests/code/viewer/test_drag_loads_exact_series.py`. Not mirrored.
 
+### Dental Curve MPR (docs + safe cleanup, 2026-06-22)
+The Patient-Tab **Dental Curve MPR** button. Before editing
+`modules/mpr/zeta_mpr/curved_mpr.py` (generation engine `CurvedMPRGenerator`),
+`modules/mpr/curved_mpr/curved_mpr_panoramic_view.py` (dual-panel VTK display), or the
+toolbar handlers (`toolbar_manager.py` `_show_curved_mpr_panel` / `_generate_curved_mpr_from_points`
+/ `_show_curved_mpr_result`), **read `docs/pipelines/dental-curve-mpr.md`** (as-built) and
+`docs/reports/DENTAL_CURVE_MPR_CODE_REVIEW_2026-06-22.md` (full audit).
+- **THREE same-named code areas; only two are this feature.** The button imports the
+  generator from `modules.mpr.zeta_mpr.curved_mpr` (it has `generate_panoramic_view`) — NOT
+  the namesake legacy `CurvedMPRGenerator` in `modules/mpr/curved_mpr/curved_mpr_module.py`
+  (advanced `viewer_2d.py`), and NOT the separate "Curve MPR" button
+  (`zeta_mpr/CurveMPR/`, `toggle_new_curve_mpr`). Keep the import path intact.
+- **Teardown fix (flag `AIPACS_CURVED_MPR_TEARDOWN`, default on):** `CurvedMPRPanoramicView`'s
+  100 ms reference-line `QTimer` is now parented to the widget, and `closeEvent` →
+  `_teardown_curved_mpr_vtk()` stops it + `Finalize()`s both render windows (fixes a
+  PySide6/VTK use-after-free). Flag off = byte-identical legacy (parentless timer, no
+  teardown). Don't un-parent the timer or drop the closeEvent.
+- **Close-with-patient crash fix (2026-06-23, deleted-object teardown race):** closing a
+  patient/tab while the Curved MPR view was open deleted its `QVTKRenderWindowInteractor`,
+  then a queued `ShowCursor->setCursor` fired on the dead C++ object →
+  `RuntimeError("Internal C++ object (...) already deleted.")`. The app's central
+  `main.py::notify` override RE-RAISED it → hard crash on the NEXT patient open. THREE
+  defenses (all flag-gated/guarded, source-pinned by
+  `tests/code/system/test_deleted_object_event_guard.py`): (1) `notify` now SWALLOWS an
+  "already deleted" `RuntimeError` as a benign teardown race (log + `return False` instead
+  of re-raise; kill switch `AIPACS_SWALLOW_DELETED_OBJECT_EVENTS=0`) — every OTHER exception
+  still hits the original capture + `raise`; (2) `_teardown_curved_mpr_vtk` now
+  `RemoveAllObservers()` + `Disable()`s each interactor BEFORE `Finalize()` so VTK stops
+  delivering cursor events to a dying widget; (3) `toolbar_manager._restore_selected_viewer`
+  wraps the previously-unguarded `hide()/setParent(None)/deleteLater()` in
+  `try/except RuntimeError` so an already-deleted MPR widget can't break the close path. None
+  of these files are plugin-mirrored. NEEDS live source-build verify (open Curved MPR → close
+  patient → open next patient → no crash).
+- **Logging:** legacy `print()` in the engine + display + legacy-module is routed to the
+  module logger via a `print` shadow (same pattern as `_pw_viewers.py`) → DEBUG in
+  `user_data/logs/`. Call sites preserved byte-for-byte.
+- **Deliberately UNCHANGED (staged, need live validation):** reconstruction math /
+  `slice_height` / spacing, the `cleanup_all_viewers()` global 1×1 layout teardown in
+  `_show_curved_mpr_result`, the FAST-mode VTK-render-window instantiation, and the
+  synchronous GUI-thread generation. Point picking still requires the non-FAST
+  `ImageViewer2D` path. Guard: `tests/code/viewer/test_curved_mpr_teardown.py` (source-pin,
+  no PySide6/VTK). None of these files are plugin-mirrored. NEEDS live source-build verify.
+- **Inherit CT W/L + normal-2D mouse (2026-06-23):** the curved view now opens with the
+  **source CT viewer's Window/Level** (read via `_curved_mpr_viewer.get_window_level()` in
+  `_show_curved_mpr_result`, passed as `source_window`/`source_level`; flag
+  `AIPACS_CURVED_MPR_INHERIT_WL`, default on) instead of auto-from-scalar-range, falling back to
+  auto when unavailable. And the default interactor is now the **normal 2D
+  `AbstractInteractorStyle`** (right=W/L, left+right=pan, middle=zoom, left=stack) reused via
+  `ImageViewerWrapper` through `_make_curved_mpr_default_style()` — NOT the in-file
+  `CurvedMPRInteractorStyle` (which mapped BOTH buttons to W/L, middle to pan, no zoom).
+  `restore_default_interactorstyle` returns to it, so ruler-mode → default round-trips. Flag
+  `AIPACS_CURVED_MPR_2D_MOUSE` (default on; `=0` = legacy style). Display/interaction only — NO
+  geometry/reconstruction change. Guard: `tests/code/viewer/test_curved_mpr_2d_mouse_and_wl.py`.
+- **Robust per-image W/L (washed-out fix, 2026-06-23):** `_robust_window_level()` windows
+  the panoramic and cross-section **separately** from each image's 1st–99th percentile
+  (`pano_window/level` vs `cross_window/level`) instead of a single full min/max range
+  applied to both — dense enamel/metal voxels otherwise stretch the window flat, and the
+  mean-projection panoramic has a different intensity domain than the raw cross-section.
+  CBCT gray values aren't standardized HU (vary by scanner/FOV) so data-driven windowing
+  generalizes; the CT-WL inherit still overrides the cross-section. Appearance only — NO
+  geometry change; the engine reslice stays cubic. Flag `AIPACS_CURVED_MPR_ROBUST_WL`
+  (default on). Guard: `tests/code/viewer/test_curved_mpr_robust_window.py`.
+- **Point-picking auto-routes to a VTK host on FAST (2026-06-23):** on the FAST/Qt viewer
+  (the DEFAULT) `enable_curved_mpr_mode` is a no-op stub over a scalar-less mock volume, so
+  arch points NEVER registered (reported "the series doesn't import to the vtk module to put
+  points"). `_show_curved_mpr_panel` now routes picking to the real VTK host
+  (`_launch_dental_curve_vtk_host` → `StandardMPRViewer` + `DentalCurvePicker`,
+  `modules/mpr/curved_mpr/dental_curve_vtk_host.py`) when `_viewer_supports_native_curve_picking()`
+  is False (FAST). A real VTK `ImageViewer2D` keeps the unchanged legacy in-place picking.
+  `AIPACS_CURVED_MPR_VTK_PICK=1` forces the host always; `AIPACS_CURVED_MPR_VTK_PICK_AUTO=0`
+  disables the auto-on-FAST routing (legacy default-off). Supersedes the "picking requires the
+  non-FAST ImageViewer2D path" note above. **Closing the point-selection panel (Close button OR
+  the window X / Escape) runs the idempotent `_cleanup_curved_mpr_panel`** (wired to the dialog's
+  `finished` signal) which disables picking and restores the original viewport via
+  `_restore_selected_viewer` — so the X no longer leaves you stuck on the VTK picking host (flag
+  `AIPACS_CURVED_MPR_CLOSE_RESTORE`, default on). Guard: `tests/code/viewer/test_dental_curve_vtk_pick.py`.
+- **Panoramic sharpening + fallback resample (soft-image fix step 1, 2026-06-23):** the panoramic
+  looked soft because the mean projection over a ~10mm slab averages out fine detail. Step 1 of
+  `docs/plans/architecture/PANORAMIC_RECONSTRUCTION_QUALITY_REVIEW_2026-06-23.md`: a mild UNSHARP
+  MASK on the final 2-D panoramic (`_apply_panoramic_unsharp` in `curved_mpr.py`, applied right
+  before the VTK output) restores root/lamina-dura/apex sharpness — APPEARANCE ONLY (no geometry/
+  spacing/orientation change; measurements use world coords, not pixels). Flag
+  `AIPACS_CURVED_MPR_SHARPEN` (default on, amount 0.5 / sigma 1.0 tunable; conservative, no
+  oversharpen). Also the soft fallback `_create_mip_image` 10× bilinear resample → cubic
+  (`AIPACS_CURVED_MPR_FALLBACK_CUBIC`, default on). Guard:
+  `tests/code/viewer/test_curved_mpr_panoramic_sharpen.py`.
+- **Panoramic quality pass step 2 (thin-slab + weighted projection, 2026-06-23):** the dominant
+  blur cause was the **10 mm slab + flat mean** averaging out roots/apices/lamina-dura/cortex.
+  Reslice is already cubic (good). Two flag-gated levers: (1) panel **slab default lowered 10→5 mm**
+  (`toolbar_manager` `_curved_mpr_thickness_mm`, flag `AIPACS_CURVED_MPR_SLAB_MM`; still slider-
+  adjustable 2–30 mm); (2) NEW **'weighted'** projection in the engine
+  (`generate_panoramic_image_slicer_method`) = a Gaussian-CENTER slab weighting (the arch plane
+  dominates → sharper roots/cortex, faithful weighted-mean, far less noisy than max) — now the
+  default at the call site (`AIPACS_CURVED_MPR_PROJECTION`, mean|max|weighted; 'mean' = legacy).
+  Plus a sampling-density flag `AIPACS_CURVED_MPR_PANO_DENSITY` (default 1.0; does NOT change
+  spacing → measurements unaffected). Sharpening stays panoramic-ONLY (cross-sections via
+  `generate_curved_mpr` untouched). Guard `tests/code/viewer/test_curved_mpr_panoramic_quality.py`
+  (weighted-projection math unit-tested + wiring pins). NEEDS live source-build verify (roots/apices
+  visibly sharper, cross-sections unchanged). Still deferred (review §6): soft-MIP/ray-sum, L/R
+  markers, curve Z/tilt.
+- **Ruler line/value render-on-complete (2026-06-23):** in Curved/FAST MPR a finished
+  measurement showed only its endpoint crosses — the green line + value appeared only after a
+  ruler off/on toggle. Cause: `RulerInteractorStyle.place_point_event` (2nd click) stores the
+  widget, `Off()`s it, and relies on `auto_deactivate_tool()`'s deferred `update_slice()`+render
+  to re-show it — but in the Curved MPR the viewer is an `ImageViewerWrapper` whose `vtk_widget`
+  is the raw `QVTKRenderWindowInteractor` (not a `VTKWidget`), so `auto_deactivate_tool()` fails
+  silently and the widget stays Off until a toggle calls `GetRenderWindow().Render()`. Fix
+  (`modules/viewer/interactor_styles/ruler_interactorstyle.py`, **plugin-mirrored** — both copies
+  updated): on completion force `update_slice()` + `image_viewer.GetRenderWindow().Render()` (the
+  same refresh the toggle does). Redundant-but-harmless in the normal viewer. Flag
+  `AIPACS_RULER_RENDER_ON_COMPLETE` (default on). Guard:
+  `tests/code/viewer/test_ruler_render_on_complete.py`.
+- **Generated result resets to default on close (2026-06-23):** after Generate, the legacy
+  `_show_curved_mpr_result` path called `cleanup_all_viewers()` (destroying the whole viewport
+  layout into a 1×1) and cleared `_dental_curve_host`, so closing the panel could NOT restore —
+  the panoramic result stayed stuck. Fix: **in-place result placement is now the DEFAULT**
+  (`AIPACS_CURVED_MPR_INPLACE_VIEWPORT=1`; `=0` = legacy destructive) — `_place_curved_mpr_inplace`
+  hands off the FAST picking host (removes it, retargets the TRUE original cell), cross-links
+  `source._curved_mpr_widget`, and stores `self._dental_curve_result_source`; `_cleanup_curved_mpr_panel`
+  then calls `_restore_selected_viewer(result_source)` on close. Also hardened
+  `_restore_selected_viewer` to match `getattr(...) is not None` (not bare `hasattr`) so a stale/None
+  attr can't shadow the `_curved_mpr_widget` restore. Guard:
+  `tests/code/viewer/test_dental_curve_vtk_pick.py`. NEEDS live source-build verify.
+
+### Unified MPR/3D pipeline — standard (Zeta) MPR is the base for ALL MPR/3D (directive 2026-06-22)
+ALL MPR/3D modules must share ONE structure — the **layout, viewport usage, viewing structure,
+volume, geometry/orientation, VTK rendering, and lifecycle** of the working standard (Zeta) MPR —
+and add only their own tools on top. Standard MPR is the reference because its geometry/orientation/
+viewport behaviour already work correctly. Before building or redesigning ANY MPR/3D feature (Dental
+Curve MPR, Curve MPR, Orthogonal MPR, VRT/3D), **read
+`docs/plans/architecture/UNIFIED_MPR_3D_PIPELINE_DIRECTION_2026-06-22.md`** (the direction + module
+conformance scorecard) and `docs/reports/DENTAL_CURVE_MPR_VS_STANDARD_MPR_ALIGNMENT_2026-06-22.md`.
+- **The shared foundation = standard MPR** (`zeta_mpr/mpr_viewer/widget.py::StandardMPRViewer`,
+  `toggle_zeta_mpr`): L1 one volume (`modules/viewer/fast/pydicom_lazy_volume.py::PyDicomLazyVolume.
+  vtk_image_data`, consumed by 2D viewer + ALL MPR); L2 geometry contract (`DirectionMatrix`/
+  `ZetaAnatA` LPS triad + X-flip + IPP slice-sign, `_mpr_canonicalize.py`/`_mpr_orientation.py`,
+  `docs/pipelines/mpr-geometry-pipeline.md`); L3 VTK reslice rendering (`vtkImageResliceMapper`+
+  `vtkImageSlice` 2D, `vtkGPUVolumeRayCastMapper` 3D); L4 viewport-scoped in-place single-cell swap
+  (`_mpr_grid_position` save/restore + `_<module>_widget`/`_original_widget` cross-link); L5
+  `cleanup()`/`Finalize()` before `deleteLater()`.
+- **Do NOT** build a divergent MPR/3D pipeline: no second volume builder (Orthogonal MPR's SimpleITK
+  `modules/mpr/orthogonal/core/volume_loader.py` must converge), no reslicing from raw
+  `GetSpacing/GetOrigin` ignoring the contract (Dental Curve engine does this today → L/R mirror /
+  oblique mis-orientation), no `vtkImageViewer2`+`ImageViewerWrapper` shim or QPainter raster path
+  (the QPainter idea is WITHDRAWN — explicit MPR is the sanctioned VTK path; the "FAST no VTK render
+  windows" rule is only for the 2D stack viewer), and **never** `cleanup_all_viewers()`/global grid
+  wipe (Dental Curve MPR must stop doing this). Advanced 3D Slicer (`advanced_3d_slicer`,
+  `slicer_launcher`) is an external app — out of scope for this in-app unification.
+- **Migration = reuse, not rewrite:** factor the foundation out of `StandardMPRViewer` (mixin/base)
+  keeping standard MPR byte-identical, then re-home Dental Curve / Curve / Orthogonal onto it with
+  only their tool layer on top. Flag-gated default-off until source-build-validated; legacy kept as
+  kill switch; guard test each step. Active first target = Dental Curve MPR (plan item A0 geometry →
+  B3 in-place viewport → revised B1 foundation render).
+
+### Dental Imaging module — TWO levels (simple viewer vs. professional) (2026-06-23)
+Dental functionality is split into two deliberately separate levels; do NOT merge them.
+Before editing `modules/dental_imaging/` or the Advanced-Analysis entry in
+`_pw_advanced.py`, read `modules/dental_imaging/README.md` and
+`docs/plans/architecture/ROMEXIS_DENTAL_CBCT_WORKSTATION_EVAL_2026-06-23.md`.
+- **Simple viewer (must stay lightweight, unchanged):** Patient-Tab **Dental Curve MPR**
+  (MPR dropdown) = `modules/mpr/zeta_mpr/curved_mpr.py` + `modules/mpr/curved_mpr/`. The
+  professional module must NEVER be imported into it, and `modules/dental_imaging/*` must
+  NOT import the simple engine (`zeta_mpr.curved_mpr` / `mpr.curved_mpr`). The two-level
+  split is guard-tested.
+- **Professional module:** `modules/dental_imaging/` opens a dedicated pop-up from the
+  Patient Viewer **Advanced Analysis** area (beside Advanced MPR / Stitching). Entry =
+  flag-gated `btn_dental_imaging` in `_pw_advanced._build_advanced_analysis_panel` →
+  `_on_dental_imaging_clicked`. Flag `AIPACS_DENTAL_IMAGING` (default ON; `=0` hides the
+  entry — purely additive, every existing flow stays byte-identical). The package is
+  import-light: stdlib + pure `DentalSeriesContext`/`core` at import; Qt/VTK only when the
+  workspace actually opens.
+- **Single source of truth (Milestone 1 foundation):** the workspace REUSES the active
+  viewer's already-built shared volume — `core.bind_active_viewer_volume(self)` wraps
+  `selected_widget.image_viewer.vtk_image_data` (the same handle the 2D viewer / standard
+  MPR / simple Dental Curve MPR consume; cf. `_pw_sync.py`) as a read-only `core.DentalVolume`
+  exposing dims/spacing/origin + the `DirectionMatrix` field-data. NEVER rebuild a volume,
+  fork a geometry pipeline, or recompute geometry here (per the Unified MPR directive above).
+  A `PyDicomLazyVolume.from_series` fallback for a *non-active* series is staged, not built.
+- **Staged (needs live source-build validation):** the 4-view VTK render + synchronized MPR
+  cursor — build it by reusing the standard (Zeta) MPR foundation, flag-gated default-off
+  until validated. The skeleton + `core` are VTK-free on purpose so they cannot disturb the
+  viewer / standard MPR.
+- **Embedded standard (Zeta) MPR VTK pipeline (2026-06-24, flag `AIPACS_DENTAL_VTK_MPR`
+  default-ON — SUPERSEDES the numpy orientation below as the default):** the numpy
+  ortho-orientation (P2) still didn't reliably match standard MPR on the user's screen, so per
+  the unified-MPR directive the workspace now EMBEDS the SAME `StandardMPRViewer`
+  (`modules/mpr/zeta_mpr/mpr_viewer/widget.py`) the toolbar "MPR" button opens, constructed the
+  SAME way as `toggle_zeta_mpr`: optional `canonicalize_volume(vid, dicom_dir)` (gated by
+  `AIPACS_ZETA_MPR_CANONICALIZE`, same as standard MPR) → `StandardMPRViewer(vtk_image_data=vid,
+  parent=self, window_width=ww, window_center=wc)`. So geometry / orientation / L-R / axial-
+  cor-sag construction / stack scroll / crosshairs are IDENTICAL to standard MPR by construction
+  (no re-derivation). `_build_vtk_mpr` mounts it into a swappable `_center_host` (the static
+  ortho grid is the fallback / empty-state); `_teardown_vtk_mpr` (cleanup()+remove, guarded
+  against already-deleted Qt objects) runs on every reload AND in `closeEvent` so VTK finalizes
+  cleanly (complements the curved-MPR close-crash guards). Imports `zeta_mpr.mpr_viewer` (the
+  STANDARD viewer) — NOT the forbidden simple `zeta_mpr.curved_mpr` (two-level split preserved).
+  Build failure falls back to the static grid (never crashes). This is a sanctioned VTK render
+  window in the module (the "FAST no VTK" rule is only the 2-D stack viewer). Guard
+  `tests/code/dental_imaging/test_dental_vtk_mpr_embed.py`; 61 green. NEEDS live source-build
+  verify (open same series in standard MPR + Dental Imaging → identical). The numpy
+  orientation/nav path stays as the `=0` fallback.
+- **Ortho geometry + stack navigation (P2, 2026-06-23 — now the FALLBACK path):** the workspace's
+  ortho views were geometrically WRONG (axial flipped, L/R reversed, head/nose inverted, sag/cor
+  off) because `_render_ortho_previews` did a raw `vol[mid]` numpy reshape that IGNORED orientation. Fix
+  REUSES the standard-MPR geometry contract: NEW pure stdlib `core/ortho_orientation.py`
+  (`plan_view`) reads the volume's OWN `DirectionMatrix` (columns = each VTK axis's patient-LPS
+  dir) and derives, per view, the through/h/v axis + flips + L/R/A/P/H/F labels in the SAME
+  radiological convention the Zeta MPR renders (axial A-top/R-left; sagittal S-top/A-left/P-right;
+  coronal S-top/R-left) — snaps axes to dominant patient axis (exact for axis-aligned CBCT). The
+  workspace `_extract_oriented`/`_compose_view` apply it (still static QImage, NO VTK render
+  window) + draws the orientation letters. Stack navigation: per-view `QSlider` + mouse-wheel
+  (`eventFilter` Wheel) + "i / N" slice index, synchronized (`_render_view`/`_on_slider`/
+  `_scroll_view`/`_update_nav_widgets`). Flags `AIPACS_DENTAL_ORTHO_ORIENT` + `AIPACS_DENTAL_STACK_NAV`
+  (default on; orient-off = legacy raw slices). Drop path reuses the same render → geometry
+  preserved on drag-drop. Pure plan + numpy extraction validated offline (A moves top→correct,
+  posterior→bottom); 44 dental tests green. Guard `tests/code/dental_imaging/test_dental_ortho_orientation.py`.
+  **NEEDS live side-by-side validation vs standard MPR** (open same series in both; confirm L/R
+  + A/P/S/I) — I can't see the screen; if any axis is reversed on a given scanner, toggle the
+  flag. M2a arch picking (`_axial_geom`, default-off) still assumes raw orientation → needs
+  reconciliation with the oriented axial before M2b.
+- **Arch-curve picking (M2a, 2026-06-23, flag `AIPACS_DENTAL_ARCH_PICK` default-OFF):**
+  the first new interaction toward panoramic/cross-section reconstruction. With the flag
+  on, the Tools cell shows Pick Arch / Undo / Clear; clicking the Axial cell collects arch
+  points. The display→slice→world mapping is the PURE, stdlib-only
+  `modules/dental_imaging/core/arch_geometry.py` (`display_click_to_slice` letterbox math +
+  `slice_index_to_world` index→world via the volume's OWN origin/spacing/`DirectionMatrix` —
+  geometry is REUSED, never recomputed). The workspace adds NO VTK render window (clicks
+  captured via `eventFilter` on the Axial `QLabel`; markers/spline drawn with `QPainter` on
+  the static QImage); `get_arch_world_points()` exposes the world points for the engine.
+  Flag-off = byte-identical Milestone-1 previews. NEXT: M2b panoramic via
+  `CurvedMPRGenerator.generate_panoramic_view` (flag `AIPACS_DENTAL_PANORAMIC`), then M2c
+  cross-section. Plan: `docs/plans/architecture/DENTAL_IMAGING_ARCH_PANORAMIC_PLAN_2026-06-23.md`.
+- **Dropped-series blank-import fix (2026-06-23, flag `AIPACS_DENTAL_FORCE_DECODE`
+  default-ON):** a series DROPPED onto the workspace (non-active) is bound via
+  `PyDicomLazyVolume.from_series`, which returns a LAZY volume (zero-filled memmap, slices
+  decoded on demand). `_render_ortho_previews` reads the middle slices immediately, so the
+  Axial preview came back BLANK and the volume was ~all zeros ("series not imported
+  correctly"; objectively reproduced: middle axial nonzero 0.0%). Fix: `_bind_dental_volume_for`
+  (`_pw_advanced.py`) now calls `core.materialize_lazy_volume(lazy)` — force-decodes every
+  slice via the lazy volume's blocking decoder (`_load_slice_blocking(i, emit_signal=False)`)
+  then `mark_vtk_modified()` — BEFORE wrapping in `DentalVolume`. The active-viewer reuse path
+  is already decoded → untouched. KNOWN: the decode is synchronous on the GUI thread (sec-scale
+  for a 222-slice CBCT); the workspace shows "Loading dropped series N…" first — moving it
+  off-thread is the staged follow-up (same concern as the from_series sync note).
+- Tests (offscreen): `tests/code/dental_imaging/test_dental_imaging_skeleton.py` +
+  `test_dental_volume_binding.py` + `test_dental_imaging_loading.py` +
+  `test_dental_arch_pick.py` + `test_dental_force_decode.py` (33 green on Windows 2026-06-23;
+  the pure arch geometry + force-decode helper are unit-tested headless). None of
+  `modules/dental_imaging/*` is plugin-mirrored. The arch UI + drop import NEED live
+  source-build verification.
+
 
 ## VS Code Agent Mode environment (configured 2026-06-02)
 
@@ -815,6 +1088,17 @@ cross-links the runbook and `.github/prompts/`. There are **two testing lanes**:
   build + logs in + positions on Monitor 1; the agent tests from the open app). Procedure:
   `docs/AIPACS_LAUNCH_CONTROL_RUNBOOK.md`. Source build only — never the frozen exe, never the
   black taskbar icon, never multiple instances.
+
+**Fastest way to CONTROL the app (not pixel-clicking):** the in-app command surface the
+maintainers built — the `aipacs-control` MCP (`tools/testing/aipacs_control_mcp/`) → Test Control
+Server (`QLocalServer`, gated by `AIPACS_TEST_SERVER=1`, source build only) → EchoMind CommandBus
+→ the real functions. Tools include `open_patient` / `select_patient` / `drag_series` / `open_mpr`
+/ `switch_tab` / `query_viewport_state` / `trigger_download` / `burst` / `run_scenario` + lifecycle
+`launch_app` / `login` / `move_app_to_monitor`. T1 fidelity (every command runs the production code
+path, so cross-patient + multi-study guards stay enforced), ms-latency, queue pressure beyond human
+speed. NEVER enable during clinical reading. Prefer it over Windows-MCP / computer-use; full how-to
+in `docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md` §3.1 +
+`tools/testing/aipacs_control_mcp/README.md`.
 
 The Verify lane is a pre-filter for the Clinical lane, not a substitute. It does NOT run the real
 GUI, VTK render windows, or anything Windows-only.

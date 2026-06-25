@@ -19,6 +19,7 @@ Design constraints (see docs/plans/performance/FAST_2D_CELL_SEPARATION_PLAN.md):
 from __future__ import annotations
 
 import logging
+import os
 import time as _time
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QFrame, QSizePolicy
 from PySide6.QtCore import Qt, QTimer
@@ -604,8 +605,35 @@ class QtFastContainer(QWidget):
             _cur_path = str(_cur_md.get('series', {}).get('series_path', '') or '')
         except Exception:
             _cur_sn = ''
+        # Volume-behind guard (2026-06-25, patient 47855 series 203): the same-series
+        # no-op below skips a rebuild whenever the series number + path match — but it
+        # never checks whether the DISPLAYED VOLUME is complete. For these secondary-
+        # study series the viewport held a tiny preview while the metadata/disk held the
+        # full set (1 of 126), and every resume hit this skip, so the volume never grew
+        # past the preview (the reported "series 203 has 1 image"). Do NOT skip when the
+        # current volume shows FEWER slices than the incoming metadata's instance list —
+        # rebuild so the full volume is built. Kill switch restores the legacy skip.
+        _inc_inst = 0
+        _cur_vis = 0
+        try:
+            _inc_inst = len((metadata or {}).get('instances', []) or [])
+            _cur_vis = int(self.get_count_of_slices() or 0)
+        except Exception:
+            _inc_inst = 0
+        _volume_behind = (
+            (os.getenv("AIPACS_SWITCH_REBUILD_WHEN_BEHIND", "1") or "1").strip() != "0"
+            and _inc_inst > 0
+            and 0 < _cur_vis < _inc_inst
+        )
+        if _volume_behind:
+            logger.info(
+                "[QtFastContainer] switch_series: volume behind series=%s visible=%d "
+                "incoming_instances=%d — rebuilding (not skipping)",
+                series_number, _cur_vis, _inc_inst,
+            )
         if (
             not force_reload
+            and not _volume_behind
             and self._qt_bridge is not None
             and _cur_sn
             and _inc_sn

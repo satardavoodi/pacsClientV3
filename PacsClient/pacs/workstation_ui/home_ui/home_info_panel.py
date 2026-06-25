@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.3.6",
-    "build_date": "2026-06-21",
-    "release_date": "2026-06-21",
+    "version": "3.3.7",
+    "build_date": "2026-06-26",
+    "release_date": "2026-06-26",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "MPR stays active when switching series or loading into another viewport",
-        "Fixed duplicate voice notes after reopening a synced patient",
-        "More accurate study grouping (correct series-to-study assignment)",
-        "More reliable downloads: oversize fast-fail and first-image alignment",
-        "Performance, stability, and testing-tooling improvements",
+        "Dental imaging workspace and improved Curve MPR (sharper panoramic)",
+        "More stable MPR: safer open/close and crash fixes",
+        "Weak-connection viewing resumes without re-downloading",
+        "More accurate multi-study thumbnails and series display",
+        "Performance, stability, and assistant-control improvements",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.3.6",
+        "AI-PACS Version 3.3.7",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "

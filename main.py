@@ -782,6 +782,34 @@ if __name__ == "__main__":
                     except Exception:
                         pass
                     return False
+                # DELETED-OBJECT guard: a queued Qt event (cursor change, timer,
+                # paint, deferred slot) can be delivered to a C++ object that was
+                # already destroyed during teardown — e.g. a VTK
+                # QVTKRenderWindowInteractor whose widget was deleted while the
+                # patient tab / Curved-MPR view was closing, then a pending
+                # ShowCursor->setCursor fires on it. Shiboken raises
+                # RuntimeError("Internal C++ object (...) already deleted."). The
+                # object is gone and the event is moot, so this is a benign teardown
+                # race: log once and treat as an unhandled event (return False)
+                # instead of re-raising into the excepthook and crashing the whole
+                # app. Kill switch: AIPACS_SWALLOW_DELETED_OBJECT_EVENTS=0.
+                if (
+                    isinstance(_notify_exc, RuntimeError)
+                    and "already deleted" in str(_notify_exc)
+                    and os.environ.get("AIPACS_SWALLOW_DELETED_OBJECT_EVENTS", "1") != "0"
+                ):
+                    try:
+                        logging.getLogger("aipacs.crash").warning(
+                            "notify() swallowed deleted-object event (benign teardown "
+                            "race): receiver=%s event_type=%s (%s)",
+                            type(receiver).__name__,
+                            (int(event.type()) if event is not None else "?"),
+                            _notify_exc,
+                            extra={"component": "crash"},
+                        )
+                    except Exception:
+                        pass
+                    return False
                 _crash_logger = logging.getLogger("aipacs.crash")
                 try:
                     import traceback as _tb_mod
@@ -1163,7 +1191,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.3.6")
+    app.setApplicationVersion("3.3.7")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

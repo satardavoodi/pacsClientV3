@@ -1,6 +1,19 @@
+import os
+
 import vtk
 from . import AbstractInteractorStyle
 from .tools_object_manager import RulerObject
+
+# Render-on-complete (Curved/FAST MPR fix, 2026-06-23). After the 2nd ruler click the
+# completed measurement is stored and turned Off, expecting auto_deactivate_tool()'s
+# deferred update_slice()+render to re-show it. In the Dental Curve MPR the viewer is an
+# ImageViewerWrapper whose vtk_widget is the raw QVTKRenderWindowInteractor (not a
+# VTKWidget), so auto_deactivate_tool() fails silently and the green line + value stay
+# hidden until the tool is toggled. When this flag is on we explicitly re-show the stored
+# measurement for the current slice and force a render-window refresh (the same refresh
+# the toggle performs) so it appears immediately everywhere. Redundant-but-harmless in
+# the normal viewer. Kill switch: AIPACS_RULER_RENDER_ON_COMPLETE=0.
+_RULER_RENDER_ON_COMPLETE = os.environ.get("AIPACS_RULER_RENDER_ON_COMPLETE", "1") != "0"
 
 
 class RulerInteractorStyle(AbstractInteractorStyle):
@@ -76,6 +89,23 @@ class RulerInteractorStyle(AbstractInteractorStyle):
             self.is_active = False
             self.active_widget = self.create_widget()
             self.auto_deactivate_tool()
+
+            # Make the finished measurement (green line + value) visible IMMEDIATELY —
+            # no ruler off/on toggle required. The deferred re-show inside
+            # auto_deactivate_tool() does not run in the Curved/FAST MPR wrapper
+            # context (see module header), so re-show the stored widget for the current
+            # slice and force the render-window refresh the toggle would have done.
+            if _RULER_RENDER_ON_COMPLETE:
+                try:
+                    self.update_slice()
+                except Exception:
+                    pass
+                try:
+                    render_window = self.image_viewer.GetRenderWindow()
+                    if render_window is not None:
+                        render_window.Render()
+                except Exception:
+                    pass
             return
 
         self.emit_interaction()

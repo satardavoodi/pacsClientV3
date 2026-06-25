@@ -984,6 +984,34 @@ class _HPPatientOpenMixin:
             if not output_dir:
                 # Create output directory path
                 output_dir = str(SOURCE_PATH / study_uid)
+            elif (not is_local) and (not is_offline_cloud):
+                # ── Per-server profile path guard (2026-06-24, mehr 15436 / 14965) ──
+                # For a SERVER study the downloader always writes to the ACTIVE
+                # profile's SOURCE_PATH (user_data/servers/<id>/patients/dicom). The
+                # DB-stored study_path can be STALE — left at the pre-per-server-
+                # profile SHARED location (user_data/patients/dicom) — so the viewer
+                # scanned a dead/old folder (live log: path_scan candidates=0
+                # matches=0), judged every series "not downloaded", and looped
+                # re-downloading forever while the files actually sat under
+                # SOURCE_PATH (the disk-ready resume found them via SOURCE_PATH, but
+                # the loader used this stale study_path). Prefer the canonical
+                # SOURCE_PATH dir whenever the DB path diverges from it AND is
+                # missing/empty on disk; a live DB path (already canonical, or a
+                # local-style folder) is kept untouched. Kill switch:
+                # AIPACS_OPEN_SOURCEPATH_GUARD=0.
+                if (os.getenv("AIPACS_OPEN_SOURCEPATH_GUARD", "1") or "1").strip() != "0":
+                    _canonical = str(SOURCE_PATH / study_uid)
+                    if str(output_dir).rstrip("/\\") != _canonical.rstrip("/\\"):
+                        try:
+                            _db_live = os.path.isdir(output_dir) and bool(os.listdir(output_dir))
+                        except Exception:
+                            _db_live = False
+                        if not _db_live:
+                            self._log_open_trace(
+                                study_uid, 'study_path_sourcepath_guard',
+                                stale_db_path=str(output_dir), canonical=_canonical,
+                            )
+                            output_dir = _canonical
 
             if is_offline_cloud:
                 sync_result = await asyncio.to_thread(

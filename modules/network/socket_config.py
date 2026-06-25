@@ -255,6 +255,33 @@ class SocketConfig:
             return False
         return False
 
+    def is_poor_network_progressive_load_enabled(self, host: Optional[str] = None) -> bool:
+        """Umbrella switch for the slow-link "first usable image as early as
+        possible" optimizations (2026-06-24): auto-load the first series into the
+        viewport on open, representative/middle-slice-first download ordering, and
+        the richer progressive UI feedback. It is intentionally a SUPERSET signal —
+        it never changes the batch-size / single-image behaviour (that stays owned by
+        ``is_poor_connectivity_enabled``); it only gates the *perception* layers.
+
+        Resolution order (first decisive wins):
+          1. Env ``AIPACS_POOR_NETWORK_PROGRESSIVE_LOAD``: ``1``/``true`` forces it
+             ON (turn the whole progressive-first-image mode on for a bad link now),
+             ``0``/``false`` forces it OFF (kill switch, restores legacy behaviour).
+          2. Otherwise it MIRRORS the per-server poor-connectivity flag, so a server
+             already flagged ``poor_connectivity`` (e.g. mehr) gets the progressive
+             optimizations automatically with no extra config.
+
+        Any unexpected error resolves to ``False`` so it can never break the open /
+        download path.
+        """
+        env = os.environ.get("AIPACS_POOR_NETWORK_PROGRESSIVE_LOAD")
+        if env is not None:
+            return str(env).strip().lower() in ("1", "true", "yes", "on")
+        try:
+            return self.is_poor_connectivity_enabled(host)
+        except Exception:
+            return False
+
     def get_batch_timeout(self) -> int:
         """Get batch timeout in seconds"""
         return self.get("batch_timeout", 600)
@@ -464,6 +491,18 @@ def is_poor_connectivity_enabled() -> bool:
     """
     try:
         return get_socket_config().is_poor_connectivity_enabled()
+    except Exception:
+        return False
+
+
+def is_poor_network_progressive_load_enabled() -> bool:
+    """Module-level convenience: is the slow-link progressive-first-image mode
+    active for the current server? See
+    ``SocketConfig.is_poor_network_progressive_load_enabled()``. Resolves to
+    ``False`` on any error so it can never break the open / download path.
+    """
+    try:
+        return get_socket_config().is_poor_network_progressive_load_enabled()
     except Exception:
         return False
 

@@ -127,12 +127,23 @@ then Sign In; then `Win+Shift+Right` to bring it to Monitor A.
 - Open the required patient: **single-click** loads thumbnails; **double-click** opens the
   patient (see the single/double-click debounce in `patient_table_widget.py`).
 
-## 6. Automation
-- Prefer the project's GUI test / automation framework where it covers a step:
-  `tests/gui/pywinauto/`, `tests/gui/echomind_driven/`, `tests/gui/live_walkthroughs/`.
-- For computer-use: `request_access` for the running app window (granted by exe path; the
-  source build's taskbar icon is the **Python** icon). The app window is full tier (clicks +
-  typing allowed); terminals/VS Code are click-only.
+## 6. Automation — control the app the FAST way (not pixel-clicking)
+- **Best path: the in-app command surface.** The `aipacs-control` MCP
+  (`tools/testing/aipacs_control_mcp/`) → Test Control Server (`QLocalServer`,
+  `AIPACS_TEST_SERVER=1`, **source build only**) → EchoMind CommandBus → the real functions.
+  Call `open_patient` / `select_patient` / `drag_series` / `open_mpr` / `switch_tab` /
+  `query_viewport_state` / `trigger_download` / `burst` / `run_scenario`, plus lifecycle
+  `launch_app` / `login` / `move_app_to_monitor`. Every command runs the production code path
+  (T1 fidelity, ms latency, queue pressure a human can't reproduce). Setup + full tool list:
+  `tools/testing/aipacs_control_mcp/README.md` and
+  `docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md` §3.1. **Never enable during
+  clinical reading.**
+- **Higher-fidelity / regression laps:** the GUI test frameworks — `tests/gui/pywinauto/`
+  (real OLE drag, tier T3), `tests/gui/echomind_driven/`, `tests/gui/live_walkthroughs/`.
+- **Fallback — computer-use** (visual verification + actions not in the command vocabulary):
+  `request_access` for the running app window (granted by exe path; the source build's taskbar
+  icon is the **Python** icon). The app window is full tier (clicks + typing allowed);
+  terminals/VS Code are click-only.
 
 ## 7. Validation checklist (run once to confirm)
 - [ ] Launch produces the source build (Python taskbar icon).

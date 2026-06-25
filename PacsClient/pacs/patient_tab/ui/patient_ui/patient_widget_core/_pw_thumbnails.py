@@ -32,6 +32,40 @@ from PacsClient.utils.series_identity import (
 _PRIMARY_BUCKET_FALLBACK = (os.getenv("AIPACS_PRIMARY_BUCKET_FALLBACK", "1") or "1").strip() != "0"
 
 
+# Clinical-history DICOMized series ordering (2026-06-21; NARROWED 2026-06-22):
+# the server saves the special DICOMized clinical/patient-history series under
+# the EXACT series number 100000. ONLY that exact number sorts FIRST in the
+# Patient-Tab thumbnail list — every OTHER series (including other large numbers
+# and other numbers in the 100000 range) keeps its normal ordering. The earlier
+# rule (>= 100000 / DOC modality / description keyword) was too broad and floated
+# unrelated large-numbered series to the top. PRIORITY rule only; regular order
+# is untouched. Default ON; AIPACS_HISTORY_SERIES_FIRST=0 restores legacy order.
+_HISTORY_SERIES_NUMBER = 100000
+
+
+def _history_first_enabled() -> bool:
+    return (os.getenv("AIPACS_HISTORY_SERIES_FIRST", "1") or "1").strip() != "0"
+
+
+def series_is_clinical_history(series) -> bool:
+    """True ONLY for the exact DICOMized clinical-history series whose ORIGINAL
+    series number is exactly 100000 (the agreed convention).
+
+    Every other series — including other large numbers and other numbers in the
+    100000 range (100001, 200000, …) — is treated as a regular imaging series
+    and keeps its normal ordering. ``_orig_series_number`` is preferred when
+    present so a multi-study OFFSET key (slot*1_000_000 + n) can never trigger
+    it. Pure + defensive: any error → False.
+    """
+    try:
+        raw = series.get('_orig_series_number')
+        if raw in (None, ''):
+            raw = series.get('series_number')
+        return int(str(raw).strip()) == _HISTORY_SERIES_NUMBER
+    except (TypeError, ValueError, AttributeError):
+        return False
+
+
 class _PWThumbnailsMixin:
     """Server thumbnails, series info, series resolution."""
 
@@ -537,14 +571,20 @@ class _PWThumbnailsMixin:
                 su for su in studies_index.keys() if su != primary
             )
 
+        _hist_on = _history_first_enabled()
+
         def _series_order_key(s):
-            """Numeric series-number sort key so each study's series render
+            """History-first, then numeric series-number order: a study's
+            DICOMized clinical-history series render FIRST, then the rest
             low→high (1,2,…,10,11) in the grouped sidebar, never lexically
-            (1,10,11,2). Non-numeric series sort last, preserving stability."""
+            (1,10,11,2). Non-numeric series sort last, preserving stability.
+            Detection uses the ORIGINAL series number (pre-offset), so offset
+            keys are unaffected; only DISPLAY order changes, never the keys."""
+            hist = 0 if (_hist_on and series_is_clinical_history(s)) else 1
             try:
-                return (0, int(str(_get_series_number(s)).strip()))
+                return (hist, 0, int(str(_get_series_number(s)).strip()))
             except (TypeError, ValueError):
-                return (1, 0)
+                return (hist, 1, 0)
 
         new_info: dict = {}
         uid_to_key: dict = {}
@@ -861,11 +901,15 @@ class _PWThumbnailsMixin:
     def _render_thumbnails_from_entries(self, series_entries: list):
         """Render thumbnail widgets from server entries."""
         try:
+            _hist_on = _history_first_enabled()
+
             def _sort_key(item):
+                # History-first, then the EXISTING numeric series-number order.
+                hist = 0 if (_hist_on and series_is_clinical_history(item)) else 1
                 try:
-                    return int(item.get('series_number', 0))
+                    return (hist, int(item.get('series_number', 0)))
                 except (TypeError, ValueError):
-                    return 0
+                    return (hist, 0)
 
             # Collect series numbers + counts for background DB update.
             db_update_entries: list = []
@@ -1031,8 +1075,25 @@ class _PWThumbnailsMixin:
         thumb_index = 0
         thumbnails = check_and_get_thumbnails(self.import_folder_path, self.study_uid)
         if thumbnails:
-            # Enforce numeric sort by series number (ascending: smallest at top)
-            thumbnails = sorted(thumbnails, key=lambda p: (int(p.stem) if p.stem.isdigit() else float('inf'), p.stem))
+            # History-first, then numeric series-number order (ascending:
+            # smallest at top). A thumbnail file is keyed by its stem = series
+            # number; detection looks up _server_series_info[stem] for
+            # modality/description, falling back to the stem number alone.
+            _hist_on = _history_first_enabled()
+
+            def _file_sort_key(p):
+                stem = p.stem
+                hist = 1
+                if _hist_on:
+                    ssi = getattr(self, '_server_series_info', None)
+                    info = ssi.get(str(stem)) if isinstance(ssi, dict) else None
+                    det = dict(info) if isinstance(info, dict) else {}
+                    det.setdefault('series_number', stem)
+                    if series_is_clinical_history(det):
+                        hist = 0
+                return (hist, int(stem) if stem.isdigit() else float('inf'), stem)
+
+            thumbnails = sorted(thumbnails, key=_file_sort_key)
             self._thumbnails_shown = True  # Mark as shown
             # Check if check_logo_patient method exists and has an event loop
             if hasattr(self, 'check_logo_patient') and callable(getattr(self, 'check_logo_patient', None)):

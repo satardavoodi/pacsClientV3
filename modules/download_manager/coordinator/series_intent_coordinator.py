@@ -371,7 +371,23 @@ class SeriesIntentCoordinator:
         # anything.  current_series_number is None during this phase, so we fall
         # back to the old viewed_series_number (still the pre-update value because
         # `state` was captured before the state_store.update() call above).
-        current_series = getattr(state, 'current_series_number', None)
+        #
+        # F1 race fix (2026-06-25, architecture review): `current_series_number`
+        # must be read FRESH. `state` is the entry snapshot (line ~300); the
+        # running download worker (a separate subprocess sharing the state store)
+        # can ADVANCE current_series_number between that snapshot and here. Under
+        # rapid cross-patient/series drops the stale value made this method write
+        # the batch-yield / interrupt for the WRONG series — the running worker
+        # already moved on — which is a root of the "nothing finishes" cross-study
+        # thrash. Re-read post-update so the yield/interrupt targets what the worker
+        # is ACTUALLY on now. The VALIDATING fallback below still reads the entry
+        # `state.viewed_series_number` ON PURPOSE (the previously-viewed series).
+        # Kill switch restores the legacy stale read.
+        if (os.getenv("AIPACS_CRITICAL_INTENT_FRESH_STATE", "1") or "1").strip() != "0":
+            _fresh_state = self.state_store.get(study_uid)
+            current_series = getattr(_fresh_state or state, 'current_series_number', None)
+        else:
+            current_series = getattr(state, 'current_series_number', None)
         effective_current = current_series or (
             getattr(state, 'viewed_series_number', None)
             if state.status == DownloadStatus.VALIDATING else None

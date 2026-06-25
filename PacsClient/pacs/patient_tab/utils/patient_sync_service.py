@@ -2,7 +2,7 @@
 Patient Data Synchronization Service
 =====================================
 این سرویس همه داده‌های بیمار (attachments، audio، و غیره) را با سرور همگام‌سازی می‌کند
-و report status را روی "منتظر تایید منشی" قرار می‌دهد.
+و report status را روی "تایید شده توسط پزشک" (physician_approved) قرار می‌دهد.
 """
 
 import os
@@ -180,13 +180,20 @@ class PatientSyncService(QObject):
                     result['attachments_failed'] = total_files
                     result['errors'].append(f"Error uploading attachments: {str(e)}")
             
-            # Update report status
+            # Update report status. The workstation user is the reading
+            # physician, so a sync marks the report Physician Approved
+            # (physician_approved) — NOT secretary_approved (the secretary's
+            # own, separate action) and NOT awaiting_secretary_approval. The
+            # exact value is the single shared constant SYNC_REPORT_STATUS so
+            # this site and the toolbar's post-sync local update never drift.
             try:
-                from modules.network.socket_report_status_service import get_report_status_service
+                from modules.network.socket_report_status_service import (
+                    get_report_status_service, SYNC_REPORT_STATUS,
+                )
                 report_service = get_report_status_service()
                 status_response = report_service.update_report_status(
                     study_uid=study_uid,
-                    new_status="awaiting_secretary_approval",
+                    new_status=SYNC_REPORT_STATUS,
                     user_id=None,
                     comment="Auto-synced by client"
                 )

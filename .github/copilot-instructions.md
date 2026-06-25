@@ -1,8 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.3.6 (2026-06-21) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.6_RELEASE.md`.
+**Current Stable Version:** v3.3.7 (2026-06-26) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.7_RELEASE.md`.
 
-**Previous Stable:** v3.3.5 (2026-06-21) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.5_RELEASE.md`.
+**Previous Stable:** v3.3.6 (2026-06-21) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.6_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 
@@ -298,6 +298,26 @@ Decision rule for AI agents:
 - **Canonical env vars for the build command:** `AIPACS_ALLOW_MISSING_ADVANCED_MPR=1` (allows build to proceed when Advanced MPR payload is absent) and `PYTHONUTF8=1` (prevents Unicode console errors). Set both for every build invocation: `$env:AIPACS_ALLOW_MISSING_ADVANCED_MPR="1"; $env:PYTHONUTF8="1"; .venv_build\Scripts\python.exe build.py`.
 - **Nuitka build command:** `.venv_build\Scripts\python.exe "builder nuitka/build_nuitka_release.py" --resume` (staged Nuitka pipeline). Use Nuitka-specific flags like `--stage`, `--from-stage`, `--clean-stage`, and `--smoke-test`; do not use `--skip-pyinstaller` here.
 - **PyInstaller version consistency (v2.5.4+)** � `.venv_build` and `.venv` MUST have the same PyInstaller version or the bundled app will crash with `AttributeError: module 'pyimod02_importers' has no attribute 'PyiFrozenImporter'`. The build system auto-detects version mismatch and forces clean-build (see `docs/architecture/BUILD_PYINSTALLER_VERSIONING.md`). For multi-PC deployments, ensure `builder/requirements/build_requirements.txt` and `requirements-dev.txt` pin the same PyInstaller version. If seen `[WARN] PyInstaller cache version mismatch detected`, it is being automatically corrected.
+
+## Controlling the app (AI agents) - use the command surface, not pixel-clicking
+The fastest, most reproducible way to drive the RUNNING workstation is the in-app command
+surface, NOT Windows-MCP / computer-use:
+
+`aipacs-control` MCP (`tools/testing/aipacs_control_mcp/`) -> Test Control Server
+(`modules/EchoMind/secretary/test_server.py`, `QLocalServer`, env `AIPACS_TEST_SERVER=1`, source
+build only) -> EchoMind CommandBus (`modules/EchoMind/secretary/command_bus.py`) -> the real
+application functions.
+
+- Enable: `pip install mcp` into `.venv`; launch the source build with `AIPACS_TEST_SERVER=1`;
+  register the MCP (stdio) or use `tools/testing/aipacs_control_mcp/client.py`.
+- Tools: `open_patient`, `select_patient`, `drag_series`, `open_mpr`, `switch_tab`,
+  `close_patient_tab`, `trigger_download`, `query_viewport_state`, `query_thumbnail_state`,
+  `burst`, `run_scenario`, plus lifecycle `launch_app` / `login` / `move_app_to_monitor`.
+- Every command runs the production code path (cross-patient + multi-study guards enforced; T1
+  fidelity). Write actions exist ONLY with the test server on. NEVER enable during clinical reading.
+- Full how-to: `tools/testing/aipacs_control_mcp/README.md` and
+  `docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md` section 3.1. Computer-use is the
+  fallback for visual verification only.
 
 ## Build/run/test workflows
 - Run app: `python main.py` (Windows uses software OpenGL flags set in `main.py`).
