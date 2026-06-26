@@ -4,6 +4,34 @@ This file is picked up automatically by AI agents working in this repository
 (`E:\ai-pacs\ai-pacs codes\ai-pacs beta version\`). Keep it accurate and integrate
 new guidance cleanly rather than overwriting existing sections.
 
+## ARCHITECTURE HARD RULE — keep Fast / Advanced / VTK-modules completely separated (NON-NEGOTIABLE)
+
+There are **THREE separate execution domains** that must remain **completely separated and never
+mixed**: (1) **Fast Viewer** (`pydicom_qt`, 2D), (2) **Advanced Viewer** (`vtk_simpleitk`, full VTK
+mode switch), and (3) the **VTK modules** (MPR, Dental Curve MPR, **Advanced Analysis / Imaging
+Analysis**, Orthogonal MPR, in-process VTK/AI — each is its own domain). **This rule outranks every
+optimization.** We move toward an optimized/unified structure, but **never** by blurring, coupling, or
+letting one domain interfere with another. If an optimization cannot be done without mixing the
+modes/modules, **do not do it** — keep them separate. Separation and stability win, always.
+
+- **Separate implementations:** each domain owns its own **decode, cache store, render, lifecycle, and
+  state**. No shared mutable object/widget/interactor; no cross-domain call into another domain's
+  internals. A failure/slowdown/eviction/teardown in one domain must not affect another.
+- **Unify ONLY through the read-only TRUNK** — download, DICOM files on disk (`SOURCE_PATH`), identity,
+  per-series state-read, metadata/geometry contract, the invalidation bus, logging/KPIs. Each domain
+  *calls* the trunk; the trunk never exposes one domain to another. Unification happens **inside the
+  trunk, never across a domain boundary**.
+- **Only IMMUTABLE, identity-keyed artifacts may pass through the trunk** (the DICOM files; and — only
+  if it passes the strict 5-point test — a built VTK volume). The VTK volume cache
+  (`PacsClient/utils/volume_cache.py` / `vtk_volume_service.py`) is an **Advanced/VTK-side** service and
+  must **never** be reachable from the Fast viewer; cross-domain reuse of a built volume is opt-in,
+  flag-gated, and gated on immutability + per-consumer reference + independent-failure + no
+  lifecycle/widget coupling. Default = per-domain caches.
+- Authoritative design: **`docs/plans/architecture/UNIFIED_PIPELINE_BOUNDARY_2026-06-27.md`** (read it
+  before any cache/pipeline/viewer "unification" work). The Fast "never instantiate VTK render windows"
+  rule and the Fast-branch GUI-thread fixes (e.g. task #39) are consequences of this rule — fix
+  Fast-branch issues inside the Fast branch, never by routing Fast through Advanced/VTK machinery.
+
 ## AI-PACS runtime / testing workflow
 
 When running or testing the AI-PACS DICOM workstation, **always use the SOURCE BUILD
@@ -685,6 +713,24 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   (display key == number). No Qt signal-signature change (the 3-arg `series_images_progress` + the
   3-arg `diagnostic_hooks/hooks.py` wrapper stay intact). Flag `AIPACS_PROGRESSIVE_UID_BIND`
   (default on). Guard `tests/code/viewer/test_progressive_uid_bind.py`.
+- **Non-terminal grow interaction STARVATION guard** (`_vc_progressive.py::_flush_progressive_grow_impl`,
+  NOT mirrored — patient 45743 prev-study 30256 series 8 / offset-display key 2000008, 2026-06-26):
+  a series the user keeps SCROLLING stayed stuck (~50/162) because the non-terminal interaction-hot
+  grow branch (`if not is_terminal and interaction_hot:`) deferred + `continue`d on every tick with NO
+  force-after-N — while the TERMINAL F10 path (`if is_terminal and interaction_hot:`) already had one
+  (`_FAST_PROGRESSIVE_FINALIZE_DEFER_MAX_RETRIES`). FIX (flag `AIPACS_PROGRESSIVE_HOT_FORCE` default on,
+  `=0` byte-identical legacy starve): after `_PROGRESSIVE_HOT_FORCE_AFTER` (env, default 3) consecutive
+  hot defers — counted via the existing per-tick `coalesced_map[sn]` — force ONE **`admit_batch`-capped**
+  grow (`min(pending, last_grow+admit_batch)`), reset the counter (periodic, not every tick), set
+  `_forced_progress=True`, log `[PROGRESSIVE_GROW_FORCE_PROGRESS]`. **Two invariants that make the fix
+  work and are tested**: (1) cap to `admit_batch` — forcing the full backlog reintroduces the ~500 ms
+  drag stall the defer exists to prevent; (2) the forced tick MUST bypass BOTH downstream gates — the
+  cadence gate (`if not is_terminal and not _forced_progress:`) and `if (not _forced_progress) and
+  _should_defer_progressive_grow(...)` — else the cadence silently re-defers and the series still
+  starves. Pure decision `_should_force_nonterminal_grow`; flag constants live AFTER `import os as _os`
+  (a module-level `_os.getenv` before the import is a load-time `NameError` that `py_compile` won't
+  catch). FAST grow pacing only — no VTK / geometry / slice-order / isolation change. Guard
+  `tests/code/viewer/test_progressive_hot_force_starvation.py`. NEEDS live source-build verify.
 - **Viewport loading-state lifecycle** (`_vc_switch.py` + `_vc_progressive.py`, NOT mirrored —
   patient 46970, 2026-06-17): `_arm_spinner_timeout` used to hide the spinner UNCONDITIONALLY after
   20 s → blanked the viewport while a slow/queued/second-study series was still downloading (re-drag

@@ -16,7 +16,11 @@ REM condition for already-complete series. Remove this file or use the Play butt
 REM for a normal (flags-off) run.
 REM ============================================================================
 cd /d "E:\ai-pacs\ai-pacs codes\ai-pacs beta version"
+REM --- unified-viewer validation flags (all SAFE: shadows are read-only; the authority and
+REM     stable-identity only ADD checks; grow-sibling is already default-on) ---
 set AIPACS_VIEWER_SPINE_SHADOW=1
 set AIPACS_VIEWER_STATE_AUTHORITY=1
+set AIPACS_VIEWER_STABLE_IDENTITY=1
+set AIPACS_VIEWER_UNIFIED_TEARDOWN=1
 set AIPACS_TEST_SERVER=1
 ".venv\Scripts\python.exe" main.py

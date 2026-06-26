@@ -1,9 +1,31 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.3.7 (2026-06-26)
-**Previous Stable:** v3.3.6 (2026-06-21)
-**Release Date:** 2026-06-26
+**Current Stable Version:** v3.3.8 (2026-06-27)
+**Previous Stable:** v3.3.7 (2026-06-26)
+**Release Date:** 2026-06-27
 **Branch:** beta-version
+
+---
+
+## v3.3.8 (2026-06-27) - Minor release: viewer performance + multi-study reliability + VTK cache groundwork
+
+### Summary
+
+Minor release advancing the stable line to 3.3.8 and publishing the full current
+beta-version working state. Focus: viewer performance and reliability — large-series
+scroll-stall fix, sibling-study progressive grow, a unified viewer request/cancellation
+pipeline, and VTK volume-cache architecture groundwork, plus the unified-pipeline
+boundary that keeps Fast / Advanced / VTK domains cleanly separated.
+
+### Included
+
+- Large-series scroll/stack stall fix (progressive hot-force starvation guard)
+- Sibling-study progressive grow by series identity (multi-study studies grow live)
+- Unified viewer request pipeline + cancellation registry (stable viewer identity)
+- VTK volume-cache + service groundwork (decode-coalescing, pin/unpin) — staged default-off
+- Architecture: unified pipeline boundary (Fast/Advanced/VTK separation) + S4B VTK cache design
+- Batched thumbnail render; resume/identity-shadow guard refinements
+- Canonical version markers advanced to v3.3.8; full local state published to all remotes
 
 ---
 

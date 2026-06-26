@@ -133,8 +133,40 @@ _DISK_READY_RESUME_RETRY_S = max(1.0, float(_os.getenv("AIPACS_VIEWPORT_DISK_REA
 # let the 47084 resume loop spin. When ON, the authority's structural `is_settled` is
 # an ADDITIONAL stop condition in the resume settled-stop (it never removes the live
 # `_settled_visible`/`_exhausted` checks — strictly more-likely-to-stop, never less).
-# Default OFF until live-validated; flip with AIPACS_VIEWER_STATE_AUTHORITY=1.
-_STATE_AUTHORITY_ENABLED = (_os.getenv("AIPACS_VIEWER_STATE_AUTHORITY", "0") or "0").strip() == "1"
+# Default ON 2026-06-26 (user "safe robustness" activation): the authority is a STRICTLY
+# more-likely-to-stop ADDITIONAL signal — it can only end the resume loop earlier (the 47084
+# livelock direction), never load a wrong/late series, so default-on carries no clinical-regression
+# risk. Kill switch: AIPACS_VIEWER_STATE_AUTHORITY=0 restores the legacy live-only settled-stop.
+_STATE_AUTHORITY_ENABLED = (_os.getenv("AIPACS_VIEWER_STATE_AUTHORITY", "1") or "1").strip() != "0"
+
+# S3b — ensure_series_displayed CHOKEPOINT, shadow-first (2026-06-26). The pure chokepoint
+# `plan_series_display` (S3a, viewer_request_pipeline.py) decides what a viewport must DO to show a
+# series; S3b begins routing the live entry points through it. Per the staged plan's STRICT ORDER
+# (S0→S5; "do not start S3 retirements until S1/S2 are default-ON and soaked"), this first step is
+# SHADOW-ONLY and additive: at the resume settled-stop we ALSO ask the chokepoint and log
+# [ENSURE-DISPLAYED-SHADOW] when its DisplayPlan disagrees with the live settled decision. It changes
+# NO behavior and retires NO flag (AIPACS_PROGRESSIVE_UID_BIND etc. stay) until the shadow proves
+# agreement on a live multi-study soak. Default OFF; the shadow also runs under AIPACS_VIEWER_SPINE_SHADOW.
+_ENSURE_SERIES_DISPLAYED_ENABLED = (_os.getenv("AIPACS_ENSURE_SERIES_DISPLAYED", "0") or "0").strip() == "1"
+
+
+def _ensure_displayed_shadow_divergence(plan, live_settled) -> "str | None":
+    """Pure (unit-testable): compare the chokepoint's :class:`DisplayPlan` with the live settled
+    decision. ``live_settled=True`` means the live path would STOP awaiting (viewport already shows
+    the series). The chokepoint's ``is_noop`` (NOOP / SKIP_DOWNGRADE) means "leave the viewport
+    as-is" = also stop. Returns a short divergence note when they disagree, else ``None``. No side
+    effects; never raises on a duck-typed plan."""
+    try:
+        chokepoint_done = bool(plan.is_noop)
+        if chokepoint_done == bool(live_settled):
+            return None
+        return "plan=%s target=%d live_settled=%s" % (
+            getattr(getattr(plan, "action", None), "name", "?"),
+            int(getattr(plan, "target_count", 0) or 0),
+            bool(live_settled),
+        )
+    except Exception:
+        return None
 
 # Progressive FIRST-IMAGE start for an AWAITING viewport (2026-06-24, mehr poor
 # network — the core "see the first usable image as early as possible" goal). When
@@ -148,6 +180,35 @@ _STATE_AUTHORITY_ENABLED = (_os.getenv("AIPACS_VIEWER_STATE_AUTHORITY", "0") or 
 # complete-resume path (secondary-study completion backfill) is unchanged. Kill
 # switch: AIPACS_PROGRESSIVE_AWAIT_FIRST_IMAGE=0.
 _PROGRESSIVE_AWAIT_FIRST_IMAGE = (_os.getenv("AIPACS_PROGRESSIVE_AWAIT_FIRST_IMAGE", "1") or "1").strip() != "0"
+
+# Interaction-hot grow STARVATION GUARD (2026-06-26, patient 45743 prev-study series 8 / 2000008
+# stuck at 50 of 162). The non-terminal grow defers on every interaction-hot tick with no
+# force-after-N (unlike the terminal F10 path), so a viewport the user keeps scrolling never grows.
+# After this many consecutive interaction-hot deferrals, force ONE admit_batch-capped grow
+# (bypassing the cadence + _should_defer gates for that tick) so the visible stack always makes
+# forward progress. Small + periodic → no perceptible drag stall. Kill switch:
+# AIPACS_PROGRESSIVE_HOT_FORCE=0 restores the byte-identical legacy (starve) behaviour.
+_PROGRESSIVE_HOT_FORCE_ENABLED = (_os.getenv("AIPACS_PROGRESSIVE_HOT_FORCE", "1") or "1").strip() != "0"
+try:
+    _PROGRESSIVE_HOT_FORCE_AFTER = max(1, int(_os.getenv("AIPACS_PROGRESSIVE_HOT_FORCE_AFTER", "3")))
+except ValueError:
+    _PROGRESSIVE_HOT_FORCE_AFTER = 3
+
+
+def _should_force_nonterminal_grow(coalesced_count) -> bool:
+    """Starvation-guard decision (pure, unit-testable).
+
+    Returns True once a non-terminal series has been deferred for interaction at least
+    ``_PROGRESSIVE_HOT_FORCE_AFTER`` consecutive ticks, so the grow loop forces one small
+    capped batch even while interaction stays hot. Returns False when the guard is disabled
+    (kill switch ``AIPACS_PROGRESSIVE_HOT_FORCE=0`` → byte-identical legacy starve behaviour).
+    """
+    if not _PROGRESSIVE_HOT_FORCE_ENABLED:
+        return False
+    try:
+        return int(coalesced_count) >= int(_PROGRESSIVE_HOT_FORCE_AFTER)
+    except (TypeError, ValueError):
+        return False
 
 
 def _format_download_progress(downloaded, total) -> str:
@@ -1026,6 +1087,52 @@ class _VCProgressiveMixin:
                 pass
         return None
 
+    def display_key_for_active_series_uid(self, series_uid) -> str | None:
+        """Return the viewer DISPLAY KEY of a viewport that is AWAITING **or** PROGRESSIVELY
+        DISPLAYING the series with this globally-unique ``series_uid``, or None.
+
+        This generalises :meth:`display_key_awaiting_series_uid` to the WHOLE grow lifecycle:
+        once the first image shows, the viewport clears ``_awaiting_series_number`` and is
+        instead in progressive mode (``_progressive_series_number``). The download→viewer bridge
+        needs the display key for both phases so it can keep feeding live grow events to a
+        (possibly SECONDARY-study) series after its first image — matched on the unique
+        ``series_uid`` (series numbers collide across a patient's studies). Returns a key ONLY for
+        a series this patient's own tab is showing/awaiting (the map comes solely from this
+        patient's ``_server_series_info`` → cross-patient safe). Never raises.
+        """
+        su = str(series_uid or "").strip()
+        if not su:
+            return None
+        try:
+            ssi = getattr(self.parent_widget, "_server_series_info", None) or {}
+        except Exception:
+            ssi = {}
+
+        def _uid_for_key(key) -> str:
+            if not key:
+                return ""
+            info = ssi.get(key) or ssi.get(str(key))
+            if isinstance(info, dict):
+                u = str(info.get("series_uid") or info.get("series_instance_uid") or "").strip()
+                if u:
+                    return u
+            try:
+                _rs, _rn, _ru = self._resolve_canonical_series_identity(key)
+                return str(_ru or "").strip()
+            except Exception:
+                return ""
+
+        for node in self.lst_nodes_viewer or []:
+            vtk_w = getattr(node, "vtk_widget", None)
+            if vtk_w is None:
+                continue
+            for key in (getattr(vtk_w, "_awaiting_series_number", None),
+                        getattr(vtk_w, "_progressive_series_number", None)):
+                key = str(key) if key else None
+                if key and _uid_for_key(key) == su:
+                    return key
+        return None
+
     def _resolve_series_identity(self, vtk_w, sn) -> str:
         """Best-effort 'MR · Series 4 · T2 FLAIR' identity from viewer metadata,
         falling back to the home panel's server series info. Never raises."""
@@ -1228,7 +1335,7 @@ class _VCProgressiveMixin:
             from PacsClient.utils.series_state_store import (
                 shadow_enabled, SeriesState, SeriesStateStore,
             )
-            if not (shadow_enabled() or _STATE_AUTHORITY_ENABLED):
+            if not (shadow_enabled() or _STATE_AUTHORITY_ENABLED or _ENSURE_SERIES_DISPLAYED_ENABLED):
                 return None
             if not study_uid or not series_uid:
                 return None
@@ -1263,9 +1370,73 @@ class _VCProgressiveMixin:
                         rec.target_count,
                         "STOP the resume loop" if authority_settled else "keep awaiting",
                     )
+            # S3b shadow: ALSO ask the unified chokepoint (plan_series_display) and log divergence.
+            # Additive + default-off; changes NO behavior and retires NO flag (the load-bearing
+            # cutover stays gated until S1/S2 are default-ON and soaked). Reuses the req + counts
+            # already gathered above.
+            if shadow_enabled() or _ENSURE_SERIES_DISPLAYED_ENABLED:
+                try:
+                    from PacsClient.utils.viewer_request_pipeline import (
+                        plan_series_display, LoadIntent,
+                    )
+                    _plan = plan_series_display(
+                        req,
+                        viewer_visible_count=visible,
+                        disk_count=disk,
+                        server_count=disk,
+                        expected_count=expected,
+                        intent=LoadIntent.DISPLAY,
+                    )
+                    _live_settled = visible > 0 and visible >= disk
+                    _div = _ensure_displayed_shadow_divergence(_plan, _live_settled)
+                    if _div is not None:
+                        self.logger.info(
+                            "[ENSURE-DISPLAYED-SHADOW] series=%s %s (the chokepoint would %s)",
+                            display_key, _div,
+                            "leave the viewport as-is" if _plan.is_noop else "load/grow/await",
+                        )
+                except Exception:
+                    pass
             return rec
         except Exception:
             return None
+
+    def _feed_state_authority_from_lifecycle(self, event, vtk_w, display_key) -> None:
+        """S2c: project a display-lifecycle TERMINAL (ViewportLoadSucceeded) onto the unified
+        per-series state authority, so the store becomes a genuine record of displayed series —
+        not only the resume settled-stops fed in S2a/S2b. Resolves the series' canonical identity
+        + visible count from the viewport and reuses ``_feed_state_authority`` (gated by shadow OR
+        AIPACS_VIEWER_STATE_AUTHORITY → no-op when both off). Never raises. The cutover that makes
+        the authority PRIMARY and retires the ownership/fresh-state guards stays separately gated
+        (S2c tail) until a live soak confirms agreement."""
+        try:
+            from PacsClient.utils.series_state_store import shadow_enabled
+            if not (shadow_enabled() or _STATE_AUTHORITY_ENABLED):
+                return
+            if display_key is None or event != "ViewportLoadSucceeded":
+                return
+            try:
+                study_uid, _orig, series_uid = self._resolve_canonical_series_identity(display_key)
+            except Exception:
+                return
+            if not study_uid or not series_uid:
+                return
+            try:
+                visible = int(vtk_w.get_count_of_slices() or 0)
+            except Exception:
+                visible = 0
+            expected = 0
+            try:
+                _res = self._resolve_series_expected_count(display_key)
+                expected = int(getattr(_res, "expected_count", 0) or 0)
+            except Exception:
+                expected = 0
+            self._feed_state_authority(
+                vtk_w, display_key, str(study_uid), str(series_uid),
+                visible, expected, visible,
+            )
+        except Exception:
+            pass
 
     def _maybe_resume_awaiting_from_disk(self, vtk_w, display_key) -> bool:
         """If the awaited series' files are already complete on disk, resume the
@@ -2291,30 +2462,47 @@ class _VCProgressiveMixin:
                     # Clear any stale terminal-grow retry counter.
                     _get_terminal_grow_defer_retry_map(self).pop(sn, None)
                 # ───────────────────────────────────────────────────────────
+                _forced_progress = False
                 if not is_terminal and interaction_hot:
-                    info["pending_downloaded"] = pending
-                    if not self._progressive_grow_timer.isActive():
-                        _restart_progressive_grow_timer(
-                            self,
-                            max(_progressive_grow_interval_ms(), 500.0),
+                    _coalesced_now = int(coalesced_map.get(sn, 0))
+                    if not _should_force_nonterminal_grow(_coalesced_now):
+                        info["pending_downloaded"] = pending
+                        if not self._progressive_grow_timer.isActive():
+                            _restart_progressive_grow_timer(
+                                self,
+                                max(_progressive_grow_interval_ms(), 500.0),
+                            )
+                        self.logger.debug(
+                            "progressive-fast: interaction-hot defer series=%s pending=%d total=%d",
+                            sn, pending, total,
                         )
-                    self.logger.debug(
-                        "progressive-fast: interaction-hot defer series=%s pending=%d total=%d",
-                        sn, pending, total,
+                        _emit_viewer_event(
+                            self.logger,
+                            "PROGRESSIVE_GROW_DEFERRED_INTERACTION",
+                            series=sn,
+                            grow_budget_ms=grow_budget_ms,
+                            applied_count=0,
+                            pending_count=int(pending),
+                            interaction_active=True,
+                            terminal=False,
+                            reason="nonterminal_hot",
+                        )
+                        continue
+                    # STARVATION GUARD: forced forward progress after K interaction-hot deferrals.
+                    # Apply ONE small admit_batch-capped grow (bypassing the cadence/_should_defer
+                    # gates below) so an actively-scrolled viewport can't be permanently denied its
+                    # own slices (prev-study series 8 / 2000008 stuck at 50/162). Reset the coalesced
+                    # counter so this stays periodic (every K deferrals), not every tick.
+                    _forced_progress = True
+                    coalesced_map[sn] = 0
+                    if admit_batch > 0:
+                        visible_target = min(int(pending), int(last_grow) + int(admit_batch))
+                    self.logger.info(
+                        "[PROGRESSIVE_GROW_FORCE_PROGRESS] series=%s coalesced>=%d forcing batch "
+                        "last_grow=%d target=%d pending=%d total=%d (interaction-hot starvation guard)",
+                        sn, _PROGRESSIVE_HOT_FORCE_AFTER, last_grow, visible_target, pending, total,
                     )
-                    _emit_viewer_event(
-                        self.logger,
-                        "PROGRESSIVE_GROW_DEFERRED_INTERACTION",
-                        series=sn,
-                        grow_budget_ms=grow_budget_ms,
-                        applied_count=0,
-                        pending_count=int(pending),
-                        interaction_active=True,
-                        terminal=False,
-                        reason="nonterminal_hot",
-                    )
-                    continue
-                if not is_terminal:
+                if not is_terminal and not _forced_progress:
                     pending_delta = max(0, int(pending) - int(last_grow))
                     last_tick_ms = float(info.get("_last_nonterminal_grow_mono_ms", 0.0) or 0.0)
                     last_cost_ms = float(info.get("_last_nonterminal_grow_cost_ms", 0.0) or 0.0)
@@ -2347,7 +2535,7 @@ class _VCProgressiveMixin:
                                 sn, pending, last_grow, elapsed_ms, min_interval_ms, last_cost_ms,
                             )
                             continue
-                if _should_defer_progressive_grow(terminal=is_terminal):
+                if (not _forced_progress) and _should_defer_progressive_grow(terminal=is_terminal):
                     info["pending_downloaded"] = pending
                     if not self._progressive_grow_timer.isActive():
                         _restart_progressive_grow_timer(self, _progressive_grow_interval_ms())

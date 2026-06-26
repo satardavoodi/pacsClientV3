@@ -825,6 +825,10 @@ class _VCSwitchMixin:
         self._async_switch_inflight.add(inflight_key)
         self._interactive_load_in_progress = True
         self._set_zeta_external_interactive_busy(True, reason=f"series={series_number} viewer={viewer_id}")
+        # S5b: cancellation token tied to this viewer's stable handle (None when the flag is off).
+        # A tab/patient close cancels it so the UI-thread apply below bails before touching a
+        # deleted widget; a superseding load for the same viewport cancels the prior one.
+        _cancel_tok = self._register_load_cancellation(vtk_widget)
 
         def _worker():
             _t_load = time.perf_counter()
@@ -910,6 +914,17 @@ class _VCSwitchMixin:
                 ok = False
 
             def _finish_on_ui():
+                if self._load_cancelled(_cancel_tok):
+                    # S5b: tab/patient closed (or this load superseded) — bail BEFORE touching the
+                    # possibly-deleted widget; clear the inflight guards so the viewer isn't blocked.
+                    try:
+                        self._interactive_load_in_progress = False
+                        self._async_switch_inflight.discard(inflight_key)
+                        self._set_zeta_external_interactive_busy(
+                            bool(self._async_switch_inflight), reason="finish_cancelled")
+                    except Exception:
+                        pass
+                    return
                 try:
                     self._interactive_load_in_progress = False
                     self._async_switch_inflight.discard(inflight_key)
@@ -943,7 +958,12 @@ class _VCSwitchMixin:
                         # false ERROR in the diagnostics.
                         logger.info(f"[PROFILE] change_series_on_viewer: series {series_number} not resident yet ({(time.perf_counter() - _t_load)*1000:.1f}ms) — awaiting download, progressive display will populate")
                         if preview_applied:
-                            logger.error(f"â„¹ï¸ڈ [ASYNC SWITCH] preview remained active for series={series_number} (full load failed)")
+                            # NOT a failure: the series simply isn't fully downloaded yet, so the
+                            # first-image preview stays up and progressive display populates it as
+                            # batches arrive (confirmed: these series reach 'complete'). Logged at
+                            # DEBUG — the adjacent INFO [PROFILE] line above already records the
+                            # await-download transition; this used to be a recurring FALSE ERROR.
+                            logger.debug(f"[ASYNC SWITCH] preview kept active for series={series_number} (not resident yet; progressive display will populate)")
                         # Keep spinner visible and mark this viewer as awaiting
                         # the series download.  Progressive display will populate
                         # it once the first batch arrives from the DM.
@@ -1028,6 +1048,7 @@ class _VCSwitchMixin:
                 finally:
                     self._interactive_load_in_progress = False
                     self._set_zeta_external_interactive_busy(bool(self._async_switch_inflight), reason="finish_async_switch_finally")
+                    self._retire_load_cancellation(_cancel_tok)  # S5b: op finished — don't cancel later
 
             try:
                 self._queue_on_ui_thread(_finish_on_ui)
@@ -1689,6 +1710,47 @@ class _VCSwitchMixin:
         except Exception:
             return None
 
+    def _register_load_cancellation(self, vtk_widget):
+        """S5b (AIPACS_VIEWER_UNIFIED_TEARDOWN, default ON 2026-06-26 — user "safe robustness"
+        activation): register a cancellation token for this viewer's STABLE handle so a tab/patient
+        close (or a superseding load) cancels the in-flight async apply BEFORE it touches a
+        possibly-deleted widget (the D1 use-after-free class). The token only ever BAILS a stale
+        apply (a closed viewport or an obsolete superseded load) — it can never load a wrong series,
+        so default-on carries no clinical-regression risk. Kill switch:
+        AIPACS_VIEWER_UNIFIED_TEARDOWN=0 returns None → callers no-op → byte-identical legacy."""
+        if (os.getenv("AIPACS_VIEWER_UNIFIED_TEARDOWN", "1") or "1").strip() == "0":
+            return None
+        try:
+            from PacsClient.utils.viewer_cancellation import CancellationRegistry
+            reg = getattr(self, "_cancel_registry", None)
+            if reg is None:
+                reg = CancellationRegistry()
+                self._cancel_registry = reg
+            return reg.new_token(self._viewer_handle_for(vtk_widget), supersede=True)
+        except Exception:
+            return None
+
+    @staticmethod
+    def _load_cancelled(token) -> bool:
+        return token is not None and bool(getattr(token, "cancelled", False))
+
+    def _retire_load_cancellation(self, token) -> None:
+        try:
+            reg = getattr(self, "_cancel_registry", None)
+            if reg is not None and token is not None:
+                reg.retire(token)
+        except Exception:
+            pass
+
+    def cancel_inflight_loads(self) -> int:
+        """Cancel every in-flight async apply for this controller (tab/patient close). No-op
+        when the registry was never used (flag off). Never raises."""
+        try:
+            reg = getattr(self, "_cancel_registry", None)
+            return reg.cancel_all() if reg is not None else 0
+        except Exception:
+            return 0
+
     def _viewer_handle_for(self, vtk_widget):
         """Lazily attach + return a STABLE ViewerHandle for this viewer cell (unified-pipeline
         S1, the identity keystone — docs/plans/architecture/VIEWER_UNIFICATION_STAGED_PLAN_2026-06-25.md).
@@ -1726,7 +1788,8 @@ class _VCSwitchMixin:
         flag when a grid slot is reused by a DIFFERENT cell identity (the raw A1 signal)."""
         try:
             from PacsClient.utils.series_state_store import shadow_enabled
-            if not shadow_enabled():
+            _stable = (os.getenv("AIPACS_VIEWER_STABLE_IDENTITY", "0") or "0").strip() == "1"
+            if not (shadow_enabled() or _stable):
                 return
             store = getattr(self, '_viewer_token_handle', None)
             if store is None:
@@ -1734,7 +1797,7 @@ class _VCSwitchMixin:
                 self._viewer_token_handle = store
             huuid = getattr(self._viewer_handle_for(vtk_widget), 'uuid', None)
             prev = store.get(viewer_id)
-            if prev is not None and huuid is not None and prev != huuid:
+            if shadow_enabled() and prev is not None and huuid is not None and prev != huuid:
                 self.logger.info(
                     "[VIEWER-IDENTITY-SHADOW] event=grid_slot_reused viewer_id=%s old=%s new=%s"
                     " (grid-index token namespace collides; a stable ViewerHandle isolates it)",
@@ -1779,6 +1842,25 @@ class _VCSwitchMixin:
         if viewer_id is None:
             return True
         current = int(self._viewer_request_token.get(viewer_id, 0)) == int(expected_token)
+        # S1b (AIPACS_VIEWER_STABLE_IDENTITY, default off): also require the cell's stable
+        # ViewerHandle to match the handle that ISSUED the token. Closes the A1 grid-index
+        # collision — a slot rebound to a different patient/layout has a NEW handle, so a stale
+        # worker's token can no longer pass even if the numeric token coincidentally matches.
+        # Falls back to token-only when no handle was recorded (byte-identical when the flag is off).
+        try:
+            if current and (os.getenv("AIPACS_VIEWER_STABLE_IDENTITY", "0") or "0").strip() == "1":
+                _store = getattr(self, '_viewer_token_handle', None)
+                _token_handle = _store.get(viewer_id) if _store else None
+                _huuid = getattr(self._viewer_handle_for(vtk_widget), 'uuid', None)
+                if _token_handle and _huuid and _token_handle != _huuid:
+                    self.logger.info(
+                        "[VIEWER-STABLE-IDENTITY] reject stale request viewer_id=%s token=%s "
+                        "token_handle=%s current_handle=%s (A1 grid-index collision blocked)",
+                        viewer_id, expected_token, _token_handle[:8], _huuid[:8],
+                    )
+                    current = False
+        except Exception:
+            pass
         self._shadow_check_token(vtk_widget, viewer_id, expected_token, current)  # read-only
         return current
 
@@ -1844,6 +1926,13 @@ class _VCSwitchMixin:
         and the active StudyInstanceUID / SeriesInstanceUID (canonical-resolved so
         multi-study display keys log the real study/series).
         """
+        # S2c: feed the per-series state authority at real display terminals (independent of the
+        # lifecycle LOG flag; gated inside the feed by shadow / AIPACS_VIEWER_STATE_AUTHORITY).
+        if event in ("ViewportLoadSucceeded",) and vtk_widget is not None:
+            try:
+                self._feed_state_authority_from_lifecycle(event, vtk_widget, series_number)
+            except Exception:
+                pass
         if not _LOADING_LIFECYCLE_LOG:
             return
         try:

@@ -5763,10 +5763,27 @@ class ToolbarManager:
                 needs_full_vtk_for_mpr = True
 
         if needs_full_vtk_for_mpr:
-            full_vtk = self._load_full_vtk_for_mpr(
-                series_number=series_number,
-                preferred_series_path=source_series_path,
-            )
+            # S4b-2: route the full-volume build through the shared VtkVolumeService — built ONCE per
+            # (study_uid, series_uid) and reused across MPR/Dental opens (removes the
+            # _load_full_vtk_for_mpr double-build). Flag AIPACS_VTK_VOLUME_CACHE off (default) → calls
+            # _load_full_vtk_for_mpr directly = byte-identical; AIPACS_VTK_VOLUME_CACHE_SHADOW measures
+            # without caching. Design: docs/plans/architecture/S4B_VTK_CACHE_ARCHITECTURE_2026-06-26.md.
+            def _build_full_vtk():
+                return self._load_full_vtk_for_mpr(
+                    series_number=series_number,
+                    preferred_series_path=source_series_path,
+                )
+            try:
+                from PacsClient.utils.vtk_volume_service import (
+                    build_or_get_mpr_volume, series_uid_from_meta, study_uid_from_meta,
+                )
+                full_vtk = build_or_get_mpr_volume(
+                    study_uid_from_meta(thumb_series_meta),
+                    series_uid_from_meta(thumb_series_meta),
+                    _build_full_vtk, source="mpr_full_rebuild", logger=logger,
+                )
+            except Exception:
+                full_vtk = _build_full_vtk()      # never block MPR on the cache layer
             if full_vtk is None:
                 self._emit_mpr_launch_route(
                     source_backend=source_backend,

@@ -79,11 +79,12 @@ def test_kill_switch_present():
 def test_s2b_state_authority_is_additional_stop_signal():
     """S2b: the state authority's is_settled is an ADDITIONAL settled-stop signal (the live
     _settled_visible / _exhausted checks are never removed — strictly more-likely-to-stop), and
-    the feed runs when shadow OR authority is enabled. Default OFF (AIPACS_VIEWER_STATE_AUTHORITY)."""
+    the feed runs when shadow OR authority is enabled. Default ON 2026-06-26 (safe-robustness
+    activation; kill switch AIPACS_VIEWER_STATE_AUTHORITY=0 restores the live-only settled-stop)."""
     src = _read(_PROG)
-    # flag defaults OFF (opt-in '1'); the resume reads the authority record only when enabled
+    # flag defaults ON (kill switch '0'); the resume reads the authority record only when enabled
     assert re.search(
-        r'_STATE_AUTHORITY_ENABLED\s*=\s*\(\s*_os\.getenv\(\s*"AIPACS_VIEWER_STATE_AUTHORITY"\s*,\s*"0"\s*\)[\s\S]*?==\s*"1"',
+        r'_STATE_AUTHORITY_ENABLED\s*=\s*\(\s*_os\.getenv\(\s*"AIPACS_VIEWER_STATE_AUTHORITY"\s*,\s*"1"\s*\)[\s\S]*?!=\s*"0"',
         src,
     )
     assert "_auth_rec = self._feed_state_authority(" in src
@@ -91,9 +92,28 @@ def test_s2b_state_authority_is_additional_stop_signal():
         r"_authority_settled\s*=\s*bool\(\s*\n?\s*_STATE_AUTHORITY_ENABLED\s*and\s*_auth_rec is not None\s*and\s*_auth_rec\.is_settled",
         src,
     )
-    # the feed runs for shadow OR authority (so the store is populated when the authority is on)
+    # the feed runs for shadow OR authority OR the S3b ensure-displayed shadow (store populated when
+    # the authority is on — substring stays valid as the gate gains more OR-clauses)
     feed = src[src.index("def _feed_state_authority"):]
     feed = feed[: feed.index("def _maybe_resume_awaiting_from_disk")]
-    assert "if not (shadow_enabled() or _STATE_AUTHORITY_ENABLED):" in feed
+    assert "shadow_enabled() or _STATE_AUTHORITY_ENABLED" in feed
     # the authority READ never replaces the live checks — they remain in the OR
     assert "if _settled_visible or _exhausted or _authority_settled:" in src
+
+
+def test_s2c_authority_fed_at_display_lifecycle():
+    """S2c: the state authority is also fed at the real display terminal (ViewportLoadSucceeded)
+    via the _log_viewport_lifecycle chokepoint — so the store records genuine display completions,
+    not only resume settled-stops. Gated by shadow / AIPACS_VIEWER_STATE_AUTHORITY."""
+    prog = _read(_PROG)
+    assert "def _feed_state_authority_from_lifecycle" in prog
+    fn = prog[prog.index("def _feed_state_authority_from_lifecycle"):]
+    fn = fn[: fn.index("def _maybe_resume_awaiting_from_disk")]
+    assert 'event != "ViewportLoadSucceeded"' in fn
+    assert "self._feed_state_authority(" in fn
+    # wired into the lifecycle chokepoint BEFORE the log-flag gate (independent of the LOG flag)
+    sw = _read("PacsClient/pacs/patient_tab/ui/patient_ui/_vc_switch.py")
+    blk = sw[sw.index("def _log_viewport_lifecycle"):]
+    blk = blk[: blk.index("def _enter_viewport_load_error")]
+    assert "_feed_state_authority_from_lifecycle" in blk
+    assert blk.index("_feed_state_authority_from_lifecycle") < blk.index("if not _LOADING_LIFECYCLE_LOG")

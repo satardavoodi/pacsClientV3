@@ -54,10 +54,15 @@ def test_is_request_current_returns_live_value():
 
 def test_shadow_helpers_gate_on_flag():
     src = _src()
-    for name in ("_shadow_record_token", "_shadow_check_token"):
-        body = src[src.index(f"def {name}"):]
-        body = body[: body.index("\n    def ", 1)]
-        assert "shadow_enabled()" in body and "if not shadow_enabled()" in body, name
+    # _shadow_check_token stays shadow-only; _shadow_record_token also feeds S1b so it gates on
+    # (shadow_enabled() OR the stable-identity flag) — both still no-op when neither is on.
+    chk = src[src.index("def _shadow_check_token"):]
+    chk = chk[: chk.index("\n    def ", 1)]
+    assert "if not shadow_enabled()" in chk
+    rec = src[src.index("def _shadow_record_token"):]
+    rec = rec[: rec.index("\n    def ", 1)]
+    assert "shadow_enabled()" in rec and "AIPACS_VIEWER_STABLE_IDENTITY" in rec
+    assert "if not (shadow_enabled() or _stable)" in rec
 
 
 # --------------------------------------------------------------------------- #

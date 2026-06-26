@@ -3393,6 +3393,32 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                         start_ms=t_total,
                         source="db_path",
                     )
+                    # S4b-3a SHADOW (AIPACS_VTK_VOLUME_CACHE[_SHADOW], default-off → no-op): observe the
+                    # ADVANCED ITK→VTK build under (study_uid, series_uid) so the shadow can confirm its
+                    # geometry MATCHES the MPR builder BEFORE any cross-builder reuse is enabled
+                    # (S4b-3b). Observe-only; never alters the load. Design: docs/plans/architecture/
+                    # S4B_VTK_CACHE_ARCHITECTURE_2026-06-26.md.
+                    try:
+                        from PacsClient.utils.vtk_volume_service import (
+                            observe_vtk_build, series_uid_from_meta, study_uid_from_meta,
+                            service_enabled, shadow_enabled,
+                        )
+                        if service_enabled() or shadow_enabled():
+                            _adv_s = (metadata or {}).get('series', {}) if isinstance(metadata, dict) else {}
+                            try:
+                                _ad = tuple(vtk_image_data.GetDimensions())
+                                _asp = tuple(vtk_image_data.GetSpacing())
+                                _ao = tuple(vtk_image_data.GetOrigin())
+                            except Exception:
+                                _ad = _asp = _ao = ()
+                            observe_vtk_build(
+                                study_uid_from_meta(_adv_s), series_uid_from_meta(_adv_s),
+                                slice_count=(int(_ad[2]) if len(_ad) == 3 else 0),
+                                dims=_ad, spacing=_asp, origin=_ao,
+                                source="advanced_itk2vtk", logger=logger,
+                            )
+                    except Exception:
+                        pass
                     _annotate_backend_metadata(metadata, BACKEND_VTK, "")
                     yield vtk_image_data, metadata, (patient_pk, study_pk)
                     return

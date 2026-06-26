@@ -247,6 +247,14 @@ class _PWLifecycleMixin:
 
             # Force clear all viewer/controller caches on tab close.
             if hasattr(self, 'viewer_controller') and self.viewer_controller:
+                # S5b: cancel any in-flight async series applies FIRST, so a queued UI-thread apply
+                # finds its token cancelled and bails before touching a viewer we're tearing down
+                # (the D1 use-after-free class). No-op when AIPACS_VIEWER_UNIFIED_TEARDOWN is off.
+                try:
+                    if hasattr(self.viewer_controller, 'cancel_inflight_loads'):
+                        self.viewer_controller.cancel_inflight_loads()
+                except Exception:
+                    pass
                 try:
                     self.viewer_controller.clear_all_caches_for_close()
                 except Exception:

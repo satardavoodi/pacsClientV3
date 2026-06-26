@@ -3,12 +3,28 @@ Right Panel Widget for displaying series information and thumbnails
 """
 
 import base64
+import os
 
 from PySide6.QtCore import Qt, Signal, QTimer, QPropertyAnimation, QRect
 from PySide6.QtGui import QPixmap, QPainter, QPen, QColor
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QGridLayout, QSizePolicy
 from PacsClient.utils.scroll_style import get_scroll_area_style
 from PacsClient.utils.theme_manager import get_theme_manager
+
+
+# Patient-open GUI-FREEZE fix (2026-06-27). Building ALL right-panel thumbnail widgets synchronously in
+# `display_thumbnails_immediately` blocks the GUI thread — captured live (PID 206088) as a ~23s hang
+# whose [MAIN_THREAD_STALL_TRACE] stack was display_thumbnails_immediately -> thumbnail_manager.
+# create_thumbnail_widget (QWidget()/addWidget) looping over a large multi-study patient's series.
+# For a set larger than the threshold, delegate to the EXISTING incremental renderer
+# (`display_thumbnails_progressively`), which paces widget creation across event-loop turns and keeps
+# the UI responsive. Small sets keep the fast synchronous path (byte-identical). This is a Fast/home-UI
+# render fix only — no viewer/VTK involvement. Kill switch: AIPACS_THUMB_BATCHED_RENDER=0.
+_THUMB_BATCHED_RENDER_ENABLED = (os.getenv("AIPACS_THUMB_BATCHED_RENDER", "1") or "1").strip() != "0"
+try:
+    _THUMB_IMMEDIATE_MAX = max(1, int(os.getenv("AIPACS_THUMB_IMMEDIATE_MAX", "16")))
+except ValueError:
+    _THUMB_IMMEDIATE_MAX = 16
 
 
 def _inside_input_synchronous_dispatch() -> bool:
@@ -572,10 +588,25 @@ class RightPanelWidget(QWidget):
             self.hide_loading()
 
     def display_thumbnails_immediately(self, thumbnails, generation=None):
-        """Display thumbnails immediately (no progressive delay)."""
+        """Display thumbnails immediately (no progressive delay).
+
+        NOTE: for a LARGE set this builds every widget synchronously and blocks the GUI thread
+        (patient-open freeze, 2026-06-27). Large sets are delegated to the incremental renderer below.
+        """
         try:
             if generation is not None and generation != self._display_generation:
                 return
+
+            # [PATIENT-OPEN FREEZE FIX] A large thumbnail set built synchronously here freezes the GUI
+            # thread (live: ~23s, stack = create_thumbnail_widget loop). Hand large sets to the EXISTING
+            # incremental renderer, which paces widget creation across event-loop turns (UI stays
+            # responsive). Small sets keep the fast synchronous path below. Kill: AIPACS_THUMB_BATCHED_RENDER=0.
+            try:
+                _too_many = len(thumbnails or []) > _THUMB_IMMEDIATE_MAX
+            except Exception:
+                _too_many = False
+            if _THUMB_BATCHED_RENDER_ENABLED and _too_many:
+                return self.display_thumbnails_progressively(thumbnails, generation)
 
             # 0x8001010d guard: never build widgets inside an input-synchronous
             # dispatch — re-post after the input call returns (bounded; the

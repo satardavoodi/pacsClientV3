@@ -152,6 +152,14 @@ So: **one identity + one state owner + one entry chokepoint + one volume cache**
 ## 4. Order, dependencies, discipline
 - Strict order S0→S5 (each depends on the prior spine piece). S1+S2 are the keystones; do not
   start S3 retirements until S1/S2 are default-ON and soaked.
+- **DEFAULT-ON activation 2026-06-26 (user "safe robustness"):** the two *monotonic-safe* spine
+  layers were flipped default-ON — **S2** `AIPACS_VIEWER_STATE_AUTHORITY` (additional settled-stop;
+  can only stop *earlier*, never load a wrong/late series) and **S5** `AIPACS_VIEWER_UNIFIED_TEARDOWN`
+  (cancellation token only ever *bails* a stale/superseded apply). Both keep `=0` kill switches and
+  byte-identical legacy. **HELD default-OFF:** **S1** `AIPACS_VIEWER_STABLE_IDENTITY` (load-bearing
+  request-currency flip — needs the live shadow pass first) and the read-only shadows
+  (`AIPACS_VIEWER_SPINE_SHADOW`, `AIPACS_ENSURE_SERIES_DISPLAYED`). So the S3b cutover gate is now
+  "S2 default-ON ✓ (pending soak) + S1 default-ON (still pending) + shadow 0-divergence".
 - **Every stage:** flag default-OFF; legacy preserved as the kill switch; one guard test
   (source-pin + functional offscreen); live source-build validation on a **multi-study** and a
   **single-study** patient and on **both** FAST and Advanced before flip; only **delete** a
@@ -185,7 +193,114 @@ So: **one identity + one state owner + one entry chokepoint + one volume cache**
 - A1 identity shadow: still **no evidence** — the restart did not set `AIPACS_VIEWER_SPINE_SHADOW=1`,
   so S1b stays gated on a future shadow run.
 
+## 5c. Stage status 2026-06-26
+- **S0** ✅ spine (identity + state authority), pure, tested.
+- **S1a** ✅ identity shadow. **S1b** ✅ LANDED — `_is_request_current` also requires the cell's
+  stable `ViewerHandle` to match the handle that issued the token (closes A1), flag
+  `AIPACS_VIEWER_STABLE_IDENTITY` default-off; guard `test_stable_identity_request_check.py` (4 green).
+- **S2a/S2b** ✅ state-authority shadow + additive settled-stop. **S2c** ✅ LANDED (feed half) —
+  the authority is now fed at the real display terminal (`ViewportLoadSucceeded`) via the
+  `_log_viewport_lifecycle` chokepoint (`_feed_state_authority_from_lifecycle`), so the store records
+  genuine display completions; gated by shadow / `AIPACS_VIEWER_STATE_AUTHORITY`; guard
+  `test_resume_livelock_complete_series.py::test_s2c_authority_fed_at_display_lifecycle`. **S2c tail**
+  (make the authority PRIMARY for the settled/ownership decision + retire
+  `AIPACS_LOAD_OWNERSHIP_RELEASE_ON_STALE` / `AIPACS_CRITICAL_INTENT_FRESH_STATE`) stays gated on a
+  live soak.
+- **S3a** ✅ LANDED (chokepoint decision core, pure + UNWIRED) —
+  `PacsClient/utils/viewer_request_pipeline.py`: `plan_series_display(request, …) -> DisplayPlan`
+  composes the `SeriesRequest` identity with the single `decide_display_action` authority (no second
+  copy of the rules) and a request-scoped `DisplayPlan.supersedes()` (same ViewerHandle + different
+  series = the cancellation signal that replaces the grid-index token race) + `LoadIntent`. Guard
+  `tests/code/ui_services/test_viewer_request_pipeline.py` (8 green). **S3b-shadow** ✅ LANDED
+  2026-06-26 (additive, default-OFF, retires NOTHING) — `_vc_progressive.py::_feed_state_authority`
+  now ALSO asks the chokepoint at the resume settled-stop (reusing the `SeriesRequest` + counts
+  already gathered for S2) and logs `[ENSURE-DISPLAYED-SHADOW]` when `plan_series_display`'s
+  `DisplayPlan` disagrees with the live settled decision. Pure helper
+  `_ensure_displayed_shadow_divergence`; flag `AIPACS_ENSURE_SERIES_DISPLAYED` (default off; also runs
+  under `AIPACS_VIEWER_SPINE_SHADOW`). Guard `tests/code/viewer/test_ensure_displayed_shadow.py`
+  (functional truth-table on the REAL `plan_series_display` + source-pins; verified to sandbox limit —
+  runs on the Windows `.venv`). `check_validation.ps1` now reports the "S3 chokepoint shadow" line.
+  **S3b-cutover** (route drop / progress / completion / disk-resume to ACT on the plan, then retire
+  `_PROGRESSIVE_UID_BIND` + the sibling patches) stays gated per §4's strict order: **not until
+  S1/S2 are default-ON and soaked**, and the shadow shows 0 divergences on a live multi-study run.
+- **S4a** ✅ LANDED (volume-cache core, pure + UNWIRED) — `PacsClient/utils/volume_cache.py`:
+  thread-safe `VolumeCache` keyed by the stable `(study_uid, series_uid)`; `get_or_create`
+  **coalesces concurrent decodes** (factory runs at most once per key — closes the duplicate-decode
+  the audit found); `pin`/`unpin` keep the active volume resident; LRU eviction skips pinned; one
+  `invalidate` / `invalidate_study` / `invalidate_all` bus. Guard
+  `tests/code/ui_services/test_volume_cache.py` (8 green, incl. an 8-thread coalescing proof + error
+  propagation). **S4b** (wire into the FAST decode path, pin the active series, retire the ~5
+  bare-keyed lock-free caches → closes C1 + the speed win) is the dedicated, clinical-lane-validated
+  commit.
+- **S5a** ✅ LANDED (cancellation primitive, pure + UNWIRED) —
+  `PacsClient/utils/viewer_cancellation.py`: `CancellationRegistry` buckets `CancellationToken`s by
+  `ViewerHandle` UUID; `new_token(handle, supersede=True)` cancels the prior in-flight op for the
+  same viewport (request supersession), `cancel_handle` / `cancel_all` cancel on tab/patient close
+  (the D1/D2 use-after-free fix — a late apply finds its token cancelled and bails before touching a
+  deleted object), `retire` drops a cleanly-finished op. Cross-viewport isolated. Guard
+  `tests/code/ui_services/test_viewer_cancellation.py` (7 green, incl. concurrency). **S5b** wires it
+  into `closeEvent` + the AsyncSwitchLoad apply + the watchdog stop — dedicated, clinical-lane-validated.
+
+**Net so far — the ENTIRE pure foundation set is built and green** (≈60 tests): stable identity
+(S0/S1), per-series state authority (S0/S2), chokepoint decision core (S3a), decoded-volume cache +
+decode-coalescing (S4a), cancellation-by-handle (S5a). **All pure/additive/default-off → zero
+clinical behavior changed.** What remains is exclusively the **side-effecting WIRING** —
+- **S3b** route the 4 entry points through `plan_series_display`, then retire `_PROGRESSIVE_UID_BIND`;
+- **S4b** wrap the FAST volume build with `VolumeCache.get_or_create` (pin active series) — note the
+  build site (`pydicom_lazy_volume.py`) has a delicate mmap/VTK-backing/GC lifetime, so this needs
+  careful design + a clinical-lane pass;
+- **S5b** ✅ LANDED (first wiring stage, flag-gated default-off) — `_vc_switch.py`: the async
+  `_schedule_async_load_and_switch` registers a `CancellationToken` on the viewer's stable handle
+  (`_register_load_cancellation`, `supersede=True`), `_finish_on_ui` **bails before touching the
+  widget** when the token is cancelled, and retires it on completion; `_pw_lifecycle.exit_patient_widget`
+  calls `cancel_inflight_loads()` first on close. Flag `AIPACS_VIEWER_UNIFIED_TEARDOWN` (default off →
+  no token registered → byte-identical; D2 timer-stop was already fixed, and `_finish_on_ui` already
+  caught the deleted-widget RuntimeError — this makes the apply BAIL cleanly instead, and also gives
+  request-supersession). Guard `tests/code/viewer/test_unified_teardown_cancellation.py` (6 green;
+  38 green across the touched viewer suites — no async-path regression). Remaining S5 wiring (the
+  off-thread non-`_finish_on_ui` apply sites + the watchdog) can extend the same registry.
+
+Each is flag-gated default-off + guard-tested, and its activation/guard-retirement **must** clear the
+clinical-lane validation gate (`run_with_validation.cmd` + `check_validation.ps1` + a Mehr slow-link
+multi-study drop). Do NOT land the wiring blind — the volume-lifetime delicacy + this session's
+grow-fallback-livelock regression both prove why.
+
 ## 6. Suggested first move
 S0 is pure and zero-risk (shadow only). Recommend starting there to lock the contracts and
 prove the model against the live app, then S1 (the identity keystone) gated default-off for
 live validation.
+
+## 7. Observed-in-default-run issues (2026-06-26) → stage coverage
+After the S2+S5 default-ON activation, a default-mode run (PID 194692) + a log/KPI check surfaced two
+**pre-existing** items (NOT activation regressions — S5 cancellation never fired, zero new-code-path
+errors, resume bounded at `attempt=3`, TTFI avg 33 ms / max 68 ms). Both fold into the existing
+stages — **no new viewer-unification stage is needed.**
+
+**Issue A — false `[ASYNC SWITCH] preview remained active (full load failed)` ERROR**
+(`_vc_switch.py::_finish_on_ui`).
+- Root cause: the `ok==False` branch is the NORMAL "switched to a series still downloading" path
+  (the code itself says *"Not a hard failure"*). Line 959 was downgraded to INFO, but the
+  `if preview_applied:` sub-line kept a stray `logger.error` (with, ironically, an info ℹ️ emoji).
+  The affected series confirmedly reach `complete` via progressive grow — purely a log-level oversight.
+- ✅ **FIXED 2026-06-26** (log-level only, zero behavior change): downgraded to `logger.debug` with a
+  clarifying comment. Removes the recurring FALSE ERROR from clinical logs.
+- **Structural coverage:** the "real load failure vs. not-downloaded-yet" decision is the S3
+  chokepoint's `AWAIT_DOWNLOAD` `DisplayPlan` action. After **S3b cutover** this path routes through
+  `plan_series_display`; the already-shipped progressive grow + disk-ready resume
+  (`AIPACS_VIEWPORT_DISK_READY_RESUME`) finish it. **S3 already owns it** — no new work.
+
+**Issue B — main-thread stalls** (this run: max ~3.0 s; 3 of 58 over 1 s). Two distinct sources:
+- **B1 — full-series finalize/build on the GUI thread.** The ~2.8 s stall window (20:34:41) was
+  dominated by `load_series_on_demand` + `_finalize_progressive_series` on the main thread (total=30
+  slices; scales with slice count → the up-to-4.4 s seen on big CBCT). **Coverage: S4b + task #39** —
+  `VolumeCache.get_or_create` (S4a, built; decode-coalescing) wired into the FAST build AND the
+  finalize/build moved OFF the GUI thread. This is exactly the S4 "speed win"; B1 is its headline
+  symptom. (Caution unchanged: `pydicom_lazy_volume.py` mmap/VTK-backing/GC lifetime — design + a
+  clinical-lane pass before flipping on.)
+- **B2 — one-time STARTUP stalls** (20:32:12 + 20:32:21, right after lock-acquire): app/VTK/Qt init +
+  first render, NOT series work. **OUT OF SCOPE for viewer-unification** (this plan is the series
+  pipeline). Tracked as a separate, lower-priority *startup responsiveness* item (lazy/defer heavy
+  subsystem init); may be an acceptable one-time cost. New backlog task.
+
+**Net:** A = fixed (log) + owned by S3; B1 = the core of S4b/#39 (already planned — the speed win);
+B2 = a new small out-of-scope startup item. The default-mode activation itself is clean.
