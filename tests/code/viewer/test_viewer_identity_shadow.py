@@ -102,12 +102,16 @@ def test_handle_is_stable_and_slot_is_diagnostic(_ctl):
 def test_shadow_off_is_byte_identical_and_zero_cost(_ctl, monkeypatch):
     from PacsClient.utils import series_state_store
     monkeypatch.setattr(series_state_store, "_VIEWER_SPINE_SHADOW", False)
+    # Stable identity is now DEFAULT-ON (2026-06-27), and it attaches the handle to drive the
+    # request-currency check — so the genuine "everything off → zero cost" path must ALSO
+    # disable stable identity. (With identity ON, the handle attach is expected, not a regression.)
+    monkeypatch.setenv("AIPACS_VIEWER_STABLE_IDENTITY", "0")
     w = _W(0)
     assert _ctl._next_request_token(w) == 1
     assert _ctl._next_request_token(w) == 2
     assert _ctl._is_request_current(w, 2) is True
     assert _ctl._is_request_current(w, 1) is False
-    # shadow off → no handle attached, no shadow store created (zero cost)
+    # shadow + identity off → no handle attached, no shadow store created (zero cost)
     assert not hasattr(w, "_viewer_handle")
     assert getattr(_ctl, "_viewer_token_handle", None) is None
 

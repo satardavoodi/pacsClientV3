@@ -14,12 +14,18 @@ low number in as the completeness TARGET made a viewer showing a partial stack
 left viewport stayed frozen on a partial series.
 
 Fix: bust the disk-count cache at the completion boundary (the download just
-finished, so disk truly holds every file) AND gate the skip on
-``max(disk, _resolve_series_expected_count(series))`` so the skip fires only when
-the viewer genuinely shows every expected slice.  Default ON; kill switch
-``AIPACS_POSTCOMPLETE_EXPECTED_GATE=0`` restores the legacy raw-disk gate.
+finished, so disk truly holds every file) AND gate the skip on the completeness
+TARGET (``max(disk, _resolve_series_expected_count(series))``) so the skip fires
+only when the viewer genuinely shows every expected slice.
 
-Source-pin (the real reload needs a live viewer + worker thread to exercise).
+UNIFIED (S3b cutover, 2026-06-27): the ``AIPACS_POSTCOMPLETE_EXPECTED_GATE`` flag +
+its legacy raw-disk ``=0`` branch (the buggy 47804 path) were removed, and the
+target now comes from the SHARED series-display authority
+(``build_series_display_state(...).target`` == ``max(disk, expected)``) — the same
+truth every other entry point uses, routed through the one authority instead of a
+local ``max()``. The fix is preserved structurally (proven equivalent below).
+
+Source-pin + a functional equivalence proof (the real reload needs a live viewer).
 """
 import re
 from pathlib import Path
@@ -40,49 +46,45 @@ def _src() -> str:
     ).read_text(encoding="utf-8")
 
 
-def test_flag_present_default_on():
+def test_gate_is_unconditional_no_flag():
     src = _src()
-    assert "AIPACS_POSTCOMPLETE_EXPECTED_GATE" in src
-    # Default ON: env default literal is "1" and the gate disables only on "0".
-    m = re.search(
-        r'os\.getenv\(\s*"AIPACS_POSTCOMPLETE_EXPECTED_GATE"\s*,\s*"1"\s*\)[\s\S]*?!=\s*"0"',
-        src,
-    )
-    assert m is not None, "post-complete expected gate must default ON (disable on '0')"
+    # S3b cutover 2026-06-27: the flag's env-read + its legacy raw-disk `=0` branch were removed
+    # (the comment may still NAME the retired flag for history). The gate is unconditional.
+    assert 'getenv("AIPACS_POSTCOMPLETE_EXPECTED_GATE"' not in src
 
 
 def test_busts_disk_count_cache_at_completion_boundary():
     src = _src()
-    idx = src.find("AIPACS_POSTCOMPLETE_EXPECTED_GATE")
-    assert idx != -1
-    block = src[idx: idx + 1400]
-    # The completion boundary must invalidate the stale disk-count cache so the
-    # downstream completeness probes read the TRUE current file count.
+    anchor = src.find("UNCONDITIONAL since the S3b cutover")
+    assert anchor != -1
+    block = src[anchor: anchor + 1500]
+    # The completion boundary must STILL invalidate the stale disk-count cache so the
+    # downstream completeness probes read the TRUE current file count (the 47804 fix).
     assert "_invalidate_disk_count_cache(series_number_str)" in block
 
 
-def test_gate_uses_authoritative_expected_not_raw_disk():
+def test_gate_target_via_shared_authority():
     src = _src()
-    idx = src.find("AIPACS_POSTCOMPLETE_EXPECTED_GATE")
-    assert idx != -1
-    block = src[idx: idx + 1400]
-    # Expected target is resolved (server series-info / metadata), not the raw count.
+    anchor = src.find("UNCONDITIONAL since the S3b cutover")
+    assert anchor != -1
+    block = src[anchor: anchor + 1500]
+    # Expected is resolved (server series-info / metadata), and the TARGET comes from the ONE
+    # series-display authority (build_series_display_state(...).target == max(disk, expected)) —
+    # not a local max() re-derived per site.
     assert "_resolve_series_expected_count(series_number_str)" in block
-    # The gate target is max(disk, resolved-expected) — never the raw disk alone.
-    assert re.search(r"_gate_expected\s*=\s*max\(\s*_completed_disk_count\s*,\s*_resolved_expected\s*\)", block)
-    # And that target (not the raw disk count) is what the skip is gated on.
+    assert "build_series_display_state(" in block and ".target" in block
+    # And that authoritative target (not the raw disk count) is what the skip is gated on.
     assert re.search(
         r"_viewer_has_series_fully_visible\(\s*series_number_str\s*,\s*_gate_expected\s*,",
-        block,
+        src,
     )
 
 
-def test_legacy_gate_preserved_as_kill_switch():
-    """When the flag is OFF the gate target collapses to the raw disk count
-    (legacy behavior) — i.e. _gate_expected is seeded from _completed_disk_count
-    before the flag-gated max() runs."""
-    src = _src()
-    idx = src.find("AIPACS_POSTCOMPLETE_EXPECTED_GATE")
-    assert idx != -1
-    block = src[idx: idx + 1400]
-    assert "_gate_expected = _completed_disk_count" in block
+def test_authority_target_equals_max_disk_expected():
+    """Behaviour-equivalence proof: routing through the authority yields the SAME target the old
+    inline `max(disk, expected)` did — so the 47804 fix is preserved, structurally. The 8/24 and
+    3/24 cases are the exact stale-low-disk scenarios that froze the left viewport."""
+    from PacsClient.utils.series_display_state import build_series_display_state
+    for disk, exp in [(24, 0), (8, 24), (3, 24), (0, 0), (10, 10), (126, 1)]:
+        t = build_series_display_state("6", disk_count=disk, expected_count=exp).target
+        assert t == max(disk, exp), (disk, exp, t)

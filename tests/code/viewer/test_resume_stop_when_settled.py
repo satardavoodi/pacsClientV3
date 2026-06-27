@@ -9,8 +9,9 @@ ViewportLoadSucceeded + clears it. So a viewport that reached the full slice cou
 kept a stale awaiting flag, and `_maybe_resume_awaiting_from_disk` re-fired every
 tick (CPU churn + main-thread stalls). Fix: when the series is disk-complete AND
 ``get_count_of_slices() >= disk_count``, clear the stale flag, emit the settled
-signal, and return False (stop). Default on; ``AIPACS_RESUME_STOP_WHEN_SETTLED=0``
-restores the legacy loop.
+signal, and return False (stop). UNCONDITIONAL since the S3b cutover (2026-06-27) — the
+``AIPACS_RESUME_STOP_WHEN_SETTLED`` flag + its legacy "loop" ``=0`` branch were removed,
+so the livelock can no longer be re-enabled.
 
 Source-pin (the watchdog needs a live viewer + the lifecycle timer to exercise).
 """
@@ -33,35 +34,33 @@ def _src() -> str:
     ).read_text(encoding="utf-8")
 
 
-def test_flag_present_default_on():
+def test_settled_stop_is_unconditional_no_flag():
     src = _src()
-    assert "AIPACS_RESUME_STOP_WHEN_SETTLED" in src
-    m = re.search(
-        r'getenv\(\s*"AIPACS_RESUME_STOP_WHEN_SETTLED"\s*,\s*"1"\s*\)[\s\S]*?!=\s*"0"',
-        src,
-    )
-    assert m is not None, "resume settled-stop must default ON (disable on '0')"
+    # S3b cutover 2026-06-27: the flag's env-read + its `=0` legacy (loop) branch were removed
+    # (the docstring/comment may still NAME the retired flag for history). Settled-stop unconditional.
+    assert 'getenv("AIPACS_RESUME_STOP_WHEN_SETTLED"' not in src
+    assert "if _complete:" in src   # the unconditional settled-stop gate
 
 
 def test_settled_stop_lives_in_the_resume_watchdog():
     src = _src()
-    # The guard must sit inside the disk-ready resume method.
+    # The settled-stop must sit inside the disk-ready resume method, after disk-completeness.
     fn = src.find("def _maybe_resume_awaiting_from_disk")
     assert fn != -1
-    flag = src.find("AIPACS_RESUME_STOP_WHEN_SETTLED")
-    assert flag != -1 and flag > fn
-    # ... and after _complete is computed (it gates on disk completeness).
     complete = src.find("_complete = _disk_ready_complete(", fn)
-    assert complete != -1 and flag > complete
+    assert complete != -1
+    stop = src.find("stopping resume loop", complete)
+    assert stop != -1 and stop > complete
 
 
 def test_settled_stop_clears_flag_and_returns_without_resuming():
     src = _src()
-    idx = src.find("AIPACS_RESUME_STOP_WHEN_SETTLED")
-    assert idx != -1
-    block = src[idx: idx + 1300]
+    fn = src.find("def _maybe_resume_awaiting_from_disk")
+    start = src.find("_complete = _disk_ready_complete(", fn)
+    end = src.find("Progressive first-image start", start)
+    assert start != -1 and end != -1
+    block = src[start:end]   # the whole settled-stop region (disk-complete gate → next section)
     # Gated on disk-complete AND the viewport already showing every on-disk slice.
-    assert "_complete" in block
     assert "get_count_of_slices()" in block
     assert re.search(r"_vis_settled\s*>=\s*count", block)
     # Clears the stale awaiting flag, emits the settled signal, and stops.

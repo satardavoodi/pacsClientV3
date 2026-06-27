@@ -253,3 +253,43 @@ def section_button_qss(t: dict) -> str:
             color: {_tok(t, 'button_text', '#ffffff')};
         }}
     """
+
+
+def menu_qss(t: dict) -> str:
+    """Right-click context menu (2026-06-27).
+
+    The default QtWebEngine context menu inherits the app palette and on the
+    dark theme renders dark-text-on-dark (unreadable). This explicitly pins
+    BOTH background and foreground from the live theme tokens, so the menu is
+    guaranteed high-contrast and readable in EVERY theme (dark and light) and
+    consistent with the rest of the browser chrome. Tokens only — the hex
+    literals are builder fallbacks for headless tests.
+    """
+    return f"""
+        QMenu {{
+            background-color: {_tok(t, 'panel_bg', '#111927')};
+            color: {_tok(t, 'text_primary', '#f8fafc')};
+            border: 1px solid {_tok(t, 'border', '#33405a')};
+            border-radius: {RADIUS_CONTROL}px;
+            padding: 6px;
+        }}
+        QMenu::item {{
+            background-color: transparent;
+            color: {_tok(t, 'text_primary', '#f8fafc')};
+            padding: 7px 24px 7px 14px;
+            border-radius: {RADIUS_CONTROL - 2}px;
+        }}
+        QMenu::item:selected {{
+            background-color: {_tok(t, 'menu_hover_bg', '#2a3a52')};
+            color: {_tok(t, 'text_primary', '#f8fafc')};
+        }}
+        QMenu::item:disabled {{
+            color: {_tok(t, 'text_muted', '#93a4b7')};
+            background-color: transparent;
+        }}
+        QMenu::separator {{
+            height: 1px;
+            background-color: {_tok(t, 'border', '#33405a')};
+            margin: 5px 8px;
+        }}
+    """

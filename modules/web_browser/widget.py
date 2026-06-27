@@ -30,6 +30,7 @@ from .styles import (
     dialog_button_qss,
     icon_button_qss,
     input_qss,
+    menu_qss,
     popup_panel_qss,
     progress_qss,
     section_button_qss,
@@ -1347,9 +1348,99 @@ class DownloadManagerPanel(QWidget):
         self.download_history = self.state_store.load_download_history()
 
 
+class _ThemedWebEngineView(QWebEngineView):
+    """QWebEngineView with a theme-aware right-click menu (2026-06-27).
+
+    The default QtWebEngine context menu inherits the app palette and on the
+    dark theme renders dark-text-on-dark (unreadable). We rebuild the SAME
+    standard actions (Back / Forward / Reload / Copy / Paste / Select All /
+    Copy Link / Save Image / …) into a QMenu we fully control and style with
+    the live theme tokens, so contrast is guaranteed readable in every theme.
+    Falls back to a minimal hand-built menu if the standard menu is
+    unavailable on this Qt version. ``theme_getter`` returns the live theme
+    dict so the menu always matches the current theme.
+    """
+
+    def __init__(self, theme_getter, parent=None):
+        super().__init__(parent)
+        self._theme_getter = theme_getter
+
+    def _theme(self):
+        try:
+            return self._theme_getter() or {}
+        except Exception:
+            return {}
+
+    def contextMenuEvent(self, event):
+        menu = None
+        # Qt 6.2+ exposes createStandardContextMenu() on the view; older
+        # builds expose it on the page. Try both, then a minimal fallback.
+        for getter in (
+            lambda: self.createStandardContextMenu(),
+            lambda: self.page().createStandardContextMenu(),
+        ):
+            try:
+                menu = getter()
+            except Exception:
+                menu = None
+            if menu is not None:
+                break
+
+        if menu is None:
+            menu = QMenu(self)
+            page = self.page()
+
+            def _add(web_action, label):
+                try:
+                    act = page.action(web_action)
+                except Exception:
+                    act = None
+                if act is not None and act.isEnabled():
+                    proxy = menu.addAction(label)
+                    proxy.triggered.connect(act.trigger)
+
+            try:
+                _add(QWebEnginePage.WebAction.Back, "Back")
+                _add(QWebEnginePage.WebAction.Forward, "Forward")
+                _add(QWebEnginePage.WebAction.Reload, "Reload")
+                menu.addSeparator()
+                _add(QWebEnginePage.WebAction.Copy, "Copy")
+                _add(QWebEnginePage.WebAction.Paste, "Paste")
+                _add(QWebEnginePage.WebAction.SelectAll, "Select All")
+            except Exception:
+                pass
+
+        try:
+            menu.setStyleSheet(menu_qss(self._theme()))
+        except Exception:
+            pass
+        menu.exec(event.globalPos())
+
+
+class _AutofillBridge(QObject):
+    """QWebChannel bridge exposed to the page's ISOLATED JS world (2026-06-27).
+
+    The injected connector (``autofill.AUTOFILL_CONNECTOR_JS``) calls
+    ``credentialSubmitted(host, username, password)`` when the user submits a
+    login form, so the browser can OFFER to save the credential. The password
+    is forwarded to the widget but is NEVER written to a log here or downstream.
+    """
+
+    def __init__(self, on_submit):
+        super().__init__()
+        self._on_submit = on_submit
+
+    @Slot(str, str, str)
+    def credentialSubmitted(self, host, username, password):
+        try:
+            self._on_submit(host or "", username or "", password or "")
+        except Exception:
+            pass
+
+
 class WebBrowserWidget(QWidget):
     """Main Web Browser Widget for AIPacs"""
-    
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.theme_manager = get_theme_manager()
@@ -1476,6 +1567,8 @@ class WebBrowserWidget(QWidget):
             panel = getattr(self, panel_attr, None)
             if panel is not None and hasattr(panel, "apply_theme"):
                 panel.apply_theme(t)
+
+        self._style_autofill_bar()
 
     def _style_address_group(self, focused=False):
         t = self._theme
@@ -1628,7 +1721,9 @@ class WebBrowserWidget(QWidget):
         # Web view + saved items sidebar. The home URL is set ONCE in
         # setup_profile() after the persistent profile/page exist — setting it
         # here too kicked off a throwaway page load on the default profile.
-        self.web_view = QWebEngineView()
+        # Themed view → readable right-click menu in every theme (the default
+        # QtWebEngine menu inherits a dark palette and renders unreadable).
+        self.web_view = _ThemedWebEngineView(lambda: self._theme, self)
         self.web_view.urlChanged.connect(self.on_url_changed)
         self.web_view.titleChanged.connect(self.on_title_changed)
         self.web_view.loadStarted.connect(self.on_load_started)
@@ -1655,10 +1750,37 @@ class WebBrowserWidget(QWidget):
         page_layout.addWidget(self.web_view)
         content_layout.addWidget(self.page_frame, 1)
 
+        # Credential autofill offer bar — hidden until a saved login matches
+        # the current page's exact host. Non-modal: the user picks Fill /
+        # Fill & Sign in / Not now (nothing is filled silently). Styled in
+        # _style_autofill_bar; populated by _show_autofill_offer.
+        self._autofill_pending_entry = None
+        self.autofill_bar = QFrame()
+        self.autofill_bar.setObjectName("BrowserAutofillBar")
+        autofill_layout = QHBoxLayout(self.autofill_bar)
+        autofill_layout.setContentsMargins(14, 7, 14, 7)
+        autofill_layout.setSpacing(8)
+        self.autofill_icon = QLabel()
+        self.autofill_icon.setStyleSheet("background: transparent; border: none;")
+        self.autofill_label = QLabel("Saved login available")
+        self.autofill_fill_btn = QPushButton("Fill")
+        self.autofill_fill_btn.clicked.connect(lambda: self._do_autofill(submit=False))
+        self.autofill_signin_btn = QPushButton("Fill && Sign in")
+        self.autofill_signin_btn.clicked.connect(lambda: self._do_autofill(submit=True))
+        self.autofill_dismiss_btn = QPushButton("Not now")
+        self.autofill_dismiss_btn.clicked.connect(self._dismiss_autofill_offer)
+        autofill_layout.addWidget(self.autofill_icon)
+        autofill_layout.addWidget(self.autofill_label, 1)
+        autofill_layout.addWidget(self.autofill_fill_btn)
+        autofill_layout.addWidget(self.autofill_signin_btn)
+        autofill_layout.addWidget(self.autofill_dismiss_btn)
+        self.autofill_bar.hide()
+
         browser_layout.setContentsMargins(12, 12, 12, 12)
         browser_layout.setSpacing(10)
         browser_layout.addWidget(nav_bar)
         browser_layout.addWidget(self.progress_bar)
+        browser_layout.addWidget(self.autofill_bar)
         browser_layout.addWidget(self.content_row)
         
         # Download manager panel
@@ -1707,6 +1829,9 @@ class WebBrowserWidget(QWidget):
         self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
         self.page = QWebEnginePage(self.profile, self.web_view)
         self.web_view.setPage(self.page)
+        # Secure credential autofill (offer-to-fill + offer-to-save) — wired
+        # BEFORE the first load so the connector is present on the home page.
+        self._setup_autofill()
         self.profile.downloadRequested.connect(self.on_download_requested)
         self.page.featurePermissionRequested.connect(self.on_feature_permission_requested)
         self.web_view.setUrl(QUrl(HOME_URL))
@@ -1818,6 +1943,378 @@ class WebBrowserWidget(QWidget):
                 "web browser: auto_fill_login failed")
             return False
 
+    # ── Structured page-read / interaction API (2026-06-27) ───────────────
+    # Used by the Secretary/EchoMind CommandBus (BrowserCommandAdapter) and
+    # the MCP test-server so an agent can READ and DRIVE the page through
+    # structured calls instead of synthetic mouse/keyboard. Each read runs a
+    # sandboxed, self-contained JS snippet (modules.web_browser.page_tools)
+    # and returns a JSON-serializable Python value. runJavaScript is async, so
+    # _run_js_sync spins a BOUNDED nested event loop to keep these synchronous
+    # for the bus while never being able to wedge (hard timeout).
+
+    def _run_js_sync(self, js, timeout_ms=2500, default=None):
+        """Run *js* in the page and return its result synchronously.
+
+        Spins a bounded nested QEventLoop on the GUI thread until the async
+        runJavaScript callback fires or *timeout_ms* elapses (then returns
+        *default*). The timeout guarantees this can never hang the UI.
+        """
+        try:
+            page = self.web_view.page()
+        except Exception:
+            return default
+        if page is None:
+            return default
+        state = {"value": default, "done": False}
+        loop = QEventLoop()
+
+        def _cb(res):
+            state["value"] = res
+            state["done"] = True
+            if loop.isRunning():
+                loop.quit()
+
+        guard = QTimer()
+        guard.setSingleShot(True)
+        guard.timeout.connect(lambda: loop.quit() if loop.isRunning() else None)
+        guard.start(max(100, int(timeout_ms)))
+        try:
+            page.runJavaScript(js, _cb)
+        except Exception:
+            return default
+        if not state["done"]:
+            loop.exec()
+        try:
+            guard.stop()
+        except Exception:
+            pass
+        return state["value"]
+
+    def get_current_url(self) -> str:
+        """Return the current page URL (empty string if unavailable)."""
+        try:
+            return self.web_view.url().toString()
+        except Exception:
+            return ""
+
+    def get_page_title(self) -> str:
+        return self.current_title or ""
+
+    def get_page_text(self, max_chars: int = 200000) -> str:
+        """Visible text of the page (innerText), capped to *max_chars*."""
+        from .page_tools import JS_PAGE_TEXT
+        txt = self._run_js_sync(JS_PAGE_TEXT, default="", timeout_ms=3000)
+        return txt[:max_chars] if isinstance(txt, str) else ""
+
+    def get_page_html(self, max_chars: int = 500000) -> str:
+        """Full rendered HTML (outerHTML), capped to *max_chars*."""
+        from .page_tools import JS_PAGE_HTML
+        html = self._run_js_sync(JS_PAGE_HTML, default="", timeout_ms=3500)
+        return html[:max_chars] if isinstance(html, str) else ""
+
+    def get_selected_text(self) -> str:
+        """Text the user has selected on the page."""
+        from .page_tools import JS_SELECTED_TEXT
+        sel = self._run_js_sync(JS_SELECTED_TEXT, default="")
+        return sel if isinstance(sel, str) else ""
+
+    def get_dom_summary(self) -> dict:
+        """Structured page summary: title/url, element counts, headings,
+        and the interactive inputs/buttons (forms & fields)."""
+        from .page_tools import JS_DOM_SUMMARY
+        res = self._run_js_sync(JS_DOM_SUMMARY, default=None, timeout_ms=3000)
+        return res if isinstance(res, dict) else {}
+
+    def find_element(self, selector: str) -> dict:
+        """Inspect the first element matching a CSS *selector*."""
+        from .page_tools import js_find_element
+        if not selector:
+            return {"found": False, "reason": "empty_selector"}
+        res = self._run_js_sync(js_find_element(selector), default=None)
+        return res if isinstance(res, dict) else {"found": False}
+
+    def fill_field(self, selector: str, value: str) -> bool:
+        """Fill the field matching *selector* with *value* (input/change)."""
+        from .page_tools import js_fill_field
+        if not selector:
+            return False
+        res = self._run_js_sync(js_fill_field(selector, value or ""),
+                                default=None)
+        return bool(isinstance(res, dict) and res.get("ok"))
+
+    def click_element(self, selector: str) -> bool:
+        """Click the first element matching a CSS *selector*."""
+        from .page_tools import js_click
+        if not selector:
+            return False
+        res = self._run_js_sync(js_click(selector), default=None)
+        return bool(isinstance(res, dict) and res.get("ok"))
+
+    def submit_form(self, selector: str = None) -> bool:
+        """Submit a form (by *selector*, or the form holding a password /
+        the first form when omitted)."""
+        from .page_tools import js_submit_form
+        res = self._run_js_sync(js_submit_form(selector), default=None)
+        return bool(isinstance(res, dict) and res.get("ok"))
+
+    def extract_table(self, selector: str = None, max_rows: int = 100) -> dict:
+        """Extract a table's cells as rows (by *selector*, or the first
+        table). Returns {found, rows:[[...], ...]}."""
+        from .page_tools import js_extract_table
+        res = self._run_js_sync(
+            js_extract_table(selector, max_rows=max_rows),
+            default=None, timeout_ms=3000)
+        return res if isinstance(res, dict) else {"found": False}
+
+    def get_links(self, max_links: int = 200) -> list:
+        """All anchors on the page as [{text, href}, ...]."""
+        from .page_tools import js_get_links
+        res = self._run_js_sync(js_get_links(max_links), default=None)
+        return res if isinstance(res, list) else []
+
+    def take_screenshot(self, path: str = None) -> dict:
+        """Grab the current page view to a PNG. Returns {ok, path}.
+
+        Reuses the same on-screen grab the camera button uses (no extra
+        Chromium capture API), so it works whenever the view is visible.
+        """
+        try:
+            from pathlib import Path as _Path
+            if path:
+                save_path = _Path(path)
+                save_path.parent.mkdir(parents=True, exist_ok=True)
+            else:
+                ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                save_path = self.make_unique_path(
+                    BROWSER_SCREENSHOTS_DIR / f"agent_capture_{ts}.png")
+            pixmap = self.page_frame.grab()
+            if pixmap.isNull() or not pixmap.save(str(save_path), "PNG"):
+                return {"ok": False, "reason": "capture_failed"}
+            try:
+                self.record_saved_item(
+                    item_type="screenshot", title=_Path(save_path).stem,
+                    path=str(save_path), url=self.get_current_url())
+            except Exception:
+                pass
+            return {"ok": True, "path": str(save_path)}
+        except Exception:
+            return {"ok": False, "reason": "exception"}
+
+    # ── Secure credential autofill (2026-06-27) ──────────────────────────
+    # Restores "remember my login + offer to fill it" on the encrypted vault
+    # (OS keychain / DPAPI — never plaintext). FILL: on load, a saved
+    # credential matching the page's EXACT host triggers a non-modal offer
+    # bar. SAVE: submitting a login form offers to store it (user confirms).
+    # Domain-exact only (no cross-domain fill); passwords are never logged.
+    # Flag-gated: AIPACS_BROWSER_AUTOFILL=0 disables (legacy behaviour).
+
+    def _setup_autofill(self):
+        """Wire the QWebChannel bridge + inject the login-submit connector into
+        an isolated JS world. Fully guarded — any failure simply leaves
+        autofill off and the browser otherwise unchanged."""
+        self._autofill_enabled = False
+        if os.environ.get("AIPACS_BROWSER_AUTOFILL", "1") == "0":
+            return
+        try:
+            from PySide6.QtCore import QFile, QIODevice
+            from PySide6.QtWebChannel import QWebChannel
+            from .autofill import AUTOFILL_CONNECTOR_JS
+
+            # World id + injection-point enums differ in name across PySide6
+            # builds — resolve defensively.
+            try:
+                world = QWebEngineScript.ScriptWorldId.ApplicationWorld
+            except AttributeError:
+                world = QWebEngineScript.ApplicationWorld
+            try:
+                at_create = QWebEngineScript.InjectionPoint.DocumentCreation
+                at_ready = QWebEngineScript.InjectionPoint.DocumentReady
+            except AttributeError:
+                at_create = QWebEngineScript.DocumentCreation
+                at_ready = QWebEngineScript.DocumentReady
+
+            self._autofill_bridge = _AutofillBridge(self._on_credential_submitted)
+            self._autofill_channel = QWebChannel(self.page)
+            self._autofill_channel.registerObject("aipacsAutofill",
+                                                  self._autofill_bridge)
+            self.page.setWebChannel(self._autofill_channel, world)
+
+            qwc_js = ""
+            qfile = QFile(":/qtwebchannel/qwebchannel.js")
+            try:
+                if qfile.open(QIODevice.ReadOnly):
+                    qwc_js = bytes(qfile.readAll()).decode("utf-8", "replace")
+            finally:
+                try:
+                    qfile.close()
+                except Exception:
+                    pass
+
+            for name, src, point in (
+                ("aipacs_qwebchannel", qwc_js, at_create),
+                ("aipacs_autofill", AUTOFILL_CONNECTOR_JS, at_ready),
+            ):
+                if not src:
+                    continue
+                script = QWebEngineScript()
+                script.setName(name)
+                script.setSourceCode(src)
+                script.setInjectionPoint(point)
+                script.setWorldId(world)
+                script.setRunsOnSubFrames(False)
+                self.page.scripts().insert(script)
+            self._autofill_enabled = True
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "web browser: autofill setup skipped", exc_info=True)
+            self._autofill_enabled = False
+
+    def _style_autofill_bar(self):
+        if not hasattr(self, "autofill_bar"):
+            return
+        t = self._theme
+        self.autofill_bar.setStyleSheet(
+            f"QFrame#BrowserAutofillBar {{ background-color: {t['panel_alt_bg']};"
+            f" border: 1px solid {t['border']}; border-radius: {RADIUS_GROUP}px; }}"
+        )
+        self.autofill_label.setStyleSheet(
+            f"color: {t['text_primary']}; font-size: 13px; background: transparent;"
+            " border: none;"
+        )
+        self.autofill_icon.setPixmap(
+            qta.icon('fa5s.key', color=t['accent']).pixmap(16, 16))
+        self.autofill_fill_btn.setStyleSheet(dialog_button_qss(t, primary=True))
+        self.autofill_signin_btn.setStyleSheet(dialog_button_qss(t, primary=False))
+        self.autofill_dismiss_btn.setStyleSheet(dialog_button_qss(t, primary=False))
+
+    def _vault_entry_for_host(self, host):
+        """Most-recently-used vault entry whose host EXACTLY equals *host*."""
+        try:
+            from .credential_vault import get_vault
+            host = (host or "").lower()
+            if not host:
+                return None
+            best = None
+            for entry in get_vault().list_entries():
+                if entry.get("host") == host:
+                    if best is None or (entry.get("last_used", "")
+                                        > best.get("last_used", "")):
+                        best = entry
+            return best
+        except Exception:
+            return None
+
+    def _maybe_offer_autofill(self, url):
+        if not getattr(self, "_autofill_enabled", False):
+            return
+        try:
+            from .autofill import JS_HAS_LOGIN_FORM, host_of
+            host = host_of(url)
+            entry = self._vault_entry_for_host(host) if host else None
+            if not entry:
+                self._dismiss_autofill_offer()
+                return
+
+            def _cb(has_form):
+                try:
+                    if has_form:
+                        self._show_autofill_offer(entry)
+                except Exception:
+                    pass
+
+            self.web_view.page().runJavaScript(JS_HAS_LOGIN_FORM, _cb)
+        except Exception:
+            pass
+
+    def _show_autofill_offer(self, entry):
+        self._autofill_pending_entry = entry
+        user = entry.get("username") or "your saved login"
+        host = entry.get("host", "")
+        self.autofill_label.setText(f"Fill saved login for {user} on {host}?")
+        # Sign-in button only when we actually have a username to submit.
+        self.autofill_signin_btn.setVisible(bool(entry.get("username")))
+        self._style_autofill_bar()
+        self.autofill_bar.show()
+
+    def _do_autofill(self, submit=False):
+        entry = getattr(self, "_autofill_pending_entry", None)
+        if not entry:
+            self._dismiss_autofill_offer()
+            return
+        try:
+            from .credential_vault import get_vault
+            vault = get_vault()
+            cred_id = entry.get("id", "")
+            password = vault.get_password(cred_id)
+            if password:
+                # auto_fill_login JSON-encodes the password into JS and never
+                # logs it.
+                self.auto_fill_login(entry.get("username", ""), password,
+                                     submit=submit)
+                vault.touch_last_used(cred_id)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "web browser: autofill apply failed", exc_info=True)
+        self._dismiss_autofill_offer()
+
+    def _dismiss_autofill_offer(self):
+        self._autofill_pending_entry = None
+        if hasattr(self, "autofill_bar"):
+            self.autofill_bar.hide()
+
+    def _on_credential_submitted(self, host, username, password):
+        """Bridge callback when the user submits a login form. Offers to SAVE
+        a NEW credential (user confirms). Never logs the password."""
+        try:
+            if not password:
+                return
+            host = (host or "").split("/")[0].split(":")[0].strip().lower()
+            if not host:
+                return
+            from .credential_vault import get_vault
+            vault = get_vault()
+            for entry in vault.list_entries():
+                if (entry.get("host") == host
+                        and (entry.get("username") or "") == (username or "")):
+                    return  # already saved this (host, username)
+            # Defer so the form's own navigation is not blocked by the modal.
+            QTimer.singleShot(
+                350,
+                lambda: self._offer_save_credential(host, username, password))
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "web browser: credential capture skipped", exc_info=True)
+
+    def _offer_save_credential(self, host, username, password):
+        try:
+            box = QMessageBox(self)
+            box.setWindowTitle("Save Password")
+            box.setIcon(QMessageBox.Question)
+            box.setText(f"Save the login for {host}?")
+            who = f"{username} on {host}" if username else host
+            box.setInformativeText(
+                f"AI-PACS will store {who} securely in the OS keychain so it "
+                "can offer to fill it next time.")
+            save_btn = box.addButton("Save", QMessageBox.AcceptRole)
+            box.addButton("Not now", QMessageBox.RejectRole)
+            box.exec()
+            if box.clickedButton() is save_btn:
+                from .credential_vault import get_vault
+                get_vault().add(f"https://{host}", username, password,
+                                label=host)
+                import logging
+                # NEVER log the password — host + username only.
+                logging.getLogger(__name__).info(
+                    "web browser: saved credential for %s (user=%s)",
+                    host, username or "(none)")
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "web browser: save-credential prompt failed", exc_info=True)
+
     def navigate_back(self):
         self.web_view.back()
 
@@ -1882,6 +2379,8 @@ class WebBrowserWidget(QWidget):
         self._update_reload_button_icon()
         self.progress_bar.setValue(0)
         self.progress_bar.show()
+        # A new navigation invalidates any pending autofill offer.
+        self._dismiss_autofill_offer()
 
     def on_load_progress(self, value):
         self.progress_bar.setValue(value)
@@ -1901,7 +2400,9 @@ class WebBrowserWidget(QWidget):
         self._sync_url_bar(url)
         self.record_history(url, self.current_title or url)
         self.update_favorite_button()
-        
+        # Offer a saved login when one matches this page's exact host.
+        self._maybe_offer_autofill(url)
+
     def toggle_bookmarks(self):
         if self.bookmark_panel.isVisible():
             self.bookmark_panel.hide()

@@ -84,13 +84,15 @@ def test_accepts_series_instance_uid_field():
     assert inst.display_key_awaiting_series_uid("UID_X") == "1000302"
 
 
-# ---- bridge wiring ------------------------------------------------------
+# ---- bridge wiring (UNIFIED 2026-06-27) ---------------------------------
+# S3b cutover: the AIPACS_PROGRESSIVE_UID_BIND flag + its dedicated re-key branch were collapsed
+# into the single `_grow_lane_display_key` resolver. The awaiting case it handled is now covered by
+# the SUPERSET `display_key_for_active_series_uid` (awaiting OR progressively displaying). The
+# controller method `display_key_awaiting_series_uid` is still exercised above and remains available.
 
-def test_bridge_flag_default_on_with_kill_switch():
-    assert 'AIPACS_PROGRESSIVE_UID_BIND", "1"' in _SRC_BRIDGE
-
-
-def test_bridge_rekeys_via_helper():
-    # The bridge consults the helper and re-keys the emitted series number.
-    assert "display_key_awaiting_series_uid(series_uid)" in _SRC_BRIDGE
-    assert "_PROGRESSIVE_UID_BIND" in _SRC_BRIDGE
+def test_bridge_uses_unified_resolver_not_flag():
+    # the flag's env-read + its dedicated branch are gone (the doc comment may still NAME the
+    # retired flag for grep-ability); every grow-lane event goes through the ONE resolver.
+    assert 'getenv("AIPACS_PROGRESSIVE_UID_BIND"' not in _SRC_BRIDGE
+    assert "_grow_lane_display_key(" in _SRC_BRIDGE
+    assert "display_key_for_active_series_uid" in _SRC_BRIDGE

@@ -2262,26 +2262,32 @@ class _VCLoadMixin:
             # otherwise we fall through and reload (the safe direction — it can
             # only ADD the missing slices, never drop any).  The fresh count also
             # primes the 1 s cache for the downstream stale-data guard, which
-            # likewise read the stale value.  Kill switch restores the legacy gate.
-            _postcomplete_expected_gate = (
-                os.getenv("AIPACS_POSTCOMPLETE_EXPECTED_GATE", "1") or "1"
-            ).strip() != "0"
-            if _postcomplete_expected_gate:
-                try:
-                    self._invalidate_disk_count_cache(series_number_str)
-                except Exception:
-                    pass
+            # likewise read the stale value.  UNCONDITIONAL since the S3b cutover (2026-06-27):
+            # the AIPACS_POSTCOMPLETE_EXPECTED_GATE flag + its legacy raw-disk `=0` branch (the
+            # buggy 47804 path) were removed, and the completeness TARGET now comes from the SHARED
+            # series-display authority (`build_series_display_state(...).target` == max(disk,
+            # expected)) — the SAME truth every other entry point uses, instead of a local max().
+            try:
+                self._invalidate_disk_count_cache(series_number_str)
+            except Exception:
+                pass
             try:
                 _completed_disk_count = int(self._count_series_files_on_disk(series_number_str) or 0)
             except Exception:
                 _completed_disk_count = 0
-            _gate_expected = _completed_disk_count
-            if _postcomplete_expected_gate:
-                try:
-                    _resolution = self._resolve_series_expected_count(series_number_str)
-                    _resolved_expected = int(getattr(_resolution, "expected_count", 0) or 0)
-                except Exception:
-                    _resolved_expected = 0
+            try:
+                _resolution = self._resolve_series_expected_count(series_number_str)
+                _resolved_expected = int(getattr(_resolution, "expected_count", 0) or 0)
+            except Exception:
+                _resolved_expected = 0
+            try:
+                from PacsClient.utils.series_display_state import build_series_display_state
+                _gate_expected = int(build_series_display_state(
+                    series_number_str,
+                    disk_count=_completed_disk_count,
+                    expected_count=_resolved_expected,
+                ).target)
+            except Exception:
                 _gate_expected = max(_completed_disk_count, _resolved_expected)
             if _gate_expected > 0 and self._viewer_has_series_fully_visible(
                 series_number_str,

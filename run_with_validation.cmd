@@ -22,5 +22,11 @@ set AIPACS_VIEWER_SPINE_SHADOW=1
 set AIPACS_VIEWER_STATE_AUTHORITY=1
 set AIPACS_VIEWER_STABLE_IDENTITY=1
 set AIPACS_VIEWER_UNIFIED_TEARDOWN=1
+REM S3 chokepoint shadow: logs [ENSURE-DISPLAYED-SHADOW] when the unified
+REM plan_series_display decision DIVERGES from the live settled path. 0 divergences
+REM on a live multi-study / multi-patient run is the GATE that unblocks the S3b
+REM cutover (route every entry point through the one chokepoint + delete the
+REM re-keying flags). Read-only; changes no behavior.
+set AIPACS_ENSURE_SERIES_DISPLAYED=1
 set AIPACS_TEST_SERVER=1
 ".venv\Scripts\python.exe" main.py

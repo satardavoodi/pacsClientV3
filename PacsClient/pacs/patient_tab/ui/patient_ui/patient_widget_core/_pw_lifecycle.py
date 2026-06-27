@@ -21,6 +21,40 @@ _print_logger = _logging.getLogger(__name__)
 def print(*args, **_kw):  # noqa: A001
     _print_logger.debug(' '.join(str(a) for a in args))
 
+import os as _os
+
+# Patient-close GUI-freeze fix (2026-06-27): exit_patient_widget ran a SYNCHRONOUS full
+# gc.collect() on the GUI thread, walking the whole heap (hundreds of MB of volumes + VTK
+# wrappers) → up to ~3.7s freeze on EVERY patient close (stall trace pinned this site). The
+# collect must STAY on the GUI thread (VTK render windows can only be destroyed there), so we
+# DEFER it to the idle event loop and COALESCE a burst of closes into ONE sweep: the close
+# returns instantly; cycle collection happens a moment later when idle. Kill switch
+# AIPACS_DEFER_CLOSE_GC=0 restores the synchronous in-close collect.
+_DEFER_CLOSE_GC = (_os.getenv("AIPACS_DEFER_CLOSE_GC", "1") or "1").strip() != "0"
+_CLOSE_GC_PENDING = [False]
+
+
+def _run_deferred_close_gc():
+    _CLOSE_GC_PENDING[0] = False
+    try:
+        gc.collect()
+    except Exception:
+        pass
+
+
+def _schedule_deferred_close_gc():
+    """Coalesced, idle-deferred gc.collect() for patient-close teardown. If a collect is already
+    queued (e.g. closing several patients in a row) do nothing — one sweep covers them all. Falls
+    back to an immediate collect when there is no Qt event loop (tests)."""
+    if _CLOSE_GC_PENDING[0]:
+        return
+    _CLOSE_GC_PENDING[0] = True
+    try:
+        from PySide6.QtCore import QTimer
+        QTimer.singleShot(150, _run_deferred_close_gc)
+    except Exception:
+        _run_deferred_close_gc()
+
 
 class _PWLifecycleMixin:
     """Tab lifecycle, theme, cleanup, tools, filters, priority queue."""
@@ -351,9 +385,14 @@ class _PWLifecycleMixin:
                     except Exception:
                         pass
 
-            # Force garbage collection for VTK objects
-            import gc as garbage_collector
-            garbage_collector.collect()
+            # Force garbage collection for VTK objects — DEFERRED + coalesced (2026-06-27) so the
+            # close returns instantly instead of freezing the GUI thread ~3.7s on the heap walk.
+            # The collect still runs on the GUI thread (VTK render windows destroy only there),
+            # just on the next idle turn, and a burst of closes collapses to a single sweep.
+            if _DEFER_CLOSE_GC:
+                _schedule_deferred_close_gc()
+            else:
+                gc.collect()
 
             print("✅ [EXIT] PatientWidget cleaned up successfully")
         except Exception as e:

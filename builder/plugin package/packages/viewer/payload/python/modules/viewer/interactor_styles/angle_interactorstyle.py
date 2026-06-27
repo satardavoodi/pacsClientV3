@@ -103,6 +103,11 @@ class AngleInteractorStyle(AbstractInteractorStyle):
             self.image_viewer.image_interactor.SetCursor(cursor_type)
 
     def _find_drag_target(self, mouse_pos):
+        # Creation-mode lock-out: while the angle tool is armed, an existing
+        # annotation must not capture the click/hover — reserve it for the new
+        # angle. Existing angles stay editable in the default/select style.
+        if self._annotation_creation_armed():
+            return None
         current_slice = self.image_viewer.GetSlice()
         if current_slice not in self.widgets_by_slice:
             return None

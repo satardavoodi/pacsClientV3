@@ -25,46 +25,17 @@ from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.series_identity import resolve_series_identifier as _resolve_series_identifier
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
 
-# Multi-study progressive-binding (2026-06-17, patient 46970): when a viewport is
-# awaiting a secondary-study series under a DISPLAY KEY (offset key e.g. 1000302)
-# but the DM reports progress under the bare resolved number (302), re-key the
-# progress to the awaiting display key — matched by the globally-unique series_uid —
-# so the viewer's progressive machinery binds + grows + loads from the correct
-# per-study folder (instead of an empty viewport until a manual re-drag). Single-
-# study is unaffected (display key == number). Kill switch: AIPACS_PROGRESSIVE_UID_BIND=0.
-_PROGRESSIVE_UID_BIND = (os.getenv("AIPACS_PROGRESSIVE_UID_BIND", "1") or "1").strip() != "0"
-
-# Multi-study real-time THUMBNAIL status (2026-06-25, patient 47084): the DM→widget
-# bridge is bound to ONE (primary) study_uid, so on_series_started/on_series_completed
-# hard-return on `uid != study_uid`. For a multi-study patient the SECONDARY study's
-# series download events were dropped, so those thumbnails never turned
-# downloading/ready in real time (only after a tab-switch rebuild). When the event's
-# globally-unique series_uid resolves to a thumbnail ALREADY shown for THIS patient
-# (cross-patient safe — the offset-key widgets + _series_uid_to_number are built only
-# from this patient's server_series_info), admit it into the THUMBNAIL lane ONLY
-# (start/complete_series_download). The viewport / progress / series_downloaded lanes
-# stay primary-study-only (no load is triggered). Kill switch:
-# AIPACS_THUMB_SIBLING_STUDY_STATUS=0 restores the byte-identical legacy filter.
-_THUMB_SIBLING_STUDY = (
-    os.getenv("AIPACS_THUMB_SIBLING_STUDY_STATUS", "1") or "1"
-).strip() != "0"
-
-# Multi-study real-time VIEWER GROW (2026-06-26, first-image→full-stack reliability). The DM→
-# widget bridge is bound to ONE (primary) study_uid, so on_series_progress / on_series_completed
-# hard-return on `uid != study_uid`. For a multi-study patient, a dropped SECONDARY-study series
-# (a non-opened study, or a Previous Exam under a different Study UID) therefore got NO live grow
-# events — its viewport relied solely on the 2s disk-ready watchdog, producing the
-# "groups late / never groups / must re-drag" symptoms. This is the SAME study_uid-filter root
-# cause as the 47084 thumbnail status fix, on the viewer GROW lane. The fix routes events by the
-# globally-unique series_uid (the identity the metadata already carries) instead of the primary
-# study_uid: a sibling-study event is admitted into the grow lane ONLY when a viewport in THIS
-# patient's tab is awaiting/progressively-displaying that series_uid (resolved via
-# display_key_for_active_series_uid — built solely from this patient's server_series_info, so
-# cross-patient isolation is preserved), re-keyed to that viewport's display/offset key. The
-# PRIMARY-study path stays byte-identical. Kill switch: AIPACS_GROW_SIBLING_STUDY=0.
-_GROW_SIBLING_STUDY = (
-    os.getenv("AIPACS_GROW_SIBLING_STUDY", "1") or "1"
-).strip() != "0"
+# UNIFIED multi-study DM→viewer routing (S3b cutover, 2026-06-27). The DM→widget bridge is bound
+# to ONE primary study_uid; a multi-study patient's SECONDARY-study series (a non-opened study or
+# a Previous Exam under a different Study UID) reports DM events under that other uid + the bare
+# resolved number, while the viewport awaits/shows it under a DISPLAY/offset key. The former THREE
+# flag-gated re-keying patches (AIPACS_PROGRESSIVE_UID_BIND / AIPACS_THUMB_SIBLING_STUDY_STATUS /
+# AIPACS_GROW_SIBLING_STUDY — all default-ON) are now ONE unconditional rule: every DM event
+# resolves its display key from the globally-unique series_uid via `_grow_lane_display_key` (grow
+# lane) / `_belongs_to_open_thumbnails` (thumbnail lane), both built SOLELY from this patient's own
+# server_series_info → cross-patient isolation preserved. PRIMARY / single-study stays
+# byte-identical (display key == resolved number). Collapsing the flags deletes the unused legacy
+# `=0` branches only — the default production behavior is unchanged.
 
 try:
     from modules.viewer.fast.slot_timing import time_slot as _g6_time_slot
@@ -468,8 +439,8 @@ class HomeDownloadService:
 
             def on_series_started(uid, series_uid, series_desc):
                 if uid != study_uid:
-                    # Multi-study sibling study: real-time "downloading" border only.
-                    if _THUMB_SIBLING_STUDY and _belongs_to_open_thumbnails(series_uid):
+                    # Sibling-study real-time "downloading" THUMBNAIL border (thumbnail lane only).
+                    if _belongs_to_open_thumbnails(series_uid):
                         _project_sibling_thumbnail(uid, series_uid, completed=False)
                     return
                 sn = _resolve_sn(series_uid)
@@ -509,47 +480,56 @@ class HomeDownloadService:
                     pass
                 return None
 
+            def _grow_lane_display_key(uid, series_uid):
+                """THE one display-key resolution for every DM grow-lane event (replaces the former
+                flag-gated sibling-grow + uid-bind + per-branch re-keying — a single rule).
+
+                Returns the display/offset key a viewport in THIS patient's tab is awaiting or
+                progressively displaying for the globally-unique series_uid (cross-patient safe:
+                resolved solely from this patient's own server_series_info); else, for the PRIMARY
+                study, the canonical _resolve_sn number; else None for a background SECONDARY-study
+                series no viewport here shows (it must not grow a viewport). PRIMARY / single-study
+                stays byte-identical (display key == resolved number)."""
+                if series_uid:
+                    dk = _active_display_key_for_uid(series_uid)
+                    if dk:
+                        return str(dk)
+                if uid == study_uid:
+                    return _resolve_sn(series_uid)
+                # Sibling / previous-exam series that no viewport here awaits/shows → not grown.
+                # DIAGNOSTIC (2026-06-27): if a viewport IS awaiting a series but THIS download's
+                # series_uid did not resolve to its display key, a previous-exam / secondary-study
+                # grow is being DROPPED here (the offset-key entry's series_uid likely doesn't match
+                # the DM's). Logged so the live run pinpoints the mismatch (restores the visibility
+                # the unified `_grow_lane_display_key` cut folded away). Silent for genuine
+                # background siblings (no awaiting viewport) so it stays quiet on normal patients.
+                try:
+                    _w_dbg = widget_ref()
+                    _vc_dbg = getattr(_w_dbg, "viewer_controller", None) if _w_dbg else None
+                    _awaiting_keys = []
+                    for _n_dbg in (getattr(_vc_dbg, "lst_nodes_viewer", None) or []):
+                        _vw_dbg = getattr(_n_dbg, "vtk_widget", None)
+                        if _vw_dbg is None:
+                            continue
+                        for _attr_dbg in ("_awaiting_series_number", "_progressive_series_number"):
+                            _a_dbg = getattr(_vw_dbg, _attr_dbg, None)
+                            if _a_dbg:
+                                _awaiting_keys.append(str(_a_dbg))
+                    if _awaiting_keys:
+                        _logger.info(
+                            "[GROW-LANE-DROP] previous-exam/sibling progress not matched to a "
+                            "viewport: study=%s series_uid=%s awaiting_keys=%s (offset-key "
+                            "series_uid mismatch?)", uid, series_uid, _awaiting_keys,
+                        )
+                except Exception:
+                    pass
+                return None
+
             def on_series_progress(uid, series_uid, current, total):
-                if uid != study_uid:
-                    # Sibling study (fundamental identity routing): the bridge is bound to ONE
-                    # primary study_uid, but a multi-study patient's dropped SECONDARY-study series
-                    # must grow LIVE too. Admit it into the grow lane ONLY when a viewport in THIS
-                    # patient's tab is awaiting/displaying this globally-unique series_uid, then
-                    # re-key to that viewport's display key. Cross-patient safe (series_uid is
-                    # resolved from this patient's own server_series_info). Flag off → byte-identical
-                    # primary-only drop.
-                    if not (_GROW_SIBLING_STUDY and widget_ref() and series_uid):
-                        return
-                    _sib_dk = _active_display_key_for_uid(series_uid)
-                    if not _sib_dk:
-                        return
-                    _logger.info(
-                        "[GROW-SIBLING] progress admitted study=%s series_uid=%s display_key=%s "
-                        "images=%s/%s", uid, series_uid, _sib_dk, current, total,
-                    )
-                    sn = str(_sib_dk)
-                else:
-                    sn = _resolve_sn(series_uid)
-                # Multi-study disambiguation: if a viewport is awaiting this exact
-                # series (matched by the globally-unique series_uid) under a DISPLAY
-                # KEY, re-key the progress to that display key so the viewer binds +
-                # grows it live and loads from the correct per-study folder. No-op
-                # for single-study (display key == number) and when nothing awaits.
-                if _PROGRESSIVE_UID_BIND and series_uid:
-                    try:
-                        _w_probe = widget_ref()
-                        _vc = getattr(_w_probe, "viewer_controller", None) if _w_probe else None
-                        if _vc is not None and hasattr(_vc, "display_key_awaiting_series_uid"):
-                            _dk = _vc.display_key_awaiting_series_uid(series_uid)
-                            if _dk and str(_dk) != sn:
-                                _logger.debug(
-                                    "[PROGRESSIVE_UID_BIND] re-keyed progress series_uid=%s "
-                                    "resolved_sn=%s -> awaiting_display_key=%s",
-                                    series_uid, sn, _dk,
-                                )
-                                sn = str(_dk)
-                    except Exception:
-                        pass
+                # ONE display-key resolution (was: sibling-branch + primary-branch + uid-bind).
+                sn = _grow_lane_display_key(uid, series_uid)
+                if sn is None:
+                    return  # background secondary-study series — no viewport here shows it
                 allowed, reason = _progress_normalizer.should_emit_progress(
                     sn,
                     int(current),
@@ -604,27 +584,16 @@ class HomeDownloadService:
             def on_series_completed(uid, series_uid):
                 if not widget_ref():
                     return
-                if uid != study_uid:
-                    # Multi-study sibling study: real-time "ready" border (thumbnail lane).
-                    if _THUMB_SIBLING_STUDY and _belongs_to_open_thumbnails(series_uid):
-                        _project_sibling_thumbnail(uid, series_uid, completed=True)
-                    # Sibling GROW finalize (identity routing): emit the terminal grow for a
-                    # sibling series a viewport here is awaiting/displaying, so the stack finalizes
-                    # (scroll enabled) even when progress was sparse / never bridged. Admitted ONLY
-                    # for a series_uid this patient's tab is actively showing → cross-patient safe.
-                    if _GROW_SIBLING_STUDY and series_uid:
-                        _sib_dk = _active_display_key_for_uid(series_uid)
-                        if _sib_dk:
-                            _logger.info(
-                                "[GROW-SIBLING] completion admitted study=%s series_uid=%s "
-                                "display_key=%s", uid, series_uid, _sib_dk,
-                            )
-                            with _g6_time_slot(
-                                "home_download.on_series_completed", series=str(_sib_dk)
-                            ):
-                                _on_series_completed_impl(uid, str(_sib_dk))
+                # Sibling-study real-time "ready" THUMBNAIL border (thumbnail lane only; the PRIMARY
+                # study's thumbnail completion is handled inside _on_series_completed_impl).
+                if uid != study_uid and _belongs_to_open_thumbnails(series_uid):
+                    _project_sibling_thumbnail(uid, series_uid, completed=True)
+                # GROW finalize via the SAME one display-key resolution as progress: PRIMARY →
+                # resolved number; a SECONDARY-study series a viewport here shows → its display key;
+                # a background sibling → None (skip the grow — its thumbnail already updated above).
+                sn = _grow_lane_display_key(uid, series_uid)
+                if sn is None:
                     return
-                sn = _resolve_sn(series_uid)
                 with _g6_time_slot("home_download.on_series_completed", series=str(sn)):
                     _on_series_completed_impl(uid, sn)
 

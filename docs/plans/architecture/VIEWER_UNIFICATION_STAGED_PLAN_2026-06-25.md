@@ -152,6 +152,46 @@ So: **one identity + one state owner + one entry chokepoint + one volume cache**
 ## 4. Order, dependencies, discipline
 - Strict order S0→S5 (each depends on the prior spine piece). S1+S2 are the keystones; do not
   start S3 retirements until S1/S2 are default-ON and soaked.
+- **FULL SPINE DEFAULT-ON 2026-06-27 (user directive — "make the unified path the default, stop
+  the flag-gating, we'll run it and fix what breaks").** Flipped to default-ON in main:
+  **S1** `AIPACS_VIEWER_STABLE_IDENTITY` (handle-based request currency — only rejects on a
+  DEFINITE handle mismatch, never a false reject) and **S3** `AIPACS_ENSURE_SERIES_DISPLAYED`
+  (chokepoint observation/divergence feed). S2 + S5 were already default-ON. Each keeps a `=0`
+  kill switch as the **per-part rollback** the user asked for (not a validation gate). The
+  validation-before-flip discipline above is SUPERSEDED by the user's "default-first, fix-on-break"
+  directive. Guard tests updated to the new defaults (`test_stable_identity_request_check.py`,
+  `test_ensure_displayed_shadow.py`, `test_viewer_identity_shadow.py`). **NEXT = the real path
+  reduction:** the S3b CUTOVER — route the entry points through `plan_series_display` to ACT and
+  DELETE the re-keying branches (`AIPACS_PROGRESSIVE_UID_BIND`, `AIPACS_THUMB_SIBLING_STUDY_STATUS`,
+  the sibling/slow-link/resume-skip patches) so the path count actually drops. Landed in main
+  default-on (no shadow gate); run → find the broken part → fix that part.
+- **S3b CUTOVER — FIRST CUT LANDED 2026-06-27 (`home_download_service.py`, the DM→viewer bridge).**
+  The three flag-gated re-keying patches `AIPACS_PROGRESSIVE_UID_BIND` (46970),
+  `AIPACS_THUMB_SIBLING_STUDY_STATUS` (47084) and `AIPACS_GROW_SIBLING_STUDY` (sibling grow) — all
+  default-ON — were **deleted** and replaced by ONE unconditional rule: every DM grow-lane event
+  (`on_series_progress` / `on_series_completed`) resolves its display key via the single
+  `_grow_lane_display_key(uid, series_uid)` (awaiting/shown key from this patient's
+  `_server_series_info` → cross-patient safe; else PRIMARY `_resolve_sn`; else None = background
+  sibling, skip), and the thumbnail lane (`on_series_started`/completed) admits via the
+  unconditional `_belongs_to_open_thumbnails`. **3 flags + 3 branches → 1 resolver.** Behavior is
+  byte-identical in production (the flags were default-ON; only the dead `=0` legacy branches were
+  removed). Guard tests updated (`test_grow_sibling_study` / `test_progressive_uid_bind` /
+  `test_thumb_sibling_study_status` — kill-switch tests removed, source-pins now pin the unified
+  resolver; 58 green with the lifecycle/connection/slow-link/resume neighbours). NEXT cuts: route
+  the viewer-side grow/resume count-truth gates (`AIPACS_SWITCH_REBUILD_WHEN_BEHIND`,
+  `AIPACS_POSTCOMPLETE_EXPECTED_GATE`, `AIPACS_GROW_FALLBACK_*`) through `plan_series_display`, then
+  the disk-ready-resume + slow-link-grow + resume-skip into the same chokepoint.
+- **First count-gate ROUTED THROUGH THE AUTHORITY — `AIPACS_POSTCOMPLETE_EXPECTED_GATE` (LANDED
+  2026-06-27, `_vc_load.py::load_series_on_demand` post-complete skip).** The flag + its legacy
+  raw-disk `=0` branch (the buggy 47804 path) were deleted; the completeness TARGET now comes from
+  the shared authority `build_series_display_state(series, disk_count, expected_count).target`
+  (== `max(disk, expected)`) instead of an inline `max()`. This is the FIRST gate whose count-truth
+  is sourced from the one authority rather than re-derived locally — the structural pattern the rest
+  of the count-gates follow. Behaviour-identical to the default-ON path (a `max()` fallback guards an
+  import failure); the 47804 fix is preserved + proven equivalent by
+  `test_postcomplete_expected_gate.py::test_authority_target_equals_max_disk_expected` (12 green).
+  Remaining count-gates (`SWITCH_REBUILD_WHEN_BEHIND` qt_fast_container, `GROW_FALLBACK_*` _vc_switch —
+  the latter embeds the 47084 livelock fix) are next, one at a time with a live check between.
 - **DEFAULT-ON activation 2026-06-26 (user "safe robustness"):** the two *monotonic-safe* spine
   layers were flipped default-ON — **S2** `AIPACS_VIEWER_STATE_AUTHORITY` (additional settled-stop;
   can only stop *earlier*, never load a wrong/late series) and **S5** `AIPACS_VIEWER_UNIFIED_TEARDOWN`

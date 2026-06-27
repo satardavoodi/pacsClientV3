@@ -1788,7 +1788,7 @@ class _VCSwitchMixin:
         flag when a grid slot is reused by a DIFFERENT cell identity (the raw A1 signal)."""
         try:
             from PacsClient.utils.series_state_store import shadow_enabled
-            _stable = (os.getenv("AIPACS_VIEWER_STABLE_IDENTITY", "0") or "0").strip() == "1"
+            _stable = (os.getenv("AIPACS_VIEWER_STABLE_IDENTITY", "1") or "1").strip() != "0"
             if not (shadow_enabled() or _stable):
                 return
             store = getattr(self, '_viewer_token_handle', None)
@@ -1842,13 +1842,15 @@ class _VCSwitchMixin:
         if viewer_id is None:
             return True
         current = int(self._viewer_request_token.get(viewer_id, 0)) == int(expected_token)
-        # S1b (AIPACS_VIEWER_STABLE_IDENTITY, default off): also require the cell's stable
-        # ViewerHandle to match the handle that ISSUED the token. Closes the A1 grid-index
+        # S1b (AIPACS_VIEWER_STABLE_IDENTITY, default ON 2026-06-27): also require the cell's
+        # stable ViewerHandle to match the handle that ISSUED the token. Closes the A1 grid-index
         # collision — a slot rebound to a different patient/layout has a NEW handle, so a stale
         # worker's token can no longer pass even if the numeric token coincidentally matches.
-        # Falls back to token-only when no handle was recorded (byte-identical when the flag is off).
+        # Falls back to token-only when no handle was recorded; only rejects on a DEFINITE handle
+        # mismatch (both present + different) so it can never wrongly reject a valid load.
+        # Kill switch AIPACS_VIEWER_STABLE_IDENTITY=0 = legacy token-only request currency.
         try:
-            if current and (os.getenv("AIPACS_VIEWER_STABLE_IDENTITY", "0") or "0").strip() == "1":
+            if current and (os.getenv("AIPACS_VIEWER_STABLE_IDENTITY", "1") or "1").strip() != "0":
                 _store = getattr(self, '_viewer_token_handle', None)
                 _token_handle = _store.get(viewer_id) if _store else None
                 _huuid = getattr(self._viewer_handle_for(vtk_widget), 'uuid', None)

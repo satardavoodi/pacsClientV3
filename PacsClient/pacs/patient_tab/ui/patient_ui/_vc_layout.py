@@ -852,6 +852,42 @@ class _VCLayoutMixin:
             self.slider = node_viewer.slider
             return
 
+        # ── Sync Image (TARGET) is viewport-CLICK driven, not active-layout bound ──
+        # Clicking Sync Image on a NON-active viewport must (a) make that viewport
+        # active and (b) drop the sync point there on the SAME click — without the
+        # tool deactivating. The generic path below runs check_and_deactivate_tools()
+        # (which turns Sync OFF) and does NOT re-apply TARGET (get_tool_activated_method
+        # has no TARGET branch), so the click only switched the active cell and disabled
+        # sync — forcing the user to click Sync Image a second time once the cell was
+        # active. Like MPR, Sync is a CROSS-viewport mode (the click-to-target pipeline
+        # is registered on every viewer), so we just move the active selection and leave
+        # the sync pipeline + tool_selected intact. The in-flight FAST mouse press then
+        # still sees `_sync_mode_active` True and lands the target on the clicked
+        # viewport, which syncs to the others.
+        # Kill switch: AIPACS_SYNC_PRESERVE_ON_VIEWPORT_CHANGE=0 restores legacy behavior.
+        _preserve_sync = (
+            os.getenv("AIPACS_SYNC_PRESERVE_ON_VIEWPORT_CHANGE", "1") or "1"
+        ).strip() != "0"
+        _tool_is_sync = False
+        try:
+            _tool_is_sync = (
+                getattr(tb, "tool_selected", None) is not None
+                and tb.tool_selected == tb.tool_access.TARGET
+            )
+        except Exception:
+            _tool_is_sync = False
+
+        if _preserve_sync and _tool_is_sync:
+            logger.info(
+                "[SYNC-PRESERVE] active-viewport change old_viewer=%s new_viewer=%s "
+                "— Sync Image kept active (no teardown); target lands on the clicked viewport",
+                getattr(self.selected_widget, "id_vtk_widget", "?"),
+                getattr(node_viewer.vtk_widget, "id_vtk_widget", "?"),
+            )
+            self.selected_widget: VTKWidget = node_viewer.vtk_widget
+            self.slider = node_viewer.slider
+            return
+
         # save tool activated
         tool_activated_method = tb.get_tool_activated_method()
 

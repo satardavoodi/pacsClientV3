@@ -82,6 +82,14 @@ if ($hotDefer -ge 8 -and $forceProg -eq 0) {
     Show "Grow anti-starvation (hot-force)" 'INFO' "0 - scroll a slow SECONDARY series continuously to exercise it"
 }
 
+# Slow-link progressive grow (Mehr "viewport doesn't grow until complete", 2026-06-27):
+# on a slow link images trickle in 1-at-a-time, so the fixed-batch grow gate (delta >= 10)
+# never trips for a small series. The time-based escape grows with whatever has arrived.
+# On a FAST link (Razi) the batch path fires first → 0 is EXPECTED; on Mehr >0 = fix engaged.
+$slowGrow = Count $all "progressive: slow-link grow"
+if ($slowGrow -gt 0) { Show "Slow-link grow (Mehr fix)" 'PASS' "$slowGrow live grows from trickled images (viewport grew mid-download)" }
+else                 { Show "Slow-link grow (Mehr fix)" 'INFO' "0 - expected on a FAST link; on Mehr, view a downloading series to exercise it" }
+
 Write-Host ""
 
 # --- HEALTH ---------------------------------------------------------------

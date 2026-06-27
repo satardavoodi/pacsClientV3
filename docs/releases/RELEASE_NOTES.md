@@ -1,9 +1,32 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.3.8 (2026-06-27)
-**Previous Stable:** v3.3.7 (2026-06-26)
+**Current Stable Version:** v3.3.9 (2026-06-27)
+**Previous Stable:** v3.3.8 (2026-06-27)
 **Release Date:** 2026-06-27
 **Branch:** beta-version
+
+---
+
+## v3.3.9 (2026-06-27) - Minor release: viewer interaction + close-freeze fix + web browser module
+
+### Summary
+
+Minor release advancing the stable line to 3.3.9 and publishing the full current
+beta-version working state. Focus: viewer interaction and responsiveness — a
+patient/tab/app-close freeze fix, slow-link progressive grow, annotation
+creation-mode lockout across both viewer backends, and Sync Image viewport-click
+preservation — plus web-browser module fixes.
+
+### Included
+
+- Patient/tab/app-close freeze fix (GC deferred and coalesced off the close path)
+- Slow-connection progressive grow (series grow step-by-step on weak links)
+- Annotation creation-mode lockout across FAST and Advanced backends (click starts a new measurement)
+- Sync Image: clicking another viewport switches active viewer, preserves sync, lands the point
+- Inactive-tab resume skip (no background churn stealing GUI cycles)
+- Web browser module: autofill, page tools, prewarm, and styling/stability fixes
+- MPR-open freeze optimization plan and groundwork
+- Canonical version markers advanced to v3.3.9; full local state published to all remotes
 
 ---
 

@@ -46,6 +46,26 @@ BROWSER_ACTIONS: dict[str, str] = {
     "browser_back":    "browser_back",
     "browser_forward": "browser_forward",
     "refresh_page":    "refresh_page",
+    # ── structured page read / inspect / interact (2026-06-27) ──────────
+    # The MCP-like surface so the Secretary/agent can drive the page through
+    # tools instead of synthetic mouse/keyboard. All names are browser_*
+    # namespaced to guarantee no collision with other adapters' actions.
+    "browser_navigate":      "navigate",        # open a page by URL (alias of open_url)
+    "browser_go_back":       "browser_back",
+    "browser_go_forward":    "browser_forward",
+    "browser_reload":        "refresh_page",
+    "browser_get_url":       "get_current_url",
+    "browser_get_text":      "get_page_text",
+    "browser_get_html":      "get_page_html",
+    "browser_dom_summary":   "get_dom_summary",
+    "browser_find_element":  "find_element",
+    "browser_fill_field":    "fill_field",
+    "browser_click":         "click_element",
+    "browser_submit_form":   "submit_form",
+    "browser_selected_text": "get_selected_text",
+    "browser_extract_table": "extract_table",
+    "browser_get_links":     "get_links",
+    "browser_screenshot":    "take_screenshot",
 }
 
 _URL_OK_RE = re.compile(r"^https?://", re.I)
@@ -242,6 +262,217 @@ class BrowserCommandAdapter:
             return _err(action, "ACTION_FAILED", f"{action} failed: {exc}")
         logger.info("browser adapter: %s ok", action)
         return CommandResult(ok=True, action=action, message=ok_msg)
+
+    # ── structured page read / inspect / interact (2026-06-27) ───────────
+    # Read actions are READ_ONLY; fill/click/submit are LOCAL_WRITE page
+    # interactions. Each resolves the live widget through the launcher, calls
+    # its controller method, and returns the page data in CommandResult.data.
+    # The widget runs the actual JS off a bounded sync helper, so these never
+    # hang the bus. A missing controller method degrades to a typed error
+    # (older widget), never an exception.
+
+    def navigate(self, plan: CommandPlan, state: dict) -> CommandResult:
+        """browser_navigate — open a page by URL (alias of open_url)."""
+        return self.open_url(plan, state)
+
+    def _need_widget(self, action: str):
+        """(widget, None) when available, else (None, MODULE_UNAVAILABLE)."""
+        widget = self._widget()
+        if widget is None:
+            return None, _unavailable(action)
+        return widget, None
+
+    def _read(self, action: str, method: str, data_key: str,
+              ok_msg: str) -> CommandResult:
+        widget, err = self._need_widget(action)
+        if err is not None:
+            return err
+        fn = getattr(widget, method, None)
+        if not callable(fn):
+            return _err(action, "ACTION_FAILED",
+                        f"Browser does not support {method}.")
+        try:
+            value = fn()
+        except Exception as exc:
+            logger.exception("browser adapter: %s failed", action)
+            return _err(action, "ACTION_FAILED", f"{action} failed: {exc}")
+        return CommandResult(ok=True, action=action, message=ok_msg,
+                             data={data_key: value})
+
+    def get_current_url(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_get_url", "get_current_url", "url",
+                          "Current URL read.")
+
+    def get_page_text(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_get_text")
+        if err is not None:
+            return err
+        try:
+            text = widget.get_page_text()
+            url = widget.get_current_url()
+        except Exception as exc:
+            logger.exception("browser adapter: get_page_text failed")
+            return _err("browser_get_text", "ACTION_FAILED", str(exc))
+        return CommandResult(
+            ok=True, action="browser_get_text",
+            message=f"Read {len(text)} characters of page text.",
+            data={"text": text, "length": len(text), "url": url})
+
+    def get_page_html(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_get_html")
+        if err is not None:
+            return err
+        try:
+            html = widget.get_page_html()
+            url = widget.get_current_url()
+        except Exception as exc:
+            logger.exception("browser adapter: get_page_html failed")
+            return _err("browser_get_html", "ACTION_FAILED", str(exc))
+        return CommandResult(
+            ok=True, action="browser_get_html",
+            message=f"Read {len(html)} characters of HTML.",
+            data={"html": html, "length": len(html), "url": url})
+
+    def get_dom_summary(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_dom_summary", "get_dom_summary", "summary",
+                          "Page structure summarized.")
+
+    def get_selected_text(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_selected_text", "get_selected_text",
+                          "selected_text", "Selection read.")
+
+    def get_links(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_get_links")
+        if err is not None:
+            return err
+        try:
+            links = widget.get_links()
+        except Exception as exc:
+            logger.exception("browser adapter: get_links failed")
+            return _err("browser_get_links", "ACTION_FAILED", str(exc))
+        links = links if isinstance(links, list) else []
+        return CommandResult(
+            ok=True, action="browser_get_links",
+            message=f"Found {len(links)} link(s).",
+            data={"links": links, "count": len(links)})
+
+    def extract_table(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_extract_table")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        selector = str(ent.get("selector") or "").strip() or None
+        try:
+            table = widget.extract_table(selector)
+        except Exception as exc:
+            logger.exception("browser adapter: extract_table failed")
+            return _err("browser_extract_table", "ACTION_FAILED", str(exc))
+        rows = table.get("rows", []) if isinstance(table, dict) else []
+        found = bool(isinstance(table, dict) and table.get("found"))
+        return CommandResult(
+            ok=found, action="browser_extract_table",
+            message=(f"Extracted {len(rows)} row(s)." if found
+                     else "No matching table found."),
+            data={"table": table})
+
+    def find_element(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_find_element")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        selector = str(ent.get("selector") or "").strip()
+        if not selector:
+            return _err("browser_find_element", "MISSING_SELECTOR",
+                        "find_element requires entities.selector (a CSS selector).")
+        try:
+            info = widget.find_element(selector)
+        except Exception as exc:
+            logger.exception("browser adapter: find_element failed")
+            return _err("browser_find_element", "ACTION_FAILED", str(exc))
+        found = bool(isinstance(info, dict) and info.get("found"))
+        return CommandResult(
+            ok=True, action="browser_find_element",
+            message=("Element found." if found else "Element not found."),
+            data={"selector": selector, "element": info})
+
+    def fill_field(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_fill_field")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        selector = str(ent.get("selector") or "").strip()
+        value = ent.get("value")
+        value = "" if value is None else str(value)
+        if not selector:
+            return _err("browser_fill_field", "MISSING_SELECTOR",
+                        "fill_field requires entities.selector and entities.value.")
+        try:
+            ok = bool(widget.fill_field(selector, value))
+        except Exception as exc:
+            logger.exception("browser adapter: fill_field failed")
+            return _err("browser_fill_field", "ACTION_FAILED", str(exc))
+        if not ok:
+            return _err("browser_fill_field", "ACTION_FAILED",
+                        f"Could not fill {selector!r} (element not found?).")
+        return CommandResult(ok=True, action="browser_fill_field",
+                             message=f"Filled {selector}.",
+                             data={"selector": selector})
+
+    def click_element(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_click")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        selector = str(ent.get("selector") or "").strip()
+        if not selector:
+            return _err("browser_click", "MISSING_SELECTOR",
+                        "click_element requires entities.selector (a CSS selector).")
+        try:
+            ok = bool(widget.click_element(selector))
+        except Exception as exc:
+            logger.exception("browser adapter: click_element failed")
+            return _err("browser_click", "ACTION_FAILED", str(exc))
+        if not ok:
+            return _err("browser_click", "ACTION_FAILED",
+                        f"Could not click {selector!r} (element not found?).")
+        return CommandResult(ok=True, action="browser_click",
+                             message=f"Clicked {selector}.",
+                             data={"selector": selector})
+
+    def submit_form(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_submit_form")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        selector = str(ent.get("selector") or "").strip() or None
+        try:
+            ok = bool(widget.submit_form(selector))
+        except Exception as exc:
+            logger.exception("browser adapter: submit_form failed")
+            return _err("browser_submit_form", "ACTION_FAILED", str(exc))
+        if not ok:
+            return _err("browser_submit_form", "ACTION_FAILED",
+                        "No form to submit.")
+        return CommandResult(ok=True, action="browser_submit_form",
+                             message="Form submitted.", data={})
+
+    def take_screenshot(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_screenshot")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        path = str(ent.get("path") or "").strip() or None
+        try:
+            res = widget.take_screenshot(path)
+        except Exception as exc:
+            logger.exception("browser adapter: take_screenshot failed")
+            return _err("browser_screenshot", "ACTION_FAILED", str(exc))
+        if not (isinstance(res, dict) and res.get("ok")):
+            return _err("browser_screenshot", "ACTION_FAILED",
+                        "Screenshot could not be captured.")
+        return CommandResult(ok=True, action="browser_screenshot",
+                             message=f"Saved screenshot to {res.get('path')}.",
+                             data={"path": res.get("path")})
 
 
 __all__ = ["BrowserCommandAdapter", "BROWSER_ACTIONS", "normalize_url",

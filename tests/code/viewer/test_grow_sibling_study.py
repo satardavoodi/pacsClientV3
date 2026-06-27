@@ -9,7 +9,9 @@ Fix: route grow events by the globally-unique `series_uid` (identity), not the p
 A sibling-study event is admitted into the grow lane ONLY when a viewport in THIS patient's tab is
 awaiting/progressively-displaying that series_uid (`display_key_for_active_series_uid`), re-keyed to
 that viewport's display key — cross-patient safe (the map is this patient's server_series_info). The
-primary path is byte-identical. Flag `AIPACS_GROW_SIBLING_STUDY` (default on).
+primary path is byte-identical. UNIFIED (S3b cutover 2026-06-27): this is now the ONE unconditional
+`_grow_lane_display_key` rule (the `AIPACS_GROW_SIBLING_STUDY` flag + its legacy `=0` branch were
+deleted — the behavior below is the only path).
 
 Functional test: a real Qt fake-DM emits signals; we assert the re-keyed grow event reaches the
 widget's `series_images_progress` / `series_downloaded` only for an actively-shown sibling series,
@@ -147,15 +149,6 @@ def test_primary_progress_unchanged(_qt_app):
     dm.seriesProgressUpdated.emit(PRIMARY, UID_PRIM, 4, 8)
     assert _wait(_qt_app, lambda: ("203", 4, 8) in widget.progress_calls), \
         "primary-study progress must still flow unchanged"
-
-
-def test_kill_switch_restores_primary_only(_qt_app, monkeypatch):
-    from PacsClient.pacs.workstation_ui.home_ui import home_download_service as hds
-    monkeypatch.setattr(hds, "_GROW_SIBLING_STUDY", False)
-    _hds, dm, widget = _build({UID_SEC: SEC_DISPLAY_KEY})
-    dm.seriesProgressUpdated.emit(SECONDARY, UID_SEC, 5, 10)
-    _wait(_qt_app, lambda: False, timeout_s=0.4)
-    assert widget.progress_calls == [], "flag off → sibling grow events stay filtered (legacy)"
 
 
 def test_sibling_completion_finalizes(_qt_app):

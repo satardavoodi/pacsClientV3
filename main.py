@@ -741,6 +741,18 @@ if __name__ == "__main__":
     else:
         QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)
     QApplication.setAttribute(Qt.AA_DontCreateNativeWidgetSiblings, True)  # Better performance for detached tabs
+    # QtWebEngine (Web Browser module) REQUIRES shared OpenGL contexts and the
+    # attribute MUST be set before the QApplication is created. Without it the
+    # embedded Chromium view takes slow/buggy GL fallback paths and logs
+    # "Qt WebEngine seems to be initialized from a plugin..." warnings. Setting
+    # it unconditionally is safe for the VTK viewers (they own their own GL
+    # contexts) and is a no-op when the browser module is never opened.
+    # Kill switch: AIPACS_WEBENGINE_SHARE_GL=0. (2026-06-27, web-browser startup fix)
+    if os.environ.get("AIPACS_WEBENGINE_SHARE_GL", "1") != "0":
+        try:
+            QApplication.setAttribute(Qt.AA_ShareOpenGLContexts, True)
+        except Exception:
+            pass
     
     # â”€â”€ H8/H9: QApplication.notify() override (v2.2.9.3) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     # PySide6/Shiboken swallows exceptions at the C++ boundary before
@@ -1191,7 +1203,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.3.8")
+    app.setApplicationVersion("3.3.9")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

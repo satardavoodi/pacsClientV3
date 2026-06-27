@@ -1,4 +1,5 @@
 import logging
+import os
 import numpy as np
 import vtkmodules.all as vtk
 from vtkmodules.all import vtkInteractorStyleImage
@@ -8,6 +9,24 @@ from modules.viewer.advanced.viewer_2d import ImageViewer2D
 from .tools_object_manager import ToolObjectAbstract
 
 logger = logging.getLogger(__name__)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Annotation creation-mode lock-out (2026-06-27)
+# When an annotation CREATION tool (ruler / arrow / angle / two-line angle /
+# ROI / circle ROI / text) is active, EXISTING annotations must NOT capture
+# mouse hover/click events — the mouse is reserved for drawing the NEW
+# annotation. Without this, the first click of a new annotation that lands on
+# or near an existing one grabs the old annotation for dragging instead of
+# starting the new one (e.g. drawing a crossed measurement or a circle over an
+# existing line). Existing annotations stay selectable/editable only in the
+# default/select style. One flag gates the behaviour across every interactor
+# style; set AIPACS_ANNOTATION_CREATION_LOCKOUT=0 to restore the legacy
+# behaviour (existing annotations grabbable while a creation tool is armed).
+# ──────────────────────────────────────────────────────────────────────────
+_ANNOTATION_CREATION_LOCKOUT = os.environ.get(
+    "AIPACS_ANNOTATION_CREATION_LOCKOUT", "1"
+) != "0"
+
 
 class InteractionSignal(QObject):
     interactionOccurred = Signal()
@@ -561,11 +580,34 @@ class AbstractInteractorStyle(vtkInteractorStyleImage):
     #  Unified drag-to-move helpers (work on ANY annotation type)
     # ──────────────────────────────────────────────────────────────────
 
+    def _annotation_creation_armed(self) -> bool:
+        """
+        True when THIS interactor style is an annotation-CREATION tool that is
+        currently armed to draw (ruler / arrow / angle / two-line angle / ROI /
+        circle ROI / text). While a creation tool is armed, EXISTING annotations
+        must not be hit-tested for select / drag / hover — the mouse is reserved
+        for creating the new annotation. Default & view-manipulation styles never
+        arm (they do not set ``is_active``), so they keep full annotation editing
+        in select mode.
+
+        Kill switch: ``AIPACS_ANNOTATION_CREATION_LOCKOUT=0`` restores the legacy
+        behaviour (existing annotations grabbable while a creation tool is active).
+        """
+        if not _ANNOTATION_CREATION_LOCKOUT:
+            return False
+        return bool(getattr(self, 'is_active', False))
+
     def _find_any_drag_target(self, mouse_pos):
         """
         Search ALL annotation types on the current slice for a drag hit.
         Returns ``(obj, drag_type, start_data)`` or ``None``.
+
+        While an annotation-creation tool is armed, existing annotations are
+        non-interactive: return ``None`` so the click/hover is reserved for the
+        new annotation (see ``_annotation_creation_armed``).
         """
+        if self._annotation_creation_armed():
+            return None
         current_slice = self.image_viewer.GetSlice()
         if current_slice not in self.widgets_by_slice:
             return None

@@ -345,6 +345,9 @@ class RoiInteractorStyle(AbstractInteractorStyle):
         except Exception:
             pass
 
+        # Creation-mode lock-out flag (see AbstractInteractorStyle): True while
+        # the ROI tool is armed to draw, so existing annotations are not grabbed.
+        self.is_active = False
         self.active_widget = self.create_contour_widget()
         self.active_widget.Off()
         self._dragging_obj = None
@@ -366,6 +369,7 @@ class RoiInteractorStyle(AbstractInteractorStyle):
         self._drag_start_world = None
         self._drag_start_nodes = None
         self._hover_obj = None
+        self.is_active = False
 
     def handle_key_press(self, key: str) -> bool:
         if key != 'Escape':
@@ -497,6 +501,11 @@ class RoiInteractorStyle(AbstractInteractorStyle):
             self.image_viewer.image_interactor.SetCursor(cursor_type)
 
     def _find_drag_target(self, mouse_pos):
+        # Creation-mode lock-out: while the ROI tool is armed, an existing
+        # annotation must not capture the click/hover — reserve it for the new
+        # ROI. Existing ROIs stay editable in the default/select style.
+        if self._annotation_creation_armed():
+            return None
         current_slice = self.image_viewer.GetSlice()
         if current_slice not in self.widgets_by_slice:
             return None
@@ -602,6 +611,7 @@ class RoiInteractorStyle(AbstractInteractorStyle):
 
     def activate(self, tool=None):
         self.active_widget.On()
+        self.is_active = True
 
     def deactivate(self, tool=None):
         self._reset_active_widget()
@@ -682,6 +692,9 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
         self.active_widget = self._create_circle_widget()
         self.active_widget.Off()
         self._drawing = False
+        # Creation-mode lock-out flag (see AbstractInteractorStyle): True while
+        # the circle ROI tool is armed, so existing circles are not grabbed.
+        self.is_active = False
         self._center_world = None
         self._drag_mode = None  # 'move' | 'resize'
         self._drag_start_world = None
@@ -708,6 +721,7 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
         self._drag_start_radius = None
         self._active_circle_obj = None
         self._hover_circle_obj = None
+        self.is_active = False
 
     def handle_key_press(self, key: str) -> bool:
         if key != 'Escape':
@@ -871,6 +885,11 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
             self.update_text_actor(text_actor, dict_statistics, widget.get_radius())
 
     def _get_handle_hit(self, mouse_pos):
+        # Creation-mode lock-out: while the circle ROI tool is armed, an existing
+        # circle must not capture the click/hover — reserve it for the new circle.
+        # Existing circles stay editable in the default/select style.
+        if self._annotation_creation_armed():
+            return None
         current_slice = self.image_viewer.GetSlice()
         if current_slice not in self.widgets_by_slice:
             return None
@@ -886,6 +905,11 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
         return None
 
     def _get_edge_hit(self, mouse_pos):
+        # Creation-mode lock-out: while the circle ROI tool is armed, an existing
+        # circle must not capture the click/hover — reserve it for the new circle.
+        # Existing circles stay editable in the default/select style.
+        if self._annotation_creation_armed():
+            return None
         current_slice = self.image_viewer.GetSlice()
         if current_slice not in self.widgets_by_slice:
             return None
@@ -1045,6 +1069,7 @@ class CircleRoiInteractorStyle(AbstractInteractorStyle):
 
     def activate(self, tool=None):
         self._reset_active_widget()
+        self.is_active = True
 
     def deactivate(self, tool=None):
         self._reset_active_widget()

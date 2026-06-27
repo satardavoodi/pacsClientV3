@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.3.8",
+    "version": "3.3.9",
     "build_date": "2026-06-27",
     "release_date": "2026-06-27",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Smoother large-series scrolling and stacking (no mid-scroll stalls)",
-        "More reliable multi-study loading (sibling studies grow correctly)",
-        "Faster viewport switching with safer cleanup",
-        "Improved memory handling for large 3D volumes",
-        "Performance and stability improvements",
+        "Faster patient and tab close (no end-of-session freeze)",
+        "Slow-connection series grow step-by-step instead of only at the end",
+        "Annotation tools reliably start a new measurement on click",
+        "Sync Image: clicking another viewport keeps sync and places the point",
+        "Built-in browser improvements and stability fixes",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.3.8",
+        "AI-PACS Version 3.3.9",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۳.۷",
+        "AI-PACS نسخهٔ ۳.۳.۸",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

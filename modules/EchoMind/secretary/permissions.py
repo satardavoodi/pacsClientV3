@@ -146,6 +146,26 @@ ACTION_SIDE_EFFECTS: dict[str, str] = {
     "cancel_download": DESTRUCTIVE,
     "cancel_agent_task": DESTRUCTIVE,
     "close_patient_tab": DESTRUCTIVE,
+    # ── browser structured page tools (2026-06-27) ──
+    # Reads return page data with no state change; fill/click are local page
+    # writes; navigate/submit cause network egress (match open_url's gating so
+    # the alias can't bypass the confirmation open_url requires).
+    "browser_get_url": READ_ONLY,
+    "browser_get_text": READ_ONLY,
+    "browser_get_html": READ_ONLY,
+    "browser_dom_summary": READ_ONLY,
+    "browser_selected_text": READ_ONLY,
+    "browser_get_links": READ_ONLY,
+    "browser_extract_table": READ_ONLY,
+    "browser_find_element": READ_ONLY,
+    "browser_screenshot": READ_ONLY,
+    "browser_go_back": UI_NAV,
+    "browser_go_forward": UI_NAV,
+    "browser_reload": UI_NAV,
+    "browser_fill_field": LOCAL_WRITE,
+    "browser_click": LOCAL_WRITE,
+    "browser_navigate": SERVER_WRITE,
+    "browser_submit_form": SERVER_WRITE,
 }
 
 #: Side-effect assigned to a known-but-unmapped action (conservative low-risk).

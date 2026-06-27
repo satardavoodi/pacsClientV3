@@ -89,13 +89,21 @@ class _HPModulesMixin:
                                             "The Web Browser module is not installed for this workstation.")
                 return None
             from modules.web_browser import WebBrowserWidget
-            return activate_or_create_module_tab(
+            widget = activate_or_create_module_tab(
                 self.tab_widget, self.custom_tab_manager,
                 tab_flag_key='is_web_browser_tab',
                 widget_factory=WebBrowserWidget,
                 add_tab_method_name='add_web_browser_tab',
                 fallback_label='Web Browser',
             )
+            # Remember the browser was opened so future sessions can adaptively
+            # pre-warm QtWebEngine at idle → near-instant subsequent opens.
+            try:
+                from modules.web_browser.prewarm import mark_browser_used
+                mark_browser_used()
+            except Exception:
+                pass
+            return widget
         except Exception as e:
             print(f"[HomePanelWidget] Error opening web browser: {e}")
             import traceback; traceback.print_exc()

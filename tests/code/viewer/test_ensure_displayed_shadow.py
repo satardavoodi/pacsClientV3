@@ -108,9 +108,12 @@ def test_production_helper_matches_this_contract(monkeypatch):
 # Source-pins — additive, default-off, retires nothing
 # --------------------------------------------------------------------------- #
 
-def test_flag_default_off_and_after_os_import():
+def test_flag_default_on_and_after_os_import():
     s = _src()
-    assert 'AIPACS_ENSURE_SERIES_DISPLAYED", "0"' in s, "S3b flag must DEFAULT OFF (shadow-first)"
+    # Flipped DEFAULT-ON 2026-06-27 (user directive: make the unified path the default).
+    # `=0` remains the kill switch. The chokepoint observation now runs by default; the
+    # ACT cutover (delete the re-keying branches) is the next step.
+    assert 'AIPACS_ENSURE_SERIES_DISPLAYED", "1"' in s, "S3b chokepoint default-ON (=0 kill switch)"
     assert s.index("import os as _os") < s.index("_ENSURE_SERIES_DISPLAYED_ENABLED ="), (
         "flag uses _os.getenv → must be defined after `import os as _os` (load-time NameError)"
     )

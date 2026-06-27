@@ -1,6 +1,8 @@
 """S1b guard: _is_request_current also requires the cell's stable ViewerHandle to match the
 handle that issued the token, closing the A1 grid-index collision. Flag
-AIPACS_VIEWER_STABLE_IDENTITY (default off → byte-identical token-only check).
+AIPACS_VIEWER_STABLE_IDENTITY (default ON 2026-06-27; `=0` kill switch → byte-identical
+token-only check). Only rejects on a DEFINITE handle mismatch, so it can never wrongly
+reject a valid load.
 
 Plan: docs/plans/architecture/VIEWER_UNIFICATION_STAGED_PLAN_2026-06-25.md (S1b).
 """

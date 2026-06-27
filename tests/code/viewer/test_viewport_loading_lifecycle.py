@@ -131,7 +131,9 @@ def test_disk_ready_never_complete_with_no_files():
 def test_disk_ready_resume_wired_into_watchdog():
     assert "def _maybe_resume_awaiting_from_disk(" in _SRC_PROG
     assert "_maybe_resume_awaiting_from_disk(vtk_w, sn)" in _SRC_PROG
-    assert 'AIPACS_VIEWPORT_DISK_READY_RESUME", "1"' in _SRC_PROG  # default on
+    # S3b cutover 2026-06-27: the AIPACS_VIEWPORT_DISK_READY_RESUME flag was removed — the resume
+    # is now UNCONDITIONAL (the watchdog always calls it; no `if flag:` gate to leave it off).
+    assert 'getenv("AIPACS_VIEWPORT_DISK_READY_RESUME"' not in _SRC_PROG
     assert "ViewportLoadResumedFromDisk" in _SRC_PROG
     # Resumes via the proven display-key load path, once per awaiting episode.
     assert "change_series_on_viewer(display_key)" in _SRC_PROG

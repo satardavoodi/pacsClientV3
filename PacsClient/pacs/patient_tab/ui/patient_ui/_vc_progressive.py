@@ -106,15 +106,14 @@ _DOWNLOAD_PROGRESS_TEXT = (_os.getenv("AIPACS_DOWNLOAD_PROGRESS_TEXT", "1") or "
 _DL_SLOW_AFTER_S = max(2.0, float(_os.getenv("AIPACS_DL_SLOW_AFTER_S", "6") or "6"))
 _DL_STALLED_AFTER_S = max(_DL_SLOW_AFTER_S + 1.0, float(_os.getenv("AIPACS_DL_STALLED_AFTER_S", "15") or "15"))
 _DL_WATCHDOG_INTERVAL_MS = max(500, int(_os.getenv("AIPACS_DL_WATCHDOG_INTERVAL_MS", "2000") or "2000"))
-# Disk-readiness resume (2026-06-18, patient 46713 DOC/Study-2). A secondary-study
-# series whose download progress is NOT bridged to this viewer (the home-download
-# progress bridge filters by study_uid, so a non-opened study's progress never
-# reaches on_series_images_progress) would await FOREVER even though its files are
-# already complete on disk. While a viewport is awaiting, the watchdog resolves the
-# series' OWN disk folder and, once the files are present + complete, resumes the
-# load via the proven display-key path — no manual re-drag. Kill switch:
-# AIPACS_VIEWPORT_DISK_READY_RESUME=0.
-_LOADING_DISK_READY_RESUME = (_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME", "1") or "1").strip() != "0"
+# Disk-readiness resume (2026-06-18, patient 46713 DOC/Study-2; UNCONDITIONAL since the S3b
+# cutover 2026-06-27 — the AIPACS_VIEWPORT_DISK_READY_RESUME flag + its "never resume → spin
+# forever" legacy branch were removed). A secondary-study series whose download progress is NOT
+# bridged to this viewer (the home-download progress bridge filters by study_uid, so a non-opened
+# study's progress never reaches on_series_images_progress) would await FOREVER even though its
+# files are already complete on disk. While a viewport is awaiting, the watchdog resolves the
+# series' OWN disk folder and, once the files are present + complete, resumes the load via the
+# proven display-key path — no manual re-drag.
 
 # Disk-ready resume RETRY (2026-06-20, slow Mehr server). The original resume was
 # one-shot (`_disk_ready_resume_done`): if that single attempt didn't actually
@@ -124,6 +123,20 @@ _LOADING_DISK_READY_RESUME = (_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME", "1
 # still awaiting the SAME series, so a delayed completion always loads on its own.
 _DISK_READY_RESUME_MAX_ATTEMPTS = max(1, int(_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME_MAX", "6") or "6"))
 _DISK_READY_RESUME_RETRY_S = max(1.0, float(_os.getenv("AIPACS_VIEWPORT_DISK_READY_RESUME_RETRY_S", "3") or "3"))
+
+# Multi-patient resume-churn guard (2026-06-27). The disk-ready resume watchdog runs
+# PER-TAB and would try to resume an awaiting viewport even on a BACKGROUND (inactive)
+# tab. But the load path itself DEFERS an inactive-tab load
+# (`_load_single_series_on_demand` returns False -> "Deferred load_series_on_demand until
+# tab activation"), so the resume can never display anything while the tab is inactive —
+# it just re-arms `_awaiting_series_number` and the watchdog reloads via change_series
+# every tick (~2-3s). Live (Mehr, 3 patients downloading): a background patient's
+# completed series fired 6 change_series reloads in 12s (visible stayed 0), stealing
+# main-thread cycles from the ACTIVE tab the user was watching -> the "growth not smooth"
+# jank. The series loads correctly when its tab is activated, so skipping the resume while
+# inactive removes pure churn and changes nothing about what actually loads. Kill switch
+# `AIPACS_RESUME_SKIP_INACTIVE_TAB=0` restores the legacy (churn) behaviour.
+_RESUME_SKIP_INACTIVE_TAB = (_os.getenv("AIPACS_RESUME_SKIP_INACTIVE_TAB", "1") or "1").strip() != "0"
 
 # S2b — per-series STATE AUTHORITY as a settled signal (unified viewer pipeline,
 # docs/plans/architecture/VIEWER_UNIFICATION_STAGED_PLAN_2026-06-25.md). The
@@ -147,7 +160,7 @@ _STATE_AUTHORITY_ENABLED = (_os.getenv("AIPACS_VIEWER_STATE_AUTHORITY", "1") or 
 # [ENSURE-DISPLAYED-SHADOW] when its DisplayPlan disagrees with the live settled decision. It changes
 # NO behavior and retires NO flag (AIPACS_PROGRESSIVE_UID_BIND etc. stay) until the shadow proves
 # agreement on a live multi-study soak. Default OFF; the shadow also runs under AIPACS_VIEWER_SPINE_SHADOW.
-_ENSURE_SERIES_DISPLAYED_ENABLED = (_os.getenv("AIPACS_ENSURE_SERIES_DISPLAYED", "0") or "0").strip() == "1"
+_ENSURE_SERIES_DISPLAYED_ENABLED = (_os.getenv("AIPACS_ENSURE_SERIES_DISPLAYED", "1") or "1").strip() != "0"
 
 
 def _ensure_displayed_shadow_divergence(plan, live_settled) -> "str | None":
@@ -207,6 +220,55 @@ def _should_force_nonterminal_grow(coalesced_count) -> bool:
         return False
     try:
         return int(coalesced_count) >= int(_PROGRESSIVE_HOT_FORCE_AFTER)
+    except (TypeError, ValueError):
+        return False
+
+
+# ── Slow-link progressive grow (Mehr / poor-connection viewport-no-grow fix, 2026-06-27) ──
+# The steady-state grow gate in `_on_series_images_progress_impl` only grows the viewport
+# once `delta` (new images since the last applied grow) reaches `_progressive_grow_batch_size`
+# (default 10) — tuned for a FAST link where images arrive in big bursts. On a SLOW link
+# (e.g. Mehr) the download delivers ONE image at a time (batch=1, ~1 image per several
+# seconds), so `delta` rises by 1 and never reaches the batch for a series with fewer than
+# `_progressive_grow_batch_size` images → the viewport then grows ONLY at completion
+# (live-confirmed 2026-06-27: 5- and 8-image series on Mehr never grew until done; the
+# per-image progress signal IS delivered — 17 [SIGNAL_FANOUT], one per image — it is the
+# batch-size gate that suppresses the grow). This escape grows with whatever HAS arrived once
+# a bounded idle time has elapsed since the last grow AND at least one new image is available.
+# On a FAST link the batch fills before the idle window elapses, so the batch path fires first
+# and behaviour is byte-identical. The grow itself still flows through the existing
+# `_progressive_grow_timer` → `_flush_progressive_grow_impl` (interaction-hot defer + the
+# HOT_FORCE starvation guard), so it never storms the UI during a drag. FAST viewer only; no
+# VTK / geometry / slice-order change. Kill switch: AIPACS_PROGRESSIVE_SLOW_LINK_GROW=0 =
+# byte-identical legacy (batch-only) behaviour.
+_PROGRESSIVE_SLOW_LINK_GROW_ENABLED = (
+    _os.getenv("AIPACS_PROGRESSIVE_SLOW_LINK_GROW", "1") or "1"
+).strip() != "0"
+try:
+    _PROGRESSIVE_SLOW_LINK_GROW_IDLE_MS = max(
+        200.0, float(_os.getenv("AIPACS_PROGRESSIVE_SLOW_LINK_GROW_MS", "1200") or "1200")
+    )
+except (TypeError, ValueError):
+    _PROGRESSIVE_SLOW_LINK_GROW_IDLE_MS = 1200.0
+
+
+def _should_slow_link_grow(delta, last_grow_ms, now_ms, idle_ms=None) -> bool:
+    """Slow-link grow decision (pure, unit-testable).
+
+    Returns True when a trickle of images should grow the viewport NOW instead of waiting
+    for a full `_progressive_grow_batch_size` boundary: at least one new image is available
+    (``delta >= 1``), the slow-link clock is armed (``last_grow_ms > 0``), and at least
+    ``idle_ms`` has elapsed since the last grow. Returns False when the escape is disabled
+    (kill switch ``AIPACS_PROGRESSIVE_SLOW_LINK_GROW=0`` → byte-identical legacy batch-only).
+    """
+    if not _PROGRESSIVE_SLOW_LINK_GROW_ENABLED:
+        return False
+    if idle_ms is None:
+        idle_ms = _PROGRESSIVE_SLOW_LINK_GROW_IDLE_MS
+    try:
+        if int(delta) < 1 or float(last_grow_ms) <= 0.0:
+            return False
+        return (float(now_ms) - float(last_grow_ms)) >= float(idle_ms)
     except (TypeError, ValueError):
         return False
 
@@ -1229,8 +1291,6 @@ class _VCProgressiveMixin:
         text + disk-readiness resume) so a stalled link is reported and a completed
         series is auto-loaded even before/without a progress signal. Best-effort;
         never raises."""
-        if not (_DOWNLOAD_PROGRESS_TEXT or _LOADING_DISK_READY_RESUME):
-            return
         try:
             waits = getattr(self, "_dl_await_since", None)
             if waits is None:
@@ -1252,11 +1312,8 @@ class _VCProgressiveMixin:
 
     def _ensure_dl_watchdog(self) -> None:
         """Lazily create + start the repeating watchdog timer (connection-state text
-        AND disk-readiness resume). Runs if EITHER feature is on, so the disk-ready
-        resume (the anti-forever-spin guarantee) works even when progress-text is
-        disabled."""
-        if not (_DOWNLOAD_PROGRESS_TEXT or _LOADING_DISK_READY_RESUME):
-            return
+        AND disk-readiness resume). Always runs — the disk-readiness resume (the
+        anti-forever-spin guarantee) is unconditional since the S3b cutover (2026-06-27)."""
         try:
             timer = getattr(self, "_dl_watchdog_timer", None)
             if timer is not None:
@@ -1292,12 +1349,13 @@ class _VCProgressiveMixin:
                 # complete on disk (e.g. a secondary-study series whose download
                 # progress was never bridged to this viewer), resume the load now —
                 # the viewport must not spin forever once the files are present.
-                if _LOADING_DISK_READY_RESUME:
-                    try:
-                        if self._maybe_resume_awaiting_from_disk(vtk_w, sn):
-                            continue
-                    except Exception:
-                        pass
+                # Disk-readiness resume is unconditional (S3b cutover 2026-06-27): while a
+                # viewport is awaiting, always try to resume a series whose files are complete.
+                try:
+                    if self._maybe_resume_awaiting_from_disk(vtk_w, sn):
+                        continue
+                except Exception:
+                    pass
                 st = stats.get(sn)
                 has_progress = bool(st and st.get("last_count"))
                 last_ts = (st.get("last_ts") if st else None) or waits.get(str(sn)) or now
@@ -1453,6 +1511,17 @@ class _VCProgressiveMixin:
         manual re-drag does. Never raises.
         """
         try:
+            # Multi-patient churn guard (2026-06-27): an inactive (background) tab's load is
+            # DEFERRED by _load_single_series_on_demand anyway, so a resume here can only
+            # re-arm the awaiting flag and make the watchdog reload via change_series every
+            # tick — pure churn that steals main-thread cycles from the ACTIVE tab. Skip
+            # while the tab is inactive; the series loads when its tab is activated. The
+            # ACTIVE tab and explicit interactive loads are unaffected (defaults keep the
+            # legacy behaviour when the flags/attrs are absent).
+            if (_RESUME_SKIP_INACTIVE_TAB
+                    and not getattr(self, "_tab_active", True)
+                    and not getattr(self, "_interactive_load_in_progress", False)):
+                return False
             now = time.monotonic()
             key_str = str(display_key)
             # New awaiting episode (a different series is now awaited) → reset the
@@ -1519,8 +1588,11 @@ class _VCProgressiveMixin:
             # clear the stale flag, emit the settled signal, and STOP. This is the
             # settled-state the unified ensure_series_displayed chokepoint (Phase 2B,
             # docs/plans/architecture/UNIFIED_SERIES_DISPLAY_AUTHORITY_PLAN_2026-06-24.md)
-            # will eventually own. Kill switch restores the legacy (loop) behaviour.
-            if (_os2.getenv("AIPACS_RESUME_STOP_WHEN_SETTLED", "1") or "1").strip() != "0" and _complete:
+            # will eventually own. UNCONDITIONAL since the S3b cutover (2026-06-27): the
+            # AIPACS_RESUME_STOP_WHEN_SETTLED flag + its legacy "loop forever" (livelock) `=0` branch
+            # were removed — the settled-stop is the only path (a clinician must never be able to
+            # re-enable the livelock).
+            if _complete:
                 try:
                     _vis_settled = int(vtk_w.get_count_of_slices() or 0)
                 except Exception:
@@ -1869,7 +1941,7 @@ class _VCProgressiveMixin:
 
         # Track this series for progressive updates
         if sn not in self._progressive_series:
-            self._progressive_series[sn] = {"total": total, "last_grow_count": 0, "last_signal_ms": 0}
+            self._progressive_series[sn] = {"total": total, "last_grow_count": 0, "last_signal_ms": 0, "last_grow_ms": 0}
             _h10_log_progressive_mutation(self, 'on_series_images_progress_impl', sn, 'add_key')
             _set_progressive_lifecycle_state(
                 self,
@@ -1898,10 +1970,31 @@ class _VCProgressiveMixin:
                 source="on_series_images_progress",
                 reason="progressive_viewer_present",
             )
-            # Only grow when enough NEW images arrived (batch boundary)
+            # Only grow when enough NEW images arrived (batch boundary) — OR, on a slow
+            # link, when a bounded idle time has elapsed since the last grow so a trickle
+            # of one-image-at-a-time downloads still grows the viewport instead of waiting
+            # for the full batch / completion (Mehr viewport-no-grow fix, 2026-06-27).
             delta = downloaded - info["last_grow_count"]
-            if delta >= self._progressive_grow_batch_size or downloaded >= total:
+            _grow_now_ms = time.monotonic() * 1000.0
+            if info.get("last_grow_ms", 0) <= 0:
+                # Arm the slow-link clock the first time we reach the grow gate in
+                # progressive mode (fallback for entry paths that did not seed it at
+                # retroactive activation). One cycle's delay at worst; harmless on FAST.
+                info["last_grow_ms"] = _grow_now_ms
+            _slow_link_escape = _should_slow_link_grow(
+                delta, info.get("last_grow_ms", 0), _grow_now_ms)
+            if (delta >= self._progressive_grow_batch_size
+                    or downloaded >= total
+                    or _slow_link_escape):
                 info["pending_downloaded"] = downloaded
+                info["last_grow_ms"] = _grow_now_ms
+                if _slow_link_escape and self.logger:
+                    self.logger.info(
+                        "progressive: slow-link grow series=%s delta=%d downloaded=%d "
+                        "total=%d idle_ms>=%.0f",
+                        sn, delta, downloaded, total,
+                        _PROGRESSIVE_SLOW_LINK_GROW_IDLE_MS,
+                    )
                 if not self._progressive_grow_timer.isActive():
                     _restart_progressive_grow_timer(self, _progressive_grow_interval_ms())
             return
@@ -1971,6 +2064,11 @@ class _VCProgressiveMixin:
                     except Exception:
                         pass
                 info["last_grow_count"] = avail
+                # Arm the slow-link grow clock at the first shown image so the NEXT
+                # trickled image grows the viewport as soon as it lands (idle window
+                # already elapsed by then on a slow link) rather than after an extra
+                # cycle. FAST link is unaffected (batch path fires first).
+                info["last_grow_ms"] = time.monotonic() * 1000.0
                 self.logger.info(
                     "progressive: retroactive activate series=%s avail=%d total=%d",
                     sn, avail, total,

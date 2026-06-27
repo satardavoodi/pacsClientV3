@@ -279,6 +279,18 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         except Exception as _cmd_bus_err:  # noqa: BLE001
             print(f"[CommandBus] init failed (non-fatal): {_cmd_bus_err}")
 
+        # Adaptive Web Browser pre-warm (2026-06-27): if the user opened the
+        # browser in a previous session (marker file), warm QtWebEngine at
+        # idle so the NEXT open is near-instant instead of a ~20 s cold boot.
+        # No-op on first-ever use or when disabled (AIPACS_BROWSER_PREWARM=0).
+        # The prewarm module is lightweight — it does NOT import QtWebEngine on
+        # this path; the heavy DLL load happens on a daemon thread at idle.
+        try:
+            from modules.web_browser.prewarm import schedule_prewarm
+            schedule_prewarm()
+        except Exception as _pw_err:  # noqa: BLE001
+            print(f"[BrowserPrewarm] schedule skipped (non-fatal): {_pw_err}")
+
     def _launcher_eagle_ai_from_home(self, entities: dict):
         """Open Eagle Eye (AiMainWindow) from the home context.
 

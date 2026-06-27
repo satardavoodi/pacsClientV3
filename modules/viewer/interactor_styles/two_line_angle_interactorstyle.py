@@ -74,6 +74,11 @@ class TwoLineAngleInteractorStyle(AbstractInteractorStyle):
             self.image_viewer.image_interactor.SetCursor(cursor_type)
 
     def _find_drag_target(self, mouse_pos):
+        # Creation-mode lock-out: while the two-line angle tool is armed, an
+        # existing annotation must not capture the click/hover — reserve it for
+        # the new measurement. Existing ones stay editable in the default style.
+        if self._annotation_creation_armed():
+            return None
         current_slice = self.image_viewer.GetSlice()
         if current_slice not in self.widgets_by_slice:
             return None

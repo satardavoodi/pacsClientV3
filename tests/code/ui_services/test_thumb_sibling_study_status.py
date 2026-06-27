@@ -47,14 +47,15 @@ def _src() -> str:
 # Source-pin: flag default-on + the sibling path touches ONLY the thumbnail lane
 # --------------------------------------------------------------------------- #
 
-def test_flag_present_default_on():
+def test_thumbnail_sibling_now_unconditional():
+    """S3b cutover 2026-06-27: the AIPACS_THUMB_SIBLING_STUDY_STATUS flag + its `=0` legacy branch
+    were removed — a sibling-study event admits to the THUMBNAIL lane unconditionally when its
+    series_uid belongs to THIS patient's open thumbnails (cross-patient safe). One rule, no flag."""
     src = _src()
-    m = re.search(
-        r'os\.getenv\(\s*"AIPACS_THUMB_SIBLING_STUDY_STATUS"\s*,\s*"1"\s*\)'
-        r'[\s\S]{0,40}?!=\s*"0"',
-        src,
-    )
-    assert m is not None, "sibling-study thumbnail status must default ON (disable on '0')"
+    # the flag's env-read + its `=0` branch are gone (the doc comment may still NAME the retired
+    # flag for grep-ability); the unconditional thumbnail-lane admission gate remains.
+    assert 'getenv("AIPACS_THUMB_SIBLING_STUDY_STATUS"' not in src
+    assert "_belongs_to_open_thumbnails(series_uid)" in src   # the unconditional admission gate
 
 
 def test_sibling_projection_thumbnail_only():
@@ -187,8 +188,6 @@ def test_primary_path_still_completes(_qt_app):
     assert "203" in tm.completed, "primary-study completion must still update its thumbnail"
 
 
-def test_kill_switch_restores_legacy_filter(_qt_app, monkeypatch):
-    hds, dm, tm, widget, ids = _build_harness()
-    monkeypatch.setattr(hds, "_THUMB_SIBLING_STUDY", False)
-    dm.seriesDownloadCompleted.emit(ids["SECONDARY"], ids["UID_SEC"])
-    assert tm.completed == [], "with the flag off, sibling-study events stay filtered (legacy)"
+# Kill-switch test removed: the AIPACS_THUMB_SIBLING_STUDY_STATUS flag + its legacy `=0` branch
+# were deleted in the S3b cutover (2026-06-27); the sibling thumbnail admission is now the ONE
+# unconditional `_belongs_to_open_thumbnails` rule (the functional tests above cover it).

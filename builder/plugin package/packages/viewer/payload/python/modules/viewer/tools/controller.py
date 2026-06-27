@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any, List, Optional, Tuple
 
 from .coord_resolver import CoordinateResolver
@@ -20,6 +21,20 @@ from .models import (
 )
 from .renderers.base import AbstractToolRenderer, RenderContext
 from .store import ToolStore
+
+
+# Annotation creation-mode lock-out (2026-06-27) — FAST viewer (ToolController).
+# When an annotation CREATION tool (ruler / angle / two-line angle / ROI / circle /
+# arrow / text) is active, the first click must START A NEW annotation, not grab and
+# drag an existing annotation under the cursor (the "draw over an existing line and it
+# selects the old one instead" bug). Existing annotations stay selectable/editable only
+# in SELECT mode (no active tool). This matches the Advanced/VTK viewer lock-out so both
+# backends behave identically. ERASER always bypasses (its job is to delete). Kill
+# switch: AIPACS_ANNOTATION_CREATION_LOCKOUT=0 restores the legacy "edit existing even
+# while a creation tool is selected" behavior.
+_ANNOTATION_CREATION_LOCKOUT = os.environ.get(
+    "AIPACS_ANNOTATION_CREATION_LOCKOUT", "1"
+) != "0"
 
 
 class ToolController:
@@ -150,10 +165,19 @@ class ToolController:
                 threshold_px=max(4.0, hit_threshold * 0.7),
             )
 
-        # When not mid-placement, prefer editing an existing annotation over
-        # creating a new one — even when a measurement tool is selected.
-        # (ERASER must bypass this block: its job is to delete, not to drag.)
-        if self._state in (ToolState.IDLE, ToolState.HOVERING) and self._active_tool != ToolType.ERASER:
+        # Creation-mode lock-out: while a creation tool is armed the click is
+        # RESERVED for the NEW annotation — do NOT grab an existing annotation
+        # under the cursor (the "draw a new line/circle over an existing one and
+        # it selects/drags the old one instead" bug). Existing annotations stay
+        # editable only in SELECT mode (the `_active_tool is None` block above).
+        # Legacy behavior (prefer editing existing even while a measurement tool
+        # is selected) is restored with AIPACS_ANNOTATION_CREATION_LOCKOUT=0.
+        # (ERASER must bypass this block regardless: its job is to delete, not drag.)
+        if (
+            not _ANNOTATION_CREATION_LOCKOUT
+            and self._state in (ToolState.IDLE, ToolState.HOVERING)
+            and self._active_tool != ToolType.ERASER
+        ):
             if self._hovered_model is None or self._hovered_handle_idx < -1:
                 self._resolve_hover_target(
                     img_x,
@@ -249,6 +273,20 @@ class ToolController:
         self._hovered_handle_idx = -2
 
         if self._state == ToolState.PLACING:
+            return (prev_model is not None) or (prev_idx != -2)
+
+        # Creation-mode lock-out: while a creation tool is armed, existing
+        # annotations are non-interactive — do NOT hover-highlight them, so the
+        # cursor stays in "create" mode and the next click starts a NEW
+        # annotation instead of selecting the old one. (ERASER still hovers so
+        # the user can see what will be deleted.) Mirrors the press lock-out.
+        if (
+            _ANNOTATION_CREATION_LOCKOUT
+            and self._active_tool is not None
+            and self._active_tool != ToolType.ERASER
+        ):
+            if self._state == ToolState.HOVERING:
+                self._state = ToolState.IDLE
             return (prev_model is not None) or (prev_idx != -2)
 
         self._resolve_hover_target(
