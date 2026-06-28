@@ -109,6 +109,31 @@ Human-assisted bootstrap mode is the **default** workflow for all AI-PACS sessio
 
 ## Subsystem regression guards
 
+### External import opens the FAST Patient Tab, not the legacy VTK viewer (2026-06-28)
+The tab auto-opened after an external image/study import must use the **same**
+viewer backend as normal patient-open. Before editing
+`_HPImportMixin._open_imported_primary_study`
+(`PacsClient/pacs/workstation_ui/home_ui/home_panel/_hp_import.py`), **read
+`docs/reports/IMPORT_OPENS_FAST_VIEWER_2026-06-28.md`**.
+- Root cause: that method hard-pinned `viewer_backend_override=BACKEND_PYDICOM`
+  (`"pydicom_2d"`, the legacy **VTK**-rendering backend) — a stale v2.3.1
+  leftover. Since v2.3.3 `BACKEND_PYDICOM_QT` (FAST, VTK-free) is the default for
+  every other open path, and `_vc_backend._get_requested_viewer_backend()`
+  returns a per-widget override **verbatim** (bypassing the
+  `resolve_viewer_backend()` remap). The factory keys strictly on
+  `== BACKEND_PYDICOM_QT` → `QtFastContainer`, else `VTKWidget` — so imported
+  studies opened in the OLD VTK viewer while reopening the same study used FAST.
+- Fix (flag `AIPACS_IMPORT_FORCE_LEGACY_VIEWER`, default **off** = no override):
+  import now resolves the same backend as normal open (FAST by default, Advanced
+  if configured). `=1` restores the byte-identical legacy pin. Both the
+  interactive import and `auto_import_folder_from_startup` route through this one
+  method. Do **not** re-add an unconditional `viewer_backend_override=BACKEND_PYDICOM`.
+- Safe because decompress-on-import (default ON) stores plain uncompressed DICOM,
+  so the FAST viewer reads imported studies exactly like server studies (the pin
+  gave no decode benefit). `_hp_import.py` is **not** plugin-mirrored. Guard:
+  `tests/code/ui_services/test_import_viewer_backend.py`. NEEDS live source-build
+  verify.
+
 ### Multi-study viewer (patients with >1 study under one Patient ID)
 Before editing the viewer thumbnail sidebar, the series-load path
 (`_vc_load.py` / `_vc_switch.py`), `thumbnail_manager.py`, or the home-page
@@ -153,6 +178,31 @@ Key invariants that must not be broken:
   (memory-first) but must fall back to the canonical PNG file; the DB
   `series.thumbnail_path` column is a hint only — never the sole source.
 - `make_pixmap_from_bytes` is Qt-main-thread only.
+
+#### Per-series download progress bar inside each card (2026-06-28)
+Each series/thumbnail card carries a thin themed `QProgressBar`
+(`widget.dl_progress_bar`) at the bottom of its inner content (created once in
+`thumbnail_manager.create_thumbnail_widget`, gated on `_THUMB_DL_PROGRESS_BAR` /
+`AIPACS_THUMB_DL_PROGRESS_BAR`, default ON). It fills `downloaded/total` and is
+driven ONLY by the existing throttled DM progress event — never polling, never a
+rebuild. Invariants:
+- The fill is a single `setValue()` on ONE card (`update_series_download_progress`
+  → `_series_dl_bar(series_key)`); it must stay O(1) and must NOT re-render or
+  re-layout the list (value updates only repaint — keep the bar a fixed-height
+  child added once at creation). `start_series_download` reveals it,
+  `complete_series_download` pins it full via `_set_series_dl_bar_complete`.
+- The feed is `home_download_service._feed_thumb_bar(uid, series_uid, current,
+  total)`, called from `on_series_progress` BEFORE the grow-lane early-return so a
+  card fills even when no viewport shows the series (background / multi-study
+  sibling). Admission is cross-patient-safe: `uid == study_uid` OR
+  `_belongs_to_open_thumbnails(series_uid)` (this patient's own uid→number map);
+  it resolves the display key via `_resolve_sn` and throttles to ~1% per card
+  (`_last_thumb_bar_pct`). Never admit a series from caller/current context.
+- The card's status BORDER ring (blue→green) is unchanged — the bar is purely
+  additive. `=0` = byte-identical legacy (no bar). Guard:
+  `tests/code/ui_services/test_thumbnail_download_progress_bar.py`. Neither
+  `thumbnail_manager.py` nor `home_download_service.py` is plugin-mirrored.
+  Failed→error-color is deferred (no real DM per-series failure signal yet).
 
 ### Patient-Tab thumbnail real-time download status — multi-study siblings (47084, 2026-06-25)
 The side-panel thumbnail border (downloading → ready) is driven by the DM→widget bridge
@@ -951,6 +1001,82 @@ toolbar handlers (`toolbar_manager.py` `_show_curved_mpr_panel` / `_generate_cur
   `_restore_selected_viewer` to match `getattr(...) is not None` (not bare `hasattr`) so a stale/None
   attr can't shadow the `_curved_mpr_widget` restore. Guard:
   `tests/code/viewer/test_dental_curve_vtk_pick.py`. NEEDS live source-build verify.
+
+### MPR-open freeze — L1 deferred 3D VRT view (2026-06-28)
+Opening Standard (Zeta) MPR froze the GUI thread ~5–11.5 s (live 8.1 s on a 512×512×588 CBCT)
+building four VTK render windows synchronously, the 3D VRT (GPU upload + first ray-cast) being the
+single biggest cost. L1 (`AIPACS_MPR_DEFER_3D`, **default ON** since 2026-06-28; `=0` = byte-identical
+synchronous build) builds the three 2D planes first and defers `_create_3d_view` to a
+`QTimer.singleShot(0)` idle callback. Before editing `_mpr_views.py::_setup_ui` /
+`_build_deferred_3d_view` / `_install_deferred_3d_placeholder` or `_mpr_layout.cleanup`, read
+`docs/plans/performance/MPR_OPEN_FREEZE_OPTIMIZATION_PLAN_2026-06-27.md`.
+- **Layout-jump fix:** the deferred-3D placeholder is `QSizePolicy.Expanding` so the 2×2 grid does
+  NOT reflow when the real 3D pane replaces it. (Deeper mount-reflow + off-thread volume build are
+  staged — the 2D views + first-open volume rebuild still run synchronously; L2 progressive-2D is
+  design-only in the plan.)
+- **First-crossline-drag pre-warm** (`AIPACS_MPR_PREWARM`, default ON): `_prewarm_mpr_reslice` forces
+  one re-reslice render of each 2D pane at the CURRENT position (identical image, no geometry change),
+  deferred to idle after open, so the first crosshair drag pays no first-touch GPU reslice cost.
+- **Geometry is unaffected — keep it that way.** The deferral changes only *when* the 3D pane is
+  built. Each view's camera/reslice is computed per-view (independent of creation order), and every
+  all-views post-pass is 2D-only: `_apply_native_plane_interpolation` → `('axial','sagittal','coronal')`,
+  `_capture_baseline_camera_state` (the "single source of truth for oblique") + `_apply_window_level`
+  → `['axial','sagittal','coronal']`. The 3D VRT's camera/preset/lights live entirely inside the
+  unchanged `_create_3d_view`. Never make a post-pass or the baseline capture depend on the 3D view.
+- **Teardown-safe.** `_build_deferred_3d_view` is one-shot (`_deferred_3d_pending`), bails when
+  `cleanup` cleared the flag, and swallows a deleted-object `RuntimeError` if MPR closed mid-defer.
+- Default-off until clinical-lane-validated (§6 of the plan: 2D planes ≲ a second, 3D fills in after,
+  geometry/crosshairs identical, close-mid-build no crash). Guard:
+  `tests/code/viewer/test_mpr_defer_3d_view.py`. `_mpr_views.py`/`_mpr_layout.py` are not plugin-mirrored.
+
+### MPR annotations — smooth FAST-like ruler/arrow (2026-06-28)
+Standard MPR ruler/arrow live in `modules/mpr/zeta_mpr/mpr_measurement_tools.py::MPRMeasurementTools`
+and use VTK built-in widgets (`vtkDistanceWidget` ruler/angle, `vtkCaptionWidget`, a two-click
+`vtkLeaderActor2D` arrow) — the SAME `vtkDistanceWidget` the FAST/Advanced `RulerInteractorStyle`
+uses, so the ruler gesture already matches FAST. The two-click arrow had NO rubber-band (only drew on
+the 2nd click). Flag `AIPACS_MPR_ANNOTATION_SMOOTH` (default ON; `=0` = byte-identical legacy) adds:
+- A LIVE preview leader that follows the cursor from the tail (`_handle_arrow_move` → a transient
+  `_arrow_preview_actor`, built by the shared `_make_arrow_leader`), throttled to 2px display motion so
+  the pane only re-composites on real motion (the reslice is cached during placement → cheap composite,
+  not a re-reslice; smooth on large CBCT). Cleared on the 2nd click and in `_deactivate_arrow_placement`
+  (move observers + preview), plus `clear_measurements`.
+- IMMEDIATE final render (`_render_immediately`) so the placed arrow appears the instant the 2nd click
+  lands (ruler already renders immediately via `_do_single_use_auto_exit`; `AIPACS_RULER_RENDER_ON_COMPLETE`).
+- **Additive only — NO geometry/reslice/slice-order/measurement-value change** (placed arrow world
+  points unchanged). The move observer is a no-op unless the arrow tool is armed with a pending tail,
+  and does not abort other observers. Guard: `tests/code/viewer/test_mpr_arrow_preview_smooth.py`
+  (source-pins + behavioral throttle/lifecycle). Not plugin-mirrored. STAGED (item 4): hover/drag to
+  EDIT an existing placed annotation (the single-use widgets go `Off()` after placement; making them
+  re-grabbable is a lifecycle change) — needs its own pass + live verify.
+
+#### Annotation PERSISTENCE — multiple measurements stay visible (2026-06-28)
+"Draw a 2nd measurement, the 1st disappears" root cause: `_do_single_use_auto_exit` removed EVERY
+ruler/angle widget on the non-completed views — including PREVIOUSLY-COMPLETED measurements — so
+measuring on a 2nd pane wiped the 1st (the MPR DOES store annotations in `active_tools[view][tool]`
+lists; the destruction was the bug). Fix (flag `AIPACS_MPR_ANNOTATION_PERSIST`, default ON; `=0` =
+legacy destructive): auto-exit removes ONLY the current activation's EMPTY placement widgets on the
+other views, tracked per-view in `_placement_widgets` (set in `_activate_ruler_on_view` /
+`_activate_angle_on_view`, cleared after auto-exit + in `deactivate_tool`). A finished measurement is
+never removed. Same-view + same-slice multiple annotations already worked (via `refresh_slice_visibility`,
+which shows ALL current-slice widgets); off-slice hiding is the intentional slice-binding
+(`AIPACS_MPR_SLICE_ANNOTATIONS`). Guard `tests/code/viewer/test_mpr_annotation_persist.py`. Not
+plugin-mirrored. (The Advanced/FAST VTK viewer is unaffected — its `update_slice` already `On()`s every
+widget on the current slice.)
+
+#### Annotations target the MPR after an active-layout switch (48117, 2026-06-28)
+In a multi-cell layout with the MPR in one cell, clicking another cell runs the MPR-preserve
+active-viewport switch (`_vc_layout.set_viewer_to_main_viewer`, `AIPACS_MPR_PRESERVE_ON_VIEWPORT_CHANGE`):
+it keeps the MPR intact but moves `selected_widget` to the clicked (FAST) cell while keeping
+`tool_selected == MPR`. The toolbar annotation handlers passed `selected_widget` to `toggle_ruler/
+angle/arrow/text`, so the tool armed the now-active FAST cell and the MPR window couldn't be annotated.
+Fix: `ToolbarManager._annotation_target_widget()` — when MPR mode is active (`tool_access.MPR in
+str(tool_selected)`) but the active cell isn't the MPR (`is_mpr_viewer` False), it scans
+`lst_nodes_viewer` for the host cell carrying `_zeta_mpr_widget` and returns THAT, so the annotation
+routes to the MPR. All five annotation button handlers (ruler/angle/two-line-angle/arrow/text) call it
+instead of `selected_widget`. Single-MPR / MPR-is-active layouts are unaffected (active cell IS the MPR).
+Kill switch `AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR=0`. Guard
+`tests/code/viewer/test_mpr_annotation_layout_switch.py`. `toolbar_manager.py` is large — verify it on the
+real machine (the sandbox FUSE mount tears it on read → false syntax errors).
 
 ### Unified MPR/3D pipeline — standard (Zeta) MPR is the base for ALL MPR/3D (directive 2026-06-22)
 ALL MPR/3D modules must share ONE structure — the **layout, viewport usage, viewing structure,

@@ -9,6 +9,38 @@ import vtk
 logger = logging.getLogger(__name__)
 
 
+# Smooth, FAST-like annotation drawing in MPR (2026-06-28): a LIVE rubber-band
+# preview for the two-click arrow (the leader follows the cursor from the tail,
+# like the ruler's vtkDistanceWidget and the FAST viewer) + an IMMEDIATE final
+# render so the placed arrow appears instantly. Purely additive — a transient
+# overlay actor + render-timing only; NO geometry, reslice, slice order, or
+# measurement-value change. Kill switch ``AIPACS_MPR_ANNOTATION_SMOOTH=0`` =
+# byte-identical legacy (no preview, batched final render).
+def _annotation_smooth_enabled():
+    return os.environ.get("AIPACS_MPR_ANNOTATION_SMOOTH", "").strip().lower() not in (
+        "0", "false", "off",
+    )
+
+
+_MPR_ANNOTATION_SMOOTH = _annotation_smooth_enabled()
+
+
+# Annotation persistence (2026-06-28): multiple measurements must remain visible
+# together. The single-use auto-exit used to remove EVERY widget on the
+# non-completed views — including PREVIOUSLY-COMPLETED measurements — so drawing a
+# second measurement on a different pane wiped the first ("only the last shows").
+# With this on, auto-exit removes ONLY the current activation's EMPTY placement
+# widgets (tracked per-view in ``_placement_widgets``), never a finished
+# measurement. Kill switch ``AIPACS_MPR_ANNOTATION_PERSIST=0`` = legacy behaviour.
+def _annotation_persist_enabled():
+    return os.environ.get("AIPACS_MPR_ANNOTATION_PERSIST", "").strip().lower() not in (
+        "0", "false", "off",
+    )
+
+
+_MPR_ANNOTATION_PERSIST = _annotation_persist_enabled()
+
+
 def _slice_bound_annotations_enabled():
     """Slice-bound MPR annotations are ON by default (each measurement shows
     only on the reslice position where it was drawn). Escape hatch:
@@ -54,6 +86,14 @@ class MPRMeasurementTools:
         self._arrow_observers = {}
         self._arrow_pending_tail = {}
 
+        # Live arrow rubber-band preview (2026-06-28, FAST-like): while a tail is
+        # anchored, a transient leader actor follows the cursor. Per-view mouse-move
+        # observer tag, the transient preview actor, and the last display position
+        # (a 2px move throttle that keeps the preview smooth on large volumes).
+        self._arrow_move_observers = {}
+        self._arrow_preview_actor = {}
+        self._arrow_preview_last_xy = {}
+
         # Single-use tool auto-exit (2026-06-09): ruler/angle/arrow are
         # one-shot — after ONE completed measurement the tool returns the
         # mouse to the MPR default (stack/WL/zoom), exactly like the 2D
@@ -63,6 +103,11 @@ class MPRMeasurementTools:
         self.on_auto_exit = None
         self._placement_clicks = {}      # {(view, tool): count}
         self._auto_exit_in_progress = False
+
+        # Current-activation EMPTY placement widgets, per view (2026-06-28). Lets
+        # the single-use auto-exit drop ONLY the unplaced widgets it created this
+        # activation on the OTHER views — never a previously-completed measurement.
+        self._placement_widgets = {}     # {view_name: widget for the current activation}
 
         # Slice-bound annotations (2026-06-09): a measurement is visible ONLY
         # at the reslice position (through-plane coordinate) where it was
@@ -202,18 +247,43 @@ class MPRMeasurementTools:
             # click there can't start a second measurement (the reported
             # "multiple rulers"); keep the one the user just completed.
             if tool_name in ('ruler', 'angle'):
-                for vn in ('axial', 'sagittal', 'coronal'):
-                    if vn == completed_view or vn not in self.active_tools:
-                        continue
-                    for w in list(self.active_tools[vn].get(tool_name, [])):
+                if _MPR_ANNOTATION_PERSIST:
+                    # Drop ONLY this activation's unplaced placement widgets on the
+                    # OTHER views (tracked in _placement_widgets). This NEVER touches
+                    # a previously-completed measurement, so earlier annotations on
+                    # those panes survive — the "draw a 2nd measurement, the 1st
+                    # disappears" fix. The just-completed widget (completed_view) is
+                    # a real measurement and is kept.
+                    for vn in ('axial', 'sagittal', 'coronal'):
+                        if vn == completed_view:
+                            continue
+                        w = self._placement_widgets.get(vn)
+                        if w is None:
+                            continue
                         try:
                             w.Off()
                         except Exception:
                             pass
                         try:
                             self.active_tools[vn][tool_name].remove(w)
-                        except ValueError:
+                        except (ValueError, KeyError):
                             pass
+                    self._placement_widgets.clear()
+                else:
+                    # Legacy (destructive): wipe every widget on the other views,
+                    # including completed measurements (AIPACS_MPR_ANNOTATION_PERSIST=0).
+                    for vn in ('axial', 'sagittal', 'coronal'):
+                        if vn == completed_view or vn not in self.active_tools:
+                            continue
+                        for w in list(self.active_tools[vn].get(tool_name, [])):
+                            try:
+                                w.Off()
+                            except Exception:
+                                pass
+                            try:
+                                self.active_tools[vn][tool_name].remove(w)
+                            except ValueError:
+                                pass
             # Arrow: drop the click observers so no further arrows are placed.
             self._deactivate_arrow_placement()
             self._placement_clicks.clear()
@@ -315,6 +385,9 @@ class MPRMeasurementTools:
         
         # Store the widget
         self.active_tools[view_name]['ruler'].append(distance_widget)
+        # Track THIS activation's placement widget so auto-exit can drop only the
+        # unplaced ones on other views (never a completed measurement).
+        self._placement_widgets[view_name] = distance_widget
         # Single-use: exit ruler mode after the 2-point measurement completes.
         self._register_placement_autoexit(distance_widget, view_name, 'ruler', 2)
 
@@ -386,6 +459,8 @@ class MPRMeasurementTools:
         
         # Store the widget
         self.active_tools[view_name]['angle'].append(angle_widget)
+        # Track THIS activation's placement widget (see ruler note above).
+        self._placement_widgets[view_name] = angle_widget
         # Single-use: exit angle mode after the 3-point measurement completes.
         self._register_placement_autoexit(angle_widget, view_name, 'angle', 3)
 
@@ -487,6 +562,20 @@ class MPRMeasurementTools:
         # (same contract the vtk measurement widgets use at 0.5).
         tag = interactor.AddObserver("LeftButtonPressEvent", _on_click, 0.6)
         self._arrow_observers[view_name] = (interactor, tag)
+
+        # Live rubber-band preview (FAST-like): a mouse-move observer updates a
+        # transient arrow from the tail to the cursor between the two clicks. It
+        # does NOT abort the move (the crosshair/hover is harmless without a
+        # button press) and is a no-op until a tail is anchored.
+        if _MPR_ANNOTATION_SMOOTH:
+            def _on_move(obj, event, vn=view_name):
+                try:
+                    self._handle_arrow_move(vn)
+                except Exception as exc:
+                    logger.debug(f"arrow preview move failed on {vn}: {exc}")
+
+            mtag = interactor.AddObserver("MouseMoveEvent", _on_move, 0.6)
+            self._arrow_move_observers[view_name] = (interactor, mtag)
         return True
 
     def _display_to_world(self, renderer, x, y):
@@ -524,17 +613,16 @@ class MPRMeasurementTools:
             return
 
         self._arrow_pending_tail[view_name] = None
+        self._clear_arrow_preview(view_name)
         self._create_arrow_actor(view_name, tail, world)
         # Single-use: one arrow drawn → return to the MPR default mouse mode.
         self._fire_single_use_auto_exit(view_name, 'arrow')
 
-    def _create_arrow_actor(self, view_name, p1_world, p2_world):
-        """Filled-head arrow between two WORLD points (camera-stable)."""
-        renderer = self.mpr_viewer.viewers[view_name]['renderer']
+    def _make_arrow_leader(self, p1_world, p2_world):
+        """Build a filled-head leader (the arrow visual) between two WORLD points.
 
-        # Match the saved Tools Settings arrow style (same as the 2D viewer), but
-        # cap the BODY width: a thick configured line dwarfed the small head
-        # (reported "body thick / head small"). Thinner settings are still honored.
+        Shared by the live preview and the final placed arrow so they look
+        identical. Honors the saved Tools-Settings arrow style (capped body width)."""
         color = (0.0, 0.9, 0.0)
         width = 2.0
         try:
@@ -560,6 +648,63 @@ class MPRMeasurementTools:
         leader.SetArrowWidth(0.12)
         leader.GetProperty().SetColor(*color)
         leader.GetProperty().SetLineWidth(width)
+        return leader
+
+    def _handle_arrow_move(self, view_name):
+        """Live rubber-band: while the arrow tail is anchored, draw/update a preview
+        arrow from the tail to the cursor (FAST-like). No-op until the first click.
+
+        Smoothness: a 2px display-move threshold drops sub-pixel jitter so the pane
+        only re-composites on real motion. The reslice output is cached (the slice is
+        unchanged during placement), so each update is a cheap re-composite, not a
+        re-reslice — keeping the preview smooth even on a large CBCT."""
+        if not _MPR_ANNOTATION_SMOOTH or self.current_tool != 'arrow':
+            return
+        tail = self._arrow_pending_tail.get(view_name)
+        if tail is None:
+            return
+        view = self.mpr_viewer.viewers.get(view_name)
+        if not view:
+            return
+        interactor = view['widget'].GetRenderWindow().GetInteractor()
+        x, y = interactor.GetEventPosition()
+        last = self._arrow_preview_last_xy.get(view_name)
+        if last is not None and abs(x - last[0]) < 2 and abs(y - last[1]) < 2:
+            return  # throttle: ignore sub-2px jitter (keeps it smooth)
+        self._arrow_preview_last_xy[view_name] = (x, y)
+        renderer = view['renderer']
+        head = self._display_to_world(renderer, x, y)
+        preview = self._arrow_preview_actor.get(view_name)
+        if preview is None:
+            preview = self._make_arrow_leader(tail, head)
+            renderer.AddActor2D(preview)
+            self._arrow_preview_actor[view_name] = preview
+        else:
+            preview.GetPositionCoordinate().SetValue(*tail)
+            preview.GetPosition2Coordinate().SetValue(*head)
+        try:
+            renderer.GetRenderWindow().Render()
+        except Exception:
+            pass
+
+    def _clear_arrow_preview(self, view_name=None):
+        """Remove the transient preview arrow(s) (the final placed arrow is kept)."""
+        views = [view_name] if view_name else list(self._arrow_preview_actor.keys())
+        for vn in views:
+            preview = self._arrow_preview_actor.pop(vn, None)
+            self._arrow_preview_last_xy.pop(vn, None)
+            if preview is None:
+                continue
+            try:
+                renderer = self.mpr_viewer.viewers[vn]['renderer']
+                renderer.RemoveActor2D(preview)
+            except Exception:
+                pass
+
+    def _create_arrow_actor(self, view_name, p1_world, p2_world):
+        """Filled-head arrow between two WORLD points (camera-stable)."""
+        renderer = self.mpr_viewer.viewers[view_name]['renderer']
+        leader = self._make_arrow_leader(p1_world, p2_world)
 
         renderer.AddActor2D(leader)
         self.active_tools[view_name].setdefault('arrow', []).append({
@@ -568,17 +713,33 @@ class MPRMeasurementTools:
             'p1': tuple(p1_world),
             'p2': tuple(p2_world),
         })
-        self.mpr_viewer._request_render(view_name)
+        # Instant final render (FAST-like) so the arrow appears the moment the 2nd
+        # click lands; legacy path keeps the batched request.
+        if _MPR_ANNOTATION_SMOOTH:
+            try:
+                self.mpr_viewer._render_immediately(view_name)
+            except Exception:
+                self.mpr_viewer._request_render(view_name)
+        else:
+            self.mpr_viewer._request_render(view_name)
         logger.info(f"✓ Arrow placed on {view_name}")
 
     def _deactivate_arrow_placement(self):
-        """Remove click observers + pending state (placed arrows stay)."""
+        """Remove click + preview-move observers, drop any live preview, and clear
+        pending state (placed arrows stay)."""
         for view_name, (interactor, tag) in list(self._arrow_observers.items()):
             try:
                 interactor.RemoveObserver(tag)
             except Exception:
                 pass
+        for view_name, (interactor, tag) in list(self._arrow_move_observers.items()):
+            try:
+                interactor.RemoveObserver(tag)
+            except Exception:
+                pass
         self._arrow_observers.clear()
+        self._arrow_move_observers.clear()
+        self._clear_arrow_preview()
         self._arrow_pending_tail.clear()
 
     def deactivate_tool(self, view_name=None):
@@ -601,6 +762,8 @@ class MPRMeasurementTools:
 
         # Arrow placement observers must not outlive the tool toggle.
         self._deactivate_arrow_placement()
+        # Forget any tracked (unplaced) placement widgets from the last activation.
+        self._placement_widgets.clear()
 
         self.current_tool = None
         logger.info("Tool deactivated")
@@ -653,6 +816,10 @@ class MPRMeasurementTools:
                         logger.error(f"Error removing widget: {e}")
 
                 self.active_tools[vn][tool].clear()
+
+        # Drop any in-flight arrow rubber-band preview too (edge case: clearing
+        # while an arrow tail is anchored).
+        self._clear_arrow_preview()
 
         # Raw actors don't trigger their own render — repaint the panes we
         # pulled arrows from.

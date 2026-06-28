@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 
 )
 
-from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain_text_from_html
+from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain_text_from_html, style_popup, themed_message_box
 from .ai_chat_api import ChatApiClient, ChatController, ApiWorker
 from .ai_chat_widgets import ChatHistory, UnifiedComposer, MessageBubble, PATIENT_SCROLLBAR_QSS
 from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET
@@ -139,6 +139,10 @@ class _ReceptionIdDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Select Reception ID")
         self.setMinimumWidth(420)
+        # Explicit, theme-independent colours so the confirmation text is
+        # readable on every Windows light/dark theme (never inherits the
+        # system palette). Gated by AIPACS_ECHO_POPUP_THEME (default on).
+        style_popup(self)
         self.selected_patient_id: str | None = None
         self.mode: str | None = None
         self.selected_status: str = "pending"
@@ -204,8 +208,9 @@ class _ReceptionIdDialog(QDialog):
     def _choose_other(self) -> None:
         other_id = (self._other_input.text() or "").strip()
         if not other_id:
-            QMessageBox.warning(
-                self, "Invalid Input", "Please enter a valid reception ID."
+            themed_message_box(
+                self, QMessageBox.Icon.Warning, "Invalid Input",
+                "Please enter a valid reception ID."
             )
             return
         self._choose(other_id, "other")
@@ -218,6 +223,9 @@ class _ImageSourceDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Attach Image Source")
         self.setMinimumWidth(460)
+        # Explicit popup colours (see _ReceptionIdDialog) — readable on any
+        # Windows theme; AIPACS_ECHO_POPUP_THEME=0 restores legacy.
+        style_popup(self)
         self.selected_source: str | None = None
 
         layout = QVBoxLayout(self)
@@ -465,7 +473,7 @@ class _PatientSeriesImagePickerDialog(QDialog):
         self.preview.clear()
         paths = self._checked_series_images()
         if not paths:
-            QMessageBox.information(self, "No Series Selected", "Please check at least one series.")
+            themed_message_box(self, QMessageBox.Icon.Information, "No Series Selected", "Please check at least one series.")
             return
 
         max_preview = 300
@@ -485,7 +493,7 @@ class _PatientSeriesImagePickerDialog(QDialog):
             self.preview.addItem(item)
 
         if self.preview.count() == 0:
-            QMessageBox.warning(self, "No Preview", "No readable image could be previewed.")
+            themed_message_box(self, QMessageBox.Icon.Warning, "No Preview", "No readable image could be previewed.")
 
     def _build_preview_pixmap(self, path: str) -> QPixmap:
         try:
@@ -543,7 +551,7 @@ class _PatientSeriesImagePickerDialog(QDialog):
                     out.append(p)
 
         if not out:
-            QMessageBox.information(self, "No Images Selected", "Please select at least one image.")
+            themed_message_box(self, QMessageBox.Icon.Information, "No Images Selected", "Please select at least one image.")
             return
 
         self.selected_paths = out
@@ -1273,7 +1281,7 @@ class OneChatPage(QWidget):
 
         if source == "current":
             if not current_patient_id:
-                QMessageBox.warning(self, "Patient Not Found", "Current patient id is not available.")
+                themed_message_box(self, QMessageBox.Icon.Warning, "Patient Not Found", "Current patient id is not available.")
                 return
             patient_id = current_patient_id
         else:
@@ -1288,12 +1296,12 @@ class OneChatPage(QWidget):
                 return
             patient_id = (patient_id or "").strip()
             if not patient_id:
-                QMessageBox.warning(self, "Invalid Patient ID", "Patient id cannot be empty.")
+                themed_message_box(self, QMessageBox.Icon.Warning, "Invalid Patient ID", "Patient id cannot be empty.")
                 return
 
         records = self._fetch_patient_image_records(patient_id)
         if not records:
-            QMessageBox.information(self, "No Images", f"No image series found for patient id: {patient_id}")
+            themed_message_box(self, QMessageBox.Icon.Information, "No Images", f"No image series found for patient id: {patient_id}")
             return
 
         picker = _PatientSeriesImagePickerDialog(self, patient_id=patient_id, records=records)
@@ -1306,7 +1314,7 @@ class OneChatPage(QWidget):
 
         png_paths = self._convert_selected_images_to_png(selected_paths)
         if not png_paths:
-            QMessageBox.warning(self, "Attach Failed", "No image could be converted and attached.")
+            themed_message_box(self, QMessageBox.Icon.Warning, "Attach Failed", "No image could be converted and attached.")
             return
 
         for p in png_paths:
@@ -2189,8 +2197,9 @@ class OneChatPage(QWidget):
             return
         try:
             from PySide6.QtWidgets import QMessageBox
-            ans = QMessageBox.question(
+            ans = themed_message_box(
                 self,
+                QMessageBox.Icon.Question,
                 "Delete chat",
                 "Are you sure you want to delete this chat?\n(This cannot be undone)",
                 QMessageBox.Yes | QMessageBox.No,
@@ -3958,7 +3967,7 @@ class OneChatPage(QWidget):
         if not html_content:
             print("❌ Report content is empty!")
             logger.error("❌ Report content is empty!")
-            QMessageBox.warning(self, "Error", "Report content is empty!")
+            themed_message_box(self, QMessageBox.Icon.Warning, "Error", "Report content is empty!")
             return
 
         # Get patient ID from database
@@ -4009,8 +4018,9 @@ class OneChatPage(QWidget):
         send_mode = getattr(dialog, "mode", None)
         if not patient_id:
             logger.error("Reception send: no reception ID selected.")
-            QMessageBox.warning(
+            themed_message_box(
                 self,
+                QMessageBox.Icon.Warning,
                 "Reception ID Required",
                 "A reception ID is required to send the report.",
             )
@@ -4035,8 +4045,9 @@ class OneChatPage(QWidget):
 
                 if not response.ok:
                     logger.warning("[RECEPTION_SERVER] ❌ Patient ID not found: <patient_id>")
-                    QMessageBox.warning(
+                    themed_message_box(
                         self,
+                        QMessageBox.Icon.Warning,
                         "Patient ID Not Found",
                         "The patient ID was not found on the server.\nPlease check and try again.",
                     )
@@ -4050,8 +4061,9 @@ class OneChatPage(QWidget):
                     pass
             except Exception as e:
                 logger.error(f"[RECEPTION_SERVER] ❌ Patient validation failed: {e}")
-                QMessageBox.warning(
+                themed_message_box(
                     self,
+                    QMessageBox.Icon.Warning,
                     "Patient ID Validation Failed",
                     "Unable to validate the patient ID with the server.\nPlease try again.",
                 )
@@ -4219,8 +4231,9 @@ class OneChatPage(QWidget):
                     logger.info(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
                     logger.info("="*100)
 
-                    QMessageBox.information(
+                    themed_message_box(
                         self,
+                        QMessageBox.Icon.Information,
                         "✅ Report Saved Successfully",
                         f"📝 The report has been saved successfully.\n\n"
                         f"📌 Report ID: {report_id}\n"
@@ -4242,7 +4255,7 @@ class OneChatPage(QWidget):
                 logger.error("❌ ❌ ❌ FAILED! Database save failed")
                 logger.error("="*100)
 
-                QMessageBox.warning(self, "Error", "Failed to save report!")
+                themed_message_box(self, QMessageBox.Icon.Warning, "Error", "Failed to save report!")
                 return False
 
             except Exception as e:
@@ -4258,7 +4271,7 @@ class OneChatPage(QWidget):
                 logger.error(traceback.format_exc())
                 logger.error("="*100)
 
-                QMessageBox.critical(self, "Error", f"Error: {str(e)}")
+                themed_message_box(self, QMessageBox.Icon.Critical, "Error", f"Error: {str(e)}")
                 return False
 
         if not _send_with_patient_id(patient_id):
@@ -7474,5 +7487,4 @@ class ChatGPTPage(OneChatPage):
 
         worker = ApiWorker(work, parent=self)
         worker.done.connect(done)
-        worker.failed.connect(lambda msg: done({"content": _safe_fa_connection_error(msg), "usage": None}))
-        worker.start()
+        worker.failed.connect(lambda msg: done({"content": _safe_fa_connection_error(msg), "usage": None}))

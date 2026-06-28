@@ -8,6 +8,7 @@ from typing import Any
 
 from . import audit
 from .adapters.home_widget_adapter import HomeWidgetAdapter
+from .config import routing_v2_enabled
 from .confirm import is_no, is_yes, parse_selection_index
 from .contracts import SecretaryActionPlan, SecretaryCommand, SecretaryResult
 from .errors import ERR_PLAN_VALIDATION_FAILED, ERR_RUNTIME, ERR_UNPARSED
@@ -65,6 +66,7 @@ class SecretaryOrchestrator:
         # ── EchoMind memory ───────────────────────────────────────────────────
         self._memory_store: Any = None   # lazy-loaded EchoMindMemoryStore
         self._last_modules: list[str] = []  # populated by _parse_plan (brain path)
+        self._last_route: dict[str, Any] = {}  # {modules, reason} of last Phase-1 routing
         self._use_brain = use_brain
         self._brain = None          # lazy-loaded AgentBrain instance
 
@@ -187,6 +189,7 @@ class SecretaryOrchestrator:
         # (2026-06-11: a SOCKS-proxy outage on an installed PC surfaced as the
         # misleading "could not map this command" — see _unparsed_result).
         self._last_parse_failure = ""
+        self._last_route = {}  # reset; populated below on the brain path
 
         # ── AgentBrain path (two-phase: routing + planning) ───────────────────
         if self._use_brain:
@@ -194,6 +197,13 @@ class SecretaryOrchestrator:
                 if callable(progress_cb):
                     progress_cb("Phase 2: Module Routing")
                 decision = self._get_brain()._get_route(user_text=text, language=language)
+                if decision is not None:
+                    # Capture the Phase-1 routing decision so the session log can
+                    # show transcription → routing → tool → result (2026-06-28).
+                    self._last_route = {
+                        "modules": list(getattr(decision, "modules", []) or []),
+                        "reason": str(getattr(decision, "reason", "") or ""),
+                    }
                 if decision and not decision.is_empty:
                     if callable(progress_cb):
                         progress_cb(f"Phase 3: Planning ({', '.join(decision.modules)})")
@@ -279,6 +289,29 @@ class SecretaryOrchestrator:
             "message": "I could not map this command to a Secretary action.",
             "data": None,
             "error_code": ERR_UNPARSED,
+        }
+
+    def _clarify_result(self, plan: Any = None) -> SecretaryResult:
+        """Ask the user which domain they meant instead of running a wrong action.
+
+        Used (routing-v2 only) when the planner returns ``action="unknown"`` —
+        i.e. the routed module(s) cannot satisfy the request. Better a clarifying
+        question than a confident wrong domain (e.g. dumping the patient list for
+        an internet search). See docs/agent_control/command_routing_rules.md §7.
+        """
+        reason = ""
+        if isinstance(plan, dict):
+            reason = str(plan.get("reason") or "").strip()
+        return {
+            "ok": False,
+            "action": "needs_clarification",
+            "message": (
+                "I wasn't sure which action you meant. For an internet search say "
+                "e.g. 'search the web for <topic>'; for a patient say e.g. 'find "
+                "patient <id/name>' or 'show today's patients'."
+            ),
+            "data": {"reason": reason} if reason else None,
+            "error_code": "NEEDS_CLARIFICATION",
         }
 
     @staticmethod
@@ -580,8 +613,25 @@ class SecretaryOrchestrator:
                 cmd,
                 memory_context=(_mem.get_context_for_llm() if _mem else ""),
             )
+            # Persist the Phase-1 routing decision so the session log shows the
+            # full trace transcription → routing → tool → result (2026-06-28).
+            # Observability only — never affects routing.
+            try:
+                if self._last_route:
+                    _session.add("route", dict(self._last_route))
+            except Exception:
+                pass
             if not plan:
                 return self._unparsed_result()
+
+            # ── Routing-v2: explicit "unknown" → ask, do not guess ───────────
+            # The planner returns action="unknown" when it cannot satisfy the
+            # request with the routed module(s) (instead of substituting a
+            # patient action). Ask the user which domain they meant. Flag-gated;
+            # when off this branch is never taken (legacy behaviour unchanged).
+            if (routing_v2_enabled() and isinstance(plan, dict)
+                    and str(plan.get("action") or "").strip() == "unknown"):
+                return self._clarify_result(plan)
 
             # ── Multi-step workflow plan (brain emitted ≥2 sequential steps) ──
             # Gated; when off the brain never produces a ``__workflow__`` plan,

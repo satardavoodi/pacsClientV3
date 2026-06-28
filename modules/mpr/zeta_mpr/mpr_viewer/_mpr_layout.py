@@ -335,6 +335,12 @@ class _MprLayoutMixin:
 
     def cleanup(self):
         """Cleanup"""
+        # L1 deferred-3D teardown safety: if MPR is closed before the deferred
+        # 3D VRT idle callback fires, clear the pending flag so the callback
+        # bails instead of building into a finalizing widget (the callback also
+        # swallows the deleted-object RuntimeError as a second layer).
+        self._deferred_3d_pending = False
+
         # Stop auto-rotation timer
         if hasattr(self, 'auto_rotation_timer') and self.auto_rotation_timer:
             self.auto_rotation_timer.stop()

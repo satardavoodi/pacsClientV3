@@ -46,3 +46,33 @@ _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
 
 PHASE1_PROMPT_FILE = _PROMPTS_DIR / "router_phase1_prompt.txt"
 PHASE2_PROMPT_FILE = _PROMPTS_DIR / "agent_phase2_prompt.txt"
+
+# ── Command-routing v2 (web vs patient search fix, 2026-06-28) ─────────────────
+# Default OFF → byte-identical legacy routing. Set AIPACS_SECRETARY_ROUTING_V2=1
+# to enable VERB+OBJECT routing so an internet/web/google search goes to the
+# web_browser module (web_search) instead of the patient list. The flag is read
+# fresh on each call (so it can be toggled at runtime / in tests) and gates four
+# layers: the Phase-1 router prompt (file swap below), the Phase-2 planner prompt
+# (override prefix in brain/agent.py), the rule-parser web fast-paths
+# (parser_rules.py), and the clarify-don't-guess fallback (orchestrator.py).
+# Background + rules: docs/agent_control/command_routing_rules.md and
+# docs/reports/SECRETARY_ECHOMIND_COMMAND_ROUTING_REVIEW_2026-06-28.md.
+PHASE1_PROMPT_FILE_V2 = _PROMPTS_DIR / "router_phase1_prompt_v2.txt"
+
+
+def routing_v2_enabled() -> bool:
+    """True when AIPACS_SECRETARY_ROUTING_V2=1 (verb+object web/patient routing)."""
+    import os
+    return os.environ.get("AIPACS_SECRETARY_ROUTING_V2", "").strip() == "1"
+
+
+def get_phase1_prompt_file() -> Path:
+    """Phase-1 (router) system-prompt path, honoring the routing-v2 flag.
+
+    Returns the v2 prompt only when the flag is on AND the v2 file exists, so a
+    missing v2 file (or the flag off) always falls back to the legacy prompt —
+    the legacy default can never break.
+    """
+    if routing_v2_enabled() and PHASE1_PROMPT_FILE_V2.exists():
+        return PHASE1_PROMPT_FILE_V2
+    return PHASE1_PROMPT_FILE

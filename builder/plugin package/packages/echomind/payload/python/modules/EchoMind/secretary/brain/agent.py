@@ -58,14 +58,42 @@ def _load_phase2_prompt() -> str:
 
 _SYSTEM_PHASE2: str = _load_phase2_prompt()
 
+# ── Routing-v2 Phase-2 override (web vs patient search fix, 2026-06-28) ────────
+# Prepended to the legacy Phase-2 system prompt ONLY when
+# AIPACS_SECRETARY_ROUTING_V2=1. It is layered on top of (not a copy of) the
+# legacy prompt to avoid duplicating ~150 lines, and it explicitly SUPERSEDES
+# the legacy "ignore context / search == select_patient" rule. Flag off → the
+# returned prompt is byte-identical to legacy.
+_PHASE2_V2_PREFIX = (
+    "━━━ ROUTING-V2 OVERRIDE RULES (HIGHEST PRIORITY — supersede everything below) ━━━\n"
+    "1. DOMAIN BY OBJECT: the verb \"search/find/look up\" depends on its OBJECT.\n"
+    "   • object = the web / internet / online / google (اینترنت، وب، آنلاین، گوگل) →\n"
+    "     this is an INTERNET search. Use the web_browser action \"web_search\" with\n"
+    "     entities.query = the topic (strip command words like \"search\" / \"on the\n"
+    "     internet\"). NEVER use select_patient or list_patients for an internet search.\n"
+    "   • object = a patient / code / name / study → use the patient action\n"
+    "     (select_patient) exactly as described in the module document below.\n"
+    "2. NO WRONG-DOMAIN SUBSTITUTION: if the action the user needs is NOT present in\n"
+    "   the MODULE DOCUMENTS provided in this request, DO NOT substitute\n"
+    "   list_patients, select_patient, or any unrelated action. Instead return\n"
+    "   EXACTLY this single JSON object:\n"
+    "     {\"action\":\"unknown\",\"entities\":{},\"confidence\":0.3,\n"
+    "      \"needs_confirmation\":false,\"reason\":\"<what the user actually wanted, one sentence>\"}\n"
+    "3. These rules OVERRIDE any later text that says to \"ignore context\" or that a\n"
+    "   verb \"always\" maps to a patient action.\n"
+    "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+)
+
 
 def _phase2_system_prompt() -> str:
+    from ..config import routing_v2_enabled
+    base = _SYSTEM_PHASE2
+    prefix = _PHASE2_V2_PREFIX if routing_v2_enabled() else ""
     if get_llm_backend() != "openai":
-        return _SYSTEM_PHASE2
+        return f"{prefix}{base}" if prefix else base
     extra = str(get_prompt_settings().get("secretary_action") or "").strip()
-    if not extra:
-        return _SYSTEM_PHASE2
-    return f"{extra}\n\n{_SYSTEM_PHASE2}"
+    parts = [p for p in (prefix.rstrip("\n") if prefix else "", extra, base) if p]
+    return "\n\n".join(parts)
 
 # ── Dispatcher map ────────────────────────────────────────────────────────────
 # Maps action name → the name of the executor method to call.
@@ -225,6 +253,17 @@ class AgentBrain:
             log.warning("Phase 2 returned no plan.")
             _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — ERROR: LLM returned no action plan")
             return None
+
+        # ── Routing-v2: pass an explicit "unknown" straight through ──────────
+        # When the planner cannot satisfy the request with the routed module(s)
+        # it is instructed (v2 prefix) to return action="unknown" instead of
+        # substituting a patient action. validate_plan would reject "unknown",
+        # so return it as-is and let the orchestrator ask the user to clarify.
+        from ..config import routing_v2_enabled as _routing_v2_enabled
+        if (_routing_v2_enabled() and isinstance(plan, dict)
+                and str(plan.get("action") or "").strip() == "unknown"):
+            _elog(f"[EchoMind | Phase 3] {_dt.datetime.now():%H:%M:%S} — planner returned 'unknown' (needs clarification)")
+            return plan
 
         # ── Validate ─────────────────────────────────────────────────────────
         from .multistep import WORKFLOW_ACTION as _WF_ACTION

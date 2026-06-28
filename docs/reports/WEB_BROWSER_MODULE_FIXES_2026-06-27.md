@@ -53,9 +53,15 @@ inspect, and drive** the page through tools, not synthetic input:
 ## 3. Credential save & autofill (secure) — `modules/web_browser/autofill.py` (NEW)
 
 Built on the existing encrypted vault (`credential_vault.py` → OS keychain/DPAPI; never plaintext).
-- **Fill:** on page load, a saved credential whose host **exactly** equals the page host AND a
-  password field is present triggers a non-modal **offer bar** (Fill / Fill & Sign in / Not now).
-  Nothing is filled silently; never cross-domain.
+- **Fill (field-anchored floating popup — revised 2026-06-28):** focusing/clicking a login field
+  whose page host **exactly** matches a saved credential shows a small **floating suggestion popup
+  anchored to the field** — a top-level `Qt.Popup` window, NOT part of the browser layout, so the
+  page **never shifts or resizes**. The injected connector reports the field's
+  `getBoundingClientRect` over QWebChannel; `autofill.compute_anchor` maps it to screen coordinates,
+  placing the popup just below the field and **flipping above** when near the bottom edge (clamped to
+  screen). Multiple saved logins render as a small list with **masked** passwords; choosing one fills
+  username + password (no auto-submit) and hides the popup. Closes on outside click, navigation, or
+  page scroll. (This replaced the earlier top offer-bar, which pushed page content down.)
 - **Save:** a `QWebChannel` bridge + a connector script injected into an **isolated JS world**
   captures a login-form submit and **offers to save** (user confirms) into the vault.
 - Security: domain-exact match, password JSON-encoded into JS, **never logged** (host+username only),

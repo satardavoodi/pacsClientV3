@@ -6,7 +6,7 @@ import os, tempfile, time, threading
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
-from .ai_chat_helpers import _set_icon, extract_plain_text_from_html
+from .ai_chat_helpers import _set_icon, extract_plain_text_from_html, themed_message_box
 from dataclasses import dataclass
 from html import escape
 
@@ -3405,7 +3405,7 @@ class UnifiedComposer(QWidget):
 
             items = self._parse_templates_payload(text)
             if not items:
-                QMessageBox.warning(self, "Invalid JSON", "No valid items with Name/Html found in file.")
+                themed_message_box(self, QMessageBox.Icon.Warning, "Invalid JSON", "No valid items with Name/Html found in file.")
                 return
 
             self._nt_loaded_path = path
@@ -3449,7 +3449,7 @@ class UnifiedComposer(QWidget):
                 pass
 
         except Exception as e:
-            QMessageBox.warning(self, "Load error", f"Could not load templates:\n{e}")
+            themed_message_box(self, QMessageBox.Icon.Warning, "Load error", f"Could not load templates:\n{e}")
 
     def _parse_templates_payload(self, text: str) -> list[dict]:
         """
@@ -4127,8 +4127,9 @@ class UnifiedComposer(QWidget):
         try:
             devices = sd.query_devices()
             if not devices:
-                QMessageBox.warning(
+                themed_message_box(
                     self,
+                    QMessageBox.Icon.Warning,
                     "Microphone Not Found",
                     "No audio input devices detected. Please connect a microphone and try again.",
                 )
@@ -4138,8 +4139,9 @@ class UnifiedComposer(QWidget):
             try:
                 default_input = sd.query_devices(kind='input')
                 if default_input is None:
-                    QMessageBox.warning(
+                    themed_message_box(
                         self,
+                        QMessageBox.Icon.Warning,
                         "Microphone Not Available",
                         "No default input device is configured. Please check your audio settings.",
                     )
@@ -4148,8 +4150,9 @@ class UnifiedComposer(QWidget):
 
                 max_input_channels = default_input.get('max_input_channels', 0)
                 if max_input_channels <= 0:
-                    QMessageBox.warning(
+                    themed_message_box(
                         self,
+                        QMessageBox.Icon.Warning,
                         "Microphone Inactive",
                         "The default input device has no active input channels. Please enable your microphone.",
                     )
@@ -4160,8 +4163,9 @@ class UnifiedComposer(QWidget):
                 return True
 
             except Exception as exc:
-                QMessageBox.warning(
+                themed_message_box(
                     self,
+                    QMessageBox.Icon.Warning,
                     "Microphone Error",
                     f"Unable to access the microphone. Please check your audio settings.\n\nError: {str(exc)}",
                 )
@@ -4169,8 +4173,9 @@ class UnifiedComposer(QWidget):
                 return False
 
         except Exception as exc:
-            QMessageBox.critical(
+            themed_message_box(
                 self,
+                QMessageBox.Icon.Critical,
                 "Audio System Error",
                 f"Failed to check audio devices. Please verify your audio drivers are installed.\n\nError: {str(exc)}",
             )

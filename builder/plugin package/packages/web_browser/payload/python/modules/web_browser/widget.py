@@ -26,6 +26,9 @@ from .styles import (
     RADIUS_GROUP,
     RADIUS_PANEL,
     RADIUS_PILL,
+    autofill_popup_header_qss,
+    autofill_popup_qss,
+    autofill_row_qss,
     card_qss,
     dialog_button_qss,
     icon_button_qss,
@@ -1420,20 +1423,108 @@ class _ThemedWebEngineView(QWebEngineView):
 class _AutofillBridge(QObject):
     """QWebChannel bridge exposed to the page's ISOLATED JS world (2026-06-27).
 
-    The injected connector (``autofill.AUTOFILL_CONNECTOR_JS``) calls
-    ``credentialSubmitted(host, username, password)`` when the user submits a
-    login form, so the browser can OFFER to save the credential. The password
-    is forwarded to the widget but is NEVER written to a log here or downstream.
+    The injected connector (``autofill.AUTOFILL_CONNECTOR_JS``) calls:
+    * ``credentialSubmitted(host, username, password)`` on a login-form submit
+      (offer to SAVE);
+    * ``loginFieldFocused(host, fieldType, rectJson)`` when a login field gains
+      focus / is clicked (show the floating FILL suggestion popup);
+    * ``dismissSuggestions()`` on scroll/resize (hide the popup — field moved).
+    Passwords are forwarded but NEVER written to a log here or downstream.
     """
 
-    def __init__(self, on_submit):
+    def __init__(self, on_submit, on_focus=None, on_dismiss=None):
         super().__init__()
         self._on_submit = on_submit
+        self._on_focus = on_focus
+        self._on_dismiss = on_dismiss
 
     @Slot(str, str, str)
     def credentialSubmitted(self, host, username, password):
         try:
             self._on_submit(host or "", username or "", password or "")
+        except Exception:
+            pass
+
+    @Slot(str, str, str)
+    def loginFieldFocused(self, host, field_type, rect_json):
+        try:
+            if self._on_focus is not None:
+                self._on_focus(host or "", field_type or "", rect_json or "")
+        except Exception:
+            pass
+
+    @Slot()
+    def dismissSuggestions(self):
+        try:
+            if self._on_dismiss is not None:
+                self._on_dismiss()
+        except Exception:
+            pass
+
+
+class _AutofillSuggestionPopup(QFrame):
+    """Floating, field-anchored credential suggestion list (2026-06-27).
+
+    A top-level frameless ``Qt.Popup`` — it floats OVER the page and is NOT part
+    of the browser layout, so the web page never shifts or resizes. Lists the
+    saved logins for the current domain (passwords masked); choosing one calls
+    ``on_choose(entry)``. Closes on outside click (``Qt.Popup``), Escape,
+    selection, navigation, or page scroll.
+    """
+
+    WIDTH = 280
+
+    def __init__(self, theme_getter, on_choose, parent=None):
+        super().__init__(parent, Qt.Popup | Qt.FramelessWindowHint)
+        self._theme_getter = theme_getter
+        self._on_choose = on_choose
+        self.setObjectName("BrowserAutofillPopup")
+        self.setFixedWidth(self.WIDTH)
+        self._vbox = QVBoxLayout(self)
+        self._vbox.setContentsMargins(6, 6, 6, 6)
+        self._vbox.setSpacing(3)
+
+    def _theme(self):
+        try:
+            return self._theme_getter() or {}
+        except Exception:
+            return {}
+
+    def set_entries(self, entries):
+        # Clear previous rows.
+        while self._vbox.count():
+            item = self._vbox.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+        t = self._theme()
+        self.setStyleSheet(autofill_popup_qss(t))
+        header = QLabel("Saved logins")
+        header.setStyleSheet(autofill_popup_header_qss(t))
+        self._vbox.addWidget(header)
+        for entry in entries:
+            self._vbox.addWidget(self._make_row(entry, t))
+        self.adjustSize()
+
+    def _make_row(self, entry, t):
+        user = entry.get("username") or "(no username)"
+        btn = QPushButton(f"  {user}\n  ••••••••")
+        accent = t.get('accent')
+        if accent:
+            try:
+                btn.setIcon(qta.icon('fa5s.user-circle', color=accent))
+            except Exception:
+                pass
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setStyleSheet(autofill_row_qss(t))
+        btn.clicked.connect(lambda _checked=False, e=entry: self._choose(e))
+        return btn
+
+    def _choose(self, entry):
+        self.hide()
+        try:
+            if self._on_choose is not None:
+                self._on_choose(entry)
         except Exception:
             pass
 
@@ -1567,8 +1658,6 @@ class WebBrowserWidget(QWidget):
             panel = getattr(self, panel_attr, None)
             if panel is not None and hasattr(panel, "apply_theme"):
                 panel.apply_theme(t)
-
-        self._style_autofill_bar()
 
     def _style_address_group(self, focused=False):
         t = self._theme
@@ -1750,37 +1839,17 @@ class WebBrowserWidget(QWidget):
         page_layout.addWidget(self.web_view)
         content_layout.addWidget(self.page_frame, 1)
 
-        # Credential autofill offer bar — hidden until a saved login matches
-        # the current page's exact host. Non-modal: the user picks Fill /
-        # Fill & Sign in / Not now (nothing is filled silently). Styled in
-        # _style_autofill_bar; populated by _show_autofill_offer.
-        self._autofill_pending_entry = None
-        self.autofill_bar = QFrame()
-        self.autofill_bar.setObjectName("BrowserAutofillBar")
-        autofill_layout = QHBoxLayout(self.autofill_bar)
-        autofill_layout.setContentsMargins(14, 7, 14, 7)
-        autofill_layout.setSpacing(8)
-        self.autofill_icon = QLabel()
-        self.autofill_icon.setStyleSheet("background: transparent; border: none;")
-        self.autofill_label = QLabel("Saved login available")
-        self.autofill_fill_btn = QPushButton("Fill")
-        self.autofill_fill_btn.clicked.connect(lambda: self._do_autofill(submit=False))
-        self.autofill_signin_btn = QPushButton("Fill && Sign in")
-        self.autofill_signin_btn.clicked.connect(lambda: self._do_autofill(submit=True))
-        self.autofill_dismiss_btn = QPushButton("Not now")
-        self.autofill_dismiss_btn.clicked.connect(self._dismiss_autofill_offer)
-        autofill_layout.addWidget(self.autofill_icon)
-        autofill_layout.addWidget(self.autofill_label, 1)
-        autofill_layout.addWidget(self.autofill_fill_btn)
-        autofill_layout.addWidget(self.autofill_signin_btn)
-        autofill_layout.addWidget(self.autofill_dismiss_btn)
-        self.autofill_bar.hide()
+        # Credential autofill: the suggestion list is a FLOATING top-level
+        # popup (_AutofillSuggestionPopup), created lazily on first field focus.
+        # It is deliberately NOT added to this layout — it floats over the page
+        # anchored to the focused field, so the web page never shifts/resizes.
+        self._autofill_popup = None
+        self._autofill_filling = False
 
         browser_layout.setContentsMargins(12, 12, 12, 12)
         browser_layout.setSpacing(10)
         browser_layout.addWidget(nav_bar)
         browser_layout.addWidget(self.progress_bar)
-        browser_layout.addWidget(self.autofill_bar)
         browser_layout.addWidget(self.content_row)
         
         # Download manager panel
@@ -2102,9 +2171,10 @@ class WebBrowserWidget(QWidget):
 
     # ── Secure credential autofill (2026-06-27) ──────────────────────────
     # Restores "remember my login + offer to fill it" on the encrypted vault
-    # (OS keychain / DPAPI — never plaintext). FILL: on load, a saved
-    # credential matching the page's EXACT host triggers a non-modal offer
-    # bar. SAVE: submitting a login form offers to store it (user confirms).
+    # (OS keychain / DPAPI — never plaintext). FILL: focusing a login
+    # field whose page host EXACTLY matches a saved credential shows a
+    # FLOATING, field-anchored suggestion popup (never reflows the page).
+    # SAVE: submitting a login form offers to store it (user confirms).
     # Domain-exact only (no cross-domain fill); passwords are never logged.
     # Flag-gated: AIPACS_BROWSER_AUTOFILL=0 disables (legacy behaviour).
 
@@ -2133,7 +2203,11 @@ class WebBrowserWidget(QWidget):
                 at_create = QWebEngineScript.DocumentCreation
                 at_ready = QWebEngineScript.DocumentReady
 
-            self._autofill_bridge = _AutofillBridge(self._on_credential_submitted)
+            self._autofill_bridge = _AutofillBridge(
+                self._on_credential_submitted,
+                on_focus=self._on_login_field_focused,
+                on_dismiss=self._hide_autofill_popup,
+            )
             self._autofill_channel = QWebChannel(self.page)
             self._autofill_channel.registerObject("aipacsAutofill",
                                                   self._autofill_bridge)
@@ -2170,99 +2244,124 @@ class WebBrowserWidget(QWidget):
                 "web browser: autofill setup skipped", exc_info=True)
             self._autofill_enabled = False
 
-    def _style_autofill_bar(self):
-        if not hasattr(self, "autofill_bar"):
-            return
-        t = self._theme
-        self.autofill_bar.setStyleSheet(
-            f"QFrame#BrowserAutofillBar {{ background-color: {t['panel_alt_bg']};"
-            f" border: 1px solid {t['border']}; border-radius: {RADIUS_GROUP}px; }}"
-        )
-        self.autofill_label.setStyleSheet(
-            f"color: {t['text_primary']}; font-size: 13px; background: transparent;"
-            " border: none;"
-        )
-        self.autofill_icon.setPixmap(
-            qta.icon('fa5s.key', color=t['accent']).pixmap(16, 16))
-        self.autofill_fill_btn.setStyleSheet(dialog_button_qss(t, primary=True))
-        self.autofill_signin_btn.setStyleSheet(dialog_button_qss(t, primary=False))
-        self.autofill_dismiss_btn.setStyleSheet(dialog_button_qss(t, primary=False))
-
-    def _vault_entry_for_host(self, host):
-        """Most-recently-used vault entry whose host EXACTLY equals *host*."""
+    def _vault_entries_for_host(self, host):
+        """All vault entries whose host EXACTLY equals *host*, most-recently-
+        used first. Domain-exact only — no subdomain/substring cross-match."""
         try:
             from .credential_vault import get_vault
             host = (host or "").lower()
             if not host:
-                return None
-            best = None
-            for entry in get_vault().list_entries():
-                if entry.get("host") == host:
-                    if best is None or (entry.get("last_used", "")
-                                        > best.get("last_used", "")):
-                        best = entry
-            return best
+                return []
+            matches = [e for e in get_vault().list_entries()
+                       if e.get("host") == host]
+            matches.sort(key=lambda e: e.get("last_used", "") or "", reverse=True)
+            return matches
         except Exception:
-            return None
+            return []
 
-    def _maybe_offer_autofill(self, url):
+    def _on_login_field_focused(self, host, field_type, rect_json):
+        """Bridge callback: a login field gained focus. Show the floating
+        suggestion popup anchored to it when saved logins match THIS domain."""
         if not getattr(self, "_autofill_enabled", False):
             return
+        if getattr(self, "_autofill_filling", False):
+            return  # ignore the focus our own programmatic fill just caused
         try:
-            from .autofill import JS_HAS_LOGIN_FORM, host_of
-            host = host_of(url)
-            entry = self._vault_entry_for_host(host) if host else None
-            if not entry:
-                self._dismiss_autofill_offer()
+            import json as _json
+            from .autofill import host_of
+            # The page-reported origin is authoritative; cross-check the
+            # browser's current URL host and require an EXACT match.
+            page_host = (host or "").split("/")[0].split(":")[0].strip().lower()
+            cur_host = host_of(self.get_current_url())
+            if not page_host:
                 return
+            if cur_host and cur_host != page_host:
+                return  # origin mismatch — never offer
+            entries = self._vault_entries_for_host(page_host)
+            if not entries:
+                self._hide_autofill_popup()
+                return
+            popup = getattr(self, "_autofill_popup", None)
+            if popup is not None and popup.isVisible():
+                return  # already showing — don't flicker on re-focus
+            try:
+                rect = _json.loads(rect_json) if rect_json else {}
+            except Exception:
+                rect = {}
+            self._show_autofill_suggestions(entries, rect)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "web browser: autofill focus handling failed", exc_info=True)
 
-            def _cb(has_form):
-                try:
-                    if has_form:
-                        self._show_autofill_offer(entry)
-                except Exception:
-                    pass
-
-            self.web_view.page().runJavaScript(JS_HAS_LOGIN_FORM, _cb)
+    def _show_autofill_suggestions(self, entries, rect):
+        """Build / position the floating popup near the focused field. The
+        popup is a top-level window, so showing it NEVER reflows the page."""
+        from .autofill import compute_anchor
+        if self._autofill_popup is None:
+            self._autofill_popup = _AutofillSuggestionPopup(
+                lambda: self._theme, self._fill_from_entry, self)
+        popup = self._autofill_popup
+        popup.set_entries(entries)
+        popup_w = popup.width() or popup.sizeHint().width()
+        popup_h = popup.sizeHint().height()
+        try:
+            view = self.web_view
+            view_tl = view.mapToGlobal(QPoint(0, 0))
+            try:
+                zoom = float(view.zoomFactor())
+            except Exception:
+                zoom = 1.0
+            screen = QApplication.screenAt(view_tl) or QApplication.primaryScreen()
+            geo = screen.availableGeometry() if screen is not None else None
+            if geo is None or not rect:
+                popup.move(view_tl.x() + 24, view_tl.y() + 60)  # safe fallback
+            else:
+                x, y, _above = compute_anchor(
+                    float(rect.get("left", 0)), float(rect.get("top", 0)),
+                    float(rect.get("height", 0)),
+                    view_tl.x(), view_tl.y(), zoom,
+                    popup_w, popup_h,
+                    geo.left(), geo.top(), geo.right(), geo.bottom())
+                popup.move(x, y)
         except Exception:
             pass
+        popup.show()
 
-    def _show_autofill_offer(self, entry):
-        self._autofill_pending_entry = entry
-        user = entry.get("username") or "your saved login"
-        host = entry.get("host", "")
-        self.autofill_label.setText(f"Fill saved login for {user} on {host}?")
-        # Sign-in button only when we actually have a username to submit.
-        self.autofill_signin_btn.setVisible(bool(entry.get("username")))
-        self._style_autofill_bar()
-        self.autofill_bar.show()
-
-    def _do_autofill(self, submit=False):
-        entry = getattr(self, "_autofill_pending_entry", None)
-        if not entry:
-            self._dismiss_autofill_offer()
-            return
+    def _fill_from_entry(self, entry):
+        """Fill the page's username/password from a chosen vault entry, then
+        hide the popup. Fills only (no auto-submit). Password never logged."""
+        self._autofill_filling = True
         try:
             from .credential_vault import get_vault
             vault = get_vault()
             cred_id = entry.get("id", "")
             password = vault.get_password(cred_id)
             if password:
-                # auto_fill_login JSON-encodes the password into JS and never
-                # logs it.
+                # auto_fill_login JSON-encodes the password into JS; never logs.
                 self.auto_fill_login(entry.get("username", ""), password,
-                                     submit=submit)
+                                     submit=False)
                 vault.touch_last_used(cred_id)
         except Exception:
             import logging
             logging.getLogger(__name__).debug(
                 "web browser: autofill apply failed", exc_info=True)
-        self._dismiss_autofill_offer()
+        finally:
+            self._hide_autofill_popup()
+            # Release the suppression after the programmatic focus settles, so
+            # the auto-focus from the fill doesn't immediately re-open the popup.
+            QTimer.singleShot(600, self._clear_autofill_filling)
 
-    def _dismiss_autofill_offer(self):
-        self._autofill_pending_entry = None
-        if hasattr(self, "autofill_bar"):
-            self.autofill_bar.hide()
+    def _clear_autofill_filling(self):
+        self._autofill_filling = False
+
+    def _hide_autofill_popup(self):
+        popup = getattr(self, "_autofill_popup", None)
+        if popup is not None:
+            try:
+                popup.hide()
+            except Exception:
+                pass
 
     def _on_credential_submitted(self, host, username, password):
         """Bridge callback when the user submits a login form. Offers to SAVE
@@ -2379,8 +2478,8 @@ class WebBrowserWidget(QWidget):
         self._update_reload_button_icon()
         self.progress_bar.setValue(0)
         self.progress_bar.show()
-        # A new navigation invalidates any pending autofill offer.
-        self._dismiss_autofill_offer()
+        # A new navigation invalidates any open autofill suggestion popup.
+        self._hide_autofill_popup()
 
     def on_load_progress(self, value):
         self.progress_bar.setValue(value)
@@ -2400,8 +2499,9 @@ class WebBrowserWidget(QWidget):
         self._sync_url_bar(url)
         self.record_history(url, self.current_title or url)
         self.update_favorite_button()
-        # Offer a saved login when one matches this page's exact host.
-        self._maybe_offer_autofill(url)
+        # NOTE: the autofill suggestion popup is triggered on login-field FOCUS
+        # (see _on_login_field_focused), not on load — so it never appears
+        # unprompted and never shifts the page.
 
     def toggle_bookmarks(self):
         if self.bookmark_panel.isVisible():

@@ -293,3 +293,45 @@ def menu_qss(t: dict) -> str:
             margin: 5px 8px;
         }}
     """
+
+
+def autofill_popup_qss(t: dict) -> str:
+    """Floating credential-suggestion popup frame (2026-06-28).
+
+    Anchored to the focused login field as a top-level window — it floats over
+    the page and never reflows it. Tokens only; hex literals are headless
+    fallbacks.
+    """
+    return f"""
+        QFrame#BrowserAutofillPopup {{
+            background-color: {_tok(t, 'panel_bg', '#111927')};
+            border: 1px solid {_tok(t, 'border', '#33405a')};
+            border-radius: {RADIUS_CONTROL}px;
+        }}
+    """
+
+
+def autofill_popup_header_qss(t: dict) -> str:
+    """The small 'Saved logins' caption above the suggestion rows."""
+    return (
+        f"color: {_tok(t, 'text_muted', '#93a4b7')}; font-size: 11px;"
+        " font-weight: 600; padding: 2px 6px; background: transparent;"
+        " border: none;"
+    )
+
+
+def autofill_row_qss(t: dict) -> str:
+    """A single credential row button (username + masked password)."""
+    return f"""
+        QPushButton {{
+            text-align: left;
+            padding: 7px 10px;
+            border: none;
+            border-radius: {RADIUS_CONTROL - 2}px;
+            color: {_tok(t, 'text_primary', '#f8fafc')};
+            background-color: transparent;
+            font-size: 12px;
+        }}
+        QPushButton:hover {{ background-color: {_tok(t, 'menu_hover_bg', '#2a3a52')}; }}
+        QPushButton:pressed {{ background-color: {_tok(t, 'menu_active_bg', '#31486a')}; }}
+    """

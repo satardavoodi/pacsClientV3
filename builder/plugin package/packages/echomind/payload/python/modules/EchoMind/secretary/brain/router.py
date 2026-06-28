@@ -35,29 +35,34 @@ log = logging.getLogger(__name__)
 from ..config import (
     SECRETARY_PHASE1_TIMEOUT,
     PHASE1_PROMPT_FILE,
+    get_phase1_prompt_file,
     get_secretary_llm_model,
     get_secretary_reasoning_effort,
 )
 _TIMEOUT = SECRETARY_PHASE1_TIMEOUT
 
 def _load_phase1_prompt() -> str:
+    # Resolve the prompt path on each call so AIPACS_SECRETARY_ROUTING_V2 is
+    # honored at runtime (v2 adds web/education routing). Falls back to the
+    # legacy file when the flag is off or the v2 file is absent.
     try:
-        return PHASE1_PROMPT_FILE.read_text(encoding="utf-8").strip()
+        return get_phase1_prompt_file().read_text(encoding="utf-8").strip()
     except Exception as exc:
         log.error("Could not load Phase 1 system prompt: %s", exc)
         return ""
 
 
-_SYSTEM_PROMPT: str = _load_phase1_prompt()
+_SYSTEM_PROMPT: str = _load_phase1_prompt()  # import-time default (flag off)
 
 
 def _system_prompt() -> str:
+    base = _load_phase1_prompt()  # re-resolve so the routing-v2 flag is honored
     if get_llm_backend() != "openai":
-        return _SYSTEM_PROMPT
+        return base
     extra = str(get_prompt_settings().get("secretary_routing") or "").strip()
     if not extra:
-        return _SYSTEM_PROMPT
-    return f"{extra}\n\n{_SYSTEM_PROMPT}"
+        return base
+    return f"{extra}\n\n{base}"
 
 
 @dataclass

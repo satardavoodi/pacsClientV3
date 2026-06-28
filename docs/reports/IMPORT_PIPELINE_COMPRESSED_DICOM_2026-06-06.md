@@ -15,7 +15,7 @@ fixed, plus decompress-on-import implemented and validated end-to-end.
 | Patient/study/series creation | scan groups by StudyInstanceUID/SeriesInstanceUID with fallbacks; `save_complete_study_info` registers patient→study→series in `dicom.db` | ✅ |
 | Local storage | `import_scanned_dicom_studies` → `SOURCE_PATH/<study_uid>/<series_number>/NNNNN_<sop>.dcm`, instance-ordered, duplicate/same-file skips | ✅ |
 | Thumbnails | `_prepare_imported_study_for_fast_open` → `load_series_preview` + `save_image_as_png` per series, cache cleared | ✅ |
-| Viewer compatibility | primary study opens with `viewer_backend_override=BACKEND_PYDICOM` (FAST pipeline decodes via pydicom `pixel_array`) | ✅ |
+| Viewer compatibility | primary study opens with `viewer_backend_override=BACKEND_PYDICOM` (FAST pipeline decodes via pydicom `pixel_array`) | ⚠️ SUPERSEDED 2026-06-28 — see `IMPORT_OPENS_FAST_VIEWER_2026-06-28.md`. `BACKEND_PYDICOM` is `pydicom_2d` (the legacy **VTK**-rendering backend), NOT the FAST viewer (`pydicom_qt`). Since v2.3.3 that pin opened imported studies in the OLD VTK viewer while every other path used FAST. Decompress-on-import (§3) already stores plain uncompressed DICOM, so the pin gave no decode benefit; it is removed (default), kept behind `AIPACS_IMPORT_FORCE_LEGACY_VIEWER=1`. |
 | Error handling | per-file copy errors collected; per-study DB failures listed; scan/import/prep wrapped with user-facing dialogs; background jobs run in a thread with a responsive progress dialog (QEventLoop, no processEvents poll) | ✅ |
 
 ## 2. Defects found → fixed

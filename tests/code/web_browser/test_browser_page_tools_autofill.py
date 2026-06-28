@@ -63,3 +63,52 @@ def test_connector_js_contract():
     assert "credentialSubmitted" in AF.AUTOFILL_CONNECTOR_JS
     assert "input[type=password]" in AF.AUTOFILL_CONNECTOR_JS
     assert AF.JS_HAS_LOGIN_FORM.strip()
+
+
+def test_connector_js_wires_focus_and_dismiss():
+    js = AF.AUTOFILL_CONNECTOR_JS
+    # field-focus → show suggestion; scroll/resize → dismiss
+    assert "loginFieldFocused" in js
+    assert "dismissSuggestions" in js
+    assert "focusin" in js
+    assert "getBoundingClientRect" in js
+    assert "isLoginField" in js
+
+
+def test_compute_anchor_places_below_by_default():
+    # field near the top → popup sits just below it; no flip
+    x, y, above = AF.compute_anchor(
+        field_left=0, field_top=100, field_height=20,
+        view_global_x=500, view_global_y=300, zoom=1.0,
+        popup_w=280, popup_h=120,
+        screen_left=0, screen_top=0, screen_right=1920, screen_bottom=1080)
+    assert (x, y, above) == (500, 424, False)
+    assert isinstance(x, int) and isinstance(y, int)
+
+
+def test_compute_anchor_flips_above_near_bottom_edge():
+    # field near the bottom → popup flips ABOVE the field
+    x, y, above = AF.compute_anchor(
+        field_left=0, field_top=1000, field_height=20,
+        view_global_x=0, view_global_y=0, zoom=1.0,
+        popup_w=280, popup_h=120,
+        screen_left=0, screen_top=0, screen_right=1920, screen_bottom=1080)
+    assert above is True
+    assert y == 1000 - 4 - 120  # above the field top, minus the gap
+
+
+def test_compute_anchor_clamps_horizontally_and_honors_zoom():
+    # far-right field is clamped so the popup stays on-screen
+    x, _y, _above = AF.compute_anchor(
+        field_left=1800, field_top=100, field_height=20,
+        view_global_x=0, view_global_y=0, zoom=1.0,
+        popup_w=280, popup_h=80,
+        screen_left=0, screen_top=0, screen_right=1920, screen_bottom=1080)
+    assert x == 1920 - 280
+    # zoom scales the CSS-pixel field offset into widget pixels
+    x2, _y2, _a2 = AF.compute_anchor(
+        field_left=100, field_top=0, field_height=10,
+        view_global_x=0, view_global_y=0, zoom=2.0,
+        popup_w=100, popup_h=50,
+        screen_left=0, screen_top=0, screen_right=1920, screen_bottom=1080)
+    assert x2 == 200

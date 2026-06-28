@@ -41,12 +41,13 @@ def test_write_portable_support_files_with_viewer_launcher():
     assert manifest["viewer_included"] is True
     assert manifest["viewer_launcher"] == "VIEWER/Viewer.exe"
 
+    # No launcher exe was staged here → autorun falls back to RUN_VIEWER.cmd.
     autorun = (staging / "autorun.inf").read_text(encoding="utf-8")
-    # AutoRun routes through RUN_VIEWER.cmd (so the 32-bit guard + folder
-    # fallback runs on autorun too); the icon still points at the viewer exe.
     assert "open=RUN_VIEWER.cmd" in autorun
-    assert "shellexecute=RUN_VIEWER.cmd" in autorun
     assert "icon=VIEWER\\Viewer.exe,0" in autorun
+    # We must NEVER ship a .hta launcher (it triggers a Windows 'open with' prompt).
+    assert not (staging / "RUN_VIEWER.hta").exists()
+    assert ".hta" not in autorun
 
     launch_script = (staging / "RUN_VIEWER.cmd").read_text(encoding="utf-8")
     assert "--import-folder \"%~dp0\"" in launch_script
@@ -54,6 +55,76 @@ def test_write_portable_support_files_with_viewer_launcher():
     readme = (staging / "START_HERE.txt").read_text(encoding="utf-8")
     assert "RUN_VIEWER.cmd" in readme
     assert "DICOMDIR" in readme
+
+
+def test_run_viewer_copies_onedir_bundle_to_local_disk():
+    """A PyInstaller onedir bundle (has _internal) must be copied to local disk
+    before running — launching it directly off optical media fails with
+    'Could not load PyInstaller's embedded PKG archive from the executable'.
+    The launcher copies VIEWER -> %TEMP% and runs from there, with an
+    in-place fallback if the copy fails (and for single-exe viewers)."""
+    staging = Path(tempfile.mkdtemp(prefix="cd_media_test_copy_"))
+    worker = CDBurnWorker(studies=[], burn_to_disc=False)
+
+    worker._write_portable_support_files(
+        str(staging),
+        fileset_label="DICOM",
+        volume_label="DICOM",
+        viewer_launcher_relative_path=Path("VIEWER") / "AIPacsLiteViewer.exe",
+        viewer_display_name="AI-PACS Lite Viewer",
+    )
+
+    cmd = (staging / "RUN_VIEWER.cmd").read_text(encoding="utf-8")
+    # only copy genuine onedir bundles (gated on the _internal folder)
+    assert "_internal" in cmd
+    assert "robocopy" in cmd
+    assert "%TEMP%\\AIPacsLiteViewer" in cmd
+    # runs the copied exe and points the import folder at the disc root
+    assert "set \"VIEWER_EXE=AIPacsLiteViewer.exe\"" in cmd
+    assert "%TEMP%\\AIPacsLiteViewer\\%VIEWER_EXE%" in cmd
+    assert "--import-folder \"%~dp0\"" in cmd
+    # graceful fallbacks remain
+    assert ":runinplace" in cmd
+    assert "requires 64-bit Windows" in cmd
+
+    readme = (staging / "START_HERE.txt").read_text(encoding="utf-8")
+    assert "copies the viewer to" in readme
+
+
+def test_exe_launcher_is_primary_and_no_open_with_prompt():
+    """The double-click launcher must be a GUI EXE (no console, no Windows
+    'open with' prompt). When a launcher exe is staged, autorun launches it
+    directly and we ship NO .hta (the .hta was what triggered the 'open with
+    HTML' prompt)."""
+    staging = Path(tempfile.mkdtemp(prefix="cd_media_test_exe_"))
+    worker = CDBurnWorker(studies=[], burn_to_disc=False)
+
+    worker._write_portable_support_files(
+        str(staging),
+        fileset_label="DICOM",
+        volume_label="DICOM",
+        viewer_launcher_relative_path=Path("VIEWER") / "AIPacsLiteViewer.exe",
+        viewer_display_name="AI-PACS Lite Viewer",
+        launcher_exe_name="AIPacsViewer.exe",
+    )
+
+    # No .hta anywhere — neither a file nor referenced by autorun.
+    assert not (staging / "RUN_VIEWER.hta").exists()
+
+    autorun = (staging / "autorun.inf").read_text(encoding="utf-8")
+    assert "open=AIPacsViewer.exe" in autorun
+    assert "shellexecute=AIPacsViewer.exe" in autorun
+    assert "mshta" not in autorun
+    assert ".hta" not in autorun
+
+    manifest = json.loads((staging / "AIPACS_MEDIA_INFO.json").read_text(encoding="utf-8"))
+    assert manifest["viewer_launcher_primary"] == "AIPacsViewer.exe"
+    assert "AIPacsViewer.exe" in manifest["portable_launchers"]
+
+    readme = (staging / "START_HERE.txt").read_text(encoding="utf-8")
+    assert "AIPacsViewer.exe" in readme
+    # RUN_VIEWER.cmd remains as a fallback
+    assert (staging / "RUN_VIEWER.cmd").exists()
 
 
 def test_write_portable_support_files_without_viewer_launcher():

@@ -560,3 +560,131 @@ Validated 2026-06-17: cold rebuild passes the gate on the warm-up run (exit 0,
 published to `lightViewer_dist`); 13/13 `test_lite_viewer_core.py` green;
 mirrors 389/389. `render.py` + `viewer_app.py` are plugin-mirrored — re-run
 `tools/dev/sync_plugin_mirrors.py` after editing them.
+
+## 24. Burned viewer must run from LOCAL disk, not off the disc (2026-06-17)
+
+**Symptom (after burning):** double-clicking `E:\VIEWER\AIPacsLiteViewer.exe`
+on the burned disc shows *"Could not load PyInstaller's embedded PKG archive
+from the executable"*.
+
+**Root cause — NOT corruption.** Diagnosed: the source exe is a valid
+PyInstaller bundle (MEI cookie at tail, 6,640,951 B = 6,485 KB, which MATCHES
+the size shown on the disc → not truncated), and the burn verifies with SHA-256
+(`cd_writer.compare_folder_trees`). The failure is PyInstaller's onedir
+**bootloader reading its own embedded PKG archive directly off optical media**:
+the bootloader does random reads of the exe tail/TOC, and a single CD read
+glitch (optical media is unreliable for random access; some target PCs / AV make
+it worse) aborts with that error. Running a 99 MB onedir bundle (the exe + ~430
+files in `_internal`) straight off a DVD is inherently fragile.
+
+**Fix — `RUN_VIEWER.cmd` copies the bundle to local disk first**
+(`cd_burn_manager._write_portable_support_files`). When the launcher sees a real
+onedir bundle (the viewer dir contains `_internal`) it `robocopy`s
+(`/E /R:3 /W:1` — the retries also ride out flaky optical reads) the VIEWER
+folder to `%TEMP%\AIPacsLiteViewer` and runs the exe from there with
+`--import-folder "%~dp0"` (the DICOM images STAY on the disc and are read via
+the viewer's existing robust/retrying optical reads). Goto-based structure (no
+fragile nested parens). Fallbacks preserved: 32-bit Windows guard → opens the
+DICOM folder; copy failed / single-exe custom viewer (no `_internal`) → runs in
+place; exe missing → clear message. `autorun.inf` already routes through
+`RUN_VIEWER.cmd`, so autorun benefits too. `START_HERE.txt` now tells users to
+launch via `RUN_VIEWER.cmd` and NOT run `VIEWER\*.exe` directly off the disc.
+
+**To pick up the fix the user must RE-BURN** from an app build that has this
+`cd_burn_manager.py` (it generates the launcher at burn time) — the exe itself
+is unchanged and does NOT need rebuilding. Quick manual confirmation on the
+*existing* failing disc: copy `E:\VIEWER` to the hard drive and run the exe from
+there — it launches fine (proves the optical-read root cause + the fix).
+
+`cd_burn_manager.py` is plugin-mirrored (run_cd) — synced (393/393). Guard:
+`tests/code/cd_burner/test_cd_burner_portability.py::test_run_viewer_copies_onedir_bundle_to_local_disk`;
+119/119 cd_burner tests green.
+
+## 25. Branded, console-free launcher — no CMD window (2026-06-17)
+
+**Symptom:** clicking the disc's viewer entry briefly showed a raw black CMD
+window reading *"Preparing the viewer, please wait…"* — that is the §24
+`RUN_VIEWER.cmd` (a `.cmd` ALWAYS opens a console). Unprofessional on a patient
+disc.
+
+**Fix — `RUN_VIEWER.hta` is now the PRIMARY launcher**
+(`cd_burn_manager._write_portable_support_files`). An HTA runs under
+`mshta.exe` (a GUI host present on every Windows XP→11), so it shows an
+AI-PACS-branded splash with **NO console**, matching the viewer's welcome page
+(dark navy `#0d1320`, card `#172133`, accent `#3b82f6`, `AI-PACS` wordmark, CSS
+spinner). Its JScript:
+- shows **"Preparing viewer, please wait."** (the exact requested text);
+- finds its own folder (`location.pathname`, fallback `aipacsApp.commandLine`);
+- 32-bit-Windows guard → opens the images folder + branded message;
+- if the viewer dir has `_internal` (real onedir), runs `robocopy` **hidden**
+  (`WScript.Shell.Run(cmd, 0, false)` — window style 0 = no console) to
+  `%TEMP%\AIPacsLiteViewer`, polls a `.copydone` marker, then launches the
+  **copied** exe with `--import-folder` at the disc root and `window.close()`s;
+- single-exe viewer (no `_internal`) → runs in place;
+- any failure → branded in-app error (`fail()`, red text) + a Close button
+  (e.g. "Could not prepare the viewer", "needs Windows Script Host → use
+  RUN_VIEWER.cmd").
+
+`autorun.inf` now routes through it (`open=mshta.exe RUN_VIEWER.hta` +
+`shellexecute=RUN_VIEWER.hta`), so AutoPlay is console-free too. `RUN_VIEWER.cmd`
+is kept as a FALLBACK for locked-down PCs that block `.hta` (its message is now
+also "Preparing viewer, please wait."). `START_HERE.txt` + the manifest
+(`viewer_launcher_primary`, `portable_launchers`) point at the HTA first.
+`_verify_staging_output` now requires `RUN_VIEWER.hta` whenever a viewer is
+included.
+
+The HTA is generated from a raw-string template with `__VIEWER_SUBDIR__` /
+`__VIEWER_EXE__` tokens; JScript syntax validated with `node --check`, paths/
+escaping confirmed by generating it. **Re-burn required** to get the HTA (the
+exe is unchanged). Acceptance criteria met: click → no CMD window → branded
+"Preparing viewer, please wait." splash → closes when the viewer opens → branded
+error on failure. Guard:
+`tests/code/cd_burner/test_cd_burner_portability.py::test_branded_hta_launcher_is_generated_and_console_free`;
+121/121 cd_burner green; mirror 393/393. NEEDS live re-burn verify (mshta can't
+be tested headlessly).
+
+## 26. Launcher is a branded EXE — no console, no "open with" prompt (2026-06-17) — SUPERSEDES §25
+
+**Symptom:** double-clicking the disc launcher showed a Windows *"how do you
+want to open this .hta file?"* (open-with) prompt on PCs where `.hta` is not
+associated with `mshta` (locked-down / hijacked association). The §25 HTA fixed
+the console but introduced this association problem.
+
+**Root cause:** the only file types that double-click DIRECTLY with **no console
+window AND no "open with" prompt** are real `.exe`s. `.cmd` → console; `.hta` /
+`.vbs` → association/"open with" prompt + AV flags; `.lnk` → breaks on
+removable media (stored drive letter). So the launcher must be an exe.
+
+**Fix — a tiny branded launcher EXE (`AIPacsViewer.exe`) at the media root.**
+- Source: `modules/cd_burner/portable_viewer/cd_launcher.py` — standalone,
+  stdlib + tkinter only (never imports `modules.cd_burner…`), built as a
+  **onefile, --windowed** exe by `build_lite_viewer.build_launcher()` (NON-FATAL;
+  if it can't build, discs fall back to RUN_VIEWER.cmd). Published to
+  `lightViewer_dist/AIPacsViewer.exe` next to the viewer dist.
+- Behaviour: GUI exe → no console; shows a branded tkinter splash (dark navy
+  `#0d1320` / card `#172133` / accent `#3b82f6` / "AI-PACS" + indeterminate
+  progressbar) saying **"Preparing viewer, please wait."**; reads
+  `AIPACS_MEDIA_INFO.json` → `viewer_launcher` (so it works for any viewer
+  name); 32-bit guard → opens the images folder; if the viewer dir has
+  `_internal` (onedir) it `robocopy`s it to `%TEMP%\AIPacsLiteViewer` (retries,
+  hidden via `CREATE_NO_WINDOW`) and launches the **copied** exe with
+  `--import-folder` at the disc root; single-exe viewer runs in place; any
+  failure shows a branded in-app error + Close button (no Windows dialog).
+  Onefile = sequential read from CD (the launcher itself is CD-safe); it's tiny
+  (~10.6 MB) so its own extraction is fast.
+- Wiring (`cd_burn_manager`): `_stage_cd_launcher` copies the exe to the media
+  root; autorun → `open=AIPacsViewer.exe` + `shellexecute=AIPacsViewer.exe` (no
+  mshta); the **`.hta` is no longer generated at all**; `RUN_VIEWER.cmd` remains
+  a last-resort fallback; manifest `viewer_launcher_primary` + START_HERE point
+  at the exe; `_verify_staging_output` requires the manifest's primary launcher
+  to exist on the media.
+- Release/installed builds: the launcher rides along in `lightViewer_dist`
+  (materialize regenerates the run_cd payload), so the installed app stages it
+  onto every disc automatically.
+
+Validated: launcher builds (10.6 MB, exit 0); 126/126 cd_burner tests green incl.
+headless launcher logic (`test_cd_launcher.py`: copy-to-temp + launch-from-copy,
+single-exe in place, 32-bit guard) + `test_exe_launcher_is_primary_and_no_open_with_prompt`
+(no `.hta` shipped, autorun → exe); mirror 394/394 (cd_launcher.py added).
+**Re-burn required** (launcher is generated/staged at burn time). NEEDS live
+double-click verify on the burned disc.

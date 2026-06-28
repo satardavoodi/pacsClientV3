@@ -203,6 +203,10 @@ class HomeDownloadService:
             _pending_completed: list[str] = []
             _pending_progress: dict[str, tuple[int, int]] = {}
             _last_progress_sent: dict[str, tuple[int, int]] = {}
+            # Per-card download-progress-bar throttle: last integer percent pushed to
+            # each open series card. Dedups so the thin bar repaints at most ~once per
+            # 1% (bounded, smooth, no lag) regardless of how chatty the DM is.
+            _last_thumb_bar_pct: dict[str, int] = {}
             _thumbnail_completed_series: set[str] = set()
             _progress_normalizer = _SeriesProgressNormalizer()
             from PySide6.QtCore import QTimer
@@ -361,6 +365,37 @@ class HomeDownloadService:
                 except Exception:
                     pass
 
+            def _feed_thumb_bar(uid, series_uid, current, total):
+                """Fill the matching series CARD's thin download bar (downloaded/total).
+
+                Independent of whether any viewport shows the series — every open card
+                for THIS patient (primary OR a multi-study sibling) fills as it
+                downloads. Cross-patient safe: a series is admitted only when it is the
+                primary study (uid == study_uid) or it resolves inside THIS patient's
+                own uid->number map (_belongs_to_open_thumbnails); a foreign patient's
+                background download is skipped. Throttled to ~1% steps; the bar repaint
+                is a single cheap setValue() on one widget — no rebuild, no I/O.
+                """
+                try:
+                    if uid != study_uid and not _belongs_to_open_thumbnails(series_uid):
+                        return
+                    total_i = int(total or 0)
+                    cur_i = int(current or 0)
+                    if total_i <= 0:
+                        return
+                    key = _resolve_sn(series_uid)
+                    pct = int(cur_i * 100 / total_i)
+                    if _last_thumb_bar_pct.get(key) == pct and cur_i < total_i:
+                        return
+                    _last_thumb_bar_pct[key] = pct
+                    w = widget_ref()
+                    tm = getattr(w, "thumbnail_manager", None) if w else None
+                    if tm is None:
+                        return
+                    tm.update_series_download_progress(key, cur_i, total_i)
+                except Exception:
+                    pass
+
             def _flush():
                 batch = list(_pending_completed)
                 _pending_completed.clear()
@@ -490,42 +525,46 @@ class HomeDownloadService:
                 study, the canonical _resolve_sn number; else None for a background SECONDARY-study
                 series no viewport here shows (it must not grow a viewport). PRIMARY / single-study
                 stays byte-identical (display key == resolved number)."""
-                if series_uid:
-                    dk = _active_display_key_for_uid(series_uid)
-                    if dk:
-                        return str(dk)
-                if uid == study_uid:
-                    return _resolve_sn(series_uid)
-                # Sibling / previous-exam series that no viewport here awaits/shows → not grown.
-                # DIAGNOSTIC (2026-06-27): if a viewport IS awaiting a series but THIS download's
-                # series_uid did not resolve to its display key, a previous-exam / secondary-study
-                # grow is being DROPPED here (the offset-key entry's series_uid likely doesn't match
-                # the DM's). Logged so the live run pinpoints the mismatch (restores the visibility
-                # the unified `_grow_lane_display_key` cut folded away). Silent for genuine
-                # background siblings (no awaiting viewport) so it stays quiet on normal patients.
+                dk = _active_display_key_for_uid(series_uid) if series_uid else None
+                resolved = str(dk) if dk else (_resolve_sn(series_uid) if uid == study_uid else None)
+                # VISIBLE diagnostic via the VIEWER logger (home_download's own `_logger` does NOT
+                # reach the log files — console only). For a previous-exam / secondary-study event
+                # whose resolved key is NOT one a viewport here awaits/shows, log the DM event's uid +
+                # series_uid, what it resolved to, and each awaiting/progressive viewport key + the
+                # series_uid stored for it in `_server_series_info`. One repro then shows whether the
+                # offset key the viewport awaits (e.g. 1000001) maps to the SAME series_uid the DM
+                # reports — pinpointing the previous-exam grow mismatch. (Diagnostic only; the return
+                # value below is unchanged: dk if matched, else _resolve_sn for the primary, else None.)
                 try:
-                    _w_dbg = widget_ref()
-                    _vc_dbg = getattr(_w_dbg, "viewer_controller", None) if _w_dbg else None
-                    _awaiting_keys = []
-                    for _n_dbg in (getattr(_vc_dbg, "lst_nodes_viewer", None) or []):
-                        _vw_dbg = getattr(_n_dbg, "vtk_widget", None)
-                        if _vw_dbg is None:
-                            continue
-                        for _attr_dbg in ("_awaiting_series_number", "_progressive_series_number"):
-                            _a_dbg = getattr(_vw_dbg, _attr_dbg, None)
-                            if _a_dbg:
-                                _awaiting_keys.append(str(_a_dbg))
-                    if _awaiting_keys:
-                        _logger.info(
-                            "[GROW-LANE-DROP] previous-exam/sibling progress not matched to a "
-                            "viewport: study=%s series_uid=%s awaiting_keys=%s (offset-key "
-                            "series_uid mismatch?)", uid, series_uid, _awaiting_keys,
-                        )
+                    _w = widget_ref()
+                    _vc = getattr(_w, "viewer_controller", None) if _w else None
+                    _lg = getattr(_vc, "logger", None) if _vc else None
+                    if _lg is not None:
+                        _ssi = getattr(getattr(_vc, "parent_widget", None), "_server_series_info", {}) or {}
+                        _aw = []
+                        for _n in (getattr(_vc, "lst_nodes_viewer", None) or []):
+                            _vw = getattr(_n, "vtk_widget", None)
+                            if _vw is None:
+                                continue
+                            for _at in ("_awaiting_series_number", "_progressive_series_number"):
+                                _k = getattr(_vw, _at, None)
+                                if _k:
+                                    _info = _ssi.get(str(_k)) if isinstance(_ssi, dict) else None
+                                    _u = (str((_info or {}).get("series_uid")
+                                              or (_info or {}).get("series_instance_uid") or ""))[-20:]
+                                    _aw.append((str(_k), _u))
+                        if _aw and (resolved is None or str(resolved) not in [k for k, _ in _aw]):
+                            _lg.info("[GROW-LANE-TRACE] uid=%s series_uid=%s resolved=%s awaiting=%s",
+                                     str(uid)[-14:], str(series_uid or "")[-20:], resolved, _aw)
                 except Exception:
                     pass
-                return None
+                return resolved
 
             def on_series_progress(uid, series_uid, current, total):
+                # Per-card download bar: fill the matching thumbnail card's thin bar
+                # for ANY open series of this patient (viewport-independent) BEFORE the
+                # grow-lane resolution, which returns early for series no viewport shows.
+                _feed_thumb_bar(uid, series_uid, current, total)
                 # ONE display-key resolution (was: sibling-branch + primary-branch + uid-bind).
                 sn = _grow_lane_display_key(uid, series_uid)
                 if sn is None:

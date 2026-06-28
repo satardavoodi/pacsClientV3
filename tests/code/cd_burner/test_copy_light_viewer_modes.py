@@ -92,11 +92,43 @@ def test_launcher_has_32bit_guard_and_autorun_uses_cmd(tmp_path):
     assert "requires 64-bit Windows" in run_cmd
     assert "explorer.exe" in run_cmd  # opens the DICOM folder as fallback
 
+    # No launcher exe alongside this fake viewer → autorun falls back to the
+    # .cmd, and we never ship a .hta (no 'open with' prompt).
     autorun = (staging / "autorun.inf").read_text(encoding="utf-8")
     assert "open=RUN_VIEWER.cmd" in autorun
+    assert ".hta" not in autorun
+    assert not (staging / "RUN_VIEWER.hta").exists()
 
     readme = (staging / "START_HERE.txt").read_text(encoding="utf-8")
     assert "64-bit Windows" in readme
+
+
+def test_launcher_exe_staged_at_root_and_used_by_autorun(tmp_path):
+    """When the launcher exe sits next to the viewer dist
+    (lightViewer_dist/AIPacsViewer.exe), the burn copies it to the media ROOT
+    and autorun launches it directly — a GUI exe → no console, no 'open with'."""
+    dist = tmp_path / "lightViewer_dist"
+    viewer = dist / "AIPacsLiteViewer"
+    (viewer / "_internal").mkdir(parents=True)
+    exe = viewer / "AIPacsLiteViewer.exe"
+    exe.write_bytes(b"MZ viewer")
+    (viewer / "_internal" / "base_library.zip").write_bytes(b"PK")
+    # the branded launcher, two levels up from the viewer exe
+    (dist / "AIPacsViewer.exe").write_bytes(b"MZ launcher")
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    worker = _make_worker(exe, display_name="AI-PACS Lite Viewer")
+    worker._copy_light_viewer(str(staging))
+
+    # launcher copied to the media root, viewer bundle under VIEWER/
+    assert (staging / "AIPacsViewer.exe").exists()
+    assert (staging / "VIEWER" / "AIPacsLiteViewer.exe").exists()
+
+    autorun = (staging / "autorun.inf").read_text(encoding="utf-8")
+    assert "open=AIPacsViewer.exe" in autorun
+    assert ".hta" not in autorun
+    assert not (staging / "RUN_VIEWER.hta").exists()
 
 
 def test_staging_verification_passes_after_viewer_copy(tmp_path):

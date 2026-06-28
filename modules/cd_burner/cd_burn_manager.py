@@ -544,6 +544,11 @@ class CDBurnWorker(QThread):
                         issues.append("Manifest says viewer is included but no viewer launcher path is recorded")
                     elif not (staging_path / Path(viewer_launcher)).exists():
                         issues.append(f"Viewer launcher is missing from export: {viewer_launcher}")
+                    # The primary double-click launcher recorded in the manifest
+                    # must actually be present on the media.
+                    primary = manifest.get("viewer_launcher_primary")
+                    if primary and not (staging_path / primary).exists():
+                        issues.append(f"Primary launcher is missing from export: {primary}")
                 elif (staging_path / "VIEWER").exists():
                     warnings.append("VIEWER folder exists but manifest says no portable viewer is included")
 
@@ -707,6 +712,11 @@ class CDBurnWorker(QThread):
 
             viewer_display_name = self.viewer_display_name or viewer_path.stem
 
+            # Stage the branded, double-clickable launcher exe at the media root
+            # (no console window, no "open with" prompt). Falls back to
+            # RUN_VIEWER.cmd when it isn't available (e.g. custom viewer).
+            launcher_name = self._stage_cd_launcher(staging_path, viewer_path)
+
             relative_exe = Path("VIEWER") / viewer_path.name
             self._write_portable_support_files(
                 staging_folder,
@@ -714,6 +724,7 @@ class CDBurnWorker(QThread):
                 normalize_volume_label(self.disc_label, default=normalize_fileset_label(self.disc_label)),
                 viewer_launcher_relative_path=relative_exe,
                 viewer_display_name=viewer_display_name,
+                launcher_exe_name=launcher_name,
             )
 
             self.progress.emit(55, "Light Viewer added successfully")
@@ -727,6 +738,28 @@ class CDBurnWorker(QThread):
                 normalize_volume_label(self.disc_label, default=normalize_fileset_label(self.disc_label)),
             )
 
+    def _stage_cd_launcher(self, staging_path: Path, viewer_path: Path) -> Optional[str]:
+        """Copy the branded double-click launcher (AIPacsViewer.exe) to the media
+        root, next to autorun.inf.
+
+        This is the file the patient double-clicks: a GUI exe → NO console
+        window, and an exe (not .hta/.vbs) → NO Windows 'open with' prompt. It
+        sits beside the viewer dist (lightViewer_dist/AIPacsViewer.exe), i.e.
+        two levels up from the viewer exe (…/lightViewer_dist/AIPacsLiteViewer/
+        AIPacsLiteViewer.exe). Returns its filename, or None when unavailable
+        (custom viewer / not built) so the burn falls back to RUN_VIEWER.cmd.
+        """
+        try:
+            launcher_src = viewer_path.resolve().parent.parent / "AIPacsViewer.exe"
+            if not launcher_src.is_file():
+                return None
+            shutil.copy2(launcher_src, staging_path / "AIPacsViewer.exe")
+            self.progress.emit(53, "Added one-click viewer launcher")
+            return "AIPacsViewer.exe"
+        except Exception as exc:
+            logger.warning(f"Could not stage CD launcher: {exc}")
+            return None
+
     def _write_portable_support_files(
         self,
         staging_folder: str,
@@ -734,12 +767,27 @@ class CDBurnWorker(QThread):
         volume_label: str,
         viewer_launcher_relative_path: Optional[Path] = None,
         viewer_display_name: Optional[str] = None,
+        launcher_exe_name: Optional[str] = None,
     ):
         """Write helper files that improve portability on other Windows PCs."""
         staging_path = Path(staging_folder)
         viewer_display_name = viewer_display_name or "DICOM Viewer"
         viewer_rel = viewer_launcher_relative_path.as_posix() if viewer_launcher_relative_path else None
         viewer_cmd_rel = viewer_rel.replace("/", "\\") if viewer_rel else None
+        # Split the viewer launcher into its bundle dir + exe name so the
+        # launcher can copy a PyInstaller onedir bundle to local disk before
+        # running it (see RUN_VIEWER.cmd below).
+        viewer_exe_name = ""
+        viewer_dir_rel_bs = ""
+        if viewer_cmd_rel:
+            _vparts = viewer_cmd_rel.split("\\")
+            viewer_exe_name = _vparts[-1]
+            viewer_dir_rel_bs = "\\".join(_vparts[:-1])  # "VIEWER" or "" if at root
+        # The patient double-clicks this at the media root. Prefer the branded
+        # launcher EXE (a GUI exe → no console, and not a .hta → no Windows
+        # "open with" prompt); fall back to RUN_VIEWER.cmd only when the
+        # launcher exe could not be staged.
+        primary_launcher = (launcher_exe_name or "RUN_VIEWER.cmd") if viewer_cmd_rel else None
         center = self.options.center_identity()
 
         launch_cmd = staging_path / "RUN_VIEWER.cmd"
@@ -749,30 +797,50 @@ class CDBurnWorker(QThread):
             # and degrade gracefully — a clear message + open the DICOM
             # folder so DICOMDIR can be used with any installed viewer —
             # instead of a cryptic "not a valid Win32 application" error.
+            # IMPORTANT: a PyInstaller onedir bundle (it has an `_internal`
+            # folder) is UNRELIABLE when launched directly off optical media —
+            # the bootloader does random reads of its own embedded PKG archive
+            # and a single CD read glitch yields
+            # "Could not load PyInstaller's embedded PKG archive from the
+            # executable". So copy the bundle to local disk FIRST (robocopy
+            # retries ride out flaky reads), then run it from there. The DICOM
+            # images stay on the disc and are read via --import-folder (the
+            # viewer already does robust, retrying optical reads). A single-exe
+            # custom viewer (no `_internal`) runs in place as before.
             launch_cmd.write_text(
                 "@echo off\n"
-                "setlocal\n"
-                "cd /d %~dp0\n"
+                "setlocal enableextensions\n"
+                "cd /d \"%~dp0\"\n"
                 "set \"AIPACS_IMPORT_FOLDER=%~dp0\"\n"
-                "if /I \"%PROCESSOR_ARCHITECTURE%\"==\"x86\" if not defined PROCESSOR_ARCHITEW6432 (\n"
-                "  echo.\n"
-                "  echo The bundled AI-PACS viewer requires 64-bit Windows.\n"
-                "  echo This computer is running 32-bit Windows.\n"
-                "  echo.\n"
-                "  echo Opening the DICOM folder instead. Open the DICOMDIR file\n"
-                "  echo with any DICOM viewer to see the images.\n"
-                "  echo.\n"
-                "  start \"\" explorer.exe \"%~dp0\"\n"
-                "  pause\n"
-                "  exit /b 0\n"
-                ")\n"
-                f"if not exist \"{viewer_cmd_rel}\" (\n"
-                "  echo Viewer executable was not found.\n"
-                "  pause\n"
-                "  exit /b 1\n"
-                ")\n"
+                # 64-bit-only guard (Qt 6 has no 32-bit build)
+                "if /I \"%PROCESSOR_ARCHITECTURE%\"==\"x86\" if not defined PROCESSOR_ARCHITEW6432 goto win32\n"
+                f"if not exist \"%~dp0{viewer_cmd_rel}\" goto noexe\n"
+                f"set \"VIEWER_SRC=%~dp0{viewer_dir_rel_bs}\"\n"
+                f"set \"VIEWER_EXE={viewer_exe_name}\"\n"
+                "if not exist \"%VIEWER_SRC%\\_internal\" goto runinplace\n"
+                "echo Preparing viewer, please wait.\n"
+                "robocopy \"%VIEWER_SRC%\" \"%TEMP%\\AIPacsLiteViewer\" /E /R:3 /W:1 /NFL /NDL /NJH /NJS /NP >nul\n"
+                "if not exist \"%TEMP%\\AIPacsLiteViewer\\%VIEWER_EXE%\" goto runinplace\n"
+                "start \"\" \"%TEMP%\\AIPacsLiteViewer\\%VIEWER_EXE%\" --import-folder \"%~dp0\"\n"
+                "exit /b 0\n"
+                ":runinplace\n"
                 f"start \"\" \"%~dp0{viewer_cmd_rel}\" --import-folder \"%~dp0\"\n"
-                "exit /b 0\n",
+                "exit /b 0\n"
+                ":win32\n"
+                "echo.\n"
+                "echo The bundled AI-PACS viewer requires 64-bit Windows.\n"
+                "echo This computer is running 32-bit Windows.\n"
+                "echo.\n"
+                "echo Opening the DICOM folder instead. Open the DICOMDIR file\n"
+                "echo with any DICOM viewer to see the images.\n"
+                "echo.\n"
+                "start \"\" explorer.exe \"%~dp0\"\n"
+                "pause\n"
+                "exit /b 0\n"
+                ":noexe\n"
+                "echo Viewer executable was not found.\n"
+                "pause\n"
+                "exit /b 1\n",
                 encoding="utf-8",
             )
         else:
@@ -783,6 +851,13 @@ class CDBurnWorker(QThread):
                 "pause\n",
                 encoding="utf-8",
             )
+
+        # NOTE: the branded splash is now the double-clickable launcher EXE
+        # (AIPacsViewer.exe), staged by _stage_cd_launcher and wired into
+        # autorun below. We deliberately do NOT ship a .hta launcher anymore —
+        # a .hta triggers a Windows "open with" prompt on PCs where .hta is not
+        # associated with mshta. An .exe double-clicks directly with no prompt
+        # and no console. RUN_VIEWER.cmd remains as a last-resort fallback.
 
         open_images_cmd = staging_path / "OPEN_DICOM_FOLDER.cmd"
         open_images_cmd.write_text(
@@ -812,15 +887,21 @@ class CDBurnWorker(QThread):
             "",
             "How to use this disc/folder on another Windows PC:",
             "1. Insert the disc or open the copied export folder.",
-            "2. If a portable viewer is included, run RUN_VIEWER.cmd.",
+            f"2. If a portable viewer is included, double-click {primary_launcher or 'RUN_VIEWER.cmd'}.",
+            "   The viewer opens directly — no command window and no extra Windows",
+            "   prompts. (If anything blocks it, RUN_VIEWER.cmd is a fallback.)",
             "3. If Windows warns about security, choose Run anyway only if this media is trusted.",
             "4. If the included viewer does not start on that PC, install or use any DICOM viewer and open the DICOMDIR file from the media root.",
             "",
             "Compatibility notes:",
             "- The bundled viewer runs on 64-bit Windows (Windows 7 SP1 through 11).",
-            "  On a 32-bit Windows PC, RUN_VIEWER.cmd opens the DICOM folder so you",
+            f"  On a 32-bit Windows PC, {primary_launcher or 'RUN_VIEWER.cmd'} opens the DICOM folder so you",
             "  can open DICOMDIR with any installed DICOM viewer instead.",
-            "- AutoRun is not guaranteed on modern Windows versions, so launch RUN_VIEWER.cmd manually.",
+            f"- AutoRun is not guaranteed on modern Windows versions, so launch {primary_launcher or 'RUN_VIEWER.cmd'} manually.",
+            f"- Always start the viewer with {primary_launcher or 'RUN_VIEWER.cmd'}. It copies the viewer to",
+            "  this PC first (faster, and it avoids disc-read errors), then opens your",
+            "  images. Do NOT run the VIEWER\\*.exe directly from the disc — that can",
+            "  fail with a \"could not load PKG archive\" error on some PCs.",
             "- The included viewer should be a portable Windows viewer bundle for best compatibility.",
             "- For the broadest compatibility, keep file names and media label unchanged after export.",
             "",
@@ -830,10 +911,12 @@ class CDBurnWorker(QThread):
             "- OPEN_DICOM_FOLDER.cmd to browse the media root quickly",
         ]
         if viewer_rel:
-            readme_lines.extend([
-                f"- Portable viewer bundle: {viewer_rel}",
-                f"- Launcher: RUN_VIEWER.cmd ({viewer_display_name})",
-            ])
+            readme_lines.append(f"- Portable viewer bundle: {viewer_rel}")
+            if launcher_exe_name:
+                readme_lines.append(
+                    f"- Launcher: {launcher_exe_name} — double-click to open the viewer ({viewer_display_name})"
+                )
+            readme_lines.append("- Fallback launcher: RUN_VIEWER.cmd")
         else:
             readme_lines.append("- No portable viewer bundle was included")
         readme_lines.append("")
@@ -847,7 +930,13 @@ class CDBurnWorker(QThread):
             "viewer_launcher": viewer_rel,
             "viewer_display_name": viewer_display_name if viewer_rel else None,
             "dicomdir": "DICOMDIR",
-            "portable_launchers": ["RUN_VIEWER.cmd", "OPEN_DICOM_FOLDER.cmd"],
+            "portable_launchers": (
+                ([launcher_exe_name] if launcher_exe_name else [])
+                + ["RUN_VIEWER.cmd", "OPEN_DICOM_FOLDER.cmd"]
+                if viewer_cmd_rel
+                else ["RUN_VIEWER.cmd", "OPEN_DICOM_FOLDER.cmd"]
+            ),
+            "viewer_launcher_primary": primary_launcher,
             "generated_by": "AIPacs CD Burner",
         }
         if center:
@@ -856,12 +945,15 @@ class CDBurnWorker(QThread):
 
         autorun_path = staging_path / "autorun.inf"
         if viewer_cmd_rel:
-            # AutoRun goes through RUN_VIEWER.cmd (not the exe directly) so the
-            # 32-bit-Windows guard + folder fallback runs even on autorun.
+            # AutoRun launches the branded, double-clickable launcher EXE
+            # directly (a GUI exe → no console window; an exe → no "open with"
+            # prompt). It shows the AI-PACS "Preparing viewer" splash, copies
+            # the bundle to local disk, and launches the viewer. Falls back to
+            # RUN_VIEWER.cmd only if the launcher exe could not be staged.
             autorun_content = (
                 "[autorun]\n"
-                "open=RUN_VIEWER.cmd\n"
-                "shellexecute=RUN_VIEWER.cmd\n"
+                f"open={primary_launcher}\n"
+                f"shellexecute={primary_launcher}\n"
                 f"icon={viewer_cmd_rel},0\n"
                 f"label={volume_label}\n"
                 f"action=Open {viewer_display_name}\n\n"

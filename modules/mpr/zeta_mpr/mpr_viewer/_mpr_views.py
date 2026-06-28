@@ -24,6 +24,28 @@ from ._interactor_styles import VRTInteractorStyle
 
 logger = logging.getLogger(__name__)
 
+import os as _os
+# L1 MPR-open optimization (2026-06-28): defer the expensive 3D VRT view (the
+# GPU volume upload + first ray-cast — the single biggest cost of opening MPR)
+# to an idle callback so the three diagnostic 2D planes (axial/sagittal/coronal)
+# paint FIRST. This changes only the *timing* of the 3D pane's construction, not
+# any geometry: each view's camera/reslice is computed per-view (independent of
+# creation order), and the all-views post-passes (_apply_native_plane_interpolation,
+# _capture_baseline_camera_state, _apply_window_level) are 2D-only by design.
+# Default ON (2026-06-28: flipped to address the MPR-open freeze) — the 3 diagnostic
+# 2D planes appear first and the heavy 3D VRT fills in a moment later. Kill switch
+# AIPACS_MPR_DEFER_3D=0 = byte-identical synchronous 4-panel build. Flag AIPACS_MPR_DEFER_3D.
+_MPR_DEFER_3D = (_os.getenv("AIPACS_MPR_DEFER_3D", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+# Pre-warm the 2D reslice/render path after MPR open (2026-06-28) so the FIRST
+# crosshair drag does not pay a first-touch GPU reslice/shader cost (the reported
+# "small lag on the first crossline move, then smooth"). It forces ONE extra
+# re-reslice render of each 2D pane at the CURRENT position — identical image, no
+# geometry change — deferred to idle so it never adds to the open time. Kill switch
+# AIPACS_MPR_PREWARM=0.
+_MPR_PREWARM = (_os.getenv("AIPACS_MPR_PREWARM", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def _emit_geometry_contract_missing_guard(*, feature: str) -> None:
     logger.warning(
         "[GEOMETRY_CONTRACT_MISSING_FOR_VTK_PATH] feature=%s reason=local_mpr_view_creation_without_advanced_contract_adapter "
@@ -91,6 +113,18 @@ class _MprViewsMixin:
                     _creator(views_layout, 0, _col)
             logger.info("[ZETA_MPR] subset layout built: %s (slab=%s)", layout_views,
                         getattr(self, '_slab_mode', None))
+        elif _MPR_DEFER_3D:
+            # L1 (AIPACS_MPR_DEFER_3D): build the three diagnostic 2D planes now and
+            # defer the expensive 3D VRT (GPU upload + first ray-cast) to an idle
+            # callback so the planes are shown first. The 3D cell is held by a
+            # lightweight placeholder so the 2x2 grid does not jump when the real
+            # 3D pane lands. Geometry is unaffected — see the module-level note.
+            self._create_axial_view(views_layout, 0, 0)
+            self._create_sagittal_view(views_layout, 1, 0)
+            self._create_coronal_view(views_layout, 1, 1)
+            self._install_deferred_3d_placeholder(views_layout, 0, 1)
+            self._deferred_3d_pending = True
+            QTimer.singleShot(0, self._build_deferred_3d_view)
         else:
             self._create_axial_view(views_layout, 0, 0)
             self._create_3d_view(views_layout, 0, 1)
@@ -132,6 +166,39 @@ class _MprViewsMixin:
         if DIAG_ENABLED:
             self._diag.install_corner_markers()
             self._diag.install_diag_overlays()
+
+        # Pre-warm the 2D reslice/render path once the UI is idle, so the FIRST
+        # crosshair drag is smooth (issue 2). Deferred → no added open time.
+        if _MPR_PREWARM:
+            QTimer.singleShot(0, self._prewarm_mpr_reslice)
+
+    def _prewarm_mpr_reslice(self):
+        """Force one re-reslice render of each 2D pane at the CURRENT position.
+
+        Warms VTK's reslice/GPU path so the user's first crosshair drag does not
+        pay a first-touch cost. Identical image (no camera/geometry change),
+        idempotent, and teardown-safe (a close mid-defer is swallowed)."""
+        if not _MPR_PREWARM:
+            return
+        try:
+            for vn in ('axial', 'sagittal', 'coronal'):
+                view = (getattr(self, 'viewers', None) or {}).get(vn)
+                if not view:
+                    continue
+                mapper = view.get('mapper')
+                if mapper is not None:
+                    try:
+                        mapper.Modified()   # mark dirty → next render re-reslices (warms the path)
+                    except Exception:
+                        pass
+                try:
+                    view['widget'].GetRenderWindow().Render()
+                except Exception:
+                    pass
+        except RuntimeError:
+            return  # MPR closed before the idle pre-warm fired — benign
+        except Exception as exc:
+            logger.debug("[ZETA_MPR] reslice pre-warm skipped: %r", exc)
 
     def _create_toolbar(self):
         """Create clean, minimal toolbar like professional DICOM viewers"""
@@ -642,6 +709,69 @@ class _MprViewsMixin:
         self._register_view('3d', container, vtk_widget, row, col)
         self.setup_auto_rotation()
         layout.addWidget(container, row, col)
+
+    # ------------------------------------------------------------------
+    # Deferred 3D VRT (L1 — AIPACS_MPR_DEFER_3D). Only the *timing* of the 3D
+    # view's construction changes; the placeholder holds its grid cell so the
+    # 2D planes do not reflow, and the build is teardown-safe (a close during
+    # the defer must never touch a deleted VTK/Qt object).
+    # ------------------------------------------------------------------
+
+    def _install_deferred_3d_placeholder(self, layout, row, col):
+        """Occupy the 3D grid cell with a lightweight 'Rendering 3D…' frame so the
+        2x2 layout is stable until the deferred VRT pane replaces it."""
+        try:
+            placeholder = QFrame()
+            placeholder.setStyleSheet("background: #000; border: 1px solid #333;")
+            # Fill the 3D cell exactly like the final VTK pane (Expanding) so the
+            # 2x2 grid does NOT reflow/jump when the real 3D widget replaces it.
+            from PySide6.QtWidgets import QSizePolicy
+            placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            ph_layout = QVBoxLayout(placeholder)
+            ph_layout.setContentsMargins(0, 0, 0, 0)
+            label = QLabel("Rendering 3D…")
+            label.setAlignment(Qt.AlignCenter)
+            label.setStyleSheet(
+                "color: #6b7785; font-size: 12px; background: transparent; border: none;"
+            )
+            ph_layout.addWidget(label)
+            layout.addWidget(placeholder, row, col)
+            self._deferred_3d_placeholder = placeholder
+        except Exception as exc:
+            self._deferred_3d_placeholder = None
+            logger.debug("[ZETA_MPR] 3D placeholder install failed (non-fatal): %r", exc)
+
+    def _build_deferred_3d_view(self):
+        """Idle callback: build the deferred 3D VRT after the 2D planes are shown.
+
+        Teardown-safe: bails if MPR was cleaned up before this fires (the pending
+        flag is cleared in ``cleanup``) or if the underlying C++ widget has been
+        deleted (closing MPR during the brief defer → benign RuntimeError, swallowed
+        like the project's other VTK teardown races)."""
+        if not getattr(self, '_deferred_3d_pending', False):
+            return
+        self._deferred_3d_pending = False
+        try:
+            layout = getattr(self, '_views_layout', None)
+            if layout is None:
+                return
+            # Drop the placeholder, then build the real 3D into the same cell (0,1).
+            placeholder = getattr(self, '_deferred_3d_placeholder', None)
+            if placeholder is not None:
+                try:
+                    layout.removeWidget(placeholder)
+                    placeholder.setParent(None)
+                    placeholder.deleteLater()
+                except RuntimeError:
+                    pass
+                self._deferred_3d_placeholder = None
+            self._create_3d_view(layout, 0, 1)
+            logger.info("[ZETA_MPR] deferred 3D VRT view built (L1)")
+        except RuntimeError as exc:
+            # Deleted C++ object mid-build (MPR closed during the defer) — benign.
+            logger.debug("[ZETA_MPR] deferred 3D build skipped (teardown race): %r", exc)
+        except Exception as exc:
+            logger.warning("[ZETA_MPR] deferred 3D build failed: %r", exc)
 
     # ------------------------------------------------------------------
     # Volume / WL preset callbacks

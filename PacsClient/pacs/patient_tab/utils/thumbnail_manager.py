@@ -27,6 +27,15 @@ from modules.viewer.fast.slot_timing import slot_timing as _g6_slot_timing
 
 _tm_logger = logging.getLogger(__name__)
 
+import os as _os
+
+# Per-series download progress bar (a thin themed bar at the bottom of each
+# series/thumbnail card, INSIDE the card frame). It fills left->right from the
+# EXISTING throttled per-image download-progress events (no polling, no new
+# download work, no full rebuilds — only the affected card's bar repaints).
+# Default ON; AIPACS_THUMB_DL_PROGRESS_BAR=0 = byte-identical legacy (no bar).
+_THUMB_DL_PROGRESS_BAR = (_os.getenv("AIPACS_THUMB_DL_PROGRESS_BAR", "1") or "1").strip() != "0"
+
 
 class CircularProgressborder(QFrame):
     """
@@ -1633,7 +1642,43 @@ class ThumbnailManager(QObject):
                     }
                 """)
                 content_layout.addWidget(no_info_label)
-            
+
+            # --- Per-series download progress bar (thin, bottom of the card) ---
+            # A minimal horizontal bar INSIDE the card frame that fills
+            # left->right as the series downloads. It is created once with the
+            # card (so value updates only repaint, never re-layout) and is hidden
+            # until a download actually starts. Driven by the existing throttled
+            # progress events via update_series_download_progress(); the card's
+            # border/status ring (blue->green) is unchanged.
+            if _THUMB_DL_PROGRESS_BAR:
+                try:
+                    dl_bar = QProgressBar()
+                    dl_bar.setObjectName("seriesDlBar")
+                    dl_bar.setFixedHeight(4)
+                    dl_bar.setTextVisible(False)
+                    dl_bar.setRange(0, 1)        # real total set on first progress/start
+                    dl_bar.setValue(0)
+                    dl_bar.setVisible(False)      # hidden until downloading begins
+                    _dl_track = self._theme.get('panel_deep_bg', '#1a202c')
+                    _dl_accent = self._theme.get('accent', '#3b82f6')
+                    dl_bar.setStyleSheet(f"""
+                        QProgressBar#seriesDlBar {{
+                            border: none;
+                            border-radius: 2px;
+                            background: {_dl_track};
+                            margin: 0px;
+                            padding: 0px;
+                        }}
+                        QProgressBar#seriesDlBar::chunk {{
+                            background: {_dl_accent};
+                            border-radius: 2px;
+                        }}
+                    """)
+                    content_layout.addWidget(dl_bar)
+                    widget.dl_progress_bar = dl_bar
+                except Exception:
+                    pass
+
             # Glass overlay for progress
             glass_overlay = QWidget(widget)
             glass_overlay.setGeometry(0, 0, 190, 215)  # mirrors widget
@@ -2408,6 +2453,86 @@ class ThumbnailManager(QObject):
         except Exception as e:
             _tm_logger.debug("error hiding overlay (safe): %s", e)
 
+    # ------------------------------------------------------------------
+    # Per-series download progress bar (thin bar at the bottom of the card).
+    # These update ONLY the matching card's bar — O(1) dict lookup + a single
+    # setValue() repaint, no rebuild, no projection-state change. Safe to call
+    # from the existing throttled progress event on the GUI thread.
+    # ------------------------------------------------------------------
+    def _series_dl_bar(self, series_key):
+        """Return the live progress bar for a series card, or None.
+
+        Resolves deleted-widget races by dropping the stale entry."""
+        try:
+            widget = self.series_widgets.get(series_key)
+            if widget is None:
+                return None
+            bar = getattr(widget, 'dl_progress_bar', None)
+            if bar is None:
+                return None
+            try:
+                _ = bar.isVisible()   # touch -> raises RuntimeError if C++ gone
+            except RuntimeError:
+                self.series_widgets.pop(series_key, None)
+                return None
+            return bar
+        except Exception:
+            return None
+
+    def update_series_download_progress(self, series_number, downloaded, total):
+        """Fill the matching series card's thin progress bar (downloaded/total).
+
+        Wired to the EXISTING throttled per-image download-progress event — it
+        does no I/O, starts no download, and touches no other card. A no-op when
+        the bar feature is disabled, the card is gone, or the numbers are unusable.
+        """
+        if not _THUMB_DL_PROGRESS_BAR:
+            return
+        try:
+            series_key = self._resolve_series_key(series_number)
+            bar = self._series_dl_bar(series_key)
+            if bar is None:
+                return
+            try:
+                total = int(total or 0)
+                downloaded = int(downloaded or 0)
+            except (TypeError, ValueError):
+                return
+            if total <= 0:
+                return
+            try:
+                if bar.maximum() != total:
+                    bar.setRange(0, total)
+                value = downloaded if downloaded >= 0 else 0
+                if value > total:
+                    value = total
+                if bar.value() != value:
+                    bar.setValue(value)
+                if not bar.isVisible():
+                    bar.setVisible(True)
+            except RuntimeError:
+                self.series_widgets.pop(series_key, None)
+        except Exception:
+            pass
+
+    def _set_series_dl_bar_complete(self, series_key):
+        """Pin the card's bar to 100% (a finished series shows a full bar)."""
+        if not _THUMB_DL_PROGRESS_BAR:
+            return
+        try:
+            bar = self._series_dl_bar(series_key)
+            if bar is None:
+                return
+            try:
+                top = bar.maximum() if bar.maximum() > 0 else 1
+                bar.setValue(top)
+                if not bar.isVisible():
+                    bar.setVisible(True)
+            except RuntimeError:
+                self.series_widgets.pop(series_key, None)
+        except Exception:
+            pass
+
 
     @_g6_slot_timing("thumbnail.start_series_download", series_arg="series_number")
     def start_series_download(self, series_number, total_images=None):
@@ -2418,6 +2543,20 @@ class ThumbnailManager(QObject):
         try:
             series_key = self._resolve_series_key(series_number)
             total_images = self._remember_series_total_images(series_key, total_images)
+            # Reveal the card's thin download bar the moment a download starts
+            # (empty track at 0% = "downloading"); the throttled per-image
+            # progress events then fill it. Runs on re-entry too so the bar is
+            # always visible while downloading.
+            if _THUMB_DL_PROGRESS_BAR:
+                _dlb = self._series_dl_bar(series_key)
+                if _dlb is not None:
+                    try:
+                        if total_images and int(total_images) > 0 and _dlb.maximum() != int(total_images):
+                            _dlb.setRange(0, int(total_images))
+                        if not _dlb.isVisible():
+                            _dlb.setVisible(True)
+                    except (RuntimeError, TypeError, ValueError):
+                        pass
             current_state = self._get_series_projection_state(series_key)
             if current_state == "downloading" and series_key in self.series_widgets:
                 if total_images is not None:
@@ -2560,6 +2699,9 @@ class ThumbnailManager(QObject):
         try:
             series_key = self._resolve_series_key(series_number)
             total_images = self._remember_series_total_images(series_key, total_images)
+            # A finished series shows a full bar (runs on both the already-completed
+            # re-entry and the first completion below).
+            self._set_series_dl_bar_complete(series_key)
             current_state = self._get_series_projection_state(series_key)
             if current_state == "completed":
                 if series_key in self.series_widgets:

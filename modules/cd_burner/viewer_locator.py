@@ -85,18 +85,39 @@ def _candidate_roots() -> List[Path]:
     return roots
 
 
-def _describe(path: Path, kind: str, display_name: str) -> Dict[str, Any]:
-    size_mb = 0.0
+def _bundle_size_mb(path: Path) -> float:
+    """Total size (MB) of what actually gets burned for this viewer.
+
+    A PyInstaller onedir bundle (the exe sits next to an ``_internal`` folder)
+    is copied to the disc as a TREE, so report the WHOLE bundle directory — not
+    just the ~6 MB bootloader exe — so the UI honestly reflects everything that
+    lands on the media (exe + ``_internal`` + Qt/codecs). A lone single-exe
+    viewer (no ``_internal``) reports its own size, matching the exe-only copy.
+    """
     try:
+        bundle_dir = path.parent
+        if (bundle_dir / "_internal").is_dir():
+            total = 0
+            for f in bundle_dir.rglob("*"):
+                try:
+                    if f.is_file():
+                        total += f.stat().st_size
+                except OSError:
+                    continue
+            return total / (1024 * 1024)
         if path.is_file():
-            size_mb = path.stat().st_size / (1024 * 1024)
+            return path.stat().st_size / (1024 * 1024)
     except OSError:
         pass
+    return 0.0
+
+
+def _describe(path: Path, kind: str, display_name: str) -> Dict[str, Any]:
     return {
         "path": str(path),
         "kind": kind,                     # "lite" | "legacy" | "override"
         "display_name": display_name,
-        "size_mb": round(size_mb, 1),
+        "size_mb": round(_bundle_size_mb(path), 1),
     }
 
 

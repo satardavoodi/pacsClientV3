@@ -1985,6 +1985,47 @@ class ToolbarManager:
             return widget
         return None
 
+    def _annotation_target_widget(self):
+        """Resolve which viewport an annotation tool (ruler / angle / arrow / text)
+        should target.
+
+        Normally the active ``selected_widget``. BUT when MPR mode is active and the
+        active viewport was switched to ANOTHER cell, annotations must still target
+        the MPR cell. The MPR-preserve active-viewport switch
+        (``_vc_layout.set_viewer_to_main_viewer``) keeps the MPR intact in its own
+        cell while moving the active selection to the clicked (FAST) cell, so
+        ``selected_widget`` is no longer the MPR — and pressing Ruler/Angle/Arrow
+        then arms the now-active FAST cell, leaving the MPR window unannotatable
+        (reported: "annotation doesn't work on the MPR window after switching the
+        active layout", patient 48117). In that one case we return the open MPR HOST
+        widget so the tool routes to the MPR; otherwise the active widget is returned
+        unchanged. Single-MPR / MPR-is-active layouts are unaffected (the active cell
+        IS the MPR). Kill switch: ``AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR=0``.
+        """
+        sw = getattr(self.patient_widget, 'selected_widget', None)
+        try:
+            import os
+            if (os.environ.get("AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR", "1") or "1").strip().lower() in ("0", "false", "off"):
+                return sw
+            # Active cell is already the MPR → nothing to reroute.
+            if self.is_mpr_viewer(sw):
+                return sw
+            # Only reroute while MPR mode is the active mode (tool_selected carries MPR).
+            if not (self.tool_selected and self.tool_access.MPR in str(self.tool_selected)):
+                return sw
+            # MPR mode active but the active cell isn't the MPR → find the open MPR host.
+            for node in getattr(self.patient_widget, 'lst_nodes_viewer', []) or []:
+                w = getattr(node, 'vtk_widget', None)
+                if w is not None and getattr(w, '_zeta_mpr_widget', None) is not None:
+                    logger.info(
+                        "[MPR-ANNOT-ROUTE] active cell is not the MPR but MPR mode is "
+                        "active → routing annotation to the open MPR cell"
+                    )
+                    return w
+        except Exception:
+            pass
+        return sw
+
     def _mpr_single_use_tool_finished(self):
         """Callback fired by the MPR viewer when a single-use tool
         (ruler/angle/arrow) completes ONE measurement. Mirrors the 2D
@@ -3473,7 +3514,7 @@ class ToolbarManager:
             # Angle button
             angle_btn = create_dropdown_tool('Angle', 'angle.png', '#f59e0b')
             def _on_angle_clicked():
-                self.toggle_angle(self.patient_widget.selected_widget)
+                self.toggle_angle(self._annotation_target_widget())
                 dropdown.close()
             angle_btn.clicked.connect(_on_angle_clicked)
             layout.addWidget(angle_btn)
@@ -3482,7 +3523,7 @@ class ToolbarManager:
             # Two-Line Angle button
             two_line_angle_btn = create_dropdown_tool('Two-Line Angle', 'fa5s.drafting-compass', '#06b6d4')
             def _on_two_line_angle_clicked():
-                self.toggle_two_line_angle(self.patient_widget.selected_widget)
+                self.toggle_two_line_angle(self._annotation_target_widget())
                 dropdown.close()
             two_line_angle_btn.clicked.connect(_on_two_line_angle_clicked)
             layout.addWidget(two_line_angle_btn)
@@ -3491,7 +3532,7 @@ class ToolbarManager:
             # Arrow button
             arrow_btn = create_dropdown_tool('Arrow', 'arrow.png', '#10b981')
             def _on_arrow_clicked():
-                self.toggle_arrow(self.patient_widget.selected_widget)
+                self.toggle_arrow(self._annotation_target_widget())
                 dropdown.close()
             arrow_btn.clicked.connect(_on_arrow_clicked)
             layout.addWidget(arrow_btn)
@@ -3500,7 +3541,7 @@ class ToolbarManager:
             # Text button
             text_btn = create_dropdown_tool('Text', 'text.png', '#8b5cf6')
             def _on_text_clicked():
-                self.toggle_text(self.patient_widget.selected_widget)
+                self.toggle_text(self._annotation_target_widget())
                 dropdown.close()
             text_btn.clicked.connect(_on_text_clicked)
             layout.addWidget(text_btn)
@@ -8214,7 +8255,7 @@ class ToolbarManager:
             self._show_measurements_dropdown(button)
 
     def _on_ruler_clicked(self):
-        self.toggle_ruler(self.patient_widget.selected_widget)
+        self.toggle_ruler(self._annotation_target_widget())
 
     def _on_eraser_clicked(self):
         self.toggle_eraser(self.patient_widget.selected_widget)

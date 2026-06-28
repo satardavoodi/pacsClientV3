@@ -37,6 +37,26 @@ def test_no_viewer_resolves_none_with_build_hint(fake_root):
     assert "build_lite_viewer" in default_viewer_hint()
 
 
+def test_default_size_reflects_whole_onedir_bundle(fake_root):
+    """The default-viewer size must report the WHOLE onedir bundle (exe +
+    _internal + resources) — what actually gets burned — not just the ~6 MB
+    bootloader exe. Otherwise the UI ('ready (6.3 MB)') wrongly implies only the
+    exe is copied to the disc."""
+    exe = _make_lite(fake_root)
+    bundle = exe.parent
+    internal = bundle / "_internal"
+    internal.mkdir()
+    # exe is tiny; the bulk lives in _internal (Qt, codecs, python dll...)
+    (internal / "base_library.zip").write_bytes(b"x" * (3 * 1024 * 1024))
+    (internal / "python313.dll").write_bytes(b"y" * (5 * 1024 * 1024))
+
+    info = resolve_default_viewer()
+    assert info is not None
+    # exe alone is < 1 MB; the whole bundle is > 8 MB → size must include _internal
+    assert info["size_mb"] >= 8.0
+    assert "ready" in default_viewer_hint()
+
+
 def test_lite_build_preferred_over_legacy(fake_root):
     lite = _make_lite(fake_root)
     _make_legacy(fake_root)

@@ -1,7 +1,7 @@
 {
   "app_name": "AIPacs",
   "app_version": "",
-  "generated_at_utc": "2026-06-27T15:00:54.199139+00:00",
+  "generated_at_utc": "2026-06-28T13:25:03.136382+00:00",
   "installer": {
     "current_version": "",
     "detected_existing_version": "",
@@ -228,7 +228,7 @@
     "last_detected_gpu": false,
     "last_probe_backend": "",
     "last_probe_device": "",
-    "last_probe_utc": "2026-06-27T15:00:54.196722Z",
+    "last_probe_utc": "2026-06-28T13:25:03.135047Z",
     "last_execution_mode": "cpu_software_opengl",
     "last_software_rendering_status": "ready",
     "last_software_rendering_warning": ""

@@ -1,8 +1,29 @@
 # MPR‑Open GUI Freeze — Optimization Plan (2026‑06‑27)
 
-**Status: DESIGN DOC ONLY — no code yet.** This is the careful‑design record so the deferral can be
-implemented deliberately, intra‑domain, with a clinical‑lane verify — not rushed. The MPR module is
-its own VTK execution domain; this plan stays inside it.
+**Status: L1 DEFAULT‑ON 2026‑06‑28 (`AIPACS_MPR_DEFER_3D=1` is now the default; `=0` kill switch).
+Added: Expanding placeholder (layout‑jump fix) + `AIPACS_MPR_PREWARM` first‑drag reslice pre‑warm.
+L2 (progressive 2D) + off‑thread volume build still design‑only — the 3 2D views + the first‑open
+volume rebuild still run synchronously, so a residual freeze remains until L2/off‑thread land.** This
+is the careful‑design record so the deferral can be implemented deliberately, intra‑domain, with a
+clinical‑lane verify — not rushed. The MPR module is its own VTK execution domain; this plan stays
+inside it. NEEDS live verify: open MPR on a large CBCT → 2D planes appear, 3D fills in after, no
+crash on close‑mid‑build, first crosshair drag smooth; `=0` flags revert each piece.
+
+> **L1 as‑built (2026‑06‑28).** `modules/mpr/zeta_mpr/mpr_viewer/_mpr_views.py` — module flag
+> `_MPR_DEFER_3D` (`AIPACS_MPR_DEFER_3D`, default OFF = byte‑identical synchronous 4‑panel build). In
+> `_setup_ui` the full‑4‑panel path gains an `elif _MPR_DEFER_3D:` branch that builds the three 2D
+> planes (axial/sagittal/coronal) synchronously, installs a lightweight "Rendering 3D…" placeholder in
+> the 3D cell (0,1) so the 2×2 grid doesn't reflow, sets `self._deferred_3d_pending = True`, and
+> schedules `QTimer.singleShot(0, self._build_deferred_3d_view)`. `_build_deferred_3d_view` is one‑shot
+> + teardown‑safe (bails when `_deferred_3d_pending` was cleared by `cleanup`, swallows a deleted‑object
+> `RuntimeError` if MPR closed mid‑defer) and calls the **unchanged** `_create_3d_view(layout, 0, 1)`.
+> `_mpr_layout.cleanup` clears `_deferred_3d_pending`. Geometry is provably unaffected — verified that
+> every all‑views post‑pass is 2D‑only (`_apply_native_plane_interpolation` → `('axial','sagittal',
+> 'coronal')`; `_capture_baseline_camera_state` and `_apply_window_level` → `['axial','sagittal',
+> 'coronal']`) and each view's camera/reslice is computed per‑view independent of creation order; the 3D
+> VRT's camera/preset live entirely inside `_create_3d_view`. Guard: `tests/code/viewer/
+> test_mpr_defer_3d_view.py` (6 green, incl. a behavioral one‑shot/teardown‑race check). **Still TODO:
+> the clinical‑lane verify in §6 before `AIPACS_MPR_DEFER_3D=1` becomes the default.**
 
 ## 1. Symptom (measured)
 

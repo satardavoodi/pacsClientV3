@@ -1,9 +1,31 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.3.9 (2026-06-27)
-**Previous Stable:** v3.3.8 (2026-06-27)
-**Release Date:** 2026-06-27
+**Current Stable Version:** v3.4.0 (2026-06-28)
+**Previous Stable:** v3.3.9 (2026-06-27)
+**Release Date:** 2026-06-28
 **Branch:** beta-version
+
+---
+
+## v3.4.0 (2026-06-28) - Minor release: import-to-fast-viewer, thumbnail progress, MPR annotations, EchoMind routing
+
+### Summary
+
+Release advancing the stable line to the 3.4 series and publishing the full current
+beta-version working state. Highlights: imported studies now open in the FAST
+(VTK-free) viewer, a per-series download progress bar on each thumbnail, smoother
+and persistent MPR annotations with faster MPR open, EchoMind command-routing v2
+with popup theme/contrast fixes, and CD/portable-viewer plus web-browser updates.
+
+### Included
+
+- Import opens the FAST viewer instead of the legacy VTK backend (faster, consistent with normal open)
+- Per-series download progress bar inside each thumbnail card
+- MPR: smoother ruler/arrow annotations, annotation persistence, layout-switch annotation routing, deferred 3D view for faster MPR open
+- EchoMind secretary: command-routing v2, popup theme/contrast fixes, viewer-chat UI refinements
+- CD burner: portable-viewer cd_launcher and viewer-locator updates
+- Web browser module fixes (autofill, styles, widget)
+- Canonical version markers advanced to v3.4.0; full local state published to all remotes
 
 ---
 

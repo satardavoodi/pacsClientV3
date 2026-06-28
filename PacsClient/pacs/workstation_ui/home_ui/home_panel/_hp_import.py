@@ -224,6 +224,31 @@ class _HPImportMixin:
 
         target_path = str(SOURCE_PATH / study_uid)
         self.data_access_panel_widget.folder_path_label.setText(target_path)
+
+        # Viewer backend for the auto-opened import tab.
+        #
+        # ROOT-CAUSE FIX (2026-06-28 — "import opens an older/slower Patient
+        # Tab"): this used to hard-pin ``viewer_backend_override=BACKEND_PYDICOM``
+        # ("pydicom_2d").  That pin dates to v2.3.1, BEFORE v2.3.3 made
+        # BACKEND_PYDICOM_QT (the VTK-free FAST viewer) the default for every
+        # other open path and deprecated pydicom_2d.  The stale pin bypasses the
+        # resolve_viewer_backend() remap (see
+        # _vc_backend._get_requested_viewer_backend), so a freshly imported study
+        # opened in the LEGACY VTK viewer (VTKWidget) while reopening the same
+        # study from the patient list used the FAST viewer (QtFastContainer) —
+        # i.e. import opened an "older / slower" tab than the rest of the app.
+        #
+        # Default now = NO override, so an imported study resolves the SAME
+        # backend as normal patient-open (FAST by default, or Advanced if the
+        # user configured it) — the tab is identical to the current Patient Tab.
+        # Kill switch ``AIPACS_IMPORT_FORCE_LEGACY_VIEWER=1`` restores the legacy
+        # pin without a code change.
+        import os as _os
+        force_legacy_import_viewer = (
+            _os.getenv("AIPACS_IMPORT_FORCE_LEGACY_VIEWER", "0").strip() == "1"
+        )
+        viewer_backend_override = BACKEND_PYDICOM if force_legacy_import_viewer else None
+
         self.add_new_tab_widget(
             patient_id=study_info.get("patient_id") or None,
             patient_name=study_info.get("patient_name") or "Imported Study",
@@ -231,7 +256,7 @@ class _HPImportMixin:
             caller=CallerTypes.IMPORT,
             study_uid=study_uid,
             enable_progressive_mode=True,
-            viewer_backend_override=BACKEND_PYDICOM,
+            viewer_backend_override=viewer_backend_override,
         )
 
     def _import_folder_with_preview(self, folder_path: str):

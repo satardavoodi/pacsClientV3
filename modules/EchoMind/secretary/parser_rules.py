@@ -87,6 +87,31 @@ _FA_NET_WORDS = ("اینترنت", "گوگل", "وب")
 _RE_FA_TOPIC = re.compile(
     r"(?:راجع\s*به|درباره\s*ی?|در\s*باره\s*ی?|در\s*مورد)\s+(.+?)\s*\.?$")
 
+# ── Routing-v2 web-search coverage (flag-gated, 2026-06-28) ──────────────────
+# Closes deterministic gaps that sent internet searches to the patient list when
+# the AI service is the fallback path. Only used when AIPACS_SECRETARY_ROUTING_V2
+# is on (config.routing_v2_enabled); legacy behaviour is byte-identical when off.
+_RE_WEB_SEARCH_PATTERNS_V2 = [
+    # English: "search/look up/find X on|in|over (the) google|web|internet|net".
+    # The legacy pattern 1 omitted "the internet"/"the web" → this adds them.
+    re.compile(
+        r"(?:^|\s)(?:search|look\s+up|find)\s+(?:for\s+)?(.+?)\s+"
+        r"(?:on|in|over|across)\s+(?:the\s+)?(?:google|web|internet|net)\s*\.?$",
+        re.I),
+    # English: "search/look up/find/google X online" (trailing "online").
+    re.compile(
+        r"(?:^|\s)(?:search|look\s+up|find|google)\s+(?:for\s+)?(.+?)\s+"
+        r"online\s*\.?$",
+        re.I),
+]
+# Persian object-first: «X رو/را (روی|تو|توی|در) اینترنت/وب/گوگل (برام|برایم|واسم)? (سرچ|جستجو|بگرد|پیدا) کن»
+_RE_FA_OBJECT_FIRST_WEB = [
+    re.compile(
+        r"^(.+?)\s+(?:رو|را)\s+(?:روی|تو|توی|در)\s+(?:اینترنت|وب|گوگل)\s+"
+        r"(?:برام\s+|برایم\s+|واسم\s+|واسه\s*ام\s+)?"
+        r"(?:سرچ|جستجو|بگرد|پیدا)\s*(?:کن)?\s*\.?$"),
+]
+
 _RE_EDU_SEARCH_PATTERNS = [
     re.compile(r"search\s+(?:the\s+)?education(?:al)?\s*(?:library|module|content)?\s+for\s+(.+?)\s*\.?$", re.I),
     re.compile(r"(?:در|توی)\s+آموزش\s+(?:جستجو|سرچ)\s*(?:کن)?\s+(.+?)\s*\.?$"),
@@ -193,6 +218,30 @@ def _parse_browser_education(raw: str, norm: str) -> SecretaryActionPlan | None:
         if m and (m.group(1) or "").strip():
             return _plan("web_search", {"query": m.group(1).strip()},
                          0.88, False, "rule: web search (fa fallback)")
+
+    # ── Routing-v2 web-search coverage (flag-gated) ──────────────────────
+    # Catches "search X on the internet/the web" (EN) and the object-first
+    # Persian "X رو روی اینترنت ... سرچ کن" that the legacy patterns above miss.
+    # Runs before the open-url / patient branches so a clear internet search is
+    # never demoted to a patient/list action when the AI service is unavailable.
+    try:
+        from .config import routing_v2_enabled as _routing_v2_enabled
+        _v2_on = _routing_v2_enabled()
+    except Exception:
+        _v2_on = False
+    if _v2_on:
+        for pat in _RE_WEB_SEARCH_PATTERNS_V2:
+            m = pat.search(raw)
+            if m:
+                query = (m.group(1) or "").strip().strip('"“”')
+                if query and query.lower() not in ("google", "گوگل", "the"):
+                    return _plan("web_search", {"query": query}, 0.9, False,
+                                 "rule: web search (v2 on the internet)")
+        for pat in _RE_FA_OBJECT_FIRST_WEB:
+            m = pat.search(raw)
+            if m and (m.group(1) or "").strip():
+                return _plan("web_search", {"query": m.group(1).strip()},
+                             0.88, False, "rule: web search (v2 fa object-first)")
 
     # ── Open a specific website / URL ─────────────────────────────────────
     if _has_any(norm, ["open", "go to", "navigate to", "باز کن", "برو به",

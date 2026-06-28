@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.3.9",
-    "build_date": "2026-06-27",
-    "release_date": "2026-06-27",
+    "version": "3.4.0",
+    "build_date": "2026-06-28",
+    "release_date": "2026-06-28",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Faster patient and tab close (no end-of-session freeze)",
-        "Slow-connection series grow step-by-step instead of only at the end",
-        "Annotation tools reliably start a new measurement on click",
-        "Sync Image: clicking another viewport keeps sync and places the point",
-        "Built-in browser improvements and stability fixes",
+        "Imported studies open in the fast viewer (quicker, smoother)",
+        "Download progress now shown on each series thumbnail",
+        "MPR annotations are smoother and stay visible; faster MPR open",
+        "Improved AI assistant routing and clearer, higher-contrast dialogs",
+        "CD/portable viewer and built-in browser improvements",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.3.9",
+        "AI-PACS Version 3.4.0",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۳.۸",
+        "AI-PACS نسخهٔ ۳.۳.۹",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "
