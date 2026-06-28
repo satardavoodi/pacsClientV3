@@ -688,3 +688,85 @@ single-exe in place, 32-bit guard) + `test_exe_launcher_is_primary_and_no_open_w
 (no `.hta` shipped, autorun → exe); mirror 394/394 (cd_launcher.py added).
 **Re-burn required** (launcher is generated/staged at burn time). NEEDS live
 double-click verify on the burned disc.
+
+## 27. Local study cache — smooth viewing, no repeated CD reads (2026-06-17)
+
+**Problem:** even after the launcher copied the *viewer* to temp, it still ran
+the viewer with `--import-folder` pointed at the **CD**, so every image was read
+off optical media at runtime → slow scrolling + repeated spinners.
+
+**Fix (all inside `cd_launcher.py` — burn side unchanged):** during the branded
+"Preparing viewer, please wait." popup the launcher now copies BOTH the viewer
+runtime AND the study DICOM to a managed per-user local cache, then launches the
+viewer with `--import-folder` pointed at the **local cache** (`discover_media_root`
+accepts any folder with a DICOMDIR). The CD is the source, never the runtime read
+path.
+
+Cache layout — `%LOCALAPPDATA%\AI-PACS\CDViewerCache` (fallback
+`%TEMP%\AIPacsCDViewerCache`; per-user, **no admin**):
+- `viewer/` — the onedir runtime, shared across discs (skipped if already cached;
+  single-exe viewers run from the CD, no copy).
+- `studies/<key>/` — one folder per study (DICOMDIR + image tree + manifest).
+  `<key>` = sha1 of the study's `(relpath, size)` set (metadata only, no content
+  reads) → the SAME disc reopens to the SAME key.
+
+Key behaviours (pure, unit-tested helpers): `compute_study_signature` (excludes
+`VIEWER/` + launcher infra from both the key and the copy), `is_study_cache_valid`
+(completion marker `.aipacs_cache.json` + on-disk count/bytes must match → catches
+partial copies), `prune_studies` (LRU: keep newest `_KEEP_STUDIES`=6 and under
+`_MAX_CACHE_BYTES`=8 GB, **never deletes the study in use**), `free_bytes`
+(pre-copy disk check with a 300 MB margin; prunes then re-checks). Copy via
+`_robocopy` (incremental `/E`, retries `/R:2` ride out flaky reads, hidden via
+`CREATE_NO_WINDOW`) with a pure-python `_py_copy_tree` fallback. Splash shows a
+live "Copying images… N files" detail line.
+
+**Graceful degradation (never blocks):** any cache failure — low disk, read-only
+target, robocopy missing, incomplete copy — falls back to opening straight from
+the CD (`mode="cd"`, `--import-folder` = CD root), exactly the pre-cache
+behaviour. 32-bit guard and the branded error+Close path are unchanged. Reopen
+of the same disc reuses the valid cache (no copy → fast).
+
+Validated: 134/134 cd_burner tests green incl. `test_cd_launcher.py` cache suite
+(signature determinism + exclusions, marker validity/tamper, LRU prune keeps
+current, cache→launch-from-cache, reuse-on-reopen, single-exe study-cached,
+CD fallback, 32-bit guard); launcher rebuilt (10.7 MB, exit 0); mirror 394/394.
+`cd_launcher.py` is plugin-mirrored. **Re-burn required.** NEEDS live verify
+(double-click on the burned disc; confirm smooth scrolling + a `studies/<key>`
+folder appears under `%LOCALAPPDATA%\AI-PACS\CDViewerCache`).
+
+## 28. CD drive shows the AI-PACS icon + the patient's name (2026-06-17)
+
+When a burned disc is inserted, Explorer should show the **AI-PACS icon** on the
+drive and **name the drive after the patient**. Windows honours `autorun.inf`
+`icon=` and `label=` for display on optical media (this is the display behaviour,
+not the disabled auto-*run*), and the filesystem **volume label** is the backstop.
+
+**Drive icon:** a dedicated `AIPACS.ico` (multi-res, generated from
+`assets/cd_icon.png` → committed `modules/cd_burner/assets/aipacs_drive.ico`) is
+staged to the disc root by `_stage_drive_icon` (inside `_write_portable_support_files`,
+so BOTH the viewer and no-viewer paths get it), and `autorun.inf` uses
+`icon=AIPACS.ico` (falls back to the launcher/viewer exe icon if the asset is
+missing). A root `.ico` is far more reliable for drive icons than the previous
+`icon=VIEWER\…exe,0`.
+
+**Patient name = CD name:** `_resolve_labels` now also returns the DICOM
+`PatientName`; `_cd_display_label` turns it into a clean volume label
+(`Family^Given` → `FAMILY GIVEN`, `normalize_volume_label`: uppercase, ASCII,
+≤32) → `cd_name`. `run()` uses `cd_name` for (a) the burn **volume label**
+(`burner.burn(..., cd_name, ...)`), (b) `autorun.inf` `label=`, and (c)
+START_HERE/manifest. The DICOM File-set ID is still the normalized disc/auto
+label (interop unaffected). **Privacy:** when `options.anonymize` is on,
+`_cd_display_label` returns the fallback label — the real name never lands on an
+anonymized disc. `_copy_light_viewer` now takes the resolved
+`fileset_label`/`volume_label` (was inconsistently re-deriving from the raw
+`disc_label`).
+
+Manifest gains `drive_icon` + `patient_label`. Validated: 138/138 cd_burner
+tests green incl. `test_cd_drive_label.py` (display label from PatientName,
+anonymize hides it, `_resolve_labels` returns the name, autorun has
+`icon=AIPACS.ico` + `label=<patient>` and `AIPACS.ico` is staged); mirror
+394/394 (+`aipacs_drive.ico` copied into the run_cd payload). `cd_burn_manager.py`
+is plugin-mirrored. **Re-burn required.** NOTE: Windows aggressively caches
+drive icons — a fresh disc on a PC that hasn't seen it shows the new icon/name;
+an already-cached drive letter may need a reinsert/icon-cache refresh. Non-ASCII
+(e.g. Persian) names fall back to the ASCII-normalized form in the label.

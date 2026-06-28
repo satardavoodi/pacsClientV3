@@ -73,6 +73,12 @@ _PHASE2_V2_PREFIX = (
     "     internet\"). NEVER use select_patient or list_patients for an internet search.\n"
     "   • object = a patient / code / name / study → use the patient action\n"
     "     (select_patient) exactly as described in the module document below.\n"
+    "   • object = a medical topic / finding / disease / general question that is NOT\n"
+    "     a specific patient (e.g. 'lumbar vertebrae hemangiomas') → prefer the\n"
+    "     web_browser action 'web_search' (an information lookup), EVEN IF the word\n"
+    "     'internet' is absent. Use a patient action ONLY when the object identifies a\n"
+    "     specific patient (a name or a code). If 'web_search' is not in the module\n"
+    "     documents provided, return 'unknown' (do not substitute a patient action).\n"
     "2. NO WRONG-DOMAIN SUBSTITUTION: if the action the user needs is NOT present in\n"
     "   the MODULE DOCUMENTS provided in this request, DO NOT substitute\n"
     "   list_patients, select_patient, or any unrelated action. Instead return\n"
@@ -147,9 +153,11 @@ def _parse_action_plan(raw: str) -> SecretaryActionPlan | None:
 
 
 def _workflows_enabled() -> bool:
-    """Multi-step execution is gated by AIPACS_SECRETARY_WORKFLOWS (default off)."""
+    """Multi-step execution (compound "do X and Y" voice commands). DEFAULT-ON
+    (2026-06-28). Set AIPACS_SECRETARY_WORKFLOWS=0 to restore single-action
+    collapse (compound requests run only the first action)."""
     import os
-    return os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "").strip() == "1"
+    return os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "1").strip() != "0"
 
 
 def _normalize_multistep(parsed):

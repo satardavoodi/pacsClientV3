@@ -2,9 +2,11 @@
 
 **Date:** 2026-06-28
 **Reviewer:** engineering agent
-**Status:** Review complete + fix IMPLEMENTED behind `AIPACS_SECRETARY_ROUTING_V2`
-(default **OFF** → byte-identical legacy). See §6 "Implementation status" and §3 for the
-per-layer changes. Pending: live source-build validation before the flag is flipped on.
+**Status:** Review complete + fix IMPLEMENTED and **live-verified** (2026-06-28: the Persian
+"search the internet for lumbar-vertebrae hemangiomas" command now runs `web_search`; patient
+list + download unaffected). Both flags are now **DEFAULT-ON** with kill switches:
+`AIPACS_SECRETARY_ROUTING_V2=0` restores legacy routing; `AIPACS_SECRETARY_WORKFLOWS=0` disables
+compound "do X and Y" commands. See §6 "Implementation status" and §3 for the per-layer changes.
 **Trigger:** A correctly-transcribed voice command to search the internet executed a
 **patient-list search** instead. This is a **command-understanding / routing / tool-selection**
 failure, not a speech-to-text failure.
@@ -291,6 +293,36 @@ pattern is confirmed to miss "on the internet"; all patient/negative inputs retu
 `modules/EchoMind/` directly, so no mirror sync is needed for source-build validation. If a packaged
 build is cut with the flag on, mirror the changed files into
 `builder/plugin package/packages/echomind/payload/...` first.
+
+## 7b. Update — two-brain capability-advertisement repair (2026-06-28, round 2)
+
+A second live failure (`همانژیوم‌های مهره‌های کمری … سرچ` — "search lumbar-vertebrae
+hemangiomas", no clean web word; STT had garbled "اینترنت"→"مونترمت") exposed that the
+problem is broader than the Phase-1 verb map: the **internal orchestrator does not fully
+advertise its capabilities to the reasoning LLM**. Three advertisement gaps were found and
+fixed (same `AIPACS_SECRETARY_ROUTING_V2` flag, default off):
+
+| Gap | Evidence | Fix |
+|---|---|---|
+| **G — Phase-2 module doc is incomplete.** `catalog/modules/web_browser.md` (the doc the planner reads) has **0** mentions of the structured page tools `browser_fill_field` / `browser_click` / `browser_get_text`… So even when routed to web_browser, the planner can't select them (breaks acceptance #5). | `grep` browser_fill_field web_browser.md → 0 | `web_browser_v2.md` advertises the full surface; `catalog_loader.load_module_doc` prefers `<id>_v2.md` when the flag is on; `list_available_module_ids` excludes `*_v2`. |
+| **H — single-shot fallback advertises only 3 patient actions.** `build_prompt_context()` told the LLM *"Allowed actions: list_patients, open_patient, download_patient"* — `web_search` was invisible, so the fallback LLM could only pick a patient action. Unchanged since v2.2.5. | `prompt_context.py` | flag-gated `_V2_CAPABILITY_REGISTRY` advertises web/browser/viewer/report/education actions + the routing rule. |
+| **I/J — topic search with no web word fell to homepage.** The v2 router rule said *"no web object → homepage"*, so a medical-topic search ("lumbar hemangiomas") still hit the patient list. | `router_phase1_prompt_v2.txt` line 24 | rewrote: a search whose object is a **medical topic / finding** (not a patient id/name/code, not a date/modality filter) → web_browser FIRST (+homepage), prefer the internet search; *"never homepage-only for a non-patient object"*. Phase-2 prefix gained the same topic→`web_search` preference. |
+
+Root insight (matches the user's "two-brain" framing): the **planner LLM only ever sees the
+tools of the one module Phase-1 pre-selected** — a lossy bottleneck. The fixes widen what the
+LLM is told exists (full module doc + full fallback registry) and make Phase-1 hand the planner
+**both** web_browser and homepage for an ambiguous/topic search so it can choose with context.
+
+Two STT-layer notes (NOT routing, separate follow-ups):
+- The web word "اینترنت" was mis-transcribed as "مونترمت"; with the web signal gone, no layer
+  can see it. Improving the STT prompt/biasing for "اینترنت" is a transcription-layer task.
+- `is_chitchat()` uses **substring** matching, so a command containing "this" (→"hi"), "qwerty"
+  (→"ty"), etc. is mis-classified as a greeting and never routed. Pre-existing; should switch to
+  word-boundary matching. Flagged, not changed here.
+
+Tests extended in `tests/code/echomind/test_routing_v2.py` (now **19**, all green offscreen):
+full-capability advertisement on/off, web_browser_v2 doc load + `*_v2` id exclusion, topic/
+browser-row presence in the router prompt.
 
 ## 7. How to validate on the live source build (before flipping the flag on)
 

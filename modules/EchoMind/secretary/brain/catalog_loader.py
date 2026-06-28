@@ -33,7 +33,20 @@ def load_module_doc(module_id: str) -> str:
     """
     Return the raw markdown text of the per-module Document 2.
     Returns empty string if the file does not exist.
+
+    Routing-v2 (2026-06-28): when AIPACS_SECRETARY_ROUTING_V2 is on and a
+    ``<module_id>_v2.md`` exists, it is loaded instead — this lets a module
+    advertise extra tools to the planner (e.g. the web_browser page tools) without
+    changing the legacy doc. Flag off (or no v2 file) → the legacy ``<id>.md``.
     """
+    try:
+        from ..config import routing_v2_enabled
+        if routing_v2_enabled():
+            v2 = _MODULES_DIR / f"{module_id}_v2.md"
+            if v2.exists():
+                return v2.read_text(encoding="utf-8")
+    except Exception:
+        pass
     path = _MODULES_DIR / f"{module_id}.md"
     try:
         return path.read_text(encoding="utf-8")
@@ -63,4 +76,9 @@ def list_available_module_ids() -> list[str]:
     """
     if not _MODULES_DIR.exists():
         return []
-    return sorted(p.stem for p in _MODULES_DIR.glob("*.md"))
+    # Exclude ``*_v2.md`` overlays — they are alternate docs for an existing
+    # module_id (selected in load_module_doc), not separate modules.
+    return sorted(
+        p.stem for p in _MODULES_DIR.glob("*.md")
+        if not p.stem.endswith("_v2")
+    )

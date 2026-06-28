@@ -61,9 +61,13 @@ PHASE1_PROMPT_FILE_V2 = _PROMPTS_DIR / "router_phase1_prompt_v2.txt"
 
 
 def routing_v2_enabled() -> bool:
-    """True when AIPACS_SECRETARY_ROUTING_V2=1 (verb+object web/patient routing)."""
+    """Verb+object web/patient routing. DEFAULT-ON (live-validated 2026-06-28).
+
+    Env absent → on. Set ``AIPACS_SECRETARY_ROUTING_V2=0`` to restore the
+    byte-identical legacy routing (kill switch).
+    """
     import os
-    return os.environ.get("AIPACS_SECRETARY_ROUTING_V2", "").strip() == "1"
+    return os.environ.get("AIPACS_SECRETARY_ROUTING_V2", "1").strip() != "0"
 
 
 def get_phase1_prompt_file() -> Path:

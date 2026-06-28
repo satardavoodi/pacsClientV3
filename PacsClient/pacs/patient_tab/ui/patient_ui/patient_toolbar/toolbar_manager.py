@@ -2000,13 +2000,11 @@ class ToolbarManager:
         active layout", patient 48117). In that one case we return the open MPR HOST
         widget so the tool routes to the MPR; otherwise the active widget is returned
         unchanged. Single-MPR / MPR-is-active layouts are unaffected (the active cell
-        IS the MPR). Kill switch: ``AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR=0``.
+        IS the MPR). This routing is unconditional (the flag that gated it was retired
+        after it was confirmed live).
         """
         sw = getattr(self.patient_widget, 'selected_widget', None)
         try:
-            import os
-            if (os.environ.get("AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR", "1") or "1").strip().lower() in ("0", "false", "off"):
-                return sw
             # Active cell is already the MPR → nothing to reroute.
             if self.is_mpr_viewer(sw):
                 return sw

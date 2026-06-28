@@ -201,27 +201,31 @@ class CDBurnWorker(QThread):
         if self._burner is not None:
             self._burner.cancel()
 
+    def _first_patient_header(self, study_folders: List[str]):
+        """(PatientName, StudyDate) from the first readable DICOM, else ('', '')."""
+        try:
+            for folder in study_folders:
+                for candidate in Path(folder).rglob("*"):
+                    if not candidate.is_file():
+                        continue
+                    try:
+                        ds = dcmread(str(candidate), stop_before_pixels=True)
+                    except Exception:
+                        continue
+                    return (
+                        str(getattr(ds, "PatientName", "") or ""),
+                        str(getattr(ds, "StudyDate", "") or ""),
+                    )
+        except Exception as exc:
+            logger.warning("Patient header read failed: %s", exc)
+        return "", ""
+
     def _resolve_labels(self, study_folders: List[str]):
-        """Resolve (fileset_label, volume_label), honoring auto-label mode."""
+        """Resolve (fileset_label, volume_label, patient_name), honoring
+        auto-label mode."""
         label = self.disc_label
+        patient_name, study_date = self._first_patient_header(study_folders)
         if is_auto_label(label):
-            patient_name, study_date = "", ""
-            try:
-                for folder in study_folders:
-                    for candidate in Path(folder).rglob("*"):
-                        if not candidate.is_file():
-                            continue
-                        try:
-                            ds = dcmread(str(candidate), stop_before_pixels=True)
-                        except Exception:
-                            continue
-                        patient_name = str(getattr(ds, "PatientName", "") or "")
-                        study_date = str(getattr(ds, "StudyDate", "") or "")
-                        raise StopIteration
-            except StopIteration:
-                pass
-            except Exception as exc:
-                logger.warning("Auto-label header read failed: %s", exc)
             label = build_auto_label(
                 patient_name=patient_name,
                 study_date=study_date,
@@ -231,7 +235,19 @@ class CDBurnWorker(QThread):
             self.progress.emit(4, f"Auto disc label: {label}")
         normalized_label = normalize_fileset_label(label)
         volume_label = normalize_volume_label(label, default=normalized_label)
-        return normalized_label, volume_label
+        return normalized_label, volume_label, patient_name
+
+    def _cd_display_label(self, patient_name: str, fallback: str) -> str:
+        """The human-facing CD name = the patient's name (DICOM PatientName with
+        '^' → space, normalized for a media volume label). The CD drive then
+        shows the patient name in Explorer (via the volume label + autorun
+        label=). Never reveals the name on an anonymized disc; falls back to the
+        resolved label when no name is available."""
+        if patient_name and not self.options.anonymize:
+            disp = normalize_volume_label(patient_name.replace("^", " "))
+            if disp:
+                return disp
+        return fallback
 
     def _collect_extras(self, staging_folder: str):
         """Optional content: reports / captured images / attachments."""
@@ -304,7 +320,9 @@ class CDBurnWorker(QThread):
                 self.completed.emit(False, "Operation cancelled")
                 return
 
-            normalized_label, volume_label = self._resolve_labels(study_folders)
+            normalized_label, volume_label, patient_name = self._resolve_labels(study_folders)
+            # The CD is named after the patient (shown on the drive in Explorer).
+            cd_name = self._cd_display_label(patient_name, volume_label)
 
             # Stage 2: Prepare DICOM (anonymization / format conversion)
             dicom_source_folders = study_folders
@@ -373,9 +391,9 @@ class CDBurnWorker(QThread):
             self.progress.emit(50, "Adding Light Viewer...")
 
             if self.light_viewer_path and Path(self.light_viewer_path).exists():
-                self._copy_light_viewer(staging_folder)
+                self._copy_light_viewer(staging_folder, normalized_label, cd_name)
             else:
-                self._write_portable_support_files(staging_folder, normalized_label, volume_label)
+                self._write_portable_support_files(staging_folder, normalized_label, cd_name)
 
             # Stage 5: Optional content (reports / images / attachments)
             if opts.wants_extras():
@@ -445,7 +463,7 @@ class CDBurnWorker(QThread):
 
                 success, message = burner.burn(
                     staging_folder,
-                    volume_label,
+                    cd_name,  # the volume label = the patient name
                     eject_after=not opts.verify_after_burn,
                     write_speed_sectors=opts.write_speed_sectors,
                     finalize=opts.finalize_disc,
@@ -667,8 +685,18 @@ class CDBurnWorker(QThread):
         
         return study_folders
     
-    def _copy_light_viewer(self, staging_folder: str):
-        """Copy a portable viewer (bundle or single exe) and create launch helpers."""
+    def _copy_light_viewer(self, staging_folder: str,
+                           fileset_label: Optional[str] = None,
+                           volume_label: Optional[str] = None):
+        """Copy a portable viewer (bundle or single exe) and create launch helpers.
+
+        ``fileset_label`` / ``volume_label`` come from the resolved labels
+        (the volume label is the patient name). They fall back to the raw
+        disc_label only when not supplied.
+        """
+        fileset_label = fileset_label or normalize_fileset_label(self.disc_label)
+        volume_label = volume_label or normalize_volume_label(
+            self.disc_label, default=fileset_label)
         try:
             staging_path = Path(staging_folder)
             viewer_path = Path(self.light_viewer_path)
@@ -720,22 +748,22 @@ class CDBurnWorker(QThread):
             relative_exe = Path("VIEWER") / viewer_path.name
             self._write_portable_support_files(
                 staging_folder,
-                normalize_fileset_label(self.disc_label),
-                normalize_volume_label(self.disc_label, default=normalize_fileset_label(self.disc_label)),
+                fileset_label,
+                volume_label,
                 viewer_launcher_relative_path=relative_exe,
                 viewer_display_name=viewer_display_name,
                 launcher_exe_name=launcher_name,
             )
 
             self.progress.emit(55, "Light Viewer added successfully")
-            
+
         except Exception as e:
             logger.warning(f"Could not copy light viewer: {e}")
             self.progress.emit(55, f"Warning: Could not add Light Viewer - {e}")
             self._write_portable_support_files(
                 staging_folder,
-                normalize_fileset_label(self.disc_label),
-                normalize_volume_label(self.disc_label, default=normalize_fileset_label(self.disc_label)),
+                fileset_label,
+                volume_label,
             )
 
     def _stage_cd_launcher(self, staging_path: Path, viewer_path: Path) -> Optional[str]:
@@ -758,6 +786,20 @@ class CDBurnWorker(QThread):
             return "AIPacsViewer.exe"
         except Exception as exc:
             logger.warning(f"Could not stage CD launcher: {exc}")
+            return None
+
+    def _stage_drive_icon(self, staging_path: Path) -> Optional[str]:
+        """Copy the AI-PACS drive icon to the media root so autorun.inf can make
+        Explorer show the AI-PACS icon on the CD drive when it is inserted.
+        Returns the icon filename, or None if the asset is missing."""
+        try:
+            src = Path(__file__).resolve().parent / "assets" / "aipacs_drive.ico"
+            if not src.is_file():
+                return None
+            shutil.copy2(src, staging_path / "AIPACS.ico")
+            return "AIPACS.ico"
+        except Exception as exc:
+            logger.warning(f"Could not stage drive icon: {exc}")
             return None
 
     def _write_portable_support_files(
@@ -788,6 +830,9 @@ class CDBurnWorker(QThread):
         # "open with" prompt); fall back to RUN_VIEWER.cmd only when the
         # launcher exe could not be staged.
         primary_launcher = (launcher_exe_name or "RUN_VIEWER.cmd") if viewer_cmd_rel else None
+        # AI-PACS icon for the CD drive (Explorer reads autorun.inf icon= on
+        # optical media). A dedicated .ico at the root is the most reliable.
+        drive_icon = self._stage_drive_icon(staging_path)
         center = self.options.center_identity()
 
         launch_cmd = staging_path / "RUN_VIEWER.cmd"
@@ -937,6 +982,8 @@ class CDBurnWorker(QThread):
                 else ["RUN_VIEWER.cmd", "OPEN_DICOM_FOLDER.cmd"]
             ),
             "viewer_launcher_primary": primary_launcher,
+            "drive_icon": drive_icon,
+            "patient_label": volume_label,
             "generated_by": "AIPacs CD Burner",
         }
         if center:
@@ -954,7 +1001,7 @@ class CDBurnWorker(QThread):
                 "[autorun]\n"
                 f"open={primary_launcher}\n"
                 f"shellexecute={primary_launcher}\n"
-                f"icon={viewer_cmd_rel},0\n"
+                f"icon={drive_icon or (viewer_cmd_rel + ',0')}\n"
                 f"label={volume_label}\n"
                 f"action=Open {viewer_display_name}\n\n"
                 "[Content]\n"
@@ -966,7 +1013,7 @@ class CDBurnWorker(QThread):
             autorun_content = (
                 "[autorun]\n"
                 "open=OPEN_DICOM_FOLDER.cmd\n"
-                "icon=OPEN_DICOM_FOLDER.cmd\n"
+                f"icon={drive_icon or 'OPEN_DICOM_FOLDER.cmd'}\n"
                 f"label={volume_label}\n"
                 "action=Open DICOM media\n\n"
                 "[Content]\n"

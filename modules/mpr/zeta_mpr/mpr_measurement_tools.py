@@ -25,22 +25,12 @@ def _annotation_smooth_enabled():
 _MPR_ANNOTATION_SMOOTH = _annotation_smooth_enabled()
 
 
-# Annotation persistence (2026-06-28): multiple measurements must remain visible
-# together. The single-use auto-exit used to remove EVERY widget on the
-# non-completed views — including PREVIOUSLY-COMPLETED measurements — so drawing a
-# second measurement on a different pane wiped the first ("only the last shows").
-# With this on, auto-exit removes ONLY the current activation's EMPTY placement
-# widgets (tracked per-view in ``_placement_widgets``), never a finished
-# measurement. Kill switch ``AIPACS_MPR_ANNOTATION_PERSIST=0`` = legacy behaviour.
-def _annotation_persist_enabled():
-    return os.environ.get("AIPACS_MPR_ANNOTATION_PERSIST", "").strip().lower() not in (
-        "0", "false", "off",
-    )
-
-
-_MPR_ANNOTATION_PERSIST = _annotation_persist_enabled()
-
-
+# Annotation persistence (2026-06-28, unified 2026-06-28): multiple measurements
+# stay visible together. The single-use auto-exit removes ONLY the current
+# activation's EMPTY placement widgets (tracked per-view in ``_placement_widgets``),
+# NEVER a previously-completed measurement — so drawing a measurement on a 2nd pane
+# no longer wipes the 1st. This is now the ONLY path (the old destructive branch
+# that removed every widget on the non-completed views was retired).
 def _slice_bound_annotations_enabled():
     """Slice-bound MPR annotations are ON by default (each measurement shows
     only on the reslice position where it was drawn). Escape hatch:
@@ -247,43 +237,27 @@ class MPRMeasurementTools:
             # click there can't start a second measurement (the reported
             # "multiple rulers"); keep the one the user just completed.
             if tool_name in ('ruler', 'angle'):
-                if _MPR_ANNOTATION_PERSIST:
-                    # Drop ONLY this activation's unplaced placement widgets on the
-                    # OTHER views (tracked in _placement_widgets). This NEVER touches
-                    # a previously-completed measurement, so earlier annotations on
-                    # those panes survive — the "draw a 2nd measurement, the 1st
-                    # disappears" fix. The just-completed widget (completed_view) is
-                    # a real measurement and is kept.
-                    for vn in ('axial', 'sagittal', 'coronal'):
-                        if vn == completed_view:
-                            continue
-                        w = self._placement_widgets.get(vn)
-                        if w is None:
-                            continue
-                        try:
-                            w.Off()
-                        except Exception:
-                            pass
-                        try:
-                            self.active_tools[vn][tool_name].remove(w)
-                        except (ValueError, KeyError):
-                            pass
-                    self._placement_widgets.clear()
-                else:
-                    # Legacy (destructive): wipe every widget on the other views,
-                    # including completed measurements (AIPACS_MPR_ANNOTATION_PERSIST=0).
-                    for vn in ('axial', 'sagittal', 'coronal'):
-                        if vn == completed_view or vn not in self.active_tools:
-                            continue
-                        for w in list(self.active_tools[vn].get(tool_name, [])):
-                            try:
-                                w.Off()
-                            except Exception:
-                                pass
-                            try:
-                                self.active_tools[vn][tool_name].remove(w)
-                            except ValueError:
-                                pass
+                # Drop ONLY this activation's unplaced placement widgets on the OTHER
+                # views (tracked in _placement_widgets). This NEVER touches a
+                # previously-completed measurement, so earlier annotations on those
+                # panes survive — the "draw a 2nd measurement, the 1st disappears"
+                # fix. The just-completed widget (completed_view) is a real
+                # measurement and is kept.
+                for vn in ('axial', 'sagittal', 'coronal'):
+                    if vn == completed_view:
+                        continue
+                    w = self._placement_widgets.get(vn)
+                    if w is None:
+                        continue
+                    try:
+                        w.Off()
+                    except Exception:
+                        pass
+                    try:
+                        self.active_tools[vn][tool_name].remove(w)
+                    except (ValueError, KeyError):
+                        pass
+                self._placement_widgets.clear()
             # Arrow: drop the click observers so no further arrows are placed.
             self._deactivate_arrow_placement()
             self._placement_clicks.clear()

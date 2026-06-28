@@ -735,6 +735,20 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   priority/download intent waits. Keep the downstream per-`(study,series)` cooldowns (500 ms
   notify / 2 s retry) and the `:691` token guard (`_is_request_current`). Guard
   `tests/code/viewer/test_dragdrop_coalesce.py`.
+- **Complete-on-disk view-intent guard** (`_vc_load.py`, NOT mirrored — 48272 series 302,
+  2026-06-28): switching to a series whose images are ALL already on disk used to re-issue a
+  DM priority/download intent for it (`request_critical_series` storm + progressive
+  `restart_after_done` 94/94 → 42/94) — re-fetching a finished series and thrashing the one
+  slot. `_coalesce_dm_view_intent` AND `_trigger_download_if_needed` (the latter has a direct
+  caller in `_pw_series`) now skip when `_view_intent_series_complete_on_disk(series)` is True.
+  **DATA-SAFE:** that helper reads the expected count ONLY from the SERVER series-info
+  `image_count` (never the disk fallback — that would make expected == disk and always skip)
+  and returns False (proceeds to download) on ANY uncertainty (unknown server count, missing
+  folder, disk < expected). Counts only finished `.dcm` (`.part` excluded). The viewer LOAD
+  path is untouched — a complete series still displays from disk, and other in-flight series
+  keep downloading. Flag `AIPACS_DL_SKIP_COMPLETE_VIEW_INTENT` (default on; `=0` legacy).
+  Guard `tests/code/viewer/test_dl_skip_complete_view_intent.py`. (Deeper: the DM-side
+  resume-scan not skipping existing `.dcm` for a re-queued series is a separate follow-up.)
 - **Rich download notification** (`_vc_progressive.py` + `loading_spinner.py` (mirrored) +
   `loading_overlay.py`, NOT all mirrored): the waiting spinner shows series identity,
   "Downloading N of M · P%", a progress bar, speed/ETA/elapsed, and an inferred connection
@@ -1053,8 +1067,9 @@ the 2nd click). Flag `AIPACS_MPR_ANNOTATION_SMOOTH` (default ON; `=0` = byte-ide
 "Draw a 2nd measurement, the 1st disappears" root cause: `_do_single_use_auto_exit` removed EVERY
 ruler/angle widget on the non-completed views — including PREVIOUSLY-COMPLETED measurements — so
 measuring on a 2nd pane wiped the 1st (the MPR DOES store annotations in `active_tools[view][tool]`
-lists; the destruction was the bug). Fix (flag `AIPACS_MPR_ANNOTATION_PERSIST`, default ON; `=0` =
-legacy destructive): auto-exit removes ONLY the current activation's EMPTY placement widgets on the
+lists; the destruction was the bug). Fix (UNIFIED 2026-06-28 — the `AIPACS_MPR_ANNOTATION_PERSIST`
+flag + its destructive `=0` branch were RETIRED; this is now the only path): auto-exit removes ONLY
+the current activation's EMPTY placement widgets on the
 other views, tracked per-view in `_placement_widgets` (set in `_activate_ruler_on_view` /
 `_activate_angle_on_view`, cleared after auto-exit + in `deactivate_tool`). A finished measurement is
 never removed. Same-view + same-slice multiple annotations already worked (via `refresh_slice_visibility`,
@@ -1074,7 +1089,8 @@ str(tool_selected)`) but the active cell isn't the MPR (`is_mpr_viewer` False), 
 `lst_nodes_viewer` for the host cell carrying `_zeta_mpr_widget` and returns THAT, so the annotation
 routes to the MPR. All five annotation button handlers (ruler/angle/two-line-angle/arrow/text) call it
 instead of `selected_widget`. Single-MPR / MPR-is-active layouts are unaffected (active cell IS the MPR).
-Kill switch `AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR=0`. Guard
+UNIFIED 2026-06-28: the `AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR` flag was RETIRED after it was confirmed
+live (`[MPR-ANNOT-ROUTE]` ×3 in the logs) — this routing is now unconditional. Guard
 `tests/code/viewer/test_mpr_annotation_layout_switch.py`. `toolbar_manager.py` is large — verify it on the
 real machine (the sandbox FUSE mount tears it on read → false syntax errors).
 

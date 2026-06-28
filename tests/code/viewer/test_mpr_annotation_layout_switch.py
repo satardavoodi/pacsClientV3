@@ -11,8 +11,9 @@ active layout").
 Fix: `ToolbarManager._annotation_target_widget()` — when MPR mode is active but the
 active cell is NOT the MPR, it returns the open MPR HOST cell so the annotation
 routes to the MPR. The annotation button handlers (ruler/angle/two-line-angle/
-arrow/text) call it instead of using `selected_widget` directly. Kill switch
-`AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR=0`.
+arrow/text) call it instead of using `selected_widget` directly. UNIFIED 2026-06-28:
+the `AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR` flag was retired (confirmed live) — the
+routing is unconditional.
 
 Source-pins + a behavioral test of the resolver (bound to a fake, no Qt).
 """
@@ -37,12 +38,14 @@ def _src() -> str:
     ).read_text(encoding="utf-8")
 
 
-def test_resolver_exists_and_gated():
+def test_resolver_exists_and_unconditional():
     src = _src()
     fn = src.find("def _annotation_target_widget(self):")
     assert fn != -1
     body = src[fn:fn + 2400]
-    assert 'os.environ.get("AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR", "1")' in body
+    # Unified 2026-06-28: the AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR flag was retired —
+    # routing annotations to the open MPR cell is now the only path.
+    assert "AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR" not in body
     # only reroute while MPR mode is the active mode
     assert "self.tool_access.MPR in str(self.tool_selected)" in body
     # scans the viewport nodes for the open MPR host cell
@@ -69,8 +72,6 @@ def test_resolver_behavioral(monkeypatch):
         )
     except Exception as exc:  # pragma: no cover - heavy import env dependent
         pytest.skip(f"toolbar_manager import unavailable: {exc}")
-
-    monkeypatch.delenv("AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR", raising=False)
 
     class Acc:
         MPR = "MPR"
@@ -103,9 +104,4 @@ def test_resolver_behavioral(monkeypatch):
     # NOT in MPR mode → the active (FAST) cell is annotated, not the MPR.
     fake.patient_widget.selected_widget = fast_cell
     fake.tool_selected = "RULER"
-    assert resolve() is fast_cell
-
-    # Kill switch → always the active cell (legacy behaviour).
-    fake.tool_selected = "MPR,RULER"
-    monkeypatch.setenv("AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR", "0")
     assert resolve() is fast_cell

@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 
 )
 
-from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain_text_from_html, style_popup, themed_message_box
+from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain_text_from_html, style_popup, themed_message_box, themed_input_text
 from .ai_chat_api import ChatApiClient, ChatController, ApiWorker
 from .ai_chat_widgets import ChatHistory, UnifiedComposer, MessageBubble, PATIENT_SCROLLBAR_QSS
 from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET
@@ -1285,12 +1285,12 @@ class OneChatPage(QWidget):
                 return
             patient_id = current_patient_id
         else:
-            patient_id, ok = QInputDialog.getText(
+            patient_id, ok = themed_input_text(
                 self,
                 "Other Patient",
                 "Enter patient id:",
-                QLineEdit.Normal,
                 "",
+                QLineEdit.Normal,
             )
             if not ok:
                 return
@@ -2167,12 +2167,12 @@ class OneChatPage(QWidget):
 
         try:
             from PySide6.QtWidgets import QInputDialog, QLineEdit
-            new_title, ok = QInputDialog.getText(
+            new_title, ok = themed_input_text(
                 self,
                 "Rename chat",
                 "New name:",
+                old,
                 QLineEdit.Normal,
-                old
             )
         except Exception:
             return
@@ -7487,4 +7487,5 @@ class ChatGPTPage(OneChatPage):
 
         worker = ApiWorker(work, parent=self)
         worker.done.connect(done)
-        worker.failed.connect(lambda msg: done({"content": _safe_fa_connection_error(msg), "usage": None}))
+        worker.failed.connect(lambda msg: done({"content": _safe_fa_connection_error(msg), "usage": None}))
+        worker.start()

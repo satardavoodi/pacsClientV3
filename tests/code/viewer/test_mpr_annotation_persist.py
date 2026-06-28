@@ -8,8 +8,8 @@ collection (`active_tools[view][tool]` lists); the destruction was the bug.
 
 Fix: auto-exit removes ONLY the current activation's EMPTY placement widgets on the
 other views (tracked per-view in `_placement_widgets`), never a finished
-measurement. Flag `AIPACS_MPR_ANNOTATION_PERSIST` (default ON; `=0` = legacy
-destructive behaviour).
+measurement. UNIFIED 2026-06-28: the `AIPACS_MPR_ANNOTATION_PERSIST` flag + its
+destructive legacy branch were retired — this is the only path.
 
 Source-pins + a behavioral cross-view test (no real VTK).
 """
@@ -33,11 +33,14 @@ def _src() -> str:
     ).read_text(encoding="utf-8")
 
 
-def test_flag_default_on():
+def test_persist_is_unconditional_no_flag():
+    # Unified 2026-06-28: the AIPACS_MPR_ANNOTATION_PERSIST flag + its destructive
+    # legacy branch were RETIRED — keeping multiple measurements visible is now the
+    # only path (the bug can no longer be re-enabled).
     src = _src()
-    assert 'os.environ.get("AIPACS_MPR_ANNOTATION_PERSIST"' in src
-    blk = src[src.find("def _annotation_persist_enabled"):src.find("def _annotation_persist_enabled") + 260]
-    assert 'not in (' in blk and '"0", "false", "off"' in blk
+    assert "AIPACS_MPR_ANNOTATION_PERSIST" not in src
+    assert "_MPR_ANNOTATION_PERSIST" not in src
+    assert "Legacy (destructive)" not in src
 
 
 def test_placement_widgets_tracked_on_activation():
@@ -55,12 +58,12 @@ def test_auto_exit_removes_only_this_activation_empties():
     fn = src.find("def _do_single_use_auto_exit")
     assert fn != -1
     body = src[fn:fn + 2200]
-    assert "if _MPR_ANNOTATION_PERSIST:" in body
-    # the persist branch removes ONLY the tracked placement widget per other view
+    # removes ONLY the tracked placement widget per other view — now unconditional
     assert "w = self._placement_widgets.get(vn)" in body
     assert "self._placement_widgets.clear()" in body
-    # legacy destructive branch preserved behind the kill switch
-    assert "Legacy (destructive)" in body
+    # the destructive legacy branch + its flag are gone
+    assert "Legacy (destructive)" not in body
+    assert "_MPR_ANNOTATION_PERSIST" not in body
 
 
 def test_cross_view_completed_measurement_survives_behavioral():
@@ -70,8 +73,6 @@ def test_cross_view_completed_measurement_survives_behavioral():
         from modules.mpr.zeta_mpr import mpr_measurement_tools as MT
     except Exception as exc:  # pragma: no cover - import env dependent
         pytest.skip(f"mpr_measurement_tools import unavailable: {exc}")
-    if not getattr(MT, "_MPR_ANNOTATION_PERSIST", False):
-        pytest.skip("AIPACS_MPR_ANNOTATION_PERSIST disabled in this env")
 
     class FakeWidget:
         def __init__(self, name):
@@ -118,43 +119,3 @@ def test_cross_view_completed_measurement_survives_behavioral():
     assert r2_sag.off_called is False
     # Tracking dict cleared for the next activation.
     assert fake._placement_widgets == {}
-
-
-def test_legacy_kill_switch_restores_destructive_behavior(monkeypatch):
-    """With the flag OFF, the legacy path wipes other-view widgets (the old bug) —
-    proving the fix is the flag-on branch and the kill switch is real."""
-    try:
-        from modules.mpr.zeta_mpr import mpr_measurement_tools as MT
-    except Exception as exc:  # pragma: no cover
-        pytest.skip(f"mpr_measurement_tools import unavailable: {exc}")
-    monkeypatch.setattr(MT, "_MPR_ANNOTATION_PERSIST", False, raising=False)
-
-    class FakeWidget:
-        def __init__(self):
-            self.off_called = False
-
-        def Off(self):
-            self.off_called = True
-
-    r1_done = FakeWidget()
-    active_tools = {
-        'axial': {'ruler': [r1_done], 'angle': [], 'caption': [], 'arrow': []},
-        'sagittal': {'ruler': [], 'angle': [], 'caption': [], 'arrow': []},
-        'coronal': {'ruler': [], 'angle': [], 'caption': [], 'arrow': []},
-    }
-    fake = types.SimpleNamespace(
-        _placement_widgets={},
-        active_tools=active_tools,
-        _placement_clicks={},
-        current_tool='ruler',
-        on_auto_exit=None,
-        _auto_exit_in_progress=True,
-        mpr_viewer=types.SimpleNamespace(_render_immediately=lambda v: None),
-    )
-    fake._deactivate_arrow_placement = lambda: None
-    fake.refresh_slice_visibility = lambda v=None: None
-    fake._apply_annotation_visibility = lambda item, tt, vis: None
-
-    MT.MPRMeasurementTools._do_single_use_auto_exit.__get__(fake)('sagittal', 'ruler')
-    # legacy: the axial measurement is wiped (the original bug, now opt-in only)
-    assert active_tools['axial']['ruler'] == []

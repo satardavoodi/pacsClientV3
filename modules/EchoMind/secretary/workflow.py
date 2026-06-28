@@ -41,7 +41,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 
 # ── Kill switch for callers (the engine itself is inert until invoked) ─────────
-WORKFLOWS_ENABLED = os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "").strip() == "1"
+# DEFAULT-ON (2026-06-28); set AIPACS_SECRETARY_WORKFLOWS=0 to disable callers.
+WORKFLOWS_ENABLED = os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "1").strip() != "0"
 
 
 # ── Plan / step / result model ────────────────────────────────────────────────

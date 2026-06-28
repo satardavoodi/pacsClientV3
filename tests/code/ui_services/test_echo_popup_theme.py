@@ -31,7 +31,10 @@ _MIRROR_VC = os.path.join(
 
 # Static popup statics that must NOT remain in the two chat files (they inherit
 # the system palette). The helper module itself MAY reference them (fallback).
-_STATIC_RE = re.compile(r"QMessageBox\.(warning|information|question|critical|about)\(")
+_STATIC_RE = re.compile(
+    r"QMessageBox\.(warning|information|question|critical|about)\("
+    r"|QInputDialog\.getText\("
+)
 
 
 def _read(path):
@@ -44,6 +47,9 @@ def test_helper_defines_explicit_popup_styling():
     assert "def popup_stylesheet(" in src
     assert "def style_popup(" in src
     assert "def themed_message_box(" in src
+    # Themed replacement for QInputDialog.getText (the "enter reception/patient
+    # id" + "rename chat" prompts) so they don't inherit the system palette.
+    assert "def themed_input_text(" in src
     # The QSS must set BOTH background and text colour explicitly on the
     # dialog/message box surfaces (never inherit the system palette).
     assert "QDialog, QMessageBox" in src
@@ -88,6 +94,8 @@ def test_reception_and_image_dialogs_are_styled():
     assert src.count("style_popup(self)") >= 2
     # Imported from the helper module.
     assert "style_popup" in src and "themed_message_box" in src
+    # The two QInputDialog prompts now route through the themed helper.
+    assert src.count("themed_input_text(") >= 2
 
 
 def test_no_raw_static_popups_left_in_chat_files():

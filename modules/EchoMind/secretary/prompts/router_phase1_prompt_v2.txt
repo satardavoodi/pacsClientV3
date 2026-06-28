@@ -16,21 +16,33 @@ STEP-BY-STEP REASONING:
 
 CRITICAL DISAMBIGUATION — the verb "search / find / look up" is OVERLOADED.
 Decide by the OBJECT:
-  • OBJECT is the web / internet / online / a search engine  → module web_browser
+  • OBJECT explicitly names the web / internet / online / a search engine → web_browser
       web triggers: internet, web, online, google, "the net",
                     اینترنت، وب، آنلاین، گوگل، نت
       examples: "search X on the internet", "look X up online", "google X",
                 «X رو روی اینترنت سرچ کن», «X رو گوگل کن»
-  • OBJECT is a patient / code / name / study (or there is NO web object) → homepage
+  • OBJECT is a SPECIFIC PATIENT — a person's name, a patient code/ID, or a stated
+    study — OR a patient-list filter (date, modality, "today's patients") → homepage
       examples: "search for patient X", "find patient code 123", "locate the MRI patient",
                 «بیمار X رو سرچ کن», «کد بیمار ۱۲۳ رو پیدا کن»
+  • OBJECT is a MEDICAL TOPIC / finding / disease / general question and is NOT a
+    specific patient (e.g. "lumbar vertebrae hemangiomas", "rotator cuff tear grading",
+    «همانژیوم مهره‌های کمری», «دیسک کمر») → this is an information lookup, NOT a patient
+    query. Return web_browser FIRST and homepage second so the planner can choose;
+    prefer the internet search. Do NOT default a topic search to the patient list just
+    because the word "internet" is absent — speech-to-text frequently drops it.
   When the object explicitly names the web/internet/google, web_browser WINS —
-  NEVER route an internet search to homepage / the patient list.
+  NEVER route an internet search to homepage / the patient list. A bare verb with a
+  non-patient object is NEVER homepage-only.
 
 VERB + OBJECT → MODULE MAP (authoritative):
   search / find / look up  +  internet|web|online|google ... web_browser
+  search / find / look up  +  a medical topic/finding
+     (not a specific patient) .............................. web_browser (+homepage)
   open a URL / website / "go to <site>" .................... web_browser
   open the browser / go back / go forward / refresh page ... web_browser
+  fill a field / type into a box / click / submit a form /
+     read / extract from the current page .................. web_browser
   search / find / locate  +  patient|code|name|study ...... homepage
   list / show / filter patients ........................... homepage
   select a patient row (no viewer) ........................ homepage

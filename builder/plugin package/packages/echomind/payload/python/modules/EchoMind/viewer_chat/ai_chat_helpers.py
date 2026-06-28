@@ -256,3 +256,35 @@ def themed_message_box(parent, icon, title, text, buttons=None, default=None):
     except Exception:
         pass
     return box.exec()
+
+
+def themed_input_text(parent, title, label, text="", echo=None):
+    """Drop-in, explicitly-themed replacement for ``QInputDialog.getText``.
+
+    Returns ``(value: str, ok: bool)`` exactly like the static method, but the
+    input dialog carries the explicit popup colours so the prompt and field are
+    readable on any Windows theme. Falls back to the static call when the kill
+    switch is off.
+    """
+    from PySide6.QtWidgets import QInputDialog, QLineEdit
+
+    if echo is None:
+        echo = QLineEdit.EchoMode.Normal
+
+    if not _echo_popup_theme_enabled():
+        return QInputDialog.getText(parent, title, label, echo, text)
+
+    dlg = QInputDialog(parent)
+    dlg.setWindowTitle(title)
+    dlg.setLabelText(label)
+    try:
+        dlg.setTextEchoMode(echo)
+    except Exception:
+        pass
+    dlg.setTextValue(text)
+    try:
+        dlg.setStyleSheet(popup_stylesheet())
+    except Exception:
+        pass
+    ok = bool(dlg.exec())
+    return dlg.textValue(), ok

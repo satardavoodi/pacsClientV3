@@ -72,7 +72,7 @@ def test_bundle_copies_tree_but_never_junk_archives(tmp_path):
     assert manifest["viewer_display_name"] == "AI-PACS Lite Viewer"
     autorun = (staging / "autorun.inf").read_text(encoding="utf-8")
     assert "action=Open AI-PACS Lite Viewer" in autorun
-    assert "VIEWER\\AIPacsLiteViewer.exe" in autorun
+    assert "icon=AIPACS.ico" in autorun           # AI-PACS icon on the CD drive
 
 
 def test_launcher_has_32bit_guard_and_autorun_uses_cmd(tmp_path):

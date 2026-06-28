@@ -61,6 +61,19 @@ _DM_CANON_IDENTITY = os.environ.get(
 _DRAGDROP_COALESCE = (os.getenv("AIPACS_DRAGDROP_DEBOUNCE", "1") or "1").strip() != "0"
 _DRAGDROP_DEBOUNCE_MS = max(0, int(os.getenv("AIPACS_DRAGDROP_DEBOUNCE_MS", "350") or "350"))
 
+# Complete-on-disk view-intent guard (48272 series 302, 2026-06-28): switching to a
+# series whose images are ALL already on disk used to re-issue a DM priority/download
+# intent for it, which re-fetched the finished series and thrashed the single download
+# slot (observed: 94/94 on disk, progress restarted at 42/94). When this is on, the
+# view-intent is skipped for a series the SERVER says is complete and whose own study
+# folder already holds >= that many .dcm files. CONSERVATIVE + data-safe: it skips ONLY
+# on a known server count (>0) AND disk>=expected; an unknown count or a partial series
+# still downloads, and the viewer LOAD path is untouched (a complete series still
+# displays from disk). Kill switch AIPACS_DL_SKIP_COMPLETE_VIEW_INTENT=0.
+_DL_SKIP_COMPLETE_VIEW_INTENT = (
+    os.getenv("AIPACS_DL_SKIP_COMPLETE_VIEW_INTENT", "1") or "1"
+).strip() != "0"
+
 
 def _merge_drag_view_intent(prev, series, want_notify, want_trigger):
     """Pure last-write-wins merge for drag view-intent coalescing (testable).
@@ -1877,6 +1890,68 @@ class _VCLoadMixin:
             return study_uid, orig, ent_uid
         return primary_study, sn, None
 
+    def _view_intent_series_complete_on_disk(self, series_number) -> bool:
+        """True when *series_number* already has ALL its expected images on disk, so a
+        DM priority/download intent for it would only re-fetch a finished series.
+
+        DATA-SAFE: the expected count comes ONLY from the SERVER series-info
+        ``image_count`` (never the disk fallback, which would make expected == disk
+        and always return True). Returns False — i.e. proceeds with the download — on
+        any uncertainty (no server count, folder missing, or disk < expected). The
+        disk count is the series' OWN study folder (multi-study safe) and counts only
+        finished ``.dcm`` files (``.part`` excluded by suffix)."""
+        try:
+            display_key = str(series_number)
+            study_uid = str(getattr(self.parent_widget, 'study_uid', '') or '')
+            orig_sn = display_key
+            if _DM_CANON_IDENTITY:
+                try:
+                    _r_study, _r_series, _ = self._resolve_canonical_series_identity(series_number)
+                    if _r_study:
+                        study_uid = _r_study
+                    if _r_series:
+                        orig_sn = str(_r_series)
+                except Exception:
+                    pass
+            # SERVER's authoritative expected image count (display-key keyed). Bail
+            # (never skip) when it is missing/zero.
+            expected = 0
+            ssi = getattr(self.parent_widget, '_server_series_info', {}) or {}
+            info = ssi.get(display_key) or ssi.get(orig_sn) if isinstance(ssi, dict) else None
+            if isinstance(info, dict):
+                try:
+                    expected = int(
+                        info.get('image_count')
+                        or (info.get('series') or {}).get('image_count')
+                        or 0
+                    )
+                except (TypeError, ValueError):
+                    expected = 0
+            if expected <= 0 or not study_uid:
+                return False
+            from PacsClient.utils.config import SOURCE_PATH
+            series_dir = os.path.join(str(SOURCE_PATH), study_uid, orig_sn)
+            if not os.path.isdir(series_dir):
+                return False
+            disk = 0
+            with os.scandir(series_dir) as it:
+                for e in it:
+                    if e.is_file(follow_symlinks=False):
+                        nm = e.name
+                        if nm.endswith('.dcm') or nm.endswith('.dicom'):
+                            disk += 1
+            # Decide "complete" through the ONE shared completeness authority
+            # (series_completeness), not a bespoke disk-vs-expected compare. Its
+            # has_expected_count gate keeps the data-safety: an unknown server count
+            # is never "complete", so the download always proceeds.
+            from PacsClient.utils.series_completeness import build_series_completeness_snapshot
+            snap = build_series_completeness_snapshot(
+                orig_sn, expected_count=expected, disk_count=disk,
+            )
+            return snap.has_expected_count and snap.is_disk_complete
+        except Exception:
+            return False
+
     def _coalesce_dm_view_intent(self, series_number, *, want_notify=False, want_trigger=False):
         """Globally coalesce the DM priority/download intent for a viewed series.
 
@@ -1888,6 +1963,24 @@ class _VCLoadMixin:
         intent waits the short debounce window. Default on; ``AIPACS_DRAGDROP_DEBOUNCE=0``
         restores the immediate per-key path (the downstream cooldown guards still apply).
         """
+        # Skip the whole DM intent when the series is ALREADY COMPLETE on disk — it
+        # needs neither a download nor a priority change, and re-requesting it (even
+        # the priority-critical notify) re-fetches a finished series (48272 series
+        # 302). The viewer still displays it from disk (this guard touches only the
+        # DM intent, never the load) and other in-flight series keep downloading.
+        if (
+            _DL_SKIP_COMPLETE_VIEW_INTENT
+            and (want_trigger or want_notify)
+            and self._view_intent_series_complete_on_disk(series_number)
+        ):
+            try:
+                self.logger.info(
+                    "[DL-SKIP-COMPLETE] view-intent series=%s already complete on disk "
+                    "-> no re-download/priority", series_number,
+                )
+            except Exception:
+                pass
+            return
         if not _DRAGDROP_COALESCE:
             # Legacy: dispatch immediately. The per-(study,series) cooldown inside
             # _notify_dm_viewed_series and the 2 s in-flight guard inside
@@ -2072,6 +2165,20 @@ class _VCLoadMixin:
     def _trigger_download_if_needed(self, series_number: str):
         """Trigger server download if series not available locally"""
         try:
+            # Complete-on-disk guard (48272 series 302): also applied HERE, not only in
+            # _coalesce_dm_view_intent, because some callers (e.g. _pw_series) invoke this
+            # directly. Never re-fetch a series whose images are all on disk. Data-safe:
+            # _view_intent_series_complete_on_disk only returns True on a known server
+            # count AND disk >= expected (see its docstring).
+            if _DL_SKIP_COMPLETE_VIEW_INTENT and self._view_intent_series_complete_on_disk(series_number):
+                try:
+                    logger.info(
+                        "[DL-SKIP-COMPLETE] retry-trigger series=%s already complete on disk -> skip",
+                        series_number,
+                    )
+                except Exception:
+                    pass
+                return
             # Canonical identity (P0): a multi-study DISPLAY key must resolve to the
             # ACTUAL (study_uid, original_series_number, series_uid) so the retry /
             # critical request targets the CORRECT study — never the primary study

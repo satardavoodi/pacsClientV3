@@ -32,6 +32,51 @@ agent **asks the user which domain they meant** — it never substitutes a defau
 
 ---
 
+## 1b. Two-brain architecture (how a command becomes an action)
+
+Routing is a cooperation between two parts. Neither works alone.
+
+**Internal orchestrator (local, not intelligent).** Owns app state and the tools. Its jobs:
+1. Receive the transcript.
+2. **Advertise the available capabilities** (the tool list) to the LLM — completely and
+   accurately. (This is where the historical bugs were: the verb map omitted web tools, the
+   Phase-2 module doc omitted the browser page tools, and the single-shot fallback advertised
+   only 3 patient actions.)
+3. **Validate** the LLM's chosen action against the allow-list (`validator.py`).
+4. **Execute** it through the right adapter and return the result.
+5. **Log** the full path.
+
+**External LLM (the reasoning brain).** Receives the transcript + the advertised capabilities +
+app/date/memory context + these tool-selection rules, and **chooses the tool**. It must not be
+boxed in by a lossy pre-selection — when a search could be web or patient, it needs to see both.
+
+**Pipeline (must stay intact):**
+
+```
+voice → transcription → orchestrator gathers capabilities + context
+      → LLM selects intent/tool  (Phase-1 module routing → Phase-2 action planning, or single-shot)
+      → orchestrator validates the selected tool
+      → orchestrator executes the adapter
+      → result returned to the user
+      → session log records: transcript → routing(modules,reason) → tool → validation → result
+```
+
+**Capability advertisement format** (what the orchestrator tells the LLM). Phase-1 receives the
+module catalog + the available `module_id` list; Phase-2 receives the chosen modules' full tool
+docs; the single-shot fallback receives the flat capability registry (`prompt_context.py`). Each
+tool is advertised as `name {entities} — one-line purpose`, e.g.:
+
+```
+web_search {query} — search the internet/Google for information or a medical topic.
+select_patient {patient_code} — find/locate a patient row in the list (no viewer).
+browser_fill_field {selector,value} — type a value into a page field.
+```
+
+**Lossy-bottleneck rule:** Phase-1 must not pre-select a single module when the command is
+ambiguous between domains. For a search whose object is a medical topic (not a patient), Phase-1
+returns **web_browser AND homepage** so the planner chooses with full context; if nothing fits it
+returns `modules: []` (→ clarify) and never substitutes the patient list.
+
 ## 2. Intent domains
 
 | Domain | What it means | Primary tool(s) | Module |

@@ -44,7 +44,8 @@ def test_write_portable_support_files_with_viewer_launcher():
     # No launcher exe was staged here → autorun falls back to RUN_VIEWER.cmd.
     autorun = (staging / "autorun.inf").read_text(encoding="utf-8")
     assert "open=RUN_VIEWER.cmd" in autorun
-    assert "icon=VIEWER\\Viewer.exe,0" in autorun
+    assert "icon=AIPACS.ico" in autorun           # AI-PACS icon on the CD drive
+    assert (staging / "AIPACS.ico").exists()
     # We must NEVER ship a .hta launcher (it triggers a Windows 'open with' prompt).
     assert not (staging / "RUN_VIEWER.hta").exists()
     assert ".hta" not in autorun
