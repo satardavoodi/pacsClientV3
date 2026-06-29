@@ -827,6 +827,71 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   `AIPACS_VIEWPORT_DISK_READY_RESUME` (default on). Deeper follow-up (not done): bridge the
   secondary study's progress so it binds progressively DURING download, not only on completion.
   Guard `tests/code/viewer/test_viewport_loading_lifecycle.py`.
+- **Canonical on-disk completeness for colliding multi-study series** (`_vc_progressive.py`, NOT
+  mirrored — patient 48296, 3 studies, 2026-06-29): a SECONDARY series whose number (or even
+  SeriesInstanceUID) COLLIDES with another study's series can carry a WRONG server `expected`
+  image_count in its offset-key metadata that does NOT describe the TRUE on-disk series (live: study-2
+  `2000006` = series 6, all 30 images downloaded to `…/<study2>/6/`, but the viewport stayed stuck on
+  1). The live grow bridge is primary-study-bound (above), so the disk-ready resume is the ONLY
+  backstop — and its strict `count >= expected` never trips with a poisoned `expected`, so the resume
+  silently returned every tick (no `ViewportLoadResumedFromDisk` log) and the series never grew past
+  its one progressive-first image. FIX (flag `AIPACS_CANONICAL_DISK_COMPLETE`, default on; `=0` =
+  legacy expected-only): the resume now ALSO completes when the series' OWN canonical folder
+  (`SOURCE_PATH/<study_uid>/<orig_series>`, resolved collision-free via
+  `_resolve_canonical_series_identity`) has SETTLED — a positive, STABLE `.dcm` count across two
+  watchdog ticks AND **no in-flight `.part`** (`_disk_series_settled(count, prev, has_part)`). This
+  trusts the DISK (the collision-free authority) over the poisoned metadata count, so the series binds
+  to its TRUE on-disk images. ONLY ADDS a completeness route — the strict path, the SETTLED-STATE STOP
+  and all livelock guards are unchanged; single/primary series with a correct `expected` never reach
+  it. The `.part` check (DM writes `<name>.part`→`os.replace`→`.dcm`) prevents settling a still-writing
+  folder; the stable-count check prevents settling a still-growing one — so it does NOT regress the
+  mehr slow-link premature-load guard. Pure helper `_disk_series_settled`; guard
+  `tests/code/viewer/test_canonical_disk_complete.py`. NEEDS live source-build verify on 48296 (open
+  study-2 series 6 → grows to its full on-disk count). STAGED (the deeper "grow DURING download for a
+  secondary study" still needs the primary-bound bridge to route secondary events by canonical
+  identity — bigger change).
+- **Settle-stop must confirm the viewport shows the AWAITED series** (`_vc_progressive.py`, NOT
+  mirrored — patient 48101 Study 3, a previous exam, 2026-06-29): the SETTLED-STATE STOP compared the
+  viewport's CURRENT slice count to the awaited series' on-disk count (`_settled_visible = visible >=
+  count`). When the viewport was still showing a DIFFERENT, LARGER series (a primary-study 10-slice
+  series) and the user dragged a SMALLER series (the previous exam's 5-slice series), `visible(10) >=
+  disk(5)` was True, so the resume declared the awaited series "settled" and CLEARED its awaiting flag
+  **without ever loading it** — the awaited series never displayed and the other study's series stayed
+  on screen (live log: `disk-ready resume: series=2000001 settled (visible=10 disk=5 …)` — the
+  "loaded a Study-1 series instead of Study 3" report; identity + disk were CORRECT, `[MULTI-STUDY
+  LOAD] key=2000001 -> study_path=…\15469842720.165` resolved fine and 5 .dcm were present). FIX
+  (flag `AIPACS_RESUME_SETTLE_REQUIRE_SERIES`, default on; `=0` = legacy visible≥count): new
+  `_viewport_displayed_series_number(vtk_w)` reads the FAST container's live
+  `_qt_bridge.metadata['series']['series_number']` (the same identity the same-series no-op uses);
+  `_settled_visible` now also requires that to equal the awaited `display_key` — when a DIFFERENT
+  series is on screen the resume proceeds to LOAD the awaited one instead of falsely settling. When
+  the displayed series can't be read → legacy behavior (treat as awaited), so nothing else regresses;
+  the attempt-cap + authority remain the livelock backstop (the 47084/47801 stale-flag settle still
+  works because there the displayed series IS the awaited one). NOTE: the `…1546984` "truncation" seen
+  in `[VIEWPORT_LIFECYCLE]` was a red herring — `_log_viewport_lifecycle` logs `study_uid[:48]`, so a
+  56-char Mindray uid is just display-clipped; the real study_uid is correct. A diagnostic
+  `[PREV-EXAM-UID]` trace (`_pw_previous_exams.py`, `AIPACS_PREV_EXAM_UID_TRACE` default-on) confirmed
+  the previous-exam metadata uid matches disk. Guard
+  `tests/code/viewer/test_resume_settle_requires_awaited_series.py`. NEEDS live verify on 48101
+  (drag Study 3 → its own 5-image ultrasound displays, not a Study-1 series).
+- **A multi-study SECONDARY series must load with ITS OWN study_pk, not the primary's** (`_vc_load.py`,
+  NOT mirrored — 48101 Study 3, 2026-06-29; the ACTUAL "loads a Study-1 series" cause). After the
+  settle fix Study 3 still showed Study 1. Live: `[MULTI-STUDY LOAD] key=2000001 -> study_path=
+  …15469842720.165` (disk path CORRECT) but `FAST:series_selected … study_uid=<primary>`. ROOT:
+  `_load_single_series_on_demand` passes `study_pk=_effective_study_pk` to `load_single_series_by_number`,
+  and `_effective_study_pk` DEFAULTS to the PRIMARY study's pk (`metadata_fixed['study_pk']`); the
+  per-series override was gated behind `AIPACS_VIEWER_DB_METADATA_MULTISTUDY` (default off). So a
+  secondary series whose NUMBER collides with the primary's (both have a series 1) fetched the
+  PRIMARY's series 1 from the DB → the primary study's images displayed under the secondary's offset
+  key. (Study 2's synthetic uid `1.2.3.4.44145` worked by luck — no colliding DB rows under the
+  primary.) FIX (flag `AIPACS_MULTISTUDY_PER_SERIES_STUDY_PK`, default on; `=0` = legacy primary pk):
+  a resolved SECONDARY series (`_ms_resolved` and `_ms_study_uid != tab.study_uid`) sets
+  `_effective_study_pk` to its OWN study_pk (`find_study_pk_with_study_uid(_ms_study_uid)`), or `None`
+  → the loader reads headers from the resolved secondary `study_path` on disk; either way NEVER the
+  primary's DB rows. The PRIMARY series (slot 0; `_ms_study_uid` None/==primary) is byte-identical. Also
+  fixed the misleading `[H7-P4] disk_file_count` (it counted `study_path/<display key>` e.g. `/2000001`
+  instead of `study_path/<orig series>` `/1` → a false `0`; diagnostic only, not the failure). Guard
+  `tests/code/viewer/test_multistudy_per_series_study_pk.py`. NEEDS live verify on 48101.
 - **Clinical guardrail:** download/priority/perception only. No VTK/MPR geometry, slice
   order, orientation, or render change. No data-loss risk (atomic `.part` + resume). All
   three pieces are flag-gated default-on with the legacy path preserved as a kill switch.
@@ -1063,6 +1128,23 @@ the 2nd click). Flag `AIPACS_MPR_ANNOTATION_SMOOTH` (default ON; `=0` = byte-ide
   EDIT an existing placed annotation (the single-use widgets go `Off()` after placement; making them
   re-grabbable is a lifecycle change) — needs its own pass + live verify.
 
+#### Placement render-throttle (ruler/angle smoothness, 48272 follow-up, 2026-06-28)
+The `vtkDistanceWidget` (ruler) and `vtkAngleWidget` render on EVERY `MouseMoveEvent` during the
+two-point placement. On a large reslice the flood of move events (100-200/s on Windows) saturates the
+GUI thread → choppy / laggy rubber-band even though each render is a cheap cached-reslice composite.
+Fix (`AIPACS_MPR_ANNOTATION_THROTTLE_MS`, default 16; `=0` = byte-identical legacy):
+`_install_placement_render_throttle(view_name, interactor)` (called at the end of
+`_activate_ruler_on_view` / `_activate_angle_on_view`) adds a **priority-1.0** `MouseMoveEvent`
+observer that **drops** (`cmd.SetAbortFlag(1)`) any move arriving within the frame budget, so the
+widget (priority ~0.5) renders at ~the frame cadence — matching the crosshair interaction throttle.
+- **Safety:** the observer aborts ONLY while a measurement is being placed (`current_tool` is
+  `'ruler'`/`'angle'`); outside placement it never aborts, so crosshair / WL / hover stay fully
+  responsive. The 2nd/3rd click (`LeftButtonPress`) is never throttled → the final point lands exactly.
+  Render TIMING only — no geometry/reslice/measurement change. Removed in `_do_single_use_auto_exit`
+  AND `deactivate_tool` via `_remove_placement_render_throttles()` (mirrors the arrow observer
+  lifecycle). Also removed two per-activation debug `print()`s. Guard
+  `tests/code/viewer/test_mpr_annotation_render_throttle.py`. Not plugin-mirrored. NEEDS live verify.
+
 #### Annotation PERSISTENCE — multiple measurements stay visible (2026-06-28)
 "Draw a 2nd measurement, the 1st disappears" root cause: `_do_single_use_auto_exit` removed EVERY
 ruler/angle widget on the non-completed views — including PREVIOUSLY-COMPLETED measurements — so
@@ -1078,21 +1160,58 @@ which shows ALL current-slice widgets); off-slice hiding is the intentional slic
 plugin-mirrored. (The Advanced/FAST VTK viewer is unaffected — its `update_slice` already `On()`s every
 widget on the current slice.)
 
-#### Annotations target the MPR after an active-layout switch (48117, 2026-06-28)
-In a multi-cell layout with the MPR in one cell, clicking another cell runs the MPR-preserve
-active-viewport switch (`_vc_layout.set_viewer_to_main_viewer`, `AIPACS_MPR_PRESERVE_ON_VIEWPORT_CHANGE`):
-it keeps the MPR intact but moves `selected_widget` to the clicked (FAST) cell while keeping
-`tool_selected == MPR`. The toolbar annotation handlers passed `selected_widget` to `toggle_ruler/
-angle/arrow/text`, so the tool armed the now-active FAST cell and the MPR window couldn't be annotated.
-Fix: `ToolbarManager._annotation_target_widget()` — when MPR mode is active (`tool_access.MPR in
-str(tool_selected)`) but the active cell isn't the MPR (`is_mpr_viewer` False), it scans
-`lst_nodes_viewer` for the host cell carrying `_zeta_mpr_widget` and returns THAT, so the annotation
-routes to the MPR. All five annotation button handlers (ruler/angle/two-line-angle/arrow/text) call it
-instead of `selected_widget`. Single-MPR / MPR-is-active layouts are unaffected (active cell IS the MPR).
-UNIFIED 2026-06-28: the `AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR` flag was RETIRED after it was confirmed
-live (`[MPR-ANNOT-ROUTE]` ×3 in the logs) — this routing is now unconditional. Guard
-`tests/code/viewer/test_mpr_annotation_layout_switch.py`. `toolbar_manager.py` is large — verify it on the
-real machine (the sandbox FUSE mount tears it on read → false syntax errors).
+##### Slice-binding must use the CREATION coordinate, not the 2D-widget geometry (48272, 2026-06-28)
+A SECOND root cause behind "draw a 2nd ruler → both disappear" and "scroll away + back → annotations
+gone": `refresh_slice_visibility` decided which slice an annotation belongs to by reading the 2D widget
+geometry — `_annotation_look_coord` did `item.GetRepresentation().GetPoint1WorldPosition()[look_axis]`.
+For a `vtkDistanceRepresentation2D` the through-plane component of that world point is NOT reliably the
+reslice-plane position, so annotations ON the current slice failed the `abs(cur-pos) <= tol` test and
+were `Off()`'d — they looked "removed / behind the image". Fix: capture the reslice coordinate AT
+CREATION into `self._annotation_slice_coord[id(widget)] = float(current_position[look_axis])` inside
+`_do_single_use_auto_exit` (recorded BEFORE the `refresh_slice_visibility(completed_view)` call so the
+first refresh already uses it), and make `_annotation_look_coord` PREFER that stored value (the
+geometry read stays only as a fallback for any pre-existing annotation). Cleaned in `clear_measurements`
+and `delete_measurement_at` (`_annotation_slice_coord.pop(id(widget), None)`). Result: multiple
+measurements on one slice stay visible TOGETHER, and scrolling back to the slice restores them. Arrows
+already stored their world point (`p1`) so they were unaffected. Structured diagnostic
+`[MPR-ANNOT] annotation_created=1 tool=… mpr_view_id=… slice_index=… annotation_id=…
+annotation_collection_count=… annotation_render_refresh=immediate` logs each completion. Guard
+`tests/code/viewer/test_mpr_annotation_slice_binding.py` (behavioral: two rulers on one slice stay
+visible, hide off-slice, restore on return). Not plugin-mirrored. NEEDS live source-build verify.
+
+#### Annotation tools are VIEWPORT-SCOPED, not MPR-routed (48272, 2026-06-28 — REVERSES 48117)
+`ToolbarManager._annotation_target_widget()` returns the active `selected_widget` ALWAYS — the cell
+the user last selected. Each layout/cell annotates independently; the tool targets whatever viewport
+is active. To annotate the MPR, its cell must be the active viewport (and it IS annotatable then —
+`is_mpr_viewer(selected_widget)` detects `_zeta_mpr_widget` and `toggle_ruler` routes to
+`MPRMeasurementTools`).
+- **History / why this is the rule.** The earlier 48117 fix did the opposite: when MPR mode was
+  globally active (`tool_access.MPR in str(tool_selected)`) it scanned `lst_nodes_viewer` and
+  rerouted EVERY annotation to the MPR host cell (`AIPACS_ANNOTATION_ROUTE_TO_OPEN_MPR`,
+  `[MPR-ANNOT-ROUTE]`). That over-corrected: with the MPR open in Layout 1 you could no longer
+  annotate Layout 2 (the FAST cell) at all — the tool always armed the MPR. Patient 48272 reported
+  exactly this. The MPR-routing + its flag were REMOVED; the resolver is now a one-liner
+  (`return getattr(self.patient_widget, 'selected_widget', None)`). This honors the "one strong rule,
+  fewer exceptions" directive — annotation always follows the active viewport, no global MPR special-case.
+- All five annotation handlers (ruler / angle / two-line-angle / arrow / text) still call
+  `self._annotation_target_widget()`; do NOT pass a hard-coded cell.
+- **MPR-click-to-activate (closes the gap, 48272, 2026-06-28).** A `StandardMPRViewer` is NOT a FAST
+  `qt_fast_container`, so its VTK clicks never ran `change_container_border` — after annotating
+  another cell you could not re-select the MPR by clicking it, so the ruler kept arming the other
+  cell ("can't draw on MPR after annotating the other layout"). Fix: the MPR's per-pane `eventFilter`
+  (`_mpr_layout.py`, already installed on every pane) calls a host-set `_viewport_activate_cb` on
+  `MouseButtonPress`; `set_viewport_activate_callback` is the setter. `ToolbarManager.toggle_zeta_mpr`
+  wires that callback to `patient_widget.change_container_border(host_cell.id_vtk_widget)` right after
+  `selected_widget._zeta_mpr_widget = zeta_widget`. So clicking any MPR pane makes the MPR's cell the
+  active `selected_widget`, and the viewport-scoped `_annotation_target_widget()` then targets the MPR
+  (`is_mpr_viewer` True → `toggle_ruler` → `MPRMeasurementTools`). PASSIVE (does not consume the press
+  → crosshair/WL/stack unchanged); the callback is a cheap **no-op when the MPR cell is already
+  active** (guarded by `selected_widget is host_cell`), so crosshair clicks add no work. Flag
+  `AIPACS_MPR_ACTIVATE_ON_CLICK` (default-on; `=0` = callback never set → MPR side byte-identical).
+  Only the standard 4-panel `toggle_zeta_mpr` open is wired (the Curve-MPR / dental hosts are separate).
+- Guards: `tests/code/viewer/test_mpr_annotation_layout_switch.py` (viewport-scoped resolver) +
+  `tests/code/viewer/test_mpr_click_activates_cell.py` (the click-activates-cell hook). `toolbar_manager.py`
+  is large — verify it on the real machine (the sandbox FUSE mount tears it on read → false syntax errors).
 
 ### Unified MPR/3D pipeline — standard (Zeta) MPR is the base for ALL MPR/3D (directive 2026-06-22)
 ALL MPR/3D modules must share ONE structure — the **layout, viewport usage, viewing structure,

@@ -153,9 +153,11 @@ def _parse_action_plan(raw: str) -> SecretaryActionPlan | None:
 
 
 def _workflows_enabled() -> bool:
-    """Multi-step execution is gated by AIPACS_SECRETARY_WORKFLOWS (default off)."""
+    """Multi-step execution (compound "do X and Y" voice commands). DEFAULT-ON
+    (2026-06-28). Set AIPACS_SECRETARY_WORKFLOWS=0 to restore single-action
+    collapse (compound requests run only the first action)."""
     import os
-    return os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "").strip() == "1"
+    return os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "1").strip() != "0"
 
 
 def _normalize_multistep(parsed):

@@ -92,11 +92,12 @@ class SecretaryOrchestrator:
 
     @staticmethod
     def _workflows_enabled() -> bool:
-        """Multi-step workflow execution is gated by AIPACS_SECRETARY_WORKFLOWS
-        (default OFF). When off, the brain never emits a ``__workflow__`` plan
-        (it collapses to the first action), so this whole path is inert."""
+        """Multi-step workflow execution. DEFAULT-ON (2026-06-28). Set
+        ``AIPACS_SECRETARY_WORKFLOWS=0`` to restore single-action collapse —
+        then the brain never emits a ``__workflow__`` plan (it collapses to the
+        first action) and this whole path is inert (byte-identical legacy)."""
         import os
-        return os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "").strip() == "1"
+        return os.environ.get("AIPACS_SECRETARY_WORKFLOWS", "1").strip() != "0"
 
     # ── Multi-step workflow execution (flag-gated; 2026-06-23) ─────────────────
     _WORKFLOW_ACTION = "__workflow__"

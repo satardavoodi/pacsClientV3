@@ -39,6 +39,22 @@ class _MprLayoutMixin:
             if view_name:
                 self._set_active_view(view_name)
             self.stop_auto_rotation()
+            # Select the MPR's HOST cell as the active viewport on a pane click, so
+            # annotation tools (ruler / arrow / text) target the MPR — exactly like
+            # clicking a FAST cell selects it. Without this, after annotating another
+            # cell the MPR could not be re-selected by clicking it, so the ruler kept
+            # arming the other cell (patient 48272 — "can't draw on MPR after
+            # annotating the other layout"). PASSIVE: we do NOT return True, so the
+            # press still reaches VTK (crosshair / WL / stack unchanged). The callback
+            # is set by the host only when enabled and is a cheap no-op when the MPR
+            # cell is already active.
+            if event.type() == event.Type.MouseButtonPress:
+                try:
+                    _vac = getattr(self, '_viewport_activate_cb', None)
+                    if callable(_vac):
+                        _vac()
+                except Exception:
+                    pass
 
         # ---- 3D Render-box RMB handling (Qt level) ----
         if view_name == '3d':
@@ -75,6 +91,14 @@ class _MprLayoutMixin:
                         return True  # consume move during drag
 
         return super().eventFilter(obj, event)
+
+    def set_viewport_activate_callback(self, cb):
+        """Host hook: invoked on a mouse press in ANY MPR pane so the host can make
+        the MPR's cell the active viewport — annotation tools (ruler / arrow / text)
+        then target the MPR, exactly like clicking a FAST cell selects it. No-op
+        until the host sets it (so flag-off / unwired = byte-identical legacy).
+        Wired by ToolbarManager.toggle_zeta_mpr (patient 48272)."""
+        self._viewport_activate_cb = cb
 
     def _register_view(self, view_name, container, vtk_widget, row, col, row_span=1, col_span=1):
         """Register a view container/widget for expand/collapse and event handling."""

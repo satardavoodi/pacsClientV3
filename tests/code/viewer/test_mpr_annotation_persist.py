@@ -103,6 +103,7 @@ def test_cross_view_completed_measurement_survives_behavioral():
         mpr_viewer=types.SimpleNamespace(_render_immediately=lambda v: None),
     )
     fake._deactivate_arrow_placement = lambda: None
+    fake._remove_placement_render_throttles = lambda: None
     fake.refresh_slice_visibility = lambda v=None: None
     fake._apply_annotation_visibility = lambda item, tt, vis: None
 

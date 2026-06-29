@@ -1,9 +1,29 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.0 (2026-06-28)
-**Previous Stable:** v3.3.9 (2026-06-27)
-**Release Date:** 2026-06-28
+**Current Stable Version:** v3.4.1 (2026-06-29)
+**Previous Stable:** v3.4.0 (2026-06-28)
+**Release Date:** 2026-06-29
 **Branch:** beta-version
+
+---
+
+## v3.4.1 (2026-06-29) - Patch release: AI CT/MRI reporting, MPR annotation precision, multi-study loading
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Highlights: EchoMind structured CT/MRI report generation, MPR annotation
+precision (per-slice binding, render throttle, click-to-activate cell), correct
+multi-study per-series study resolution, and viewer resume/disk-completeness fixes
+for previous exams.
+
+### Included
+
+- EchoMind viewer-chat: dedicated CT and MRI report generation (openai_reporter) + prompt refinements
+- MPR annotations: per-slice binding, render throttle for smoother drawing, click-to-activate the MPR cell, persistence across layout switch
+- Multi-study: correct per-series study_pk so colliding series load from the right study
+- Viewer resume: canonical on-disk completeness + settle-requires-awaited-series guards (previous exams)
+- Canonical version markers advanced to v3.4.1; full local state published to all remotes
 
 ---
 

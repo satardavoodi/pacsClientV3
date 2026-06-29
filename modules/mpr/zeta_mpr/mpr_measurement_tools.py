@@ -25,6 +25,26 @@ def _annotation_smooth_enabled():
 _MPR_ANNOTATION_SMOOTH = _annotation_smooth_enabled()
 
 
+# Smooth placement render throttle (2026-06-28): the vtkDistanceWidget (ruler) and
+# vtkAngleWidget render on EVERY MouseMoveEvent during the two-point placement. On a
+# large reslice the flood of move events (100-200/s on Windows) saturates the GUI
+# thread → choppy / laggy rubber-band. A high-priority move observer DROPS (aborts)
+# intermediate moves so the widget renders at ~the frame cadence instead — the same
+# 16 ms coalescing the crosshair interaction already uses. The final position always
+# lands (the 2nd click / LeftButtonPress is never throttled), and outside an active
+# placement the observer never aborts, so crosshair / hover stay fully responsive.
+# Render TIMING only — NO geometry, reslice, slice order, or measurement-value change.
+# AIPACS_MPR_ANNOTATION_THROTTLE_MS (default 16; 0 = disabled = byte-identical legacy).
+def _annotation_throttle_ms():
+    try:
+        return max(0, int(os.environ.get("AIPACS_MPR_ANNOTATION_THROTTLE_MS", "16")))
+    except Exception:
+        return 16
+
+
+_MPR_ANNOTATION_THROTTLE_MS = _annotation_throttle_ms()
+
+
 # Annotation persistence (2026-06-28, unified 2026-06-28): multiple measurements
 # stay visible together. The single-use auto-exit removes ONLY the current
 # activation's EMPTY placement widgets (tracked per-view in ``_placement_widgets``),
@@ -76,6 +96,12 @@ class MPRMeasurementTools:
         self._arrow_observers = {}
         self._arrow_pending_tail = {}
 
+        # Placement render-throttle observers (ruler / angle), per view (2026-06-28).
+        # A high-priority MouseMoveEvent observer drops excess moves so the widget
+        # renders at ~the frame cadence during placement (smooth on large reslices).
+        self._placement_throttle_observers = {}   # view_name -> (interactor, tag)
+        self._placement_throttle_last = {}        # view_name -> last-pass monotonic s
+
         # Live arrow rubber-band preview (2026-06-28, FAST-like): while a tail is
         # anchored, a transient leader actor follows the cursor. Per-view mouse-move
         # observer tag, the transient preview actor, and the last display position
@@ -107,6 +133,14 @@ class MPRMeasurementTools:
         # toggles when it actually changes (cheap + flicker-free).
         self._slice_bound_enabled = _slice_bound_annotations_enabled()
         self._annotation_visible_cache = {}   # id(item) -> bool
+        # Per-annotation reslice coordinate captured AT CREATION (2026-06-28). The
+        # slice an annotation belongs to is the through-plane (look-axis) value of
+        # ``current_position`` when it was drawn — NOT a value re-derived from the
+        # 2D widget's ``GetPoint1WorldPosition`` (whose look-axis component is not
+        # reliably the reslice-plane position, so the old binding wrongly HID
+        # annotations on the current slice → "both rulers disappear / not restored
+        # on scroll-back"). Keyed by id(widget). Cleaned on clear/delete.
+        self._annotation_slice_coord = {}   # id(item) -> float (look-axis world coord)
 
         logger.info("MPR Measurement Tools initialized")
 
@@ -119,6 +153,12 @@ class MPRMeasurementTools:
             if tool_type == 'arrow':
                 p1 = item.get('p1') if isinstance(item, dict) else None
                 return float(p1[look_axis]) if p1 is not None else None
+            # Prefer the reslice coordinate captured at CREATION (reliable). The
+            # 2D-widget geometry fallback below is kept only for any annotation
+            # created before this map existed.
+            stored = self._annotation_slice_coord.get(id(item))
+            if stored is not None:
+                return float(stored)
             rep = item.GetRepresentation()
             p = [0.0, 0.0, 0.0]
             if tool_type == 'ruler':
@@ -260,6 +300,8 @@ class MPRMeasurementTools:
                 self._placement_widgets.clear()
             # Arrow: drop the click observers so no further arrows are placed.
             self._deactivate_arrow_placement()
+            # Ruler/angle: drop the placement render-throttle observer.
+            self._remove_placement_render_throttles()
             self._placement_clicks.clear()
             self.current_tool = None
             # Lock the slice binding for the just-completed measurement (it is
@@ -270,6 +312,20 @@ class MPRMeasurementTools:
             # left a SECOND ruler created-but-not-painted (the reported "second
             # measurement doesn't show / looks like it's behind the image").
             try:
+                items = self.active_tools.get(completed_view, {}).get(tool_name, [])
+                # Record the reslice coordinate this measurement was drawn on FIRST,
+                # so the slice-binding (the refresh below AND every future scroll)
+                # uses the RELIABLE stored value instead of the 2D-widget geometry —
+                # this is what keeps multiple measurements visible together and
+                # restores them when the user scrolls back to the slice.
+                if items:
+                    try:
+                        _la = int(self.mpr_viewer._view_axes(completed_view)[0])
+                        self._annotation_slice_coord[id(items[-1])] = float(
+                            self.mpr_viewer.current_position[_la]
+                        )
+                    except Exception:
+                        pass
                 self.refresh_slice_visibility(completed_view)
                 # GUARANTEE the just-drawn measurement is shown: it was created
                 # on the current reslice, so force its visibility True even if a
@@ -277,10 +333,35 @@ class MPRMeasurementTools:
                 # deferred moment (the slice-binding still hides it correctly on
                 # the next scroll). This is what makes a SECOND/Nth measurement
                 # reliably appear.
-                items = self.active_tools.get(completed_view, {}).get(tool_name, [])
                 if items:
                     self._apply_annotation_visibility(items[-1], tool_name, True)
                 self.mpr_viewer._render_immediately(completed_view)
+                # Structured annotation-lifecycle log (48272 diagnostics): one line
+                # per completed measurement so the user can verify on-screen that a
+                # 2nd/Nth annotation IS created, stays in the per-view collection, and
+                # is repainted (not hidden behind the image layer). The active
+                # viewport / layout identity is logged on the toolbar side
+                # ([MPR-PRESERVE] / [MPR-ANNOT-ROUTE]); this covers the per-annotation
+                # fields. Best-effort; never raises.
+                try:
+                    _coll = sum(
+                        len(self.active_tools.get(completed_view, {}).get(_t, []))
+                        for _t in ('ruler', 'angle', 'caption', 'arrow')
+                    )
+                    _sc = (
+                        self._annotation_slice_coord.get(id(items[-1]))
+                        if items else None
+                    )
+                    logger.info(
+                        "[MPR-ANNOT] annotation_created=1 tool=%s mpr_view_id=%s "
+                        "slice_index=%s annotation_id=%s "
+                        "annotation_collection_count=%s annotation_render_refresh=immediate",
+                        tool_name, completed_view,
+                        ("%.3f" % _sc) if _sc is not None else "?",
+                        id(items[-1]) if items else "?", _coll,
+                    )
+                except Exception:
+                    pass
             except Exception:
                 pass
             # Tell the toolbar to drop the tool highlight + restore the MPR
@@ -319,10 +400,8 @@ class MPRMeasurementTools:
             return False
         
         self.current_tool = 'ruler'
-        
+
         # Get the interactor for this view
-        print('self.mpr_viewer.viewers[view_name]:', self.mpr_viewer.viewers[view_name], '\n')
-        print("self.mpr_viewer.viewers[view_name]['widget']:", self.mpr_viewer.viewers[view_name]['widget'])
         interactor = self.mpr_viewer.viewers[view_name]['widget'].GetRenderWindow().GetInteractor()
         renderer = self.mpr_viewer.viewers[view_name]['renderer']
         
@@ -364,6 +443,8 @@ class MPRMeasurementTools:
         self._placement_widgets[view_name] = distance_widget
         # Single-use: exit ruler mode after the 2-point measurement completes.
         self._register_placement_autoexit(distance_widget, view_name, 'ruler', 2)
+        # Smooth placement: render the rubber-band at frame cadence, not per event.
+        self._install_placement_render_throttle(view_name, interactor)
 
         logger.info(f"✓ Ruler widget created and enabled on {view_name}")
         return True
@@ -437,6 +518,8 @@ class MPRMeasurementTools:
         self._placement_widgets[view_name] = angle_widget
         # Single-use: exit angle mode after the 3-point measurement completes.
         self._register_placement_autoexit(angle_widget, view_name, 'angle', 3)
+        # Smooth placement: render the rubber-band at frame cadence, not per event.
+        self._install_placement_render_throttle(view_name, interactor)
 
         logger.info(f"✓ Angle widget created and enabled on {view_name}")
         return True
@@ -716,6 +799,55 @@ class MPRMeasurementTools:
         self._clear_arrow_preview()
         self._arrow_pending_tail.clear()
 
+    # ── Placement render-throttle (ruler / angle smoothness, 2026-06-28) ──────
+    def _install_placement_render_throttle(self, view_name, interactor):
+        """Drop excess MouseMoveEvents during ruler/angle placement so the widget
+        renders at ~the frame cadence (AIPACS_MPR_ANNOTATION_THROTTLE_MS, default
+        16 ms) instead of on every event — smooth rubber-band on large reslices.
+
+        SAFETY: the observer ONLY aborts a move while a measurement is being PLACED
+        (``current_tool`` is 'ruler' / 'angle'); outside placement it never aborts,
+        so crosshair / window-level / hover stay fully responsive. The 2nd/3rd click
+        (LeftButtonPress) is never throttled, so the final point lands exactly. The
+        observer sits ABOVE the vtk measurement widget (priority 1.0 > ~0.5) so an
+        aborted frame skips the widget's per-event render. No-op when disabled."""
+        if not _MPR_ANNOTATION_THROTTLE_MS:
+            return
+        if view_name in self._placement_throttle_observers:
+            return
+        import time as _t
+        budget = _MPR_ANNOTATION_THROTTLE_MS / 1000.0
+        self._placement_throttle_last[view_name] = 0.0
+
+        def _on_move(obj, event, vn=view_name, b=budget):
+            try:
+                if self.current_tool not in ('ruler', 'angle'):
+                    return  # not placing → never block normal interaction
+                now = _t.monotonic()
+                if (now - self._placement_throttle_last.get(vn, 0.0)) < b:
+                    entry = self._placement_throttle_observers.get(vn)
+                    if entry is not None:
+                        cmd = obj.GetCommand(entry[1])
+                        if cmd is not None:
+                            cmd.SetAbortFlag(1)  # drop this frame; widget render skipped
+                else:
+                    self._placement_throttle_last[vn] = now
+            except Exception:
+                pass
+
+        tag = interactor.AddObserver("MouseMoveEvent", _on_move, 1.0)
+        self._placement_throttle_observers[view_name] = (interactor, tag)
+
+    def _remove_placement_render_throttles(self):
+        """Remove all ruler/angle placement throttle observers (call on tool exit)."""
+        for view_name, (interactor, tag) in list(self._placement_throttle_observers.items()):
+            try:
+                interactor.RemoveObserver(tag)
+            except Exception:
+                pass
+        self._placement_throttle_observers.clear()
+        self._placement_throttle_last.clear()
+
     def deactivate_tool(self, view_name=None):
         """
         Deactivate current tool
@@ -736,6 +868,8 @@ class MPRMeasurementTools:
 
         # Arrow placement observers must not outlive the tool toggle.
         self._deactivate_arrow_placement()
+        # Ruler/angle placement render-throttle observers likewise.
+        self._remove_placement_render_throttles()
         # Forget any tracked (unplaced) placement widgets from the last activation.
         self._placement_widgets.clear()
 
@@ -771,8 +905,9 @@ class MPRMeasurementTools:
 
                 for widget in self.active_tools[vn][tool]:
                     try:
-                        # Drop the slice-visibility cache entry for this item.
+                        # Drop the slice-visibility cache + stored slice for this item.
                         self._annotation_visible_cache.pop(id(widget), None)
+                        self._annotation_slice_coord.pop(id(widget), None)
                         if tool == 'arrow':
                             # Arrow entries are dicts holding a raw
                             # vtkLeaderActor2D, not a VTK widget — remove the
@@ -852,6 +987,8 @@ class MPRMeasurementTools:
             self.active_tools[view_name][tool_type].remove(widget)
         except ValueError:
             pass
+        self._annotation_visible_cache.pop(id(widget), None)
+        self._annotation_slice_coord.pop(id(widget), None)
 
         logger.info(f"✓ Deleted {tool_type} measurement on {view_name}")
         return True

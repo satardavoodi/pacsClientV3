@@ -1987,42 +1987,19 @@ class ToolbarManager:
 
     def _annotation_target_widget(self):
         """Resolve which viewport an annotation tool (ruler / angle / arrow / text)
-        should target.
+        should target — VIEWPORT-SCOPED.
 
-        Normally the active ``selected_widget``. BUT when MPR mode is active and the
-        active viewport was switched to ANOTHER cell, annotations must still target
-        the MPR cell. The MPR-preserve active-viewport switch
-        (``_vc_layout.set_viewer_to_main_viewer``) keeps the MPR intact in its own
-        cell while moving the active selection to the clicked (FAST) cell, so
-        ``selected_widget`` is no longer the MPR — and pressing Ruler/Angle/Arrow
-        then arms the now-active FAST cell, leaving the MPR window unannotatable
-        (reported: "annotation doesn't work on the MPR window after switching the
-        active layout", patient 48117). In that one case we return the open MPR HOST
-        widget so the tool routes to the MPR; otherwise the active widget is returned
-        unchanged. Single-MPR / MPR-is-active layouts are unaffected (the active cell
-        IS the MPR). This routing is unconditional (the flag that gated it was retired
-        after it was confirmed live).
+        It is ALWAYS the active ``selected_widget`` (the cell the user last selected),
+        so each layout/cell annotates independently. An MPR open in ONE cell must NOT
+        capture annotations meant for ANOTHER cell — the reported "Layout 2 can't use
+        annotation tools while Layout 1 is in MPR" (patient 48272). An earlier version
+        rerouted annotations to the open MPR cell whenever MPR mode was globally
+        active; that broke the multi-layout case and is removed. To annotate the MPR,
+        its cell must be the active viewport (open MPR there / select that cell) — a
+        single-MPR or MPR-is-active layout is unaffected because the active cell IS the
+        MPR.
         """
-        sw = getattr(self.patient_widget, 'selected_widget', None)
-        try:
-            # Active cell is already the MPR → nothing to reroute.
-            if self.is_mpr_viewer(sw):
-                return sw
-            # Only reroute while MPR mode is the active mode (tool_selected carries MPR).
-            if not (self.tool_selected and self.tool_access.MPR in str(self.tool_selected)):
-                return sw
-            # MPR mode active but the active cell isn't the MPR → find the open MPR host.
-            for node in getattr(self.patient_widget, 'lst_nodes_viewer', []) or []:
-                w = getattr(node, 'vtk_widget', None)
-                if w is not None and getattr(w, '_zeta_mpr_widget', None) is not None:
-                    logger.info(
-                        "[MPR-ANNOT-ROUTE] active cell is not the MPR but MPR mode is "
-                        "active → routing annotation to the open MPR cell"
-                    )
-                    return w
-        except Exception:
-            pass
-        return sw
+        return getattr(self.patient_widget, 'selected_widget', None)
 
     def _mpr_single_use_tool_finished(self):
         """Callback fired by the MPR viewer when a single-use tool
@@ -5459,7 +5436,34 @@ class ToolbarManager:
                 selected_widget._zeta_mpr_widget = zeta_widget
                 selected_widget._original_visible = True
                 zeta_widget._original_widget = selected_widget
-                
+
+                # Clicking any MPR pane selects the MPR's HOST cell as the active
+                # viewport, so annotation tools target the MPR like a FAST cell
+                # (patient 48272: after annotating another cell the MPR could not be
+                # re-selected by clicking it → the ruler kept arming the other cell).
+                # Flag default-on; AIPACS_MPR_ACTIVATE_ON_CLICK=0 = legacy (callback
+                # never set → MPR side byte-identical). No-op when already active, so
+                # crosshair clicks stay cheap; passive (the press still reaches VTK).
+                try:
+                    if (os.getenv("AIPACS_MPR_ACTIVATE_ON_CLICK", "1") or "1").strip() != "0":
+                        _mpr_host_cell = selected_widget
+
+                        def _activate_mpr_host(_h=_mpr_host_cell):
+                            try:
+                                _pw = self.patient_widget
+                                if getattr(_pw, "selected_widget", None) is _h:
+                                    return  # already active — cheap no-op on crosshair clicks
+                                _hid = getattr(_h, "id_vtk_widget", None)
+                                if _hid is not None:
+                                    _pw.change_container_border(_hid)
+                            except Exception:
+                                pass
+
+                        if hasattr(zeta_widget, "set_viewport_activate_callback"):
+                            zeta_widget.set_viewport_activate_callback(_activate_mpr_host)
+                except Exception:
+                    pass
+
                 # Set tool as active and update button state (turns green)
                 self.tool_selected = self.tool_access.MPR
                 self.handle_buttons_checked()

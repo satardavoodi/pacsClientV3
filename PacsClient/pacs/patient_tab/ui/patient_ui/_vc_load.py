@@ -762,6 +762,52 @@ class _VCLoadMixin:
                 except Exception:
                     pass  # leave the default study_pk -> unchanged disk header path
 
+            # Per-series study_pk for a multi-study SECONDARY series (48101 Study 3,
+            # 2026-06-29). `_effective_study_pk` defaults (line above) to the PRIMARY
+            # study's pk. When THIS load resolved to a DIFFERENT study (a previous exam /
+            # secondary study — `_ms_study_uid` != the tab's primary) whose series NUMBER
+            # collides with the primary's (here both have a series 1), passing the PRIMARY
+            # pk makes `load_single_series_by_number` fetch the PRIMARY study's same-
+            # numbered series from the DB → the viewer displays the WRONG study's images
+            # ("Study 3 loads a Study-1 series"; live: FAST:series_selected study_uid=
+            # <primary>, metadata_instance_count=5 under the primary pk). The disk path
+            # was already resolved correctly to the secondary study's folder; the bug is
+            # ONLY the DB study_pk. Fix: resolve THIS series' OWN study_pk so the DB
+            # metadata is for the correct study; if it can't be resolved, pass None so the
+            # loader reads headers from the (correct) resolved `study_path` on disk instead
+            # of the primary's DB rows. The PRIMARY series (slot 0; `_ms_study_uid` None or
+            # == primary) is never touched → byte-identical. Flag
+            # AIPACS_MULTISTUDY_PER_SERIES_STUDY_PK default-on; =0 = legacy (primary pk).
+            try:
+                _primary_uid_pk = str(getattr(self.parent_widget, 'study_uid', '') or '')
+                if (_ms_resolved and _ms_study_uid
+                        and str(_ms_study_uid) != _primary_uid_pk
+                        and (os.getenv("AIPACS_MULTISTUDY_PER_SERIES_STUDY_PK", "1") or "1").strip() != "0"):
+                    _sec_pk = None
+                    try:
+                        _pk_cache2 = getattr(self, '_ms_study_pk_cache', None)
+                        if _pk_cache2 is None:
+                            _pk_cache2 = {}
+                            self._ms_study_pk_cache = _pk_cache2
+                        if _ms_study_uid in _pk_cache2:
+                            _sec_pk = _pk_cache2[_ms_study_uid]
+                        else:
+                            from PacsClient.utils import find_study_pk_with_study_uid
+                            _sec_pk = find_study_pk_with_study_uid(_ms_study_uid)
+                            _pk_cache2[_ms_study_uid] = _sec_pk
+                    except Exception:
+                        _sec_pk = None
+                    # study-3's own pk, or None -> the loader reads from the resolved
+                    # (secondary) study_path on disk; either way NOT the primary's rows.
+                    _effective_study_pk = _sec_pk
+                    logger.info(
+                        "[MULTI-STUDY LOAD] key=%s per-series study_pk=%s (study_uid=%s) — "
+                        "secondary study, NOT the primary, so DB metadata is the correct study",
+                        series_key, _sec_pk, _ms_study_uid,
+                    )
+            except Exception:
+                pass
+
             max_itk_threads, max_pydicom_workers = self._get_interactive_load_limits(effective_viewer_backend)
             _gate_wait_start = time.perf_counter()
             self.logger.info("[UX_SERIES_LOAD_START] series=%s backend=%s", series_key, effective_viewer_backend)
@@ -894,7 +940,12 @@ class _VCLoadMixin:
                         pass
                     _h7_disk_count = 0
                     try:
-                        _h7_sp = Path(study_path) / _h7_sn
+                        # Count the series' OWN on-disk folder: study_path/<orig series>,
+                        # NOT study_path/<display key> (the offset key 2000001 is not a
+                        # disk folder — the disk uses the original series number). Using
+                        # the display key reported a misleading disk_file_count=0 for a
+                        # multi-study secondary series (48101 Study 3).
+                        _h7_sp = Path(study_path) / str(ms_disk_series_number)
                         if _h7_sp.is_dir():
                             _h7_disk_count = sum(1 for f in os.scandir(str(_h7_sp)) if f.name.lower().endswith('.dcm'))
                     except Exception:

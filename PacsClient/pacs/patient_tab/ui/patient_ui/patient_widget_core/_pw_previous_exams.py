@@ -438,6 +438,31 @@ class _PWPreviousExamsMixin:
                 from PacsClient.pacs.patient_tab.utils import save_thumbnail_with_bytes
             except Exception:
                 save_thumbnail_with_bytes = None
+            # Identity trace (48101 Study 3 — the previous-exam study_uid in the
+            # reception metadata (`uid`) can DIFFER from the real DICOM
+            # StudyInstanceUID the images download/store under, so the viewer's
+            # offset-key entry resolves to a non-existent disk folder and the
+            # exam cannot be displayed. This logs, per fetched series, every
+            # identity-ish field so we can see WHICH field carries the real
+            # on-disk study uid and align the entry to it. Default-on, additive,
+            # never raises. Kill switch: AIPACS_PREV_EXAM_UID_TRACE=0.
+            try:
+                import os as _os_pe
+                if (_os_pe.getenv("AIPACS_PREV_EXAM_UID_TRACE", "1") or "1").strip() != "0":
+                    _s0 = next((x for x in (series or []) if isinstance(x, dict)), {})
+                    self.logger.info(
+                        "[PREV-EXAM-UID] reception_uid=%s series_count=%d "
+                        "first_series_keys=%s study_uid=%s StudyInstanceUID=%s "
+                        "study_instance_uid=%s series_uid=%s series_instance_uid=%s "
+                        "series_number=%s",
+                        uid, len(series or []), sorted(list(_s0.keys()))[:24],
+                        _s0.get("study_uid"), _s0.get("StudyInstanceUID"),
+                        _s0.get("study_instance_uid"), _s0.get("series_uid"),
+                        _s0.get("series_instance_uid"), _s0.get("series_number"),
+                    )
+            except Exception:
+                pass
+
             norm = []
             for s in (series or []):
                 if not isinstance(s, dict):

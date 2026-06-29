@@ -101,6 +101,34 @@ _PROGRESSIVE_MIN_COMPLETENESS = 0.30
 # render/geometry effect. Kill switch: AIPACS_DOWNLOAD_PROGRESS_TEXT=0.
 import os as _os  # noqa: E402  (module-level constant block)
 _DOWNLOAD_PROGRESS_TEXT = (_os.getenv("AIPACS_DOWNLOAD_PROGRESS_TEXT", "1") or "1").strip() != "0"
+# Canonical-identity disk completeness (2026-06-29, multi-study colliding series — 48296).
+# A multi-study SECONDARY series whose number (or even SeriesInstanceUID) collides with
+# another study's series can get a WRONG server ``expected`` image_count in its offset-key
+# metadata. The disk-ready resume's strict ``count >= expected`` then never becomes True
+# even when the series' TRUE images are ALL on disk → the viewport stays stuck on its one
+# progressive-first image (the live progress bridge is primary-study-bound and cannot grow
+# a secondary-study series, so the disk-ready resume is the ONLY backstop). When the
+# series' OWN canonical folder (``SOURCE_PATH/<study_uid>/<orig_series>`` — resolved
+# collision-free from the entry's study_uid + _orig_series_number) has SETTLED — a positive,
+# STABLE ``.dcm`` count across two watchdog ticks AND no in-flight ``.part`` file — the
+# download for that folder has finished, so the on-disk set IS the series regardless of a
+# poisoned ``expected``. This trusts the DISK (the collision-free authority) over the
+# metadata count. Kill switch: AIPACS_CANONICAL_DISK_COMPLETE=0 (legacy expected-only).
+_CANON_DISK_COMPLETE = (_os.getenv("AIPACS_CANONICAL_DISK_COMPLETE", "1") or "1").strip() != "0"
+# Settle-stop must confirm the viewport shows the AWAITED series (48101 Study 3, 2026-06-29).
+# The disk-ready resume's "settled" detection compared the viewport's CURRENT slice count to
+# the awaited series' on-disk count (`visible >= count`). When the viewport is still showing a
+# DIFFERENT, LARGER series (e.g. a primary-study 10-slice series) and the user drags a SMALLER
+# series (a previous exam's 5-slice series), `visible(10) >= disk(5)` is True, so the resume
+# declared the awaited series "settled" and CLEARED its awaiting flag WITHOUT ever loading it —
+# the awaited series never displayed and the viewport kept showing the other study's series
+# (the "loaded a Study-1 series instead of Study 3" report). Fix: only settle-by-visible when
+# the viewport is actually displaying the awaited display key (else proceed to load it). The
+# attempt-cap + authority checks remain the livelock backstop. Kill switch:
+# AIPACS_RESUME_SETTLE_REQUIRE_SERIES=0 (legacy visible>=count, ignores which series is shown).
+_RESUME_SETTLE_REQUIRE_SERIES = (
+    _os.getenv("AIPACS_RESUME_SETTLE_REQUIRE_SERIES", "1") or "1"
+).strip() != "0"
 # Connection-state inference thresholds (seconds since the last progress signal /
 # since the wait began). Tuned for a slow/dropping link; env-overridable.
 _DL_SLOW_AFTER_S = max(2.0, float(_os.getenv("AIPACS_DL_SLOW_AFTER_S", "6") or "6"))
@@ -403,6 +431,27 @@ def _disk_ready_complete(count, expected, prev_count) -> bool:
         exp = 0
     if exp > 0:
         return c >= exp
+    return prev_count is not None and int(prev_count) == c
+
+
+def _disk_series_settled(count, prev_count, has_part) -> bool:
+    """Pure: True when a series' OWN on-disk folder has SETTLED — a positive, STABLE
+    ``.dcm`` count across two watchdog ticks (``prev_count == count``) AND no in-flight
+    ``.part`` file. The Download Manager writes ``<name>.part`` then ``os.replace``-s it
+    to ``.dcm``, so the absence of ANY ``.part`` means nothing is being written to this
+    folder; combined with an unchanged count it means the download for this folder has
+    finished. Used as a completeness route that is IMMUNE to a wrong/poisoned server
+    ``expected`` count for a multi-study series whose number collides across studies —
+    the TRUE on-disk files ARE the series. Never settles an actively-growing download
+    (count still changing) or one still writing a ``.part``. ``count <= 0`` is never
+    settled.
+    """
+    try:
+        c = int(count)
+    except Exception:
+        return False
+    if c <= 0 or has_part:
+        return False
     return prev_count is not None and int(prev_count) == c
 
 
@@ -1496,6 +1545,30 @@ class _VCProgressiveMixin:
         except Exception:
             pass
 
+    def _viewport_displayed_series_number(self, vtk_w):
+        """Best-effort: the series_number the viewport is CURRENTLY displaying, or None
+        if it can't be determined. Read from the FAST container's live metadata
+        (``_qt_bridge.metadata['series']['series_number']`` — the same identity the
+        same-series no-op uses), falling back to the progressive marker. Used by the
+        disk-ready resume to confirm a "settled" viewport is showing the AWAITED series
+        and not a different one still on screen. Never raises."""
+        try:
+            bridge = getattr(vtk_w, "_qt_bridge", None)
+            md = getattr(bridge, "metadata", None) if bridge is not None else None
+            if isinstance(md, dict):
+                sn = str(((md.get("series") or {}).get("series_number") or "")).strip()
+                if sn:
+                    return sn
+        except Exception:
+            pass
+        try:
+            psn = getattr(vtk_w, "_progressive_series_number", None)
+            if psn:
+                return str(psn).strip()
+        except Exception:
+            pass
+        return None
+
     def _maybe_resume_awaiting_from_disk(self, vtk_w, display_key) -> bool:
         """If the awaited series' files are already complete on disk, resume the
         load via the proven display-key path and return True.
@@ -1552,10 +1625,16 @@ class _VCProgressiveMixin:
             if not _os2.path.isdir(folder):
                 return False
             count = 0
+            _has_part = False  # an in-flight ``*.part`` => the DM is still writing this folder
             with _os2.scandir(folder) as it:
                 for e in it:
-                    if e.is_file(follow_symlinks=False) and (e.name.endswith(".dcm") or e.name.endswith(".dicom")):
+                    if not e.is_file(follow_symlinks=False):
+                        continue
+                    _nm = e.name
+                    if _nm.endswith(".dcm") or _nm.endswith(".dicom"):
                         count += 1
+                    elif _nm.endswith(".part"):
+                        _has_part = True
             if count <= 0:
                 return False
             # Completeness: prefer the server's expected count; otherwise require the
@@ -1574,6 +1653,23 @@ class _VCProgressiveMixin:
             prev = counts.get(str(display_key))
             counts[str(display_key)] = count
             _complete = _disk_ready_complete(count, expected, prev)
+            # Canonical-identity completeness override (48296, multi-study colliding
+            # series): a secondary series whose number/uid collides across studies can
+            # carry a WRONG server ``expected`` (here it does not match the TRUE on-disk
+            # series), so the strict ``count >= expected`` above never trips even though
+            # every image is on disk. When this series' OWN canonical folder has SETTLED
+            # (stable .dcm count across two ticks AND no in-flight .part), trust the disk
+            # — the collision-free authority — over the poisoned metadata count. Only
+            # ADDS a completeness route; the settle/livelock guards below are unchanged.
+            if (not _complete) and _CANON_DISK_COMPLETE and _disk_series_settled(count, prev, _has_part):
+                _complete = True
+                try:
+                    self.logger.info(
+                        "disk-ready resume: series=%s canonical-disk-settled (disk=%d "
+                        "expected=%d no_part=1 stable=1) — trusting the on-disk set over "
+                        "a mismatched server count", display_key, count, expected)
+                except Exception:
+                    pass
             # SETTLED-STATE STOP (2026-06-24, fresh-run 47801/47836 series 6 =
             # 145+ live resume attempts). The resume rebuilds via change_series,
             # which does NOT clear _awaiting_series_number — only the
@@ -1605,7 +1701,18 @@ class _VCProgressiveMixin:
                 # get_count_of_slices() momentarily reads low mid-rebuild — the 47084 202/203
                 # livelock that climbed to attempt=243 despite MAX=6.
                 _attempts_now = int(getattr(vtk_w, "_disk_ready_resume_attempts", 0) or 0)
-                _settled_visible = _vis_settled > 0 and _vis_settled >= count
+                # Only treat "visible >= count" as settled when the viewport is actually
+                # showing the AWAITED series. If it is still showing a DIFFERENT series
+                # (a larger one from another study), the awaited series has NOT loaded —
+                # settling here would clear its awaiting flag without ever displaying it
+                # (48101 Study 3). When the displayed series can't be read, preserve the
+                # legacy behavior (treat as the awaited one) so nothing else regresses.
+                _shows_awaited = True
+                if _RESUME_SETTLE_REQUIRE_SERIES:
+                    _cur_disp_sn = self._viewport_displayed_series_number(vtk_w)
+                    if _cur_disp_sn is not None and str(_cur_disp_sn) != str(display_key):
+                        _shows_awaited = False
+                _settled_visible = _vis_settled > 0 and _vis_settled >= count and _shows_awaited
                 _exhausted = _attempts_now >= _DISK_READY_RESUME_MAX_ATTEMPTS
                 # S2b: feed the unified per-series state authority at this exact livelock site
                 # and read its STRUCTURAL is_settled (monotonic high-water mark of displayed) as
