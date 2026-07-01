@@ -1,9 +1,31 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.1 (2026-06-29)
-**Previous Stable:** v3.4.0 (2026-06-28)
-**Release Date:** 2026-06-29
+**Current Stable Version:** v3.4.2 (2026-07-01)
+**Previous Stable:** v3.4.1 (2026-06-29)
+**Release Date:** 2026-07-01
 **Branch:** beta-version
+
+---
+
+## v3.4.2 (2026-07-01) - Patch release: dental imaging, cine/multi-frame, startup responsiveness, AI reporters
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Large batch: dental imaging (dual-arch/oblique panoramic, mandibular
+nerve-canal tracing, planning tools), FAST multi-frame/cine playback, startup and
+patient-switch responsiveness (chunked thumbnail save / status refresh / sidebar
+build, warmup dispatch, KPI session reporting), additional EchoMind report types,
+and multi-study/previous-exam grow correctness.
+
+### Included
+
+- Dental Imaging: dual-arch/oblique panoramic reconstruction, mandibular nerve-canal tracing, planning/measurement tools, geometry sync
+- FAST viewer: multi-frame / cine playback (ultrasound, XA, enhanced CT/MR) with cine metadata + player
+- Responsiveness: async thumbnail save, chunked status refresh + sidebar build, warmup dispatch, startup stage sub-timing, KPI session-report tooling
+- EchoMind: mammography + ultrasound reporters, GapGPT connection test, reporter refinements
+- Multi-study/previous-exam: canonical on-disk count for offset keys + grow-displayed-to-disk (secondary series grow correctly)
+- Canonical version markers advanced to v3.4.2; full local state published to all remotes
 
 ---
 

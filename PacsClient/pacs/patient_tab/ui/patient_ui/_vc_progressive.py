@@ -129,6 +129,23 @@ _CANON_DISK_COMPLETE = (_os.getenv("AIPACS_CANONICAL_DISK_COMPLETE", "1") or "1"
 _RESUME_SETTLE_REQUIRE_SERIES = (
     _os.getenv("AIPACS_RESUME_SETTLE_REQUIRE_SERIES", "1") or "1"
 ).strip() != "0"
+# Grow a DISPLAYED viewport to its full on-disk count (Stage A1, 48273 Series 602, 2026-06-30).
+# A SECONDARY (previous-exam) study's progress/completion is NOT bridged to the viewer (the
+# download bridge is primary-study-bound), so a secondary series dragged mid-download builds a
+# PARTIAL stack (e.g. 40 of 380), the load "succeeds", its awaiting flag clears, and nothing ever
+# tells it to grow — it sticks at 40 even though all 380 are on disk. The disk-ready resume only
+# watches AWAITING viewports, so it never re-checks a displayed-but-behind one. This rule makes the
+# watchdog ALSO grow a DISPLAYED viewport whose shown slice count < its own canonical on-disk .dcm
+# count, once the folder has SETTLED (stable count, no in-flight .part) — by re-issuing
+# change_series (whose existing volume-behind guard rebuilds the full set). Matched on canonical
+# identity (study_uid, orig_series), never the bare series number. Per-viewport attempt cap + a
+# per-disk-count marker prevent churn; it acts only on a SETTLED folder so mid-download flicker is
+# ignored. DEFAULT-OFF until live-verified on 48273 (drag 602 → grows to 380); enable with
+# AIPACS_GROW_DISPLAYED_TO_DISK=1.
+_GROW_DISPLAYED_TO_DISK = (
+    _os.getenv("AIPACS_GROW_DISPLAYED_TO_DISK", "1") or "1"
+).strip() != "0"  # DEFAULT-ON since 2026-06-30 (48567 confirmed: 8/8 on disk, viewer stuck at 1).
+_GROW_DISPLAYED_MAX_ATTEMPTS = max(1, int(_os.getenv("AIPACS_GROW_DISPLAYED_MAX_ATTEMPTS", "4") or "4"))
 # Connection-state inference thresholds (seconds since the last progress signal /
 # since the wait began). Tuned for a slow/dropping link; env-overridable.
 _DL_SLOW_AFTER_S = max(2.0, float(_os.getenv("AIPACS_DL_SLOW_AFTER_S", "6") or "6"))
@@ -1386,12 +1403,22 @@ class _VCProgressiveMixin:
             stats = getattr(self, "_dl_progress_stats", {}) or {}
             waits = getattr(self, "_dl_await_since", {}) or {}
             any_awaiting = False
+            any_behind = False  # Stage A1: a DISPLAYED viewport still behind its on-disk count
             for node in self.lst_nodes_viewer or []:
                 vtk_w = getattr(node, "vtk_widget", None)
                 if vtk_w is None:
                     continue
                 sn = getattr(vtk_w, "_awaiting_series_number", None)
                 if not sn:
+                    # Not awaiting, but it may be DISPLAYING a secondary-study series whose
+                    # download finished after a partial load (no progress event reaches a
+                    # secondary study) — grow it to the full on-disk set. Keeps the watchdog
+                    # alive while behind / still downloading.
+                    try:
+                        if self._maybe_grow_displayed_to_disk(vtk_w):
+                            any_behind = True
+                    except Exception:
+                        pass
                     continue  # progressive viewers are driven by progress signals
                 any_awaiting = True
                 # Disk-readiness resume: if the awaited series' files are already
@@ -1417,7 +1444,7 @@ class _VCProgressiveMixin:
                         spinner.set_status(state)
                     except Exception:
                         pass
-            if not any_awaiting:
+            if not any_awaiting and not any_behind:
                 timer = getattr(self, "_dl_watchdog_timer", None)
                 if timer is not None:
                     try:
@@ -1568,6 +1595,122 @@ class _VCProgressiveMixin:
         except Exception:
             pass
         return None
+
+    def _maybe_grow_displayed_to_disk(self, vtk_w) -> bool:
+        """Stage A1 (48273 Series 602, 2026-06-30): grow a DISPLAYED (non-awaiting) viewport
+        whose shown slice count is BEHIND its OWN canonical on-disk .dcm count.
+
+        A SECONDARY (previous-exam) study's download progress/completion is never bridged to
+        this viewer, so a secondary series dragged mid-download builds a PARTIAL stack, the
+        load "succeeds", its awaiting flag clears, and nothing ever grows it — it sticks at
+        e.g. 40/380 though all files are on disk. This makes the watchdog rebuild such a
+        viewport once its folder has SETTLED. Matched on canonical identity (study_uid,
+        orig_series), NEVER the bare series number. Returns True while the viewport is BEHIND
+        or its folder is still downloading (so the watchdog keeps running), else False.
+
+        SAFETY: only acts on a SETTLED folder (stable .dcm across two ticks AND no in-flight
+        .part) so mid-download flicker can't churn; capped per (series, disk-count) so a load
+        that can't reach the disk count can't loop; the rebuild is the proven change_series
+        path (its volume-behind guard does the actual grow). Disabled unless the flag is on;
+        background tabs are skipped (active-tab grow only). Never raises."""
+        if not _GROW_DISPLAYED_TO_DISK:
+            return False
+        try:
+            if (_RESUME_SKIP_INACTIVE_TAB
+                    and not getattr(self, "_tab_active", True)
+                    and not getattr(self, "_interactive_load_in_progress", False)):
+                return False
+            display_key = self._viewport_displayed_series_number(vtk_w)
+            if not display_key:
+                return False
+            try:
+                displayed = int(vtk_w.get_count_of_slices() or 0)
+            except Exception:
+                displayed = 0
+            if displayed <= 0:
+                return False
+            study_uid, orig_series, _series_uid = self._resolve_canonical_series_identity(display_key)
+            if not study_uid or orig_series in (None, ""):
+                return False
+            import os as _os3
+            from PacsClient.utils.config import SOURCE_PATH as _SRC
+            folder = _os3.path.join(str(_SRC), str(study_uid), str(orig_series))
+            if not _os3.path.isdir(folder):
+                return False
+            disk = 0
+            has_part = False
+            with _os3.scandir(folder) as it:
+                for e in it:
+                    if not e.is_file(follow_symlinks=False):
+                        continue
+                    nm = e.name
+                    if nm.endswith(".dcm") or nm.endswith(".dicom"):
+                        disk += 1
+                    elif nm.endswith(".part"):
+                        has_part = True
+            counts = getattr(self, "_grow_disk_counts", None)
+            if counts is None:
+                counts = {}
+                self._grow_disk_counts = counts
+            elif len(counts) > 512:
+                # Bound per-session growth: entries for already-settled series are
+                # never revisited (disk<=displayed returns early), so dropping them is
+                # safe — at worst a re-grow re-establishes its prev on the next tick.
+                counts.clear()
+            prev = counts.get(str(display_key))
+            counts[str(display_key)] = disk
+            if disk <= displayed:
+                # Caught up (or viewer ahead). Keep the watchdog alive only while the folder
+                # is still actively downloading (a .part is being written), so we re-check
+                # once it settles ahead; otherwise we are done with this viewport.
+                return bool(has_part)
+            # Behind. Only rebuild on a SETTLED folder; otherwise keep watching.
+            if not _disk_series_settled(disk, prev, has_part):
+                return True
+            marks = getattr(self, "_grow_disk_attempts", None)
+            if marks is None:
+                marks = {}
+                self._grow_disk_attempts = marks
+            elif len(marks) > 512:
+                # Bound per-session growth (see _grow_disk_counts above). Clearing at
+                # worst lets a capped-out series retry — only if it is still behind.
+                marks.clear()
+            _mk = (str(display_key), disk)
+            _n = int(marks.get(_mk, 0))
+            if _n >= _GROW_DISPLAYED_MAX_ATTEMPTS:
+                return False  # gave up on this disk count — stop churning (still behind)
+            marks[_mk] = _n + 1
+            try:
+                self.logger.info(
+                    "[GROW-DISPLAYED] series=%s displayed=%d disk=%d settled — rebuilding from "
+                    "disk (attempt %d/%d)", display_key, displayed, disk, _n + 1,
+                    _GROW_DISPLAYED_MAX_ATTEMPTS,
+                )
+            except Exception:
+                pass
+            try:
+                # force_reload=True is REQUIRED here (48476/46281, 2026-07-01): with
+                # force_reload=False the change_series same-series skip fires (the viewport
+                # already shows this display key) and the stack is NOT rebuilt — the live
+                # log showed 4 GROW-DISPLAYED attempts with `displayed` never moving
+                # (1->1, 30->30) because the no-op swallowed every rebuild. force_reload
+                # bypasses that skip and re-reads the FULL on-disk set. It is SAFE here (no
+                # re-download) precisely because this path only runs on a SETTLED folder
+                # (stable .dcm count AND no in-flight .part = the download has FINISHED), so
+                # there is no load miss to trigger a re-fetch — it only invalidates the stale
+                # partial decoded-volume cache and rebuilds from the complete DICOM files.
+                self.change_series_on_viewer(
+                    display_key,
+                    flag_change_selected_widget=False,
+                    vtk_widget=vtk_w,
+                    slider=getattr(vtk_w, "slider", None),
+                    force_reload=True,
+                )
+            except Exception:
+                pass
+            return True
+        except Exception:
+            return False
 
     def _maybe_resume_awaiting_from_disk(self, vtk_w, display_key) -> bool:
         """If the awaited series' files are already complete on disk, resume the

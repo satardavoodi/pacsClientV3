@@ -29,6 +29,23 @@ def get_active_image_data(patient_widget: Any) -> Any:
     return getattr(iv, "vtk_image_data", None)
 
 
+def image_has_scalars(image_data: Any) -> bool:
+    """True when ``image_data`` has a real scalar buffer, not just geometry metadata."""
+    if image_data is None:
+        return False
+    try:
+        pd = image_data.GetPointData()
+        scalars = pd.GetScalars() if pd is not None else None
+        if scalars is None:
+            return False
+        tuples = getattr(scalars, "GetNumberOfTuples", None)
+        if callable(tuples):
+            return int(tuples()) > 0
+        return True
+    except Exception:
+        return False
+
+
 def _active_modality(patient_widget: Any) -> str:
     sw = getattr(patient_widget, "selected_widget", None)
     iv = getattr(sw, "image_viewer", None) if sw is not None else None
@@ -87,7 +104,7 @@ def bind_active_viewer_volume(patient_widget: Any, series_uid: Optional[str] = N
     failing.
     """
     img = get_active_image_data(patient_widget)
-    if img is None:
+    if not image_has_scalars(img):
         return None
     dvol = DentalVolume(img, modality=_active_modality(patient_widget), series_uid=series_uid)
     return dvol if dvol.is_valid() else None

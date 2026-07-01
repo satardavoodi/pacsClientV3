@@ -26,6 +26,14 @@ from PySide6.QtCore import Qt, QTimer
 
 from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
 from modules.viewer.widgets import ViewportSpinner
+
+# Cine playback for multi-frame / cine loops (US / XA / echo — 2026-07-01). The
+# engine below is PURELY ADDITIVE: it does nothing unless the open series is a
+# multi-frame cine AND the user presses Space (or toggle_cine() is called). Every
+# ordinary single-frame series is completely unaffected. `=0` disables it entirely.
+_FAST_CINE_ENABLED = str(
+    os.environ.get("AIPACS_FAST_CINE", "1")
+).strip().lower() not in ("0", "false", "no", "off")
 from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
     _SERIES_DROP_MIME,
     _SYNC_MOVE_THROTTLE_MS,
@@ -230,6 +238,10 @@ class QtFastContainer(QWidget):
         self._qt_bridge = None
         self._qt_viewer_widget = None  # The actual QtSliceViewer widget
 
+        # ── Cine playback (multi-frame / cine loops) — inert until toggled ───
+        self._cine_player = None   # lazily-created CinePlayer state machine
+        self._cine_timer = None    # QTimer driving frame advance while playing
+
         # ── Viewport spinner (reuses the same class as VTKWidget) ────────────
         try:
             self.viewport_spinner = ViewportSpinner(self)
@@ -398,6 +410,134 @@ class QtFastContainer(QWidget):
     def set_slice(self, value: int) -> None:
         if self._qt_bridge:
             self._qt_bridge.set_slice(value)
+
+    # ── Cine playback (multi-frame / cine loops) ─────────────────────────
+    # Purely additive: no ordinary single-frame series is affected. Playback
+    # only runs for a multi-frame cine AND only while explicitly toggled on.
+    def _cine_pipeline(self):
+        """Return the FAST pipeline (for cine metadata), or None."""
+        try:
+            return getattr(self._qt_bridge, "pipeline", None)
+        except Exception:
+            return None
+
+    def is_cine_series(self) -> bool:
+        """True when the open series is a multi-frame cine loop (US/XA/echo)."""
+        if not _FAST_CINE_ENABLED:
+            return False
+        pl = self._cine_pipeline()
+        try:
+            return bool(pl is not None and pl.is_cine_series())
+        except Exception:
+            return False
+
+    def _cine_frame_rate(self) -> float:
+        pl = self._cine_pipeline()
+        try:
+            fps = pl.cine_frame_rate() if pl is not None else None
+        except Exception:
+            fps = None
+        try:
+            return float(fps) if fps and float(fps) > 0 else 15.0
+        except Exception:
+            return 15.0
+
+    def _current_slice_index(self) -> int:
+        for attr in ("get_slice", "GetSlice"):
+            try:
+                fn = getattr(self._qt_bridge, attr, None)
+                if callable(fn):
+                    return int(fn() or 0)
+            except Exception:
+                pass
+        return 0
+
+    def toggle_cine(self) -> bool:
+        """Start/stop cine playback. Returns the resulting playing state. Safe to
+        call for any series — a no-op (returns False) when not a cine loop."""
+        if not self.is_cine_series():
+            return False
+        if self._cine_timer is not None and self._cine_timer.isActive():
+            self.stop_cine()
+            return False
+        return self.start_cine()
+
+    def start_cine(self) -> bool:
+        if not self.is_cine_series():
+            return False
+        try:
+            from modules.viewer.fast.cine_player import CinePlayer
+        except Exception:
+            return False
+        try:
+            count = int(self.get_count_of_slices() or 0)
+        except Exception:
+            count = 0
+        if count <= 1:
+            return False
+        if self._cine_player is None:
+            self._cine_player = CinePlayer(fps=self._cine_frame_rate(), loop=True)
+        self._cine_player.set_fps(self._cine_frame_rate())
+        self._cine_player.set_count(count)
+        self._cine_player.sync_index(self._current_slice_index())
+        if not self._cine_player.play():
+            return False
+        if self._cine_timer is None:
+            self._cine_timer = QTimer(self)
+            self._cine_timer.timeout.connect(self._cine_tick)
+        self._cine_timer.setInterval(self._cine_player.interval_ms)
+        self._cine_timer.start()
+        try:
+            logger.info("[FAST-CINE] play frames=%d fps=%.1f", count, self._cine_frame_rate())
+        except Exception:
+            pass
+        return True
+
+    def stop_cine(self) -> None:
+        try:
+            if self._cine_timer is not None:
+                self._cine_timer.stop()
+            if self._cine_player is not None:
+                self._cine_player.pause()
+        except Exception:
+            pass
+
+    def _cine_tick(self) -> None:
+        """Timer tick: advance one frame; stop if the series is gone/single-frame."""
+        try:
+            player = self._cine_player
+            if player is None:
+                self.stop_cine()
+                return
+            # Re-sync count in case the series grew/shrank while playing.
+            try:
+                player.set_count(int(self.get_count_of_slices() or 0))
+            except Exception:
+                pass
+            nxt = player.advance()
+            if nxt is None:
+                self.stop_cine()
+                return
+            self.set_slice(int(nxt))
+        except Exception:
+            self.stop_cine()
+
+    def keyPressEvent(self, event) -> None:
+        """Spacebar toggles cine playback for a multi-frame loop. Every other key
+        (and the single-frame case) is passed straight through to the base widget,
+        so this adds a cine control without changing any existing key behaviour."""
+        try:
+            if (_FAST_CINE_ENABLED and event is not None
+                    and event.key() == Qt.Key_Space and self.is_cine_series()):
+                self.toggle_cine()
+                event.accept()
+                return
+        except Exception:
+            pass
+        try:
+            super().keyPressEvent(event)
+        except Exception:
+            pass
 
     def begin_slider_drag_session(self) -> None:
         """Begin a protected FAST drag session from slider thumb-press."""
@@ -1141,6 +1281,12 @@ class QtFastContainer(QWidget):
         if getattr(self, '_cleaned_up', False):
             return
         self._cleaned_up = True
+        # Stop the cine timer first so no frame-advance fires during teardown.
+        try:
+            if getattr(self, '_cine_timer', None) is not None:
+                self._cine_timer.stop()
+        except Exception:
+            pass
         try:
             if self._qt_bridge and hasattr(self._qt_bridge, 'cleanup'):
                 self._qt_bridge.cleanup()

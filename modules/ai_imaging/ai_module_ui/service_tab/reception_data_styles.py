@@ -127,6 +127,41 @@ BORDER_RADIUS = {
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# CONTEXT-MENU STYLE (explicit, theme-independent)
+# ═══════════════════════════════════════════════════════════════════════════════
+# Right-click (context) menus inherit the Windows light/dark *system* palette
+# unless an explicit QMenu rule is defined. That is what produced the unreadable
+# Report Editor menu (light-grey text on a near-white background). This block is
+# embedded into the dialog + editor stylesheets so every context menu in this
+# module has a defined background, text, selection and separator colour that is
+# identical on any OS theme. Selection uses a fixed #1976d2 (white text = 4.6:1)
+# rather than the light accent (#4a9fd4), which would be low-contrast with white.
+MENU_QSS = f"""
+    QMenu {{
+        background-color: {COLORS['bg_light']};
+        color: {COLORS['text_primary']};
+        border: 1px solid {COLORS['border_light']};
+    }}
+    QMenu::item {{
+        background: transparent;
+        color: {COLORS['text_primary']};
+        padding: 5px 24px;
+    }}
+    QMenu::item:selected {{
+        background-color: #1976d2;
+        color: #ffffff;
+    }}
+    QMenu::item:disabled {{
+        color: {COLORS['text_muted']};
+    }}
+    QMenu::separator {{
+        height: 1px;
+        background: {COLORS['border_medium']};
+        margin: 4px 8px;
+    }}
+"""
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # STYLE FUNCTIONS
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -410,6 +445,7 @@ def get_text_edit_style(rtl=False):
             width: 0px;
             height: 0px;
         }}
+        {MENU_QSS}
     """
 
 
@@ -424,6 +460,7 @@ def get_dialog_style():
         QDialog {{
             background-color: {COLORS['bg_darkest']};
         }}
+        {MENU_QSS}
     """
 
 

@@ -23,5 +23,5 @@
   "secretary_stt_provider": "native",
   "secretary_stt_fallback": true,
   "connection_type": "direct",
-  "proxy_port": 2080
+  "proxy_port": 2082
 }

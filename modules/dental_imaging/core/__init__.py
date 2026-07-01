@@ -10,6 +10,7 @@ from .volume import DentalVolume
 from .volume_binder import (
     bind_active_viewer_volume,
     get_active_image_data,
+    image_has_scalars,
     materialize_lazy_volume,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "DentalVolume",
     "bind_active_viewer_volume",
     "get_active_image_data",
+    "image_has_scalars",
     "materialize_lazy_volume",
 ]

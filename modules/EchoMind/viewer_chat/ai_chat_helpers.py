@@ -177,6 +177,36 @@ def popup_stylesheet() -> str:
             selection-background-color: {CLR_ACCENT};
             selection-color: #ffffff;
         }}
+        QTextEdit, QPlainTextEdit, QTextBrowser {{
+            background-color: {CLR_BG_PANEL};
+            color: {CLR_TEXT};
+            border: 1px solid {CLR_BORDER};
+            border-radius: 6px;
+            selection-background-color: {CLR_ACCENT};
+            selection-color: #ffffff;
+        }}
+        QMenu {{
+            background-color: {CLR_BG_PANEL};
+            color: {CLR_TEXT};
+            border: 1px solid {CLR_BORDER};
+        }}
+        QMenu::item {{
+            background: transparent;
+            color: {CLR_TEXT};
+            padding: 5px 24px;
+        }}
+        QMenu::item:selected {{
+            background-color: {CLR_ACCENT};
+            color: #ffffff;
+        }}
+        QMenu::item:disabled {{
+            color: rgba(220, 220, 220, 0.35);
+        }}
+        QMenu::separator {{
+            height: 1px;
+            background: {CLR_BORDER};
+            margin: 4px 8px;
+        }}
         QPushButton {{
             background-color: {CLR_BG_PANEL};
             color: {CLR_TEXT};

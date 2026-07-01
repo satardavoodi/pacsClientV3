@@ -195,10 +195,10 @@ def test_clean_non_string_passthrough():
 # 3. _validate_report_json -- non-MRI passthrough
 # =============================================================================
 
-def test_validate_non_mri_passthrough():
-    """Non-MRI/CT modalities must be returned byte-for-byte unchanged."""
-    raw = "anything at all -- not checked for MRI or CT"
-    for mod in ("Ultrasound", "mammography", "Radiology", "sonography"):
+def test_validate_non_validated_modality_passthrough():
+    """Modalities outside _VALIDATED_MODALITIES must be returned byte-for-byte unchanged."""
+    raw = "anything at all -- not checked for this modality"
+    for mod in ("Radiology", "XRay", "Nuclear", "PET"):
         result = _validate_report_json(raw, mod)
         assert result == raw, f"Modality {mod!r} was mutated"
 

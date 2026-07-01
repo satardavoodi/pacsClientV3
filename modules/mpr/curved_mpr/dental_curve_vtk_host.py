@@ -78,6 +78,7 @@ class DentalCurvePicker:
         self._spline_actor = None
         self._observer_tag = None
         self._style = None
+        self._closed = False
 
     # -- internal: resolve the axial renderer/interactor-style off the host --------
 
@@ -88,10 +89,31 @@ class DentalCurvePicker:
     def _axial_renderer(self):
         return self._axial().get("renderer")
 
-    def _axial_style(self):
+    def _axial_interactor(self):
         widget = self._axial().get("widget")
         if widget is None:
             return None
+        try:
+            render_window = widget.GetRenderWindow()
+            if render_window is not None:
+                return render_window.GetInteractor()
+        except Exception:
+            pass
+        try:
+            return widget.GetInteractor()
+        except Exception:
+            return None
+
+    def _axial_style(self):
+        interactor = self._axial_interactor()
+        if interactor is not None:
+            try:
+                style = interactor.GetInteractorStyle()
+                if style is not None:
+                    return style
+            except Exception:
+                pass
+        widget = self._axial().get("widget")
         try:
             return widget.GetInteractorStyle()
         except Exception:
@@ -101,19 +123,9 @@ class DentalCurvePicker:
 
     def enable_curved_mpr_mode(self, enable: bool) -> None:
         """Arm/disarm point picking on the axial pane (panel calls this)."""
-        style = self._axial_style()
-        if style is None:
-            logger.warning("[DENTAL-CURVE-PICK] No axial interactor style; cannot arm picking")
+        if self._closed and enable:
             return
-        if enable:
-            if self._observer_tag is None:
-                # High priority (1.0), non-consuming — mirrors CurveMPRInteractorStyle.
-                self._style = style
-                self._observer_tag = style.AddObserver(
-                    "LeftButtonPressEvent", self._on_left_button_press, 1.0
-                )
-            self.curved_mpr_mode = True
-        else:
+        if not enable:
             if self._observer_tag is not None and self._style is not None:
                 try:
                     self._style.RemoveObserver(self._observer_tag)
@@ -122,18 +134,48 @@ class DentalCurvePicker:
             self._observer_tag = None
             self._style = None
             self.curved_mpr_mode = False
+            return
+
+        style = self._axial_style()
+        if style is None:
+            logger.warning("[DENTAL-CURVE-PICK] No axial interactor style; cannot arm picking")
+            return
+        if self._observer_tag is None or self._style is not style:
+            if self._observer_tag is not None and self._style is not None:
+                try:
+                    self._style.RemoveObserver(self._observer_tag)
+                except Exception:
+                    pass
+            # High priority (1.0), non-consuming — mirrors CurveMPRInteractorStyle.
+            self._style = style
+            self._observer_tag = style.AddObserver(
+                "LeftButtonPressEvent", self._on_left_button_press, 1.0
+            )
+        self.curved_mpr_mode = True
 
     def _on_left_button_press(self, obj, event):
         """VTK observer: convert the axial click to a 3D world point (does not consume)."""
+        if not self.curved_mpr_mode or self._closed:
+            return
         try:
-            interactor = obj.GetInteractor()
+            interactor = None
+            if hasattr(obj, "GetInteractor"):
+                interactor = obj.GetInteractor()
+            if interactor is None:
+                interactor = self._axial_interactor()
+            if interactor is None:
+                return
             pos = interactor.GetEventPosition()
             renderer = self._axial_renderer()
             if renderer is None:
                 return
             picker = vtk.vtkWorldPointPicker()
-            picker.Pick(pos[0], pos[1], 0.0, renderer)
-            world = picker.GetPickPosition()
+            picked = bool(picker.Pick(pos[0], pos[1], 0.0, renderer))
+            world = picker.GetPickPosition() if picked else None
+            if not self._point_is_in_volume(world):
+                world = self._display_to_axial_world(renderer, pos[0], pos[1])
+            if not self._point_is_in_volume(world):
+                return
             self._add_curved_mpr_point(world)
         except Exception:
             logger.exception("[DENTAL-CURVE-PICK] Error handling axial click")
@@ -144,12 +186,19 @@ class DentalCurvePicker:
 
     def _add_curved_mpr_point(self, point_3d) -> None:
         """Append a control point and draw its marker, label, and the live arch spline."""
-        self.curved_mpr_points.append(tuple(point_3d))
+        if self._closed:
+            return
+        try:
+            point = (float(point_3d[0]), float(point_3d[1]), float(point_3d[2]))
+        except (TypeError, ValueError, IndexError):
+            logger.warning("[DENTAL-CURVE-PICK] Ignoring invalid curve point: %r", point_3d)
+            return
+        self.curved_mpr_points.append(point)
         renderer = self._axial_renderer()
         if renderer is None:
             return
         try:
-            self._draw_point_marker(renderer, point_3d, len(self.curved_mpr_points))
+            self._draw_point_marker(renderer, point, len(self.curved_mpr_points))
             self._rebuild_spline(renderer)
             self._render_axial()
         except Exception:
@@ -182,6 +231,38 @@ class DentalCurvePicker:
     def get_curved_mpr_points(self):
         return list(self.curved_mpr_points)
 
+    def _point_is_in_volume(self, point) -> bool:
+        if point is None:
+            return False
+        try:
+            if len(point) < 3:
+                return False
+            bounds = self.vtk_image_data.GetBounds()
+            eps = 1e-3
+            return (
+                bounds[0] - eps <= point[0] <= bounds[1] + eps
+                and bounds[2] - eps <= point[1] <= bounds[3] + eps
+                and bounds[4] - eps <= point[2] <= bounds[5] + eps
+            )
+        except Exception:
+            return True
+
+    def _display_to_axial_world(self, renderer, x, y):
+        """Project a display click onto the current axial camera focal plane."""
+        try:
+            focal = renderer.GetActiveCamera().GetFocalPoint()
+            renderer.SetWorldPoint(focal[0], focal[1], focal[2], 1.0)
+            renderer.WorldToDisplay()
+            display_z = renderer.GetDisplayPoint()[2]
+            renderer.SetDisplayPoint(float(x), float(y), display_z)
+            renderer.DisplayToWorld()
+            world = renderer.GetWorldPoint()
+            if world is None or world[3] == 0:
+                return None
+            return (world[0] / world[3], world[1] / world[3], world[2] / world[3])
+        except Exception:
+            return None
+
     def _clear_curved_mpr_visuals(self) -> None:
         renderer = self._axial_renderer()
         if renderer is not None:
@@ -199,6 +280,20 @@ class DentalCurvePicker:
         self._sphere_actors = []
         self._label_actors = []
         self._spline_actor = None
+
+    def cleanup(self) -> None:
+        """Disable picking and remove preview actors before the VTK host is destroyed."""
+        if self._closed:
+            return
+        try:
+            self.enable_curved_mpr_mode(False)
+        except Exception:
+            pass
+        try:
+            self._clear_curved_mpr_visuals()
+        except Exception:
+            pass
+        self._closed = True
 
     # -- drawing helpers -----------------------------------------------------------
 

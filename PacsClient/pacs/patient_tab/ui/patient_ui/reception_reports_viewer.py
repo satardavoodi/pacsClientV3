@@ -176,6 +176,28 @@ class ReceptionReportsViewer(QWidget):
                 padding: 12px;
                 color: #e0e0e0;
             }
+            QMenu {
+                background-color: #2b2b2b;
+                color: #e0e0e0;
+                border: 1px solid #3a3a3a;
+            }
+            QMenu::item {
+                background: transparent;
+                color: #e0e0e0;
+                padding: 5px 24px;
+            }
+            QMenu::item:selected {
+                background-color: #1976d2;
+                color: #ffffff;
+            }
+            QMenu::item:disabled {
+                color: #777;
+            }
+            QMenu::separator {
+                height: 1px;
+                background: #3a3a3a;
+                margin: 4px 8px;
+            }
         """)
     
     def _create_header(self):

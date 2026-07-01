@@ -94,8 +94,10 @@ def test_workspace_uses_orientation_and_nav():
     assert "AIPACS_DENTAL_ORTHO_ORIENT" in s and "AIPACS_DENTAL_STACK_NAV" in s
     for sym in ("def _ortho_cell", "def _extract_oriented", "def _render_view",
                 "def _on_slider", "def _scroll_view", "def _compose_view",
-                "def _update_nav_widgets"):
+                "def _update_nav_widgets",
+                "def _apply_standard_mpr_static_camera_correction"):
         assert sym in s, f"missing {sym}"
+    assert 'view in ("coronal", "sagittal")' in s
     assert "QSlider" in s                  # sidebar/slider navigation
     assert "angleDelta()" in s             # mouse-wheel scroll
     assert "/ {count}" in s or "/ {" in s   # slice index display

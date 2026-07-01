@@ -892,6 +892,52 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   fixed the misleading `[H7-P4] disk_file_count` (it counted `study_path/<display key>` e.g. `/2000001`
   instead of `study_path/<orig series>` `/1` → a false `0`; diagnostic only, not the failure). Guard
   `tests/code/viewer/test_multistudy_per_series_study_pk.py`. NEEDS live verify on 48101.
+- **Secondary series won't grow — WRONG on-disk count for offset keys + A1 rebuild swallowed**
+  (`_vc_cache.py` + `_vc_progressive.py`, NOT mirrored — patient 48476 series 203 / prev-study
+  1000001 / 3000202, 2026-07-01): the recurring "previous-exam series sticks at its partial stack"
+  class, TWO reinforcing bugs, both fixed **default-on**. **BUG 1 (source-level — the real
+  unification):** `_count_series_files_on_disk(series_number)` (`_vc_cache.py`) joined the tab's
+  PRIMARY study path (`_get_correct_study_path()`) with the bare number. A SECONDARY series is keyed
+  by an OFFSET DISPLAY key (`study_slot*1_000_000 + orig`, e.g. `2000602`) which does NOT exist under
+  the primary study path → `isdir` False → returned **0**. ALL 13 callers (the same-series no-op grow
+  check `_vc_switch.py:337`, progressive grow, load-completion, the backend candidate probe) then saw
+  disk `0` on-disk for a secondary series → the ONE decision authority `decide_display_action` had
+  nothing to grow → the rebuild was skipped. FIX (originally flag `AIPACS_DISK_COUNT_CANONICAL`,
+  **COLLAPSED to unconditional after the 48695 live-verify, 2026-07-01** — the legacy "return wrong 0"
+  had no valid use, so there is no kill switch): when the bare join misses AND the key is an offset key
+  (`int(series_number) >= 1_000_000`), resolve `_resolve_canonical_series_identity` and count the
+  series' OWN folder `SOURCE_PATH/<study_uid>/<orig_series>`. **STRICTLY additive** — ordinary /
+  primary / single-study numbers (< 1_000_000) matched the bare join already or legitimately return 0,
+  so they NEVER reach the fallback. `expected` was always correct (it reads the offset-keyed
+  `_server_series_info` image_count via `resolve_series_expected_count`); only the DISK count was
+  wrong. Fixing it at source makes the shared authority grow secondary series on EVERY path
+  (same-series no-op / progressive / completion) — one rule, not a per-call-site exception. **BUG 2
+  (the watchdog backstop):** Stage A1 (`_maybe_grow_displayed_to_disk`, from the 48273/48567 work)
+  rebuilt via `change_series_on_viewer(display_key, force_reload=False)` — but the same-series no-op
+  (`_vc_switch.py:321 if (not force_reload) and current_series_no == series_number`) fires (the
+  viewport already shows this key) and, compounded by BUG 1's disk 0, never rebuilt (LIVE: repeated
+  `[GROW-DISPLAYED] displayed=1 disk=6 attempt 1/4…4/4` with `displayed` never moving). FIX: A1 now
+  passes `force_reload=True`. A1 is the canonical-identity authority that already counted the true
+  disk folder + confirmed SETTLED (stable `.dcm`, no `.part`), so it tells `change_series` to execute
+  the rebuild it decided on, bypassing the no-op's re-derivation. **SAFE (no re-download):** A1 only
+  fires on a SETTLED folder = the download FINISHED, so there is no load miss to trigger a re-fetch;
+  `force_reload` only invalidates the stale partial decoded-volume cache and re-reads the complete
+  DICOM files. Guards `tests/code/viewer/test_disk_count_canonical_offset_key.py` +
+  `test_grow_displayed_to_disk.py` (force_reload=True pin); 23 viewer green. **LIVE-VERIFIED on 48695
+  (2026-07-01):** every series grew with `[GROW-DISPLAYED]` `displayed` CLIMBING between attempts
+  (primary 302 29→41→100→147, 175651321 1→36; prev-exam 1000010 50→144, 2000203 20→70→135), prev-exam
+  loaded from its own folder `…/019/10/`, clean download KPIs (all on_disk==expected), zero errors. See
+  `docs/reports/DICOM_COMPLEX_STUDY_COMPATIBILITY_REVIEW_2026-07-01.md` §8. POLISH after verify:
+  (1) collapsed `AIPACS_DISK_COUNT_CANONICAL` (unconditional, above); (2) BOUNDED A1's
+  `_grow_disk_counts`/`_grow_disk_attempts` dicts (self-clear past 512 — they were never cleared = slow
+  per-session leak; safe: a settled series is never revisited). A1's OWN fresh `.dcm`+`.part` scandir is
+  KEPT intentionally (needs an atomic snapshot for the settle decision that the 1 s-TTL shared
+  `_count_series_files_on_disk` can't give — do NOT force-unify it). `AIPACS_GROW_DISPLAYED_TO_DISK`
+  stays a kill switch (bigger watchdog behavior; next collapse candidate). SANDBOX NOTE: source-pin
+  tests that read the large `_vc_cache.py` / `_vc_progressive.py` under `pytest` get a stale/TRUNCATED
+  FUSE read (false SyntaxError or stale content) while a fresh `open()`/importlib/Read-tool all show the
+  correct file; `touch` the file or verify edited regions via a standalone snippet compile. (46281
+  series 1 "one image" = a DISTINCT multi-frame issue, deferred.)
 - **Clinical guardrail:** download/priority/perception only. No VTK/MPR geometry, slice
   order, orientation, or render change. No data-loss risk (atomic `.part` + resume). All
   three pieces are flag-gated default-on with the legacy path preserved as a kill switch.
@@ -899,6 +945,57 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   `docs/pipelines/unified-patient-study-pipeline.md` §8). Staged next (need live validation):
   settle-then-switch cross-study preemption (batch-boundary yield not kill), and converging
   the drop onto the shared `PatientStudySetService` / typed `DownloadPlan`.
+
+### FAST multi-frame / cine / enhanced series (single file, N frames — 2026-07-01)
+A single DICOM file with `NumberOfFrames > 1` (ultrasound cine, XA, cardiac cine,
+enhanced CT/MR) previously showed **only frame 0** in the FAST viewer: the pipeline built
+one `SliceMeta` per FILE and the decoder did `arr = arr[0]`. Before editing
+`modules/viewer/fast/lightweight_2d_pipeline.py` (`_expand_multiframe_slices`,
+`_decode_cache_key`, `_decode_slice`, `_sort_slices`, `SliceMeta`) or
+`modules/viewer/fast/dicom_header_scan.py` (`DicomHeaderEntry.num_frames`), know:
+- **`NumberOfFrames` is captured for free during the header scan** (`entry_from_dataset` →
+  `num_frames`), so ordinary many-file single-frame series pay no extra read. In
+  `open_series`, `_expand_multiframe_slices` turns each `NumberOfFrames>1` file into **N
+  `SliceMeta` entries** sharing the same `path`, each with a distinct `frame_index`
+  (0..N-1). `_decode_slice` then selects `arr[frame_index]` (not `arr[0]`), and
+  `_decode_cache_key` appends `::f{frame_index}` so the N frames of one file never collide
+  in the L2 disk cache. `_sort_slices` uses `frame_index` as the tertiary key.
+- **Byte-identical for single-frame series** (the whole current dataset — 0 multi-frame
+  series in the store as of 2026-07-01): `num_frames<=1` slices keep `frame_index=None`,
+  never enter the expansion or the frame-select branch, and produce the exact legacy
+  path-only cache key. Flag `AIPACS_FAST_MULTIFRAME` (default on; `=0` = legacy frame-0).
+- **Metadata path probes only single-FILE series** for `NumberOfFrames` (`len(slices)==1`)
+  — the classic multi-frame candidate — so a many-file series never pays a probe.
+- Multi-frame is a single file = fully present once downloaded, so it does NOT interact
+  with the grow/disk-count logic (disk=1 file, viewer=N frames; the never-downgrade guard
+  keeps N). Geometry: cine frames share IPP/IOP → treated as a scrollable stack (correct).
+- **Deferred (untestable — no multi-frame data here):** per-frame volumetric geometry for
+  enhanced MR/CT (PerFrameFunctionalGroupsSequence), and the same `arr[0]` fallback in the
+  MPR/lazy-volume path (`pydicom_2d_backend.py:456`, `decode_service.py:194`) — the
+  lazy-volume feeds MPR/3D, a separate geometry task. Guard:
+  `tests/code/viewer/test_fast_multiframe.py` (real synthetic multi-frame DICOM: header
+  captures N, `arr[k]` selects frame k, + wiring pins). NEEDS live verify when a cine
+  series is available. Neither file is plugin-mirrored.
+- **SOP class + cine timing + PLAYBACK (2026-07-01).** The header scan also captures
+  `sop_class_uid` + `frame_time_ms` (FrameTime) + `cine_rate` (CineRate) +
+  `recommended_display_frame_rate` (all free during the existing read;
+  `dicom_header_scan.py`). Pure `modules/viewer/fast/cine_metadata.py` resolves a playback
+  fps by DICOM precedence (RecommendedDisplayFrameRate → CineRate → 1000/FrameTime →
+  mean(FrameTimeVector) → default 15, clamped 1–60). Pure `modules/viewer/fast/cine_player.py`
+  (`CinePlayer`) is the play/pause/loop/step state machine. The pipeline exposes
+  `is_cine_series()` + `cine_frame_rate()` (SliceMeta gains `frame_rate`). `QtFastContainer`
+  (`vtk_widget/qt_fast_container.py`, flag `AIPACS_FAST_CINE` default-on) has an ADDITIVE cine
+  engine: a QTimer advances frames at the resolved fps, **Spacebar toggles play/pause** for a
+  cine series, timer stopped in `cleanup()`. Purely additive — new members/methods + a
+  `keyPressEvent` that passes every non-cine key through unchanged, so single-frame series and
+  all existing key behavior are byte-identical; `toggle_cine()` is public for a future toolbar
+  button. Guards: `tests/code/viewer/test_cine_playback.py` (pure resolver + player + container
+  pins). **DEFERRED (need real data):** enhanced-MR volumetric per-frame geometry
+  (PerFrameFunctionalGroupsSequence; today all frames share frame-0 geometry = correct for a
+  temporal cine, wrong for a spatial volume), US region calibration
+  (SequenceOfUltrasoundRegions), JPEG-LS codec, XA polarity, and a visible toolbar Play button.
+  Full review + staged plan: `docs/reports/DICOM_COMPLEX_STUDY_COMPATIBILITY_REVIEW_2026-07-01.md`.
+  NEEDS live source-build verify with a real cine series.
 
 ### Previous Exams — cross-PatientID prior studies (National ID, 2026-06-20)
 A patient may be the SAME real person as other patients imaged before under

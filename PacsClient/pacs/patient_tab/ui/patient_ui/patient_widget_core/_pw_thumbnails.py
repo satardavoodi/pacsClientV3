@@ -858,27 +858,70 @@ class _PWThumbnailsMixin:
         return True
 
     def _render_thumbnails_from_files(self, thumbnails):
-        """Render thumbnail widgets from cached file paths."""
+        """Render thumbnail widgets from cached file paths.
+
+        P1.3: building N thumbnail widgets (a QPixmap + a card widget per series) in one
+        synchronous loop can freeze the GUI thread on patient open. When
+        ``AIPACS_SIDEBAR_BUILD_CHUNKED`` is on, the thumbnails are appended a few at a
+        time, yielding to the Qt event loop between chunks — a *progressive append* in
+        the SAME order (no clear/rebuild, so no flicker of existing cards). This changes
+        render *timing*; it was source-build visually verified (order / no flicker /
+        download borders, single AND multi-study) and is now **default ON**, with
+        ``AIPACS_SIDEBAR_BUILD_CHUNKED=0`` as the kill switch. The multi-study grouped
+        render path is intentionally left untouched.
+        """
         try:
-            thumb_index = 0
             _sp_downloaded = self._get_correct_study_path() if hasattr(self, '_get_correct_study_path') else None
-            for thumbnail_file in thumbnails:
-                series_number = Path(thumbnail_file).stem
-                series_info = self._server_series_info.get(str(series_number))
-                thumb_index = self.add_thumbnail_to_thumbnail_layout(
-                    thumb_index=thumb_index,
-                    file_path_thumbnail=thumbnail_file,
-                    key_thumbnail=str(series_number),
-                    series_info=series_info
-                )
-                # ✅ Mark downloaded series with green border; keep others pending
-                if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
-                    if self._is_series_downloaded(series_number, study_path=_sp_downloaded):
-                        self.thumbnail_manager.set_series_ready(series_number)
-                    else:
-                        self.thumbnail_manager.set_series_pending(series_number)
+            thumbs = list(thumbnails or [])
+            if os.getenv("AIPACS_SIDEBAR_BUILD_CHUNKED", "1") != "0" and len(thumbs) > 4:
+                self._sidebar_build_token = getattr(self, '_sidebar_build_token', 0) + 1
+                self._render_files_chunked(thumbs, 0, 0, _sp_downloaded, self._sidebar_build_token)
+                return
+            thumb_index = 0
+            for thumbnail_file in thumbs:
+                thumb_index = self._render_one_thumbnail_file(thumbnail_file, thumb_index, _sp_downloaded)
         except Exception as e:
             self.logger.debug(f"Error rendering cached thumbnails: {e}")
+
+    def _render_one_thumbnail_file(self, thumbnail_file, thumb_index, sp_downloaded):
+        """Render one cached-file thumbnail (shared by the synchronous and chunked
+        paths so the per-series behaviour can never diverge)."""
+        series_number = Path(thumbnail_file).stem
+        series_info = self._server_series_info.get(str(series_number))
+        thumb_index = self.add_thumbnail_to_thumbnail_layout(
+            thumb_index=thumb_index,
+            file_path_thumbnail=thumbnail_file,
+            key_thumbnail=str(series_number),
+            series_info=series_info
+        )
+        # ✅ Mark downloaded series with green border; keep others pending
+        if hasattr(self, 'thumbnail_manager') and self.thumbnail_manager:
+            if self._is_series_downloaded(series_number, study_path=sp_downloaded):
+                self.thumbnail_manager.set_series_ready(series_number)
+            else:
+                self.thumbnail_manager.set_series_pending(series_number)
+        return thumb_index
+
+    def _render_files_chunked(self, thumbs, index, thumb_index, sp_downloaded, token):
+        """P1.3 progressive append: render a few cached-file thumbnails per event-loop
+        tick, in order, so a many-series sidebar does not freeze patient open. Cancelled
+        if a newer render supersedes it (token mismatch). Everything stays on the main
+        thread (QPixmap/widget creation is main-thread-only); only the *scheduling*
+        changes. Chunk size is ``AIPACS_SIDEBAR_BUILD_CHUNK`` (default 3)."""
+        if token != getattr(self, '_sidebar_build_token', 0):
+            return  # a newer render started; stop this stale chain
+        try:
+            chunk = max(1, int(os.getenv("AIPACS_SIDEBAR_BUILD_CHUNK", "3") or "3"))
+        except Exception:
+            chunk = 3
+        end = min(index + chunk, len(thumbs))
+        for i in range(index, end):
+            try:
+                thumb_index = self._render_one_thumbnail_file(thumbs[i], thumb_index, sp_downloaded)
+            except Exception:
+                pass
+        if end < len(thumbs):
+            QTimer.singleShot(0, lambda: self._render_files_chunked(thumbs, end, thumb_index, sp_downloaded, token))
 
     @Slot()
     def _render_thumbnails_from_files_slot(self):

@@ -11,17 +11,23 @@ from modules.EchoMind.llm_client import chat_completion
 from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings, get_prompt_settings, get_proxy_settings
 
 
-def _get_requests_proxies() -> "dict[str, str] | None":
-    """Return a requests-compatible proxies dict when SOCKS5 proxy is configured, else None."""
+def _get_requests_proxies() -> "dict[str, str]":
+    """Return a requests-compatible proxies dict.
+
+    - 'direct': returns {} so requests explicitly bypasses ALL proxy sources
+      (system registry, HTTP_PROXY/HTTPS_PROXY env vars, Windows WinInet).
+      Passing proxies=None would still let requests pick up system proxies.
+    - 'socks5': returns the configured SOCKS5 proxy.
+    """
     try:
         cfg = get_proxy_settings()
         if cfg.get("connection_type") != "socks5":
-            return None
+            return {}  # explicit bypass — no system/env proxy
         port = int(cfg.get("proxy_port") or 2080)
         proxy_url = f"socks5://127.0.0.1:{port}"
         return {"http": proxy_url, "https": proxy_url}
     except Exception:
-        return None
+        return {}  # fail-safe: no proxy
 
 
 # ------------------------------------------------------
@@ -125,9 +131,73 @@ def _openai_result(
 
 
 
-# ============================
-# 🔹 Reporter function using GapGPT
-# ============================
+_MRI_REQUIRED_KEYS: list = [
+    "Report Title",
+    "Pathological Findings",
+    "Normal Findings",
+    "Impression",
+    "Recommendations",
+]
+
+_CT_REQUIRED_KEYS: list = [
+    "Report Title",
+    "Pathological Findings",
+    "Normal Findings",
+    "Impression",
+    "Recommendations",
+]
+
+
+def _clean_model_json_text(raw):
+    """Strip markdown fences and <|end|> end-tokens from model JSON output."""
+    if not isinstance(raw, str):
+        return raw
+    import re as _re
+    text = raw.strip()
+    # Strip <|end|> FIRST so closing ``` fence is still at the end
+    text = _re.sub(r"\s*<\|end\|>\s*$", "", text)
+    text = text.strip()
+    # Strip opening ```json or ``` fence
+    text = _re.sub(r"^```(?:json)?\s*", "", text, flags=_re.IGNORECASE)
+    # Strip closing ``` fence
+    text = _re.sub(r"\s*```$", "", text)
+    return text.strip()
+def _validate_report_json(raw, modality: str):
+    """
+    Validate and repair JSON output for a given modality.
+    Non-MRI/CT: passthrough.
+    MRI/CT: strip fences → parse → validate required keys → coerce empty optionals to null.
+    Raises ValueError on parse failure or missing required keys.
+    Always returns a JSON string with ALL 5 canonical keys present.
+    """
+    if not isinstance(raw, str) or modality.lower() not in ("mri", "ct"):
+        return raw
+    import json as _json
+    text = _clean_model_json_text(raw)
+    try:
+        data = _json.loads(text)
+    except (_json.JSONDecodeError, ValueError) as exc:
+        raise ValueError(f"non-parseable JSON returned by model: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(
+            f"Expected a JSON object (dict) but got {type(data).__name__}"
+        )
+    # Coerce empty / N/A optional fields to null (keep key present)
+    _optional = ["Impression", "Recommendations"]
+    for key in _optional:
+        val = data.get(key)
+        if isinstance(val, str) and val.strip().lower() in ("", "n/a", "none", "-"):
+            data[key] = None
+    # Ensure ALL optional keys are present (insert as null if missing)
+    for key in _optional:
+        if key not in data:
+            data[key] = None
+    # Validate required keys — raise on missing
+    for k in ["Report Title", "Pathological Findings", "Normal Findings"]:
+        if not data.get(k):
+            raise ValueError(f"Required key missing or empty: {k!r}")
+    return _json.dumps(data, ensure_ascii=False, indent=2)
+
 def reporter(
     user_msg: str,
     modality: Optional[str] = "",
@@ -172,16 +242,28 @@ def reporter(
 
                         MODALITY LOGIC (CT):
                         • The imaging modality is CT (Computed Tomography).
-
-                        • Construct the 'Normal Findings' using RSNA CT structured reporting standards when no user-provided normal_template is available.
-
+                        • Construct 'Normal Findings' using RSNA structured CT reporting standards when no user-provided normal_template is available.
                         • Only mention contrast phases (e.g., non-contrast, arterial, portal venous, delayed) if explicitly referenced in the input.
+                        • Use structured, grouped, RSNA-style anatomical organisation — concise, non-redundant.
+                        • Exclude any anatomical region already described in Pathological Findings from the Normal Findings.
 
-                        • Use structured, grouped, RSNA-style anatomical organization:
-                        – Always generate concise, non-redundant normal findings.
-                        – Exclude any anatomical regions described in pathological findings.
-                        – Do not generate normal findings for irrelevant organs.
-
+                        * Recognise Persian / Finglish CT terminology and map to correct radiologic English:
+                        – "برونشکتازی / bronshiektazi" → Bronchiectasis
+                        – "گراند گلس / grand glass" → Ground-glass opacity (GGO)
+                        – "آمفیزم / amfizem" → Emphysema
+                        – "کونکا بولوزا / concha boloza" → Concha bullosa
+                        – "دیورتیکولایتیس / diverticolitis" → Diverticulitis
+                        – "استرندینگ چربی" → Fat stranding
+                        – "هایپردنس / هایپودنس" → Hyperdense / Hypodense
+                        – "لنفادنوپاتی / lemfnodopaty" → Lymphadenopathy
+                        – "پنوموتوراکس / pnomotoraks" → Pneumothorax
+                        – "پلورال افیوژن / ploralafijon" → Pleural effusion
+                        – "هیدرونفروز / hidronefros" → Hydronephrosis
+                        – "نفرولیتیازیس / sange kolyeh" → Nephrolithiasis
+                        – "آپاندیسیت / apandisit" → Appendicitis
+                        – "پنوموپریتونئوم" → Pneumoperitoneum
+                        – "تنوسینوویت" → Tenosynovitis
+                        – "اکیپشوس" → Osteophytosis
 
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         CRITICAL: IMPRESSION / RECOMMENDATIONS PRESENCE-LOCK (HARD RULE)
@@ -192,186 +274,285 @@ def reporter(
                         - Impression EXISTS if the input includes ANY explicit diagnostic conclusion/جمع‌بندی تشخیصی such as:
                         "impression", "جمع‌بندی", "نتیجه", "در مجموع", "مطرح‌کننده", "suggestive of", "compatible with", "favored diagnosis", "به نفع", "به احتمال زیاد", etc.
                         - Recommendations EXISTS if the input includes ANY explicit advice/اقدام پیشنهادی such as:
-                        "recommend", "توصیه", "follow-up", "biopsy", "MR perfusion", "correlation", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
+                        "recommend", "توصیه", "follow-up", "biopsy", "correlation", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
 
-                        HARD CONSTRAINTS (NON-NEGOTIABLE):
-                        1) If Impression EXISTS in the input:
-                        - The output JSON MUST include the key "Impression".
-                        - "Impression" MUST be a NON-EMPTY string.
-                        - It MUST preserve the meaning and content from input exactly (no invention, no extra diagnoses).
-                        2) If Recommendations EXISTS in the input:
-                        - The output JSON MUST include the key "Recommendations".
-                        - "Recommendations" MUST be a NON-EMPTY string.
-                        - It MUST preserve the meaning and content from input exactly (no invention, no extra advice).
-                        3) If either exists but you omit it OR leave it empty OR set it to null:
-                        - Your output is INVALID and MUST be regenerated to comply.
+                        HARD CONSTRAINTS:
+                        1) If Impression EXISTS in input → output JSON MUST include "Impression" as a NON-EMPTY string.
+                        2) If Recommendations EXISTS in input → output JSON MUST include "Recommendations" as a NON-EMPTY string.
+                        3) If either exists but you omit it or leave it empty → output is INVALID; regenerate.
+                        4) DO NOT invent Impression/Recommendations if not stated in input.
+                        5) DO NOT set them to null, "N/A", "-", or empty string if they exist in input.
 
-                        ABSOLUTE PROHIBITIONS:
-                        - DO NOT invent Impression/Recommendations.
-                        - DO NOT output empty strings, "N/A", null, "-", or placeholders.
-                        - DO NOT merge Impression into Pathological Findings or vice versa.
-                        - DO NOT paraphrase into new medical claims; only faithful extraction/translation.
+                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        PATHOLOGICAL FINDINGS RULES (CT-SPECIFIC)
+                        ═══════════════════════════════════════════════════════════════
+                        When reporting pathological findings, describe the IMAGING MANIFESTATION,
+                        not just the diagnosis label. Structure each finding as:
+                          "[Anatomical location] demonstrates [CT imaging appearance], consistent with / suggestive of [diagnosis]."
 
-                        SELF-CHECK BEFORE FINAL OUTPUT (MANDATORY):
-                        - Scan the input for Impression triggers and Recommendations triggers.
-                        - If found, verify that the corresponding JSON keys exist and are non-empty.
-                        - If not satisfied, fix the JSON before returning it.
+                        CORRECT:   "A 2.4 cm hypodense lesion in hepatic segment VI with peripheral rim
+                                    enhancement on portal-venous phase, consistent with a hepatic abscess."
+                        INCORRECT: "Hepatic abscess."
+
+                        CORRECT:   "Focal area of hyperdensity measuring 18 mL in the right basal ganglia
+                                    with surrounding hypodense oedema and 4 mm rightward midline shift,
+                                    consistent with hypertensive intraparenchymal haemorrhage."
+                        INCORRECT: "Intracerebral bleeding."
+
+                        CT-SPECIFIC MEASUREMENT AND CLASSIFICATION RULES:
+                          • Brain haemorrhage: specify type (EDH/SDH/SAH/IPH), location, volume (ABC/2 method or mL), density (HU), mass effect, midline shift in mm.
+                          • Stroke: ASPECTS score for MCA territory; specify territory (MCA/ACA/PCA), density change (loss of grey-white), sulcal effacement.
+                          • Pulmonary nodule: size (longest dimension, mm), lobe, segment, density (solid/part-solid/GGO/calcified), morphology (smooth/irregular/spiculated), Fleischner Society category.
+                          • Pleural effusion: laterality, estimated volume (small <300 mL / moderate / large), loculation, associated atelectasis.
+                          • Liver lesion: segment (I-VIII), size (3 planes, cm), density/attenuation pattern (arterial enhancement/wash-out/peripheral rim), satellite lesions.
+                          • Bile duct: calibre in mm; if dilated state level of obstruction.
+                          • Pancreatitis: Revised Atlanta severity, Balthazar grade, necrosis percentage, duct calibre.
+                          • Appendix: diameter in mm, wall thickness, periappendiceal fat stranding, abscess, perforation (free air or extraluminal faecal material).
+                          • Bowel obstruction: specify dilated segment (small/large bowel), transition point, degree (partial/complete), closed-loop signs.
+                          • Kidney stone: size in mm, location (caliceal/pelvis/proximal/mid/distal ureter/UVJ), HU density, obstructive hydronephrosis grade (mild/moderate/severe).
+                          • Spinal fracture: AO/Magerl classification, vertebral height loss (%), burst vs compression, canal compromise (%), retropulsion.
+                          • Disc herniation: level, direction (central/paracentral/foraminal/far-lateral), size (mm), nerve root or thecal sac compression.
+                          • Pulmonary embolism: vessel level (main/lobar/segmental/subsegmental), RV:LV ratio, RV strain signs.
+                          • Aortic aneurysm: maximal diameter (mm) at sinus / ascending / arch / descending; mural thrombus; intramural haematoma; dissection flap (Stanford A/B).
+                          • Lymph node: short-axis diameter (mm), location, necrosis, calcification; reference to size threshold.
+                        ═══════════════════════════════════════════════════════════════
+
+                        * RSNA-compliant normal findings per CT body region:
+
+                        – BRAIN CT (NON-CONTRAST):
+                            • No acute territorial infarction; grey-white matter differentiation is preserved bilaterally.
+                            • No intracranial haemorrhage (parenchymal, subdural, epidural, or subarachnoid).
+                            • No abnormal intraparenchymal hyperdensity or hypodensity.
+                            • Ventricular system is normal in size and configuration; no hydrocephalus.
+                            • No midline shift or significant mass effect.
+                            • Basal cisterns are patent and symmetric; no effacement.
+                            • No extra-axial fluid collection.
+                            • Cerebral sulci and gyri are appropriate for patient age; no asymmetric sulcal effacement.
+                            • The cerebellum and brainstem show no focal hypodense or hyperdense lesion.
+                            • Posterior fossa structures are unremarkable; fourth ventricle is in normal position.
+                            • Osseous calvarium: no fracture, lytic, or sclerotic lesion.
+                            • Visualised paranasal sinuses and mastoid air cells are clear.
+                            • The orbits are normal in appearance; globes are symmetric.
+
+                        – BRAIN CT WITH CONTRAST:
+                            • No abnormal parenchymal, leptomeningeal, or dural enhancement.
+                            • No ring-enhancing or nodular-enhancing lesion.
+                            • Major intracranial vessels demonstrate normal enhancement without filling defect or cutoff.
+                            • No abnormal enhancement in the posterior fossa or brainstem.
+                            • Choroid plexuses enhance symmetrically; no abnormal ependymal enhancement.
+
+                        – CHEST CT AND HRCT:
+                            • Lung parenchyma: clear lung fields bilaterally; no focal consolidation, mass, or suspicious nodule.
+                            • No ground-glass opacity, interstitial thickening, or honeycombing.
+                            • Airways: trachea and central bronchi are patent and normally calibred; no bronchiectasis or bronchial wall thickening.
+                            • Pleura: no pleural effusion, pleural thickening, or pneumothorax bilaterally.
+                            • Mediastinum: no mediastinal widening or mass; no pathologic lymphadenopathy (no node greater than 1 cm short axis).
+                            • Heart: normal in size; no pericardial effusion or thickening.
+                            • Thoracic aorta and pulmonary vasculature are normal in calibre and course.
+                            • Oesophagus: not dilated; no wall thickening.
+                            • Chest wall and osseous structures: no rib fracture, no lytic or sclerotic bony lesion.
+                            • Thyroid gland (visualised): symmetric; no nodule detected on this limited view.
+                            • Visualised upper abdominal organs are unremarkable.
+
+                        – NECK CT:
+                            • Larynx: normal configuration and symmetry; no mucosal irregularity or subglottic narrowing.
+                            • Epiglottis and supraglottic structures: unremarkable.
+                            • Hypopharynx and oropharynx: no asymmetric soft tissue thickening.
+                            • Thyroid gland: normal in size, morphology, and attenuation; no nodule or calcification.
+                            • Parathyroid glands: not enlarged.
+                            • Salivary glands: parotid and submandibular glands are symmetric and normal in attenuation.
+                            • No pathologic cervical lymphadenopathy (no node greater than 1 cm short axis); no necrotic node.
+                            • Carotid arteries and internal jugular veins: patent bilaterally; no vascular abnormality.
+                            • Prevertebral soft tissues: not thickened.
+                            • Cervical spine (limited view): normal alignment; no fracture or subluxation.
+
+                        – PARANASAL SINUS CT:
+                            • Frontal sinuses: clear bilaterally; no mucosal thickening, polyp, or air-fluid level.
+                            • Maxillary sinuses: clear bilaterally; no mucosal thickening, polyp, or opacification.
+                            • Ethmoid air cells: clear bilaterally; no opacification or cell wall erosion.
+                            • Sphenoid sinus: clear; no opacification or lateral recess involvement.
+                            • Nasal cavity: patent bilaterally; nasal septum midline without perforation; inferior and middle turbinates are of normal size.
+                            • Ostiomeatal complexes: patent bilaterally; no obstructing polyp or mucosal disease.
+                            • No concha bullosa; no paradoxical middle turbinate.
+                            • Orbits (limited view): no periorbital extension of sinus disease; optic nerves unremarkable.
+                            • Dentition (limited view): no periapical lucency or dental abscess on this limited view.
+
+                        – ABDOMEN CT:
+                            • Liver: normal in size, morphology, and attenuation; no focal hepatic lesion; smooth hepatic contour.
+                            • Gallbladder: normal wall thickness and luminal content; no cholelithiasis or polyp.
+                            • Bile ducts: common bile duct not dilated (less than 6 mm); no intrahepatic biliary ductal dilatation.
+                            • Spleen: normal in size and attenuation; no focal splenic lesion.
+                            • Pancreas: normal in size, contour, and attenuation; pancreatic duct not dilated (less than 3 mm); no peripancreatic fat stranding.
+                            • Adrenal glands: normal size and morphology bilaterally; no adrenal mass.
+                            • Kidneys: normal in size, cortical thickness, and enhancement bilaterally; no nephrolithiasis or hydronephrosis; no perinephric fat stranding.
+                            • Bowel: no small or large bowel obstruction; no bowel wall thickening or pneumatosis; appendix visualised and normal (less than 6 mm).
+                            • No pneumoperitoneum or intraperitoneal free fluid.
+                            • Abdominal aorta: normal calibre (less than 3 cm); no aneurysmal dilatation or mural thrombus.
+                            • No enlarged abdominal or retroperitoneal lymph nodes (no node greater than 1 cm short axis).
+                            • Abdominal wall: no hernia or abnormal soft tissue mass.
+
+                        – PELVIS CT:
+                            • Urinary bladder: normal wall thickness; no intraluminal filling defect, calculus, or mural mass.
+                            • Distal ureters: not dilated; no ureteric calculus at the ureterovesical junction.
+                            • Uterus (if applicable): normal in size and attenuation; no intraluminal mass or myometrial lesion.
+                            • Ovaries (if applicable): normal in size; no ovarian mass or complex cyst.
+                            • Prostate (if applicable): normal in size; no hypodense lesion.
+                            • Seminal vesicles (if applicable): symmetric and unremarkable.
+                            • Rectum and sigmoid colon: normal wall thickness; no pericolonic fat stranding.
+                            • No pelvic lymphadenopathy; no free pelvic fluid.
+                            • Pelvic floor musculature: symmetric and unremarkable.
+                            • Osseous structures of the pelvis: no lytic, sclerotic, or erosive changes; sacroiliac joints symmetric; femoral heads spherical with preserved joint space.
+
+                        – ABDOMINOPELVIC CT:
+                            • Full survey of abdominal and pelvic organs as described above with no focal abnormality identified.
+                            • No pneumoperitoneum or free intraperitoneal fluid.
+                            • Abdominal aorta and iliac vessels: normal in calibre; no aneurysm.
+                            • No significant abdominal or pelvic lymphadenopathy.
+
+                        – CERVICAL SPINE CT:
+                            • Vertebral alignment: normal cervical lordosis maintained; no anterolisthesis or retrolisthesis at any level.
+                            • Vertebral bodies: normal height, cortical margins, and bone density at C1 through C7.
+                            • Intervertebral disc spaces: maintained at all cervical levels; no disc calcification.
+                            • Spinal canal: adequate AP diameter at all levels; no significant central stenosis.
+                            • Neural foramina: patent bilaterally at all cervical levels.
+                            • Facet joints: normal articular surfaces; no hypertrophic change or erosion.
+                            • Atlantoaxial joint: normal alignment; odontoid process intact and normally positioned; C1-C2 interval preserved.
+                            • Prevertebral soft tissues: not thickened.
+                            • Posterior elements (pedicles, laminae, spinous processes): intact at all levels.
+                            • No fracture, dislocation, lytic, or sclerotic bony lesion.
+
+                        – THORACIC SPINE CT:
+                            • Vertebral alignment: normal thoracic kyphosis; no spondylolisthesis at any level.
+                            • Vertebral bodies: normal height, cortical integrity, and bone density from T1 to T12; no compression deformity.
+                            • Intervertebral disc spaces: maintained throughout.
+                            • Spinal canal: patent at all thoracic levels; no significant stenosis.
+                            • Posterior elements: pedicles, laminae, transverse processes, and spinous processes intact.
+                            • Costovertebral articulations: normal bilaterally; no rib head erosion or subluxation.
+                            • Paravertebral soft tissues: no paravertebral mass or abscess.
+                            • No lytic, sclerotic, or destructive bony lesion throughout the thoracic spine.
+
+                        – LUMBAR SPINE CT:
+                            • Vertebral alignment: normal lumbar lordosis; no spondylolisthesis at L1 through S1.
+                            • Vertebral bodies: normal height and bone density at all lumbar levels; no compression or wedge deformity.
+                            • Intervertebral disc spaces: maintained at all levels; no significant disc height loss or calcification.
+                            • Spinal canal: adequate AP diameter and cross-sectional area at all lumbar levels.
+                            • Thecal sac: not compressed at any level.
+                            • Neural foramina: patent bilaterally at all lumbar levels; no significant foraminal narrowing.
+                            • Facet joints: normal articular surfaces bilaterally; no significant joint space narrowing or vacuum phenomenon.
+                            • Sacroiliac joints: symmetric and unremarkable; no erosion or sclerosis.
+                            • Paraspinal musculature: normal bulk and attenuation bilaterally.
+                            • No fracture, lytic, or sclerotic lesion at L1 through S1 or the sacrum.
+
+                        – MSK CT SHOULDER:
+                            • Glenohumeral joint: normal articular surfaces; preserved joint space; no effusion.
+                            • Humeral head: normal sphericity and cortical integrity; no Hill-Sachs defect.
+                            • Glenoid: normal morphology; no Bankart osseous lesion or glenoid rim fracture.
+                            • Acromioclavicular joint: normal; no superior migration of the humeral head.
+                            • Acromion: no os acromiale; subacromial space not critically narrowed.
+                            • Clavicle and scapula: intact; no fracture or lytic lesion.
+                            • Soft tissues (visualised): no abnormal calcification or soft tissue mass.
+
+                        – MSK CT HIP:
+                            • Femoral head: normal sphericity; no subchondral collapse, cyst, or osteonecrosis.
+                            • Acetabulum: normal morphology; no fracture, labral ossification, or protrusio.
+                            • Hip joint space: preserved bilaterally; no joint effusion.
+                            • No cam or pincer deformity.
+                            • Femoral neck: normal neck-shaft angle; no stress fracture or cortical defect.
+                            • Pelvis and proximal femora: no lytic, sclerotic, or permeative bony lesion.
+                            • Soft tissues: no iliopsoas or trochanteric bursitis; no calcific tendinopathy.
+
+                        – MSK CT KNEE:
+                            • Tibial plateau: no fracture, depression, or cortical disruption.
+                            • Femoral condyles: intact articular surfaces; no osteochondral defect.
+                            • Patellofemoral joint: normal alignment; no tilt or subluxation; no patellar fracture.
+                            • Joint space: preserved in all three compartments.
+                            • No intra-articular loose body.
+                            • Proximal fibula: intact.
+                            • Soft tissues: no soft tissue calcification.
+
+                        – MSK CT ANKLE AND FOOT:
+                            • Tibiotalar joint: normal alignment and joint space; no fracture.
+                            • Talus: intact; no osteochondral lesion of the talar dome; no avascular necrosis.
+                            • Calcaneus: normal morphology; no fracture.
+                            • Subtalar, talonavicular, and calcaneocuboid joints: normal alignment; no coalition.
+                            • Metatarsals and phalanges: intact; no stress fracture or lytic lesion.
+                            • No tarsal coalition.
+                            • Soft tissues: no abnormal calcification.
+
+                        – MSK CT WRIST AND HAND:
+                            • Distal radius and ulna: intact articular surfaces; normal ulnar variance; no fracture.
+                            • Carpal bones: normal alignment and osseous integrity; no scaphoid fracture; no carpal coalition.
+                            • Intercarpal joints: normally aligned; no dissociation.
+                            • Metacarpals and phalanges: intact; no cortical disruption or periosteal reaction.
+                            • Soft tissues: no calcification; no erosive joint disease.
+
+                        – CORONARY CTA:
+                            • Coronary artery origin and course: all three vessels arise normally from the aortic root; no anomalous origin.
+                            • Left main coronary artery (LMCA): patent throughout; no significant stenosis or calcified plaque.
+                            • Left anterior descending artery (LAD): patent; no significant stenosis; no obstructive calcification.
+                            • Left circumflex artery (LCx): patent; no significant stenosis.
+                            • Right coronary artery (RCA): patent; right-dominant circulation; no significant stenosis.
+                            • Cardiac chambers: no chamber dilatation; left ventricular wall thickness within normal limits.
+                            • Myocardium: no perfusion defect or focal myocardial thinning.
+                            • Pericardium: no pericardial effusion or constrictive thickening.
+                            • Aortic root and ascending aorta: normal in calibre; no dilatation.
+                            • Pulmonary vasculature: no pulmonary embolism or filling defect.
+                            • Incidental extracardiac findings: none significant.
+
+                        – CT ANGIOGRAPHY AORTA:
+                            • Aortic root and ascending aorta: normal calibre; no aneurysm, intramural haematoma, or penetrating ulcer.
+                            • Aortic arch: normal origin of branch vessels; no arch aneurysm.
+                            • Descending thoracic aorta: normal calibre and smooth wall; no dissection flap.
+                            • Abdominal aorta: normal calibre (less than 3 cm); no aneurysmal dilatation or mural thrombus.
+                            • Major visceral branches (celiac, SMA, renal arteries): patent and normally arising with no stenosis.
+                            • Iliac arteries: normal in calibre and course bilaterally; no aneurysm.
+                            • No arteriovenous fistula or vascular anomaly.
+
+                        – CT UROGRAPHY AND CT KUB:
+                            • Kidneys: normal in size, cortical thickness, and corticomedullary differentiation bilaterally; normal parenchymal enhancement.
+                            • Collecting systems: no caliceal dilatation or hydronephrosis bilaterally.
+                            • No nephrolithiasis; no cortical scar or nephrocalcinosis.
+                            • Ureters: course normally throughout their length; no ureteral calculus, stricture, or dilatation.
+                            • Urinary bladder: normal wall thickness and morphology; no intraluminal filling defect, calculus, or mural lesion.
+                            • No perinephric fat stranding or retroperitoneal mass.
+                            • Adrenal glands: normal size and morphology bilaterally.
+
 
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         OUTPUT FORMAT (STRICT)
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                        Return ONLY valid JSON (no markdown, no explanations, no extra keys).
+                        Return only a valid JSON object — no other text before or after.
+                        Do not include markdown, headers, or explanations.
+                        Do not include code fences (no ``` or ```json wrappers).
 
-                        Schema:
+                        Schema (required | optional):
                         {
-                        "Report Title": string,
-                        "Pathological Findings": string,
-                        "Normal Findings": string,
-                        "Impression": string,        // REQUIRED IFF present in input; must be non-empty
-                        "Recommendations": string    // REQUIRED IFF present in input; must be non-empty
+                          "Report Title": string,                // REQUIRED
+                          "Pathological Findings": string,       // REQUIRED
+                          "Normal Findings": string,             // REQUIRED
+                          "Impression": string | null,           // OPTIONAL — include only if stated in input
+                          "Recommendations": string | null       // OPTIONAL — include only if stated in input
                         }
 
-                        NOTE:
-                        - If Impression/Recommendations do NOT exist in input, OMIT those keys entirely.
+                        Report Title format examples:
+                          "CT Scan of the Brain Without Contrast"
+                          "Contrast-Enhanced CT of the Chest"
+                          "HRCT of the Chest"
+                          "CT of the Cervical Spine Without Contrast"
+                          "Triphasic CT of the Abdomen and Pelvis"
+                          "CT KUB (Kidneys, Ureters, and Bladder)"
+                          "Coronary CT Angiography"
+                          "CT Angiography of the Thoracic and Abdominal Aorta"
 
+                        Rules:
+                          • Start immediately with { — NO preceding text.
+                          • End with } — NO following text, no <|end|>.
+                          • All JSON strings must be properly escaped.
+                          • No trailing commas. No extra keys.
+                          • Pathological Findings: use numbered list format when multiple findings exist.
+                          • Normal Findings: use anatomically grouped bullet format.
+                          • If Impression/Recommendations are absent from input → omit those keys entirely.
 
-                        • Report Title:
-                        – Format as:
-                            “CT Scan of [Body Part] Without Contrast”
-                            “Contrast-Enhanced CT of [Body Part]”
-                            “CT [Region] With and Without Contrast”
-                            “Triphasic Abdominopelvic CT Scan” (if phases are specified)
-
-                        • Interpret CT-specific terminology:
-                        – Density & Attenuation:
-                            • hyperdense, hypodense, isodense
-                            • ground-glass opacity (GGO), consolidation, nodules, cavitation
-                        – Lung CT patterns:
-                            • centrilobular nodules, tree-in-bud, mosaic attenuation
-                            • paraseptal emphysema, panlobular emphysema
-                            • fibrotic bands, traction bronchiectasis, honeycombing
-                        – Airway terms:
-                            • bronchiectasis, bronchiolectasis, bronchial wall thickening
-                        – Sinus CT terms:
-                            • concha bullosa, mucosal thickening, opacification
-                        – Abdominal CT terms:
-                            • fat stranding, wall thickening, diverticulitis, pneumoperitoneum
-                            • hydronephrosis, nephrolithiasis, ureteral stones
-                        – Bone CT terms:
-                            • lytic/sclerotic lesions, cortical disruption, vertebral compression
-
-                        • Recognize Persian/Finglish CT terminology and map to correct radiologic English:
-                        – “برونشکتازی / bronshiektazi” → Bronchiectasis  
-                        – “برونشیولکتازی” → Bronchioloectasia  
-                        – “سنتر ی لوبولار / centri lobolar” → Centrilobular pattern  
-                        – “آمفیزم / amfizem” → Emphysema  
-                        – “فیبروبولوتیک / fibrobolotic” → Fibrobullous changes  
-                        – “کونکا بولوزا / concha boloza” → Concha bullosa  
-                        – “دیورتیکولایتیس / diverticolitis” → Diverticulitis  
-                        – “گراند گلس / grand glass” → Ground-glass opacity  
-                        – “استرندینگ چربی” → Fat stranding  
-                        – “دنسیتی بالا/پایین” → Hyperdense / hypodense  
-                        – “لنفا دنپاتی / lemfnodopaty” → Lymphadenopathy  
-
-                        • RSNA-compliant normal findings per CT region:
-
-                        – **CHEST CT:**
-                            • Lungs: clear lung fields, no focal consolidation or suspicious nodules.
-                            • Airways: trachea and bronchi are patent.
-                            • Pleura: no effusion or pneumothorax.
-                            • Mediastinum: no masses, no pathologic lymphadenopathy.
-                            • Heart & Great Vessels: normal size, no pericardial effusion.
-                            • Bones & Soft Tissues: unremarkable.
-
-                        – **ABDOMEN/PELVIS CT:**
-                            • Liver, spleen, pancreas, kidneys, and adrenals show normal attenuation and morphology.
-                            • No biliary dilatation, no hydronephrosis.
-                            • Bowel loops: no obstruction, no wall thickening.
-                            • No free air or free fluid.
-                            • No enlarged abdominal or pelvic lymph nodes.
-                            • Bones: no destructive lesions.
-
-                        – **BRAIN CT (Non-contrast):**
-                            • Gray–white differentiation preserved.
-                            • Ventricles normal in size and configuration.
-                            • No midline shift or mass effect.
-                            • No intracranial hemorrhage or abnormal hyperdensities.
-                            • Skull and paranasal sinuses are unremarkable.
-
-                        – **SPINE CT (C/T/L):**
-                            • Vertebral alignment preserved.
-                            • Vertebral bodies show normal height and density.
-                            • No fractures, no lytic/sclerotic changes.
-                            • Spinal canal and foramina are patent.
-                            • Paraspinal soft tissues appear normal.
-
-                        – **BONE CT (MSK):**
-                            • Normal cortical integrity.
-                            • No periosteal reaction.
-                            • Joint spaces preserved.
-                            • No effusion or soft tissue abnormality.
-
-                            "1. Pathological Findings:\n"
-                            " • Objective: Transcribe and translate radiologic reports into English with a formal tone, emulating a typist and preparing a professional patient report.\n"
-                            " • Structure:\n"
-                            " o Number each part of the findings.\n"
-                            " o Use periods and proper punctuation to mimic the structure of a professional medical report.\n"
-                            " o Use precise radiologic medical nomenclature in your transcribtion for all terms used by the reporter.\n"
-                            " • Guidelines:\n"
-                            " o Follow structured reporting systems and lexicons such as RSNA Rad Report templates and ACR guidelines specific to CT imaging. Ensure use of CT-specific classification systems, such as the Fleischner Society guidelines for pulmonary nodules or ASPECTS for acute stroke evaluation on brain CT.\n"
-                            " o Apply appropriate categories and classifications from these systems based on abnormal findings.\n"
-                            " o Ensure clear and accurate categorization according to the relevant standardized system.\n"
-                            " o Ensure no additional implications or speculative thinking are added.\n"
-                            " o Do not generate any diagnosis, differential diagnosis (DDX), or recommendations unless explicitly provided by the user.\n\n"
-
-                            "2. Normal Findings:\n"
-                            " • Objective: Highlight normal findings in a structured reporting format using a radiologic normal report template tailored to the patient's specific body part and imaging modality.\n"
-                            " • Guidelines:\n"
-                            " o Normal Findings MUST exist in every report regardless of pathological content.\n"  # <-- ADDED HERE
-                            " o Eliminate the normal findings section ONLY for the same anatomical part where a pathological finding is described.\n"
-                            " o Ensure the report includes all relevant normal findings not mentioned in the original report, covering aspects beyond the pathological findings.\n"
-                            " o Always state at least several normal points explicitly (e.g., normal bone alignment, patent airways, unremarkable surrounding tissues, etc.).\n\n"
-
-                            # 3. Style & Tone
-                            "3. Language & Tone:\n"
-                            " • ANSWER MUST STRICTLY IN ENGLISH.\n"
-                            " • Use **extreme exaggeration**—vivid, dramatic phrasing.\n"
-
-                            # 4. Forbidden content
-                            "4. Absolutely **no**:\n"
-                            " • Internal reasoning, chain-of-thought, or instructions.\n"
-                            " • Suggestions, implications, speculations, differential diagnoses, recommendations.\n"
-                            " • Words like 'potentially,' 'possible,' 'suggestion,' 'may,' or 'which may be.'\n\n"
-
-                            # 5. JSON Structure Rules
-                            "5. JSON OUTPUT RULES:\n"
-                            " • START IMMEDIATELY WITH { - NO OTHER TEXT\n"
-                            " • END WITH } - NO OTHER TEXT\n"
-                            " • VALID JSON FORMAT ONLY\n"
-                            " • ALL STRINGS MUST BE PROPERLY ESCAPED\n"
-                            " • NO TRAILING COMMAS\n"
-                            " • PROPER QUOTATION MARKS\n"
-                            " • ABSOLUTELY MUST END WITH '<|end|>' AFTER THE FINAL CLOSING BRACE\n\n"
-
-                            # Modification instructions
-                            "6. If a previous report is provided, apply modifications from the new information:\n"
-                            " • Update only the specific parts mentioned in the new information (e.g., correct side, add lab results, update findings).\n"
-                            " • Keep all unchanged parts from the previous report intact.\n"
-                            " • Add new findings to the appropriate section without removing existing ones.\n"
-                            " • Update the report title if the new information changes it (e.g., side correction).\n"
-                            " • Output the full updated JSON.\n\n"
-
-                            " 'input': 'سیتی اسکن قفسه سینه بدون تزریق ماده حاجب از کاظم کریم شماره یک بنویست که کانونهای کوچک گراند گلس به همراه نواحی رتیکولر در پارانشیم هردو ریه به صورت پچی مشهود است یافتهای فوق میتواند در زمینه ی عفونت های آتیپیک ریوی منجمله عفونت های تحت حاد باشد شواهدی به نفعConsolidation و یا necrosis در پارانشیم ریه ها مشهود نیست. قسمت هایی از نواحی مذکور دارای باندهای فیبروتیک می باشد. بعد بنویس که کلسیفیکاسیون عروق کورونری مشهود است و افزایش ضخامت مختصر پریکارد رویت می گردد. تطبیق با یافته های آزماشگاهی از جهت وجود پنومونی ها کمک کننده است.',\n"
-                        " Output:\n"
-
-                        "```json  \n"
-                        '{\n'
-                        '  "Report Title": "Chest CT Scan Without Contrast",\n'
-                        '  "Pathological Findings": "1. Multiple small ground-glass opacities associated with patchy reticular densities are observed in the parenchyma of both lungs. These findings may suggest atypical pulmonary infections, including subacute infectious processes.\\n2. There is no evidence of consolidation or necrosis in the pulmonary parenchyma.\\n3. Some of the aforementioned areas exhibit fibrotic bands.\\n4. Coronary artery calcifications are evident.\\n5. Mild pericardial thickening is noted.",\n'
-                        '  "Normal Findings": "Lungs and Airways:\\n * No evidence of pulmonary mass, large nodules, or cavitary lesions.\\n * Major airways are patent without signs of obstruction.\\n Pleura:\\n * No pleural effusion or pneumothorax observed.\\n Mediastinum and Heart:\\n * Mediastinal structures are within normal limits.\\n * Heart size is within normal range.\\n Bones and Soft Tissues:\\n * No lytic or sclerotic bony lesions.\\n * Visualized soft tissues are unremarkable.\\n Upper Abdomen (limited view):\\n * Visualized upper abdominal organs are unremarkable."\n'
-                        '}\n\n'
-                        "```  \n"
-                        "<|end|>"                                            
                         """
                     )
         elif modality_lower == "mri":
@@ -424,15 +605,17 @@ def reporter(
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         OUTPUT FORMAT (STRICT)
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-                        Return ONLY valid JSON (no markdown, no explanations, no extra keys).
+                        Return only a valid JSON object — no other text before or after.
+                        Do not include markdown, headers, or explanations.
+                        Do not include code fences (no ``` or ```json wrappers).
 
-                        Schema:
+                        Schema (required | optional):
                         {
                         "Report Title": string,
                         "Pathological Findings": string,
                         "Normal Findings": string,
-                        "Impression": string,        // REQUIRED IFF present in input; must be non-empty
-                        "Recommendations": string    // REQUIRED IFF present in input; must be non-empty
+                        "Impression": string | null,        // REQUIRED IFF present in input; must be non-empty
+                        "Recommendations": string | null    // REQUIRED IFF present in input; must be non-empty
                         }
 
                         NOTE:
@@ -451,44 +634,202 @@ def reporter(
                         * Recognize MRI sequences from Persian or Finglish:
                             – T1, T2, FLAIR, STIR, DWI, ADC, SWI, GRE, PD, Spectroscopy, Perfusion.
 
+                        ═══════════════════════════════════════════════════════════════
+                        PATHOLOGICAL FINDINGS RULES
+                        ═══════════════════════════════════════════════════════════════
+                        When reporting pathological findings, describe the IMAGING MANIFESTATION,
+                        not just the diagnosis label. Structure each finding as:
+                          "[Anatomical location] demonstrates [imaging appearance], consistent with / suggestive of [diagnosis]."
+                        
+                        CORRECT:   "Widening of the cortical sulci and enlargement of the ventricular system,
+                                    consistent with diffuse cerebral volume loss."
+                        INCORRECT: "Brain atrophy."
+                        
+                        CORRECT:   "A T2-hyperintense lesion with peripheral ring enhancement measuring 3.2 cm
+                                    in the right temporal lobe, consistent with glioblastoma."
+                        INCORRECT: "Glioblastoma."
+                        
+                        Rules:
+                          • State imaging appearance FIRST (signal, morphology, size, location).
+                          • Add interpretation SECOND ("consistent with", "suggestive of", "compatible with").
+                          • Include relevant ancillary findings (mass effect, enhancement, diffusion, etc.).
+                          • Recommendations / follow-up notes go at END of Pathological Findings as plain prose.
+                          • Each pathological finding must be "manifested by [imaging appearance]" /
+                            "evidenced by [imaging appearance]" / "characterised by [imaging appearance]".
+                        ═══════════════════════════════════════════════════════════════
+                        
                         * RSNA-compliant normal findings per body region:
-
+                        
                         – BRAIN:
-                            • No abnormal parenchymal signal.
-                            • Ventricular system is normal in size and configuration.
-                            • No midline shift or abnormal enhancement.
-                            • Normal brainstem, cerebellum, basal ganglia, internal capsule, cortical sulci, cisterns, and paranasal sinuses.
-
-                        – SPINE (C/T/L):
-                            • Normal vertebral alignment and physiological curvatures maintained.
-                            • Vertebral bodies show normal height and signal intensity.
-                            • Intervertebral discs show preserved height and signal without herniation or bulge.
-                            • No spinal canal or neural foraminal stenosis.
-                            • Spinal cord is normal in thickness and signal.
-                            • Conus medullaris terminates at a normal level and appears unremarkable.
-                            • Cauda equina shows no abnormal signal or compression.
-
-                        – MSK:
-                            • Normal alignment of bones and joints.
-                            • Articular cartilage is preserved in thickness and signal.
-                            • No joint effusion or bone marrow edema.
-                            • Tendons and ligaments are intact without discontinuity or abnormal signal.
-                            • Muscles have normal bulk and signal intensity.
-
-                        – BREAST:
-                            • Fibroglandular tissue shows scattered distribution.
-                            • Background parenchymal enhancement is minimal.
-                            • No suspicious masses, non-mass enhancement, or abnormal axillary lymph nodes.
-
-                        – ABDOMEN/PELVIS:
-                            • Liver, pancreas, spleen, and kidneys demonstrate normal size, morphology, and signal characteristics.
-                            • No focal lesions or abnormal enhancement observed.
-                            • Adrenal glands are normal in size and configuration.
-                            • Bowel loops are unremarkable without wall thickening or mass.
-                            • No ascites or lymphadenopathy.
-                            • Bladder appears normal in wall thickness and signal.
-                            • Uterus and ovaries (or prostate and seminal vesicles) are within normal limits for size and morphology.
-                            ## ✅ MRI Example 1                     
+                            • No acute territorial infarction or ischemic change.
+                            • No intracranial hemorrhage, hemosiderin deposits, or susceptibility artifact.
+                            • No intra-axial or extra-axial mass lesion; no abnormal enhancement.
+                            • No midline shift or significant mass effect.
+                            • Ventricular system is normal in size and configuration; basal cisterns are patent.
+                            • No abnormal extra-axial fluid collection (subdural, epidural, or subarachnoid).
+                            • The cerebellum and brainstem show no focal abnormal signal or structural abnormality.
+                            • The sellar and parasellar regions are unremarkable; pituitary gland is normal in size and morphology.
+                            • The orbits are grossly unremarkable bilaterally.
+                            • Major intracranial arterial vascular flow voids are preserved.
+                            • [CONDITIONAL — include only if DWI was explicitly mentioned] DWI sequences
+                              demonstrate no restricted diffusion to suggest acute infarction.
+                        
+                        – SPINE (Cervical / Thoracic / Lumbar):
+                            • Vertebral alignment is maintained with preservation of physiological curvatures.
+                            • Vertebral body heights are preserved; no compression, endplate erosion, or marrow
+                              signal abnormality.
+                            • Intervertebral disc heights are maintained; no disc herniation, bulge, or annular fissure.
+                            • No significant spinal canal stenosis.
+                            • Neural foramina are patent bilaterally at all levels.
+                            • Ligamentum flavum and posterior elements are within normal limits.
+                            • Facet joints show no significant hypertrophy or effusion.
+                            • Spinal cord demonstrates normal calibre and signal throughout; no intramedullary lesion.
+                            • Conus medullaris terminates at the expected level without signal abnormality.
+                            • Cauda equina nerve roots show no clumping, thickening, or enhancement.
+                            • Paraspinal soft tissues are unremarkable.
+                            • [Cervical] Craniocervical junction and atlantoaxial relationship are normal.
+                            • [Lumbar] Sacrum and sacroiliac joints appear unremarkable.
+                        
+                        – MSK / MUSCULOSKELETAL (use the applicable sub-template):
+                        
+                          ► KNEE:
+                            • ACL and PCL are intact with normal signal and course.
+                            • MCL and LCL are intact.
+                            • Medial meniscus: no tear, degeneration, or extrusion.
+                            • Lateral meniscus: no tear, degeneration, or extrusion.
+                            • Articular cartilage of medial, lateral, and patellofemoral compartments is preserved.
+                            • No significant joint effusion or popliteal cyst.
+                            • Hoffa's fat pad is unremarkable.
+                            • Quadriceps and patellar tendons are intact.
+                            • No bone marrow edema or subchondral lesion.
+                        
+                          ► SHOULDER:
+                            • Supraspinatus, infraspinatus, subscapularis, and teres minor tendons are intact;
+                              no full- or partial-thickness tear.
+                            • Biceps tendon (long head) is intact and normally positioned in the bicipital groove.
+                            • Glenoid labrum is intact circumferentially; no labral tear or detachment.
+                            • Articular cartilage of the glenohumeral joint is preserved.
+                            • No joint effusion or subdeltoid/subacromial bursitis.
+                            • Acromioclavicular joint is unremarkable; no evidence of impingement.
+                            • Bone marrow signal of the humeral head and glenoid is within normal limits.
+                        
+                          ► HIP:
+                            • Femoral head morphology and signal are normal; no avascular necrosis (AVN).
+                            • Articular cartilage of the hip joint is preserved.
+                            • Acetabular labrum is intact circumferentially; no labral tear or detachment.
+                            • Iliopsoas and abductor tendons are intact.
+                            • No greater trochanteric or iliopsoas bursitis.
+                            • No bone marrow edema, subchondral lesion, or joint effusion.
+                            • Sciatic nerve appears unremarkable in its course.
+                        
+                          ► ANKLE / FOOT:
+                            • Achilles tendon is intact with normal morphology and signal.
+                            • Posterior tibial tendon (PTT) is intact.
+                            • Peroneal tendons are intact with no subluxation or tendinopathy.
+                            • ATFL, CFL, and PTFL ligaments are intact; deltoid ligament complex is intact.
+                            • Articular cartilages of ankle and subtalar joints are preserved.
+                            • Tarsal bones show no marrow edema, AVN, or stress fracture.
+                            • Plantar fascia is of normal thickness and signal.
+                            • No joint effusion or synovitis.
+                        
+                          ► WRIST / HAND:
+                            • Triangular fibrocartilage complex (TFCC) is intact.
+                            • Scapholunate (SL) and lunotriquetral (LT) ligaments are intact.
+                            • Carpal bones are aligned; no marrow edema, AVN, or fracture.
+                            • Joint cartilages of radiocarpal and intercarpal joints are preserved.
+                            • Flexor and extensor tendons are intact with no tear or tendinopathy.
+                            • Carpal tunnel is patent; median nerve shows normal signal and calibre.
+                            • No joint effusion or synovitis.
+                        
+                        – BREAST (BI-RADS structured):
+                            • Fibroglandular tissue distribution: [scattered / heterogeneous — select from input].
+                            • Background parenchymal enhancement (BPE) is minimal to mild and symmetric.
+                            • No suspicious masses identified in either breast.
+                            • No non-mass enhancement (NME) or focal asymmetry.
+                            • No suspicious kinetic curve (rapid washout) on dynamic series.
+                            • Nipple-areolar complexes are unremarkable.
+                            • No skin thickening, retraction, or abnormal enhancement.
+                            • Bilateral axillary lymph nodes are normal in number and morphology.
+                            • Chest wall and pectoralis muscles are unremarkable.
+                        
+                        – ABDOMEN / PELVIS:
+                            Liver: normal size and morphology with homogeneous parenchymal signal; no focal
+                              hepatic lesion; intrahepatic bile ducts are not dilated.
+                            Gallbladder: normal in size and wall thickness; no gallstones or pericholecystic fluid;
+                              common bile duct is not dilated.
+                            Pancreas: normal in size, contour, and signal; pancreatic duct is not dilated.
+                            Spleen: normal in size and signal; no focal splenic lesion.
+                            Kidneys: normal in size, cortical thickness, and signal bilaterally; no renal mass,
+                              cyst, or hydronephrosis; no perinephric collection.
+                            Adrenals: normal in size and morphology bilaterally; no adrenal mass.
+                            Aorta and IVC: unremarkable; no significant retroperitoneal lymphadenopathy.
+                            Bowel: visualised loops are unremarkable; no wall thickening, mass, or obstruction.
+                            Peritoneum: no free intraperitoneal fluid or peritoneal implants.
+                            Bladder: normal wall thickness and signal.
+                            Female pelvis (if applicable): uterus is normal in size, position, and signal;
+                              endometrial stripe within normal limits; ovaries normal bilaterally; no adnexal mass.
+                            Male pelvis (if applicable): prostate normal in size and signal; no focal T2-hypointense
+                              lesion; seminal vesicles symmetric and unremarkable.
+                            Pelvic bones: normal marrow signal; no osseous lesion.
+                        
+                        – PROSTATE (mpMRI / PI-RADS):
+                            T2W: peripheral zone (PZ) shows homogeneous high T2 signal bilaterally; no focal
+                              T2-hypointense lesion. Transition zone (TZ) is heterogeneous per age/BPH; no
+                              discrete hypointense nodule. Prostate capsule is intact; no extracapsular extension.
+                              Seminal vesicles are symmetric; no seminal vesicle invasion.
+                            DWI/ADC: no focal restricted diffusion in PZ or TZ; ADC map is homogeneous.
+                            DCE (if performed): no focal early arterial enhancement or washout.
+                            Lymph nodes: no pelvic lymphadenopathy.
+                            Bones: pelvic bones show normal marrow signal; no osseous lesion.
+                            PI-RADS assessment category: 1 — clinically significant cancer very likely absent.
+                        
+                        – HEAD AND NECK:
+                            • Nasopharyngeal mucosa is symmetric; no nasopharyngeal mass or adenoid hypertrophy.
+                            • Nasal cavity and paranasal sinuses are clear; no mucosal thickening or fluid.
+                            • Oral cavity (tongue, floor of mouth) and oropharyngeal walls are unremarkable.
+                            • Laryngeal structures and hypopharyngeal walls are normal.
+                            • Thyroid gland is normal in size and signal; no focal nodule.
+                            • Parotid, submandibular, and sublingual glands are symmetric and unremarkable.
+                            • Parapharyngeal, retropharyngeal, carotid, and masticator spaces are preserved;
+                              no mass or fluid collection.
+                            • No pathologically enlarged cervical lymph nodes (all ≤ 1 cm short axis, fatty hila intact).
+                            • Carotid arteries and jugular veins are patent bilaterally.
+                            • Skull base and clivus are unremarkable; no erosion or marrow signal abnormality.
+                        
+                        – PITUITARY / SELLA:
+                            • Pituitary gland is normal in size and morphology (height within normal limits).
+                            • Pituitary signal is homogeneous on T1 and T2; no focal hypointense or hyperintense lesion.
+                            • Normal posterior pituitary bright spot is preserved on T1.
+                            • Pituitary stalk is midline and not thickened.
+                            • Sella turcica is normal in shape; no bony erosion or ballooning.
+                            • Optic chiasm is in normal position with no compression.
+                            • Cavernous sinuses are symmetric bilaterally; no lateral extension or ICA encasement.
+                            • Suprasellar and parasellar regions are clear; no mass or cyst.
+                            • No empty sella or partial empty sella.
+                        
+                        – ORBIT:
+                            • Bilateral globes are normal in size, shape, and internal signal.
+                            • No retinal detachment or choroidal mass.
+                            • Optic nerves are normal in calibre and signal bilaterally; optic nerve sheaths
+                              are not distended.
+                            • Optic chiasm and optic tracts are unremarkable.
+                            • Extraocular muscles are symmetric and normal in signal; no enlargement or infiltration.
+                            • Lacrimal glands are normal in size and signal.
+                            • Orbital fat is unremarkable; no intraorbital mass or pre-/postseptal collection.
+                            • Orbital walls and bony margins are intact bilaterally.
+                        
+                        – TEMPORAL BONES / INTERNAL AUDITORY CANALS (IAC):
+                            • Bilateral IACs are normal in calibre and symmetrical.
+                            • Facial nerves (CN VII) are normal in calibre and signal in all segments bilaterally.
+                            • Vestibulocochlear nerves (CN VIII) are normal in calibre bilaterally; no filling
+                              defect within the IAC.
+                            • Cochlea, semicircular canals, and vestibule are normal bilaterally.
+                            • No abnormal enhancement within the IAC or membranous labyrinth.
+                            • Middle ear cavities are clear; ossicular chain is intact bilaterally.
+                            • Mastoid air cells are well-pneumatised and clear bilaterally.
+                            • Cerebellopontine angle (CPA) cisterns are clear bilaterally; no CPA mass.
+                        
+## ✅ MRI Example 1                     
                             'input': 'همین آدم، کاظم کریم، ام‌آرآی مغز با و بدون تزریق ماده حاجب داره به همراه سکانس DWI و سکانس‌های MR Spectroscopy. شماره یک بنویس که ضایعه توده‌ای اینفیلتراسیو در قسمت‌های قدامی لوب تمپورال سمت راست مشهود است. از توده مذکور در سکانس DWI رستریکشن در نواحی محیطی دیده می‌شود. پس از تزریق ماده حاجب، نکروز در قسمت‌های مرکزی توده رویت می‌گردد. در سکانس‌های MR Spectroscopy، پیک کولین در نواحی سالید توده مشاهده می‌شود. انحراف خط وسط به سمت چپ و اثر فشاری بر روی بطن طرفی راست وجود دارد. شواهدی به نفع خونریزی واضح در ضایعه مشاهده نمی‌شود یافته های فوق در مجموع مطرح کننده گلیوبلاستوما میباشد توصیه به بررسی بیشتر توسط ام ار پرفیوژن و نمونه یرداری از توده مذکور می گردد.',  
                             Output:  
                             "```json  \n"
@@ -1273,6 +1614,9 @@ def reporter(
             {"role": "user", "content": user_msg},
         ],
     }
+    if modality and modality.lower() in ("mri", "ct"):
+        payload["temperature"] = 0.1
+        payload["max_tokens"] = 2500
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -1303,8 +1647,11 @@ def reporter(
     # ------------------------------------------------------
     #  RETURN THE AI OUTPUT
     # ------------------------------------------------------
+    raw_content = result["choices"][0]["message"]["content"]
+    if modality and modality.lower() in ("mri", "ct"):
+        raw_content = _validate_report_json(raw_content, modality.lower())
     return {
-        "content": result["choices"][0]["message"]["content"],
+        "content": raw_content,
         "usage": {
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -1755,15 +2102,15 @@ def translate_text_to_persian(
     center, api_key = m.get_center_and_gapgpt_key()
 
     system_prompt = """
-You are a professional medical translator.
-Task: Translate the user's text from English to Persian (Farsi).
+You are a professional medical translator specialized in producing official radiology reports in Persian.
+Task: Translate the user's text from English to Persian (Farsi) following Iranian clinical reporting standards.
 
 STRICT RULES:
 - Output MUST be plain text only (NO JSON, NO code fences, NO extra labels).
 - Preserve structure: headings, numbering, bullet points, and line breaks.
-- Translate ALL medical terms, anatomy names, diagnoses, and clinical terminology into their proper Persian equivalents.
-- Use accurate medical terminology in Persian (e.g., "disc bulging" → "برآمدگی دیسک", "intervertebral disc" → "دیسک بین مهره‌ای").
-- Keep abbreviations and technical codes in English only when they are universally used (e.g., MRI, CT, L4-L5).
+- Keep ALL medical terms, anatomical names, diagnoses, procedures, and clinical terminology in English — do NOT translate them (e.g., disc bulging, neural foraminal stenosis, spinal cord, facet joint, ligament, MRI, CT, L4-L5, BPD, FHR, etc.).
+- Translate ONLY the non-medical connective and descriptive language into Persian (e.g., "is observed", "there is no evidence of", "was measured at", "appears normal").
+- The output is an official Persian-language report where all medical terms remain in English within Persian sentence structure — consistent with standard Iranian clinical reporting practice.
 - Do NOT add, remove, infer, or summarize any content.
 """
 
@@ -1827,19 +2174,19 @@ def translate_report(
                     "MUST_TERMINATE_WITH": "<|end|>",
                     "FULL_OUTPUT_STRUCTURE": "```json \\n{ ... valid JSON object ... }\\n``` \\n<|end|>"},
             You are a professional medical translator specialized in radiology reports.
-            Your task is to translate radiology reports from English to Persian (Farsi) while strictly following the rules below.
+            Your task is to translate radiology reports from English to Persian (Farsi) following standard Iranian clinical reporting practice.
 
             Translation Rules
 
             Preserve the exact structure of the original radiology report, including all headings such as Findings, Pathological Findings, Normal Findings, bullet points, indentation, and sub-sections.
 
-            Translate ALL medical terms, anatomical names, disease names, and clinical terminology into their proper Persian equivalents.
+            Keep ALL medical terms, anatomical names, disease names, clinical terminology, and technical codes in English — do NOT translate them (e.g., disc bulging, neural foraminal stenosis, spinal cord, facet joint, ligament, endplate, bone marrow, MRI, CT, L4-L5, BPD, FHR, and all similar medical/anatomical expressions).
 
-            The Persian translation must be clear, formal, and consistent with professional clinical reporting style.
+            Translate ONLY the non-medical connective and descriptive language into Persian — this includes verbs, prepositions, conjunctions, and structural expressions (e.g., "is observed at", "there is no evidence of", "was measured at", "appears normal", "is intact").
+
+            The output is a formal Persian-language radiology report where all medical terms remain in English within Persian sentence structure — consistent with standard Iranian clinical reporting practice.
 
             Do not add, remove, or modify any clinical information.
-
-            Keep abbreviations and technical codes in English only when they are universally used (e.g., MRI, CT, L4-L5).
 
             Output Format
 
@@ -1848,10 +2195,10 @@ def translate_report(
             Translated Radiology Report (EN → FA)
 
             [Pathological Findings]
-            ... Persian translation (with proper medical terms in Persian) ...
+            ... Persian translation (with all medical terms kept in English) ...
 
             [Normal Findings]
-            ... Persian translation (with proper medical terms in Persian) ...
+            ... Persian translation (with all medical terms kept in English) ...
 
             User Input
 
@@ -1891,31 +2238,31 @@ def translate_report(
             Translated Radiology Report (EN → FA)
 
             Pathological Findings
-            • در سطح L5-S1، برآمدگی دیسک همراه با شکاف حلقوی مشاهده می‌شود.
-            • در سطح L4-L5، هیپرتروفی دوطرفه در مفاصل فاست دیده می‌شود.
-            • در سطح L4-L5، تنگی فورامن عصبی دوطرفه متوسط تا شدید وجود دارد.
-            • در سطح L3-L4، به دلیل فتق دیسک و بیرون زدگی مرکزی دیسک، تنگی کانال نخاعی متوسط تا شدید مشاهده می‌شود.
+            • در سطح L5-S1، disc bulging همراه با annular fissuring مشاهده می‌شود.
+            • در سطح L4-L5، bilateral hypertrophy از facet joints وجود دارد.
+            • در سطح L4-L5، bilateral moderate to severe neural foraminal stenosis وجود دارد.
+            • در سطح L3-L4، به دلیل disc herniation و central disc extrusion، moderate to severe spinal canal stenosis مشاهده می‌شود.
 
             Normal Findings
-            • تراز مهره‌ها و صفحات انتهایی:
-            • هیچ شواهدی از شکستگی یا فروپاشی جسم مهره وجود ندارد.
-            • صفحات انتهایی مهره‌های کمری سالم هستند.
-            • هیچ چرخش غیرطبیعی یا سابلوکساسیون مهره مشاهده نمی‌شود.
+            • Vertebral Alignment and Endplates:
+            • شواهدی از fracture یا collapse در vertebral body وجود ندارد.
+            • Endplates مهره‌های lumbar سالم می‌باشند.
+            • هیچ چرخش غیرطبیعی یا subluxation مشاهده نمی‌شود.
 
-            • رباط‌ها و بافت‌های نرم:
-            • هیچ شواهدی از پارگی یا رگشدگی رباط وجود ندارد.
-            • بافت‌های نرم پیش مهره‌ای طبیعی هستند.
+            • Ligaments and Soft Tissues:
+            • شواهدی از tear یا rupture در ligament وجود ندارد.
+            • Prevertebral soft tissues طبیعی هستند.
 
-            • دیسک‌ها و مفاصل بین مهره‌ای:
-            • دیسک‌های بین مهره‌ای در سایر سطوح از نظر ارتفاع و شدت سیگنال طبیعی هستند.
-            • در سایر سطوح، شواهدی از بیرون زدگی مرکزی یا فتق دیسک وجود ندارد.
+            • Discs and Intervertebral Joints:
+            • Intervertebral discs در سایر سطوح از نظر ارتفاع و signal intensity طبیعی می‌باشند.
+            • در سایر سطوح، شواهدی از central disc extrusion یا herniation وجود ندارد.
 
-            • طناب نخاعی و ریشه‌های عصبی:
-            • طناب نخاعی فشرده نشده و شدت سیگنال طبیعی دارد.
-            • هیچ شواهدی از کندگی ریشه عصبی یا آسیب وجود ندارد.
+            • Spinal Cord and Nerve Roots:
+            • Spinal cord تحت فشار نبوده و signal intensity طبیعی دارد.
+            • شواهدی از nerve root avulsion یا آسیب وجود ندارد.
 
-            • مغز استخوان:
-            • سیگنال مغز استخوان در مهره‌های کمری طبیعی است.
+            • Bone Marrow:
+            • Bone marrow signal در vertebral bodies lumbar طبیعی است.
 
             ─────────────────────────────────────────
             🔴 STRICT FORMAT-MATCHING RULES (VERY IMPORTANT)
@@ -1932,7 +2279,8 @@ def translate_report(
             – Do NOT remove line breaks between logically separate findings or sections.
 
             • Your job is ONLY:
-            – to translate the non-medical descriptive parts to Persian,
+            – to translate the non-medical connective and descriptive language to Persian,
+            – keeping ALL medical terms, anatomical names, diagnoses, and clinical terminology in English (unchanged),
             – while preserving the line-by-line structure, section ordering, and numbering/bullets exactly.
 
             ─────────────────────────────────────────
@@ -2123,63 +2471,64 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
 
     # --- 🔹 Token Instructions ---
     token_instructions = """
-        ### CRITICAL NON-EXPANSION RULE (DO NOT ADD INFORMATION)
-        - DO NOT add, invent, infer, complete, or expand ANY medical sentence, finding, description, conclusion, impression, or recommendation that is not explicitly present in the original dictation.
-        - ONLY normalize, clean, split, deduplicate, and translate the exact stated content from the input.
+        ### ROLE
+        You are a conservative bilingual (Persian-English) medical text normalizer for radiology dictation.
+        Input: raw Persian speech-to-text dictation (may include filler words, repetition, STT errors).
+        Output: lightly cleaned Persian sentences and their English translations with minimal intervention.
 
         ======================================================
-        ABSOLUTE OUTPUT RULES (TOP PRIORITY — NEVER BREAK)
+        ABSOLUTE OUTPUT RULES (NEVER BREAK)
         ======================================================
-        1) Output ONLY a single valid JSON object (RAW JSON).
-        2) No markdown, no code fences, no labels, no commentary, no extra text.
-        3) The first non-whitespace character MUST be "{" and the last MUST be "}".
-        4) Must be parseable by Python json.loads().
-        5) Use ONLY double quotes for JSON keys/strings. No trailing commas. No comments.
-        6) DO NOT include newline characters inside any JSON string element.
-        7) If the input is empty or meaningless, output empty arrays.
+        1) Output ONLY a single valid JSON object (RAW JSON - no markdown, no code fences, no extra text).
+        2) First non-whitespace character MUST be "{" and last MUST be "}".
+        3) Must be parseable by Python json.loads(). Use ONLY double quotes. No trailing commas. No comments.
+        4) DO NOT include newline characters inside any JSON string element.
+        5) If the input is empty or meaningless, output all empty arrays.
 
         ======================================================
-        TASK DEFINITION
+        CORE PRINCIPLE: MINIMAL INTERVENTION
         ======================================================
-        You are a professional bilingual (Persian–English) medical text normalizer.
-        Input: spoken Persian medical dictation (may contain typos, repetition, spoken fillers).
-        Output: short independent Persian sentences and aligned English translations.
-
-        Your job:
-        1) Convert dictation into short independent grammatically complete Persian sentences.
-        2) Translate each Persian sentence accurately into English.
-        3) Preserve order and content exactly.
-        4) Deduplicate repeated content without removing unique meaning.
+        Make the minimum edits necessary. The output must stay as close to the original dictation as
+        possible while being grammatically correct and readable. When in doubt, keep the original word.
 
         ======================================================
-        PUNCTUATION OVERRIDE (STRICT — MUST FOLLOW)
+        PERMITTED TRANSFORMATIONS
         ======================================================
-        - NEVER use commas.
-        - Use only "." to end sentences.
-        - Every sentence must be atomic and independent.
+        1) STT ERROR CORRECTION (Only obvious, unambiguous errors)
+           - Correct speech-recognition mistakes ONLY when context makes the intended word absolutely certain.
+           - UNCERTAINTY RULE: If you are not certain whether a word is an STT error or a valid medical
+             term, KEEP THE ORIGINAL WORD verbatim. Never replace an uncommon but valid medical term.
+           - Acceptable: "هپاتوما گلی" (clear STT split) -> "هپاتومگالی".
+           - NOT acceptable: replacing any word that could be a valid anatomical or clinical term.
+
+        2) READABILITY SPLITTING (Selective - not mandatory)
+           - Split a sentence ONLY when it contains clearly distinct, separable clinical findings that are
+             grammatically independent and joined by a discourse marker (e.g. "همچنین" / "در ادامه").
+           - NEVER split mechanically at every conjunction. "و" (and) alone is NOT a reason to split.
+           - Natural compound medical phrases must stay intact: "کلیه راست و چپ" / "با و بدون تزریق" /
+             "اندازه و شکل طبیعی".
+           - Do NOT split if removing the connector would cause either part to lose clinical context.
+
+        3) FORMATTING
+           - Remove filler/non-medical words: "مرسی" / "خب" / "اِ" / "آها" / "ببخشید" and similar.
+           - Remove exactly duplicated sentences (keep the first occurrence only).
+           - Normalize spacing and fix obvious punctuation. End each sentence with ".".
+           - Commas are permitted where grammatically appropriate in Persian.
+
+        4) DICTATION COMMAND NORMALIZATION (Strictly limited)
+           - Convert standard radiologist shorthand ONLY when the referent organ is unambiguous.
+           - "[organ] طبیعی بزن" -> "[organ] نمای طبیعی دارد."
+           - If the referent is unclear or the command is ambiguous, keep the phrase as-is.
 
         ======================================================
-        HARD SENTENCE SPLITTING (MANDATORY)
+        PROHIBITED ACTIONS (STRICT - ANY VIOLATION IS A FAILURE)
         ======================================================
-        - One clause equals one sentence.
-        - Each sentence must contain exactly one finding and one verb.
-        - No chained clauses using connectors such as:
-        "و" "یا" "که" "بعد" "سپس" "همچنین" "اما" "ولی"
-        "با توجه به" "پس از تزریق" "در ادامه"
-
-        ======================================================
-        MEDICAL TERMINOLOGY (NO PARAPHRASING)
-        ======================================================
-        - KEEP all medical terms exactly as dictated.
-        - DO NOT translate English medical terms into Persian.
-        - DO NOT substitute terminology.
-
-        ======================================================
-        NO HALLUCINATION
-        ======================================================
-        - DO NOT infer diagnosis.
-        - DO NOT expand findings.
-        - DO NOT generate impression or recommendation.
+        - DO NOT add, invent, infer, or expand any finding, diagnosis, or anatomical detail not stated.
+        - DO NOT complete unfinished sentences with assumed medical content.
+        - DO NOT change the clinical meaning of any dictated statement.
+        - DO NOT substitute a valid medical term with a synonym - even if the original term seems unusual.
+        - DO NOT translate English medical terms (appearing in the dictation) into Persian.
+        - DO NOT generate impressions or recommendations - extract them ONLY if explicitly dictated.
 
         ======================================================
         ORDER PRESERVATION
@@ -2187,41 +2536,19 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
         - Preserve the exact original order of dictated content.
 
         ======================================================
-        MINIMAL CLEANUP
-        ======================================================
-        - Correct obvious typos without changing meaning.
-        - Remove spoken commands and non-medical chatter.
-        - Remove duplicated repeated sentences.
-
-        ======================================================
         CONDITIONAL IMPRESSION EXTRACTION (STRICT)
         ======================================================
-        - Impression MUST be extracted ONLY if explicitly dictated by the physician.
-        - Explicit indicators include but are not limited to:
-        "یافته ها به نفع"
-        "یافته ها به ضرر"
-        "جمع بندی"
-        "نتیجه گیری"
-        "Impression"
+        - Extract impression ONLY if explicitly dictated. Explicit markers include:
+          "یافته ها به نفع" / "یافته ها به ضرر" / "جمع بندی" / "نتیجه گیری" / "Impression"
         - DO NOT infer impression from findings.
-        - If no explicit impression exists output an empty array.
+        - If no explicit impression exists -> empty array.
 
         ======================================================
         CONDITIONAL RECOMMENDATION EXTRACTION (STRICT)
         ======================================================
-        - Recommendation MUST be extracted ONLY if explicitly dictated.
-        - Includes recommendations such as:
-        follow up
-        biopsy
-        further imaging
-        additional evaluation
-        - Trigger phrases include:
-        "توصیه می شود"
-        "پیشنهاد می شود"
-        "جهت بررسی دقیق تر"
-        "فالو آپ"
-        - Preserve original wording and referenced finding.
-        - If no explicit recommendation exists output an empty array.
+        - Extract recommendation ONLY if explicitly dictated. Trigger phrases include:
+          "توصیه می شود" / "پیشنهاد می شود" / "فالو آپ" / "جهت بررسی دقیق تر"
+        - Preserve original wording. If no explicit recommendation -> empty array.
 
         ======================================================
         REQUIRED JSON FORMAT (ONLY)
@@ -2252,8 +2579,8 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
         ======================================================
         EXAMPLE (MRI ABDOMEN AND PELVIS)
         ======================================================
-        Input: 
-        ام آر آی شكم و لگن با و بدون تزریق ماده حاجب شكمش رو طبیعی بزن, لگن هم داره, بنویس که تغییرات پس از عمل به صورت هیسترکتومی در ناحیه لگن مشهود است, بعد بنویس که مایع ازاد اندک در عهره لگن رویت می گردد, کاف واژن دارای نمای طبیعی میباشد آزاد اندک در حوره لگن رویت می گردد کاف واژن دارای نمای طبیعی میباشد تشکیل بافت فیبروز اندک در ناحیه کاف واژن مشهود است پس از تزریق ماده حاجب انهانسمنت غیرطبیعی در ناحیه کاف واژن رویت نمیگردد با توجه به نمای رویت شده یافته های فوق به ضرر با توجه به نمای رویت شده یافته های فوق به ضرر وجود عود لوکال می باشد و مطرح کننده تغییرات طبیعی پس از درمان است توصیه به پیگیری کوتاه مدت توسط ام ار ای و مقایسه با تصویر برداری فعلی می گردد, DWI ناحیه لگنش رو هم طبیعی بزن, مرسی 
+        Input:
+        ام آر آی شكم و لگن با و بدون تزریق ماده حاجب شكمش رو طبیعی بزن, لگن هم داره, بنویس که تغییرات پس از عمل به صورت هیسترکتومی در ناحیه لگن مشهود است, بعد بنویس که مایع ازاد اندک در عهره لگن رویت می گردد, کاف واژن دارای نمای طبیعی میباشد آزاد اندک در حوره لگن رویت می گردد کاف واژن دارای نمای طبیعی میباشد تشکیل بافت فیبروز اندک در ناحیه کاف واژن مشهود است پس از تزریق ماده حاجب انهانسمنت غیرطبیعی در ناحیه کاف واژن رویت نمیگردد با توجه به نمای رویت شده یافته های فوق به ضرر با توجه به نمای رویت شده یافته های فوق به ضرر وجود عود لوکال می باشد و مطرح کننده تغییرات طبیعی پس از درمان است توصیه به پیگیری کوتاه مدت توسط ام ار ای و مقایسه با تصویر برداری فعلی می گردد, DWI ناحیه لگنش رو هم طبیعی بزن, مرسی
         Expected JSON:
         {
         "cleaned_sentences_persian": [
@@ -2355,94 +2682,103 @@ def correction(
 
 
     system_msg = """
-    You are a Medical Report Editor, NOT a medical report generator.
+    ### ROLE
+    You are a high-precision medical report editor performing a PATCH operation.
+    Task: output = ORIGINAL_REPORT + minimum_edits_from_CORRECTION_NOTE.
+    You are NOT generating a new report. You are NOT rewriting the report. You are applying a surgical edit.
 
-    INPUT FORMAT:
-    You will be given a single input containing:
-    1) ORIGINAL_REPORT:
-    - Either:
-    A) A complete medical report in JSON format (canonical), OR
-    B) HTML that visually represents the report (e.g., the UI-rendered report).
-    - The ORIGINAL_REPORT is the single source of truth.
-    - If ORIGINAL_REPORT is HTML, treat it as a faithful visual rendering of the report content.
+    ======================================================
+    INPUT
+    ======================================================
+    1) ORIGINAL_REPORT — the approved medical report (JSON or HTML).
+       • This is the authoritative source of truth.
+       • JSON input: use directly as the edit baseline.
+       • HTML input: convert to the required 5-key JSON schema using ONLY content explicitly present;
+         leave unmappable fields as empty strings; then apply CORRECTION_NOTE.
+    2) CORRECTION_NOTE — the physician's exact instruction describing what to change.
 
-    2) CORRECTION_NOTE:
-    - Physician instructions describing which part(s) of the ORIGINAL_REPORT must be corrected.
+    ======================================================
+    ABSOLUTE OUTPUT FORMAT (NEVER BREAK)
+    ======================================================
+    • Output MUST be a SINGLE valid JSON object in a JSON code block:
+      - MUST_START_WITH: ```json\\n
+      - MUST_END_WITH_CODE_BLOCK: ```
+      - MUST_TERMINATE_WITH: <|end|>
+      - No text before or after the JSON block. No explanations. No comments.
+    • Output MUST contain EXACTLY these 5 keys (no more, no less):
+      1) "Report Title"
+      2) "Pathological Findings"
+      3) "Normal Findings"
+      4) "Impression"
+      5) "Recommendations"
+    • NEVER output HTML — even when ORIGINAL_REPORT is HTML.
 
-    OUTPUT FORMAT (MUST FOLLOW EXACTLY):
-    - You MUST ALWAYS output a corrected report as a SINGLE JSON object with EXACTLY these 5 keys (NO MORE, NO LESS):
-    1) "Report Title"
-    2) "Pathological Findings"
-    3) "Normal Findings"
-    4) "Impression"
-    5) "Recommendations"
+    ======================================================
+    CORE PRINCIPLE: PATCH, NOT REGENERATE
+    ======================================================
+    The output must equal ORIGINAL_REPORT with the minimum necessary edits applied.
+    Every word, phrase, and sentence NOT required to change by CORRECTION_NOTE must be
+    preserved exactly — same wording, same phrasing, same order, same structure.
+    Do NOT improve, rephrase, expand, or restructure anything outside the requested change.
 
-    - Output MUST be ONLY valid JSON wrapped in a JSON code block exactly as follows:
-    - MUST_START_WITH: ```json\\n
-    - MUST_END_WITH_CODE_BLOCK: ```
-    - MUST_TERMINATE_WITH: <|end|>
-    - No text before/after the JSON code block. No explanations. No comments.
+    ======================================================
+    WHAT YOU MAY CHANGE
+    ======================================================
+    1) PRIMARY: the specific section(s) and sentence(s) directly addressed by CORRECTION_NOTE.
+    2) SECONDARY (consistency only): other locations that contain a LITERAL reference to the
+       changed fact — and ONLY when leaving them unchanged would create an internal contradiction.
+       Example: if laterality changes from "left" to "right" in Pathological Findings,
+       update ONLY the exact "left" → "right" occurrence in Impression if it explicitly references
+       the same structure. Do not update anything else.
 
-    HARD RULE ABOUT HTML INPUT:
-    - Even if the ORIGINAL_REPORT input is HTML, you MUST NOT output HTML.
-    - If the ORIGINAL_REPORT is HTML, you must first convert/interpret it into the 5-key JSON schema above, then apply corrections.
-    - If the HTML content cannot be mapped to the required 5 fields with high confidence, do NOT invent or infer:
-    - Convert only what is explicitly present.
-    - Leave unmappable fields as empty strings.
-    - Then apply CORRECTION_NOTE only if it clearly refers to present content; otherwise leave as-is.
+    ======================================================
+    WHAT YOU MUST NEVER CHANGE
+    ======================================================
+    • Any section not mentioned or implicated by CORRECTION_NOTE.
+    • Wording or phrasing of unaffected sentences — even if improvement seems possible.
+    • Medical terminology — keep exact terms; do not simplify or substitute.
+    • Measurements, laterality, severity, anatomy outside the requested edit scope.
+    • Impression or Recommendations unless CORRECTION_NOTE explicitly targets them,
+      or they contain a literal inconsistency caused by the primary change.
 
-    CRITICAL RULES (STRICT – ANY VIOLATION IS A FAILURE):
-    1) You are an editor: generating a new report or rewriting the report globally is strictly forbidden.
-    2) The CORRECTION_NOTE defines the PRIMARY section(s) to be edited.
-    3) You may modify ONLY:
-    a) Sections explicitly mentioned in the CORRECTION_NOTE, AND
-    b) Other sections ONLY IF a direct medical or logical dependency requires consistency.
-    4) If no such dependency exists, all other sections must remain EXACTLY unchanged in meaning and wording.
-    5) NEVER add new findings, diagnoses, impressions, or recommendations.
-    6) Do NOT rephrase, expand, summarize, or stylistically improve unaffected content.
-    7) Preserve the exact key names and key ordering of the required 5-key JSON output.
-    8) NEVER output HTML (even if the input is HTML). Output MUST follow the STRICT JSON rules only.
+    ======================================================
+    PERMITTED EDIT TYPES (examples)
+    ======================================================
+    • Replace a sentence or phrase with the dictated replacement.
+    • Add a new finding to a section.
+    • Remove a stated finding from a section.
+    • Modify a measurement, laterality, or severity.
+    • Correct a specific medical term.
+    • Change the Impression or Recommendation when explicitly requested.
 
-    REPORT SECTION LOGIC:
-    - Reports contain:
-    • Pathological Findings (always present)
-    • Normal Findings (always present)
-    • Impression (always present)
-    • Recommendations (always present)
-    - If a correction modifies Pathological or Normal Findings:
-    • Update Impression ONLY if it directly reflects that finding.
-    • Update Recommendations ONLY if it already logically depends on that finding.
-    - Never create new medical content to populate empty/unknown fields.
+    ======================================================
+    PROHIBITED ACTIONS (ANY VIOLATION IS A FAILURE)
+    ======================================================
+    • Rewriting or paraphrasing unaffected sentences for style or clarity.
+    • Adding diagnoses, findings, differential diagnoses, or recommendations not present
+      in ORIGINAL_REPORT and not explicitly requested in CORRECTION_NOTE.
+    • Completing or expanding unfinished sentences.
+    • Propagating a change to sections beyond what is required for internal consistency.
+    • Inferring additional corrections beyond what CORRECTION_NOTE clearly states.
 
-    PROCESS:
-    1) Parse/interpret the ORIGINAL_REPORT completely.
-    - If JSON input: use it directly as the baseline content.
-    - If HTML input: convert it into the required 5-key JSON baseline using only explicit content.
-    2) Identify the PRIMARY target section(s) from the CORRECTION_NOTE.
-    3) Apply minimal, localized edits to those sections.
-    4) Check for REQUIRED dependencies in other sections.
-    5) Modify dependent sections ONLY if inconsistency would otherwise occur.
-    6) Leave all unrelated content byte-for-byte identical (within each JSON string field).
-    7) Return the COMPLETE corrected report in the STRICT JSON code block format.
+    ======================================================
+    AMBIGUOUS INSTRUCTIONS
+    ======================================================
+    • Apply the SMALLEST reasonable interpretation of an ambiguous CORRECTION_NOTE.
+    • If CORRECTION_NOTE refers to content not present in ORIGINAL_REPORT:
+      return ORIGINAL_REPORT unchanged (after HTML→JSON conversion if needed).
+    • Never invent content to satisfy an ambiguous or incomplete instruction.
 
-    EDGE CASE HANDLING:
-    - If the CORRECTION_NOTE is ambiguous, incomplete, or refers to content not present in the ORIGINAL_REPORT:
-    → Do NOT infer, invent, or generalize.
-    → Return the baseline report unchanged (after converting HTML to the required 5-key JSON if needed).
-
-    F) JSON OUTPUT RULES (HARD)
-    - RESPONSE_FORMAT: STRICTLY JSON ONLY (no text before/after).
-    - MUST_START_WITH: ```json\\n
-    - MUST_END_WITH_CODE_BLOCK: ```
-    - MUST_TERMINATE_WITH: <|end|>
-    - Output MUST be a single valid JSON object.
-
-    - REQUIRED KEYS (ALWAYS PRESENT, EXACTLY THESE 5 — NO MORE, NO LESS):
-    1) "Report Title"
-    2) "Pathological Findings"
-    3) "Normal Findings"
-    4) "Impression"
-    5) "Recommendations"
+    ======================================================
+    PROCESS (follow in order)
+    ======================================================
+    1) Parse ORIGINAL_REPORT (JSON: use directly; HTML: convert to 5-key JSON baseline).
+    2) Read CORRECTION_NOTE. Identify the minimum target change.
+    3) Apply ONLY that change to the target location(s).
+    4) Check for literal dependencies in other fields — update only those that would be
+       internally inconsistent without the update.
+    5) Verify: everything else is byte-identical to ORIGINAL_REPORT.
+    6) Return the complete corrected report in the required JSON code block + <|end|>.
     """
 
     # API payload

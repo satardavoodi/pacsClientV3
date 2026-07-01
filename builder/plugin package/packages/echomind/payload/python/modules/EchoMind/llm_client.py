@@ -26,17 +26,23 @@ _DEFAULT_MODEL = GAPGPT_DEFAULT_MODEL
 _DEFAULT_TIMEOUT = GAPGPT_TIMEOUT
 
 
-def _get_requests_proxies() -> "dict[str, str] | None":
-    """Return a requests-compatible proxies dict when SOCKS5 proxy is configured, else None."""
+def _get_requests_proxies() -> "dict[str, str]":
+    """Return a requests-compatible proxies dict.
+
+    - 'direct': returns {} so requests explicitly bypasses ALL proxy sources
+      (system registry, HTTP_PROXY/HTTPS_PROXY env vars, Windows WinInet).
+      Passing proxies=None would still let requests pick up system proxies.
+    - 'socks5': returns the configured SOCKS5 proxy.
+    """
     try:
         cfg = get_proxy_settings()
         if cfg.get("connection_type") != "socks5":
-            return None
+            return {}  # explicit bypass — no system/env proxy
         port = int(cfg.get("proxy_port") or 2080)
         proxy_url = f"socks5://127.0.0.1:{port}"
         return {"http": proxy_url, "https": proxy_url}
     except Exception:
-        return None
+        return {}  # fail-safe: no proxy
 
 
 def _ensure_socks_proxy_support(proxies: "dict[str, str] | None") -> None:

@@ -28,6 +28,14 @@ _MIRROR_VC = os.path.join(
     _ROOT, "builder", "plugin package", "packages", "echomind",
     "payload", "python", "modules", "EchoMind", "viewer_chat",
 )
+_RECEPTION_VIEWER = os.path.join(
+    _ROOT, "PacsClient", "pacs", "patient_tab", "ui", "patient_ui",
+    "reception_reports_viewer.py",
+)
+_RECEPTION_STYLES = os.path.join(
+    _ROOT, "modules", "ai_imaging", "ai_module_ui", "service_tab",
+    "reception_data_styles.py",
+)
 
 # Static popup statics that must NOT remain in the two chat files (they inherit
 # the system palette). The helper module itself MAY reference them (fallback).
@@ -57,6 +65,40 @@ def test_helper_defines_explicit_popup_styling():
     assert "color:" in src
     # The primary reception button is styled by objectName.
     assert "ReceptionIdPrimaryButton" in src
+    # Editors (Edit dialog / report boxes) and right-click context menus are
+    # themed too, so they never inherit the Windows palette.
+    assert "QTextEdit, QPlainTextEdit, QTextBrowser" in src
+    assert "QMenu" in src and "QMenu::item:selected" in src
+
+
+def test_edit_editor_and_context_menus_are_themed():
+    # EchoMind "Edit" dialog under a generated answer applies the popup style
+    # (dark editor + themed context menu) — 2 dialogs + the edit editor.
+    pages = _read(_PAGES)
+    assert pages.count("style_popup(") >= 3
+    # The composer editor's right-click menu is themed.
+    widgets = _read(_WIDGETS)
+    assert "QMenu::item:selected" in widgets
+    # The patient reception-tab reports viewer themes its context menu too.
+    if os.path.exists(_RECEPTION_VIEWER):
+        rv = _read(_RECEPTION_VIEWER)
+        assert "QMenu::item:selected" in rv and "QMenu::item {" in rv
+
+
+def test_report_editor_context_menu_is_themed():
+    """The ai_imaging Report Editor's right-click menu must have explicit
+    colours (shared MENU_QSS) embedded in BOTH the dialog and the editor
+    stylesheets, so it never renders light-grey-on-white on a light Windows
+    theme."""
+    if not os.path.exists(_RECEPTION_STYLES):
+        return
+    src = _read(_RECEPTION_STYLES)
+    assert "MENU_QSS = f" in src, "shared MENU_QSS block missing"
+    assert "QMenu::item:selected" in src
+    # embedded in both get_dialog_style() and get_text_edit_style()
+    assert src.count("{MENU_QSS}") >= 2
+    # explicit selection colour (not the low-contrast light accent)
+    assert "#1976d2" in src
 
 
 def test_kill_switch_present_and_parses():

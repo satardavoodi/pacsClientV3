@@ -1120,12 +1120,12 @@ class _PWAdvancedMixin:
             # Series source order: (1) active viewport series, (2) selected thumbnail,
             # (3) none → the workspace shows a clear empty-state.
             context = self._resolve_dental_series_context()
-            # Reuse the active viewer's already-built shared volume (single source
-            # of truth) — never rebuild a volume or fork a geometry pipeline.
+            # Resolve the shared DentalVolume. This reuses the active viewer only
+            # when it has real scalars; FAST/Qt exposes a geometry-only mock, so
+            # that path falls through to the same disk-backed loader used by drops.
             volume = None
             try:
-                from modules.dental_imaging.core import bind_active_viewer_volume
-                volume = bind_active_viewer_volume(self, series_uid=context.series_uid)
+                volume = self._bind_dental_volume_for(context)
             except Exception as ve:
                 print(f"[PatientWidget] Dental volume bind skipped: {ve}")
 
@@ -1209,12 +1209,17 @@ class _PWAdvancedMixin:
             return None
         # 1) Reuse the active viewer's shared volume when it matches the request.
         try:
-            from modules.dental_imaging.core import bind_active_viewer_volume, get_active_image_data
+            from modules.dental_imaging.core import (
+                bind_active_viewer_volume,
+                get_active_image_data,
+                image_has_scalars,
+            )
             sw = getattr(self, 'selected_widget', None)
             iv = getattr(sw, 'image_viewer', None) if sw is not None else None
             md = getattr(iv, 'metadata', None) if iv is not None else None
             active_num = str(((md or {}).get('series', {}) or {}).get('series_number', '')) if md else ''
-            if active_num and active_num == str(context.series_number) and get_active_image_data(self) is not None:
+            active_img = get_active_image_data(self)
+            if active_num and active_num == str(context.series_number) and image_has_scalars(active_img):
                 return bind_active_viewer_volume(self, series_uid=context.series_uid)
         except Exception:
             pass

@@ -59,6 +59,16 @@ imported only when the workspace is actually opened.
 entry and disable the launcher. Purely additive: disabling leaves every existing
 flow byte-identical.
 
+## AI research references
+
+This module keeps AI research references under `References/` for future Dental
+AI planning. `References/AI-in-Dentistry/awesome-ai-in-dentistry.md` documents
+**Awesome AI in Dentistry** as one main starting point for future AI-assisted
+dental reporting, panoramic X-ray analysis, CBCT segmentation, lesion detection,
+structured reporting, and dental imaging workflow features. These references are
+for research and development only; external code, datasets, or models must be
+reviewed separately before any production integration.
+
 ## Entry point
 
 `PacsClient/.../patient_widget_core/_pw_advanced.py` adds a flag-gated **Dental

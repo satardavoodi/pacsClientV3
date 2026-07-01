@@ -487,6 +487,9 @@ class ControlPanelWindow(object):
         self.verticalLayout_2.addWidget(self.frame_3)
 
     def setupUi(self):
+        # [STARTUP_STAGE] sub-timing (pure logging, no behaviour change) — attributes
+        # the ~1.3s of add_AIPacs_tab not already covered by home_widget/settings_widget.
+        _t_setupui_pre = time.perf_counter()
         font = QFont()
         font.setPointSize(10)
         self.MainWindow.setFont(font)
@@ -683,6 +686,10 @@ class ControlPanelWindow(object):
                 right_tab_area = tab_widget_parent.get_right_tab_area()
 
         # Home widget
+        logger.warning(
+            f"[STARTUP_STAGE] stage=setupUi_pre_home ms={(time.perf_counter() - _t_setupui_pre) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
         # [STARTUP_STAGE] instrumentation — pure logging, no behaviour change.
         _t = time.perf_counter()
         self.home_widget = home_ui.HomePanelWidget(
@@ -709,6 +716,7 @@ class ControlPanelWindow(object):
             f"[STARTUP_STAGE] stage=settings_widget ms={(time.perf_counter() - _t) * 1000:.1f}",
             extra={"component": "viewer"},
         )
+        _t_setupui_post = time.perf_counter()  # [STARTUP_STAGE] sub-timing
 
         # Data page
         self.dataPage = QWidget()
@@ -851,7 +859,16 @@ class ControlPanelWindow(object):
         # Apply initial (collapsed) style to left menu buttons
         self._apply_left_menu_state()
         self.theme_manager.themeChanged.connect(self.apply_theme)
+        logger.warning(
+            f"[STARTUP_STAGE] stage=setupUi_post_home ms={(time.perf_counter() - _t_setupui_post) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
+        _t_setupui_theme = time.perf_counter()
         self.apply_theme(self._active_theme)
+        logger.warning(
+            f"[STARTUP_STAGE] stage=setupUi_apply_theme ms={(time.perf_counter() - _t_setupui_theme) * 1000:.1f}",
+            extra={"component": "viewer"},
+        )
 
     def apply_theme(self, theme=None):
         self._active_theme = theme or self.theme_manager.current_theme()

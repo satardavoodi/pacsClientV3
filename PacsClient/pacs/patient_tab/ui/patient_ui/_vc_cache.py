@@ -888,10 +888,45 @@ class _VCCacheMixin:
                 return entry[0]
 
             study_path = self._get_correct_study_path()
-            if not study_path:
-                return 0
-            series_dir = os.path.join(study_path, str(series_number))
-            if not os.path.isdir(series_dir):
+            series_dir = None
+            if study_path:
+                _cand = os.path.join(study_path, str(series_number))
+                if os.path.isdir(_cand):
+                    series_dir = _cand
+            if series_dir is None:
+                # Multi-study CANONICAL fallback (48273/48476/48567, 2026-07-01): a
+                # SECONDARY (previous-exam) series is keyed by an offset DISPLAY key
+                # (study_slot*1_000_000 + orig), which does NOT exist under the tab's
+                # PRIMARY study path — so the bare join above misses and every caller
+                # (the same-series no-op's grow check, progressive grow, load-completion,
+                # the backend candidate probe) used to see a WRONG 0 on-disk for it, and
+                # the series could never grow. Resolve the canonical (study_uid,
+                # orig_series) and count the series' OWN per-study folder instead. This is
+                # the single source-level fix so the WHOLE pipeline sees the true count,
+                # not just one call site. STRICTLY additive: gated on the offset-key
+                # threshold so ordinary/primary/single-study series (number < 1_000_000)
+                # never reach it and stay byte-identical (they already matched above or
+                # legitimately return 0). Now UNCONDITIONAL (flag collapsed after the
+                # 48695 live verification, 2026-07-01): the legacy "return wrong 0 for an
+                # offset key" behaviour has no valid use, so there is no kill switch — an
+                # offset display key always resolves to its own canonical study folder.
+                _is_offset_key = False
+                try:
+                    _is_offset_key = int(str(series_number)) >= 1_000_000
+                except (TypeError, ValueError):
+                    _is_offset_key = False
+                if _is_offset_key:
+                    try:
+                        _cu_study, _cu_orig, _ = self._resolve_canonical_series_identity(series_number)
+                        if _cu_study and _cu_orig not in (None, ""):
+                            from PacsClient.utils.config import SOURCE_PATH as _SRC
+                            _cand2 = os.path.join(str(_SRC), str(_cu_study), str(_cu_orig))
+                            if os.path.isdir(_cand2):
+                                series_dir = _cand2
+                    except Exception:
+                        series_dir = None
+            if series_dir is None:
+                cache[key] = (0, _now)
                 return 0
             count = 0
             with os.scandir(series_dir) as it:

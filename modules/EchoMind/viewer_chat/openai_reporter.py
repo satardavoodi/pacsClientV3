@@ -11,17 +11,23 @@ from modules.EchoMind.llm_client import chat_completion
 from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings, get_prompt_settings, get_proxy_settings
 
 
-def _get_requests_proxies() -> "dict[str, str] | None":
-    """Return a requests-compatible proxies dict when SOCKS5 proxy is configured, else None."""
+def _get_requests_proxies() -> "dict[str, str]":
+    """Return a requests-compatible proxies dict.
+
+    - 'direct': returns {} so requests explicitly bypasses ALL proxy sources
+      (system registry, HTTP_PROXY/HTTPS_PROXY env vars, Windows WinInet).
+      Passing proxies=None would still let requests pick up system proxies.
+    - 'socks5': returns the configured SOCKS5 proxy.
+    """
     try:
         cfg = get_proxy_settings()
         if cfg.get("connection_type") != "socks5":
-            return None
+            return {}  # explicit bypass — no system/env proxy
         port = int(cfg.get("proxy_port") or 2080)
         proxy_url = f"socks5://127.0.0.1:{port}"
         return {"http": proxy_url, "https": proxy_url}
     except Exception:
-        return None
+        return {}  # fail-safe: no proxy
 
 
 # ------------------------------------------------------
@@ -141,6 +147,38 @@ _CT_REQUIRED_KEYS: list = [
     "Recommendations",
 ]
 
+_MAMMOGRAPHY_REQUIRED_KEYS: list = [
+    "Report Title",
+    "Breast Composition",
+    "Pathological Findings",
+    "Normal Findings",
+    "Axillary Evaluation",
+    "BI-RADS Category",
+]
+
+_ULTRASOUND_REQUIRED_KEYS: list = [
+    "Report Title",
+    "Pathological Findings",
+    "Normal Findings",
+]
+
+_OB_ULTRASOUND_REQUIRED_KEYS: list = [
+    "Report Title",
+    "Gestational Age & Dating",
+    "Fetal Presentation",
+    "Biometry",
+    "Placenta & Umbilical Cord",
+    "Amniotic Fluid",
+    "Normal Findings",
+]
+
+_VALIDATED_MODALITIES: frozenset = frozenset({
+    "mri", "ct", "mammography",
+    "sonography", "ultrasound",
+    "obstetric ultrasound", "ob ultrasound",
+    "pregnancy ultrasound", "fetal ultrasound",
+})
+
 
 def _clean_model_json_text(raw):
     """Strip markdown fences and <|end|> end-tokens from model JSON output."""
@@ -159,12 +197,13 @@ def _clean_model_json_text(raw):
 def _validate_report_json(raw, modality: str):
     """
     Validate and repair JSON output for a given modality.
-    Non-MRI/CT: passthrough.
-    MRI/CT: strip fences → parse → validate required keys → coerce empty optionals to null.
+    Modalities not in _VALIDATED_MODALITIES: passthrough unchanged.
+    Handled modalities: strip fences → parse → validate required keys →
+    coerce empty optionals to null → return canonical JSON string.
     Raises ValueError on parse failure or missing required keys.
-    Always returns a JSON string with ALL 5 canonical keys present.
     """
-    if not isinstance(raw, str) or modality.lower() not in ("mri", "ct"):
+    _mod = modality.lower()
+    if not isinstance(raw, str) or _mod not in _VALIDATED_MODALITIES:
         return raw
     import json as _json
     text = _clean_model_json_text(raw)
@@ -176,8 +215,18 @@ def _validate_report_json(raw, modality: str):
         raise ValueError(
             f"Expected a JSON object (dict) but got {type(data).__name__}"
         )
+    # Determine required/optional keys per modality
+    if _mod == "mammography":
+        _required = _MAMMOGRAPHY_REQUIRED_KEYS
+        _optional: list = []
+    elif _mod in ("obstetric ultrasound", "ob ultrasound",
+                  "pregnancy ultrasound", "fetal ultrasound"):
+        _required = _OB_ULTRASOUND_REQUIRED_KEYS
+        _optional = ["Anatomy Survey", "Doppler", "Impression", "Recommendations"]
+    else:  # mri, ct, sonography, ultrasound
+        _required = ["Report Title", "Pathological Findings", "Normal Findings"]
+        _optional = ["Impression", "Recommendations"]
     # Coerce empty / N/A optional fields to null (keep key present)
-    _optional = ["Impression", "Recommendations"]
     for key in _optional:
         val = data.get(key)
         if isinstance(val, str) and val.strip().lower() in ("", "n/a", "none", "-"):
@@ -187,7 +236,7 @@ def _validate_report_json(raw, modality: str):
         if key not in data:
             data[key] = None
     # Validate required keys — raise on missing
-    for k in ["Report Title", "Pathological Findings", "Normal Findings"]:
+    for k in _required:
         if not data.get(k):
             raise ValueError(f"Required key missing or empty: {k!r}")
     return _json.dumps(data, ensure_ascii=False, indent=2)
@@ -908,6 +957,203 @@ def reporter(
             
                             """
                         )
+        elif modality_lower in ["obstetric ultrasound", "ob ultrasound",
+                                "pregnancy ultrasound", "fetal ultrasound"]:
+            specific_instructions = ("""
+                MODALITY: Obstetric Ultrasound — ISUOG Structured Report
+
+                JSON OUTPUT SCHEMA (ISUOG — STRICT):
+                {
+                  "Report Title": "Obstetric Ultrasound – [First/Second/Third] Trimester",
+                  "Gestational Age & Dating": "GA by LMP: X wXd | GA by biometry: X wXd | EDD: [date] | Concordant / Discordant (>7d in 1st tri or >14d in 2nd/3rd tri)",
+                  "Fetal Presentation": "Cephalic/Breech/Transverse/Oblique | FHR: X bpm | Fetal movement: present/absent/reduced",
+                  "Biometry": "BPD: X mm | HC: X mm | AC: X mm | FL: X mm | HL: X mm | EFW: X g (Hadlock) | Growth Percentile: Xth (AGA 10th–90th / SGA <10th / LGA >90th)",
+                  "Anatomy Survey": "[ISUOG organ-by-organ findings per Section 4 below]",
+                  "Placenta & Umbilical Cord": "Location: [anterior/posterior/fundal/lateral/low-lying/previa] | Grade: [0/I/II/III] | Distance from internal os: X mm | Cord: three-vessel/two-vessel | Cord insertion: central/eccentric/marginal/velamentous",
+                  "Amniotic Fluid": "AFI: X cm (normal 8–24 cm) OR DVP: X cm (normal 2–8 cm)",
+                  "Normal Findings": "[Single sentence: uterus, adnexa, cervical length if measured]",
+                  "Doppler": "[UA S/D ratio | MCA PSV | DV flow | Uterine artery notching — OMIT if no Doppler performed]",
+                  "Impression": "[GA confirmation, fetal wellbeing summary, growth status, any abnormalities]",
+                  "Recommendations": "[Follow-up timing, repeat scan, referral — OMIT if routine normal]"
+                }
+
+                ─────────────────────────────────────────────────────
+                SECTION 1 — TRIMESTER DETECTION
+                ─────────────────────────────────────────────────────
+                • 1st trimester: ≤13w6d | 2nd: 14w0d–27w6d | 3rd: ≥28w0d
+                • Detect trimester from GA stated in dictation; infer from CRL/BPD/FL if GA not given
+                • Label Report Title accordingly: "First Trimester", "Second Trimester", "Third Trimester"
+
+                ─────────────────────────────────────────────────────
+                SECTION 2 — GESTATIONAL AGE & DATING RULES
+                ─────────────────────────────────────────────────────
+                • GA by LMP: use if explicitly stated in dictation
+                • GA by biometry: derived from BPD/HC/AC/FL (Hadlock tables)
+                • EDD: calculate from biometric GA; use LMP-based EDD only if concordant
+                • Discordance: >7 days (1st trimester) or >14 days (2nd/3rd) → note discordance, recommend biometric dating
+                • GA not stated in dictation → write "Not stated" for LMP; derive from biometry if available
+
+                ─────────────────────────────────────────────────────
+                SECTION 3 — BIOMETRY FORMAT (ISUOG STANDARD)
+                ─────────────────────────────────────────────────────
+                2nd/3rd trimester mandatory measurements:
+                • BPD (Biparietal Diameter): outer-to-inner; mm
+                • HC (Head Circumference): ellipse method; mm
+                • AC (Abdominal Circumference): outer; mm
+                • FL (Femur Length): ossified diaphysis; mm
+                • HL (Humerus Length): ossified diaphysis; mm (include if stated)
+                • EFW (Estimated Fetal Weight): Hadlock formula; grams
+                • Growth Percentile: state percentile + AGA (10th–90th) / SGA (<10th) / LGA (>90th)
+
+                1st trimester measurements:
+                • CRL (Crown-Rump Length): primary GA measurement 7w–13w6d; mm
+                • NT (Nuchal Translucency): if ≥11w0d; normal <3.0 mm; state mm value
+                • Nasal bone: present / absent (if assessed)
+                • Yolk sac, fetal heartbeat (bpm if stated)
+
+                Normal biometry construction rule:
+                • If numbers not individually stated but described as "normal" or "appropriate for GA":
+                  → write "[measurement]: appropriate for stated gestational age" for each
+
+                ─────────────────────────────────────────────────────
+                SECTION 4 — ANATOMY SURVEY (ISUOG STRUCTURED)
+                ─────────────────────────────────────────────────────
+                CNS / Brain:
+                • Skull: normal ovoid shape
+                • Cerebral ventricles: atrial width ≤10 mm normal; mild ventriculomegaly 10–15 mm; severe >15 mm
+                • Posterior fossa: cerebellum normal shape/transverse diameter | cisterna magna 2–10 mm | no Dandy-Walker
+                • Corpus callosum: present (if visualized at ≥18w)
+                • Midline falx: present; no midline shift
+
+                Face:
+                • Orbits: symmetric, normal size, normal inter-orbital distance
+                • Nasal bone: present (if assessed ≥11w)
+                • Facial profile: normal forehead, nose, chin (if visualized)
+                • Lip and primary palate: intact (if visualized)
+
+                Chest / Heart (ISUOG cardiac screening):
+                • Lung echogenicity: normal bilateral symmetry; no pleural effusion
+                • Diaphragm: intact (if visualized)
+                • Cardiac situs: levocardia; apex pointing left; stomach on left
+                • Four-chamber view: equal-size ventricles and atria; intact IV septum; normal AV valves; no pericardial effusion
+                • Outflow tracts (if assessed): LVOT/RVOT normal alignment and crossing
+                • FHR: state bpm if provided (normal 110–160 bpm)
+
+                Abdomen:
+                • Stomach: visible, fluid-filled, left-sided (absence → note)
+                • Liver: normal echogenicity
+                • Kidneys: bilateral, normal echogenicity and corticomedullary differentiation
+                  • Renal pelvis AP diameter: normal <7 mm (mild pyelectasis 4–7 mm; note if >7 mm)
+                • Bladder: visible, normal size
+                • Abdominal wall: intact; umbilical cord insertion normal; no omphalocele/gastroschisis
+                • Bowel: normal echogenicity (hyperechoic bowel ≥ bone echogenicity → note)
+
+                Spine:
+                • Cervical/thoracic/lumbar/sacral: normal alignment and curvature
+                • Posterior ossification centers: intact, normal spacing
+                • Overlying skin line: intact; no meningomyelocele
+
+                Limbs:
+                • Four extremities: present, normal morphology and movement
+                • Long bone lengths: appropriate for GA (see biometry)
+                • Hands: five digits (if visualized), normal position
+                • Feet: normal position; no talipes (club foot)
+
+                Umbilical Cord:
+                • Three-vessel cord (two arteries + one vein): normal
+                • Single umbilical artery (SUA / two-vessel cord): note — associated with renal/cardiac anomalies
+                • Abdominal wall cord insertion: normal (no cord presentation)
+                • Placental cord insertion: central / eccentric / marginal / velamentous
+
+                Visualization note: if anatomy incompletely visualized →
+                state "Limited visualization due to [fetal position / oligohydramnios / maternal habitus / gestational age]"
+
+                ─────────────────────────────────────────────────────
+                SECTION 5 — PLACENTA & AMNIOTIC FLUID RULES
+                ─────────────────────────────────────────────────────
+                Placenta:
+                • Location: anterior / posterior / fundal / right lateral / left lateral / low-lying / previa
+                • Low-lying: lower edge <20 mm from internal os → state exact distance; recommend repeat at 32–34w
+                • Placenta previa: classify complete / partial / marginal
+                • Placental grade (Grannum): 0 (2nd tri) → I → II → III (mature); premature grade III <34w → note
+                • Texture: homogeneous normal | heterogeneous | calcifications | subchorionic hematoma (size, location)
+
+                Amniotic Fluid:
+                • AFI (sum of 4-quadrant deepest pockets): Normal 8–24 cm | Borderline 5–8 cm | Oligo <5 cm | Poly >24 cm
+                • DVP (single deepest vertical pocket): Normal 2–8 cm | Oligo <2 cm | Poly >8 cm
+                • Use whichever the radiologist provided; do NOT convert between AFI and DVP
+
+                ─────────────────────────────────────────────────────
+                SECTION 6 — DOPPLER DOCUMENTATION
+                ─────────────────────────────────────────────────────
+                Include "Doppler" key ONLY if Doppler values/terms appear in the dictation:
+                • Umbilical artery (UA): S/D ratio | PI | RI | absent/reversed end-diastolic flow (AEDF/REDF)
+                • Middle cerebral artery (MCA): PSV (normal >1.5 MoM for fetal anemia) | PI | RI
+                • Ductus venosus (DV): a-wave direction (reversed = venous compromise)
+                • Uterine artery: bilateral PI/RI | notching (early diastolic notch → note laterality)
+                • Normal Doppler: "Umbilical artery Doppler: normal S/D ratio with positive end-diastolic flow"
+                OMIT entire "Doppler" key if no Doppler was assessed
+
+                ─────────────────────────────────────────────────────
+                SECTION 7 — PERSIAN / FINGLISH RECOGNITION
+                ─────────────────────────────────────────────────────
+                The dictation may contain Persian words in Latin script (Finglish) or Persian script:
+                • "jadeh-ye-zaye" / "rahem" / "رحم" → uterus
+                • "joft" / "jadeh joft" / "جفت" → placenta
+                • "maayeh amniotik" / "مایع آمنیوتیک" → amniotic fluid
+                • "janian" / "janin" / "جنین" → fetus/fetal
+                • "saret janian" / "سر جنین" → fetal head
+                • "galb janian" / "قلب جنین" → fetal heart
+                • "seeneh" / "سینه" → chest
+                • "haml" / "حاملگی" → pregnancy/gravid
+                • "GA" or "SGA" or "hafteh" → gestational age / weeks
+                Normalize all to standard English radiological terminology before building JSON
+
+                ─────────────────────────────────────────────────────
+                SECTION 8 — NORMAL FINDINGS CONSTRUCTION
+                ─────────────────────────────────────────────────────
+                Write a single sentence summarizing non-pathological features:
+                • Include: uterine contour, adnexal regions, cervical length (if measured)
+                • Normal cervical length: ≥25 mm (short cervix <25 mm → note in Pathological Findings instead)
+                • Example: "Uterus gravid with normal contour; adnexal regions unremarkable; cervical length 38 mm (normal)."
+                • Do NOT repeat findings already in Anatomy Survey
+
+                ─────────────────────────────────────────────────────
+                SECTION 9 — IMPRESSION & RECOMMENDATIONS LOCK
+                ─────────────────────────────────────────────────────
+                • Impression: REQUIRED — always include. Summarize: confirmed GA, fetal wellbeing, growth status, fluid/placenta, any significant findings
+                • Recommendations: OMIT if fully normal and routine. Include when: anomaly detected, growth restriction (<10th percentile), abnormal Doppler, short cervix, follow-up scan needed, referral indicated
+
+                ─────────────────────────────────────────────────────
+                SECTION 10 — SELF-CHECK BEFORE OUTPUT
+                ─────────────────────────────────────────────────────
+                Before finalizing JSON output, verify:
+                ✓ Trimester correctly labeled in Report Title
+                ✓ All available biometry measurements stated in mm (grams for EFW)
+                ✓ Growth percentile stated with AGA/SGA/LGA classification
+                ✓ AFI or DVP stated with normal range in parentheses
+                ✓ Anatomy Survey covers all ISUOG domains (CNS, Face, Heart/Chest, Abdomen, Spine, Limbs, Cord)
+                ✓ "Doppler" key present ONLY if Doppler was performed
+                ✓ Impression present and complete
+                ✓ No fabricated measurements not present in the dictation
+
+                ─────────────────────────────────────────────────────
+                EXAMPLE OUTPUT (second trimester, normal study)
+                ─────────────────────────────────────────────────────
+                {
+                  "Report Title": "Obstetric Ultrasound – Second Trimester",
+                  "Gestational Age & Dating": "GA by LMP: 22w3d | GA by biometry: 22w1d | EDD: [calculated] | Concordant",
+                  "Fetal Presentation": "Cephalic | FHR: 152 bpm (normal) | Fetal movement: present",
+                  "Biometry": "BPD: 56 mm | HC: 198 mm | AC: 178 mm | FL: 39 mm | HL: 37 mm | EFW: 510 g | Growth Percentile: 48th (AGA)",
+                  "Anatomy Survey": "CNS: normal ventricular atrial width, normal posterior fossa, cisterna magna 6 mm. Face: symmetric orbits, intact lip. Chest/Heart: levocardia, normal four-chamber view, FHR 152 bpm. Abdomen: stomach visible, bilateral normal kidneys (renal pelvis <7 mm), bladder visible, intact abdominal wall. Spine: normal alignment and integrity. Limbs: four extremities present, long bones appropriate for GA. Umbilical cord: three-vessel.",
+                  "Placenta & Umbilical Cord": "Posterior, Grade I, distance from internal os >20 mm. Three-vessel cord, central placental insertion.",
+                  "Amniotic Fluid": "AFI: 14 cm (normal 8–24 cm)",
+                  "Normal Findings": "Uterus gravid with normal contour; adnexal regions unremarkable.",
+                  "Impression": "Single live intrauterine fetus at 22 weeks gestation, concordant with biometry. Normal fetal anatomy survey. Appropriate growth for gestational age (48th percentile). Normal amniotic fluid volume.",
+                  "Recommendations": null
+                }
+                """)
+
         elif modality_lower in ["sonography", "ultrasound"]:
             specific_instructions = ("""
                 MODALITY LOGIC (Ultrasound – General + OB/GYN):
@@ -1221,6 +1467,41 @@ def reporter(
                 • normalize increased / decreased variations  
                 • NEVER add new interpretation  
 
+                ACR BI-RADS 5th Edition — Mass Descriptors (use EXACTLY these terms):
+
+                Mass SHAPE:
+                • oval (elliptical, egg-shaped)
+                • round (spherical, ball-shaped)
+                • irregular (shape cannot be characterized as oval or round)
+
+                Mass MARGIN:
+                • circumscribed (well-defined, sharp interface ≥75% of border)
+                • obscured (hidden by overlying or adjacent tissue)
+                • microlobulated (short-cycle undulations on border)
+                • indistinct (no clear demarcation from adjacent tissue)
+                • spiculated (lines radiating from mass; highest malignancy concern)
+
+                Mass DENSITY (relative to equal volume of fibroglandular tissue):
+                • fat-containing (includes oil cysts, lipomas, galactoceles, hamartomas)
+                • low density
+                • equal density
+                • high density
+
+                Calcification MORPHOLOGY:
+                • Typically benign: skin / vascular / coarse or popcorn-like / large rod-like / round / rim / dystrophic / milk of calcium / suture
+                • Suspicious — Intermediate concern: coarse heterogeneous
+                • Suspicious — Higher concern: fine pleomorphic | fine linear | fine-linear branching (casting)
+
+                Calcification DISTRIBUTION:
+                • diffuse (randomly scattered throughout whole breast)
+                • regional (large volume of breast tissue, not duct distribution)
+                • grouped / clustered (≥5 calcifications in <2 cm² area)
+                • linear (calcifications in a line, may branch; suggests ductal distribution)
+                • segmental (triangular or cone-shaped; suggests ductal/lobular distribution)
+
+                Use EXACTLY these BI-RADS terms when describing mass shape, margins, density, and calcification characteristics.
+                Do NOT paraphrase or substitute synonyms.
+
                 ====================================================================
                 SECTION 4 — NORMAL FINDINGS TEMPLATE (CONFLICT-FILTERED)
                 ====================================================================
@@ -1262,13 +1543,38 @@ def reporter(
                 ✗ Pathology: mass → Normal: “No suspicious mass.”
 
                 ====================================================================
-                SECTION 6 — BI-RADS RULE
+                SECTION 6 — BI-RADS RULE (ACR BI-RADS 5th Edition)
                 ====================================================================
 
+                BI-RADS CATEGORY RULE:
                 - The user MUST provide BI-RADS.  
                 - NEVER infer or guess BI-RADS.  
-                - Copy EXACT formatting (e.g., “4C”, “5”, “6”).  
+                - Copy EXACT formatting from user input (e.g., “4C”, “5”, “6”).  
                 - Missing value → “Not mentioned”.
+                - When a BI-RADS category is stated, append the standard label and management recommendation:
+
+                BI-RADS Category Descriptions & Standard Management:
+                • 0 — Incomplete. Need additional imaging evaluation and/or prior mammograms for comparison.
+                • 1 — Negative. Annual screening mammography (routine interval).
+                • 2 — Benign finding(s). Annual screening mammography (routine interval).
+                • 3 — Probably benign. Short-interval follow-up (6 months); probability of malignancy <2%.
+                • 4A — Low suspicion for malignancy. Tissue sampling (biopsy) recommended; malignancy risk >2% to ≤10%.
+                • 4B — Moderate suspicion for malignancy. Tissue sampling (biopsy) recommended; malignancy risk >10% to ≤50%.
+                • 4C — High suspicion for malignancy. Tissue sampling (biopsy) required; malignancy risk >50% to <95%.
+                • 5 — Highly suggestive of malignancy. Tissue sampling required; malignancy risk ≥95%.
+                • 6 — Known biopsy-proven malignancy. Prior to definitive therapy (treatment planning).
+
+                Format for BI-RADS Category value: "[Category] — [Standard Label]"
+                Example: "5 — Highly suggestive of malignancy"
+
+                BREAST COMPOSITION (ACR BI-RADS A–D):
+                Use EXACT ACR terminology when composition is stated:
+                • A — The breasts are almost entirely fatty.
+                • B — There are scattered areas of fibroglandular density.
+                • C — The breasts are heterogeneously dense, which may obscure small masses.
+                • D — The breasts are extremely dense, which lowers the sensitivity of mammography.
+                If composition stated as a letter (A/B/C/D) or type number (1/2/3/4): map to the standard description above.
+                If composition is not stated: "Not mentioned".
 
                 ====================================================================
                 SECTION 7 — AXILLARY RULE
@@ -1608,7 +1914,7 @@ def reporter(
             {"role": "user", "content": user_msg},
         ],
     }
-    if modality and modality.lower() in ("mri", "ct"):
+    if modality and modality.lower() in _VALIDATED_MODALITIES:
         payload["temperature"] = 0.1
         payload["max_tokens"] = 2500
 
@@ -2465,63 +2771,64 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
 
     # --- 🔹 Token Instructions ---
     token_instructions = """
-        ### CRITICAL NON-EXPANSION RULE (DO NOT ADD INFORMATION)
-        - DO NOT add, invent, infer, complete, or expand ANY medical sentence, finding, description, conclusion, impression, or recommendation that is not explicitly present in the original dictation.
-        - ONLY normalize, clean, split, deduplicate, and translate the exact stated content from the input.
+        ### ROLE
+        You are a conservative bilingual (Persian-English) medical text normalizer for radiology dictation.
+        Input: raw Persian speech-to-text dictation (may include filler words, repetition, STT errors).
+        Output: lightly cleaned Persian sentences and their English translations with minimal intervention.
 
         ======================================================
-        ABSOLUTE OUTPUT RULES (TOP PRIORITY — NEVER BREAK)
+        ABSOLUTE OUTPUT RULES (NEVER BREAK)
         ======================================================
-        1) Output ONLY a single valid JSON object (RAW JSON).
-        2) No markdown, no code fences, no labels, no commentary, no extra text.
-        3) The first non-whitespace character MUST be "{" and the last MUST be "}".
-        4) Must be parseable by Python json.loads().
-        5) Use ONLY double quotes for JSON keys/strings. No trailing commas. No comments.
-        6) DO NOT include newline characters inside any JSON string element.
-        7) If the input is empty or meaningless, output empty arrays.
+        1) Output ONLY a single valid JSON object (RAW JSON - no markdown, no code fences, no extra text).
+        2) First non-whitespace character MUST be "{" and last MUST be "}".
+        3) Must be parseable by Python json.loads(). Use ONLY double quotes. No trailing commas. No comments.
+        4) DO NOT include newline characters inside any JSON string element.
+        5) If the input is empty or meaningless, output all empty arrays.
 
         ======================================================
-        TASK DEFINITION
+        CORE PRINCIPLE: MINIMAL INTERVENTION
         ======================================================
-        You are a professional bilingual (Persian–English) medical text normalizer.
-        Input: spoken Persian medical dictation (may contain typos, repetition, spoken fillers).
-        Output: short independent Persian sentences and aligned English translations.
-
-        Your job:
-        1) Convert dictation into short independent grammatically complete Persian sentences.
-        2) Translate each Persian sentence accurately into English.
-        3) Preserve order and content exactly.
-        4) Deduplicate repeated content without removing unique meaning.
+        Make the minimum edits necessary. The output must stay as close to the original dictation as
+        possible while being grammatically correct and readable. When in doubt, keep the original word.
 
         ======================================================
-        PUNCTUATION OVERRIDE (STRICT — MUST FOLLOW)
+        PERMITTED TRANSFORMATIONS
         ======================================================
-        - NEVER use commas.
-        - Use only "." to end sentences.
-        - Every sentence must be atomic and independent.
+        1) STT ERROR CORRECTION (Only obvious, unambiguous errors)
+           - Correct speech-recognition mistakes ONLY when context makes the intended word absolutely certain.
+           - UNCERTAINTY RULE: If you are not certain whether a word is an STT error or a valid medical
+             term, KEEP THE ORIGINAL WORD verbatim. Never replace an uncommon but valid medical term.
+           - Acceptable: "هپاتوما گلی" (clear STT split) -> "هپاتومگالی".
+           - NOT acceptable: replacing any word that could be a valid anatomical or clinical term.
+
+        2) READABILITY SPLITTING (Selective - not mandatory)
+           - Split a sentence ONLY when it contains clearly distinct, separable clinical findings that are
+             grammatically independent and joined by a discourse marker (e.g. "همچنین" / "در ادامه").
+           - NEVER split mechanically at every conjunction. "و" (and) alone is NOT a reason to split.
+           - Natural compound medical phrases must stay intact: "کلیه راست و چپ" / "با و بدون تزریق" /
+             "اندازه و شکل طبیعی".
+           - Do NOT split if removing the connector would cause either part to lose clinical context.
+
+        3) FORMATTING
+           - Remove filler/non-medical words: "مرسی" / "خب" / "اِ" / "آها" / "ببخشید" and similar.
+           - Remove exactly duplicated sentences (keep the first occurrence only).
+           - Normalize spacing and fix obvious punctuation. End each sentence with ".".
+           - Commas are permitted where grammatically appropriate in Persian.
+
+        4) DICTATION COMMAND NORMALIZATION (Strictly limited)
+           - Convert standard radiologist shorthand ONLY when the referent organ is unambiguous.
+           - "[organ] طبیعی بزن" -> "[organ] نمای طبیعی دارد."
+           - If the referent is unclear or the command is ambiguous, keep the phrase as-is.
 
         ======================================================
-        HARD SENTENCE SPLITTING (MANDATORY)
+        PROHIBITED ACTIONS (STRICT - ANY VIOLATION IS A FAILURE)
         ======================================================
-        - One clause equals one sentence.
-        - Each sentence must contain exactly one finding and one verb.
-        - No chained clauses using connectors such as:
-        "و" "یا" "که" "بعد" "سپس" "همچنین" "اما" "ولی"
-        "با توجه به" "پس از تزریق" "در ادامه"
-
-        ======================================================
-        MEDICAL TERMINOLOGY (NO PARAPHRASING)
-        ======================================================
-        - KEEP all medical terms exactly as dictated.
-        - DO NOT translate English medical terms into Persian.
-        - DO NOT substitute terminology.
-
-        ======================================================
-        NO HALLUCINATION
-        ======================================================
-        - DO NOT infer diagnosis.
-        - DO NOT expand findings.
-        - DO NOT generate impression or recommendation.
+        - DO NOT add, invent, infer, or expand any finding, diagnosis, or anatomical detail not stated.
+        - DO NOT complete unfinished sentences with assumed medical content.
+        - DO NOT change the clinical meaning of any dictated statement.
+        - DO NOT substitute a valid medical term with a synonym - even if the original term seems unusual.
+        - DO NOT translate English medical terms (appearing in the dictation) into Persian.
+        - DO NOT generate impressions or recommendations - extract them ONLY if explicitly dictated.
 
         ======================================================
         ORDER PRESERVATION
@@ -2529,41 +2836,19 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
         - Preserve the exact original order of dictated content.
 
         ======================================================
-        MINIMAL CLEANUP
-        ======================================================
-        - Correct obvious typos without changing meaning.
-        - Remove spoken commands and non-medical chatter.
-        - Remove duplicated repeated sentences.
-
-        ======================================================
         CONDITIONAL IMPRESSION EXTRACTION (STRICT)
         ======================================================
-        - Impression MUST be extracted ONLY if explicitly dictated by the physician.
-        - Explicit indicators include but are not limited to:
-        "یافته ها به نفع"
-        "یافته ها به ضرر"
-        "جمع بندی"
-        "نتیجه گیری"
-        "Impression"
+        - Extract impression ONLY if explicitly dictated. Explicit markers include:
+          "یافته ها به نفع" / "یافته ها به ضرر" / "جمع بندی" / "نتیجه گیری" / "Impression"
         - DO NOT infer impression from findings.
-        - If no explicit impression exists output an empty array.
+        - If no explicit impression exists -> empty array.
 
         ======================================================
         CONDITIONAL RECOMMENDATION EXTRACTION (STRICT)
         ======================================================
-        - Recommendation MUST be extracted ONLY if explicitly dictated.
-        - Includes recommendations such as:
-        follow up
-        biopsy
-        further imaging
-        additional evaluation
-        - Trigger phrases include:
-        "توصیه می شود"
-        "پیشنهاد می شود"
-        "جهت بررسی دقیق تر"
-        "فالو آپ"
-        - Preserve original wording and referenced finding.
-        - If no explicit recommendation exists output an empty array.
+        - Extract recommendation ONLY if explicitly dictated. Trigger phrases include:
+          "توصیه می شود" / "پیشنهاد می شود" / "فالو آپ" / "جهت بررسی دقیق تر"
+        - Preserve original wording. If no explicit recommendation -> empty array.
 
         ======================================================
         REQUIRED JSON FORMAT (ONLY)
@@ -2594,8 +2879,8 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
         ======================================================
         EXAMPLE (MRI ABDOMEN AND PELVIS)
         ======================================================
-        Input: 
-        ام آر آی شكم و لگن با و بدون تزریق ماده حاجب شكمش رو طبیعی بزن, لگن هم داره, بنویس که تغییرات پس از عمل به صورت هیسترکتومی در ناحیه لگن مشهود است, بعد بنویس که مایع ازاد اندک در عهره لگن رویت می گردد, کاف واژن دارای نمای طبیعی میباشد آزاد اندک در حوره لگن رویت می گردد کاف واژن دارای نمای طبیعی میباشد تشکیل بافت فیبروز اندک در ناحیه کاف واژن مشهود است پس از تزریق ماده حاجب انهانسمنت غیرطبیعی در ناحیه کاف واژن رویت نمیگردد با توجه به نمای رویت شده یافته های فوق به ضرر با توجه به نمای رویت شده یافته های فوق به ضرر وجود عود لوکال می باشد و مطرح کننده تغییرات طبیعی پس از درمان است توصیه به پیگیری کوتاه مدت توسط ام ار ای و مقایسه با تصویر برداری فعلی می گردد, DWI ناحیه لگنش رو هم طبیعی بزن, مرسی 
+        Input:
+        ام آر آی شكم و لگن با و بدون تزریق ماده حاجب شكمش رو طبیعی بزن, لگن هم داره, بنویس که تغییرات پس از عمل به صورت هیسترکتومی در ناحیه لگن مشهود است, بعد بنویس که مایع ازاد اندک در عهره لگن رویت می گردد, کاف واژن دارای نمای طبیعی میباشد آزاد اندک در حوره لگن رویت می گردد کاف واژن دارای نمای طبیعی میباشد تشکیل بافت فیبروز اندک در ناحیه کاف واژن مشهود است پس از تزریق ماده حاجب انهانسمنت غیرطبیعی در ناحیه کاف واژن رویت نمیگردد با توجه به نمای رویت شده یافته های فوق به ضرر با توجه به نمای رویت شده یافته های فوق به ضرر وجود عود لوکال می باشد و مطرح کننده تغییرات طبیعی پس از درمان است توصیه به پیگیری کوتاه مدت توسط ام ار ای و مقایسه با تصویر برداری فعلی می گردد, DWI ناحیه لگنش رو هم طبیعی بزن, مرسی
         Expected JSON:
         {
         "cleaned_sentences_persian": [
@@ -2697,94 +2982,103 @@ def correction(
 
 
     system_msg = """
-    You are a Medical Report Editor, NOT a medical report generator.
+    ### ROLE
+    You are a high-precision medical report editor performing a PATCH operation.
+    Task: output = ORIGINAL_REPORT + minimum_edits_from_CORRECTION_NOTE.
+    You are NOT generating a new report. You are NOT rewriting the report. You are applying a surgical edit.
 
-    INPUT FORMAT:
-    You will be given a single input containing:
-    1) ORIGINAL_REPORT:
-    - Either:
-    A) A complete medical report in JSON format (canonical), OR
-    B) HTML that visually represents the report (e.g., the UI-rendered report).
-    - The ORIGINAL_REPORT is the single source of truth.
-    - If ORIGINAL_REPORT is HTML, treat it as a faithful visual rendering of the report content.
+    ======================================================
+    INPUT
+    ======================================================
+    1) ORIGINAL_REPORT — the approved medical report (JSON or HTML).
+       • This is the authoritative source of truth.
+       • JSON input: use directly as the edit baseline.
+       • HTML input: convert to the required 5-key JSON schema using ONLY content explicitly present;
+         leave unmappable fields as empty strings; then apply CORRECTION_NOTE.
+    2) CORRECTION_NOTE — the physician's exact instruction describing what to change.
 
-    2) CORRECTION_NOTE:
-    - Physician instructions describing which part(s) of the ORIGINAL_REPORT must be corrected.
+    ======================================================
+    ABSOLUTE OUTPUT FORMAT (NEVER BREAK)
+    ======================================================
+    • Output MUST be a SINGLE valid JSON object in a JSON code block:
+      - MUST_START_WITH: ```json\\n
+      - MUST_END_WITH_CODE_BLOCK: ```
+      - MUST_TERMINATE_WITH: <|end|>
+      - No text before or after the JSON block. No explanations. No comments.
+    • Output MUST contain EXACTLY these 5 keys (no more, no less):
+      1) "Report Title"
+      2) "Pathological Findings"
+      3) "Normal Findings"
+      4) "Impression"
+      5) "Recommendations"
+    • NEVER output HTML — even when ORIGINAL_REPORT is HTML.
 
-    OUTPUT FORMAT (MUST FOLLOW EXACTLY):
-    - You MUST ALWAYS output a corrected report as a SINGLE JSON object with EXACTLY these 5 keys (NO MORE, NO LESS):
-    1) "Report Title"
-    2) "Pathological Findings"
-    3) "Normal Findings"
-    4) "Impression"
-    5) "Recommendations"
+    ======================================================
+    CORE PRINCIPLE: PATCH, NOT REGENERATE
+    ======================================================
+    The output must equal ORIGINAL_REPORT with the minimum necessary edits applied.
+    Every word, phrase, and sentence NOT required to change by CORRECTION_NOTE must be
+    preserved exactly — same wording, same phrasing, same order, same structure.
+    Do NOT improve, rephrase, expand, or restructure anything outside the requested change.
 
-    - Output MUST be ONLY valid JSON wrapped in a JSON code block exactly as follows:
-    - MUST_START_WITH: ```json\\n
-    - MUST_END_WITH_CODE_BLOCK: ```
-    - MUST_TERMINATE_WITH: <|end|>
-    - No text before/after the JSON code block. No explanations. No comments.
+    ======================================================
+    WHAT YOU MAY CHANGE
+    ======================================================
+    1) PRIMARY: the specific section(s) and sentence(s) directly addressed by CORRECTION_NOTE.
+    2) SECONDARY (consistency only): other locations that contain a LITERAL reference to the
+       changed fact — and ONLY when leaving them unchanged would create an internal contradiction.
+       Example: if laterality changes from "left" to "right" in Pathological Findings,
+       update ONLY the exact "left" → "right" occurrence in Impression if it explicitly references
+       the same structure. Do not update anything else.
 
-    HARD RULE ABOUT HTML INPUT:
-    - Even if the ORIGINAL_REPORT input is HTML, you MUST NOT output HTML.
-    - If the ORIGINAL_REPORT is HTML, you must first convert/interpret it into the 5-key JSON schema above, then apply corrections.
-    - If the HTML content cannot be mapped to the required 5 fields with high confidence, do NOT invent or infer:
-    - Convert only what is explicitly present.
-    - Leave unmappable fields as empty strings.
-    - Then apply CORRECTION_NOTE only if it clearly refers to present content; otherwise leave as-is.
+    ======================================================
+    WHAT YOU MUST NEVER CHANGE
+    ======================================================
+    • Any section not mentioned or implicated by CORRECTION_NOTE.
+    • Wording or phrasing of unaffected sentences — even if improvement seems possible.
+    • Medical terminology — keep exact terms; do not simplify or substitute.
+    • Measurements, laterality, severity, anatomy outside the requested edit scope.
+    • Impression or Recommendations unless CORRECTION_NOTE explicitly targets them,
+      or they contain a literal inconsistency caused by the primary change.
 
-    CRITICAL RULES (STRICT – ANY VIOLATION IS A FAILURE):
-    1) You are an editor: generating a new report or rewriting the report globally is strictly forbidden.
-    2) The CORRECTION_NOTE defines the PRIMARY section(s) to be edited.
-    3) You may modify ONLY:
-    a) Sections explicitly mentioned in the CORRECTION_NOTE, AND
-    b) Other sections ONLY IF a direct medical or logical dependency requires consistency.
-    4) If no such dependency exists, all other sections must remain EXACTLY unchanged in meaning and wording.
-    5) NEVER add new findings, diagnoses, impressions, or recommendations.
-    6) Do NOT rephrase, expand, summarize, or stylistically improve unaffected content.
-    7) Preserve the exact key names and key ordering of the required 5-key JSON output.
-    8) NEVER output HTML (even if the input is HTML). Output MUST follow the STRICT JSON rules only.
+    ======================================================
+    PERMITTED EDIT TYPES (examples)
+    ======================================================
+    • Replace a sentence or phrase with the dictated replacement.
+    • Add a new finding to a section.
+    • Remove a stated finding from a section.
+    • Modify a measurement, laterality, or severity.
+    • Correct a specific medical term.
+    • Change the Impression or Recommendation when explicitly requested.
 
-    REPORT SECTION LOGIC:
-    - Reports contain:
-    • Pathological Findings (always present)
-    • Normal Findings (always present)
-    • Impression (always present)
-    • Recommendations (always present)
-    - If a correction modifies Pathological or Normal Findings:
-    • Update Impression ONLY if it directly reflects that finding.
-    • Update Recommendations ONLY if it already logically depends on that finding.
-    - Never create new medical content to populate empty/unknown fields.
+    ======================================================
+    PROHIBITED ACTIONS (ANY VIOLATION IS A FAILURE)
+    ======================================================
+    • Rewriting or paraphrasing unaffected sentences for style or clarity.
+    • Adding diagnoses, findings, differential diagnoses, or recommendations not present
+      in ORIGINAL_REPORT and not explicitly requested in CORRECTION_NOTE.
+    • Completing or expanding unfinished sentences.
+    • Propagating a change to sections beyond what is required for internal consistency.
+    • Inferring additional corrections beyond what CORRECTION_NOTE clearly states.
 
-    PROCESS:
-    1) Parse/interpret the ORIGINAL_REPORT completely.
-    - If JSON input: use it directly as the baseline content.
-    - If HTML input: convert it into the required 5-key JSON baseline using only explicit content.
-    2) Identify the PRIMARY target section(s) from the CORRECTION_NOTE.
-    3) Apply minimal, localized edits to those sections.
-    4) Check for REQUIRED dependencies in other sections.
-    5) Modify dependent sections ONLY if inconsistency would otherwise occur.
-    6) Leave all unrelated content byte-for-byte identical (within each JSON string field).
-    7) Return the COMPLETE corrected report in the STRICT JSON code block format.
+    ======================================================
+    AMBIGUOUS INSTRUCTIONS
+    ======================================================
+    • Apply the SMALLEST reasonable interpretation of an ambiguous CORRECTION_NOTE.
+    • If CORRECTION_NOTE refers to content not present in ORIGINAL_REPORT:
+      return ORIGINAL_REPORT unchanged (after HTML→JSON conversion if needed).
+    • Never invent content to satisfy an ambiguous or incomplete instruction.
 
-    EDGE CASE HANDLING:
-    - If the CORRECTION_NOTE is ambiguous, incomplete, or refers to content not present in the ORIGINAL_REPORT:
-    → Do NOT infer, invent, or generalize.
-    → Return the baseline report unchanged (after converting HTML to the required 5-key JSON if needed).
-
-    F) JSON OUTPUT RULES (HARD)
-    - RESPONSE_FORMAT: STRICTLY JSON ONLY (no text before/after).
-    - MUST_START_WITH: ```json\\n
-    - MUST_END_WITH_CODE_BLOCK: ```
-    - MUST_TERMINATE_WITH: <|end|>
-    - Output MUST be a single valid JSON object.
-
-    - REQUIRED KEYS (ALWAYS PRESENT, EXACTLY THESE 5 — NO MORE, NO LESS):
-    1) "Report Title"
-    2) "Pathological Findings"
-    3) "Normal Findings"
-    4) "Impression"
-    5) "Recommendations"
+    ======================================================
+    PROCESS (follow in order)
+    ======================================================
+    1) Parse ORIGINAL_REPORT (JSON: use directly; HTML: convert to 5-key JSON baseline).
+    2) Read CORRECTION_NOTE. Identify the minimum target change.
+    3) Apply ONLY that change to the target location(s).
+    4) Check for literal dependencies in other fields — update only those that would be
+       internally inconsistent without the update.
+    5) Verify: everything else is byte-identical to ORIGINAL_REPORT.
+    6) Return the complete corrected report in the required JSON code block + <|end|>.
     """
 
     # API payload
@@ -2857,41 +3151,4 @@ def correction(
 # if __name__ == "__main__":
 #     print("=== Test Razi GAPGPT ===")
 
-# response = ImageQualityAnalyzer(
-#     user_msg="analyse this provided image.",
-#     CENTER_Key=CENTER_KEY_MEHR ,
-#     image_path=r"D:\project\PacsClient\ChatGPT Image Sep 2, 2025, 02_18_34 PM.png"
-# )
-
-# print(response["content"])
-
-# result1 = reporter(
-#     user_msg="ام آر آی مغز از بیمار 263787، کانون‌های کوچک هایپر سیگنال در ماده سفید",
-#     modality="MRI",
-#     CENTER_Key=CENTER_KEY_RAZI,
-# )
-# print(result1)
-
-# print(chat("Hello, how are you?", CENTER_Key=CENTER_KEY_RAZI))
-
-# result2 = reporter(
-#     user_msg="CT اسکن قفسه سینه بدون تزریق، ناحیه رتیکولر و گراند گلس در لوب فوقانی راست",
-#     modality="CT",
-#     CENTER_Key=CENTER_KEY_Mehr,
-#     model="gpt-4.1-mini"
-# )
-
-# result3 = reporter(
-#     user_msg="سونوگرافی شکم: کبد بزرگ‌شده با اکوی افزایش‌یافته",
-#     modality="Sonography",
-#     CENTER_Key=CENTER_KEY_Razi,
-#     model="gpt-5.1"
-# )
-
-# result4 = reporter(
-#     user_msg="ماموگرافی: کلسیفیکیشن‌های مشکوک در ربع فوقانی خارجی پستان چپ",
-#     modality="Mammography",
-#     CENTER_Key=CENTER_KEY_Mehr,
-#     model="gpt-5.1-mini"
-# )
-
+# response = Image

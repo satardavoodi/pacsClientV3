@@ -984,6 +984,42 @@ class ToolbarManager:
             
             layout.addLayout(btn_layout)
 
+            # --- Dual-arch (apical) picking — flag-gated, default OFF ------------
+            # When AIPACS_CURVED_MPR_DUAL_ARCH is on the user can trace a SECOND
+            # (apical / root) arch in addition to the crown arch. The engine then
+            # tilts each column crown->apex (compute_oblique_slice_axes) so forward-
+            # inclined anterior teeth keep BOTH crown and apex at a thin slab. The
+            # panel orchestrates two point sets over the single picker (no picker
+            # change). Flag OFF => none of this appears and the panel is byte-identical.
+            self._crown_arch_points = []
+            self._apical_arch_points = []
+            self._active_arch = "crown"
+            self._dual_arch_ui = os.environ.get("AIPACS_CURVED_MPR_DUAL_ARCH", "1") != "0"
+            if self._dual_arch_ui:
+                from PySide6.QtWidgets import QButtonGroup
+                arch_row = QHBoxLayout()
+                arch_row.addWidget(QLabel("Arch:"))
+                self._crown_arch_btn = QPushButton("Crown (occlusal)")
+                self._apical_arch_btn = QPushButton("Apical (root)")
+                self._arch_btn_group = QButtonGroup(self._curved_mpr_panel)
+                self._arch_btn_group.setExclusive(True)
+                for _ab in (self._crown_arch_btn, self._apical_arch_btn):
+                    _ab.setCheckable(True)
+                    self._arch_btn_group.addButton(_ab)
+                self._crown_arch_btn.setChecked(True)
+                self._crown_arch_btn.clicked.connect(lambda: self._set_curved_mpr_active_arch("crown"))
+                self._apical_arch_btn.clicked.connect(lambda: self._set_curved_mpr_active_arch("apical"))
+                arch_row.addWidget(self._crown_arch_btn, stretch=1)
+                arch_row.addWidget(self._apical_arch_btn, stretch=1)
+                layout.addLayout(arch_row)
+                self._arch_hint_label = QLabel(
+                    "Trace the crown arch, then switch to Apical and trace the root "
+                    "apices (optional — leaves the panoramic single-arch if empty)."
+                )
+                self._arch_hint_label.setWordWrap(True)
+                self._arch_hint_label.setStyleSheet("color:#94a3b8; font-size:11px;")
+                layout.addWidget(self._arch_hint_label)
+
             # Panoramic thickness (trough width) control — feeds generate_panoramic_view.
             # Default lowered 10 -> 5 mm (2026-06-23): a thinner slab averages less, so
             # tooth roots / apices / cortical margins / lamina dura stay sharp. Still
@@ -1111,11 +1147,64 @@ class ToolbarManager:
         except Exception as e:
             print(f"[CURVED MPR] Update list error: {e}")
     
+    def _set_curved_mpr_active_arch(self, which: str):
+        """Switch the active arch (crown/apical) for dual-arch picking.
+
+        Stashes the current picker points into the currently-active list, then loads
+        the target arch's list back into the single picker — so both arches are
+        preserved and independently editable without changing DentalCurvePicker. A
+        no-op-safe stash also runs when ``which`` equals the active arch (used by
+        Generate to capture the in-progress arch). Only reachable when the dual-arch
+        UI is on.
+        """
+        try:
+            viewer = getattr(self, '_curved_mpr_viewer', None)
+            if viewer is None:
+                return
+            which = "apical" if str(which) == "apical" else "crown"
+            current = getattr(self, '_active_arch', 'crown')
+            # 1) stash whatever is currently picked into the active list
+            if hasattr(viewer, 'get_curved_mpr_points'):
+                stash = list(viewer.get_curved_mpr_points())
+            else:
+                stash = list(getattr(viewer, 'curved_mpr_points', []) or [])
+            if current == "apical":
+                self._apical_arch_points = stash
+            else:
+                self._crown_arch_points = stash
+            if which == current:
+                self._update_points_list()
+                return
+            # 2) clear the picker and load the target arch's points
+            if hasattr(viewer, '_clear_curved_mpr_visuals'):
+                viewer._clear_curved_mpr_visuals()
+            viewer.curved_mpr_points = []
+            target = self._apical_arch_points if which == "apical" else self._crown_arch_points
+            add = getattr(viewer, '_add_curved_mpr_point', None) or getattr(viewer, 'add_point', None)
+            if add is not None:
+                for p in target:
+                    try:
+                        add(p)
+                    except Exception:
+                        pass
+            self._active_arch = which
+            self._update_points_list()
+            print(f"[CURVED MPR] Active arch: {which} "
+                  f"(crown={len(self._crown_arch_points)}, apical={len(self._apical_arch_points)})")
+        except Exception as e:
+            print(f"[CURVED MPR] Arch switch error: {e}")
+
     def _clear_curved_mpr_points(self):
         """Clear all curved MPR points"""
         try:
             self._curved_mpr_viewer.curved_mpr_points = []
             self._curved_mpr_viewer._clear_curved_mpr_visuals()
+            # dual-arch: also clear the stashed list for the arch being edited
+            if getattr(self, '_dual_arch_ui', False):
+                if getattr(self, '_active_arch', 'crown') == "apical":
+                    self._apical_arch_points = []
+                else:
+                    self._crown_arch_points = []
             self._update_points_list()
         except Exception as e:
             print(f"[CURVED MPR] Clear error: {e}")
@@ -1147,25 +1236,38 @@ class ToolbarManager:
     def _generate_curved_mpr(self):
         """Generate curved MPR from collected points"""
         try:
-            points = self._curved_mpr_viewer.get_curved_mpr_points()
-            
+            viewer = self._curved_mpr_viewer
+            apical_points = None
+            if getattr(self, '_dual_arch_ui', False):
+                # capture the in-progress arch, then read both stored sets
+                self._set_curved_mpr_active_arch(getattr(self, '_active_arch', 'crown'))
+                crown = list(getattr(self, '_crown_arch_points', []) or [])
+                apical = list(getattr(self, '_apical_arch_points', []) or [])
+                points = crown if len(crown) >= 2 else list(viewer.get_curved_mpr_points())
+                if len(apical) >= 2:
+                    apical_points = apical
+            else:
+                points = viewer.get_curved_mpr_points()
+
             if len(points) < 2:
                 from PySide6.QtWidgets import QMessageBox
                 QMessageBox.warning(
                     self._curved_mpr_panel,
                     "Not Enough Points",
-                    f"Need at least 2 points. You have {len(points)} points."
+                    f"Need at least 2 crown-arch points. You have {len(points)} points."
                 )
                 return
-            
+
             # Disable point adding
             if self._add_points_btn.isChecked():
                 self._add_points_btn.setChecked(False)
                 self._toggle_point_adding()
-            
-            # Generate
-            self._generate_curved_mpr_from_points(points, self._curved_mpr_viewer.vtk_image_data)
-            
+
+            # Generate (apical_points is None unless a valid second arch was traced)
+            self._generate_curved_mpr_from_points(
+                points, viewer.vtk_image_data, apical_points=apical_points
+            )
+
         except Exception as e:
             print(f"[CURVED MPR] Generate error: {e}")
             import traceback
@@ -1331,8 +1433,13 @@ class ToolbarManager:
                 f"Error opening Orthogonal MPR Viewer:\n{e}"
             )
     
-    def _generate_curved_mpr_from_points(self, points, image_data):
-        """Generate curved MPR from points and display it"""
+    def _generate_curved_mpr_from_points(self, points, image_data, apical_points=None):
+        """Generate curved MPR from points and display it.
+
+        ``apical_points`` (optional) is a second (apical / root) arch; when supplied and
+        AIPACS_CURVED_MPR_DUAL_ARCH is on, the panoramic is reconstructed obliquely
+        (each column sampled crown->apex). None => legacy single-arch panoramic.
+        """
         from PySide6.QtWidgets import QMessageBox, QApplication
         from PySide6.QtCore import Qt
         # Import from zeta mpr (primary MPR implementation).
@@ -1367,12 +1474,23 @@ class ToolbarManager:
                     _center_x = volume_center_x(image_data)
                     image_data = prepare_radiological_volume(image_data)
                     points = [mirror_point_x(p, _center_x) for p in points]
+                    if apical_points:
+                        apical_points = [mirror_point_x(p, _center_x) for p in apical_points]
                     print("[CURVED MPR] Geometry contract ON: standard-MPR-prepared volume (X-flip) + mirrored points")
                 except Exception as _geo_err:
                     print(f"[CURVED MPR] Geometry-contract prep failed, using raw volume: {_geo_err}")
 
             generator = CurvedMPRGenerator(image_data)
             generator.set_centerline(points)
+            # Dual-arch oblique panoramic: attach the apical arch (engine tilts crown->apex
+            # per column). Guarded by AIPACS_CURVED_MPR_DUAL_ARCH inside generate_panoramic_view;
+            # any failure falls back to the single-arch panoramic (never blocks generation).
+            if apical_points and len(apical_points) >= 2:
+                try:
+                    generator.set_apical_centerline(apical_points)
+                    print(f"[CURVED MPR] Dual-arch: apical arch set ({len(apical_points)} points)")
+                except Exception as _ap_err:
+                    print(f"[CURVED MPR] set_apical_centerline failed (single-arch fallback): {_ap_err}")
 
             # Use reasonable values for speed
             slice_size = 150.0

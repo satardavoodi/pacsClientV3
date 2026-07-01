@@ -1835,15 +1835,26 @@ class _VCLoadMixin:
                 #    warmup must NOT start in the background.  It will be triggered
                 #    naturally by on_tab_activated when the physician opens this tab.
                 if self._tab_active:
-                    try:
-                        QMetaObject.invokeMethod(
-                            self.parent_widget,
-                            lambda: QTimer.singleShot(500, self._start_open_tab_warmup),
-                            Qt.ConnectionType.QueuedConnection,
-                        )
-                    except Exception:
-                        # Fallback: direct call (may already be on UI thread)
+                    # PERF (2D patient-tab open): QMetaObject.invokeMethod with a Python
+                    # callable triggers PySide6 shibokensupport signature introspection
+                    # (is_dir/os.stat over sys.path) — a hundreds-of-ms stall on patient
+                    # open. This pipeline callback runs on the qasync GUI loop in the
+                    # common case, so the cross-thread marshalling is redundant: when we
+                    # are already on the UI thread, schedule the warmup directly (no
+                    # shibokensupport). AIPACS_WARMUP_DISPATCH_FAST=0 restores the original
+                    # invokeMethod path.
+                    if os.getenv("AIPACS_WARMUP_DISPATCH_FAST", "1") != "0" and self._is_on_ui_thread():
                         QTimer.singleShot(500, self._start_open_tab_warmup)
+                    else:
+                        try:
+                            QMetaObject.invokeMethod(
+                                self.parent_widget,
+                                lambda: QTimer.singleShot(500, self._start_open_tab_warmup),
+                                Qt.ConnectionType.QueuedConnection,
+                            )
+                        except Exception:
+                            # Fallback: direct call (may already be on UI thread)
+                            QTimer.singleShot(500, self._start_open_tab_warmup)
                     logger.debug(f"[Pipeline] POST_DOWNLOAD â†’ warmup scheduled (tab active)")
                 else:
                     logger.debug(f"[Pipeline] POST_DOWNLOAD â†’ warmup deferred (tab inactive â€” starts on next activation)")

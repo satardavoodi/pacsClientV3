@@ -18,6 +18,9 @@ from PacsClient.utils import update_series_thumbnail_path, get_series_thumbnail_
 from datetime import datetime
 import uuid
 import json
+import logging as _logging
+import threading as _threading
+from concurrent.futures import ThreadPoolExecutor as _ThreadPoolExecutor
 from natsort import natsorted
 from pydicom import config
 from collections import defaultdict
@@ -1181,6 +1184,67 @@ def save_thumbnail_with_bytes(study_uid, file_name, thumbnail_bytes, overwrite=T
         f.write(thumbnail_bytes)
 
     return file_path_str
+
+
+# --- Off-GUI-thread thumbnail disk writes (P1.1, flag AIPACS_THUMB_SAVE_ASYNC) ------
+# The socket-fetch thumbnail save (_hp_series.save_thumbnail) writes every series' PNG
+# with mkdir+open synchronously; on the GUI thread this showed up as main-thread stalls
+# (save_thumbnail / save_thumbnail_with_bytes appear in the stall traces). The write is
+# pure bytes I/O (no Qt objects), so it is safe on a background worker while the caller
+# keeps the deterministic canonical path. Consumers read "canonical PNG -> base64
+# fallback", so a millisecond-late write is covered by the in-dict base64. Kill switch:
+# AIPACS_THUMB_SAVE_ASYNC=0 restores the byte-identical synchronous write.
+_THUMB_SAVE_ASYNC = os.getenv("AIPACS_THUMB_SAVE_ASYNC", "1") != "0"
+_thumb_write_executor = None
+_thumb_write_lock = _threading.Lock()
+_thumb_logger = _logging.getLogger(__name__)
+
+
+def canonical_thumbnail_path(study_uid, file_name):
+    """The single canonical thumbnail path — shared by the sync and async writers so
+    they can never diverge (THUMBNAIL_PATH/<study_uid>/<file_name>.png)."""
+    return str(THUMBNAIL_PATH / study_uid / f'{file_name}.png')
+
+
+def _get_thumb_write_executor():
+    global _thumb_write_executor
+    if _thumb_write_executor is None:
+        with _thumb_write_lock:
+            if _thumb_write_executor is None:
+                _thumb_write_executor = _ThreadPoolExecutor(
+                    max_workers=1, thread_name_prefix="thumb-write"
+                )
+    return _thumb_write_executor
+
+
+def save_thumbnail_with_bytes_async(study_uid, file_name, thumbnail_bytes, overwrite=True):
+    """Persist a thumbnail PNG without blocking the caller (GUI) thread.
+
+    Returns the canonical path immediately; the mkdir+write runs on a single background
+    worker via the SAME ``save_thumbnail_with_bytes`` (no duplicated write logic). Any
+    dispatch failure falls back to a synchronous write so a thumbnail is never silently
+    dropped. ``AIPACS_THUMB_SAVE_ASYNC=0`` -> byte-identical synchronous behaviour.
+    """
+    if not _THUMB_SAVE_ASYNC:
+        return save_thumbnail_with_bytes(study_uid, file_name, thumbnail_bytes, overwrite=overwrite)
+    try:
+        path = canonical_thumbnail_path(study_uid, file_name)
+    except Exception:
+        return save_thumbnail_with_bytes(study_uid, file_name, thumbnail_bytes, overwrite=overwrite)
+
+    def _job():
+        try:
+            save_thumbnail_with_bytes(study_uid, file_name, thumbnail_bytes, overwrite=overwrite)
+        except Exception:
+            _thumb_logger.exception(
+                "async thumbnail write failed study=%s name=%s", study_uid, file_name
+            )
+
+    try:
+        _get_thumb_write_executor().submit(_job)
+    except Exception:
+        return save_thumbnail_with_bytes(study_uid, file_name, thumbnail_bytes, overwrite=overwrite)
+    return path
 
 
 def save_series_json(study_uid, **kwargs):

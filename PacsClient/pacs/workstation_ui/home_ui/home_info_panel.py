@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.4.1",
-    "build_date": "2026-06-29",
-    "release_date": "2026-06-29",
+    "version": "3.4.2",
+    "build_date": "2026-07-01",
+    "release_date": "2026-07-01",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "AI reporting: dedicated CT and MRI report generation",
-        "MPR annotations: precise slice-binding, smoother rendering, click-to-activate",
-        "More accurate multi-study series loading (correct per-study images)",
-        "More reliable image loading on previous exams",
-        "AI assistant and stability refinements",
+        "Dental: dual-arch panoramic, nerve-canal tracing, and planning tools",
+        "Cine / multi-frame playback (ultrasound, XA, enhanced series)",
+        "Faster startup and smoother patient switching (chunked loading)",
+        "AI reporting adds mammography and ultrasound report types",
+        "More reliable multi-study and previous-exam image loading",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.4.1",
+        "AI-PACS Version 3.4.2",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۴.۰",
+        "AI-PACS نسخهٔ ۳.۴.۱",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

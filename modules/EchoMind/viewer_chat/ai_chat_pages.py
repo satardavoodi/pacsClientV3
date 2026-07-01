@@ -4522,6 +4522,11 @@ class OneChatPage(QWidget):
 
         dlg = QDialog(self)
         dlg.setWindowTitle("Edit message")
+        # Explicit dark editor colours (matches the chat the report was authored
+        # for) so the text never becomes light-on-light on a light Windows theme,
+        # and the right-click context menu is themed too. AIPACS_ECHO_POPUP_THEME=0
+        # restores the legacy unstyled editor.
+        style_popup(dlg)
         v = QVBoxLayout(dlg)
         te = QTextEdit(dlg)
         te.setAcceptRichText(True)

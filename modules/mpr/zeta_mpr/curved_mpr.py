@@ -111,6 +111,101 @@ def _apply_panoramic_unsharp(array):
 
 
 # =============================================================================
+# Dual-arch / oblique panoramic (anterior-inclination fix, 2026-07-01)
+# =============================================================================
+# Forward-inclined anterior teeth lose their crown or root apex in a single-arch
+# panoramic because the reslice samples a vertical (Binormal) line straight down the
+# axial axis: an inclined tooth's crown and apex sit on different arch positions, so no
+# single vertical slab holds both. Thickening the slab pulls them back in but blurs.
+#
+# The published fix (Luo et al., PLoS One 2016, DOI 10.1371/journal.pone.0156976) is to
+# sample along the tooth LONG AXIS instead of straight down: given a second (apical)
+# arch curve, the per-column vector crown->apex IS the local long-axis / oblique
+# direction. compute_oblique_slice_axes() tilts the Binormal (vertical sampling axis) to
+# follow it, staying inside the slice plane (perpendicular to the arch tangent) so the
+# ALONG-ARCH geometry — path length, X spacing, measurements — is unchanged. The result
+# captures crown AND apex of an inclined tooth at a THIN slab (no blur penalty).
+#
+# Flag-gated, DEFAULT ON (2026-07-01, after live validation). With no apical curve (or the
+# flag off = AIPACS_CURVED_MPR_DUAL_ARCH=0) the panoramic path is byte-identical to the
+# legacy single-arch behaviour. Purely additive; display/sampling only — no change to
+# spacing, origin, world coordinates, or the projection modes.
+_DUAL_ARCH = os.environ.get("AIPACS_CURVED_MPR_DUAL_ARCH", "1") != "0"
+try:
+    # Below this projected tilt magnitude (mm) a column is treated as vertical (no tilt).
+    _DUAL_ARCH_MIN_TILT_MM = max(1e-4, float(os.environ.get("AIPACS_CURVED_MPR_DUAL_ARCH_MIN_TILT", "0.5")))
+except ValueError:
+    _DUAL_ARCH_MIN_TILT_MM = 0.5
+
+
+def compute_oblique_slice_axes(tangent, normal, binormal, tilt_vec, min_tilt=_DUAL_ARCH_MIN_TILT_MM):
+    """Tilt the vertical (Binormal) sampling axis to follow ``tilt_vec`` (crown->apex).
+
+    Returns ``(normal', binormal')`` such that the reslice for this column samples along
+    the tooth long axis instead of straight down, while keeping the basis ORTHONORMAL and
+    RIGHT-HANDED (``normal' x binormal' == tangent``, the same convention
+    ``_extract_orthogonal_slice_for_panoramic`` relies on) and the arch ``tangent``
+    UNCHANGED (so along-arch spacing / path length / measurements are untouched).
+
+    The tilt is projected into the slice plane (perpendicular to ``tangent``); a tilt that
+    is degenerate (crown==apex) or purely along-arch leaves the axes unchanged, so the
+    result is a safe superset of the legacy vertical behaviour. Pure numpy — no VTK.
+    """
+    t = np.asarray(tangent, dtype=float)
+    n = np.asarray(normal, dtype=float)
+    b = np.asarray(binormal, dtype=float)
+    v = np.asarray(tilt_vec, dtype=float)
+
+    t_norm = np.linalg.norm(t)
+    if t_norm < 1e-9:
+        return n, b
+    t = t / t_norm
+
+    # Keep the tilt inside the slice plane: drop any along-arch (tangent) component so
+    # the panoramic's horizontal (along-arch) geometry cannot be skewed.
+    v_plane = v - np.dot(v, t) * t
+    mag = np.linalg.norm(v_plane)
+    if mag < float(min_tilt):
+        return n, b
+    b_new = v_plane / mag
+
+    # Preserve the original superior (up) sense so the panoramic stays oriented.
+    if np.dot(b_new, b) < 0.0:
+        b_new = -b_new
+
+    # Right-handed: normal' = binormal' x tangent  (=> normal' x binormal' == tangent).
+    n_new = np.cross(b_new, t)
+    n_mag = np.linalg.norm(n_new)
+    if n_mag < 1e-9:
+        return n, b
+    n_new = n_new / n_mag
+    return n_new, b_new
+
+
+def resample_polyline_arclength(points, n):
+    """Uniform arc-length resample of a 3-D polyline to ``n`` points (pure numpy).
+
+    Used to put a second (apical) arch curve into per-column correspondence with the
+    crown arch's frames before lofting. Returns an ``(n, 3)`` array.
+    """
+    pts = np.asarray(points, dtype=float).reshape(-1, 3)
+    if len(pts) == 0 or n <= 0:
+        return np.zeros((max(0, int(n)), 3), dtype=float)
+    if len(pts) == 1 or n == 1:
+        return np.repeat(pts[:1], int(n), axis=0)
+    seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    total = float(cum[-1])
+    if total < 1e-9:
+        return np.repeat(pts[:1], int(n), axis=0)
+    targets = np.linspace(0.0, total, int(n))
+    out = np.empty((int(n), 3), dtype=float)
+    for a in range(3):
+        out[:, a] = np.interp(targets, cum, pts[:, a])
+    return out
+
+
+# =============================================================================
 # Path3D: 3D Spline Path with Catmull-Rom Interpolation
 # =============================================================================
 
@@ -878,10 +973,19 @@ class ResliceEngine:
         slice_thickness_mm: float = 10.0,
         slice_height_mm: float = 150.0,
         output_spacing: Optional[float] = None,
-        projection_type: str = 'mean'
+        projection_type: str = 'mean',
+        apical_origins: Optional[np.ndarray] = None
     ) -> vtk.vtkImageData:
         """
         Generate panoramic image using 3D Slicer's two-step method.
+
+        DUAL-ARCH / OBLIQUE (optional, flag ``AIPACS_CURVED_MPR_DUAL_ARCH``): when
+        ``apical_origins`` is provided (one apex world-point per frame, aligned to
+        ``frames`` — see ``resample_polyline_arclength``) and the flag is on, each
+        column's vertical (Binormal) sampling axis is tilted to follow crown->apex
+        (``compute_oblique_slice_axes``), so forward-inclined anterior teeth keep both
+        crown and apex at a THIN slab. With ``apical_origins=None`` or the flag off the
+        output is byte-identical to the legacy single-arch panoramic.
         
         BASED ON: lassoan's CurvedPlanarReformatting.py gist
         https://gist.github.com/lassoan/b445c734f118a5fb7643f3fb05f98b07
@@ -969,14 +1073,28 @@ class ResliceEngine:
         print(f"[PANORAMIC] Straightened volume shape: {straightened_volume.shape}")
         print(f"[PANORAMIC] Extracting {num_positions} orthogonal slices...")
         
+        # Dual-arch / oblique: only when the flag is on AND an aligned apical curve was
+        # supplied. Otherwise eff_* stay the legacy frame axes (byte-identical output).
+        use_oblique = bool(_DUAL_ARCH) and apical_origins is not None and len(apical_origins) >= num_positions
+        if use_oblique:
+            print(f"      - Dual-arch OBLIQUE sampling: ON ({len(apical_origins)} apical points)")
+
         # For each position along the centerline
         for i, (origin, tangent, normal, binormal) in enumerate(frames):
             # Extract a full 2D orthogonal slice at this position
             # The slice is perpendicular to the path (Tangent is the slice normal)
             # In-plane directions: Normal (radial) × Binormal (vertical)
-            
+            eff_normal, eff_binormal = normal, binormal
+            if use_oblique:
+                # crown->apex tilt for THIS column; tilts only the vertical axis, keeps
+                # the arch tangent (and therefore along-arch geometry) untouched.
+                tilt_vec = np.asarray(apical_origins[i], dtype=float) - np.asarray(origin, dtype=float)
+                eff_normal, eff_binormal = compute_oblique_slice_axes(
+                    tangent, normal, binormal, tilt_vec
+                )
+
             slice_2d = self._extract_orthogonal_slice_for_panoramic(
-                origin, tangent, normal, binormal,
+                origin, tangent, eff_normal, eff_binormal,
                 thickness_pixels, height_pixels, output_spacing
             )
             
@@ -1511,6 +1629,11 @@ class CurvedMPRGenerator:
         self.path = None
         self.centerline_points = []
         self.curved_image = None
+        # Optional second (apical / root) arch for dual-arch oblique panoramic. Set via
+        # set_apical_centerline(); consumed by generate_panoramic_view() only when the
+        # AIPACS_CURVED_MPR_DUAL_ARCH flag is on. None => legacy single-arch behaviour.
+        self.apical_points = []
+        self.apical_path = None
     
     def set_centerline(self, points: List[Tuple[float, float, float]]):
         """
@@ -1547,6 +1670,23 @@ class CurvedMPRGenerator:
         
         # Create the smooth 3D path
         self.path = Path3D(points)
+
+    def set_apical_centerline(self, points: Optional[List[Tuple[float, float, float]]]):
+        """Set the optional second (apical / root) arch for dual-arch oblique panoramic.
+
+        ``points`` are 3D world coordinates traced along the root apices (same left->right
+        ordering as the crown arch). Pass ``None`` or fewer than 2 points to clear it and
+        fall back to the legacy single-arch panoramic. Only consumed by
+        ``generate_panoramic_view`` when ``AIPACS_CURVED_MPR_DUAL_ARCH`` is enabled.
+        """
+        if not points or len(points) < 2:
+            self.apical_points = []
+            self.apical_path = None
+            return
+        self.apical_points = list(points)
+        self.apical_path = Path3D(list(points))
+        print(f"[CURVED MPR] Apical arch set: {len(points)} points "
+              f"(length {self.apical_path.total_length:.1f} mm)")
         
         print(f"[CURVED MPR] Path set with {len(points)} control points, "
               f"total length: {self.path.total_length:.1f} mm")
@@ -1663,7 +1803,21 @@ class CurvedMPRGenerator:
         # Generate frames along the path
         plane_generator = PlaneGenerator(self.path)
         frames = plane_generator.generate_frames(num_positions)
-        
+
+        # Dual-arch / oblique: sample the apical arch at the SAME positions (same framer,
+        # same arc-length parameterisation) so column i corresponds crown<->apex. Only
+        # active when the flag is on and an apical arch was set; any failure falls back to
+        # the single-arch panoramic (never raises into the reconstruction).
+        apical_origins = None
+        if _DUAL_ARCH and getattr(self, "apical_path", None) is not None:
+            try:
+                apical_frames = PlaneGenerator(self.apical_path).generate_frames(num_positions)
+                apical_origins = np.array([f[0] for f in apical_frames], dtype=float)
+                print(f"[PANORAMIC] Dual-arch oblique: {len(apical_origins)} apical positions")
+            except Exception:
+                logger.exception("[PANORAMIC] apical framing failed; using single-arch")
+                apical_origins = None
+
         # Generate panoramic using Slicer's method
         reslice_engine = ResliceEngine(self.image_data)
         panoramic_image = reslice_engine.generate_panoramic_image_slicer_method(
@@ -1671,9 +1825,10 @@ class CurvedMPRGenerator:
             slice_thickness_mm=slice_thickness_mm,
             slice_height_mm=slice_height_mm,
             output_spacing=output_spacing,
-            projection_type=projection_type
+            projection_type=projection_type,
+            apical_origins=apical_origins
         )
-        
+
         return panoramic_image
 
 

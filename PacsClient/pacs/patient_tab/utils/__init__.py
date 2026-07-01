@@ -36,6 +36,7 @@ from .utils import (
     save_image_as_png,
     save_series_json,
     save_thumbnail_with_bytes,
+    save_thumbnail_with_bytes_async,
     show_message,
     validate_thumbnail_files,
 )
@@ -61,6 +62,7 @@ __all__ = [
     "open_folder",
     "create_random_string",
     "save_thumbnail_with_bytes",
+    "save_thumbnail_with_bytes_async",
     "check_study_exists",
     "check_study_complete",
     "get_study_download_status",

@@ -996,7 +996,16 @@ class EchoMindSettingsWidget(QWidget):
 
         api_key = (self.key_input.text() or "").strip() or (get_echomind_api_key() or "").strip()
         display_name = get_active_backend_display_name() if is_active_backend_configured() else "EchoMind"
-        self._refresh_usage(api_key=api_key, display_name=display_name, backend_code="COMPANY")
+        backend_code = "COMPANY"
+        if api_key:
+            try:
+                info = Manage.instance().detect_center(api_key)
+                backend_code = (info.center_code or "COMPANY").upper()
+                if info.center_display:
+                    display_name = info.center_display
+            except Exception:
+                pass
+        self._refresh_usage(api_key=api_key, display_name=display_name, backend_code=backend_code)
 
     def _refresh_usage(self, api_key: str, display_name: str, backend_code: str):
         api_key = (api_key or "").strip()

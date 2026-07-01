@@ -2974,16 +2974,30 @@ class PatientTableWidget(QWidget):
             # Clear cache to force fresh check
             self._download_status_cache.clear()
 
-            # Update each study
-            for row in range(self.results_table.rowCount()):
-                uid_item = self.results_table.item(row, COL['study_uid'])
-                if uid_item:
-                    study_uid = uid_item.text()
-                    if study_uid:
-                        # Update status (will use check_study_complete)
-                        self.update_study_download_status(study_uid)
+            # Update each study. The per-study status check hits disk
+            # (check_study_complete -> build_local_manifest), so scanning every row in
+            # one synchronous loop froze the GUI thread (main-thread stalls). When
+            # AIPACS_STATUS_REFRESH_CHUNKED is on (default) the rows are processed in
+            # small chunks that yield to the event loop between studies, keeping the
+            # refresh responsive. =0 restores the byte-identical synchronous loop.
+            if os.getenv("AIPACS_STATUS_REFRESH_CHUNKED", "1") != "0":
+                study_uids = []
+                for row in range(self.results_table.rowCount()):
+                    uid_item = self.results_table.item(row, COL['study_uid'])
+                    if uid_item and uid_item.text():
+                        study_uids.append(uid_item.text())
+                self._status_refresh_token = getattr(self, '_status_refresh_token', 0) + 1
+                self._refresh_statuses_chunked(study_uids, 0, self._status_refresh_token)
+            else:
+                for row in range(self.results_table.rowCount()):
+                    uid_item = self.results_table.item(row, COL['study_uid'])
+                    if uid_item:
+                        study_uid = uid_item.text()
+                        if study_uid:
+                            # Update status (will use check_study_complete)
+                            self.update_study_download_status(study_uid)
 
-            print(f"✓ Refreshed download statuses for {self.results_table.rowCount()} studies")
+                print(f"✓ Refreshed download statuses for {self.results_table.rowCount()} studies")
 
             # 2026-06-06: the same refresh also re-pulls the REPORT column
             # (workflow status + reporting physician) from the server. Clear
@@ -2996,6 +3010,32 @@ class PatientTableWidget(QWidget):
         except Exception as e:
             print(f"Error refreshing download statuses: {e}")
             self.refresh_btn.setEnabled(True)
+
+    def _refresh_statuses_chunked(self, study_uids, index, token):
+        """Refresh download-status badges a few studies at a time, yielding to the Qt
+        event loop between chunks so the per-study disk check
+        (``check_study_complete`` -> ``build_local_manifest``) never freezes the GUI
+        thread. Everything still runs on the main thread — no worker threads and no
+        cache races; only the *scheduling* of the existing per-study updates changes.
+
+        The run is cancelled if a newer refresh supersedes it (token mismatch). Chunk
+        size is ``AIPACS_STATUS_REFRESH_CHUNK`` (default 2)."""
+        if token != getattr(self, '_status_refresh_token', 0):
+            return  # a newer refresh started; stop this stale chain
+        try:
+            chunk = max(1, int(os.getenv("AIPACS_STATUS_REFRESH_CHUNK", "2") or "2"))
+        except Exception:
+            chunk = 2
+        end = min(index + chunk, len(study_uids))
+        for i in range(index, end):
+            try:
+                self.update_study_download_status(study_uids[i])
+            except Exception:
+                pass
+        if end < len(study_uids):
+            QTimer.singleShot(0, lambda: self._refresh_statuses_chunked(study_uids, end, token))
+        else:
+            print(f"✓ Refreshed download statuses for {len(study_uids)} studies")
 
     def refresh_download_statuses_local_only(self):
         """Recompute every visible study's downloaded/green status from disk,

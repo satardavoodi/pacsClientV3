@@ -43,13 +43,31 @@ class _FakeFieldData:
         return self._a.get(name)
 
 
+class _FakeScalars:
+    def __init__(self, n):
+        self._n = int(n)
+
+    def GetNumberOfTuples(self):
+        return self._n
+
+
+class _FakePointData:
+    def __init__(self, scalars):
+        self._scalars = scalars
+
+    def GetScalars(self):
+        return self._scalars
+
+
 class _FakeImageData:
-    def __init__(self, dims, spacing, origin, direction=None):
+    def __init__(self, dims, spacing, origin, direction=None, has_scalars=True):
         self._d, self._s, self._o = dims, spacing, origin
         arrays = {}
         if direction is not None:
             arrays["DirectionMatrix"] = _FakeArr(direction)
         self._fd = _FakeFieldData(arrays)
+        n = int(dims[0]) * int(dims[1]) * int(dims[2]) if has_scalars else 0
+        self._pd = _FakePointData(_FakeScalars(n) if has_scalars else None)
 
     def GetDimensions(self):
         return self._d
@@ -62,6 +80,9 @@ class _FakeImageData:
 
     def GetFieldData(self):
         return self._fd
+
+    def GetPointData(self):
+        return self._pd
 
 
 class _FakeIV:
@@ -149,6 +170,17 @@ def test_bind_none_when_no_viewer():
 def test_bind_none_when_volume_invalid():
     _, bind, _ = _load_core()
     pw = _FakePW(_FakeSW(_FakeIV(_FakeImageData((0, 0, 0), (1, 1, 1), (0, 0, 0)))))
+    assert bind(pw) is None
+
+
+def test_bind_none_when_active_volume_has_no_scalars():
+    _, bind, _ = _load_core()
+    # FAST/Qt's bridge exposes geometry-only mock vtk_image_data. Dental must not
+    # treat that as renderable; the PatientWidget resolver then falls through to
+    # the disk-backed PyDicomLazyVolume path.
+    pw = _FakePW(_FakeSW(_FakeIV(
+        _FakeImageData((256, 256, 128), (1, 1, 1), (0, 0, 0), has_scalars=False)
+    )))
     assert bind(pw) is None
 
 
