@@ -41,11 +41,11 @@ RELEASE_INFO = {
     "release_date": "2026-07-01",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Dental: dual-arch panoramic, nerve-canal tracing, and planning tools",
-        "Cine / multi-frame playback (ultrasound, XA, enhanced series)",
-        "Faster startup and smoother patient switching (chunked loading)",
-        "AI reporting adds mammography and ultrasound report types",
-        "More reliable multi-study and previous-exam image loading",
+        "AI reporting: dedicated CT and MRI report generation",
+        "MPR annotations: precise slice-binding, smoother rendering, click-to-activate",
+        "More accurate multi-study series loading (correct per-study images)",
+        "More reliable image loading on previous exams",
+        "AI assistant and stability refinements",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۴.۱",
+        "AI-PACS نسخهٔ ۳.۴.۲",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

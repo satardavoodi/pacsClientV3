@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
@@ -46,6 +47,19 @@ from PacsClient.utils.theme_manager import get_theme_manager
 _COTD_PREFS_PATH = EDUCATION_STORAGE_PATH / "case_of_day_prefs.json"
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    val = os.environ.get(name)
+    if val is None:
+        return default
+    return str(val).strip().lower() not in ("0", "false", "no", "off", "")
+
+
+# Non-modal dialog + Media Capture section (2026-07-01), each with its own
+# kill switch. Default ON — see docs/reports/CASE_OF_DAY_MEDIA_CAPTURE_2026-07-01.md.
+_NONMODAL_ENABLED = _env_flag("AIPACS_CASE_OF_DAY_NONMODAL", True)
+_MEDIA_CAPTURE_ENABLED = _env_flag("AIPACS_CASE_OF_DAY_MEDIA_CAPTURE", True)
+
+
 def _load_prefs() -> Dict[str, Any]:
     try:
         if _COTD_PREFS_PATH.exists():
@@ -75,6 +89,18 @@ class CaseOfDayEntryDialog(QDialog):
         self.prefill = dict(prefill or {})
         self.setWindowTitle("Case of the Day")
         self.setMinimumWidth(720)
+        if _NONMODAL_ENABLED:
+            # Non-modal: the user can keep navigating/scrolling/zooming/
+            # dragging-and-dropping in the rest of the app while this stays
+            # open. The call site decides show() vs exec(); this flag just
+            # makes sure the dialog itself never claims application-modal
+            # ownership even if some caller still uses exec().
+            self.setWindowModality(Qt.NonModal)
+            self.setModal(False)
+        # Media-capture state (Screenshot / Record Viewport). None when idle.
+        self._active_recorder = None
+        self._active_overlay_guard = None
+        self._record_status_timer: Optional[QTimer] = None
         # Two modes:
         # - source_folder: will be copied into Case-of-Day storage on Save.
         # - dicom_folder_path: already copied into Case-of-Day storage (Save writes DB only).
@@ -120,7 +146,21 @@ class CaseOfDayEntryDialog(QDialog):
         self._theme = theme or self.theme_manager.current_theme()
         self._build_ui()
 
+    def closeEvent(self, event) -> None:
+        # Non-modal dialogs can be closed (window X) while a recording is in
+        # progress — stop it cleanly first so the encoder thread is joined
+        # and the MP4 is finalized/released rather than left half-written.
+        try:
+            self._stop_recording()
+        except Exception:
+            pass
+        super().closeEvent(event)
+
     def reject(self) -> None:
+        try:
+            self._stop_recording()
+        except Exception:
+            pass
         # If the patient-export flow pre-copied data into Case-of-Day storage and the user cancels,
         # delete the orphaned folder. Only do this when explicitly requested via prefill flag.
         try:
@@ -289,8 +329,13 @@ class CaseOfDayEntryDialog(QDialog):
     # ------------------------------------------------------------------
     def _build_ui(self):
         t = self._theme
-        self.setMinimumWidth(820)
-        self.setMinimumHeight(740)
+        # Compacted 2026-07-01 (was 820x740): tighter margins/spacing and
+        # merged field rows (below) free up enough space that a smaller
+        # minimum size still shows every section without feeling cramped,
+        # leaving more of the screen usable for the viewer behind this
+        # now-non-modal dialog.
+        self.setMinimumWidth(720)
+        self.setMinimumHeight(600)
         self.setStyleSheet(f"QDialog {{ background-color: {t['panel_deep_bg']}; }}")
 
         existing_layout = self.layout()
@@ -309,12 +354,12 @@ class CaseOfDayEntryDialog(QDialog):
             f"border: none; border-bottom: 1px solid {t['border']}; }}"
         )
         header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(28, 20, 28, 18)
-        header_layout.setSpacing(4)
+        header_layout.setContentsMargins(20, 12, 20, 10)
+        header_layout.setSpacing(2)
 
         title = QLabel("Create Case of the Day")
         title_font = QFont()
-        title_font.setPointSize(18)
+        title_font.setPointSize(15)
         title_font.setWeight(QFont.DemiBold)
         title.setFont(title_font)
         title.setStyleSheet(
@@ -342,8 +387,8 @@ class CaseOfDayEntryDialog(QDialog):
             f"QWidget {{ background-color: {t['panel_deep_bg']}; }}"
         )
         body_layout = QVBoxLayout(body_container)
-        body_layout.setContentsMargins(28, 20, 28, 20)
-        body_layout.setSpacing(14)
+        body_layout.setContentsMargins(20, 12, 20, 12)
+        body_layout.setSpacing(8)
 
         field_style = self._field_style()
         prefs = _load_prefs()
@@ -491,34 +536,54 @@ class CaseOfDayEntryDialog(QDialog):
         self.diagnosis.setStyleSheet(field_style)
         self.diagnosis.setPlaceholderText("e.g., Acute appendicitis")
         self.diagnosis.setText(str(self.prefill.get("diagnosis") or ""))
-        self._add_field_row(body_layout, "Diagnosis", self.diagnosis, required=True)
 
         self.protocol = QLineEdit()
         self.protocol.setStyleSheet(field_style)
         self.protocol.setPlaceholderText("e.g., With contrast, special sequence ...")
         self.protocol.setText(str(self.prefill.get("protocol_details") or ""))
-        self._add_field_row(body_layout, "Protocol Details", self.protocol)
 
-        body_layout.addSpacing(4)
+        # Diagnosis + Protocol side-by-side (was two stacked full-width rows)
+        # — same fields, half the vertical space.
+        clinical_grid = QGridLayout()
+        clinical_grid.setHorizontalSpacing(18)
+        clinical_grid.setVerticalSpacing(6)
+        clinical_grid.setContentsMargins(0, 0, 0, 0)
+        clinical_grid.addWidget(self._label_widget("Diagnosis", required=True), 0, 0)
+        clinical_grid.addWidget(self._label_widget("Protocol Details"), 0, 1)
+        clinical_grid.addWidget(self.diagnosis, 1, 0)
+        clinical_grid.addWidget(self.protocol, 1, 1)
+        clinical_grid.setColumnStretch(0, 1)
+        clinical_grid.setColumnStretch(1, 1)
+        body_layout.addLayout(clinical_grid)
 
         # ---------- Section: Notes ----------
         body_layout.addWidget(self._section_header("Notes"))
 
         self.description = QTextEdit()
         self.description.setStyleSheet(field_style)
-        self.description.setFixedHeight(96)
+        self.description.setFixedHeight(68)
         self.description.setPlaceholderText("Case description and key teaching points...")
         self.description.setPlainText(str(self.prefill.get("description") or ""))
-        self._add_field_row(body_layout, "Description", self.description)
 
         self.ddx = QTextEdit()
         self.ddx.setStyleSheet(field_style)
-        self.ddx.setFixedHeight(96)
+        self.ddx.setFixedHeight(68)
         self.ddx.setPlaceholderText("Differential diagnosis (one entry per line is fine)...")
         self.ddx.setPlainText(str(self.prefill.get("differential_diagnosis") or ""))
-        self._add_field_row(body_layout, "Differential Diagnosis", self.ddx)
 
-        body_layout.addSpacing(4)
+        # Description + DDx side-by-side (was two stacked 96px boxes) and a
+        # shorter fixed height — same content, roughly a third of the space.
+        notes_grid = QGridLayout()
+        notes_grid.setHorizontalSpacing(18)
+        notes_grid.setVerticalSpacing(6)
+        notes_grid.setContentsMargins(0, 0, 0, 0)
+        notes_grid.addWidget(self._label_widget("Description"), 0, 0)
+        notes_grid.addWidget(self._label_widget("Differential Diagnosis"), 0, 1)
+        notes_grid.addWidget(self.description, 1, 0)
+        notes_grid.addWidget(self.ddx, 1, 1)
+        notes_grid.setColumnStretch(0, 1)
+        notes_grid.setColumnStretch(1, 1)
+        body_layout.addLayout(notes_grid)
 
         # ---------- Section: Source DICOM ----------
         body_layout.addWidget(self._section_header("Source DICOM"))
@@ -565,6 +630,51 @@ class CaseOfDayEntryDialog(QDialog):
             f"font-size: 9.5pt; background: transparent; border: none; padding-top: 4px; }}"
         )
         body_layout.addWidget(hint)
+
+        # ---------- Section: Media Capture ----------
+        self.screenshot_btn = None
+        self.record_btn = None
+        self.media_status_label = None
+        if _MEDIA_CAPTURE_ENABLED:
+            body_layout.addWidget(self._section_header("Media Capture"))
+
+            media_row = QHBoxLayout()
+            media_row.setSpacing(8)
+            media_row.setContentsMargins(0, 0, 0, 0)
+
+            self.screenshot_btn = QPushButton("📷  Screenshot")
+            self.screenshot_btn.setFixedHeight(38)
+            self.screenshot_btn.setCursor(Qt.PointingHandCursor)
+            self.screenshot_btn.setToolTip("Capture the active viewport as a JPEG into this case's folder")
+            self.screenshot_btn.setStyleSheet(secondary_btn_style)
+            self.screenshot_btn.clicked.connect(self._on_screenshot_clicked)
+            media_row.addWidget(self.screenshot_btn)
+
+            self.record_btn = QPushButton("⏺  Record Viewport")
+            self.record_btn.setFixedHeight(38)
+            self.record_btn.setCursor(Qt.PointingHandCursor)
+            self.record_btn.setToolTip("Record the active viewport to MP4 into this case's folder")
+            self.record_btn.setStyleSheet(secondary_btn_style)
+            self.record_btn.clicked.connect(self._on_toggle_recording_clicked)
+            media_row.addWidget(self.record_btn)
+            media_row.addStretch(1)
+            body_layout.addLayout(media_row)
+
+            self.media_status_label = QLabel("")
+            self.media_status_label.setWordWrap(True)
+            self.media_status_label.setStyleSheet(
+                f"QLabel {{ color: {t.get('text_muted', t['text_secondary'])}; "
+                f"font-size: 9pt; background: transparent; border: none; padding-top: 2px; }}"
+            )
+            body_layout.addWidget(self.media_status_label)
+
+            if not self._resolve_media_capture_availability():
+                self.screenshot_btn.setEnabled(False)
+                self.record_btn.setEnabled(False)
+                self._set_media_status(
+                    "Screenshot / Record need an active viewport and an on-disk case folder — "
+                    "open Case of the Day from a patient's viewer toolbar."
+                )
 
         body_layout.addStretch(1)
         body_scroll.setWidget(body_container)
@@ -718,7 +828,117 @@ class CaseOfDayEntryDialog(QDialog):
                     # Also stuff into prefill so a future reopen sees it.
                     self.prefill.setdefault(key, value)
 
+    # ------------------------------------------------------------------
+    # Media Capture (Screenshot / Record Viewport)
+    # ------------------------------------------------------------------
+    def _case_media_folder(self) -> str:
+        """The on-disk DICOM folder to resolve the enclosing case-package dir
+        from — same value the folder-path field shows. Empty when this case
+        has no on-disk folder yet (e.g. a not-yet-saved notes-only case)."""
+        return str(self._dicom_already_stored_folder or self._copied_folder or "")
+
+    def _resolve_media_capture_availability(self) -> bool:
+        parent = self.parent()
+        if not hasattr(parent, "selected_widget"):
+            return False
+        folder = self._case_media_folder()
+        if not folder:
+            return False
+        try:
+            from modules.education.case_of_day_database import resolve_case_package_dir
+            return resolve_case_package_dir(folder) is not None
+        except Exception:
+            return False
+
+    def _set_media_status(self, text: str) -> None:
+        if getattr(self, "media_status_label", None) is not None:
+            self.media_status_label.setText(text)
+
+    def _on_screenshot_clicked(self) -> None:
+        folder = self._case_media_folder()
+        if not folder:
+            return
+        try:
+            from modules.education.case_media_capture import capture_screenshot_jpeg
+            path = capture_screenshot_jpeg(self.parent(), folder)
+        except Exception as exc:
+            QMessageBox.warning(self, "Screenshot Failed", str(exc))
+            return
+        if path:
+            self._set_media_status(f"Saved screenshot: {Path(path).name}")
+        else:
+            self._set_media_status("Screenshot failed — no active viewport image to capture.")
+
+    def _on_toggle_recording_clicked(self) -> None:
+        if self._active_recorder is not None:
+            self._stop_recording()
+        else:
+            self._start_recording()
+
+    def _start_recording(self) -> None:
+        folder = self._case_media_folder()
+        if not folder:
+            return
+        try:
+            from modules.education.case_media_capture import begin_recording
+            recorder, guard, error = begin_recording(self.parent(), folder)
+        except Exception as exc:
+            QMessageBox.warning(self, "Recording Unavailable", str(exc))
+            return
+        if error:
+            QMessageBox.warning(self, "Recording Unavailable", error)
+            return
+        self._active_recorder = recorder
+        self._active_overlay_guard = guard
+        if self.record_btn is not None:
+            self.record_btn.setText("⏹  Stop Recording")
+        if self.screenshot_btn is not None:
+            self.screenshot_btn.setEnabled(False)
+        self._set_media_status("Recording viewport… 0:00")
+        self._record_status_timer = QTimer(self)
+        self._record_status_timer.setInterval(1000)
+        self._record_status_timer.timeout.connect(self._tick_recording_status)
+        self._record_status_timer.start()
+
+    def _tick_recording_status(self) -> None:
+        recorder = self._active_recorder
+        if recorder is None:
+            return
+        elapsed = int(recorder.elapsed_seconds)
+        self._set_media_status(f"Recording viewport… {elapsed // 60}:{elapsed % 60:02d}")
+
+    def _stop_recording(self) -> Optional[str]:
+        recorder = self._active_recorder
+        if recorder is None:
+            return None
+        guard = self._active_overlay_guard
+        self._active_recorder = None
+        self._active_overlay_guard = None
+        if self._record_status_timer is not None:
+            self._record_status_timer.stop()
+            self._record_status_timer = None
+        from modules.education.case_media_capture import end_recording
+        path, frame_count, elapsed = end_recording(recorder, guard)
+        if self.record_btn is not None:
+            self.record_btn.setText("⏺  Record Viewport")
+        if self.screenshot_btn is not None:
+            self.screenshot_btn.setEnabled(True)
+        if frame_count > 0:
+            self._set_media_status(
+                f"Saved recording: {Path(path).name} ({int(elapsed)}s, {frame_count} frames)"
+            )
+        else:
+            self._set_media_status("Recording produced no frames — nothing saved.")
+        return path
+
     def _save(self):
+        # Finalize any in-progress recording first so its MP4 is flushed to
+        # disk (and the overlay restored) before the case's metadata sidecar
+        # is written / the dialog closes.
+        try:
+            self._stop_recording()
+        except Exception:
+            pass
         diagnosis = self.diagnosis.text().strip()
         if not diagnosis:
             QMessageBox.warning(

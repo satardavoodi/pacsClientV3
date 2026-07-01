@@ -146,6 +146,16 @@ _GROW_DISPLAYED_TO_DISK = (
     _os.getenv("AIPACS_GROW_DISPLAYED_TO_DISK", "1") or "1"
 ).strip() != "0"  # DEFAULT-ON since 2026-06-30 (48567 confirmed: 8/8 on disk, viewer stuck at 1).
 _GROW_DISPLAYED_MAX_ATTEMPTS = max(1, int(_os.getenv("AIPACS_GROW_DISPLAYED_MAX_ATTEMPTS", "4") or "4"))
+# Smooth A1 grow (2026-07-01): grow a displayed-behind-disk viewport by the SAME additive
+# append the native progressive grow uses (`bridge.grow()` + `_update_vtk_slice_range`) — new
+# slices are appended in place, existing decoded pixels are preserved, the current slice/view
+# is kept, and the slider count updates incrementally. This replaces the previous jarring
+# `change_series(force_reload=True)` FULL rebuild (re-decode + view reset) that made the count
+# and scroll bar jump/hiccup. `=0` restores the full-rebuild behaviour. The full rebuild remains
+# the fallback for non-FAST viewers or when the append does not advance.
+_GROW_SMOOTH_APPEND = (
+    _os.getenv("AIPACS_GROW_SMOOTH_APPEND", "1") or "1"
+).strip() != "0"
 # Connection-state inference thresholds (seconds since the last progress signal /
 # since the wait began). Tuned for a slow/dropping link; env-overridable.
 _DL_SLOW_AFTER_S = max(2.0, float(_os.getenv("AIPACS_DL_SLOW_AFTER_S", "6") or "6"))
@@ -1688,26 +1698,53 @@ class _VCProgressiveMixin:
                 )
             except Exception:
                 pass
-            try:
-                # force_reload=True is REQUIRED here (48476/46281, 2026-07-01): with
-                # force_reload=False the change_series same-series skip fires (the viewport
-                # already shows this display key) and the stack is NOT rebuilt — the live
-                # log showed 4 GROW-DISPLAYED attempts with `displayed` never moving
-                # (1->1, 30->30) because the no-op swallowed every rebuild. force_reload
-                # bypasses that skip and re-reads the FULL on-disk set. It is SAFE here (no
-                # re-download) precisely because this path only runs on a SETTLED folder
-                # (stable .dcm count AND no in-flight .part = the download has FINISHED), so
-                # there is no load miss to trigger a re-fetch — it only invalidates the stale
-                # partial decoded-volume cache and rebuilds from the complete DICOM files.
-                self.change_series_on_viewer(
-                    display_key,
-                    flag_change_selected_widget=False,
-                    vtk_widget=vtk_w,
-                    slider=getattr(vtk_w, "slider", None),
-                    force_reload=True,
-                )
-            except Exception:
-                pass
+            _grew_smoothly = False
+            if _GROW_SMOOTH_APPEND:
+                # SMOOTH grow (preferred): append the new on-disk slices IN PLACE via the
+                # same additive path the native progressive grow uses — existing decoded
+                # pixels are preserved, the current slice/view is kept, and the slider count
+                # updates incrementally. No full re-decode, no view reset, no flicker. This
+                # is what removes the "hiccup / shock" the user saw when the count jumped.
+                try:
+                    _bridge = getattr(vtk_w, "image_viewer", None)
+                    if (getattr(vtk_w, "_qt_bridge_active", False)
+                            and _bridge is not None and hasattr(_bridge, "grow")):
+                        _new_count = int(_bridge.grow(force_flush=True) or 0)
+                        _node = None
+                        for _n in (self.lst_nodes_viewer or []):
+                            if getattr(_n, "vtk_widget", None) is vtk_w:
+                                _node = _n
+                                break
+                        try:
+                            self._update_vtk_slice_range(
+                                vtk_w, _node, _new_count,
+                                slider=getattr(vtk_w, "slider", None),
+                            )
+                        except Exception:
+                            pass
+                        _grew_smoothly = _new_count > displayed
+                except Exception:
+                    _grew_smoothly = False
+            if not _grew_smoothly:
+                # FALLBACK full rebuild — for a non-FAST (Advanced/VTK) viewer that has no
+                # bridge.grow(), or when the additive append did not advance. force_reload=True
+                # is REQUIRED here: with force_reload=False the change_series same-series skip
+                # fires (the viewport already shows this key) and the stack is NOT rebuilt (the
+                # live log showed GROW-DISPLAYED attempts with `displayed` never moving because
+                # the no-op swallowed every rebuild). SAFE (no re-download): this path only runs
+                # on a SETTLED folder (stable .dcm, no .part = download FINISHED), so there is no
+                # load miss to re-fetch — it only invalidates the stale partial decoded-volume
+                # cache and rebuilds from the complete DICOM files.
+                try:
+                    self.change_series_on_viewer(
+                        display_key,
+                        flag_change_selected_widget=False,
+                        vtk_widget=vtk_w,
+                        slider=getattr(vtk_w, "slider", None),
+                        force_reload=True,
+                    )
+                except Exception:
+                    pass
             return True
         except Exception:
             return False

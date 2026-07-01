@@ -45,18 +45,24 @@ def test_flag_default_on_and_method_present():
 def test_grow_uses_canonical_identity_and_settle_and_cap():
     src = _src()
     fn = src.find("def _maybe_grow_displayed_to_disk")
-    body = src[fn:fn + 7000]
+    body = src[fn:fn + 8500]
     # canonical identity, not the bare series number
     assert "self._resolve_canonical_series_identity(display_key)" in body
     assert "_viewport_displayed_series_number(vtk_w)" in body
     # counts the series' OWN folder + .part, settled-only rebuild
     assert 'nm.endswith(".part")' in body
     assert "_disk_series_settled(disk, prev, has_part)" in body
-    # only rebuild when behind, via the proven change_series path
+    # only act when behind
     assert "if disk <= displayed:" in body
+    # SMOOTH grow preferred: additive append via bridge.grow + slider update (no full
+    # rebuild / flicker / view reset) — the anti-hiccup path.
+    assert "_GROW_SMOOTH_APPEND" in body
+    assert "_bridge.grow(force_flush=True)" in body
+    assert "self._update_vtk_slice_range(" in body
+    assert "_grew_smoothly" in body
+    # full rebuild remains the FALLBACK (non-FAST / append didn't advance); force_reload=True
+    # so the same-series skip doesn't swallow it (safe: settled folder → no re-download).
     assert "self.change_series_on_viewer(" in body
-    # force_reload=True is required so the same-series skip doesn't swallow the rebuild
-    # (safe: only runs on a settled/complete folder → no re-download).
     assert "force_reload=True," in body
     # capped per (series, disk-count) to prevent churn
     assert "_GROW_DISPLAYED_MAX_ATTEMPTS" in body

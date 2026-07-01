@@ -922,8 +922,16 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   the rebuild it decided on, bypassing the no-op's re-derivation. **SAFE (no re-download):** A1 only
   fires on a SETTLED folder = the download FINISHED, so there is no load miss to trigger a re-fetch;
   `force_reload` only invalidates the stale partial decoded-volume cache and re-reads the complete
-  DICOM files. Guards `tests/code/viewer/test_disk_count_canonical_offset_key.py` +
-  `test_grow_displayed_to_disk.py` (force_reload=True pin); 23 viewer green. **LIVE-VERIFIED on 48695
+  DICOM files. **SMOOTH GROW (anti-hiccup, `AIPACS_GROW_SMOOTH_APPEND` default on, 2026-07-01):** the
+  full `force_reload` rebuild made the slice count + scroll bar JUMP/hiccup (re-decode + view reset).
+  A1 now PREFERS the same additive append the native progressive grow uses — `vtk_w.image_viewer.grow(
+  force_flush=True)` (→ `pipeline.refresh_file_list`, which appends only the new on-disk slices,
+  PRESERVES existing decoded pixels + the current slice/view) followed by `_update_vtk_slice_range(...)`
+  to bump the slider incrementally. No re-decode, no flicker, no position reset. The `force_reload=True`
+  rebuild stays as the FALLBACK for a non-FAST/Advanced viewport (no `bridge.grow`) or when the append
+  doesn't advance (`_grew_smoothly` gate). Guards
+  `tests/code/viewer/test_disk_count_canonical_offset_key.py` + `test_grow_displayed_to_disk.py`
+  (smooth-append + force_reload-fallback pins); 25 viewer green. **LIVE-VERIFIED on 48695
   (2026-07-01):** every series grew with `[GROW-DISPLAYED]` `displayed` CLIMBING between attempts
   (primary 302 29→41→100→147, 175651321 1→36; prev-exam 1000010 50→144, 2000203 20→70→135), prev-exam
   loaded from its own folder `…/019/10/`, clean download KPIs (all on_disk==expected), zero errors. See
@@ -1437,6 +1445,55 @@ Before editing `modules/dental_imaging/` or the Advanced-Analysis entry in
   `modules/dental_imaging/*` is plugin-mirrored. The arch UI + drop import NEED live
   source-build verification.
 
+
+### Case of the Day — non-modal dialog + Media Capture (2026-07-01)
+Before editing `modules/education/case_of_day_widget.py` (`CaseOfDayEntryDialog`),
+`modules/education/case_media_capture.py`, `modules/education/case_of_day_database.py`'s
+`case_media_dir`/`PACKAGE_*_SUBDIR` constants, or the toolbar's
+`_save_case_of_day_from_patient` (`toolbar_manager.py`), read
+`docs/reports/CASE_OF_DAY_MEDIA_CAPTURE_2026-07-01.md`.
+
+- **The toolbar-invoked dialog is non-modal** (`dlg.show()`, not `dlg.exec()`) —
+  the user must be able to keep navigating/scrolling/zooming/dragging-and-dropping
+  while it's open. A strong reference (`self._case_of_day_dialog`) keeps it alive;
+  clicking the graduation-cap icon again re-activates the existing dialog instead
+  of duplicating the DICOM copy. `CaseOfDayPage._create_case` (the manual
+  Education-tab "+ Add Case" entry, no live viewer) is intentionally UNCHANGED —
+  still `exec()`, no Media Capture section (nothing to capture there). Flag
+  `AIPACS_CASE_OF_DAY_NONMODAL` (default on).
+- **Media Capture (Screenshot/Record Viewport) only enables when there's already
+  an on-disk case package** (`resolve_case_package_dir` must succeed) — i.e. the
+  patient-toolbar path, which copies the DICOM folder before the dialog opens.
+  The manual/notes-only entry flow shows the buttons disabled with a tooltip.
+  Flag `AIPACS_CASE_OF_DAY_MEDIA_CAPTURE` (default on).
+- **Privacy: overlay suppression is scoped to the ONE captured viewport and is
+  FAST-only.** It reuses `QtSliceViewer.set_show_annotations()`
+  (`modules/viewer/fast/qt_slice_viewer.py`) — a toggle that already existed,
+  gated into `paintEvent`, but had ZERO external callers before this change.
+  `case_media_capture.OverlayGuard` hides it before grabbing pixels and restores
+  it in a `finally`, never touching DICOM data or permanently disabling it. Tool
+  annotations/measurements are a separate paint call (`_paint_tool_annotations`)
+  and are NOT affected. Advanced/VTK/MPR overlay suppression is NOT implemented
+  yet (capture still works there, just without hiding that surface's overlay).
+  Flag `AIPACS_CASE_OF_DAY_PRIVACY_OVERLAY` (default on).
+- **Capture target is `patient_widget.selected_widget`** (the one viewport cell) —
+  never the window — so window borders/menus/toolbars/patient list are excluded
+  by construction, not by clipping.
+- **Recording is a QTimer grab (GUI thread, default 10fps) feeding a bounded
+  `queue.Queue` drained by a background encoder thread** (`cv2.VideoWriter`,
+  fourcc `avc1`→`H264`→`mp4v` fallback — no new dependency, `opencv-python-headless`
+  was already in `requirements.txt`). A full queue DROPS the newest frame rather
+  than blocking the GUI thread. `closeEvent`/`reject()`/`_save()` all call
+  `_stop_recording()` first so a recording in progress is always flushed/released
+  instead of left dangling when the (now freely closable) dialog closes.
+- New case-package subfolders `screenshots/`/`videos/`/`card/`/`notes/` are
+  PURELY ADDITIVE alongside the existing `dicom/`/`attachments/` layout — no
+  existing path, constant, or DB column changed. `card/`/`notes/` are reserved
+  for the future teaching-card/notes-export pipeline; nothing writes there yet.
+- NEEDS live source-build verification (non-modal interaction, JPEG/MP4 output
+  correctness, mid-recording close, no regression to the manual entry flow) —
+  see the report's "NOT done" section. Guard test:
+  `tests/code/education/test_case_of_day_media_capture.py`.
 
 ## VS Code Agent Mode environment (configured 2026-06-02)
 

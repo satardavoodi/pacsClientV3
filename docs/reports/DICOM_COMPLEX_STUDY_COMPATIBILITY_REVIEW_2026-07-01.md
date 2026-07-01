@@ -307,6 +307,21 @@ work on real data:
 | ~~`AIPACS_DISK_COUNT_CANONICAL`~~ | **COLLAPSED** | canonical on-disk count for offset keys is now UNCONDITIONAL (flag removed after the 48695 live verification — the legacy "return wrong 0" had no valid use) |
 | `AIPACS_GROW_DISPLAYED_TO_DISK` | on | watchdog grows a displayed-behind-disk viewport (A1); `=0` = off. Kept as a kill switch for the larger watchdog behavior (next collapse candidate) |
 
+### Smooth grow — anti-hiccup (2026-07-01, `AIPACS_GROW_SMOOTH_APPEND` default on)
+User feedback after 48695: as new images downloaded and the series grew, the slice count and
+scroll bar **jumped/hiccuped** — the app felt "shocked" by the sudden import. Cause: A1 grew the
+viewport with a full `change_series_on_viewer(force_reload=True)` **rebuild** — it invalidated the
+decoded-volume cache, re-decoded from disk, and reset the view, so the count and slider snapped in
+big discrete jumps (e.g. 29→100→147) with a flicker each time. Fix: A1 now GROWS THE SAME WAY the
+native progressive download does — the additive append `vtk_w.image_viewer.grow(force_flush=True)`
+(→ `Lightweight2DPipeline.refresh_file_list`, which reads headers for only the NEW files on a
+background thread, **preserves the existing SliceMeta + cached pixels**, and keeps the current
+slice/view) followed by `_update_vtk_slice_range(...)` to advance the slider count in place. No
+re-decode, no flicker, no position reset — the stack simply extends. The full `force_reload` rebuild
+remains the FALLBACK for a non-FAST/Advanced viewport (which has no `bridge.grow`) or when the
+append doesn't advance. Guard: `test_grow_displayed_to_disk.py` (smooth-append + fallback pins).
+NEEDS live source-build verify (grow should now feel continuous, not shocked).
+
 ### Post-verification polish (2026-07-01)
 After the 48695 confirmation, two safe clean-ups landed:
 - **Flag collapse (unify directive):** `AIPACS_DISK_COUNT_CANONICAL` was removed — the canonical

@@ -94,6 +94,19 @@ class DicomHeaderEntry:
     intercept: float
     instance_number: Optional[int]
     is_rgb: bool
+    # DICOM (0028,0008) NumberOfFrames. 1 for ordinary single-frame instances.
+    # A value > 1 marks a multi-frame / cine / enhanced file whose single .dcm
+    # holds N image frames; the FAST pipeline expands it into N scrollable slices.
+    num_frames: int = 1
+    # SOP Class UID (0008,0016) — identifies the object type (US multi-frame, XA,
+    # Enhanced MR, Ophthalmic Photography, Encapsulated PDF, …). Empty when absent.
+    sop_class_uid: str = ""
+    # Cine / frame-timing tags for playback speed (multi-frame US / XA / echo):
+    # FrameTime (0018,1063) ms/frame, CineRate (0018,0040) fps,
+    # RecommendedDisplayFrameRate (0008,2144) fps. None when absent (still images).
+    frame_time_ms: Optional[float] = None
+    cine_rate: Optional[float] = None
+    recommended_display_frame_rate: Optional[float] = None
 
 
 def entry_from_dataset(path: str, ds: pydicom.Dataset) -> DicomHeaderEntry:
@@ -129,7 +142,24 @@ def entry_from_dataset(path: str, ds: pydicom.Dataset) -> DicomHeaderEntry:
             else None
         ),
         is_rgb=(spp >= 3),
+        num_frames=_safe_number_of_frames(getattr(ds, "NumberOfFrames", None)),
+        sop_class_uid=str(getattr(ds, "SOPClassUID", "") or ""),
+        frame_time_ms=_safe_float(getattr(ds, "FrameTime", None)),
+        cine_rate=_safe_float(getattr(ds, "CineRate", None)),
+        recommended_display_frame_rate=_safe_float(
+            getattr(ds, "RecommendedDisplayFrameRate", None)
+        ),
     )
+
+
+def _safe_number_of_frames(value) -> int:
+    """Parse DICOM (0028,0008) NumberOfFrames → int ≥ 1. Any missing/invalid
+    value yields 1 (ordinary single-frame instance)."""
+    try:
+        n = int(value)
+        return n if n > 1 else 1
+    except (TypeError, ValueError):
+        return 1
 
 
 def scan_series_header_entries(

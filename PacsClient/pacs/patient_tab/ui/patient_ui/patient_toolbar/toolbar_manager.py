@@ -8817,6 +8817,20 @@ class ToolbarManager:
         Export the current study folder into Education/MyCourse/CaseOfTheDay storage
         and create a Case-of-Day entry (metadata-only in DB, files on disk).
         """
+        # Non-modal dialog (2026-07-01): if one is already open for this
+        # patient widget, just bring it forward instead of re-copying the
+        # DICOM folder into a second case package.
+        existing = getattr(self, "_case_of_day_dialog", None)
+        if existing is not None:
+            try:
+                import shiboken6
+                alive = shiboken6.isValid(existing)
+            except Exception:
+                alive = True
+            if alive and existing.isVisible():
+                existing.raise_()
+                existing.activateWindow()
+                return
         try:
             from pathlib import Path
             from PySide6.QtCore import Qt
@@ -8955,9 +8969,22 @@ class ToolbarManager:
                 ))
             except Exception:
                 pass
-            dlg.exec()
-            # Final refresh after the dialog closes (covers manual close paths).
-            self._refresh_case_of_day_badge()
+            # Non-modal (2026-07-01): show() instead of exec() so the user can
+            # keep navigating/scrolling/zooming/dragging-and-dropping in the
+            # rest of the viewer — including recording/screenshotting the
+            # viewport from inside the dialog itself — while it stays open.
+            # `dlg.finished` covers what the old "after exec()" line used to
+            # (badge refresh on every close path, save or cancel); a strong
+            # reference is kept on `self` so the dialog isn't garbage
+            # collected the instant this method returns.
+            try:
+                dlg.finished.connect(lambda _result: self._refresh_case_of_day_badge())
+            except Exception:
+                pass
+            self._case_of_day_dialog = dlg
+            dlg.show()
+            dlg.raise_()
+            dlg.activateWindow()
         except Exception as exc:
             QMessageBox.warning(self.patient_widget, "Export Failed", str(exc))
 

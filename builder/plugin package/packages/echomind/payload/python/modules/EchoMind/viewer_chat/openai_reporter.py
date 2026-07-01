@@ -147,6 +147,38 @@ _CT_REQUIRED_KEYS: list = [
     "Recommendations",
 ]
 
+_MAMMOGRAPHY_REQUIRED_KEYS: list = [
+    "Report Title",
+    "Breast Composition",
+    "Pathological Findings",
+    "Normal Findings",
+    "Axillary Evaluation",
+    "BI-RADS Category",
+]
+
+_ULTRASOUND_REQUIRED_KEYS: list = [
+    "Report Title",
+    "Pathological Findings",
+    "Normal Findings",
+]
+
+_OB_ULTRASOUND_REQUIRED_KEYS: list = [
+    "Report Title",
+    "Gestational Age & Dating",
+    "Fetal Presentation",
+    "Biometry",
+    "Placenta & Umbilical Cord",
+    "Amniotic Fluid",
+    "Normal Findings",
+]
+
+_VALIDATED_MODALITIES: frozenset = frozenset({
+    "mri", "ct", "mammography",
+    "sonography", "ultrasound",
+    "obstetric ultrasound", "ob ultrasound",
+    "pregnancy ultrasound", "fetal ultrasound",
+})
+
 
 def _clean_model_json_text(raw):
     """Strip markdown fences and <|end|> end-tokens from model JSON output."""
@@ -165,12 +197,13 @@ def _clean_model_json_text(raw):
 def _validate_report_json(raw, modality: str):
     """
     Validate and repair JSON output for a given modality.
-    Non-MRI/CT: passthrough.
-    MRI/CT: strip fences → parse → validate required keys → coerce empty optionals to null.
+    Modalities not in _VALIDATED_MODALITIES: passthrough unchanged.
+    Handled modalities: strip fences → parse → validate required keys →
+    coerce empty optionals to null → return canonical JSON string.
     Raises ValueError on parse failure or missing required keys.
-    Always returns a JSON string with ALL 5 canonical keys present.
     """
-    if not isinstance(raw, str) or modality.lower() not in ("mri", "ct"):
+    _mod = modality.lower()
+    if not isinstance(raw, str) or _mod not in _VALIDATED_MODALITIES:
         return raw
     import json as _json
     text = _clean_model_json_text(raw)
@@ -182,8 +215,18 @@ def _validate_report_json(raw, modality: str):
         raise ValueError(
             f"Expected a JSON object (dict) but got {type(data).__name__}"
         )
+    # Determine required/optional keys per modality
+    if _mod == "mammography":
+        _required = _MAMMOGRAPHY_REQUIRED_KEYS
+        _optional: list = []
+    elif _mod in ("obstetric ultrasound", "ob ultrasound",
+                  "pregnancy ultrasound", "fetal ultrasound"):
+        _required = _OB_ULTRASOUND_REQUIRED_KEYS
+        _optional = ["Anatomy Survey", "Doppler", "Impression", "Recommendations"]
+    else:  # mri, ct, sonography, ultrasound
+        _required = ["Report Title", "Pathological Findings", "Normal Findings"]
+        _optional = ["Impression", "Recommendations"]
     # Coerce empty / N/A optional fields to null (keep key present)
-    _optional = ["Impression", "Recommendations"]
     for key in _optional:
         val = data.get(key)
         if isinstance(val, str) and val.strip().lower() in ("", "n/a", "none", "-"):
@@ -193,7 +236,7 @@ def _validate_report_json(raw, modality: str):
         if key not in data:
             data[key] = None
     # Validate required keys — raise on missing
-    for k in ["Report Title", "Pathological Findings", "Normal Findings"]:
+    for k in _required:
         if not data.get(k):
             raise ValueError(f"Required key missing or empty: {k!r}")
     return _json.dumps(data, ensure_ascii=False, indent=2)
@@ -914,6 +957,203 @@ def reporter(
             
                             """
                         )
+        elif modality_lower in ["obstetric ultrasound", "ob ultrasound",
+                                "pregnancy ultrasound", "fetal ultrasound"]:
+            specific_instructions = ("""
+                MODALITY: Obstetric Ultrasound — ISUOG Structured Report
+
+                JSON OUTPUT SCHEMA (ISUOG — STRICT):
+                {
+                  "Report Title": "Obstetric Ultrasound – [First/Second/Third] Trimester",
+                  "Gestational Age & Dating": "GA by LMP: X wXd | GA by biometry: X wXd | EDD: [date] | Concordant / Discordant (>7d in 1st tri or >14d in 2nd/3rd tri)",
+                  "Fetal Presentation": "Cephalic/Breech/Transverse/Oblique | FHR: X bpm | Fetal movement: present/absent/reduced",
+                  "Biometry": "BPD: X mm | HC: X mm | AC: X mm | FL: X mm | HL: X mm | EFW: X g (Hadlock) | Growth Percentile: Xth (AGA 10th–90th / SGA <10th / LGA >90th)",
+                  "Anatomy Survey": "[ISUOG organ-by-organ findings per Section 4 below]",
+                  "Placenta & Umbilical Cord": "Location: [anterior/posterior/fundal/lateral/low-lying/previa] | Grade: [0/I/II/III] | Distance from internal os: X mm | Cord: three-vessel/two-vessel | Cord insertion: central/eccentric/marginal/velamentous",
+                  "Amniotic Fluid": "AFI: X cm (normal 8–24 cm) OR DVP: X cm (normal 2–8 cm)",
+                  "Normal Findings": "[Single sentence: uterus, adnexa, cervical length if measured]",
+                  "Doppler": "[UA S/D ratio | MCA PSV | DV flow | Uterine artery notching — OMIT if no Doppler performed]",
+                  "Impression": "[GA confirmation, fetal wellbeing summary, growth status, any abnormalities]",
+                  "Recommendations": "[Follow-up timing, repeat scan, referral — OMIT if routine normal]"
+                }
+
+                ─────────────────────────────────────────────────────
+                SECTION 1 — TRIMESTER DETECTION
+                ─────────────────────────────────────────────────────
+                • 1st trimester: ≤13w6d | 2nd: 14w0d–27w6d | 3rd: ≥28w0d
+                • Detect trimester from GA stated in dictation; infer from CRL/BPD/FL if GA not given
+                • Label Report Title accordingly: "First Trimester", "Second Trimester", "Third Trimester"
+
+                ─────────────────────────────────────────────────────
+                SECTION 2 — GESTATIONAL AGE & DATING RULES
+                ─────────────────────────────────────────────────────
+                • GA by LMP: use if explicitly stated in dictation
+                • GA by biometry: derived from BPD/HC/AC/FL (Hadlock tables)
+                • EDD: calculate from biometric GA; use LMP-based EDD only if concordant
+                • Discordance: >7 days (1st trimester) or >14 days (2nd/3rd) → note discordance, recommend biometric dating
+                • GA not stated in dictation → write "Not stated" for LMP; derive from biometry if available
+
+                ─────────────────────────────────────────────────────
+                SECTION 3 — BIOMETRY FORMAT (ISUOG STANDARD)
+                ─────────────────────────────────────────────────────
+                2nd/3rd trimester mandatory measurements:
+                • BPD (Biparietal Diameter): outer-to-inner; mm
+                • HC (Head Circumference): ellipse method; mm
+                • AC (Abdominal Circumference): outer; mm
+                • FL (Femur Length): ossified diaphysis; mm
+                • HL (Humerus Length): ossified diaphysis; mm (include if stated)
+                • EFW (Estimated Fetal Weight): Hadlock formula; grams
+                • Growth Percentile: state percentile + AGA (10th–90th) / SGA (<10th) / LGA (>90th)
+
+                1st trimester measurements:
+                • CRL (Crown-Rump Length): primary GA measurement 7w–13w6d; mm
+                • NT (Nuchal Translucency): if ≥11w0d; normal <3.0 mm; state mm value
+                • Nasal bone: present / absent (if assessed)
+                • Yolk sac, fetal heartbeat (bpm if stated)
+
+                Normal biometry construction rule:
+                • If numbers not individually stated but described as "normal" or "appropriate for GA":
+                  → write "[measurement]: appropriate for stated gestational age" for each
+
+                ─────────────────────────────────────────────────────
+                SECTION 4 — ANATOMY SURVEY (ISUOG STRUCTURED)
+                ─────────────────────────────────────────────────────
+                CNS / Brain:
+                • Skull: normal ovoid shape
+                • Cerebral ventricles: atrial width ≤10 mm normal; mild ventriculomegaly 10–15 mm; severe >15 mm
+                • Posterior fossa: cerebellum normal shape/transverse diameter | cisterna magna 2–10 mm | no Dandy-Walker
+                • Corpus callosum: present (if visualized at ≥18w)
+                • Midline falx: present; no midline shift
+
+                Face:
+                • Orbits: symmetric, normal size, normal inter-orbital distance
+                • Nasal bone: present (if assessed ≥11w)
+                • Facial profile: normal forehead, nose, chin (if visualized)
+                • Lip and primary palate: intact (if visualized)
+
+                Chest / Heart (ISUOG cardiac screening):
+                • Lung echogenicity: normal bilateral symmetry; no pleural effusion
+                • Diaphragm: intact (if visualized)
+                • Cardiac situs: levocardia; apex pointing left; stomach on left
+                • Four-chamber view: equal-size ventricles and atria; intact IV septum; normal AV valves; no pericardial effusion
+                • Outflow tracts (if assessed): LVOT/RVOT normal alignment and crossing
+                • FHR: state bpm if provided (normal 110–160 bpm)
+
+                Abdomen:
+                • Stomach: visible, fluid-filled, left-sided (absence → note)
+                • Liver: normal echogenicity
+                • Kidneys: bilateral, normal echogenicity and corticomedullary differentiation
+                  • Renal pelvis AP diameter: normal <7 mm (mild pyelectasis 4–7 mm; note if >7 mm)
+                • Bladder: visible, normal size
+                • Abdominal wall: intact; umbilical cord insertion normal; no omphalocele/gastroschisis
+                • Bowel: normal echogenicity (hyperechoic bowel ≥ bone echogenicity → note)
+
+                Spine:
+                • Cervical/thoracic/lumbar/sacral: normal alignment and curvature
+                • Posterior ossification centers: intact, normal spacing
+                • Overlying skin line: intact; no meningomyelocele
+
+                Limbs:
+                • Four extremities: present, normal morphology and movement
+                • Long bone lengths: appropriate for GA (see biometry)
+                • Hands: five digits (if visualized), normal position
+                • Feet: normal position; no talipes (club foot)
+
+                Umbilical Cord:
+                • Three-vessel cord (two arteries + one vein): normal
+                • Single umbilical artery (SUA / two-vessel cord): note — associated with renal/cardiac anomalies
+                • Abdominal wall cord insertion: normal (no cord presentation)
+                • Placental cord insertion: central / eccentric / marginal / velamentous
+
+                Visualization note: if anatomy incompletely visualized →
+                state "Limited visualization due to [fetal position / oligohydramnios / maternal habitus / gestational age]"
+
+                ─────────────────────────────────────────────────────
+                SECTION 5 — PLACENTA & AMNIOTIC FLUID RULES
+                ─────────────────────────────────────────────────────
+                Placenta:
+                • Location: anterior / posterior / fundal / right lateral / left lateral / low-lying / previa
+                • Low-lying: lower edge <20 mm from internal os → state exact distance; recommend repeat at 32–34w
+                • Placenta previa: classify complete / partial / marginal
+                • Placental grade (Grannum): 0 (2nd tri) → I → II → III (mature); premature grade III <34w → note
+                • Texture: homogeneous normal | heterogeneous | calcifications | subchorionic hematoma (size, location)
+
+                Amniotic Fluid:
+                • AFI (sum of 4-quadrant deepest pockets): Normal 8–24 cm | Borderline 5–8 cm | Oligo <5 cm | Poly >24 cm
+                • DVP (single deepest vertical pocket): Normal 2–8 cm | Oligo <2 cm | Poly >8 cm
+                • Use whichever the radiologist provided; do NOT convert between AFI and DVP
+
+                ─────────────────────────────────────────────────────
+                SECTION 6 — DOPPLER DOCUMENTATION
+                ─────────────────────────────────────────────────────
+                Include "Doppler" key ONLY if Doppler values/terms appear in the dictation:
+                • Umbilical artery (UA): S/D ratio | PI | RI | absent/reversed end-diastolic flow (AEDF/REDF)
+                • Middle cerebral artery (MCA): PSV (normal >1.5 MoM for fetal anemia) | PI | RI
+                • Ductus venosus (DV): a-wave direction (reversed = venous compromise)
+                • Uterine artery: bilateral PI/RI | notching (early diastolic notch → note laterality)
+                • Normal Doppler: "Umbilical artery Doppler: normal S/D ratio with positive end-diastolic flow"
+                OMIT entire "Doppler" key if no Doppler was assessed
+
+                ─────────────────────────────────────────────────────
+                SECTION 7 — PERSIAN / FINGLISH RECOGNITION
+                ─────────────────────────────────────────────────────
+                The dictation may contain Persian words in Latin script (Finglish) or Persian script:
+                • "jadeh-ye-zaye" / "rahem" / "رحم" → uterus
+                • "joft" / "jadeh joft" / "جفت" → placenta
+                • "maayeh amniotik" / "مایع آمنیوتیک" → amniotic fluid
+                • "janian" / "janin" / "جنین" → fetus/fetal
+                • "saret janian" / "سر جنین" → fetal head
+                • "galb janian" / "قلب جنین" → fetal heart
+                • "seeneh" / "سینه" → chest
+                • "haml" / "حاملگی" → pregnancy/gravid
+                • "GA" or "SGA" or "hafteh" → gestational age / weeks
+                Normalize all to standard English radiological terminology before building JSON
+
+                ─────────────────────────────────────────────────────
+                SECTION 8 — NORMAL FINDINGS CONSTRUCTION
+                ─────────────────────────────────────────────────────
+                Write a single sentence summarizing non-pathological features:
+                • Include: uterine contour, adnexal regions, cervical length (if measured)
+                • Normal cervical length: ≥25 mm (short cervix <25 mm → note in Pathological Findings instead)
+                • Example: "Uterus gravid with normal contour; adnexal regions unremarkable; cervical length 38 mm (normal)."
+                • Do NOT repeat findings already in Anatomy Survey
+
+                ─────────────────────────────────────────────────────
+                SECTION 9 — IMPRESSION & RECOMMENDATIONS LOCK
+                ─────────────────────────────────────────────────────
+                • Impression: REQUIRED — always include. Summarize: confirmed GA, fetal wellbeing, growth status, fluid/placenta, any significant findings
+                • Recommendations: OMIT if fully normal and routine. Include when: anomaly detected, growth restriction (<10th percentile), abnormal Doppler, short cervix, follow-up scan needed, referral indicated
+
+                ─────────────────────────────────────────────────────
+                SECTION 10 — SELF-CHECK BEFORE OUTPUT
+                ─────────────────────────────────────────────────────
+                Before finalizing JSON output, verify:
+                ✓ Trimester correctly labeled in Report Title
+                ✓ All available biometry measurements stated in mm (grams for EFW)
+                ✓ Growth percentile stated with AGA/SGA/LGA classification
+                ✓ AFI or DVP stated with normal range in parentheses
+                ✓ Anatomy Survey covers all ISUOG domains (CNS, Face, Heart/Chest, Abdomen, Spine, Limbs, Cord)
+                ✓ "Doppler" key present ONLY if Doppler was performed
+                ✓ Impression present and complete
+                ✓ No fabricated measurements not present in the dictation
+
+                ─────────────────────────────────────────────────────
+                EXAMPLE OUTPUT (second trimester, normal study)
+                ─────────────────────────────────────────────────────
+                {
+                  "Report Title": "Obstetric Ultrasound – Second Trimester",
+                  "Gestational Age & Dating": "GA by LMP: 22w3d | GA by biometry: 22w1d | EDD: [calculated] | Concordant",
+                  "Fetal Presentation": "Cephalic | FHR: 152 bpm (normal) | Fetal movement: present",
+                  "Biometry": "BPD: 56 mm | HC: 198 mm | AC: 178 mm | FL: 39 mm | HL: 37 mm | EFW: 510 g | Growth Percentile: 48th (AGA)",
+                  "Anatomy Survey": "CNS: normal ventricular atrial width, normal posterior fossa, cisterna magna 6 mm. Face: symmetric orbits, intact lip. Chest/Heart: levocardia, normal four-chamber view, FHR 152 bpm. Abdomen: stomach visible, bilateral normal kidneys (renal pelvis <7 mm), bladder visible, intact abdominal wall. Spine: normal alignment and integrity. Limbs: four extremities present, long bones appropriate for GA. Umbilical cord: three-vessel.",
+                  "Placenta & Umbilical Cord": "Posterior, Grade I, distance from internal os >20 mm. Three-vessel cord, central placental insertion.",
+                  "Amniotic Fluid": "AFI: 14 cm (normal 8–24 cm)",
+                  "Normal Findings": "Uterus gravid with normal contour; adnexal regions unremarkable.",
+                  "Impression": "Single live intrauterine fetus at 22 weeks gestation, concordant with biometry. Normal fetal anatomy survey. Appropriate growth for gestational age (48th percentile). Normal amniotic fluid volume.",
+                  "Recommendations": null
+                }
+                """)
+
         elif modality_lower in ["sonography", "ultrasound"]:
             specific_instructions = ("""
                 MODALITY LOGIC (Ultrasound – General + OB/GYN):
@@ -1227,6 +1467,41 @@ def reporter(
                 • normalize increased / decreased variations  
                 • NEVER add new interpretation  
 
+                ACR BI-RADS 5th Edition — Mass Descriptors (use EXACTLY these terms):
+
+                Mass SHAPE:
+                • oval (elliptical, egg-shaped)
+                • round (spherical, ball-shaped)
+                • irregular (shape cannot be characterized as oval or round)
+
+                Mass MARGIN:
+                • circumscribed (well-defined, sharp interface ≥75% of border)
+                • obscured (hidden by overlying or adjacent tissue)
+                • microlobulated (short-cycle undulations on border)
+                • indistinct (no clear demarcation from adjacent tissue)
+                • spiculated (lines radiating from mass; highest malignancy concern)
+
+                Mass DENSITY (relative to equal volume of fibroglandular tissue):
+                • fat-containing (includes oil cysts, lipomas, galactoceles, hamartomas)
+                • low density
+                • equal density
+                • high density
+
+                Calcification MORPHOLOGY:
+                • Typically benign: skin / vascular / coarse or popcorn-like / large rod-like / round / rim / dystrophic / milk of calcium / suture
+                • Suspicious — Intermediate concern: coarse heterogeneous
+                • Suspicious — Higher concern: fine pleomorphic | fine linear | fine-linear branching (casting)
+
+                Calcification DISTRIBUTION:
+                • diffuse (randomly scattered throughout whole breast)
+                • regional (large volume of breast tissue, not duct distribution)
+                • grouped / clustered (≥5 calcifications in <2 cm² area)
+                • linear (calcifications in a line, may branch; suggests ductal distribution)
+                • segmental (triangular or cone-shaped; suggests ductal/lobular distribution)
+
+                Use EXACTLY these BI-RADS terms when describing mass shape, margins, density, and calcification characteristics.
+                Do NOT paraphrase or substitute synonyms.
+
                 ====================================================================
                 SECTION 4 — NORMAL FINDINGS TEMPLATE (CONFLICT-FILTERED)
                 ====================================================================
@@ -1268,13 +1543,38 @@ def reporter(
                 ✗ Pathology: mass → Normal: “No suspicious mass.”
 
                 ====================================================================
-                SECTION 6 — BI-RADS RULE
+                SECTION 6 — BI-RADS RULE (ACR BI-RADS 5th Edition)
                 ====================================================================
 
+                BI-RADS CATEGORY RULE:
                 - The user MUST provide BI-RADS.  
                 - NEVER infer or guess BI-RADS.  
-                - Copy EXACT formatting (e.g., “4C”, “5”, “6”).  
+                - Copy EXACT formatting from user input (e.g., “4C”, “5”, “6”).  
                 - Missing value → “Not mentioned”.
+                - When a BI-RADS category is stated, append the standard label and management recommendation:
+
+                BI-RADS Category Descriptions & Standard Management:
+                • 0 — Incomplete. Need additional imaging evaluation and/or prior mammograms for comparison.
+                • 1 — Negative. Annual screening mammography (routine interval).
+                • 2 — Benign finding(s). Annual screening mammography (routine interval).
+                • 3 — Probably benign. Short-interval follow-up (6 months); probability of malignancy <2%.
+                • 4A — Low suspicion for malignancy. Tissue sampling (biopsy) recommended; malignancy risk >2% to ≤10%.
+                • 4B — Moderate suspicion for malignancy. Tissue sampling (biopsy) recommended; malignancy risk >10% to ≤50%.
+                • 4C — High suspicion for malignancy. Tissue sampling (biopsy) required; malignancy risk >50% to <95%.
+                • 5 — Highly suggestive of malignancy. Tissue sampling required; malignancy risk ≥95%.
+                • 6 — Known biopsy-proven malignancy. Prior to definitive therapy (treatment planning).
+
+                Format for BI-RADS Category value: "[Category] — [Standard Label]"
+                Example: "5 — Highly suggestive of malignancy"
+
+                BREAST COMPOSITION (ACR BI-RADS A–D):
+                Use EXACT ACR terminology when composition is stated:
+                • A — The breasts are almost entirely fatty.
+                • B — There are scattered areas of fibroglandular density.
+                • C — The breasts are heterogeneously dense, which may obscure small masses.
+                • D — The breasts are extremely dense, which lowers the sensitivity of mammography.
+                If composition stated as a letter (A/B/C/D) or type number (1/2/3/4): map to the standard description above.
+                If composition is not stated: "Not mentioned".
 
                 ====================================================================
                 SECTION 7 — AXILLARY RULE
@@ -1614,7 +1914,7 @@ def reporter(
             {"role": "user", "content": user_msg},
         ],
     }
-    if modality and modality.lower() in ("mri", "ct"):
+    if modality and modality.lower() in _VALIDATED_MODALITIES:
         payload["temperature"] = 0.1
         payload["max_tokens"] = 2500
 
@@ -2851,41 +3151,4 @@ def correction(
 # if __name__ == "__main__":
 #     print("=== Test Razi GAPGPT ===")
 
-# response = ImageQualityAnalyzer(
-#     user_msg="analyse this provided image.",
-#     CENTER_Key=CENTER_KEY_MEHR ,
-#     image_path=r"D:\project\PacsClient\ChatGPT Image Sep 2, 2025, 02_18_34 PM.png"
-# )
-
-# print(response["content"])
-
-# result1 = reporter(
-#     user_msg="ام آر آی مغز از بیمار 263787، کانون‌های کوچک هایپر سیگنال در ماده سفید",
-#     modality="MRI",
-#     CENTER_Key=CENTER_KEY_RAZI,
-# )
-# print(result1)
-
-# print(chat("Hello, how are you?", CENTER_Key=CENTER_KEY_RAZI))
-
-# result2 = reporter(
-#     user_msg="CT اسکن قفسه سینه بدون تزریق، ناحیه رتیکولر و گراند گلس در لوب فوقانی راست",
-#     modality="CT",
-#     CENTER_Key=CENTER_KEY_Mehr,
-#     model="gpt-4.1-mini"
-# )
-
-# result3 = reporter(
-#     user_msg="سونوگرافی شکم: کبد بزرگ‌شده با اکوی افزایش‌یافته",
-#     modality="Sonography",
-#     CENTER_Key=CENTER_KEY_Razi,
-#     model="gpt-5.1"
-# )
-
-# result4 = reporter(
-#     user_msg="ماموگرافی: کلسیفیکیشن‌های مشکوک در ربع فوقانی خارجی پستان چپ",
-#     modality="Mammography",
-#     CENTER_Key=CENTER_KEY_Mehr,
-#     model="gpt-5.1-mini"
-# )
-
+# response = Image

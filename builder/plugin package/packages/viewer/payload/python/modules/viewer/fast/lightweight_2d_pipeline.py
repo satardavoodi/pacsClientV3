@@ -27,7 +27,7 @@ import time
 import warnings
 from collections import OrderedDict
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as _dc_replace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -60,6 +60,7 @@ from modules.viewer.fast.dicom_header_scan import (
     resolve_measurement_pixel_spacing,
     scan_series_header_entries,
 )
+from modules.viewer.fast.cine_metadata import playback_fps as _cine_playback_fps
 from modules.viewer.fast.ui_throttle import (
     cap_prefetch_radius,
     is_heavy_download_active,
@@ -100,6 +101,17 @@ _FAST_DICOM_EXTRAS_ENABLED = str(
     os.environ.get("AIPACS_FAST_DICOM_EXTRAS", "1")
 ).strip().lower() not in ("0", "false", "no", "off")
 _EXTRAS_CACHE_MAX = 1024
+
+# Multi-frame / cine / enhanced support (2026-07-01): a single DICOM file with
+# NumberOfFrames > 1 (e.g. ultrasound cine, XA, enhanced CT/MR) is expanded into
+# N scrollable slices, and each slice decodes its OWN frame (not just frame 0).
+# Default ON; `=0` restores the legacy first-frame-only behaviour. This only ever
+# activates for files that actually carry NumberOfFrames > 1 — every ordinary
+# single-frame series is byte-identical (the expansion and the frame-select branch
+# are never reached), so it is a no-op for existing data.
+_FAST_MULTIFRAME = str(
+    os.environ.get("AIPACS_FAST_MULTIFRAME", "1")
+).strip().lower() not in ("0", "false", "no", "off")
 
 
 def _dataset_has_dicom_extras(ds) -> bool:
@@ -328,6 +340,15 @@ class SliceMeta:
     instance_number: Optional[int]
     is_rgb: bool = False
     voi_lut_function: Optional[str] = None
+    # Multi-frame support: for an ordinary single-frame instance frame_index is
+    # None and num_frames is 1 (byte-identical legacy). For a multi-frame file the
+    # pipeline creates num_frames SliceMeta entries sharing the same `path`, each
+    # with a distinct frame_index (0..num_frames-1) so it decodes its own frame.
+    frame_index: Optional[int] = None
+    num_frames: int = 1
+    # Resolved cine playback rate (fps) for a multi-frame file, else None. Derived
+    # from RecommendedDisplayFrameRate / CineRate / FrameTime during the header scan.
+    frame_rate: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -762,6 +783,25 @@ class Lightweight2DPipeline(QObject):
     def slice_count(self) -> int:
         return len(self._slices)
 
+    def is_cine_series(self) -> bool:
+        """True when the open series is a multi-frame / cine loop (its slices came
+        from expanding a NumberOfFrames>1 file). False for ordinary series."""
+        try:
+            return any(getattr(s, "frame_index", None) is not None for s in self._slices)
+        except Exception:
+            return False
+
+    def cine_frame_rate(self) -> Optional[float]:
+        """Resolved playback fps for a cine series (from RecommendedDisplayFrameRate
+        / CineRate / FrameTime), or None when not a cine series / no timing."""
+        try:
+            for s in self._slices:
+                if getattr(s, "frame_index", None) is not None:
+                    return getattr(s, "frame_rate", None)
+        except Exception:
+            pass
+        return None
+
     @property
     def current_index(self) -> int:
         return self._current_index
@@ -801,6 +841,11 @@ class Lightweight2DPipeline(QObject):
             self._slices = self._from_metadata_instances(metadata["instances"])
         else:
             self._slices = self._scan_series_headers(series_path)
+
+        # Multi-frame / cine / enhanced: expand any NumberOfFrames>1 file into one
+        # SliceMeta per frame so the viewport scrolls all N frames (not just frame 0).
+        # No-op for ordinary single-frame series (the common case).
+        self._slices = self._expand_multiframe_slices(self._slices)
 
         self._hydrate_series_display_metadata(metadata)
 
@@ -2437,7 +2482,7 @@ class Lightweight2DPipeline(QObject):
         study_uid = self._series_path or ""
         t_lookup = time.perf_counter()
         cached = disk_cache.get(
-            sop_instance_uid=_disk_cache_decode_key(sm.path),
+            sop_instance_uid=self._decode_cache_key(sm),
             study_uid=study_uid,
             expected_shape=(sm.rows, sm.cols),
         )
@@ -2485,17 +2530,23 @@ class Lightweight2DPipeline(QObject):
             else:
                 raise
 
+        # Multi-frame frame selection: for a multi-frame file this SliceMeta's
+        # frame_index picks its OWN frame; single-frame slices (frame_index None)
+        # keep the legacy frame-0 behaviour. Clamp defensively.
+        _fi = getattr(sm, "frame_index", None)
+        _frame = int(_fi) if (_FAST_MULTIFRAME and _fi is not None) else 0
+
         if arr.ndim == 3 and sm.samples_per_pixel < 3:
-            arr = arr[0]  # multi-frame fallback
+            arr = arr[_frame] if 0 <= _frame < arr.shape[0] else arr[0]  # multi-frame: this frame
 
         if sm.samples_per_pixel >= 3:
             if arr.ndim == 4:
-                arr = arr[0]
+                arr = arr[_frame] if 0 <= _frame < arr.shape[0] else arr[0]
             if arr.dtype != np.uint8:
                 arr = np.clip(arr, 0, 255).astype(np.uint8)
             result = np.ascontiguousarray(arr)
             disk_cache.put(
-                _disk_cache_decode_key(sm.path),
+                self._decode_cache_key(sm),
                 study_uid,
                 result,
                 defer=bool(getattr(self, '_protected_drag_active', False)),
@@ -2523,7 +2574,7 @@ class Lightweight2DPipeline(QObject):
                     arr = arr.astype(np.int16, copy=False)
                 result = np.ascontiguousarray(arr)
                 disk_cache.put(
-                    _disk_cache_decode_key(sm.path),
+                    self._decode_cache_key(sm),
                     study_uid,
                     result,
                     defer=bool(getattr(self, '_protected_drag_active', False)),
@@ -2536,7 +2587,7 @@ class Lightweight2DPipeline(QObject):
             arr = arr + float(intercept)
             result = np.ascontiguousarray(arr)
             disk_cache.put(
-                _disk_cache_decode_key(sm.path),
+                self._decode_cache_key(sm),
                 study_uid,
                 result,
                 defer=bool(getattr(self, '_protected_drag_active', False)),
@@ -2594,7 +2645,7 @@ class Lightweight2DPipeline(QObject):
 
         result = np.ascontiguousarray(arr)
         disk_cache.put(
-            _disk_cache_decode_key(sm.path),
+            self._decode_cache_key(sm),
             study_uid,
             result,
             defer=bool(getattr(self, '_protected_drag_active', False)),
@@ -3428,7 +3479,7 @@ class Lightweight2DPipeline(QObject):
                 disk_cache = get_disk_pixel_cache()
                 study_uid = self._series_path or ""
                 arr = disk_cache.get(
-                    sop_instance_uid=_disk_cache_decode_key(sm.path),
+                    sop_instance_uid=self._decode_cache_key(sm),
                     study_uid=study_uid,
                     expected_shape=(sm.rows, sm.cols),
                 )
@@ -3447,7 +3498,7 @@ class Lightweight2DPipeline(QObject):
                 if arr is not None:
                     # Save to disk cache (B3.12)
                     disk_cache.put(
-                        _disk_cache_decode_key(sm.path),
+                        self._decode_cache_key(sm),
                         study_uid,
                         arr,
                         defer=bool(getattr(self, '_protected_drag_active', False)),
@@ -3725,6 +3776,13 @@ class Lightweight2DPipeline(QObject):
             intercept=entry.intercept,
             instance_number=entry.instance_number,
             is_rgb=entry.is_rgb,
+            num_frames=int(getattr(entry, "num_frames", 1) or 1),
+            frame_rate=_cine_playback_fps(
+                getattr(entry, "num_frames", 1),
+                recommended_display_frame_rate=getattr(entry, "recommended_display_frame_rate", None),
+                cine_rate=getattr(entry, "cine_rate", None),
+                frame_time_ms=getattr(entry, "frame_time_ms", None),
+            ),
         )
 
     def _get_voi_lut_function(self, sm: SliceMeta) -> Optional[str]:
@@ -3783,6 +3841,68 @@ class Lightweight2DPipeline(QObject):
             self._slice_trace_header_cache[key] = result
         return result
 
+    def _probe_number_of_frames(self, path: str) -> int:
+        """Read DICOM (0028,0008) NumberOfFrames from a header. Returns ≥ 1
+        (1 = single-frame). Used only on the metadata path for single-file series
+        (the classic multi-frame candidate) so the ordinary many-file series pays
+        no extra header read. Never raises."""
+        try:
+            ds = pydicom.dcmread(str(path), stop_before_pixels=True, force=True)
+            n = int(getattr(ds, "NumberOfFrames", 1) or 1)
+            return n if n > 1 else 1
+        except Exception:
+            return 1
+
+    def _expand_multiframe_slices(self, slices: List[SliceMeta]) -> List[SliceMeta]:
+        """Expand every multi-frame file (NumberOfFrames > 1) into one SliceMeta
+        per frame (frame_index 0..N-1, same path), so the viewport scrolls all N
+        frames instead of showing frame 0 only.
+
+        Byte-identical for ordinary single-frame series: a SliceMeta with
+        num_frames <= 1 passes through unchanged (frame_index stays None). The flag
+        `AIPACS_FAST_MULTIFRAME=0` disables expansion entirely (legacy behaviour).
+        `num_frames` is captured for free during the header scan; on the metadata
+        path (num_frames unknown) a single-file series is probed once."""
+        if not _FAST_MULTIFRAME or not slices:
+            return slices
+        # Metadata path may not know NumberOfFrames. Probe ONLY the classic
+        # single-file case — a many-file series is single-frame per file, so it
+        # never needs (and never pays for) a probe.
+        if len(slices) == 1 and int(getattr(slices[0], "num_frames", 1) or 1) <= 1 \
+                and getattr(slices[0], "frame_index", None) is None:
+            _n0 = self._probe_number_of_frames(slices[0].path)
+            if _n0 > 1:
+                slices[0].num_frames = _n0
+        if not any(int(getattr(sm, "num_frames", 1) or 1) > 1 for sm in slices):
+            return slices  # nothing multi-frame → unchanged
+        out: List[SliceMeta] = []
+        for sm in slices:
+            n = int(getattr(sm, "num_frames", 1) or 1)
+            if n > 1 and getattr(sm, "frame_index", None) is None:
+                for k in range(n):
+                    out.append(_dc_replace(sm, frame_index=k, num_frames=n))
+            else:
+                out.append(sm)
+        try:
+            logger.info(
+                "lw2d-pipeline multiframe-expand files=%d -> slices=%d",
+                len(slices), len(out),
+            )
+        except Exception:
+            pass
+        return out
+
+    def _decode_cache_key(self, sm: SliceMeta) -> str:
+        """Disk-cache key for a decoded slice. Byte-identical to the legacy
+        path-only key for single-frame slices; a multi-frame frame appends its
+        frame index so the N frames of one file never collide in the L2 cache."""
+        _p = sm.path
+        base = _disk_cache_decode_key(_p)
+        fi = getattr(sm, "frame_index", None)
+        if _FAST_MULTIFRAME and fi is not None:
+            return f"{base}::f{int(fi)}"
+        return base
+
     def _sort_slices(self, slices: List[SliceMeta]) -> List[SliceMeta]:
         """Sort slices by DICOM InstanceNumber (acquisition order).
 
@@ -3790,10 +3910,17 @@ class Lightweight2DPipeline(QObject):
         lines in v1.09.5-v1.09.7, reverses CT head-to-feet order, and
         interleaves diffusion b-value groups.  The rest of the pipeline
         (file naming, DB queries, VTK backend) all use InstanceNumber order.
+
+        Multi-frame: frames of one file share instance_number and path, so
+        frame_index is the tertiary key that keeps them in frame order.
         """
         if len(slices) <= 1:
             return slices
-        return sorted(slices, key=lambda s: (s.instance_number if s.instance_number is not None else 10**9, s.path))
+        return sorted(slices, key=lambda s: (
+            s.instance_number if s.instance_number is not None else 10**9,
+            s.path,
+            s.frame_index if getattr(s, "frame_index", None) is not None else -1,
+        ))
 
     def _attach_spacing_between_slices(self) -> None:
         if len(self._slices) <= 1:
