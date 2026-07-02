@@ -14,6 +14,49 @@ import requests
 
 _logger = logging.getLogger(__name__)
 
+# ── Stage-1 lifecycle SHADOW observer (telemetry only; default OFF via env
+#    AIPACS_LIFECYCLE_THUMBS). These calls NEVER raise and NEVER change behavior;
+#    they run the canonical PatientLoadModel alongside the legacy path so its
+#    correctness can be proven on the source build before any cutover. See
+#    docs/reports/PATIENT_LOADING_PIPELINE_RELIABILITY_REVIEW_2026-07-02.md §11.
+try:
+    from PacsClient.utils.lifecycle_shadow import get_lifecycle_shadow as _get_lifecycle_shadow
+except Exception:  # pragma: no cover - telemetry import must never break this module
+    def _get_lifecycle_shadow():
+        return None
+
+
+def _lc_shadow_note(method, *args, **kwargs):
+    """Fire one shadow-observer method, swallowing everything (telemetry only)."""
+    try:
+        sh = _get_lifecycle_shadow()
+        if sh is not None:
+            getattr(sh, method)(*args, **kwargs)
+    except Exception:
+        pass
+
+
+# ── Seam A CUTOVER (behaviour change; default OFF via AIPACS_LIFECYCLE_THUMBS_ACTIVE).
+#    Legacy discards EVERY token-stale right-panel thumbnail result — including a
+#    result for a study the user clicked BACK to (A->B->A), the Problem #1 loss.
+#    When active, a token-stale result is RENDERED iff it is still the active
+#    selection; cross-patient safety is unchanged (the _is_active_patient_selection
+#    guard before display is untouched, and the result is re-checked there). Default
+#    OFF = byte-identical legacy. NEEDS LIVE SOURCE-BUILD VERIFY before flipping on.
+#    See docs/reports/PATIENT_LOADING_PIPELINE_RELIABILITY_REVIEW_2026-07-02.md §16.
+_LIFECYCLE_THUMBS_ACTIVE = os.getenv(
+    "AIPACS_LIFECYCLE_THUMBS_ACTIVE", "1"
+).strip().lower() in ("1", "true", "yes", "on")
+
+try:
+    from PacsClient.utils.patient_load_lifecycle import (
+        resolve_stale_thumbnail_action as _resolve_stale_thumbnail_action,
+    )
+except Exception:  # pragma: no cover - a failed import must fall back to legacy discard
+    def _resolve_stale_thumbnail_action(token_matches, is_active_selection, cutover_enabled):
+        return "render" if token_matches else "discard"
+
+
 # ── Patient image/series count = whole-patient total, applied ONCE (2026-06-17) ──
 # The server's per-patient `count_of_instances` / `count_of_series` are WHOLE-PATIENT
 # aggregates (see the documented `count_of_series`-is-patient-total caveat). They must
@@ -1438,6 +1481,9 @@ class _HPSearchMixin:
             db_cache_miss = False
             if hasattr(self, '_log_open_trace'):
                 self._log_open_trace(study_uid, 'right_panel_begin', patient_id=patient_id)
+            # SHADOW: record the selection in the canonical lifecycle model (no-op
+            # unless AIPACS_LIFECYCLE_THUMBS is on). The right panel is a preview.
+            _lc_shadow_note('note_selection', patient_id, study_uid, open_intent=False)
 
             if self.source_of_patient_load == SourceOfPatientLoad.OFFLINE_CLOUD:
                 server = self.data_access_panel_widget.get_server_selected()
@@ -1528,6 +1574,10 @@ class _HPSearchMixin:
                 if hasattr(self, '_log_open_trace'):
                     self._log_open_trace(study_uid, 'ThumbnailCacheHit', thumbnail_count=len(local_payload.get('thumbnails', [])))
                     self._log_open_trace(study_uid, 'right_panel_cache_hit', thumbnail_count=len(local_payload.get('thumbnails', [])))
+                # SHADOW: the sidebar rendered from the local cache — the model
+                # reaches THUMBS_READY for this study (telemetry only).
+                _lc_shadow_note('note_series_set', study_uid, local_payload.get('thumbnails', []))
+                _lc_shadow_note('note_thumbs_rendered', study_uid)
                 return
             if hasattr(self, '_log_open_trace'):
                 try:
@@ -1727,14 +1777,37 @@ class _HPSearchMixin:
                     has_data=bool(thumbnails),
                 )
 
-                if int(getattr(self, "_thumbnail_fetch_token", 0)) != int(request_token) or str(getattr(self, "_thumbnail_fetch_study_uid", "")) != str(study_uid):
-                    emit_ui_event(
-                        _logger,
-                        "THUMBNAIL_FETCH_STALE_DISCARDED",
-                        study_uid=str(study_uid),
-                        token=int(request_token),
+                _token_matches = (
+                    int(getattr(self, "_thumbnail_fetch_token", 0)) == int(request_token)
+                    and str(getattr(self, "_thumbnail_fetch_study_uid", "")) == str(study_uid)
+                )
+                if not _token_matches:
+                    _still_active = bool(
+                        hasattr(self, '_is_active_patient_selection')
+                        and self._is_active_patient_selection(patient_id, study_uid)
                     )
-                    return
+                    if _resolve_stale_thumbnail_action(
+                        _token_matches, _still_active, _LIFECYCLE_THUMBS_ACTIVE
+                    ) == "discard":
+                        emit_ui_event(
+                            _logger,
+                            "THUMBNAIL_FETCH_STALE_DISCARDED",
+                            study_uid=str(study_uid),
+                            token=int(request_token),
+                        )
+                        # SHADOW: legacy discards this result. Record that the model
+                        # still holds the study PARKED (the Problem #1 evidence).
+                        _lc_shadow_note('note_discard', study_uid, 'stale_token')
+                        return
+                    # CUTOVER (AIPACS_LIFECYCLE_THUMBS_ACTIVE=1): this token-stale
+                    # result is still for the ACTIVE selection — render it instead of
+                    # dropping (the A->B->A fix). The _is_active_patient_selection
+                    # guard immediately before display_thumbnails is unchanged, so
+                    # cross-patient safety is preserved.
+                    _logger.info(
+                        "[LIFECYCLE-CUTOVER] rendered token-stale ACTIVE thumbnail result "
+                        "study=%s (legacy would_discard=1)", study_uid,
+                    )
 
                 if thumbnails:
                     retry_block_until.pop(study_uid_str, None)
@@ -1832,6 +1905,9 @@ class _HPSearchMixin:
 
             if thumbnails:
                 if hasattr(self, '_is_active_patient_selection') and not self._is_active_patient_selection(patient_id, study_uid):
+                    # SHADOW: legacy abandons a COMPLETED fetch because the patient
+                    # is no longer active. Record that the model retains it parked.
+                    _lc_shadow_note('note_discard', study_uid, 'inactive_patient')
                     return
                 if hasattr(self, '_log_open_trace'):
                     t_items = thumbnails.get('thumbnails', []) if isinstance(thumbnails, dict) else []
@@ -1855,6 +1931,10 @@ class _HPSearchMixin:
                 self._right_panel_render_study_uid = study_uid_str
                 if hasattr(self, '_log_open_trace'):
                     self._log_open_trace(study_uid, 'right_panel_display_done', thumbnail_count=len(thumbnails.get('thumbnails', [])))
+                # SHADOW: sidebar rendered from the server fetch — model reaches
+                # THUMBS_READY for this study (telemetry only).
+                _lc_shadow_note('note_series_set', study_uid, thumbnails.get('thumbnails', []))
+                _lc_shadow_note('note_thumbs_rendered', study_uid)
             else:
                 # All socket fetches and fallbacks failed — reset the stuck "Loading..."
                 # label so the sidebar does not freeze in a loading state when the

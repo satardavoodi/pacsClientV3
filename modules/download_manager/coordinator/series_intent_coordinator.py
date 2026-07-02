@@ -640,6 +640,18 @@ class SeriesIntentCoordinator:
                         study_uid,
                         max_retries,
                     )
+                    # SHADOW (default OFF via AIPACS_LIFECYCLE_THUMBS): record this
+                    # download give-up as a FAILED terminal in the canonical lifecycle
+                    # model — the state the legacy path lacks (a poor-link retry
+                    # exhaustion, e.g. the Mehr server, otherwise stalls silently).
+                    # Telemetry only; never raises. See RELIABILITY review §13.1.
+                    try:
+                        from PacsClient.utils.lifecycle_shadow import get_lifecycle_shadow as _get_lc_shadow
+                        _lc_shadow = _get_lc_shadow()
+                        if _lc_shadow is not None:
+                            _lc_shadow.note_download_failed(study_uid, None, "retry_exhausted")
+                    except Exception:
+                        pass
                 # F3.5.1 — recovery chain expired (always emit; branch=recovery).
                 self._emit_intent_priority(
                     tag="exhaust",

@@ -25,6 +25,29 @@ from PacsClient.utils.config import SOURCE_PATH
 from PacsClient.utils.series_identity import resolve_series_identifier as _resolve_series_identifier
 from modules.download_manager.ui.main_widget import DownloadManagerWidget
 
+# ── Stage-1 lifecycle SHADOW observer (Seam B; telemetry only, default OFF via
+#    AIPACS_LIFECYCLE_THUMBS). Feeds DM progress/completion into the canonical
+#    PatientLoadModel keyed by each series' OWN study_uid so a previous-exam
+#    (secondary-study) series is first-class, and logs where the legacy grow lane
+#    drops it (sn is None). NEVER raises, NEVER changes behavior. See
+#    docs/reports/PATIENT_LOADING_PIPELINE_RELIABILITY_REVIEW_2026-07-02.md §11-§13.
+try:
+    from PacsClient.utils.lifecycle_shadow import get_lifecycle_shadow as _get_lifecycle_shadow
+except Exception:  # pragma: no cover - telemetry import must never break this module
+    def _get_lifecycle_shadow():
+        return None
+
+
+def _lc_shadow_note(method, *args, **kwargs):
+    """Fire one shadow-observer method, swallowing everything (telemetry only)."""
+    try:
+        sh = _get_lifecycle_shadow()
+        if sh is not None:
+            getattr(sh, method)(*args, **kwargs)
+    except Exception:
+        pass
+
+
 # UNIFIED multi-study DM→viewer routing (S3b cutover, 2026-06-27). The DM→widget bridge is bound
 # to ONE primary study_uid; a multi-study patient's SECONDARY-study series (a non-opened study or
 # a Previous Exam under a different Study UID) reports DM events under that other uid + the bare
@@ -567,6 +590,11 @@ class HomeDownloadService:
                 _feed_thumb_bar(uid, series_uid, current, total)
                 # ONE display-key resolution (was: sibling-branch + primary-branch + uid-bind).
                 sn = _grow_lane_display_key(uid, series_uid)
+                # SHADOW (Seam B): feed the model keyed by the series' OWN study_uid.
+                # When sn is None the legacy grow lane DROPS this (Problem #2); the
+                # model still records it and would grow the viewport. Telemetry only.
+                _lc_shadow_note('note_download_progress', study_uid, uid, series_uid,
+                                current, total, dropped=(sn is None))
                 if sn is None:
                     return  # background secondary-study series — no viewport here shows it
                 allowed, reason = _progress_normalizer.should_emit_progress(
@@ -631,6 +659,10 @@ class HomeDownloadService:
                 # resolved number; a SECONDARY-study series a viewport here shows → its display key;
                 # a background sibling → None (skip the grow — its thumbnail already updated above).
                 sn = _grow_lane_display_key(uid, series_uid)
+                # SHADOW (Seam B): record completion by the series' OWN study_uid;
+                # log when the legacy grow lane drops a secondary-study completion.
+                _lc_shadow_note('note_download_complete', study_uid, uid, series_uid,
+                                dropped=(sn is None))
                 if sn is None:
                     return
                 with _g6_time_slot("home_download.on_series_completed", series=str(sn)):

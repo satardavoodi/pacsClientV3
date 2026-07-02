@@ -1,9 +1,29 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.2 (2026-07-01)
-**Previous Stable:** v3.4.1 (2026-06-29)
-**Release Date:** 2026-07-01
+**Current Stable Version:** v3.4.3 (2026-07-02)
+**Previous Stable:** v3.4.2 (2026-07-01)
+**Release Date:** 2026-07-02
 **Branch:** beta-version
+
+---
+
+## v3.4.3 (2026-07-02) - Patch release: patient-loading reliability (deterministic load lifecycle)
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Focus: patient-loading reliability — a deterministic patient/study load
+lifecycle foundation (done = disk convergence, identity over liveness) with a
+shadow-diagnostic mode, plus download series-intent coordination and thumbnail/
+search refinements.
+
+### Included
+
+- Patient load lifecycle: deterministic study-load model foundation (identity-keyed, disk-convergence completion) with an additive shadow-diagnostic mode (default off)
+- Download manager: series-intent coordinator refinements for correct viewing-series prioritization
+- Home: thumbnail/status and search refinements (home_download_service, _hp_search)
+- Case of the Day: database/widget refinements
+- Canonical version markers advanced to v3.4.3; full local state published to all remotes
 
 ---
 

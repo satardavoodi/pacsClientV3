@@ -18,6 +18,29 @@ from PacsClient.utils.runtime_correlation import (
 )
 import logging
 
+# ── Stage-1 lifecycle SHADOW observer (Seam C; telemetry only, default OFF via
+#    AIPACS_LIFECYCLE_THUMBS). Records each firing of the GUI-thread
+#    _dl_watchdog_tick backstop (disk-readiness resume / displayed-to-disk grow)
+#    — the exact work the deterministic off-GUI-thread convergence sweep would own.
+#    NEVER raises, NEVER changes behavior. See
+#    docs/reports/PATIENT_LOADING_PIPELINE_RELIABILITY_REVIEW_2026-07-02.md §11,§15.
+try:
+    from PacsClient.utils.lifecycle_shadow import get_lifecycle_shadow as _get_lifecycle_shadow
+except Exception:  # pragma: no cover - telemetry import must never break this module
+    def _get_lifecycle_shadow():
+        return None
+
+
+def _lc_shadow_note(method, *args, **kwargs):
+    """Fire one shadow-observer method, swallowing everything (telemetry only)."""
+    try:
+        sh = _get_lifecycle_shadow()
+        if sh is not None:
+            getattr(sh, method)(*args, **kwargs)
+    except Exception:
+        pass
+
+
 try:
     from PacsClient.utils.structured_logging import emit_viewer_event as _emit_viewer_event_raw
 
@@ -1427,6 +1450,9 @@ class _VCProgressiveMixin:
                     try:
                         if self._maybe_grow_displayed_to_disk(vtk_w):
                             any_behind = True
+                            # SHADOW: the GUI-thread backstop just grew a displayed
+                            # series to disk — work the convergence sweep would own.
+                            _lc_shadow_note('note_watchdog_activity', 'grow')
                     except Exception:
                         pass
                     continue  # progressive viewers are driven by progress signals
@@ -1439,6 +1465,9 @@ class _VCProgressiveMixin:
                 # viewport is awaiting, always try to resume a series whose files are complete.
                 try:
                     if self._maybe_resume_awaiting_from_disk(vtk_w, sn):
+                        # SHADOW: the GUI-thread backstop just resumed an awaiting
+                        # series from disk — work the convergence sweep would own.
+                        _lc_shadow_note('note_watchdog_activity', 'resume', sn)
                         continue
                 except Exception:
                     pass

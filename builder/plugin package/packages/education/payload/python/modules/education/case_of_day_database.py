@@ -19,6 +19,26 @@ PACKAGE_METADATA_FILE = "metadata.json"
 PACKAGE_RECEPTION_FILE = "reception.json"
 PACKAGE_ATTACHMENTS_SUBDIR = "attachments"
 
+# Educational-media subfolders (added 2026-07-01 for the Case-of-Day Media
+# Capture feature — screenshots / viewport recordings / the future teaching
+# "card" export / free-text notes). Purely additive: `attachments/` above is
+# untouched and keeps working for whatever already writes there. Every case
+# package can therefore look like::
+#
+#     case_<stamp>/
+#         dicom/            (PACKAGE_DICOM_SUBDIR — unchanged)
+#         attachments/      (PACKAGE_ATTACHMENTS_SUBDIR — unchanged, legacy)
+#         screenshots/      (PACKAGE_SCREENSHOTS_SUBDIR — new)
+#         videos/           (PACKAGE_VIDEOS_SUBDIR — new)
+#         card/             (PACKAGE_CARD_SUBDIR — new, reserved for future
+#                            AI-generated teaching-card / social export)
+#         notes/            (PACKAGE_NOTES_SUBDIR — new, reserved for a
+#                            plain-text notes export alongside metadata.json)
+PACKAGE_SCREENSHOTS_SUBDIR = "screenshots"
+PACKAGE_VIDEOS_SUBDIR = "videos"
+PACKAGE_CARD_SUBDIR = "card"
+PACKAGE_NOTES_SUBDIR = "notes"
+
 
 # ---------------------------------------------------------------------------
 # Global signal hub. Keeps the rest of the app decoupled from the toolbar:
@@ -582,6 +602,37 @@ def attach_file_to_case_package(dicom_folder_path: str, file_path: str) -> Optio
         return str(dest)
     except Exception:
         return None
+
+
+def case_media_dir(dicom_folder_path: str, kind: str, *, create: bool = True) -> Optional[Path]:
+    """Return the case package's media subfolder for *kind* (one of
+    ``"screenshots"``, ``"videos"``, ``"card"``, ``"notes"``, or the legacy
+    ``"attachments"``), creating it on demand.
+
+    Returns ``None`` for a legacy case (no package dir, see
+    ``resolve_case_package_dir``) — callers should treat that as "media
+    capture isn't available for this case" rather than guessing a path.
+    """
+    package_dir = resolve_case_package_dir(dicom_folder_path)
+    if package_dir is None:
+        return None
+    subdir_by_kind = {
+        "screenshots": PACKAGE_SCREENSHOTS_SUBDIR,
+        "videos": PACKAGE_VIDEOS_SUBDIR,
+        "card": PACKAGE_CARD_SUBDIR,
+        "notes": PACKAGE_NOTES_SUBDIR,
+        "attachments": PACKAGE_ATTACHMENTS_SUBDIR,
+    }
+    sub = subdir_by_kind.get(str(kind or "").strip().lower())
+    if not sub:
+        return None
+    target = package_dir / sub
+    if create:
+        try:
+            target.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            return None
+    return target
 
 
 def load_reception_payload_for_patient(patient_id: str) -> Optional[Dict[str, Any]]:
