@@ -1218,3 +1218,67 @@ carry `[LIFECYCLE] …->thumbs_ready`, `[LIFECYCLE-CUTOVER] rendered token-stale
 ACTIVE …` (the fix firing), and `[LIFECYCLE-SHADOW] {legacy_discard | grow_lane_drop
 | download_failed | watchdog_resume/grow} …` — send that back and it confirms both
 the fix and the remaining-work evidence in one pass.
+
+---
+
+## 18. Seam B cutover — event-driven watchdog keep-alive (2026-07-03, default ON)
+
+**Motivated by live evidence.** On "pc user 2 sanam" (build carrying the changes,
+third poor server `81.16.117.196`, 471 `[POOR_CONN]`), the shadow captured the
+previous-exam grow failure in bulk: **2,831 `grow_lane_drop`**, of which **1,619
+had `model_action=load_or_grow`** — the DM reported progress for a secondary
+(previous-exam) series that the primary-bound bridge dropped (`sn is None`) and
+the model would have grown. The GUI-thread watchdog backstop rescued only **203**.
+That is Problem #2, quantified.
+
+**The fix (safe subset of Seam C).** Rather than re-key the bridge (which risks
+routing a series to the wrong viewport), the cutover makes the *existing,
+proven* backstop event-driven: on a dropped secondary event, keep the viewer's
+disk-ready grow/resume watchdog **alive** so it grows the series promptly instead
+of self-stopping and leaving it stuck until a re-drag.
+
+- File: `home_download_service.py` — `_lc_seam_b_nudge_backstop(widget_ref())` at
+  both `on_series_progress` and `on_series_completed` drop paths.
+- It calls only the widget's `_ensure_dl_watchdog()`; the actual grow is done by
+  the unchanged `_maybe_grow_displayed_to_disk` / `_maybe_resume_awaiting_from_disk`
+  (canonical-identity correct). **It never routes, renders, or grows directly** —
+  so there is no wrong-viewport / cross-study risk (guard-tested).
+- **Cannot raise the watchdog tick rate** — the interval is fixed; `ensure()` on a
+  running timer is a no-op. It only prevents premature self-stop, so it adds no
+  measurable GUI-thread load (important on the stall-prone PC).
+- Runs in the same GUI-thread context as the existing bridge handlers (which
+  already touch widgets), so starting the QTimer is thread-safe. No-op if the
+  widget doesn't expose the watchdog.
+
+**Default ON** (`AIPACS_LIFECYCLE_GROW_ACTIVE`, kill switch `=0`) so the next build
+tests it on the other PC without env vars.
+
+**Verification:** `py_compile` OK; imports clean offscreen (default True);
+`_lc_seam_b_nudge_backstop(None)` is a safe no-op; source-wiring guard
+(`test_seam_b_cutover_wiring.py`, 4 tests incl. a "does not route/render directly"
+assertion) green; `tests/code/ui_services` + `test_grow_displayed_to_disk` =
+**322 passed / 1 skipped** with defaults on (same 3 pre-existing unrelated
+failures). **Not yet live-verified** — the other-PC test is that validation.
+
+### 18.1 Updated flag registry (all lifecycle work)
+
+| Flag | Default | Kill switch | Effect |
+|---|---|---|---|
+| `AIPACS_LIFECYCLE_THUMBS` | on | `=0` | shadow observer (5 diagnostic markers) |
+| `AIPACS_LIFECYCLE_THUMBS_ACTIVE` | on | `=0` | Seam A cutover — render token-stale *active* thumbnail results |
+| `AIPACS_LIFECYCLE_GROW_ACTIVE` | on | `=0` | Seam B cutover — keep the grow watchdog alive on dropped secondary events |
+
+Set all three to `0` for byte-identical pre-refactor legacy.
+
+**What this build now fixes vs. still only diagnoses.** Fixes: Problem #1 (A→B→A
+thumbnail discard, Seam A) **and** Problem #2's stuck previous-exam grow (Seam B
+keep-alive). Still diagnostic-only: the poor-link give-ups (`download_failed`) and
+the deeper Seam-C off-thread sweep + reaching `displayed_complete` (needs feeding
+the viewport's decoded count — deferred, still a spec). Stage 2 (moving decode /
+DM-rebuild off the GUI thread — the stall amplifier) also remains a spec.
+
+**Validate on the other PC:** in the next build's `app.log`, compare
+`grow_lane_drop` (should still appear — the bridge still drops) against a **rising
+`watchdog_grow` count** and, crucially, previous-exam series that **finish growing
+without a second drag**. If a viewport ever shows the wrong study, set
+`AIPACS_LIFECYCLE_GROW_ACTIVE=0` and send the log.

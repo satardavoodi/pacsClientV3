@@ -139,6 +139,64 @@ def clean(output_dir: Path) -> None:
     print("âœ… Cleanup completed")
 
 
+# â”€â”€â”€ Availability helpers (tolerate missing optional deps) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+def _toplevel_importable(name: str) -> bool:
+    """True if the top-level package of `name` can be located in this venv.
+
+    Mirrors the PyInstaller spec's try/except tolerance: an optional dependency
+    that isn't installed (e.g. Custom_Widgets) must be SKIPPED, not turned into
+    a fatal Nuitka '--include-package ... failed to locate' error.
+    """
+    top = name.split(".")[0]
+    try:
+        return importlib.util.find_spec(top) is not None
+    except (ImportError, ValueError, ModuleNotFoundError, AttributeError):
+        return False
+
+
+def _module_importable(name: str) -> bool:
+    """True if the FULL dotted module path can be located in this venv.
+
+    Used for --include-module entries: Nuitka fatals on a module it cannot
+    locate (e.g. legacy 'numpy.core._methods' on newer numpy where it moved to
+    'numpy._core'), whereas PyInstaller only warns. Dropping the missing ones
+    keeps the equivalent (new-name) entry that IS present.
+    """
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError, ModuleNotFoundError, AttributeError):
+        return False
+    except Exception:
+        # find_spec can raise oddly for half-broken optional deps; treat as absent
+        return False
+
+
+def _distribution_available(dist: str) -> bool:
+    try:
+        import importlib.metadata as _md
+        _md.distribution(dist)
+        return True
+    except Exception:
+        return False
+
+
+def _filter_available(items: list[str], *, kind: str, full_path: bool = False) -> list[str]:
+    """Drop entries that can't be located. full_path=True checks the whole
+    dotted module (for --include-module); otherwise just the top-level package
+    (for --include-package / package-data)."""
+    check = _module_importable if full_path else _toplevel_importable
+    kept, skipped = [], []
+    for item in items:
+        if check(item):
+            kept.append(item)
+        else:
+            skipped.append(item)
+    if skipped:
+        print(f"âš   Skipping {len(skipped)} unavailable {kind}: {', '.join(sorted(set(skipped)))}")
+    return kept
+
+
 # â”€â”€â”€ Command builder â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def build_command(spec: ModuleType) -> list[str]:
@@ -156,6 +214,8 @@ def build_command(spec: ModuleType) -> list[str]:
     nofollow    = getattr(spec, "NOFOLLOW_IMPORTS", [])
     forced      = getattr(spec, "FORCED_IMPORTS", [])
     include_pkg = getattr(spec, "INCLUDE_PACKAGES", [])
+    package_data = getattr(spec, "PACKAGE_DATA", [])
+    dist_meta   = getattr(spec, "DIST_METADATA", [])
     data_dirs   = getattr(spec, "DATA_DIRS", [])
     opt_data    = getattr(spec, "OPTIONAL_DATA", [])
     jobs        = getattr(spec, "JOBS", 0)
@@ -165,7 +225,16 @@ def build_command(spec: ModuleType) -> list[str]:
     report      = getattr(spec, "REPORT_FILE", None)
     extra       = getattr(spec, "EXTRA_FLAGS", [])
     lto         = getattr(spec, "LTO", "auto")
-    
+
+    # Tolerate missing optional dependencies (like the PyInstaller spec does):
+    # drop any include-package / include-module / package-data / metadata entry
+    # whose top-level package (or distribution) isn't installed, instead of
+    # letting Nuitka fatal-out on it.
+    forced       = _filter_available(list(forced), kind="modules", full_path=True)
+    include_pkg  = _filter_available(list(include_pkg), kind="packages")
+    package_data = _filter_available(list(package_data), kind="package-data")
+    dist_meta    = [d for d in dist_meta if _distribution_available(d)]
+
     # Mode
     if onefile:
         cmd.append("--onefile")
@@ -214,6 +283,17 @@ def build_command(spec: ModuleType) -> list[str]:
 
     # Force include PySide6 package data
     cmd.append("--include-package-data=PySide6")
+
+    # Extra package data (qtawesome fonts, Custom_Widgets themes, ...)
+    for pkg in package_data:
+        cmd.append(f"--include-package-data={pkg}")
+
+    # Distribution metadata — REQUIRED for pylibjpeg codec plugin discovery.
+    # Without this, compressed DICOM (JPEG 2000 / JPEG-lossless / RLE) silently
+    # fails to decode in the frozen build. This is the Nuitka equivalent of the
+    # PyInstaller spec's copy_metadata() calls.
+    for dist in dist_meta:
+        cmd.append(f"--include-distribution-metadata={dist}")
 
     # Data directories
     for src, dst in data_dirs:
@@ -398,18 +478,27 @@ Output Directory:  {dist_dir}
 
 def main() -> bool:
     parser = argparse.ArgumentParser(description="Build AIPacs with Nuitka")
-    parser.add_argument("--spec", default="AIPacs_nuitka.spec",
-                        help="Path to the Nuitka spec file (default: AIPacs_nuitka.spec)")
+    parser.add_argument("--spec", default=None,
+                        help="Path to the Nuitka spec file "
+                             "(default: builder nuitka/AIPacs_nuitka.spec.py)")
     parser.add_argument("--clean", action="store_true",
                         help="Clean previous build artifacts before building")
+    parser.add_argument("--onefile", action="store_true",
+                        help="Build a single-file executable (overrides spec)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the Nuitka command without executing it")
     args = parser.parse_args()
 
     print_step("AIPacs â€” Nuitka Build Process")
 
-    # Load spec
-    spec_path = Path(args.spec)
+    # Load spec. Default lives inside the nuitka builder folder. Fall back to a
+    # legacy root-level spec name if someone kept one there.
+    if args.spec:
+        spec_path = Path(args.spec)
+    else:
+        spec_path = PROJECT_ROOT / "builder nuitka" / "AIPacs_nuitka.spec.py"
+        if not spec_path.is_file():
+            spec_path = PROJECT_ROOT / "AIPacs_nuitka.spec"
     if not spec_path.is_absolute():
         spec_path = PROJECT_ROOT / spec_path
     if not spec_path.is_file():
@@ -418,6 +507,11 @@ def main() -> bool:
 
     print(f"  Spec file: {spec_path.name}")
     spec = load_spec(spec_path)
+
+    # CLI override: force single-file mode regardless of spec setting.
+    if args.onefile:
+        spec.ONEFILE = True
+        print("  Mode override: --onefile requested")
 
     # Verify prerequisites
     if not verify_required_files(spec):
@@ -457,29 +551,44 @@ def main() -> bool:
     print_step("Building AIPacs with Nuitka")
     print("This may take a while (10-30 minutes on first build) ...\n")
 
-    # Set LINKFLAGS environment variable for the subprocess
+    # Build environment: pin BLAS thread counts for a stable compile (the
+    # equivalent of the old PyInstaller numpy runtime hook), plus any RUNTIME_ENV
+    # declared in the spec.
     env = os.environ.copy()
-    # linker_flags = getattr(spec, "WINDOWS_LINKER_FLAGS", [])
-    # for flag in linker_flags:
-    #     cmd.extend([f"--windows-linker-flags={flag}"])
+    for _k, _v in getattr(spec, "RUNTIME_ENV", {}).items():
+        env.setdefault(_k, _v)
 
-    proc = subprocess.Popen(
-        cmd,
-        cwd=str(PROJECT_ROOT),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-        universal_newlines=True,
-    )
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        print(line, end="", flush=True)
-    proc.wait()
+    # Tee all Nuitka output to a timestamped log so build failures are
+    # inspectable after the fact.
+    log_dir = PROJECT_ROOT / "builder nuitka" / "output" / "logs"
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f"nuitka_build_{datetime.datetime.now():%Y%m%d_%H%M%S}.log"
+    print(f"  Build log: {log_path}\n")
 
-    if proc.returncode != 0:
-        print(f"\nâ‌Œ Nuitka exited with code {proc.returncode}")
+    returncode = 1
+    with open(log_path, "w", encoding="utf-8", errors="replace") as log_file:
+        log_file.write("COMMAND: " + " ".join(cmd) + "\n\n")
+        log_file.flush()
+        proc = subprocess.Popen(
+            cmd,
+            cwd=str(PROJECT_ROOT),
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True,
+        )
+        assert proc.stdout is not None
+        for line in proc.stdout:
+            print(line, end="", flush=True)
+            log_file.write(line)
+        proc.wait()
+        returncode = proc.returncode
+
+    if returncode != 0:
+        print(f"\nâ‌Œ Nuitka exited with code {returncode}")
+        print(f"   See full build log: {log_path}")
         return False
 
     print("\nâœ… Nuitka compilation finished")

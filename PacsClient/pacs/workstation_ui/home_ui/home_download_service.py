@@ -48,6 +48,43 @@ def _lc_shadow_note(method, *args, **kwargs):
         pass
 
 
+# ── Seam B CUTOVER (behaviour; default OFF via AIPACS_LIFECYCLE_GROW_ACTIVE).
+#    A secondary-study (previous-exam) download event that the primary-bound grow
+#    lane drops (sn is None) — 1619 such drops observed live on one poor-link PC,
+#    rescued only 203 times by the watchdog. Instead of silently returning, KEEP
+#    THE VIEWER'S EXISTING disk-ready grow/resume watchdog ALIVE so it re-checks and
+#    grows the secondary series promptly, rather than self-stopping and leaving it
+#    stuck until a re-drag. This does NOT route, render, or grow directly — the
+#    proven canonical-identity backstop (`_maybe_grow_displayed_to_disk` /
+#    `_maybe_resume_awaiting_from_disk`) does the actual work, so there is no
+#    wrong-viewport / cross-study risk. Runs in the same GUI-thread context as the
+#    existing bridge signal handlers (which already touch widgets), so starting the
+#    QTimer is thread-safe. No-op if the widget doesn't expose the watchdog. Default
+#    DEFAULT ON (2026-07-03) for the other-PC test build — kill switch
+#    AIPACS_LIFECYCLE_GROW_ACTIVE=0. Safe: the nudge cannot raise the watchdog tick
+#    rate (fixed interval; ensure() on a running timer is a no-op) — it only stops
+#    the proven backstop self-stopping while secondary downloads are active, and it
+#    never displays anything. NEEDS LIVE SOURCE-BUILD VERIFY.
+#    See docs/reports/PATIENT_LOADING_PIPELINE_RELIABILITY_REVIEW_2026-07-02.md §18.
+_LIFECYCLE_GROW_ACTIVE = os.getenv(
+    "AIPACS_LIFECYCLE_GROW_ACTIVE", "1"
+).strip().lower() in ("1", "true", "yes", "on")
+
+
+def _lc_seam_b_nudge_backstop(w) -> None:
+    """Keep the viewer's disk-ready grow/resume watchdog alive after a dropped
+    secondary-study download event. Guarded, idempotent, no-op when off/unavailable."""
+    if not _LIFECYCLE_GROW_ACTIVE or w is None:
+        return
+    try:
+        ctrl = w if hasattr(w, "_ensure_dl_watchdog") else getattr(w, "viewer_controller", None)
+        ensure = getattr(ctrl, "_ensure_dl_watchdog", None)
+        if callable(ensure):
+            ensure()
+    except Exception:
+        pass
+
+
 # UNIFIED multi-study DM→viewer routing (S3b cutover, 2026-06-27). The DM→widget bridge is bound
 # to ONE primary study_uid; a multi-study patient's SECONDARY-study series (a non-opened study or
 # a Previous Exam under a different Study UID) reports DM events under that other uid + the bare
@@ -596,6 +633,9 @@ class HomeDownloadService:
                 _lc_shadow_note('note_download_progress', study_uid, uid, series_uid,
                                 current, total, dropped=(sn is None))
                 if sn is None:
+                    # Seam B cutover (default OFF): keep the disk-ready grow watchdog
+                    # alive so this dropped secondary series is grown promptly.
+                    _lc_seam_b_nudge_backstop(widget_ref())
                     return  # background secondary-study series — no viewport here shows it
                 allowed, reason = _progress_normalizer.should_emit_progress(
                     sn,
@@ -664,6 +704,10 @@ class HomeDownloadService:
                 _lc_shadow_note('note_download_complete', study_uid, uid, series_uid,
                                 dropped=(sn is None))
                 if sn is None:
+                    # Seam B cutover (default OFF): a secondary series just COMPLETED
+                    # on disk but was dropped by the primary-bound lane — keep the
+                    # disk-ready grow watchdog alive so it loads/grows it now.
+                    _lc_seam_b_nudge_backstop(widget_ref())
                     return
                 with _g6_time_slot("home_download.on_series_completed", series=str(sn)):
                     _on_series_completed_impl(uid, sn)

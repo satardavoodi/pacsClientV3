@@ -1,9 +1,27 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.3 (2026-07-02)
-**Previous Stable:** v3.4.2 (2026-07-01)
-**Release Date:** 2026-07-02
+**Current Stable Version:** v3.4.4 (2026-07-03)
+**Previous Stable:** v3.4.3 (2026-07-02)
+**Release Date:** 2026-07-03
 **Branch:** beta-version
+
+---
+
+## v3.4.4 (2026-07-03) - Patch release: Nuitka build pipeline, patient-loading lifecycle cutover
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Adds a Nuitka-based optimized build pipeline and continues the
+patient-loading reliability work (lifecycle seam-B cutover wiring), plus
+download-service refinements.
+
+### Included
+
+- Nuitka build pipeline: build_nuitka.py, AIPacs_nuitka.spec.py, build_nuitka_release.py, build_nuitka_simple.cmd, with a completion report and build README
+- Patient load lifecycle: seam-B cutover wiring (test-guarded)
+- Download manager: home_download_service refinements
+- Canonical version markers advanced to v3.4.4; full local state published to all remotes
 
 ---
 

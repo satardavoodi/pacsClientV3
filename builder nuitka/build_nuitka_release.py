@@ -853,6 +853,19 @@ def resolve_built_dist(stage: Stage, entrypoint: str) -> Path:
 def run_nuitka_stage(ctx: BuildContext, stage: Stage, log_path: Path, profile: str, entrypoint: str) -> StageResult:
     cmd, report_path, output_root = create_nuitka_command(ctx, stage, profile=profile, entrypoint=entrypoint)
 
+    # Remove any stale Nuitka intermediate ".build" tree left by a previously
+    # interrupted compile. Nuitka refuses to overwrite an already-present
+    # generated C file (e.g. "AssertionError: ...main.build\\module.PIL.c"),
+    # which would otherwise hard-fail the stage on resume. The ".dist" output is
+    # preserved; only the regenerable intermediate is cleared.
+    try:
+        for build_dir in Path(output_root).glob("*.build"):
+            if build_dir.is_dir():
+                append_log(log_path, f"[INFO] Removing stale Nuitka build dir: {build_dir}")
+                shutil.rmtree(build_dir, ignore_errors=True)
+    except Exception as _clean_err:  # pragma: no cover - defensive only
+        append_log(log_path, f"[WARN] Could not pre-clean build dir: {_clean_err}")
+
     env = os.environ.copy()
     # Keep compiler cache optional; forcing cache env vars has shown unstable
     # artifacts with some toolchain combinations.
