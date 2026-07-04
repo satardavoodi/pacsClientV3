@@ -26,11 +26,21 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from typing import Any, Iterable, Optional
 
 _logger = logging.getLogger("aipacs.lifecycle_shadow")
 
 _ENABLED_VALUES = {"shadow", "observe", "on", "1", "true", "yes"}
+
+# Per-key log throttle interval (seconds). The MODEL is updated on every event;
+# only the verbose per-progress log lines are rate-limited so multi-tab sessions
+# don't flood app.log (e.g. 9,346 benign cross-tab grow_lane_drop lines / session).
+try:
+    _LOG_INTERVAL_S = max(0.0, float(os.getenv("AIPACS_LIFECYCLE_LOG_INTERVAL_S", "1.0")))
+except Exception:
+    _LOG_INTERVAL_S = 1.0
+_LOG_TS_CAP = 4000  # bound the throttle map for a long default-ON session
 
 
 def _mode() -> str:
@@ -52,6 +62,22 @@ class LifecycleShadow:
         self._model = None  # lazily built so a disabled build imports nothing heavy
         self._active = is_enabled()
         self._watchdog_counts: dict = {}
+        self._log_ts: dict = {}  # per-key last-log time (verbose-line throttle)
+
+    def _should_log(self, key, interval: float = _LOG_INTERVAL_S) -> bool:
+        """Rate-limit a verbose log line per key (the model still updates every
+        event; only the log is throttled). Bounded for long sessions."""
+        try:
+            now = time.monotonic()
+            last = self._log_ts.get(key, 0.0)
+            if now - last < interval:
+                return False
+            if len(self._log_ts) > _LOG_TS_CAP:
+                self._log_ts.clear()
+            self._log_ts[key] = now
+            return True
+        except Exception:
+            return True
 
     # -- internal ----------------------------------------------------------
     def _ensure_model(self):
@@ -173,12 +199,14 @@ class LifecycleShadow:
             model.on_series_set(su, [cid], expected={cid.key(): exp} if exp > 0 else None)
             action = model.on_disk_change(su, cid, int(current or 0),
                                           expected=exp if exp > 0 else None)
-            if dropped:
+            # Throttle the verbose per-progress log (the model already updated
+            # above). Benign multi-tab cross-study drops otherwise flood app.log.
+            if dropped and self._should_log(("grow_lane_drop", su, str(series_uid or ""))):
                 rec = model.study(su).series.get(cid.key())
                 _logger.info(
                     "[LIFECYCLE-SHADOW] grow_lane_drop primary=%s series_study=%s "
                     "series=%s on_disk=%d/%d model_action=%s disk_complete=%s "
-                    "(legacy dropped: sn is None)",
+                    "(legacy dropped: sn is None; throttled)",
                     str(primary_study_uid or "")[-16:], su[-16:],
                     str(series_uid or "")[-12:], int(current or 0), exp,
                     getattr(action, "value", action),

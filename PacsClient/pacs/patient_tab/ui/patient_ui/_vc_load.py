@@ -296,6 +296,41 @@ class _VCLoadMixin:
                         series_key, parent, study_path,
                     )
                     return str(parent)  # the entry's study is authoritative
+            # POISON GUARD (48912 / previous-exam 29694, 2026-07-04): on a MULTI-STUDY
+            # tab a PRIMARY (plain-key) series whose entry has NO series_path (only
+            # secondary / previous-exam entries get one from the multi-study rebuild)
+            # can arrive with study_path POISONED to a previously-viewed study whose
+            # folder ALSO contains this series number — the `study_path/<key> exists`
+            # check below then keeps the WRONG study and loads the previous exam's
+            # series under the current one (confirmed in the log: drop current series 4
+            # -> [SERIES UNLOAD] rebind_to_series=1000004, open_series path=<previous>/4).
+            # A plain (< 1_000_000) key ALWAYS belongs to the tab's PRIMARY study_uid,
+            # so if the passed study_path is not that study's own folder, re-resolve to
+            # it. Fires only on a multi-study tab AND only when the primary study really
+            # has this series on disk -> single-study + correctly-resolved primary loads
+            # are byte-identical. Kill switch AIPACS_PRIMARY_SERIES_POISON_GUARD=0.
+            try:
+                import os as _os
+                if (_os.getenv("AIPACS_PRIMARY_SERIES_POISON_GUARD", "1") or "1").strip() != "0":
+                    pw = self.parent_widget
+                    primary_uid = str(getattr(pw, 'study_uid', '') or '')
+                    multistudy = (
+                        bool(getattr(pw, '_is_multistudy_hint', False))
+                        or len(getattr(pw, '_studies_series', {}) or {}) > 1
+                    )
+                    if (multistudy and primary_uid and study_path
+                            and _Path(study_path).name != primary_uid):
+                        from PacsClient.utils.config import SOURCE_PATH as _SRC
+                        _primary_path = _Path(_SRC) / primary_uid
+                        if (_primary_path / str(series_key)).exists():
+                            logger.info(
+                                "[MULTI-STUDY LOAD] key=%s -> study_path=%s "
+                                "(primary poison-guard; passed=%s != primary=%s)",
+                                series_key, _primary_path, study_path, primary_uid,
+                            )
+                            return str(_primary_path)
+            except Exception:
+                pass
             # No usable entry path: keep the tab path if it actually has the series
             # (single-study common case — zero-cost).
             if study_path and (_Path(study_path) / str(series_key)).exists():
@@ -922,6 +957,50 @@ class _VCLoadMixin:
                             metadata['series']['series_number'] = series_key
                     except Exception:
                         pass
+
+                # Identity travels WITH the series: stamp this series' OWN study_uid
+                # onto its metadata so the study identity flows through the cache into
+                # the viewport. The FAST pipeline does not set study_uid, which left the
+                # viewport study-identity gate (qt_fast_container._start_qt_viewer) with
+                # nothing to compare — a superseded previous-exam re-render then stomped
+                # a current-series request (48912/48952). `_ms_study_uid` is the series'
+                # resolved study (multi-study entry authority / offset-key fallback);
+                # a primary/single-study series falls back to the tab study_uid. Flag
+                # AIPACS_STAMP_SERIES_STUDY_UID=0 restores byte-identical legacy.
+                try:
+                    if (os.getenv("AIPACS_STAMP_SERIES_STUDY_UID", "1") or "1").strip() != "0" \
+                            and isinstance(metadata, dict) and isinstance(metadata.get('series'), dict):
+                        # AUTHORITATIVE study for this display key comes from the
+                        # server-side canonical resolver (reads _server_series_info),
+                        # NOT the DB-loaded metadata — a previous-exam series that was
+                        # downloaded and saved under the wrong study in the DB would
+                        # otherwise carry the current study_uid (the 48912 defect).
+                        _study_for_meta = ''
+                        try:
+                            _rid_meta = self._resolve_canonical_series_identity(series_key)
+                            _study_for_meta = str((_rid_meta[0] if _rid_meta else '') or '').strip()
+                        except Exception:
+                            _study_for_meta = ''
+                        if not _study_for_meta:
+                            _study_for_meta = str(
+                                _ms_study_uid or getattr(self.parent_widget, 'study_uid', '') or ''
+                            ).strip()
+                        # Also carry the canonical series_uid so the viewport gate can
+                        # match on the globally-unique identity even when study_uid is
+                        # unreliable.
+                        _uid_for_meta = ''
+                        try:
+                            if _rid_meta and len(_rid_meta) > 2 and _rid_meta[2]:
+                                _uid_for_meta = str(_rid_meta[2]).strip()
+                        except Exception:
+                            _uid_for_meta = ''
+                        if _study_for_meta:
+                            metadata['series']['study_uid'] = _study_for_meta
+                            metadata.setdefault('study_uid', _study_for_meta)
+                        if _uid_for_meta and not str(metadata['series'].get('series_uid') or '').strip():
+                            metadata['series']['series_uid'] = _uid_for_meta
+                except Exception:
+                    pass
 
                 # [H7-P4] Series bind snapshot — 7-field comparison at metadata load time
                 try:

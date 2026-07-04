@@ -1,9 +1,28 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.4 (2026-07-03)
-**Previous Stable:** v3.4.3 (2026-07-02)
-**Release Date:** 2026-07-03
+**Current Stable Version:** v3.4.5 (2026-07-04)
+**Previous Stable:** v3.4.4 (2026-07-03)
+**Release Date:** 2026-07-04
 **Branch:** beta-version
+
+---
+
+## v3.4.5 (2026-07-04) - Patch release: startup-freeze removals, wrong-study correctness, storage-cleanup fix
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Consolidates the Optimization/Stability/Reliability master-plan work:
+OPT-01 startup-freeze removals, multi-study wrong-study correctness guards, a
+patient-data storage-cleanup fix, and lifecycle-shadow refinements.
+
+### Included
+
+- Startup performance (OPT-01): deferred startup work, DICOM-only status refresh, theme-apply de-duplication
+- Multi-study correctness: primary-series poison guard and viewport study-identity gate (no wrong study/series after viewing a previous exam), plus a current-series display-miss fix
+- Storage: filtered Patient Data Cleanup fix (Viewer Config)
+- Reliability: patient-load lifecycle shadow refinements and the consolidated optimization/stability/reliability master plan
+- Canonical version markers advanced to v3.4.5; full local state published to all remotes
 
 ---
 

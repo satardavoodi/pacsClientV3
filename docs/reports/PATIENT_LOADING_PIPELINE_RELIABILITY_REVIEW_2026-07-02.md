@@ -1282,3 +1282,26 @@ DM-rebuild off the GUI thread — the stall amplifier) also remains a spec.
 `watchdog_grow` count** and, crucially, previous-exam series that **finish growing
 without a second drag**. If a viewport ever shows the wrong study, set
 `AIPACS_LIFECYCLE_GROW_ACTIVE=0` and send the log.
+
+### 18.2 Polish (2026-07-03)
+
+Two refinements after the 4-patient / multi-tab review (which showed 9,346 benign
+cross-tab `grow_lane_drop` lines — 100% cross-study, 83% `model_action=none` —
+i.e. correct cross-patient isolation, not a bug, but a lot of log noise):
+
+- **Log throttle.** `lifecycle_shadow._should_log(key, interval)` rate-limits the
+  verbose per-progress `grow_lane_drop` line to ~1 per series per second
+  (`AIPACS_LIFECYCLE_LOG_INTERVAL_S`, default 1.0; throttle map bounded at 4000).
+  The **model still updates on every event** — only the log line is throttled, so
+  a multi-tab session no longer floods `app.log` (~50× fewer lines) while the
+  signal and correctness are unchanged.
+- **Seam B observability.** `_lc_seam_b_nudge_backstop` now emits a heavily
+  throttled (≤1 / 5 s) `[LIFECYCLE-CUTOVER] seam_b watchdog kept alive …` line, so
+  the next build can be *seen* to have the Problem #2 keep-alive active (previously
+  it was silent — only inferable from a rising `watchdog_grow`).
+
+Verification: `py_compile` OK; new throttle tests (per-key throttle + "model sees
+every event while log is throttled") green; `tests/code/ui_services` = **320
+passed / 1 skipped** (same 3 pre-existing unrelated failures);
+`verify_plugin_mirrors.py` → **[OK] 395**. Both refinements are telemetry-only and
+change no behavior.

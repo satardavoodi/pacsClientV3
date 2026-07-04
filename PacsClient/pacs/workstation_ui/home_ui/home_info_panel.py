@@ -36,15 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.4.4",
-    "build_date": "2026-07-03",
-    "release_date": "2026-07-03",
+    "version": "3.4.5",
+    "build_date": "2026-07-04",
+    "release_date": "2026-07-04",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "New Nuitka-based optimized build pipeline",
-        "Continued patient-loading reliability (lifecycle cutover)",
-        "Download service and thumbnail refinements",
-        "Stability and performance improvements",
+        "Faster startup - removed several startup freezes",
+        "Fixed a previous-exam case that could show the wrong study's series",
+        "Corrected the Patient Data Cleanup (storage) behavior",
+        "Snappier patient list (theme/status-refresh optimizations)",
+        "Broad stability and reliability improvements",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -79,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.4.4",
+        "AI-PACS Version 3.4.5",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "

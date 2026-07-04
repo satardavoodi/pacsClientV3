@@ -4,6 +4,7 @@ import logging
 import shutil
 import ctypes
 import time
+from datetime import datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List
@@ -607,6 +608,11 @@ class LocalStorageCleanupManager:
             cur.execute("DELETE FROM download_progress")
             rows += int(cur.rowcount or 0)
 
+            # get_db_connection() rolls back on scope exit (the pool returns the
+            # connection via rollback()); without this commit the deletes above
+            # are discarded and the files-gone / DB-still-knows inconsistency the
+            # "Check Consistency" button repairs is re-created on every clear.
+            conn.commit()
             return rows
 
     def _cleanup_education_db(self) -> int:
@@ -621,6 +627,7 @@ class LocalStorageCleanupManager:
             cur.execute("DELETE FROM case_of_day_entries")
             rows += int(cur.rowcount or 0)
 
+            conn.commit()  # persist — get_db_connection() rolls back otherwise
             return rows
 
     def _cleanup_cache_db(self) -> int:
@@ -634,6 +641,7 @@ class LocalStorageCleanupManager:
                 cur.execute("UPDATE series SET thumbnail_path = NULL, main_thumbnail = 0")
                 rows += int(cur.rowcount or 0)
 
+            conn.commit()  # persist — get_db_connection() rolls back otherwise
             return rows
 
     def _cleanup_printing_db(self) -> int:
@@ -648,6 +656,7 @@ class LocalStorageCleanupManager:
                 cur.execute("UPDATE studies SET has_filming = 0, filming_folder_path = NULL WHERE COALESCE(has_filming, 0) = 1 OR COALESCE(filming_folder_path, '') != ''")
                 rows += int(cur.rowcount or 0)
 
+            conn.commit()  # persist — get_db_connection() rolls back otherwise
             return rows
 
     def get_total_patient_count(self) -> int:
@@ -662,119 +671,255 @@ class LocalStorageCleanupManager:
             logger.error(f"Failed to get total patient count: {e}")
             return 0
 
+    @staticmethod
+    def _parse_study_epoch(study_date, study_time, dp_created_at) -> int | None:
+        """Resolve a study's 'age' epoch, preferring the DICOM StudyDate/Time and
+        falling back to the local download timestamp. Returns None when the study
+        cannot be dated at all (so date-based strategies can KEEP it — we never
+        delete data whose age is unknown)."""
+        sd = str(study_date or "").strip()
+        if len(sd) >= 8 and sd[:8].isdigit():
+            try:
+                year, month, day = int(sd[:4]), int(sd[4:6]), int(sd[6:8])
+                hh = mm = ss = 0
+                st = str(study_time or "").strip().replace(":", "")
+                if len(st) >= 2 and st[:2].isdigit():
+                    hh = int(st[:2])
+                    if len(st) >= 4 and st[2:4].isdigit():
+                        mm = int(st[2:4])
+                    if len(st) >= 6 and st[4:6].isdigit():
+                        ss = int(st[4:6])
+                return int(datetime(year, month, day, hh, mm, ss).timestamp())
+            except Exception:
+                pass  # malformed date/time -> try the download-time fallback
+        dp = str(dp_created_at or "").strip()
+        if dp:
+            try:
+                return int(datetime.fromisoformat(dp).timestamp())
+            except Exception:
+                try:
+                    return int(float(dp))  # tolerate an epoch stored as text
+                except Exception:
+                    pass
+        return None
+
+    def _gather_patient_age_index(self) -> List[Dict[str, Any]]:
+        """Per-patient record with its study_uids, on-disk study folders and an
+        effective 'newest activity' epoch (max over the patient's studies).
+
+        Built off the REAL schema (patients.patient_pk + studies + download_progress).
+        The patients table has no timestamp of its own, so age is derived from each
+        study's StudyDate (download time as fallback). Disk folders are keyed by
+        study_uid (studies.study_path when set), NOT by patient — matching how the
+        rest of the app stores DICOM under SOURCE_PATH/<study_uid>/.
+        """
+        records: Dict[Any, Dict[str, Any]] = {}
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("PRAGMA table_info(download_progress)")
+            dp_cols = {r[1] for r in cur.fetchall()}
+            if "created_at" in dp_cols:
+                cur.execute(
+                    "SELECT p.patient_pk, p.patient_id, s.study_uid, s.study_path, "
+                    "       s.study_date, s.study_time, dp.created_at "
+                    "FROM patients p "
+                    "LEFT JOIN studies s ON s.patient_fk = p.patient_pk "
+                    "LEFT JOIN download_progress dp ON dp.study_uid = s.study_uid"
+                )
+            else:
+                cur.execute(
+                    "SELECT p.patient_pk, p.patient_id, s.study_uid, s.study_path, "
+                    "       s.study_date, s.study_time, NULL "
+                    "FROM patients p "
+                    "LEFT JOIN studies s ON s.patient_fk = p.patient_pk"
+                )
+            for pk, pid, study_uid, study_path, study_date, study_time, dp_created in cur.fetchall():
+                rec = records.get(pk)
+                if rec is None:
+                    rec = {
+                        "patient_pk": pk,
+                        "patient_id": pid,
+                        "study_uids": [],
+                        "study_paths": [],
+                        "newest_epoch": None,
+                    }
+                    records[pk] = rec
+                if study_uid:
+                    rec["study_uids"].append(str(study_uid))
+                    rec["study_paths"].append(str(study_path) if study_path else "")
+                    epoch = self._parse_study_epoch(study_date, study_time, dp_created)
+                    if epoch is not None and (
+                        rec["newest_epoch"] is None or epoch > rec["newest_epoch"]
+                    ):
+                        rec["newest_epoch"] = epoch
+        return list(records.values())
+
+    def _select_patients_for_strategy(self, strategy: str, value: int) -> List[Dict[str, Any]]:
+        """Return the patient records selected for deletion by the given strategy.
+
+        - "keep_recent_days" / "older_than_days": delete patients whose newest study
+          is KNOWN to be older than the cutoff. Undatable patients are kept (safe).
+        - "delete_oldest_count": oldest-first, datable patients before undatable ones,
+          then take the first `value`.
+        """
+        records = self._gather_patient_age_index()
+        value = int(value)
+        if strategy in ("older_than_days", "keep_recent_days"):
+            cutoff_ts = int(time.time()) - (value * 86400)
+            return [
+                r for r in records
+                if r["newest_epoch"] is not None and r["newest_epoch"] < cutoff_ts
+            ]
+        if strategy == "delete_oldest_count":
+            ordered = sorted(
+                records,
+                key=lambda r: (0, r["newest_epoch"]) if r["newest_epoch"] is not None else (1, 0),
+            )
+            return ordered[: max(0, value)]
+        raise ValueError(f"Unknown cleanup strategy: {strategy}")
+
     def count_patients_to_delete(self, strategy: str, value: int) -> int:
-        """Count how many patients would be deleted with given strategy."""
+        """Count how many patients would be deleted with the given strategy."""
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                
-                if strategy == "older_than_days":
-                    # Delete patients older than X days
-                    cutoff_ts = int(time.time()) - (value * 86400)
-                    cur.execute(
-                        "SELECT COUNT(*) FROM patients WHERE COALESCE(created_at, 0) < ?",
-                        (cutoff_ts,)
-                    )
-                elif strategy == "keep_recent_days":
-                    # Delete patients NOT in last X days
-                    cutoff_ts = int(time.time()) - (value * 86400)
-                    cur.execute(
-                        "SELECT COUNT(*) FROM patients WHERE COALESCE(created_at, 0) < ?",
-                        (cutoff_ts,)
-                    )
-                elif strategy == "delete_oldest_count":
-                    # Delete oldest X patients
-                    return min(value, self.get_total_patient_count())
-                else:
-                    return 0
-                    
-                row = cur.fetchone()
-                return int(row[0]) if row else 0
+            return len(self._select_patients_for_strategy(strategy, value))
         except Exception as e:
-            logger.error(f"Failed to count patients: {e}")
+            logger.error(f"Failed to count patients: {e}", exc_info=True)
             return 0
+
+    @staticmethod
+    def _chunks(seq: List[Any], size: int = 400):
+        for i in range(0, len(seq), size):
+            yield seq[i:i + size]
+
+    def _delete_patients_db(self, patient_pks: List[Any], study_uids: List[str]) -> int:
+        """Delete the selected patients and everything under them, then their
+        download_progress rows. Deletes instances/series/studies explicitly so it
+        is correct regardless of the connection's foreign-key setting, chunks the
+        IN-lists to stay under SQLite's bound-variable limit, and commits (the
+        pooled connection rolls back otherwise)."""
+        if not patient_pks:
+            return 0
+        rows = 0
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            for pk_chunk in self._chunks(list(patient_pks)):
+                ph = ",".join("?" * len(pk_chunk))
+                cur.execute(
+                    f"DELETE FROM instances WHERE series_fk IN ("
+                    f"  SELECT series_pk FROM series WHERE study_fk IN ("
+                    f"    SELECT study_pk FROM studies WHERE patient_fk IN ({ph})))",
+                    pk_chunk,
+                )
+                rows += int(cur.rowcount or 0)
+                cur.execute(
+                    f"DELETE FROM series WHERE study_fk IN ("
+                    f"  SELECT study_pk FROM studies WHERE patient_fk IN ({ph}))",
+                    pk_chunk,
+                )
+                rows += int(cur.rowcount or 0)
+                cur.execute(f"DELETE FROM studies WHERE patient_fk IN ({ph})", pk_chunk)
+                rows += int(cur.rowcount or 0)
+                cur.execute(f"DELETE FROM patients WHERE patient_pk IN ({ph})", pk_chunk)
+                rows += int(cur.rowcount or 0)
+            for uid_chunk in self._chunks(list(study_uids)):
+                if not uid_chunk:
+                    continue
+                ph = ",".join("?" * len(uid_chunk))
+                cur.execute(f"DELETE FROM download_progress WHERE study_uid IN ({ph})", uid_chunk)
+                rows += int(cur.rowcount or 0)
+            conn.commit()
+        return rows
 
     def cleanup_patients_folder_filtered(self, strategy: str, value: int) -> CleanupResult:
         """
-        Cleanup patients folder with filtering strategy.
-        
+        Cleanup patient data with a filtering strategy.
+
         Strategies:
-        - "older_than_days": Delete patients older than X days
-        - "keep_recent_days": Keep only patients from last X days (delete rest)
-        - "delete_oldest_count": Delete oldest X patients by creation timestamp
+        - "older_than_days":   delete patients whose newest study is older than X days
+        - "keep_recent_days":  keep only patients with a study in the last X days
+        - "delete_oldest_count": delete the oldest X patients
+
+        Deletes the matching patients' study_uid-keyed DICOM folders (and thumbnail
+        folders), then the patient + study/series/instance + download_progress rows.
         """
         try:
-            with get_db_connection() as conn:
-                cur = conn.cursor()
-                
-                # Get patient UIDs to delete based on strategy
-                patient_uids_to_delete: List[str] = []
-                
-                if strategy in ("older_than_days", "keep_recent_days"):
-                    cutoff_ts = int(time.time()) - (value * 86400)
-                    cur.execute(
-                        "SELECT patient_uid FROM patients WHERE COALESCE(created_at, 0) < ? ORDER BY created_at ASC",
-                        (cutoff_ts,)
-                    )
-                    patient_uids_to_delete = [str(row[0]) for row in cur.fetchall() if row and row[0]]
-                    
-                elif strategy == "delete_oldest_count":
-                    cur.execute(
-                        "SELECT patient_uid FROM patients ORDER BY COALESCE(created_at, 0) ASC LIMIT ?",
-                        (value,)
-                    )
-                    patient_uids_to_delete = [str(row[0]) for row in cur.fetchall() if row and row[0]]
-                else:
-                    raise ValueError(f"Unknown cleanup strategy: {strategy}")
-                
-                if not patient_uids_to_delete:
-                    return CleanupResult(
-                        success=True,
-                        category="patients",
-                        folders_touched=0,
-                        files_deleted=0,
-                        db_rows_affected=0,
-                        message="No patients matched the filter criteria.",
-                    )
-                
-                # Delete matching patient folders
-                files_deleted = 0
-                folders_touched = 0
-                
-                for patient_uid in patient_uids_to_delete:
-                    patient_folder = SOURCE_PATH / patient_uid
-                    if patient_folder.exists() and patient_folder.is_dir():
-                        try:
-                            count = sum(1 for p in patient_folder.rglob("*") if p.is_file())
-                            shutil.rmtree(patient_folder, ignore_errors=False)
-                            files_deleted += count
-                            folders_touched += 1
-                        except Exception as exc:
-                            logger.warning(f"Failed deleting patient folder {patient_folder}: {exc}")
-                
-                # Delete matching DB records
-                db_rows = 0
-                placeholders = ",".join("?" * len(patient_uids_to_delete))
-                
-                cur.execute(f"DELETE FROM patients WHERE patient_uid IN ({placeholders})", patient_uids_to_delete)
-                db_rows += int(cur.rowcount or 0)
-                
-                # Clean up related download progress
-                cur.execute(f"DELETE FROM download_progress WHERE patient_uid IN ({placeholders})", patient_uids_to_delete)
-                db_rows += int(cur.rowcount or 0)
-                
-                conn.commit()
-                
-                self.invalidate_caches()
-                return CleanupResult(
-                    success=True,
-                    category="patients",
-                    folders_touched=folders_touched,
-                    files_deleted=files_deleted,
-                    db_rows_affected=db_rows,
-                    message=f"Cleaned {len(patient_uids_to_delete)} patients matching filter criteria.",
-                )
-                
+            selected = self._select_patients_for_strategy(strategy, value)
         except Exception as e:
-            logger.error(f"Failed filtered patient cleanup: {e}")
+            logger.error(f"Failed filtered patient cleanup selection: {e}", exc_info=True)
             raise
+
+        if not selected:
+            return CleanupResult(
+                success=True,
+                category="patients",
+                folders_touched=0,
+                files_deleted=0,
+                db_rows_affected=0,
+                message="No patients matched the filter criteria.",
+            )
+
+        files_deleted = 0
+        folders_touched = 0
+        patient_pks: List[Any] = []
+        all_study_uids: List[str] = []
+
+        for rec in selected:
+            patient_pks.append(rec["patient_pk"])
+            study_paths = rec.get("study_paths", [])
+            for idx, study_uid in enumerate(rec.get("study_uids", [])):
+                all_study_uids.append(study_uid)
+
+                # DICOM folder: prefer studies.study_path, else SOURCE_PATH/<study_uid>.
+                folder: Path | None = None
+                sp = study_paths[idx] if idx < len(study_paths) else ""
+                if sp:
+                    cand = Path(sp)
+                    if cand.exists() and cand.is_dir():
+                        folder = cand
+                if folder is None:
+                    cand = SOURCE_PATH / study_uid
+                    if cand.exists() and cand.is_dir():
+                        folder = cand
+                if folder is not None:
+                    try:
+                        count = sum(1 for p in folder.rglob("*") if p.is_file())
+                        shutil.rmtree(folder, ignore_errors=False)
+                        files_deleted += count
+                        folders_touched += 1
+                    except Exception as exc:
+                        logger.warning(f"Failed deleting study folder {folder}: {exc}")
+
+                # Best-effort thumbnail folder (THUMBNAIL_PATH/<study_uid>).
+                thumb_dir = THUMBNAIL_PATH / study_uid
+                if thumb_dir.exists() and thumb_dir.is_dir():
+                    try:
+                        shutil.rmtree(thumb_dir, ignore_errors=True)
+                    except Exception:
+                        pass
+
+        warnings: List[str] = []
+        db_rows = 0
+        try:
+            db_rows = self._delete_patients_db(patient_pks, all_study_uids)
+        except Exception as exc:
+            warnings.append(f"patient files deleted but DB cleanup failed: {exc}")
+            logger.error(
+                "[storage-cleanup] filtered patient DB cleanup failed after file deletion: %s",
+                exc, exc_info=True,
+            )
+
+        # Cleared patients' cached thumbnail bytes must not survive in RAM.
+        self._clear_thumbnail_store(warnings)
+        self.invalidate_caches()
+        return CleanupResult(
+            success=not warnings,
+            category="patients",
+            folders_touched=folders_touched,
+            files_deleted=files_deleted,
+            db_rows_affected=db_rows,
+            message=(
+                f"Cleaned {len(selected)} patients matching the filter criteria."
+                + ("" if not warnings else " WARNING: DB cleanup failed — run the storage consistency check.")
+            ),
+            warnings=warnings,
+        )

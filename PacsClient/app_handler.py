@@ -430,9 +430,17 @@ class AppHandler(QDialog):
         """)
         self.license_info_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         
-        # Update license info
-        self._update_license_info()
-        
+        # Update license info. OPT-01 (startup main-thread): LicenseManager.check_license()
+        # is LOCAL (hardware id via uuid.getnode() + SHA256, no network) but cost ~1.7 s on
+        # the GUI thread here, and it only drives a cosmetic "N days left" label — nothing
+        # downstream depends on it running synchronously. Defer it to the idle event loop so
+        # the login window appears immediately; the label fills in a beat later. Kill switch:
+        # AIPACS_DEFER_LICENSE_INFO=0 restores the synchronous call.
+        if os.getenv("AIPACS_DEFER_LICENSE_INFO", "1") != "0":
+            QTimer.singleShot(0, self._update_license_info)
+        else:
+            self._update_license_info()
+
         # Set initial icon
         self.checkbox_remember = self.checkbox_button  # For compatibility
         self._update_checkbox_icon()

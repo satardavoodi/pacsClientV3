@@ -4,6 +4,21 @@ This file is picked up automatically by AI agents working in this repository
 (`E:\ai-pacs\ai-pacs codes\ai-pacs beta version\`). Keep it accurate and integrate
 new guidance cleanly rather than overwriting existing sections.
 
+## CANONICAL OPTIMIZATION / STABILITY / RELIABILITY PLAN — single source of truth
+
+All performance, stability, reliability, and optimization work is consolidated in
+**`docs/OPTIMIZATION_STABILITY_RELIABILITY_MASTER_PLAN.md`** (created 2026-07-03). Before starting ANY
+optimization/reliability/perf task: read it, locate the concern in its backlog (§9, `OPT-*` IDs), and
+**extend that item** — do **not** start a new disconnected optimization plan. After any such change,
+update the master plan's §9 (status) and §15 (validation/regression history): what changed, files, KPI
+before/after, reliability + regression result. It reconciles the four anchor docs
+(`PATIENT_LOADING_PIPELINE_RELIABILITY_REVIEW_2026-07-02`, `UNIFIED_STABILIZATION_OPTIMIZATION_PLAN_2026-07-01`,
+`KPI_SESSION_REVIEW_2026-07-01`, `deploy-record-workstation-2026-07-03`) against the actual code and
+fresh logs. Current headline: #1 perf issue = **main-thread blocking** (not decode/render, which are
+healthy); #1 reliability defect = **completion-by-notification not convergence** (the canonical lifecycle
+fix is partly shipped — Seam A/B cutovers default-on, live-verify pending). Next safe phase = verify the
+shipped cutovers first, then log hygiene + subprocess-spawn hardening, then off-thread work.
+
 ## ARCHITECTURE HARD RULE — keep Fast / Advanced / VTK-modules completely separated (NON-NEGOTIABLE)
 
 There are **THREE separate execution domains** that must remain **completely separated and never

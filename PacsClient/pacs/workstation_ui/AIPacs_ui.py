@@ -1,6 +1,7 @@
 from functools import partial
 import logging
 import time  # startup stage timing instrumentation
+import os
 
 from PySide6.QtCore import (QCoreApplication, QMetaObject, QRect,
                             QSize, Qt)
@@ -874,6 +875,23 @@ class ControlPanelWindow(object):
         self._active_theme = theme or self.theme_manager.current_theme()
         t = self._active_theme
 
+        # OPT-01 (startup main-thread): this restyles the whole control-panel shell
+        # (~15 setStyleSheet calls) AND cascades apply_theme to child widgets
+        # (info_panel / data_analysis_widget / home_widget / host_window). It is called
+        # from setup (~line 867) and re-fires on theme changes, re-running with the SAME
+        # theme during construction (~1.4 s startup stall: AIPacs_ui.apply_theme). Every
+        # stylesheet is a pure function of the theme, and the children self-dedup, so
+        # re-applying an unchanged theme is redundant. Skip when unchanged. Safe: on the
+        # first apply everything (incl. children) styles; a real theme change is a
+        # different dict and always re-applies + cascades. Kill switch (shared):
+        # AIPACS_THEME_APPLY_DEDUP=0.
+        if os.getenv("AIPACS_THEME_APPLY_DEDUP", "1") != "0":
+            try:
+                if t is not None and getattr(self, "_applied_theme_sig", None) == t:
+                    return
+            except Exception:
+                pass
+
         self.MainWindow.setStyleSheet(f"QMainWindow {{ background: {t['window_bg']}; border: none; }}")
         self.leftMenuContainer.setStyleSheet(
             f"background-color: {t['menu_bg']}; border-radius: 10px; margin: 3px;"
@@ -957,6 +975,9 @@ class ControlPanelWindow(object):
             self.home_widget.apply_theme(t)
         if getattr(self.MainWindow, "host_window", None) is not None and hasattr(self.MainWindow.host_window, "apply_theme"):
             self.MainWindow.host_window.apply_theme(t)
+        # Remember the applied theme so an identical re-apply (setup + a same-theme
+        # re-emit) skips the shell restyle + child cascade above.
+        self._applied_theme_sig = t
 
     def connect_left_navigation(self):
         """Connect left-side navigation buttons to stacked pages."""

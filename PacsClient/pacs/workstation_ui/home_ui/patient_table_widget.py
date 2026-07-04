@@ -2865,6 +2865,39 @@ class PatientTableWidget(QWidget):
                 "Download the selected studies first, then use Offline Sync to export them into an Offline Cloud Server folder."
             )
 
+    def _refresh_local_status_dicom_flag(self, cache_key, study_uid) -> bool:
+        """OPT-01 (main-thread): on a download-status refresh only the DICOM
+        availability flag can have changed. Refresh just that flag in the cached
+        local-status entry and KEEP the expensive attachment-walk + DB-derived flags
+        (docs/voice/ai/case_of_day/printed) — instead of popping the cache and forcing
+        ``_compute_local_status_flags`` to re-run ``os.walk(attachments)`` + two DB
+        queries for EVERY row on EVERY refresh. That per-row disk/DB scan on the GUI
+        thread is a measured main-thread stall source (KPI review 2026-07-01); those
+        other flags do NOT change because a DICOM download completed, so re-deriving
+        them here is redundant work.
+
+        Returns True when the cache was refreshed in place (the caller then SKIPS the
+        legacy pop, so ``_build_local_status_widget`` reads the fresh cached flags with
+        no attachment walk / DB query). Returns False — legacy full recompute — when
+        the flag is off, nothing is cached yet (first population must compute
+        everything), or on any error. The DICOM flag itself stays authoritative
+        (re-read from disk via ``_is_study_downloaded``), so the download indicator is
+        never stale. Kill switch: ``AIPACS_STATUS_REFRESH_DICOM_ONLY=0`` restores the
+        byte-identical unconditional pop + full recompute.
+        """
+        try:
+            if os.getenv("AIPACS_STATUS_REFRESH_DICOM_ONLY", "1") == "0":
+                return False
+            entry = self._local_status_cache.get(cache_key)
+            if not entry or not isinstance(entry.get('data'), dict):
+                return False  # nothing cached yet -> let the full compute run once
+            data = dict(entry['data'])
+            data['dicom'] = bool(self._is_study_downloaded(study_uid))
+            self._local_status_cache[cache_key] = {'data': data, 'timestamp': time.time()}
+            return True
+        except Exception:
+            return False
+
     def update_study_download_status(self, study_uid: str, status: str = None, is_downloaded: bool = None):
         """
         Update download status icon for a study
@@ -2894,7 +2927,11 @@ class PatientTableWidget(QWidget):
                     patient_id_item = self.results_table.item(row, COL['patient_id'])
                     patient_id = patient_id_item.text().strip() if patient_id_item else ''
                     cache_key = (str(study_uid or '').strip(), patient_id)
-                    self._local_status_cache.pop(cache_key, None)
+                    # OPT-01: refresh only the DICOM flag in place (keep the cached
+                    # attachment/DB flags); fall back to the legacy pop + full
+                    # recompute when the flag is off / nothing cached yet / on error.
+                    if not self._refresh_local_status_dicom_flag(cache_key, study_uid):
+                        self._local_status_cache.pop(cache_key, None)
                     self.results_table.setCellWidget(
                         row,
                         COL['status'],
@@ -3056,6 +3093,11 @@ class PatientTableWidget(QWidget):
         try:
             # Force a fresh disk check (the per-study cache is consulted first).
             self._download_status_cache.clear()
+            # OPT-01 safety: a storage clear can also remove attachments, so drop the
+            # local-status flag cache too — this makes the per-row dicom-only refresh
+            # (_refresh_local_status_dicom_flag) fall through to a full recompute here,
+            # keeping the storage-clear path fully authoritative (not just DICOM).
+            self._local_status_cache.clear()
             count = 0
             for row in range(self.results_table.rowCount()):
                 uid_item = self.results_table.item(row, COL['study_uid'])

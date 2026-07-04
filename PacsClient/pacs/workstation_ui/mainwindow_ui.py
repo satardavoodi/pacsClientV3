@@ -894,6 +894,20 @@ class MainWindowWidget(QWidget):
 
     def apply_modern_styling(self):
         theme = getattr(self, "_active_theme", None) or get_theme_manager().current_theme()
+        # OPT-01 (startup main-thread): this sets a large TOP-LEVEL stylesheet on the main
+        # window, which cascades a full style recomputation over the whole widget tree
+        # (~2.3 s at startup). apply_modern_styling is called from setup (~line 679) AND from
+        # apply_theme (~line 1031), so it re-runs with the SAME theme during construction.
+        # The stylesheet is a pure function of the theme and persists on the window (it also
+        # covers widgets created later), so re-applying an unchanged theme is redundant work
+        # with a byte-identical result. Skip when unchanged. Kill switch:
+        # AIPACS_THEME_APPLY_DEDUP=0 (shared with the patient-search theme dedup).
+        if os.getenv("AIPACS_THEME_APPLY_DEDUP", "1") != "0":
+            try:
+                if theme is not None and getattr(self, "_applied_modern_sig", None) == theme:
+                    return
+            except Exception:
+                pass
         self.setStyleSheet(
             f"""
             MainWindowWidget {{
@@ -950,6 +964,9 @@ class MainWindowWidget(QWidget):
             }}
             """
         )
+        # Remember the applied theme so an identical re-apply (setup + apply_theme with the
+        # same theme, or a themeChanged re-emit) skips the full-tree restyle above.
+        self._applied_modern_sig = theme
 
     def _user_info_stylesheet(self) -> str:
         theme = self._active_theme

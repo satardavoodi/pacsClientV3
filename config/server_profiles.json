@@ -2,7 +2,7 @@
   "schema_version": 1,
   "enabled": true,
   "primary_profile_id": "razi",
-  "active_profile_id": "mehr",
+  "active_profile_id": "razi",
   "profiles": [
     {
       "id": "razi",

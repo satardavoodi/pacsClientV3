@@ -256,6 +256,26 @@ class _VCSwitchMixin:
             except Exception:
                 pass
 
+            # ── Viewport study-identity stamp (cross-exam stomp guard) ──────────
+            # Record the STUDY this viewport is now intended to display, resolved
+            # from the requested series' canonical identity (multi-study safe: an
+            # offset key resolves to its own study, a primary/plain key to the tab
+            # study). The render choke point qt_fast_container._start_qt_viewer reads
+            # this to reject a superseded cross-exam re-render (a stale async apply or
+            # grow/resume watchdog still pointing at the previously-displayed exam) —
+            # the 48912/48952 "current series 4 shows previous-exam 1000004" defect.
+            # Stamped BEFORE any cache lookup / async load / switch so every render
+            # for this request is checked against the correct intended study.
+            try:
+                _rid_intent = self._resolve_canonical_series_identity(series_number)
+                vtk_widget._intended_study_uid = str((_rid_intent[0] if _rid_intent else '') or '')
+                vtk_widget._intended_series_uid = str(
+                    (_rid_intent[2] if (_rid_intent and len(_rid_intent) > 2) else '') or ''
+                )
+                vtk_widget._intended_series_key = str(series_number)
+            except Exception:
+                pass
+
             # FAST drag/drop can arrive before the per-viewer slider reference is
             # wired on some layout transitions. Series switching itself does not
             # depend on slider presence, so resolve it best-effort and continue.
@@ -1147,7 +1167,35 @@ class _VCSwitchMixin:
         - Shows loading spinner for series changes
         """
         try:
+            # DIAGNOSTIC (48952 current-series-won't-display, 2026-07-04): log-only,
+            # default-OFF. When AIPACS_SERIES_SWITCH_DIAG=1, record whether this apply
+            # is entered for the requested series and whether it silently returns at the
+            # stale-token guard below — the two things the existing markers don't show
+            # (series 4/6 render, series 2 clears with no [SWITCH ABORT]). Zero clinical
+            # behaviour change; remove once the display-abort cause is pinned.
+            _switch_diag = (os.getenv("AIPACS_SERIES_SWITCH_DIAG", "0") or "0") == "1"
+            if _switch_diag:
+                try:
+                    _dsn = str((metadata or {}).get('series', {}).get('series_number', '')) if isinstance(metadata, dict) else '?'
+                    _ddims = vtk_image_data.GetDimensions() if hasattr(vtk_image_data, 'GetDimensions') else '?'
+                    logger.warning(
+                        "[SWITCH_DIAG] enter series=%s viewer=%s token=%s is_current=%s vtk=%s dims=%s force_reload=%s",
+                        _dsn, getattr(vtk_widget, 'id_vtk_widget', '?'), expected_token,
+                        self._is_request_current(vtk_widget, expected_token),
+                        vtk_image_data is not None, _ddims, force_reload,
+                    )
+                except Exception:
+                    pass
             if not self._is_request_current(vtk_widget, expected_token):
+                if _switch_diag:
+                    try:
+                        _dsn = str((metadata or {}).get('series', {}).get('series_number', '')) if isinstance(metadata, dict) else '?'
+                        logger.warning(
+                            "[SWITCH_DIAG] STALE-TOKEN silent return series=%s viewer=%s token=%s",
+                            _dsn, getattr(vtk_widget, 'id_vtk_widget', '?'), expected_token,
+                        )
+                    except Exception:
+                        pass
                 return
             requested_backend = self._get_requested_viewer_backend()
 

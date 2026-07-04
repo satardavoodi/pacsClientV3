@@ -140,6 +140,31 @@ def test_watchdog_activity_disabled_is_noop():
     assert sh._watchdog_counts == {}
 
 
+def test_should_log_throttles_per_key():
+    sh = _fresh(True)
+    # First call for a key logs; an immediate second call for the same key is throttled.
+    assert sh._should_log(("k", "s1"), interval=100.0) is True
+    assert sh._should_log(("k", "s1"), interval=100.0) is False
+    # A different key is independent.
+    assert sh._should_log(("k", "s2"), interval=100.0) is True
+    # interval=0 always logs.
+    assert sh._should_log(("k", "s1"), interval=0.0) is True
+
+
+def test_grow_lane_drop_log_is_throttled(caplog):
+    sh = _fresh(True)
+    with caplog.at_level(logging.INFO, logger="aipacs.lifecycle_shadow"):
+        # Many progress ticks for ONE series -> the model updates each time, but the
+        # verbose grow_lane_drop log line is rate-limited to ~1 per interval.
+        for i in range(1, 40):
+            sh.note_download_progress("PRIM", "PREV", "uidThrottle", i, 123, dropped=True)
+    drops = [r for r in caplog.records if "grow_lane_drop" in r.getMessage()]
+    assert len(drops) <= 3, f"expected throttled logging, got {len(drops)} lines"
+    # But the model still saw every event (on_disk advanced to the latest count).
+    rec = list(sh._model.study("PREV").series.values())[0]
+    assert rec.on_disk == 39
+
+
 def test_default_is_enabled_when_env_unset():
     # Build default (2026-07-02): the observer runs unless explicitly killed.
     prev = os.environ.pop("AIPACS_LIFECYCLE_THUMBS", None)

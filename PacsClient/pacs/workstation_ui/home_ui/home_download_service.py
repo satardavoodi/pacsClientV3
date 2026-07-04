@@ -71,9 +71,14 @@ _LIFECYCLE_GROW_ACTIVE = os.getenv(
 ).strip().lower() in ("1", "true", "yes", "on")
 
 
+_seam_b_last_log = [0.0]  # module-level throttle for the confirmation log
+
+
 def _lc_seam_b_nudge_backstop(w) -> None:
     """Keep the viewer's disk-ready grow/resume watchdog alive after a dropped
-    secondary-study download event. Guarded, idempotent, no-op when off/unavailable."""
+    secondary-study download event. Guarded, idempotent, no-op when off/unavailable.
+    Emits a heavily-throttled ``[LIFECYCLE-CUTOVER]`` confirmation so the live build
+    can be seen to have the keep-alive active."""
     if not _LIFECYCLE_GROW_ACTIVE or w is None:
         return
     try:
@@ -81,6 +86,13 @@ def _lc_seam_b_nudge_backstop(w) -> None:
         ensure = getattr(ctrl, "_ensure_dl_watchdog", None)
         if callable(ensure):
             ensure()
+            _now = _time.monotonic()
+            if _now - _seam_b_last_log[0] >= 5.0:
+                _seam_b_last_log[0] = _now
+                _logger.info(
+                    "[LIFECYCLE-CUTOVER] seam_b watchdog kept alive on dropped "
+                    "secondary download event (Problem #2 keep-alive active)"
+                )
     except Exception:
         pass
 

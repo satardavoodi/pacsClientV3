@@ -601,6 +601,72 @@ class QtFastContainer(QWidget):
             series_number=series_number,
             series_uid=series_uid,
         )
+
+        # ── Viewport study-identity gate (cross-exam stomp guard) ──────────────
+        # ARCHITECTURAL INVARIANT: a viewport may only display a series belonging
+        # to the STUDY the user last intended for it. change_series_on_viewer()
+        # stamps `_intended_study_uid` on this container before every switch. If an
+        # incoming render carries a DIFFERENT study_uid than the intended one, it is
+        # a superseded / stale re-render (async apply or grow/resume watchdog that
+        # was still pointing at the previously-displayed exam) — painting it would
+        # show the WRONG exam in the viewport (48912/48952: current series 4 request
+        # rendered previous-exam series 1000004). Skip it and keep the current image;
+        # the correct series' own render (matching intended) proceeds normally.
+        #
+        # SAFE BY CONSTRUCTION: gates ONLY on cross-STUDY mismatch, so same-study
+        # operations — normal switch, paired-MG, in-place grow, reset_image — are
+        # never blocked. Fail-open: if either the intended or the incoming study_uid
+        # is unknown, the render proceeds (identical to legacy). Kill switch
+        # AIPACS_VIEWPORT_STUDY_IDENTITY_GATE=0 restores byte-identical legacy.
+        try:
+            import os as _os_gate
+            if (_os_gate.getenv("AIPACS_VIEWPORT_STUDY_IDENTITY_GATE", "1") or "1").strip() != "0":
+                _intended_study = str(getattr(self, "_intended_study_uid", "") or "").strip()
+                _intended_uid = str(getattr(self, "_intended_series_uid", "") or "").strip()
+                _m = metadata or {}
+                _ser = _m.get("series") if isinstance(_m.get("series"), dict) else {}
+                _incoming_study = str(
+                    (_ser or {}).get("study_uid") or _m.get("study_uid") or ""
+                ).strip()
+                # PRIMARY signal: SeriesInstanceUID mismatch. A viewport must show
+                # EXACTLY the series last requested for it (change_series stamps the
+                # intended series_uid); a re-render carrying a different series_uid is
+                # a superseded/stale stomp. series_uid is globally unique and — unlike
+                # study_uid — cannot be corrupted by a series that was DOWNLOADED and
+                # SAVED IN THE DB under the wrong study (48912: the previous exam's
+                # series 1000004 carries the CURRENT study_uid in its metadata, so the
+                # study signals falsely matched; the series_uid …301684 vs the intended
+                # …802574 still exposes the mismatch). Each viewport gets its OWN
+                # intended stamp, so a paired-MG side-by-side (separate viewport, its
+                # own change_series) is not affected — within ONE viewport the rendered
+                # series_uid always equals the intended one for a legit switch/grow/reset.
+                # Secondary signal: cross-STUDY mismatch (kept for defence in depth).
+                # Both fail open when their value is unknown.
+                _study_mismatch = bool(_intended_study and _incoming_study and _incoming_study != _intended_study)
+                _uid_mismatch = bool(_intended_uid and series_uid and series_uid != _intended_uid)
+                # Always-on decision trace (gated) so a non-block is diagnosable.
+                try:
+                    logger.info(
+                        "[IDENTITY-GATE] eval viewer=%s incoming(series=%s study=...%s uid=...%s) "
+                        "intended(study=...%s uid=...%s) study_mismatch=%s uid_mismatch=%s",
+                        self.id_vtk_widget, series_number, (_incoming_study or "-")[-12:],
+                        (series_uid or "-")[-12:], (_intended_study or "-")[-12:],
+                        (_intended_uid or "-")[-12:], _study_mismatch, _uid_mismatch,
+                    )
+                except Exception:
+                    pass
+                if _study_mismatch or _uid_mismatch:
+                    logger.warning(
+                        "[IDENTITY-GATE] viewer=%s SKIP render: incoming series=%s study=...%s uid=...%s "
+                        "!= intended study=...%s uid=...%s (superseded cross-exam render; keeping current image)",
+                        self.id_vtk_widget, series_number, (_incoming_study or "-")[-16:],
+                        (series_uid or "-")[-16:], (_intended_study or "-")[-16:],
+                        (_intended_uid or "-")[-16:],
+                    )
+                    return
+        except Exception:
+            pass
+
         if self._qt_bridge is not None:
             # Lifecycle trace (FAST/default backend): the previous series' Qt bridge
             # is torn down before the viewport rebinds. Mirrors the Advanced/VTK

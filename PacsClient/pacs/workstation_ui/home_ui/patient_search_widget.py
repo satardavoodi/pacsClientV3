@@ -2,6 +2,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QGroupBox, QLin
     QHBoxLayout, QComboBox, QCheckBox, QSizePolicy
 from PySide6.QtCore import Signal, QDate, Qt
 import qtawesome as qta
+import os
 from datetime import datetime, timedelta
 from PacsClient.utils.custom_checkbox import CustomCheckbox
 from PacsClient.utils.theme_manager import get_theme_manager
@@ -727,6 +728,24 @@ class PatientSearchWidget(QWidget):
     def apply_theme(self, theme=None):
         self._active_theme = theme or self.theme_manager.current_theme()
         t = self._active_theme
+        # OPT-01 (startup main-thread): apply_theme re-runs ~15 setStyleSheet calls
+        # (incl. _apply_field_styling over 11 fields, each a large QSS block) and is
+        # invoked several times during construction (setup_ui line 89, __init__ line 29,
+        # _hp_layout.apply_theme, home_panel) with the SAME theme — a measured ~2.3 s
+        # startup freeze (stall trace: apply_theme -> _apply_field_styling). Every
+        # stylesheet here is a pure function of the theme dict, so re-applying an
+        # unchanged theme is redundant work with a byte-identical visual result. Skip
+        # when the theme is unchanged since the last successful application. All
+        # styleable child widgets are created in setup_ui() BEFORE the first apply_theme,
+        # so nothing is left unstyled. Kill switch: AIPACS_THEME_APPLY_DEDUP=0 restores
+        # the byte-identical always-apply behavior; a real theme change (themeChanged ->
+        # a different dict) never matches and always re-applies.
+        if os.getenv("AIPACS_THEME_APPLY_DEDUP", "1") != "0":
+            try:
+                if t is not None and getattr(self, "_applied_theme_sig", None) == t:
+                    return
+            except Exception:
+                pass
         self.setStyleSheet(f"background: {t['panel_bg']};")
         if hasattr(self, "search_group"):
             self.search_group.setStyleSheet(
@@ -825,6 +844,9 @@ class PatientSearchWidget(QWidget):
             )
         self._apply_field_styling(t)
         self._apply_date_field_styling(t)
+        # Remember the applied theme so an identical re-apply (redundant construction-time
+        # call, or _hp_layout/home_panel re-theming with the same theme) is skipped above.
+        self._applied_theme_sig = t
 
     def _on_date_selector_activated(self, _index):
         """Re-apply the active preset on every user pick (even the same one)."""
