@@ -63,6 +63,17 @@ from typing import Optional, Callable
 # restores the psutil-only enumeration.
 _FAST_PROC_SCAN = (os.getenv("AIPACS_FAST_PROC_SCAN", "1") or "1").strip() != "0"
 
+# OPT-12 (startup): compute the "protected" set (self + ancestors + descendants) and
+# the top-level candidate check from ONE cheap pid→ppid snapshot instead of psutil
+# me.parents()/me.children(recursive=True)/proc.ppid(), each of which rebuilds the
+# whole Windows parent map (the ~2.3 s startup stall in STALL_TRACE at
+# single_instance_lock.py:387). DEFAULT OFF pending live Windows validation — this
+# touches the safety-critical "never kill our own launcher/tree" logic; enable with
+# AIPACS_FAST_INSTANCE_SWEEP=0 restores the legacy psutil sweep. Promoted to DEFAULT ON
+# 2026-07-05 after a live validation run (startup `single_instance_lock.py:387` stall gone,
+# 0 crashes, nothing unexpected closed).
+_FAST_INSTANCE_SWEEP = (os.getenv("AIPACS_FAST_INSTANCE_SWEEP", "1") or "1").strip() != "0"
+
 
 def _toolhelp_pid_names():
     """Yield (pid, image_basename) for every process via a Windows Toolhelp32
@@ -103,7 +114,11 @@ def _toolhelp_pid_names():
         entry.dwSize = ctypes.sizeof(PROCESSENTRY32W)
         ok = k32.Process32FirstW(snap, ctypes.byref(entry))
         while ok:
-            yield int(entry.th32ProcessID), str(entry.szExeFile)
+            # (pid, image_basename, parent_pid) — all three come FREE from the one
+            # Toolhelp snapshot (th32ParentProcessID is already in PROCESSENTRY32W),
+            # so the parent-PID map needs no extra syscall and no psutil ppid_map()
+            # rebuild (OPT-12 fast instance sweep).
+            yield int(entry.th32ProcessID), str(entry.szExeFile), int(entry.th32ParentProcessID)
             ok = k32.Process32NextW(snap, ctypes.byref(entry))
     finally:
         k32.CloseHandle(snap)
@@ -113,10 +128,19 @@ def _iter_pid_name_cheap():
     """Yield (pid, image_basename) for every process as cheaply as the platform
     allows. Windows: Toolhelp snapshot (avoids psutil name()->exe() per process);
     otherwise / on any failure: psutil.process_iter(["pid", "name"])."""
+    for pid, name, _ppid in _iter_pid_name_ppid_cheap():
+        yield pid, name
+
+
+def _iter_pid_name_ppid_cheap():
+    """Yield (pid, image_basename, parent_pid) for every process as cheaply as the
+    platform allows. Windows: ONE Toolhelp snapshot (pid+name+ppid together, no
+    per-process OpenProcess and no O(n^2) psutil ppid_map() rebuild). Otherwise / on
+    any failure: psutil.process_iter(["pid", "name", "ppid"])."""
     if _FAST_PROC_SCAN and os.name == "nt":
         try:
-            for pid, name in _toolhelp_pid_names():
-                yield pid, name
+            for pid, name, ppid in _toolhelp_pid_names():
+                yield pid, name, ppid
             return
         except Exception:
             pass  # fall through to the psutil enumeration
@@ -124,11 +148,45 @@ def _iter_pid_name_cheap():
         import psutil
     except Exception:
         return
-    for proc in psutil.process_iter(["pid", "name"]):
+    for proc in psutil.process_iter(["pid", "name", "ppid"]):
         try:
-            yield proc.pid, (proc.info.get("name") or "")
+            yield proc.pid, (proc.info.get("name") or ""), int(proc.info.get("ppid") or 0)
         except Exception:
             continue
+
+
+def _protected_pids_from_snapshot(pid2ppid: dict, self_pid: int) -> set:
+    """Pure: compute {self_pid} ∪ ancestors ∪ descendants from a pid→ppid snapshot.
+
+    Replaces psutil ``me.parents()`` + ``me.children(recursive=True)`` — each of which
+    rebuilds the whole Windows parent map per call — with dict walks over ONE snapshot.
+    Ancestors: walk parent links up from self (cycle/paranoia-guarded). Descendants:
+    BFS over the inverted map. Never returns a pid not reachable in the snapshot, so a
+    stale/partial map can only ever OVER-protect (skip a kill) — never mis-protect a
+    real target into being killed. Stdlib-only; unit-tested in isolation."""
+    protected = {int(self_pid)}
+    # ancestors
+    cur = int(self_pid)
+    seen = set()
+    while True:
+        parent = pid2ppid.get(cur)
+        if parent is None or parent in (0, cur) or parent in seen:
+            break
+        seen.add(parent)
+        protected.add(int(parent))
+        cur = int(parent)
+    # descendants (invert once, BFS)
+    children: dict = {}
+    for _pid, _ppid in pid2ppid.items():
+        children.setdefault(_ppid, []).append(_pid)
+    stack = [int(self_pid)]
+    while stack:
+        node = stack.pop()
+        for child in children.get(node, ()):  # direct children of node
+            if child not in protected:
+                protected.add(int(child))
+                stack.append(int(child))
+    return protected
 
 logger = logging.getLogger(__name__)
 
@@ -382,12 +440,27 @@ class SingleInstanceLock:
             return 0
         self_pid = os.getpid()
         protected = {self_pid}
-        try:
-            me = psutil.Process(self_pid)
-            protected.update(a.pid for a in me.parents())
-            protected.update(c.pid for c in me.children(recursive=True))
-        except Exception:
-            pass
+        _pid2ppid: dict = {}      # populated only in fast-sweep mode
+        _use_fast = _FAST_INSTANCE_SWEEP
+        _scan = None
+        if _use_fast:
+            try:
+                # ONE cheap Toolhelp snapshot → (pid, name, ppid) for every process.
+                _scan = list(_iter_pid_name_ppid_cheap())
+                _pid2ppid = {p: pp for p, _n, pp in _scan}
+                protected = _protected_pids_from_snapshot(_pid2ppid, self_pid)
+            except Exception:
+                _use_fast = False
+                _scan = None
+        if not _use_fast:
+            # Legacy path: psutil ancestors + descendants. Each of these rebuilds the
+            # whole Windows parent map (the ~2.3 s startup stall at :387/:449).
+            try:
+                me = psutil.Process(self_pid)
+                protected.update(a.pid for a in me.parents())
+                protected.update(c.pid for c in me.children(recursive=True))
+            except Exception:
+                pass
 
         candidates = {}
         # PERF (2026-06-08): enumerate with ONLY the cheap "name" attribute first.
@@ -402,7 +475,13 @@ class SingleInstanceLock:
         # Cheap (pid, name) enumeration first (Toolhelp on Windows; see
         # _iter_pid_name_cheap), name pre-filter, then the expensive exe/cmdline
         # only for the handful of aipacs/python candidates.
-        for pid, name in _iter_pid_name_cheap():
+        # Reuse the single fast-sweep snapshot for enumeration when available, else
+        # the standalone cheap (pid, name) scan (identical matches either way).
+        _enum = (
+            ((pid, name) for pid, name, _pp in _scan)
+            if _scan is not None else _iter_pid_name_cheap()
+        )
+        for pid, name in _enum:
             try:
                 if pid in protected:
                     continue
@@ -429,21 +508,37 @@ class SingleInstanceLock:
                     except Exception:
                         cwd = ""
                 if self._proc_is_aipacs(name, exe, cmdline, cwd):
-                    candidates[pid] = proc
+                    # Keep the CHEAP name (from the Toolhelp snapshot) with the
+                    # candidate so the kill loop never has to call proc.name()
+                    # again — that re-derives via proc.exe()/OpenProcess, a slow
+                    # Windows syscall that blocked the startup thread ~1.3 s on a
+                    # half-dead orphan (STALL_TRACE single_instance_lock.py:446,
+                    # 2026-07-04). We already have the name; reuse it.
+                    candidates[pid] = (proc, name)
             except Exception:
                 continue
 
         killed = 0
-        for pid, proc in candidates.items():
+        for pid, (proc, cand_name) in candidates.items():
             try:
-                if (proc.ppid() in candidates):
+                # Top-level check: skip a candidate whose parent is ALSO a candidate
+                # (it dies with its parent's tree). Use the snapshot ppid in fast mode
+                # (no per-candidate psutil ppid_map() rebuild); else legacy proc.ppid().
+                if _use_fast:
+                    _parent_pid = _pid2ppid.get(pid)
+                else:
+                    try:
+                        _parent_pid = proc.ppid()
+                    except Exception:
+                        _parent_pid = None
+                if _parent_pid in candidates:
                     continue  # not top-level; dies with its parent's tree
                 tree = [proc]
                 try:
                     tree += proc.children(recursive=True)
                 except Exception:
                     pass
-                desc = f"PID {pid} ({(proc.name() or '?')})"
+                desc = f"PID {pid} ({cand_name or '?'})"
                 for t in tree:
                     try:
                         t.terminate()

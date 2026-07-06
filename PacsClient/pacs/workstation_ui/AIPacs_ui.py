@@ -883,14 +883,13 @@ class ControlPanelWindow(object):
         # stylesheet is a pure function of the theme, and the children self-dedup, so
         # re-applying an unchanged theme is redundant. Skip when unchanged. Safe: on the
         # first apply everything (incl. children) styles; a real theme change is a
-        # different dict and always re-applies + cascades. Kill switch (shared):
-        # AIPACS_THEME_APPLY_DEDUP=0.
-        if os.getenv("AIPACS_THEME_APPLY_DEDUP", "1") != "0":
-            try:
-                if t is not None and getattr(self, "_applied_theme_sig", None) == t:
-                    return
-            except Exception:
-                pass
+        # different dict and always re-applies + cascades. Live-verified (2026-07-04) and
+        # promoted to default 2026-07-05 (flag AIPACS_THEME_APPLY_DEDUP retired).
+        try:
+            if t is not None and getattr(self, "_applied_theme_sig", None) == t:
+                return
+        except Exception:
+            pass
 
         self.MainWindow.setStyleSheet(f"QMainWindow {{ background: {t['window_bg']}; border: none; }}")
         self.leftMenuContainer.setStyleSheet(

@@ -1,9 +1,29 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.5 (2026-07-04)
-**Previous Stable:** v3.4.4 (2026-07-03)
-**Release Date:** 2026-07-04
+**Current Stable Version:** v3.4.6 (2026-07-06)
+**Previous Stable:** v3.4.5 (2026-07-04)
+**Release Date:** 2026-07-06
 **Branch:** beta-version
+
+---
+
+## v3.4.6 (2026-07-06) - Patch release: series-identity hardening, OPT perf, EchoMind unified MCP
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Continues the Optimization/Stability/Reliability plan and hardens
+multi-study series identity, plus an EchoMind secretary unified MCP entrypoint and
+clinical-agent validation pipeline.
+
+### Included
+
+- Series identity: cache study-identity, grow-lane study-number binding (OPT-06), and viewport study-identity guards (multi-study / previous-exam correctness)
+- Startup/perf (OPT-01/OPT-12): single-instance fast sweep + cheap-name reuse, study-downloaded status cache, telemetry log-level downgrade (log hygiene)
+- EchoMind secretary: unified MCP entrypoint, clinical-agent validation pipeline, viewer-write adapter, browser/education adapter refinements
+- Web browser: page-tools and widget improvements
+- Nuitka build refinements; aipacs_control_mcp testing-harness updates
+- Canonical version markers advanced to v3.4.6 (incl. home Info panel realigned); full local state published to all remotes
 
 ---
 

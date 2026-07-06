@@ -2,16 +2,16 @@
   "stage": 0,
   "key": "preflight",
   "title": "Preflight",
-  "created_at_utc": "2026-04-24T22:16:38.477060+00:00",
+  "created_at_utc": "2026-07-04T20:08:13.759787+00:00",
   "marker_only": true,
   "command": [],
   "output_paths": [
-    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output"
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output"
   ],
   "artifact_paths": [
-    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\build_state.json"
+    "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\build_state.json"
   ],
-  "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_00_preflight.log",
+  "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_00_preflight.log",
   "report_path": null,
   "issues": [],
   "notes": [

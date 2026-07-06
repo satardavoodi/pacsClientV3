@@ -230,6 +230,17 @@ class _VCCacheMixin:
             series = _s if isinstance(_s, dict) else {}
             cached_study = str(series.get('study_uid') or metadata.get('study_uid') or '').strip()
             if not cached_study:
+                # _full_cache_put now stamps study_uid at write time, so this
+                # fail-open branch should be unreachable for entries we wrote.
+                # Log if a legacy/un-stamped entry ever appears (observability;
+                # still fail-open — cannot prove a mismatch without a cached study).
+                try:
+                    logger.debug(
+                        "[CACHE-STUDY-IDENTITY] no cached study_uid for key=%s (fail-open keep)",
+                        str(series_number),
+                    )
+                except Exception:
+                    pass
                 return True  # no study on the cached entry -> cannot prove a mismatch
             resolver = getattr(self, '_resolve_canonical_series_identity', None)
             if not callable(resolver):
@@ -347,6 +358,25 @@ class _VCCacheMixin:
         if not self._is_full_volume_cache_candidate(str(series_number), vtk_image_data, metadata):
             return
         try:
+            # ── Study-identity stamp (multi-study clinical isolation) ──────────
+            # Guarantee every entry we cache carries its OWN study_uid so the
+            # read-side study-match guard can POSITIVELY verify it and never
+            # fail-open on a missing study_uid. Only fills a gap (never overwrites
+            # a present study_uid); resolved via the same canonical resolver the
+            # read path uses. Kill switch AIPACS_CACHE_STUDY_IDENTITY=0.
+            try:
+                import os as _os_cid
+                if (_os_cid.getenv("AIPACS_CACHE_STUDY_IDENTITY", "1") or "1").strip() != "0" \
+                        and isinstance(metadata, dict):
+                    _ser = metadata.get('series')
+                    if isinstance(_ser, dict) and not str(_ser.get('study_uid') or '').strip():
+                        _resolver = getattr(self, '_resolve_canonical_series_identity', None)
+                        if callable(_resolver):
+                            _rid = _resolver(str(series_number))
+                            if _rid and _rid[0]:
+                                _ser['study_uid'] = str(_rid[0])
+            except Exception:
+                pass
             self.zeta_boost.put(series_number, vtk_image_data, metadata)
             try:
                 self._emit_advanced_cache_probe(

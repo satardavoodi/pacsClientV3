@@ -54,16 +54,18 @@ def _read(p: Path) -> str:
 
 # --- source-pins: the gate at the render choke point ---------------------------------
 
-def test_gate_flag_default_on():
+def test_gate_flag_retired_unconditional():
+    # promoted to default 2026-07-05: the gate is a fail-open safety add (never blocks a
+    # correct render), so the on/off flag was retired and the gate is always on.
     s = _read(QFC)
-    assert 'os_gate.getenv("AIPACS_VIEWPORT_STUDY_IDENTITY_GATE", "1")' in s, \
-        "study-identity gate must default ON"
+    assert 'os_gate.getenv("AIPACS_VIEWPORT_STUDY_IDENTITY_GATE"' not in s, \
+        "flag retired - gate is unconditional now"
 
 
 def test_gate_reads_intended_and_incoming_study_and_returns_on_mismatch():
     s = _read(QFC)
     i = s.index("Viewport study-identity gate")
-    body = s[i:i + 4200]
+    body = s[i:i + 5400]
     assert 'getattr(self, "_intended_study_uid"' in body
     assert 'getattr(self, "_intended_series_uid"' in body
     assert '.get("study_uid")' in body            # incoming study from metadata
@@ -136,11 +138,6 @@ def test_allows_legit_switch_to_previous_exam():
 def test_fail_open_when_intended_unknown():
     # first render before any stamp -> proceed
     assert _gate_should_render("", "STUDY_CURRENT") is True
-
-
-def test_kill_switch_is_byte_identical_legacy():
-    # with the gate off, even a cross-study render is allowed (legacy behaviour)
-    assert _gate_should_render("STUDY_CURRENT", "STUDY_PREVIOUS", enabled=False) is True
 
 
 def test_same_study_different_series_not_blocked():

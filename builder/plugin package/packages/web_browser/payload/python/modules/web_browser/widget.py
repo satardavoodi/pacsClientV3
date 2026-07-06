@@ -44,6 +44,8 @@ from .styles import (
 
 
 HOME_URL = "https://www.google.com"
+NETWORK_CAPTURE_ENV = "AIPACS_BROWSER_NETWORK_CAPTURE"
+NETWORK_CAPTURE_DEFAULT = "1"  # default-on; set env to 0 only to disable
 
 
 def _current_theme():
@@ -1898,6 +1900,8 @@ class WebBrowserWidget(QWidget):
         self.profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
         self.page = QWebEnginePage(self.profile, self.web_view)
         self.web_view.setPage(self.page)
+        # Agent API response capture — main-world injection before first load.
+        self._setup_network_response_capture()
         # Secure credential autofill (offer-to-fill + offer-to-save) — wired
         # BEFORE the first load so the connector is present on the home page.
         self._setup_autofill()
@@ -2067,7 +2071,11 @@ class WebBrowserWidget(QWidget):
             return ""
 
     def get_page_title(self) -> str:
-        return self.current_title or ""
+        if getattr(self, "current_title", ""):
+            return self.current_title or ""
+        from .page_tools import JS_PAGE_TITLE
+        title = self._run_js_sync(JS_PAGE_TITLE, default="", timeout_ms=1500)
+        return title if isinstance(title, str) else ""
 
     def get_page_text(self, max_chars: int = 200000) -> str:
         """Visible text of the page (innerText), capped to *max_chars*."""
@@ -2094,6 +2102,51 @@ class WebBrowserWidget(QWidget):
         res = self._run_js_sync(JS_DOM_SUMMARY, default=None, timeout_ms=3000)
         return res if isinstance(res, dict) else {}
 
+    def get_dom_snapshot(self, max_elements: int = 300) -> dict:
+        """Rendered DOM snapshot for agent inspection.
+
+        Returns visible/interactive elements with compact text, approximate CSS
+        selectors, roles, and bounding boxes. This is intentionally smaller and
+        safer for the LLM than full HTML.
+        """
+        from .page_tools import js_dom_snapshot
+        res = self._run_js_sync(
+            js_dom_snapshot(max_elements=max_elements),
+            default=None, timeout_ms=3500)
+        return res if isinstance(res, dict) else {"elements": []}
+
+    def get_accessibility_tree(self, max_nodes: int = 250) -> dict:
+        """Approximate accessibility tree from DOM roles/ARIA/native controls."""
+        from .page_tools import js_accessibility_tree
+        res = self._run_js_sync(
+            js_accessibility_tree(max_nodes=max_nodes),
+            default=None, timeout_ms=3500)
+        return res if isinstance(res, dict) else {"nodes": []}
+
+    def get_inputs(self, max_inputs: int = 200) -> list:
+        """Visible input/select/textarea controls and their current values."""
+        from .page_tools import js_get_inputs
+        res = self._run_js_sync(js_get_inputs(max_inputs), default=None)
+        return res if isinstance(res, list) else []
+
+    def get_buttons(self, max_buttons: int = 200) -> list:
+        """Buttons and button-like elements visible in the page."""
+        from .page_tools import js_get_buttons
+        res = self._run_js_sync(js_get_buttons(max_buttons), default=None)
+        return res if isinstance(res, list) else []
+
+    def get_selected_element(self) -> dict:
+        """The active/focused page element, if any."""
+        from .page_tools import JS_SELECTED_ELEMENT
+        res = self._run_js_sync(JS_SELECTED_ELEMENT, default=None)
+        return res if isinstance(res, dict) else {"found": False}
+
+    def get_scroll_state(self) -> dict:
+        """Current page scroll position and document/viewport size."""
+        from .page_tools import JS_SCROLL_STATE
+        res = self._run_js_sync(JS_SCROLL_STATE, default=None)
+        return res if isinstance(res, dict) else {}
+
     def find_element(self, selector: str) -> dict:
         """Inspect the first element matching a CSS *selector*."""
         from .page_tools import js_find_element
@@ -2108,6 +2161,15 @@ class WebBrowserWidget(QWidget):
         if not selector:
             return False
         res = self._run_js_sync(js_fill_field(selector, value or ""),
+                                default=None)
+        return bool(isinstance(res, dict) and res.get("ok"))
+
+    def type_text(self, text: str, selector: str = None) -> bool:
+        """Type/insert text into *selector* or the currently focused element."""
+        from .page_tools import js_type_text
+        if text is None:
+            text = ""
+        res = self._run_js_sync(js_type_text(selector, str(text)),
                                 default=None)
         return bool(isinstance(res, dict) and res.get("ok"))
 
@@ -2126,6 +2188,15 @@ class WebBrowserWidget(QWidget):
         res = self._run_js_sync(js_submit_form(selector), default=None)
         return bool(isinstance(res, dict) and res.get("ok"))
 
+    def scroll_page(self, delta_x: int = 0, delta_y: int = 0,
+                    x: int = None, y: int = None) -> dict:
+        """Scroll by delta or to an absolute page coordinate."""
+        from .page_tools import js_scroll_page
+        res = self._run_js_sync(
+            js_scroll_page(delta_x=delta_x, delta_y=delta_y, x=x, y=y),
+            default=None)
+        return res if isinstance(res, dict) else {"ok": False}
+
     def extract_table(self, selector: str = None, max_rows: int = 100) -> dict:
         """Extract a table's cells as rows (by *selector*, or the first
         table). Returns {found, rows:[[...], ...]}."""
@@ -2140,6 +2211,26 @@ class WebBrowserWidget(QWidget):
         from .page_tools import js_get_links
         res = self._run_js_sync(js_get_links(max_links), default=None)
         return res if isinstance(res, list) else []
+
+    def read_network_responses(self) -> dict:
+        """Recent resource timing entries and injected fetch/XHR response bodies."""
+        from .page_tools import JS_NETWORK_ENTRIES
+        res = self._run_js_sync(JS_NETWORK_ENTRIES, default=None, timeout_ms=2500)
+        return res if isinstance(res, dict) else {"supported": False, "entries": []}
+
+    def clear_network_responses(self) -> dict:
+        """Clear the in-page fetch/XHR response-body capture buffer."""
+        from .page_tools import JS_CLEAR_NETWORK_CAPTURE
+        res = self._run_js_sync(JS_CLEAR_NETWORK_CAPTURE, default=None,
+                                timeout_ms=1500)
+        return res if isinstance(res, dict) else {"ok": False}
+
+    def extract_structured_page_data(self) -> dict:
+        """High-level structured extraction: metadata, JSON-LD, forms, tables, cards."""
+        from .page_tools import JS_STRUCTURED_PAGE_DATA
+        res = self._run_js_sync(JS_STRUCTURED_PAGE_DATA, default=None,
+                                timeout_ms=4000)
+        return res if isinstance(res, dict) else {}
 
     def take_screenshot(self, path: str = None) -> dict:
         """Grab the current page view to a PNG. Returns {ok, path}.
@@ -2168,6 +2259,42 @@ class WebBrowserWidget(QWidget):
             return {"ok": True, "path": str(save_path)}
         except Exception:
             return {"ok": False, "reason": "exception"}
+
+    def _setup_network_response_capture(self):
+        """Inject fetch/XHR response capture into the page's main JS world.
+
+        QWebEngine URL interceptors can see request metadata, but not response
+        bodies. This script runs at document creation and wraps page-level
+        fetch/XMLHttpRequest so the agent can read bounded API response bodies
+        through ``read_network_responses``.
+        """
+        if os.environ.get(NETWORK_CAPTURE_ENV, NETWORK_CAPTURE_DEFAULT) == "0":
+            return
+        try:
+            from .page_tools import JS_NETWORK_CAPTURE_INSTALL
+            try:
+                world = QWebEngineScript.ScriptWorldId.MainWorld
+            except AttributeError:
+                try:
+                    world = QWebEngineScript.MainWorld
+                except AttributeError:
+                    world = 0
+            try:
+                at_create = QWebEngineScript.InjectionPoint.DocumentCreation
+            except AttributeError:
+                at_create = QWebEngineScript.DocumentCreation
+            script = QWebEngineScript()
+            script.setName("aipacs_network_capture")
+            script.setSourceCode(JS_NETWORK_CAPTURE_INSTALL)
+            script.setInjectionPoint(at_create)
+            script.setWorldId(world)
+            script.setRunsOnSubFrames(True)
+            self.page.scripts().insert(script)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "web browser: network response capture setup skipped",
+                exc_info=True)
 
     # ── Secure credential autofill (2026-06-27) ──────────────────────────
     # Restores "remember my login + offer to fill it" on the encrypted vault

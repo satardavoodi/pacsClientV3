@@ -6,8 +6,9 @@ __init__ line 29, `_hp_layout.apply_theme`, `home_panel`) with the SAME theme �
 ~2.3 s startup freeze (stall trace: apply_theme -> _apply_field_styling). Every stylesheet is a
 pure function of the theme dict, so re-applying an unchanged theme is redundant work with a
 byte-identical result. The fix skips when the theme is unchanged since the last application;
-a real theme change (a different dict) never matches and always re-applies. Kill switch:
-AIPACS_THEME_APPLY_DEDUP=0.
+a real theme change (a different dict) never matches and always re-applies. Live-verified
+2026-07-04 and PROMOTED TO DEFAULT 2026-07-05 — the flag AIPACS_THEME_APPLY_DEDUP was retired,
+so the dedup is now unconditional.
 
 House style (mirrors test_status_refresh_dicom_only.py): source-pins guard the real edit (no
 PySide6/QApplication needed) + a mirror-behavioral test reproduces the exact skip algorithm.
@@ -27,10 +28,9 @@ def _src() -> str:
 
 # --- source-pins ---------------------------------------------------------------------
 
-def test_flag_default_on_and_os_imported():
+def test_flag_retired_dedup_unconditional():
     s = _src()
-    assert "\nimport os\n" in s, "os must be imported for the flag read"
-    assert 'os.getenv("AIPACS_THEME_APPLY_DEDUP", "1")' in s, "dedup flag must default ON"
+    assert 'os.getenv("AIPACS_THEME_APPLY_DEDUP"' not in s, "flag retired — dedup is unconditional now"
 
 
 def test_guard_and_signature_wired():
@@ -42,7 +42,7 @@ def test_guard_and_signature_wired():
     # guard sits inside apply_theme, before the first setStyleSheet
     ap = s.index("def apply_theme(self, theme=None):")
     first_style = s.index('self.setStyleSheet(f"background: {t[', ap)
-    assert s.index("AIPACS_THEME_APPLY_DEDUP", ap) < first_style
+    assert s.index('getattr(self, "_applied_theme_sig"', ap) < first_style
 
 
 # --- mirror-behavioral: exact skip algorithm -----------------------------------------
@@ -98,12 +98,3 @@ def test_first_apply_always_runs():
     assert not hasattr(m, "_applied_theme_sig")
     m.apply_theme({"panel_bg": "#000"})
     assert m.applies == 1                 # getattr default None != theme -> applied
-
-
-def test_kill_switch_always_applies():
-    m = _Mirror(enabled=False)
-    theme = {"panel_bg": "#000"}
-    m.apply_theme(theme)
-    m.apply_theme(theme)
-    m.apply_theme(theme)
-    assert m.applies == 3                 # flag off -> byte-identical always-apply legacy

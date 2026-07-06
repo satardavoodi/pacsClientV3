@@ -63,16 +63,25 @@ def _record(kind: str, payload: dict) -> None:
         pass
 
 
-def _send(action: str, entities: Optional[dict] = None, timeout_ms: int = 30000) -> dict:
+def _send(
+    action: str,
+    entities: Optional[dict] = None,
+    timeout_ms: int = 30000,
+    mode: str = "",
+) -> dict:
     t0 = time.perf_counter()
     try:
-        result = _get_client().send(action, entities or {}, timeout_ms=timeout_ms)
+        result = _get_client().send(
+            action, entities or {}, timeout_ms=timeout_ms, mode=mode)
     except Exception as exc:
         global _client
         _client = None  # force reconnect next call
         result = {"ok": False, "action": action, "error_code": "TRANSPORT", "message": str(exc)}
     result["client_ms"] = round((time.perf_counter() - t0) * 1000.0, 1)
-    _record("command", {"action": action, "entities": entities or {}, "result": result})
+    _record("command", {
+        "action": action, "entities": entities or {}, "mode": mode,
+        "result": result,
+    })
     return result
 
 
@@ -94,9 +103,9 @@ def list_actions() -> str:
 
 
 @mcp.tool()
-def raw_command(action: str, entities_json: str = "{}") -> str:
+def raw_command(action: str, entities_json: str = "{}", mode: str = "") -> str:
     """Send any bus action with a JSON entities object (escape hatch)."""
-    return _j(_send(action, json.loads(entities_json or "{}")))
+    return _j(_send(action, json.loads(entities_json or "{}"), mode=mode))
 
 
 # ── workflow tools (requested command set) ───────────────────────────
@@ -199,6 +208,75 @@ def query_viewport_state() -> str:
 
 
 @mcp.tool()
+def get_viewport_context(
+    viewport: int = 0,
+    include_slice_meta: bool = True,
+    include_local_paths: bool = False,
+) -> str:
+    """Read active viewport state plus DICOM slice metadata and geometry.
+
+    This is a read-only context package for the external GPT brain: current
+    tab/study, viewport transform, slice index/count, metadata, pixel spacing,
+    orientation/position, and available measurement/capture capabilities.
+    """
+    return _j(_send("get_viewport_context", {
+        "viewport": viewport,
+        "include_slice_meta": include_slice_meta,
+        "include_local_paths": include_local_paths,
+    }, mode="read_only"))
+
+
+@mcp.tool()
+def capture_viewport(
+    viewport: int = 0,
+    scope: str = "viewport",
+    filename_prefix: str = "",
+) -> str:
+    """Save a viewport or full patient-tab PNG under user_data/echomind/agent_artifacts."""
+    ent: dict[str, Any] = {"viewport": viewport, "scope": scope}
+    if filename_prefix:
+        ent["filename_prefix"] = filename_prefix
+    return _j(_send("capture_viewport", ent))
+
+
+@mcp.tool()
+def activate_tool(tool: str, viewport: int = 0) -> str:
+    """Activate a viewer tool on the active FAST viewport.
+
+    Supported: distance/ruler, angle, two_line_angle, roi_rect, roi_circle,
+    arrow, text, eraser, select.
+    """
+    return _j(_send("activate_tool", {"viewport": viewport, "tool": tool}))
+
+
+@mcp.tool()
+def measure_distance(points_image_json: str, viewport: int = 0, slice_index: int = -1, label: str = "") -> str:
+    """Place a distance ruler using image-pixel points, not screen guessing.
+
+    points_image_json example: [[120, 210], [220, 210]]
+    slice_index=-1 means require/use the current displayed slice.
+    """
+    ent: dict[str, Any] = {
+        "viewport": viewport,
+        "points_image": json.loads(points_image_json),
+    }
+    if slice_index >= 0:
+        ent["slice_index"] = slice_index
+    if label:
+        ent["label"] = label
+    return _j(_send("measure_distance", ent))
+
+
+@mcp.tool()
+def get_measurements(viewport: int = 0, slice_index: int = -1, all_slices: bool = False) -> str:
+    """Read measurement/annotation models from the viewport tool store."""
+    ent: dict[str, Any] = {"viewport": viewport, "all_slices": all_slices}
+    if slice_index >= 0:
+        ent["slice_index"] = slice_index
+    return _j(_send("get_measurements", ent, mode="read_only"))
+
+
+@mcp.tool()
 def query_thumbnail_state() -> str:
     """QueryThumbnailState: the active tab's series/thumbnail metadata."""
     return _j(_send("get_thumbnails_data", {}))
@@ -210,6 +288,180 @@ def snapshot_health(since_minutes: int = 10) -> str:
     res = _send("snapshot_resources", {})
     faults = _send("count_native_faults_since", {"minutes": since_minutes})
     return _j({"resources": res, "native_faults": faults})
+
+
+# ── browser tools ────────────────────────────────────────────────────
+@mcp.tool()
+def browser_open() -> str:
+    """Open or activate the embedded AI-PACS Web Browser tab."""
+    return _j(_send("open_browser", {}))
+
+
+@mcp.tool()
+def web_search(query: str) -> str:
+    """Search Google in the embedded browser using the CommandBus browser adapter."""
+    return _j(_send("web_search", {"query": query}, timeout_ms=60000))
+
+
+@mcp.tool()
+def browser_open_url(url: str) -> str:
+    """Open a URL in the embedded browser. http/https and bare domains only."""
+    return _j(_send("open_url", {"url": url}, timeout_ms=60000))
+
+
+@mcp.tool()
+def browser_get_url() -> str:
+    """Read the current embedded browser URL."""
+    return _j(_send("browser_get_url", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_get_title() -> str:
+    """Read the current embedded browser page title."""
+    return _j(_send("browser_get_title", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_get_text() -> str:
+    """Read visible text from the current embedded browser page."""
+    return _j(_send("browser_get_text", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_get_html() -> str:
+    """Read HTML from the current embedded browser page."""
+    return _j(_send("browser_get_html", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_get_links() -> str:
+    """List links from the current embedded browser page."""
+    return _j(_send("browser_get_links", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_dom_summary() -> str:
+    """Summarize headings, inputs, buttons, and other DOM counts."""
+    return _j(_send("browser_dom_summary", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_dom_snapshot(max_elements: int = 300) -> str:
+    """Return a compact rendered DOM snapshot for agent inspection."""
+    return _j(_send("browser_dom_snapshot", {"max_elements": max_elements}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_accessibility_tree(max_nodes: int = 250) -> str:
+    """Return an accessibility-like tree derived from DOM roles/ARIA/native controls."""
+    return _j(_send("browser_accessibility_tree", {"max_nodes": max_nodes}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_get_buttons(max_buttons: int = 200) -> str:
+    """List buttons and button-like elements on the current page."""
+    return _j(_send("browser_get_buttons", {"max_buttons": max_buttons}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_get_inputs(max_inputs: int = 200) -> str:
+    """List input/select/textarea controls and current values."""
+    return _j(_send("browser_get_inputs", {"max_inputs": max_inputs}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_find_element(selector: str) -> str:
+    """Find one element on the current browser page by CSS selector."""
+    return _j(_send("browser_find_element", {"selector": selector}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_extract_table(selector: str = "") -> str:
+    """Extract a table from the current page; defaults to the first table."""
+    ent = {"selector": selector} if selector else {}
+    return _j(_send("browser_extract_table", ent, mode="read_only"))
+
+
+@mcp.tool()
+def browser_screenshot(path: str = "") -> str:
+    """Save a screenshot of the embedded browser page."""
+    ent = {"path": path} if path else {}
+    return _j(_send("browser_screenshot", ent, mode="read_only"))
+
+
+@mcp.tool()
+def browser_selected_text() -> str:
+    """Read the user's current page text selection."""
+    return _j(_send("browser_selected_text", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_selected_element() -> str:
+    """Read the active/focused page element."""
+    return _j(_send("browser_selected_element", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_scroll_state() -> str:
+    """Read the current page scroll position and document size."""
+    return _j(_send("browser_scroll_state", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_network() -> str:
+    """Read recent browser resource timing entries and captured fetch/XHR bodies."""
+    return _j(_send("browser_network", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_clear_network() -> str:
+    """Clear the browser's injected fetch/XHR response-body capture buffer."""
+    return _j(_send("browser_clear_network", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_structured_data() -> str:
+    """Extract structured page data: metadata, JSON-LD, forms, tables, cards."""
+    return _j(_send("browser_structured_data", {}, mode="read_only"))
+
+
+@mcp.tool()
+def browser_fill_field(selector: str, value: str) -> str:
+    """Fill an input or textarea on the current page by CSS selector."""
+    return _j(_send("browser_fill_field", {"selector": selector, "value": value}))
+
+
+@mcp.tool()
+def browser_type_text(text: str, selector: str = "") -> str:
+    """Type/insert text into a selector or the focused page element."""
+    ent: dict[str, Any] = {"text": text}
+    if selector:
+        ent["selector"] = selector
+    return _j(_send("browser_type_text", ent))
+
+
+@mcp.tool()
+def browser_click(selector: str) -> str:
+    """Click an element on the current page by CSS selector."""
+    return _j(_send("browser_click", {"selector": selector}))
+
+
+@mcp.tool()
+def browser_scroll(delta_y: int = 0, delta_x: int = 0, x: int = -1, y: int = -1) -> str:
+    """Scroll the page by delta, or to absolute x/y when provided."""
+    ent: dict[str, Any] = {"delta_x": delta_x, "delta_y": delta_y}
+    if x >= 0:
+        ent["x"] = x
+    if y >= 0:
+        ent["y"] = y
+    return _j(_send("browser_scroll", ent))
+
+
+@mcp.tool()
+def browser_submit_form(selector: str = "") -> str:
+    """Submit a browser form; defaults to password form, else first form."""
+    ent = {"selector": selector} if selector else {}
+    return _j(_send("browser_submit_form", ent, timeout_ms=60000))
 
 
 # ── pressure tools ───────────────────────────────────────────────────
@@ -225,7 +477,10 @@ def burst(commands_json: str, interval_ms: int = 0, seed: int = 0) -> str:
     ids: list[int] = []
     t0 = time.perf_counter()
     for i, cmd in enumerate(cmds):
-        ids.append(client.fire(str(cmd.get("action")), cmd.get("entities") or {}))
+        ids.append(client.fire(
+            str(cmd.get("action")), cmd.get("entities") or {},
+            mode=str(cmd.get("mode") or ""),
+        ))
         if interval_ms and i < len(cmds) - 1:
             jitter = rng.uniform(0.8, 1.2) if rng else 1.0
             time.sleep(interval_ms * jitter / 1000.0)

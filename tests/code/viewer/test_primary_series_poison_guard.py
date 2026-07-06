@@ -32,10 +32,12 @@ def _src() -> str:
 
 # --- source-pins ---------------------------------------------------------------------
 
-def test_flag_default_on():
+def test_flag_retired_guard_unconditional():
+    # promoted to default 2026-07-05: multi-study-gated + only re-resolves when the
+    # primary really has the series on disk, so the on/off flag was retired.
     s = _src()
-    assert 'AIPACS_PRIMARY_SERIES_POISON_GUARD' in s
-    assert '_os.getenv("AIPACS_PRIMARY_SERIES_POISON_GUARD", "1")' in s
+    assert '_os.getenv("AIPACS_PRIMARY_SERIES_POISON_GUARD"' not in s, \
+        "flag retired - poison-guard is unconditional now"
 
 
 def test_guard_logic_present():
@@ -86,15 +88,6 @@ def test_poison_reresolves_to_primary(tmp_path):
     out = _resolve("4", str(prev), entry_path="", multistudy=True,
                    primary_uid="CURRENT_UID", source_path=str(src))
     assert out == str(cur), "must re-resolve the primary series to the CURRENT study"
-
-
-def test_kill_switch_keeps_legacy_poison(tmp_path):
-    src = tmp_path / "dicom"
-    _mk(src, "CURRENT_UID", "4")
-    prev = _mk(src, "PREVIOUS_UID", "4")
-    out = _resolve("4", str(prev), entry_path="", multistudy=True,
-                   primary_uid="CURRENT_UID", source_path=str(src), flag=False)
-    assert out is None, "flag off -> legacy behaviour (keeps the poisoned tab path)"
 
 
 def test_single_study_byte_identical(tmp_path):

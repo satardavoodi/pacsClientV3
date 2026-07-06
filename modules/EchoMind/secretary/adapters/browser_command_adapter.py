@@ -55,16 +55,28 @@ BROWSER_ACTIONS: dict[str, str] = {
     "browser_go_forward":    "browser_forward",
     "browser_reload":        "refresh_page",
     "browser_get_url":       "get_current_url",
+    "browser_get_title":     "get_page_title",
     "browser_get_text":      "get_page_text",
     "browser_get_html":      "get_page_html",
     "browser_dom_summary":   "get_dom_summary",
+    "browser_dom_snapshot":  "get_dom_snapshot",
+    "browser_accessibility_tree": "get_accessibility_tree",
     "browser_find_element":  "find_element",
+    "browser_get_buttons":   "get_buttons",
+    "browser_get_inputs":    "get_inputs",
     "browser_fill_field":    "fill_field",
+    "browser_type_text":     "type_text",
     "browser_click":         "click_element",
     "browser_submit_form":   "submit_form",
     "browser_selected_text": "get_selected_text",
+    "browser_selected_element": "get_selected_element",
     "browser_extract_table": "extract_table",
+    "browser_structured_data": "extract_structured_page_data",
     "browser_get_links":     "get_links",
+    "browser_scroll":        "scroll_page",
+    "browser_scroll_state":  "get_scroll_state",
+    "browser_network":       "read_network_responses",
+    "browser_clear_network": "clear_network_responses",
     "browser_screenshot":    "take_screenshot",
 }
 
@@ -303,6 +315,10 @@ class BrowserCommandAdapter:
         return self._read("browser_get_url", "get_current_url", "url",
                           "Current URL read.")
 
+    def get_page_title(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_get_title", "get_page_title", "title",
+                          "Page title read.")
+
     def get_page_text(self, plan: CommandPlan, state: dict) -> CommandResult:
         widget, err = self._need_widget("browser_get_text")
         if err is not None:
@@ -337,9 +353,85 @@ class BrowserCommandAdapter:
         return self._read("browser_dom_summary", "get_dom_summary", "summary",
                           "Page structure summarized.")
 
+    def get_dom_snapshot(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_dom_snapshot")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        try:
+            max_elements = int(ent.get("max_elements", 300) or 300)
+            snapshot = widget.get_dom_snapshot(max_elements=max_elements)
+        except Exception as exc:
+            logger.exception("browser adapter: get_dom_snapshot failed")
+            return _err("browser_dom_snapshot", "ACTION_FAILED", str(exc))
+        count = int(snapshot.get("count", len(snapshot.get("elements", [])))
+                    if isinstance(snapshot, dict) else 0)
+        return CommandResult(
+            ok=True, action="browser_dom_snapshot",
+            message=f"DOM snapshot contains {count} element(s).",
+            data={"snapshot": snapshot})
+
+    def get_accessibility_tree(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_accessibility_tree")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        try:
+            max_nodes = int(ent.get("max_nodes", 250) or 250)
+            tree = widget.get_accessibility_tree(max_nodes=max_nodes)
+        except Exception as exc:
+            logger.exception("browser adapter: get_accessibility_tree failed")
+            return _err("browser_accessibility_tree", "ACTION_FAILED", str(exc))
+        count = int(tree.get("count", len(tree.get("nodes", [])))
+                    if isinstance(tree, dict) else 0)
+        return CommandResult(
+            ok=True, action="browser_accessibility_tree",
+            message=f"Accessibility tree contains {count} node(s).",
+            data={"tree": tree})
+
     def get_selected_text(self, plan: CommandPlan, state: dict) -> CommandResult:
         return self._read("browser_selected_text", "get_selected_text",
                           "selected_text", "Selection read.")
+
+    def get_selected_element(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_selected_element", "get_selected_element",
+                          "element", "Selected/focused element read.")
+
+    def get_scroll_state(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_scroll_state", "get_scroll_state",
+                          "scroll", "Scroll state read.")
+
+    def get_inputs(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_get_inputs")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        try:
+            inputs = widget.get_inputs(max_inputs=int(ent.get("max_inputs", 200) or 200))
+        except Exception as exc:
+            logger.exception("browser adapter: get_inputs failed")
+            return _err("browser_get_inputs", "ACTION_FAILED", str(exc))
+        inputs = inputs if isinstance(inputs, list) else []
+        return CommandResult(
+            ok=True, action="browser_get_inputs",
+            message=f"Found {len(inputs)} input(s).",
+            data={"inputs": inputs, "count": len(inputs)})
+
+    def get_buttons(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_get_buttons")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        try:
+            buttons = widget.get_buttons(max_buttons=int(ent.get("max_buttons", 200) or 200))
+        except Exception as exc:
+            logger.exception("browser adapter: get_buttons failed")
+            return _err("browser_get_buttons", "ACTION_FAILED", str(exc))
+        buttons = buttons if isinstance(buttons, list) else []
+        return CommandResult(
+            ok=True, action="browser_get_buttons",
+            message=f"Found {len(buttons)} button(s).",
+            data={"buttons": buttons, "count": len(buttons)})
 
     def get_links(self, plan: CommandPlan, state: dict) -> CommandResult:
         widget, err = self._need_widget("browser_get_links")
@@ -418,6 +510,31 @@ class BrowserCommandAdapter:
                              message=f"Filled {selector}.",
                              data={"selector": selector})
 
+    def type_text(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_type_text")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        selector = str(ent.get("selector") or "").strip() or None
+        text = ent.get("text")
+        if text is None:
+            text = ent.get("value")
+        text = "" if text is None else str(text)
+        if not text:
+            return _err("browser_type_text", "MISSING_TEXT",
+                        "type_text requires entities.text (or entities.value).")
+        try:
+            ok = bool(widget.type_text(text, selector=selector))
+        except Exception as exc:
+            logger.exception("browser adapter: type_text failed")
+            return _err("browser_type_text", "ACTION_FAILED", str(exc))
+        if not ok:
+            return _err("browser_type_text", "ACTION_FAILED",
+                        "Could not type text into the requested element.")
+        return CommandResult(ok=True, action="browser_type_text",
+                             message="Typed text into the page.",
+                             data={"selector": selector, "length": len(text)})
+
     def click_element(self, plan: CommandPlan, state: dict) -> CommandResult:
         widget, err = self._need_widget("browser_click")
         if err is not None:
@@ -455,6 +572,43 @@ class BrowserCommandAdapter:
                         "No form to submit.")
         return CommandResult(ok=True, action="browser_submit_form",
                              message="Form submitted.", data={})
+
+    def scroll_page(self, plan: CommandPlan, state: dict) -> CommandResult:
+        widget, err = self._need_widget("browser_scroll")
+        if err is not None:
+            return err
+        ent = plan.entities or {}
+        try:
+            kwargs: dict[str, Any] = {
+                "delta_x": int(ent.get("delta_x", 0) or 0),
+                "delta_y": int(ent.get("delta_y", ent.get("pixels", 0)) or 0),
+            }
+            if ent.get("x") is not None:
+                kwargs["x"] = int(ent.get("x"))
+            if ent.get("y") is not None:
+                kwargs["y"] = int(ent.get("y"))
+            result = widget.scroll_page(**kwargs)
+        except Exception as exc:
+            logger.exception("browser adapter: scroll_page failed")
+            return _err("browser_scroll", "ACTION_FAILED", str(exc))
+        ok = bool(isinstance(result, dict) and result.get("ok"))
+        if not ok:
+            return _err("browser_scroll", "ACTION_FAILED",
+                        "Could not scroll the page.")
+        return CommandResult(ok=True, action="browser_scroll",
+                             message="Page scrolled.", data={"scroll": result})
+
+    def read_network_responses(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_network", "read_network_responses",
+                          "network", "Network resource entries read.")
+
+    def clear_network_responses(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_clear_network", "clear_network_responses",
+                          "result", "Network response capture buffer cleared.")
+
+    def extract_structured_page_data(self, plan: CommandPlan, state: dict) -> CommandResult:
+        return self._read("browser_structured_data", "extract_structured_page_data",
+                          "structured_data", "Structured page data extracted.")
 
     def take_screenshot(self, plan: CommandPlan, state: dict) -> CommandResult:
         widget, err = self._need_widget("browser_screenshot")

@@ -4,122 +4,153 @@
   "completed_stages": [
     0,
     1,
-    2,
-    7,
-    8,
-    9
+    2
   ],
   "stages": {
     "0": {
       "name": "Preflight",
       "status": "completed",
-      "started_at_utc": "2026-04-24T22:16:37.835102+00:00",
-      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_00_preflight.log",
-      "finished_at_utc": "2026-04-24T22:16:38.476926+00:00",
+      "started_at_utc": "2026-07-04T20:08:13.073532+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_00_preflight.log",
+      "finished_at_utc": "2026-07-04T20:08:13.759649+00:00",
       "command": [],
       "output_paths": [
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output"
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output"
       ],
       "artifact_paths": [
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\build_state.json"
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\build_state.json"
       ],
       "report_path": null,
       "issues": [],
       "notes": [
         "Preflight checks completed"
-      ]
+      ],
+      "stale_reason": "completed stage artifacts are missing or belong to a different project root"
     },
     "1": {
       "name": "Minimal Core Smoke Build",
       "status": "completed",
-      "started_at_utc": "2026-04-24T09:23:21.385849+00:00",
-      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_01_minimal_core.log",
-      "finished_at_utc": "2026-04-24T09:24:13.364110+00:00",
+      "started_at_utc": "2026-07-04T22:13:18.646829+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_01_minimal_core.log",
+      "finished_at_utc": "2026-07-04T22:13:32.747761+00:00",
       "command": [
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\.venv_build\\Scripts\\python.exe",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
         "-m",
         "nuitka",
         "--standalone",
-        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_01_minimal_core",
         "--output-filename=AIPacs.exe",
         "--product-name=AIPacs",
-        "--product-version=2.4.8",
+        "--product-version=3.4.5",
         "--company-name=AIPacs",
         "--file-description=AIPacs - staged Nuitka build",
-        "--windows-console-mode=disable",
-        "--windows-icon-from-ico=Qss/images/favicon.ico",
-        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_01_minimal_core.xml",
+        "--windows-console-mode=attach",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_01_minimal_core.xml",
         "--assume-yes-for-downloads",
-        "--warn-unusual-code",
-        "--warn-implicit-exceptions",
-        "--lto=yes",
-        "--zig",
-        "--include-module=_project_root",
-        "--include-module=aipacs_runtime",
+        "--python-flag=static_hashes",
+        "--python-flag=safe_path",
+        "--lto=auto",
+        "--msvc=latest",
         "builder nuitka/stage_entrypoints/stage1_minimal_bootstrap.py"
       ],
       "output_paths": [
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core",
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core\\stage1_minimal_bootstrap.dist"
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_01_minimal_core",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_01_minimal_core\\stage1_minimal_bootstrap.dist"
       ],
       "artifact_paths": [
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_01_minimal_core\\stage1_minimal_bootstrap.dist\\AIPacs.exe"
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_01_minimal_core\\stage1_minimal_bootstrap.dist\\AIPacs.exe"
       ],
-      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_01_minimal_core.xml",
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_01_minimal_core.xml",
       "issues": [],
-      "error": "Nuitka command failed with exit code 1. Issues: ['see log'] ",
-      "notes": []
+      "notes": [],
+      "stale_reason": "completed stage artifacts are missing or belong to a different project root"
     },
     "2": {
       "name": "Qt Shell Build",
       "status": "completed",
-      "started_at_utc": "2026-04-24T09:26:59.900509+00:00",
-      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_02_qt_shell.log",
-      "finished_at_utc": "2026-04-24T09:27:22.826854+00:00",
+      "started_at_utc": "2026-07-05T09:10:09.123899+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_02_qt_shell.log",
+      "finished_at_utc": "2026-07-05T09:11:14.697762+00:00",
       "command": [
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\.venv_build\\Scripts\\python.exe",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
         "-m",
         "nuitka",
         "--standalone",
-        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_02_qt_shell",
         "--output-filename=AIPacs.exe",
         "--product-name=AIPacs",
-        "--product-version=2.4.8",
+        "--product-version=3.4.5",
         "--company-name=AIPacs",
         "--file-description=AIPacs - staged Nuitka build",
-        "--windows-console-mode=disable",
-        "--windows-icon-from-ico=Qss/images/favicon.ico",
-        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_02_qt_shell.xml",
+        "--windows-console-mode=attach",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_02_qt_shell.xml",
         "--assume-yes-for-downloads",
-        "--warn-unusual-code",
-        "--warn-implicit-exceptions",
-        "--lto=no",
-        "--zig",
+        "--python-flag=static_hashes",
+        "--python-flag=safe_path",
+        "--lto=auto",
+        "--msvc=latest",
         "--enable-plugin=pyside6",
+        "--include-module=base64",
         "builder nuitka/stage_entrypoints/stage2_qt_shell.py"
       ],
       "output_paths": [
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell",
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist"
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_02_qt_shell",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist"
       ],
       "artifact_paths": [
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist\\AIPacs.exe",
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist\\PySide6\\qt-plugins\\platforms"
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist\\AIPacs.exe",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist\\PySide6\\qt-plugins\\platforms"
       ],
-      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\reports\\nuitka_stage_02_qt_shell.xml",
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_02_qt_shell.xml",
       "issues": [],
-      "error": "Qt platform plugin folder missing: E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\dist\\stage_02_qt_shell\\stage2_qt_shell.dist\\PySide6\\plugins\\platforms",
-      "notes": []
+      "notes": [],
+      "stale_reason": "completed stage artifacts are missing or belong to a different project root"
     },
     "3": {
       "name": "Core Package Inclusion",
       "status": "running",
-      "started_at_utc": "2026-04-24T11:48:39.285353+00:00",
-      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_03_core_packages.log"
+      "started_at_utc": "2026-07-05T09:11:14.699190+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_03_core_packages.log",
+      "finished_at_utc": "2026-07-04T21:30:56.063240+00:00",
+      "command": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages",
+        "--output-filename=AIPacs.exe",
+        "--product-name=AIPacs",
+        "--product-version=3.4.5",
+        "--company-name=AIPacs",
+        "--file-description=AIPacs - staged Nuitka build",
+        "--windows-console-mode=attach",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_03_core_packages.xml",
+        "--assume-yes-for-downloads",
+        "--python-flag=static_hashes",
+        "--python-flag=safe_path",
+        "--lto=auto",
+        "--include-module=base64",
+        "--include-module=database",
+        "--include-module=database.core",
+        "--include-module=database.manager",
+        "--include-package=database",
+        "--include-package=modules.module_system",
+        "builder nuitka/stage_entrypoints/stage3_core_bootstrap.py"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages\\stage3_core_bootstrap.dist"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages\\stage3_core_bootstrap.dist\\AIPacs.exe"
+      ],
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_03_core_packages.xml",
+      "issues": [],
+      "notes": []
     },
     "7": {
       "name": "Runtime Resources",
-      "status": "completed",
+      "status": "stale",
       "started_at_utc": "2026-04-24T22:19:41.450838+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_07_runtime_resources.log",
       "finished_at_utc": "2026-04-24T22:19:47.624490+00:00",
@@ -151,11 +182,12 @@
         "compare:Fonts: pyinstaller=no nuitka=yes",
         "compare:config: pyinstaller=no nuitka=yes",
         "compare:json-styles: pyinstaller=no nuitka=yes"
-      ]
+      ],
+      "stale_reason": "completed stage artifacts are missing or belong to a different project root"
     },
     "8": {
       "name": "External Plugin Package Staging",
-      "status": "completed",
+      "status": "stale",
       "started_at_utc": "2026-04-25T06:13:04.999156+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_08_plugin_staging.log",
       "finished_at_utc": "2026-04-25T06:13:05.511975+00:00",
@@ -170,11 +202,12 @@
       "issues": [],
       "notes": [
         "Staged plugin packages: advanced_mpr, download_manager, echomind, education, offline_cloud_server, printing, run_cd, stitching, viewer, web_browser, zeta_boost"
-      ]
+      ],
+      "stale_reason": "completed stage artifacts are missing or belong to a different project root"
     },
     "9": {
       "name": "Installer Staging",
-      "status": "completed",
+      "status": "stale",
       "started_at_utc": "2026-04-25T06:13:30.646314+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs\\builder nuitka\\output\\logs\\stage_09_installer_staging.log",
       "finished_at_utc": "2026-04-25T06:13:30.648108+00:00",
@@ -191,12 +224,58 @@
       "issues": [],
       "notes": [
         "Installer staging manifests generated"
-      ]
+      ],
+      "stale_reason": "completed stage artifacts are missing or belong to a different project root"
+    },
+    "4": {
+      "name": "DICOM Basic Viewer Dependencies",
+      "status": "stale",
+      "started_at_utc": "2026-07-04T22:13:38.136768+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_04_dicom_basic.log",
+      "finished_at_utc": "2026-07-04T22:28:14.583812+00:00",
+      "command": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic",
+        "--output-filename=AIPacs.exe",
+        "--product-name=AIPacs",
+        "--product-version=3.4.5",
+        "--company-name=AIPacs",
+        "--file-description=AIPacs - staged Nuitka build",
+        "--windows-console-mode=attach",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_04_dicom_basic.xml",
+        "--assume-yes-for-downloads",
+        "--python-flag=static_hashes",
+        "--python-flag=safe_path",
+        "--lto=auto",
+        "--msvc=latest",
+        "--nofollow-import-to=modules.mpr.advanced_3d_slicer",
+        "--include-module=numpy",
+        "--include-module=pydicom",
+        "--include-module=pydicom.encoders",
+        "--include-module=pydicom.pixel_data_handlers",
+        "--include-module=pydicom.pixel_data_handlers.numpy_handler",
+        "--include-package=numpy",
+        "--include-package=pydicom",
+        "builder nuitka/stage_entrypoints/stage4_dicom_bootstrap.py"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic\\stage4_dicom_bootstrap.dist"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic\\stage4_dicom_bootstrap.dist\\AIPacs.exe"
+      ],
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_04_dicom_basic.xml",
+      "issues": [],
+      "notes": []
     }
   },
-  "updated_at_utc": "2026-04-25T06:13:32.676869+00:00",
-  "mode": "fresh",
+  "updated_at_utc": "2026-07-05T09:11:14.699198+00:00",
+  "mode": "resume",
   "clean_mode": "none",
-  "current_stage": null,
+  "current_stage": 3,
   "failed_stage": null
 }

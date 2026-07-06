@@ -1510,6 +1510,77 @@ Before editing `modules/education/case_of_day_widget.py` (`CaseOfDayEntryDialog`
   see the report's "NOT done" section. Guard test:
   `tests/code/education/test_case_of_day_media_capture.py`.
 
+### Viewer-cache STUDY-IDENTITY hardening (2026-07-05, OPT-17)
+The in-memory viewer caches key on the BARE display series number, not the study.
+Before editing `_get_series_by_number_fast` / `_entry_is_valid` (`_vc_backend.py`) or
+`_full_cache_put` / `_cache_entry_study_matches` (`_vc_cache.py`), **read
+`docs/reports/CLINICAL_SERIES_IDENTITY_TARGET_AUDIT_2026-07-05.md` §5** and the master
+plan OPT-17 (§9/§15).
+- Root cause: tiers 1-3 of `_get_series_by_number_fast` (`_hot_series_cache` /
+  `_series_cache` / `_series_number_to_index`) validated ONLY series_number + object
+  identity — NO study check; the tier-4 `_cache_entry_study_matches` guard fails OPEN
+  when a cached entry lacks a `study_uid`. Cross-study isolation therefore depended on
+  the offset-key scheme + permanent slot order, not on the key itself.
+- Fix (flag `AIPACS_CACHE_STUDY_IDENTITY`, default ON; `=0` = byte-identical legacy):
+  make study identity INTRINSIC + positively checked. (1) `_full_cache_put` stamps the
+  entry's own `study_uid` at write time (gap-fill only, via
+  `_resolve_canonical_series_identity`) so the read guard never fail-opens on our
+  entries; (2) `_entry_is_valid` REJECTS a cached tuple whose stored `study_uid` ≠ the
+  study the display key resolves to → treated as a miss → clean reload; (3) the tier-4
+  fail-open branch is now logged. **Multi-study-gated + positive-mismatch-only ⇒
+  single-study byte-identical**; a correctly-cached hit is never dropped.
+- The viewport `series_uid` identity-gate (`AIPACS_VIEWPORT_STUDY_IDENTITY_GATE`) remains
+  the FINAL clinical backstop; these cache checks are availability-biased (fail-open),
+  the gate is fail-closed on the globally-unique series_uid.
+- **Do NOT reformat the ZetaBoost store key to a composite string.** The warmup callback
+  `_zeta_boost_load_series` (`patient_widget_viewer_controller.py`) hard-requires a digit
+  key (`isdigit()` / `int(sn)`); a composite key silently breaks warmup. A full store
+  re-key stays a larger STAGED item (needs warmup-callback rework + per-study path
+  resolution + live validation). Neither file is plugin-mirrored. Guard:
+  `tests/code/viewer/test_cache_study_identity.py` (11 green). NEEDS live source-build
+  verify on a multi-study / previous-exam tab.
+
+### Async-apply render gate — targeted-viewer render (OPT-20, 2026-07-06, live-verified 45289)
+The "a previous-exam X-ray / DICOMized document won't display" bug. When a large single-frame
+previous-exam series (offset display key, e.g. `2000001`) loads on a WORKER thread, the render
+happens through the async apply path `_apply_loaded_series_data`
+(`_vc_load.py`) → `_apply_loaded_series_data_threadsafe` → `_queue_on_ui_thread`. Before editing
+that path or the render gate around `_vc_load.py:~1259`, know the fix and its invariants:
+- **Root cause (type mismatch):** the render (`_perform_series_switch_optimized` → the FAST
+  container `_start_qt_viewer`) was gated on `current_idx == series_idx`, where
+  `current_idx = vtk_w.last_series_show` is the **SERIES NUMBER** (`_pw_viewers.py:684` sets it =
+  `metadata['series']['series_number']`) while `series_idx` is the **list INDEX** returned by
+  `parent_widget.replace_series_data` (`_pw_metadata.py:259 -> int`). An offset-key series number
+  (`2000001`) can NEVER equal a small list index ⇒ the gate was ALWAYS False ⇒ the render was
+  skipped and `_start_qt_viewer` never ran (metadata was fine — `[FAST-YIELD-TRACE] will_yield=True`).
+  Small primary series matched only by coincidence and/or rendered via the synchronous path.
+- **Fix (flag `AIPACS_APPLY_RENDER_TARGET_VIEWER`, default ON; `=0` = byte-identical legacy):** also
+  render for the explicitly-targeted, non-stale viewer. By that gate we are already PAST the
+  `target_viewer_id` filter AND the `_is_request_current` stale check, so `target_viewer_id is not
+  None` means THIS loop iteration is exactly the viewer that requested THIS series → render it. The
+  condition is `if _legacy_match or _apply_target_fix:` — ADDITIVE: the legacy index match is
+  preserved and the no-target broadcast case (`target_viewer_id is None`) is unchanged.
+  **Do NOT "restore" the bare `current_idx == series_idx` compare** (it is the bug); if you must
+  compare identities, compare the SERIES NUMBER (`str(current_idx) == str(series_number)`), never a
+  number-vs-index.
+- **Telemetry is behind `AIPACS_APPLY_TRACE` (default OFF)** so a clinical session is not spammed:
+  `[APPLY-ENTER]` (did the UI apply run at all), the early `[APPLY-STALE-EARLY]` stale-guard drop,
+  and `[APPLY-GATE] … last_series_show=… series_idx=… legacy_match=… target_fix_render=…`. Turn it
+  on with `tools/dev/run_dx_trace.ps1` (which also drives the DX/document repro). Live proof (45289):
+  `[apply-path] APPLY-ENTER=34 APPLY-STALE-EARLY=0 APPLY-GATE(legacy_match=False)=28
+  target_fix_render=29`; previous-exam series now render (1000001 4/4, 1000004 3/3, …).
+- **Two rare residuals (P2, do NOT conflate with the above):** (a) an occasional miss where the apply
+  is NEVER entered (no `[APPLY-ENTER]`) = the worker→UI fire-and-forget post (`_queue_on_ui_thread`)
+  was lost for that one switch — recovers on the next click; a default-off `[RENDER-DROP-RECONVERGE]`
+  safety net (`_vc_switch.py`, `AIPACS_RENDER_DROP_RECONVERGE`) re-issues once; (b) a rare
+  `[FAST-YIELD-TRACE] will_yield=False` = the metadata build returned no instances. Both intermittent.
+- **Dead theories (already ruled out — don't re-chase):** it is NOT main-thread contention/OPT-04
+  (0 stalls), NOT a stale-token race (`[APPLY-STALE-EARLY]=0`), NOT the disk-header metadata path
+  (renders primary DX fine), NOT the "66 series=None display-misses" (that metric is FALSE — benign
+  post-success spinner clears; the real failure signals are `ViewportLoadFailed` and a NON-None
+  `ViewportLoadingStateCleared`). `_vc_load.py` / `_vc_switch.py` are NOT plugin-mirrored. As-built +
+  the three wrong turns: master plan OPT-20 (§9/§15).
+
 ## VS Code Agent Mode environment (configured 2026-06-02)
 
 The VS Code workspace is tuned so both **Copilot Agent Mode** (in VS Code) and

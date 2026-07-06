@@ -28,6 +28,7 @@ tab strip, viewport area.
 from __future__ import annotations
 
 import json
+import shutil
 import threading
 import time
 from collections import deque
@@ -117,6 +118,20 @@ def _save_png(path: Path, frame: np.ndarray) -> None:
     Image.fromarray(frame if frame.ndim == 3 else frame.astype(np.uint8)).save(str(path))
 
 
+def _agent_artifacts_dir() -> Path:
+    try:
+        from modules.EchoMind.secretary.background.verification import artifacts_dir
+        return Path(artifacts_dir())
+    except Exception:
+        try:
+            from PacsClient.utils.data_paths import ECHOMIND_DIR
+            d = Path(ECHOMIND_DIR) / "agent_artifacts"
+        except Exception:
+            d = Path.home() / ".aipacs_agent_artifacts"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+
 def _save_gif(path: Path, frames: list, fps: int = 10, max_w: int = 760) -> None:
     from PIL import Image
     if not frames:
@@ -194,6 +209,7 @@ class UiProbe:
         self.client = client
         self.out = Path(out_dir)
         self.out.mkdir(parents=True, exist_ok=True)
+        self.artifacts = _agent_artifacts_dir()
         self.records: list[dict] = []
         bbox = self._app_bbox()
         self.loop = CaptureLoop(bbox, fps_target=fps)
@@ -204,7 +220,18 @@ class UiProbe:
     def _app_bbox() -> dict:
         import lifecycle
         best, area = None, -1
-        for w in lifecycle._app_windows():
+        windows = list(lifecycle._app_windows())
+        if not windows:
+            try:
+                from pywinauto import Desktop
+                windows = [
+                    w for w in Desktop(backend="uia").windows()
+                    if "AIPacs" in (w.window_text() or "")
+                    or "AI-PACS" in (w.window_text() or "")
+                ]
+            except Exception:
+                windows = []
+        for w in windows:
             try:
                 r = w.rectangle()
                 a = r.width() * r.height()
@@ -234,6 +261,8 @@ class UiProbe:
             "label": label, "action": action, "entities": entities or {},
             "wall_send": wall_send,
             "ok": reply.get("ok"), "error_code": reply.get("error_code"),
+            "message": reply.get("message"),
+            "reply": reply,
             "bus_elapsed_ms": reply.get("elapsed_ms"),
             "reply_roundtrip_ms": round((t_reply - t_send) * 1000, 1),
             "capture_fps": round(self.loop.actual_fps, 1),
@@ -241,28 +270,41 @@ class UiProbe:
         try:
             a = analyze(frames, t_send)
             rec["analysis"] = a
+            artifact_paths: dict[str, str] = {}
+
+            def save_named(name: str, frame: np.ndarray) -> Path:
+                local = d / f"{name}.png"
+                _save_png(local, frame)
+                artifact = self.artifacts / f"{time.strftime('%Y%m%d_%H%M%S')}_{label}_{name}.png"
+                try:
+                    shutil.copy2(str(local), str(artifact))
+                    artifact_paths[name] = str(artifact)
+                except Exception:
+                    artifact_paths[name] = str(local)
+                return local
+
             # artifacts
             times = [t for t, _ in frames]
             base_i = max([i for i, t in enumerate(times) if t <= t_send] or [0])
-            _save_png(d / "before.png", frames[base_i][1])
+            save_named("before", frames[base_i][1])
             full = a.get("full", {})
             fr = full.get("first_response_ms")
             if fr is not None:
                 i_fr = min(range(len(times)),
                            key=lambda i: abs((times[i] - t_send) * 1000 - fr))
-                _save_png(d / "first_change.png", frames[i_fr][1])
+                save_named("first_change", frames[i_fr][1])
             st = full.get("stable_ms")
             i_st = (min(range(len(times)),
                         key=lambda i: abs((times[i] - t_send) * 1000 - st))
                     if st is not None else len(frames) - 1)
-            _save_png(d / "stable.png", frames[i_st][1])
+            save_named("stable", frames[i_st][1])
             ev = (full.get("flicker_events") or full.get("blank_dips") or [])
             if ev:
-                _save_png(d / "worst_event.png", frames[ev[0]["i"]][1])
-            _save_png(d / "tab_strip.png",
-                      _crop(frames[i_st][1], REGIONS["tab_strip"]))
+                save_named("worst_event", frames[ev[0]["i"]][1])
+            save_named("tab_strip", _crop(frames[i_st][1], REGIONS["tab_strip"]))
             ts_crop = _gray(_crop(frames[i_st][1], REGIONS["tab_strip"]))
             rec["tab_strip_std"] = round(float(ts_crop.std()), 1)
+            rec["agent_artifacts"] = artifact_paths
             _save_gif(d / "clip.gif", frames, fps=10)
         except Exception as exc:  # noqa: BLE001
             rec["analysis_error"] = repr(exc)

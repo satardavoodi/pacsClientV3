@@ -56,5 +56,7 @@ if errorlevel 1 (
 
 echo.
 echo [SUCCESS] Nuitka release build complete.
-echo Output: builder nuitka\output\dist\AIPacs_nuitka\main.dist\AIPacs.exe
+echo Staged launcher: builder nuitka\output\stage\core\AIPacs.exe
+echo Staged engine:   builder nuitka\output\stage\core\Engine\AIPacs.exe
+echo Installer:       builder nuitka\output\installer\ai-pacs-nuitka-installer.exe
 pause

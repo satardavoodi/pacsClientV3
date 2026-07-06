@@ -744,6 +744,10 @@ class PatientTableWidget(QWidget):
         self._download_status_cache = {}  # study_uid -> {'status': str, 'timestamp': float}
         self._cache_validity_seconds = 5  # Cache is valid for 5 seconds
         self._local_status_cache = {}  # (study_uid, patient_id) -> {'data': dict, 'timestamp': float}
+        # OPT-01: short-TTL cache for _is_study_downloaded so per-DM-progress status
+        # refreshes don't re-walk every study's folder on the GUI thread (the 48 s-stall
+        # amplifier). study_uid -> (bool, monotonic_ts). Invalidated on status change.
+        self._study_downloaded_cache = {}
         # Snapshot of EchoMind memory/log filenames, reused across a whole
         # patient-list population pass instead of re-walking the tree per row.
         self._echomind_names_cache = None  # list[str] (lowercased file names)
@@ -2255,34 +2259,82 @@ class PatientTableWidget(QWidget):
         return self._get_downloaded_selected_studies()
     
     def _is_study_downloaded(self, study_uid: str) -> bool:
-        """Check if a study is downloaded locally"""
+        """Check if a study is downloaded locally (a series subfolder holds ≥1 file).
+
+        OPT-01: this runs per-row on EVERY DM-progress-driven status refresh, so a
+        download storm re-walks every study's folder many times/second on the GUI
+        thread (the measured 48 s-stall amplifier). A short-TTL cache collapses the
+        repeated walks; the entry is invalidated the moment a study's download status
+        actually changes (see ``update_study_download_status``), so a completed study
+        still flips to downloaded promptly. Live-verified 2026-07-05 (during-use max
+        stall 173 ms, disk-walk gone from traces) and promoted to default (the on/off
+        flag AIPACS_STUDY_DL_CHECK_CACHE retired). The TTL remains tunable via
+        AIPACS_STUDY_DL_CHECK_TTL_MS (default 1500).
+        """
         if not study_uid:
             return False
-        
+
+        try:
+            _ent = self._study_downloaded_cache.get(study_uid)
+            if _ent is not None:
+                _val, _ts = _ent
+                try:
+                    _ttl = float(os.getenv("AIPACS_STUDY_DL_CHECK_TTL_MS", "1500") or "1500") / 1000.0
+                except (TypeError, ValueError):
+                    _ttl = 1.5
+                if (time.monotonic() - _ts) < _ttl:
+                    return _val
+        except Exception:
+            pass
+
+        result = self._compute_study_downloaded(study_uid)
+
+        try:
+            self._study_downloaded_cache[study_uid] = (result, time.monotonic())
+        except Exception:
+            pass
+        return result
+
+    def _compute_study_downloaded(self, study_uid: str) -> bool:
+        """Uncached disk check: True when a series subfolder has ≥1 entry.
+
+        Single ``os.scandir`` pass with early exit (was 1 + N ``iterdir`` calls, each
+        materializing a full list). Behavior is preserved: a study counts as
+        downloaded when at least one immediate SUBDIRECTORY contains at least one
+        entry (file or dir)."""
         try:
             from PacsClient.utils.config import SOURCE_PATH
             study_path = SOURCE_PATH / study_uid
-            
-            # Check if study directory exists and has DICOM files
-            if not study_path.exists():
+            try:
+                with os.scandir(study_path) as _entries:
+                    for _entry in _entries:
+                        try:
+                            if not _entry.is_dir():
+                                continue
+                            with os.scandir(_entry.path) as _sub:
+                                for _child in _sub:
+                                    return True  # first entry in a series folder
+                        except OSError:
+                            continue
+            except (FileNotFoundError, NotADirectoryError):
                 return False
-            
-            # Check if there are any subdirectories (series folders)
-            if not any(study_path.iterdir()):
-                return False
-            
-            # Check if at least one series folder has DICOM files
-            for series_dir in study_path.iterdir():
-                if series_dir.is_dir():
-                    # Check if directory has any files
-                    if any(series_dir.iterdir()):
-                        return True
-            
             return False
-            
         except Exception as e:
             print(f"Error checking if study {study_uid} is downloaded: {e}")
             return False
+
+    def _invalidate_study_downloaded_cache(self, study_uid: str = None) -> None:
+        """Drop the cached downloaded-state so the next check re-walks disk.
+
+        Called when a study's download status changes (a completed download must
+        flip to downloaded without waiting out the TTL). ``None`` clears everything."""
+        try:
+            if study_uid is None:
+                self._study_downloaded_cache.clear()
+            else:
+                self._study_downloaded_cache.pop(study_uid, None)
+        except Exception:
+            pass
 
     @staticmethod
     def _sanitize_id_for_filename(value: str) -> str:
@@ -2403,8 +2455,36 @@ class PatientTableWidget(QWidget):
 
         now = time.time()
         cached = self._local_status_cache.get(cache_key)
-        if cached and (now - float(cached.get('timestamp', 0.0))) < self._cache_validity_seconds:
-            return dict(cached.get('data') or {})
+        if cached:
+            _age = now - float(cached.get('timestamp', 0.0))
+            if _age < self._cache_validity_seconds:
+                return dict(cached.get('data') or {})
+            # OPT-01: between the short TTL and a longer "expensive" TTL, refresh ONLY
+            # the cheap (already-cached) dicom flag and REUSE the expensive
+            # attachment-walk + DB-query flags (documents/voice/ai/case_of_day/printed).
+            # Those change only via viewer actions (save voice/doc, add case, print),
+            # each of which returns to the home list through a refresh that CLEARS this
+            # cache (refresh_download_statuses_local_only) — so reuse within the window
+            # is safe and skips the per-row os.walk(attachments) + 2 DB queries on
+            # frequent status-widget rebuilds during a download. Kill switch
+            # AIPACS_STATUS_EXPENSIVE_TTL=1 enables it. Default OFF (0) = byte-identical
+            # legacy (full recompute after the 5 s short TTL) until this freshness change
+            # is validated live; flip to 1 after confirming status chips still update
+            # promptly on the viewer→list transition (which clears this cache).
+            try:
+                if (os.getenv("AIPACS_STATUS_EXPENSIVE_TTL", "0") or "0").strip() != "0":
+                    try:
+                        _exp_ttl = float(os.getenv("AIPACS_STATUS_EXPENSIVE_TTL_S", "30") or "30")
+                    except (TypeError, ValueError):
+                        _exp_ttl = 30.0
+                    _prev = cached.get('data')
+                    if _age < _exp_ttl and isinstance(_prev, dict):
+                        _data = dict(_prev)
+                        _data['dicom'] = bool(self._is_study_downloaded(study_uid))
+                        self._local_status_cache[cache_key] = {'data': _data, 'timestamp': now}
+                        return dict(_data)
+            except Exception:
+                pass
 
         dicom_available = self._is_study_downloaded(study_uid)
         docs_available = False
@@ -2879,15 +2959,14 @@ class PatientTableWidget(QWidget):
         Returns True when the cache was refreshed in place (the caller then SKIPS the
         legacy pop, so ``_build_local_status_widget`` reads the fresh cached flags with
         no attachment walk / DB query). Returns False — legacy full recompute — when
-        the flag is off, nothing is cached yet (first population must compute
-        everything), or on any error. The DICOM flag itself stays authoritative
-        (re-read from disk via ``_is_study_downloaded``), so the download indicator is
-        never stale. Kill switch: ``AIPACS_STATUS_REFRESH_DICOM_ONLY=0`` restores the
-        byte-identical unconditional pop + full recompute.
+        nothing is cached yet (first population must compute everything), or on any
+        error. The DICOM flag itself stays authoritative (re-read from disk via
+        ``_is_study_downloaded``), so the download indicator is never stale.
+        Live-verified 2026-07-03 and promoted to default 2026-07-05 (flag
+        AIPACS_STATUS_REFRESH_DICOM_ONLY retired — the full recompute on a DICOM-only
+        change is never desirable).
         """
         try:
-            if os.getenv("AIPACS_STATUS_REFRESH_DICOM_ONLY", "1") == "0":
-                return False
             entry = self._local_status_cache.get(cache_key)
             if not entry or not isinstance(entry.get('data'), dict):
                 return False  # nothing cached yet -> let the full compute run once
@@ -2920,7 +2999,11 @@ class PatientTableWidget(QWidget):
                 'status': status,
                 'timestamp': time.time()
             }
-            
+            # OPT-01: this study's on-disk state just changed — drop its cached
+            # downloaded-check so the DICOM-flag refresh below re-walks disk and the
+            # row flips to downloaded immediately (rather than after the TTL).
+            self._invalidate_study_downloaded_cache(study_uid)
+
             for row in range(self.results_table.rowCount()):
                 uid_item = self.results_table.item(row, COL['study_uid'])
                 if uid_item and uid_item.text() == study_uid:

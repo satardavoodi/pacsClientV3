@@ -2907,6 +2907,30 @@ def load_single_series_by_number(study_path, series_number, patient_pk=None, stu
                     _hdr_err,
                 )
             _qt_substage_ms['headers_only_build'] = now_ms() - _t_hdr
+        # [FAST-YIELD-TRACE] (OPT-20 diagnostic, log-only, default-on). Capture the FAST
+        # yield decision + geometry shape at the exact choke point so a DX / single-frame
+        # previous-exam series that fails to render is pinpointed: will_yield=False =>
+        # empty-metadata sub-case (build produced no instances); will_yield=True but no
+        # subsequent first_image => a downstream apply/decode/render issue. The SAME code
+        # renders primary DX, so this isolates whether the divergence is the metadata build
+        # or the render. Kill switch AIPACS_FAST_YIELD_TRACE=0.
+        try:
+            if (os.getenv("AIPACS_FAST_YIELD_TRACE", "1") or "1").strip() != "0":
+                _yt_insts = (_qt_meta.get('instances') if isinstance(_qt_meta, dict) else None) or []
+                _yt_first = _yt_insts[0] if (_yt_insts and isinstance(_yt_insts[0], dict)) else {}
+                _yt_iop = _yt_first.get('image_orientation_patient')
+                _yt_series = _qt_meta.get('series', {}) if isinstance(_qt_meta, dict) else {}
+                logger.info(
+                    "[FAST-YIELD-TRACE] series=%s qt_meta=%s instances=%d has_iop=%s modality=%s "
+                    "rows=%s cols=%s will_yield=%s",
+                    series_number, _qt_meta is not None, len(_yt_insts),
+                    bool(_yt_iop and len(_yt_iop) >= 6),
+                    _yt_series.get('modality', '?'),
+                    _yt_first.get('rows', '?'), _yt_first.get('columns', '?'),
+                    bool(_qt_meta and _qt_meta.get('instances')),
+                )
+        except Exception:
+            pass
         if _qt_meta and _qt_meta.get('instances'):
             _ensure_series_meta(_qt_meta).setdefault('series_path', str(series_path))
             _annotate_backend_metadata(_qt_meta, BACKEND_PYDICOM_QT, '')

@@ -6,10 +6,11 @@ From the 2026-07-03 probe run the biggest remaining stalls were one-time startup
   * ~1.7 s  app_handler._update_license_info     (LOCAL LicenseManager.check_license on the
             GUI thread, only to fill a cosmetic "N days left" label)
 
-Fixes: (1) idempotent dedup of apply_modern_styling (skip identical-theme re-apply — reuses
-the shared AIPACS_THEME_APPLY_DEDUP flag); (2) defer _update_license_info to the idle event
-loop so the login window appears immediately (AIPACS_DEFER_LICENSE_INFO). Both flag-gated
-default-on with kill switches.
+Fixes: (1) idempotent dedup of apply_modern_styling (skip identical-theme re-apply);
+(2) defer _update_license_info to the idle event loop so the login window appears
+immediately. Both live-verified 2026-07-04 and PROMOTED TO DEFAULT 2026-07-05 — the flags
+(AIPACS_THEME_APPLY_DEDUP / AIPACS_DEFER_LICENSE_INFO) were retired, so the dedup/defer are
+now unconditional.
 
 House style: source-pins guard the real edits (no PySide6/QApplication) + mirror-behavioral
 tests reproduce the skip / defer decisions.
@@ -29,39 +30,34 @@ AU = REPO / "PacsClient" / "pacs" / "workstation_ui" / "AIPacs_ui.py"
 
 def test_modern_styling_dedup_wired():
     s = MW.read_text(encoding="utf-8", errors="ignore")
-    assert 'os.getenv("AIPACS_THEME_APPLY_DEDUP", "1")' in s, "reuse the shared theme-dedup flag"
+    assert 'os.getenv("AIPACS_THEME_APPLY_DEDUP"' not in s, "flag retired — dedup is unconditional now"
     assert 'getattr(self, "_applied_modern_sig", None) == theme' in s, "skip guard"
     assert "self._applied_modern_sig = theme" in s, "signature stored after a full apply"
     # guard sits inside apply_modern_styling, before the top-level setStyleSheet
     a = s.index("def apply_modern_styling")
     style = s.index("self.setStyleSheet(", a)
-    assert s.index("AIPACS_THEME_APPLY_DEDUP", a) < style
+    assert s.index('getattr(self, "_applied_modern_sig"', a) < style
 
 
 # --- source-pins: AIPacs_ui control-panel apply_theme dedup --------------------------
 
 def test_aipacs_ui_theme_dedup_wired():
     s = AU.read_text(encoding="utf-8", errors="ignore")
-    assert "\nimport os\n" in s, "os must be imported for the flag read"
-    assert 'os.getenv("AIPACS_THEME_APPLY_DEDUP", "1")' in s, "reuse the shared theme-dedup flag"
+    assert 'os.getenv("AIPACS_THEME_APPLY_DEDUP"' not in s, "flag retired — dedup is unconditional now"
     assert 'getattr(self, "_applied_theme_sig", None) == t' in s, "skip guard"
     assert "self._applied_theme_sig = t" in s, "signature stored after a full apply + child cascade"
     # guard sits inside apply_theme, before the first (MainWindow) setStyleSheet
     a = s.index("def apply_theme(self, theme=None):")
     style = s.index("self.MainWindow.setStyleSheet(", a)
-    assert s.index("AIPACS_THEME_APPLY_DEDUP", a) < style
+    assert s.index('getattr(self, "_applied_theme_sig"', a) < style
 
 
 # --- source-pins: license-info defer -------------------------------------------------
 
 def test_license_defer_wired():
     s = AH.read_text(encoding="utf-8", errors="ignore")
-    assert 'os.getenv("AIPACS_DEFER_LICENSE_INFO", "1")' in s, "defer flag must default ON"
+    assert 'os.getenv("AIPACS_DEFER_LICENSE_INFO"' not in s, "flag retired — defer is unconditional now"
     assert "QTimer.singleShot(0, self._update_license_info)" in s, "deferred to idle loop"
-    # legacy synchronous call preserved as the kill-switch branch
-    start = s.index("AIPACS_DEFER_LICENSE_INFO")
-    region = s[start:start + 400]
-    assert "else:" in region and "self._update_license_info()" in region
 
 
 # --- mirror: apply_modern_styling dedup ----------------------------------------------
@@ -100,14 +96,6 @@ def test_modern_styling_reapplies_on_change():
     assert m.restyles == 2
 
 
-def test_modern_styling_kill_switch():
-    m = _Styler(enabled=False)
-    t = {"window_bg": "#000"}
-    m.apply_modern_styling(t)
-    m.apply_modern_styling(t)
-    assert m.restyles == 2                  # flag off -> always restyle (legacy)
-
-
 # --- mirror: license defer decision --------------------------------------------------
 
 class _Login:
@@ -130,15 +118,9 @@ class _Login:
             self.queued.pop(0)()
 
 
-def test_license_deferred_when_flag_on():
+def test_license_deferred_to_idle_loop():
     lg = _Login(defer=True)
     lg._startup()
     assert lg.ran_sync == 0 and len(lg.queued) == 1   # not run during startup
     lg._drain_idle()                                   # runs when the loop goes idle
     assert not lg.queued
-
-
-def test_license_synchronous_when_flag_off():
-    lg = _Login(defer=False)
-    lg._startup()
-    assert lg.ran_sync == 1 and not lg.queued          # byte-identical legacy

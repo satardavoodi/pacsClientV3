@@ -900,14 +900,14 @@ class MainWindowWidget(QWidget):
         # apply_theme (~line 1031), so it re-runs with the SAME theme during construction.
         # The stylesheet is a pure function of the theme and persists on the window (it also
         # covers widgets created later), so re-applying an unchanged theme is redundant work
-        # with a byte-identical result. Skip when unchanged. Kill switch:
-        # AIPACS_THEME_APPLY_DEDUP=0 (shared with the patient-search theme dedup).
-        if os.getenv("AIPACS_THEME_APPLY_DEDUP", "1") != "0":
-            try:
-                if theme is not None and getattr(self, "_applied_modern_sig", None) == theme:
-                    return
-            except Exception:
-                pass
+        # with a byte-identical result. Skip when unchanged. Live-verified (2026-07-04) and
+        # promoted to default 2026-07-05 (flag AIPACS_THEME_APPLY_DEDUP retired — re-applying
+        # an identical theme is never desirable).
+        try:
+            if theme is not None and getattr(self, "_applied_modern_sig", None) == theme:
+                return
+        except Exception:
+            pass
         self.setStyleSheet(
             f"""
             MainWindowWidget {{

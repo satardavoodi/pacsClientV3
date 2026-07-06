@@ -11,7 +11,8 @@ Three defense-in-depth layers (each flag-gated, default ON = fix active):
   L1  coordinator membership validation  (AIPACS_DM_MEMBERSHIP_VALIDATION)
   L2  immutable progress totals          (AIPACS_DM_IMMUTABLE_TOTALS)
   L3  canonical viewer→DM resolver        (AIPACS_DM_CANON_IDENTITY)
-Plus P1 DB ownership-reassignment guard  (AIPACS_DB_ENFORCE_OWNER, observe-by-default).
+Plus P1 DB ownership-reassignment guard  (AIPACS_DB_ENFORCE_OWNER, ENFORCE-by-default since
+OPT-18 2026-07-05; =0 restores observe-only).
 
 The source-wiring test runs anywhere. The functional coordinator tests import the
 download_manager package (PySide6 + package __init__), so run them on Windows; if a
@@ -57,6 +58,10 @@ def test_source_wiring_present():
     assert "_DB_ENFORCE_OWNER" in db
     assert "CrossPatientReassignment" in db
     assert "CrossStudyReassignment" in db
+    # OPT-18 (2026-07-05): owner-reassignment enforcement is now DEFAULT ON (was
+    # observe-only). The kill switch AIPACS_DB_ENFORCE_OWNER=0 restores observe-only.
+    assert 'os.environ.get(\n    "AIPACS_DB_ENFORCE_OWNER", "1"' in db or \
+        '"AIPACS_DB_ENFORCE_OWNER", "1"' in db, "OPT-18: enforcement must default ON"
 
 
 # ── functional: coordinator membership validation (L1) — run on Windows ──────

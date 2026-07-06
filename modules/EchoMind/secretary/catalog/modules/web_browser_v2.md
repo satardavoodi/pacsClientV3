@@ -71,19 +71,38 @@ Use these to drive the page the browser is currently showing — read its conten
 and submit forms (e.g. a login). Selectors are CSS selectors.
 
 ### Read (read-only)
+- `browser_get_url` — the current URL. No entities.
+- `browser_get_title` — current page title. No entities.
 - `browser_get_text` — return the visible page text. No entities.
 - `browser_get_html` — return the page HTML. No entities.
 - `browser_get_links` — list the page's links. No entities.
 - `browser_dom_summary` — title/url + counts of inputs/buttons/headings. No entities.
+- `browser_dom_snapshot {max_elements?}` — compact rendered DOM element snapshot.
+- `browser_accessibility_tree {max_nodes?}` — accessibility-like tree from native controls, role, and ARIA.
+- `browser_get_buttons {max_buttons?}` — list buttons and button-like elements.
+- `browser_get_inputs {max_inputs?}` — list inputs/selects/textareas and current values.
 - `browser_find_element {selector}` — locate one element and report its details.
 - `browser_extract_table {selector?}` — extract a table's rows (defaults to the first table).
-- `browser_get_url` — the current URL. `browser_selected_text` — the user's selection.
+- `browser_selected_text` — the user's selected text.
+- `browser_selected_element` — the active/focused element.
+- `browser_scroll_state` — current scroll position and page dimensions.
+- `browser_network` — recent resource timing entries and captured fetch/XHR response bodies.
+- `browser_clear_network` — clear the captured fetch/XHR response-body buffer.
+- `browser_structured_data` — metadata, JSON-LD, forms, tables, and cards.
 - `browser_screenshot {path?}` — save a screenshot of the page.
 
 ### Interact (local / server write)
 - `browser_fill_field {selector, value}` — type a value into an input/textarea.
+- `browser_type_text {text, selector?}` — insert text into a selector or focused element.
 - `browser_click {selector}` — click an element (button/link).
+- `browser_scroll {delta_y?, delta_x?, x?, y?}` — scroll by delta or to absolute coordinates.
 - `browser_submit_form {selector?}` — submit a form (defaults to the password form, else the first).
+
+Preferred read hierarchy for the agent:
+1. `browser_structured_data`, `browser_dom_snapshot`, table/input/button/link actions.
+2. `browser_accessibility_tree`.
+3. `browser_get_text`.
+4. `browser_screenshot` plus OCR only when structured access is unavailable.
 
 ---
 
@@ -99,6 +118,9 @@ and submit forms (e.g. a login). Selectors are CSS selectors.
 * "click login / the submit button" → `browser_click {selector}`  ·  "submit the form" → `browser_submit_form`
 * "read this page / what does the page say" → `browser_get_text`
 * "extract the table" → `browser_extract_table`
+* "what buttons/fields are on this page" → `browser_get_buttons` / `browser_get_inputs`
+* "inspect this page / what can I click" → `browser_dom_snapshot` or `browser_accessibility_tree`
+* "scroll down" → `browser_scroll {"delta_y": 700}`
 * "what is the agent doing", "task status" → `agent_task_status`  ·  "cancel the search" → `cancel_agent_task`
 
 ---

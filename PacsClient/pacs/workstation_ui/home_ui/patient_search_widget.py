@@ -737,15 +737,14 @@ class PatientSearchWidget(QWidget):
         # unchanged theme is redundant work with a byte-identical visual result. Skip
         # when the theme is unchanged since the last successful application. All
         # styleable child widgets are created in setup_ui() BEFORE the first apply_theme,
-        # so nothing is left unstyled. Kill switch: AIPACS_THEME_APPLY_DEDUP=0 restores
-        # the byte-identical always-apply behavior; a real theme change (themeChanged ->
-        # a different dict) never matches and always re-applies.
-        if os.getenv("AIPACS_THEME_APPLY_DEDUP", "1") != "0":
-            try:
-                if t is not None and getattr(self, "_applied_theme_sig", None) == t:
-                    return
-            except Exception:
-                pass
+        # so nothing is left unstyled. Live-verified (2026-07-04) and promoted to default
+        # 2026-07-05 (flag AIPACS_THEME_APPLY_DEDUP retired); a real theme change
+        # (themeChanged -> a different dict) never matches and always re-applies.
+        try:
+            if t is not None and getattr(self, "_applied_theme_sig", None) == t:
+                return
+        except Exception:
+            pass
         self.setStyleSheet(f"background: {t['panel_bg']};")
         if hasattr(self, "search_group"):
             self.search_group.setStyleSheet(

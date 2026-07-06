@@ -10,9 +10,6 @@ from PySide6.QtWidgets import QApplication, QLabel
 
 app = QApplication(sys.argv)
 label = QLabel("AIPacs Qt shell stage")
-label.setWindowTitle("AIPacs Qt Shell")
-label.resize(360, 80)
 label.show()
-
-QTimer.singleShot(250, app.quit)
+QTimer.singleShot(50, app.quit)
 raise SystemExit(app.exec())

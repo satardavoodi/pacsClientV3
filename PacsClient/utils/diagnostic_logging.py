@@ -201,6 +201,53 @@ class CatchAllOtherFilter(logging.Filter):
         return component not in self._SPECIALISED_COMPONENTS
 
 
+class TelemetryLevelDowngradeFilter(logging.Filter):
+    """OPT-09 log hygiene: reclassify download TELEMETRY from WARNING to INFO.
+
+    The download component threshold is WARNING (``_DEFAULT_COMPONENT_THRESHOLDS``),
+    so the download pipeline emits its high-volume progress telemetry (batch traces,
+    per-series/pipeline summaries, stage timings, TTFC KPIs) at WARNING purely to pass
+    that gate. The result: ~36 k telemetry WARNING records bury the ~300 REAL download
+    WARNING/ERROR records (125:1), so ``grep WARNING``/``grep ERROR`` on
+    download_diagnostics.log is useless for triage.
+
+    This filter is attached to the download handler AFTER the threshold filter (so the
+    record has already passed the WARNING gate), and rewrites those known-telemetry
+    records to INFO *for the file output*. Genuine WARNING/ERROR records (anything not
+    matching a telemetry prefix) are left untouched, so real problems stand out. The
+    telemetry is still captured (the handler level is DEBUG) — only its LEVEL label
+    changes. Non-download handlers never receive download-component records
+    (component routing), so this has no cross-log side effect. Disable with
+    AIPACS_LOG_TELEMETRY_DOWNGRADE=0 (byte-identical legacy WARNING telemetry).
+    """
+
+    # Distinctive leading tokens of the download telemetry messages (verified against
+    # download_diagnostics.log 2026-07-04: these account for the 36 k WARNING volume).
+    _TELEMETRY_PREFIXES = (
+        "[BATCH_TRACE]", "download-summary", "series-summary",
+        "download-pipeline-summary", "stage-timing", "[NET_TIMING]",
+        "[reporter-hydration]", "[KPI]", "[SERIES_COMPLETE]", "[TTFC]",
+    )
+
+    def __init__(self):
+        super().__init__()
+        self._enabled = (os.getenv("AIPACS_LOG_TELEMETRY_DOWNGRADE", "1") or "1").strip() != "0"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            if not self._enabled or record.levelno != logging.WARNING:
+                return True
+            head = record.getMessage()[:64]
+            for _p in self._TELEMETRY_PREFIXES:
+                if _p in head:
+                    record.levelno = logging.INFO
+                    record.levelname = "INFO"
+                    break
+        except Exception:
+            pass
+        return True
+
+
 class SafeRotatingFileHandler(RotatingFileHandler):
     """RotatingFileHandler variant that degrades gracefully on Windows locks.
 
@@ -512,6 +559,9 @@ def configure_diagnostic_logging(process_role: str = "main", force: bool = True)
     download_handler.addFilter(context_filter)
     download_handler.addFilter(DownloadOnlyFilter())
     download_handler.addFilter(threshold_filter)
+    # OPT-09: after the WARNING threshold gate, relabel high-volume download
+    # telemetry as INFO so real download WARNING/ERROR records are grep-able.
+    download_handler.addFilter(TelemetryLevelDowngradeFilter())
 
     db_handler = SafeRotatingFileHandler(
         logs_dir / "db_diagnostics.log",

@@ -308,27 +308,27 @@ class _VCLoadMixin:
             # so if the passed study_path is not that study's own folder, re-resolve to
             # it. Fires only on a multi-study tab AND only when the primary study really
             # has this series on disk -> single-study + correctly-resolved primary loads
-            # are byte-identical. Kill switch AIPACS_PRIMARY_SERIES_POISON_GUARD=0.
+            # are byte-identical. Made unconditional 2026-07-05 (flag
+            # AIPACS_PRIMARY_SERIES_POISON_GUARD retired; multi-study-gated + only
+            # re-resolves when the primary really has the series on disk).
             try:
-                import os as _os
-                if (_os.getenv("AIPACS_PRIMARY_SERIES_POISON_GUARD", "1") or "1").strip() != "0":
-                    pw = self.parent_widget
-                    primary_uid = str(getattr(pw, 'study_uid', '') or '')
-                    multistudy = (
-                        bool(getattr(pw, '_is_multistudy_hint', False))
-                        or len(getattr(pw, '_studies_series', {}) or {}) > 1
-                    )
-                    if (multistudy and primary_uid and study_path
-                            and _Path(study_path).name != primary_uid):
-                        from PacsClient.utils.config import SOURCE_PATH as _SRC
-                        _primary_path = _Path(_SRC) / primary_uid
-                        if (_primary_path / str(series_key)).exists():
-                            logger.info(
-                                "[MULTI-STUDY LOAD] key=%s -> study_path=%s "
-                                "(primary poison-guard; passed=%s != primary=%s)",
-                                series_key, _primary_path, study_path, primary_uid,
-                            )
-                            return str(_primary_path)
+                pw = self.parent_widget
+                primary_uid = str(getattr(pw, 'study_uid', '') or '')
+                multistudy = (
+                    bool(getattr(pw, '_is_multistudy_hint', False))
+                    or len(getattr(pw, '_studies_series', {}) or {}) > 1
+                )
+                if (multistudy and primary_uid and study_path
+                        and _Path(study_path).name != primary_uid):
+                    from PacsClient.utils.config import SOURCE_PATH as _SRC
+                    _primary_path = _Path(_SRC) / primary_uid
+                    if (_primary_path / str(series_key)).exists():
+                        logger.info(
+                            "[MULTI-STUDY LOAD] key=%s -> study_path=%s "
+                            "(primary poison-guard; passed=%s != primary=%s)",
+                            series_key, _primary_path, study_path, primary_uid,
+                        )
+                        return str(_primary_path)
             except Exception:
                 pass
             # No usable entry path: keep the tab path if it actually has the series
@@ -965,11 +965,11 @@ class _VCLoadMixin:
                 # nothing to compare — a superseded previous-exam re-render then stomped
                 # a current-series request (48912/48952). `_ms_study_uid` is the series'
                 # resolved study (multi-study entry authority / offset-key fallback);
-                # a primary/single-study series falls back to the tab study_uid. Flag
-                # AIPACS_STAMP_SERIES_STUDY_UID=0 restores byte-identical legacy.
+                # a primary/single-study series falls back to the tab study_uid. Made
+                # unconditional 2026-07-05 (flag AIPACS_STAMP_SERIES_STUDY_UID retired;
+                # stamping the series' own study_uid/series_uid is always correct + additive).
                 try:
-                    if (os.getenv("AIPACS_STAMP_SERIES_STUDY_UID", "1") or "1").strip() != "0" \
-                            and isinstance(metadata, dict) and isinstance(metadata.get('series'), dict):
+                    if isinstance(metadata, dict) and isinstance(metadata.get('series'), dict):
                         # AUTHORITATIVE study for this display key comes from the
                         # server-side canonical resolver (reads _server_series_info),
                         # NOT the DB-loaded metadata — a previous-exam series that was
@@ -1179,6 +1179,20 @@ class _VCLoadMixin:
                                   expected_token=None):
         try:
             _t_apply_start = time.perf_counter()
+            # [APPLY-ENTER] (OPT-20 diagnostic, log-only). Confirms the UI apply actually
+            # RAN for this series (vs the worker->UI fire-and-forget post being lost). If a
+            # miss has NO [APPLY-ENTER], the cross-thread post never delivered; if it has
+            # [APPLY-ENTER] then [APPLY-STALE-EARLY], the top-level stale guard dropped it;
+            # if it has [APPLY-ENTER] + [APPLY-GATE] legacy_match=False, it is the index gate.
+            try:
+                if (os.getenv("AIPACS_APPLY_TRACE", "0") or "0").strip() != "0":
+                    logger.info(
+                        "[APPLY-ENTER] series=%s refresh=%s target_viewer=%s has_token=%s on_ui=%s",
+                        series_number, refresh_viewer, target_viewer_id,
+                        (expected_token is not None), self._is_on_ui_thread(),
+                    )
+            except Exception:
+                pass
             dims = vtk_image_data.GetDimensions() if vtk_image_data else (0, 0, 0)
             incoming_count = 0
             try:
@@ -1202,7 +1216,16 @@ class _VCLoadMixin:
                         target_widget = vtk_w
                         break
                 if target_widget is not None and (not self._is_request_current(target_widget, expected_token)):
-                    logger.debug(f"âڈ­ï¸ڈ [APPLY STALE] series={series_number} token no longer current, skipping mutation")
+                    # [APPLY-STALE-EARLY] — the top-level stale guard drops the whole apply
+                    # (incl. the render) when the request token is no longer current. Upgraded
+                    # from debug to a visible, gated INFO because THIS is a prime OPT-20 suspect
+                    # for the dropped repaint of a large previous-exam series. It fires when a
+                    # NEWER request superseded this one; but if a miss shows this with NO newer
+                    # user switch, the token is going stale spuriously (the real bug to fix).
+                    logger.info(
+                        "[APPLY-STALE-EARLY] series=%s viewer=%s token_no_longer_current -> apply+render DROPPED",
+                        series_number, target_viewer_id,
+                    )
                     return
 
             # Populate metadata_fixed if needed
@@ -1253,10 +1276,41 @@ class _VCLoadMixin:
                     if expected_token is not None and not self._is_request_current(vtk_w, expected_token):
                         logger.debug(f"   âڈ­ï¸ڈ [APPLY STALE] viewer[{vi}] series={series_number} skipped")
                         continue
-                    # last_series_show stores thumbnail *index*, not series number
+                    # BUG (48456, 2026-07-06): last_series_show holds the SERIES NUMBER
+                    # (_pw_viewers.py sets it = metadata['series']['series_number']), NOT a
+                    # list index — but this compared it to series_idx (the replace_series_data
+                    # INDEX). For an offset-key previous-exam series (e.g. 2000001) a series
+                    # number can NEVER equal a small list index, so the render block below was
+                    # ALWAYS skipped -> the async worker-load apply never rendered (the large-DX
+                    # / DICOMized-document previous-exam "won't display" bug; _start_qt_viewer
+                    # never called, IDENTITY-GATE evals=0). We are already PAST the
+                    # target_viewer_id filter AND the not-stale check, so when a specific target
+                    # viewer was requested THIS is exactly that viewer and it must render its
+                    # requested series. Fix (flag AIPACS_APPLY_RENDER_TARGET_VIEWER, default
+                    # OFF = byte-identical legacy): also render for the explicitly-targeted,
+                    # non-stale viewer. Additive — the legacy index match is preserved and the
+                    # no-target broadcast case (target_viewer_id is None) is unchanged.
                     current_idx = getattr(vtk_w, 'last_series_show', None)
-                    logger.debug(f"   ًں”ژ viewer[{vi}] last_series_show={current_idx} vs series_idx={series_idx}")
-                    if current_idx is not None and current_idx == series_idx:
+                    # PROMOTED DEFAULT-ON 2026-07-06 after live validation on 45289
+                    # (target_fix_render=29 successful renders that the buggy index compare
+                    # would have skipped; previous-exam DX/document series now display; 0
+                    # stalls/crashes). Kill switch AIPACS_APPLY_RENDER_TARGET_VIEWER=0.
+                    _apply_target_fix = (
+                        (os.getenv("AIPACS_APPLY_RENDER_TARGET_VIEWER", "1") or "1").strip() != "0"
+                        and target_viewer_id is not None
+                    )
+                    _legacy_match = (current_idx is not None and current_idx == series_idx)
+                    # [APPLY-GATE] telemetry gated behind AIPACS_APPLY_TRACE (default OFF) so
+                    # a clinical session is not spammed (this logs on every apply). The fix
+                    # itself does not depend on the trace.
+                    if (os.getenv("AIPACS_APPLY_TRACE", "0") or "0").strip() != "0":
+                        logger.info(
+                            "[APPLY-GATE] series=%s viewer=%s last_series_show=%s series_idx=%s "
+                            "legacy_match=%s target_fix_render=%s",
+                            series_number, getattr(vtk_w, 'id_vtk_widget', '?'),
+                            current_idx, series_idx, _legacy_match, _apply_target_fix,
+                        )
+                    if _legacy_match or _apply_target_fix:
                         try:
                             slider = getattr(node_viewer, 'slider', None)
                             viewer_meta = getattr(getattr(vtk_w, 'image_viewer', None), 'metadata', {}) or {}

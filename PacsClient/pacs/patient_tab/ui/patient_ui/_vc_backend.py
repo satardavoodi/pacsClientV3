@@ -784,6 +784,54 @@ class _VCBackendMixin:
                 if entry[0] is not cur_vtk or entry[1] is not cur_meta:
                     return False
 
+                # ── Study-identity guard (multi-study clinical isolation) ──────────
+                # Tiers 1-3 historically validated ONLY series_number + object
+                # identity. On a multi-study / previous-exam tab this is not
+                # intrinsic isolation: it relies on the offset-key scheme keeping
+                # display keys unique per study. Make study identity a POSITIVE
+                # property of every returned entry — reject a cached tuple whose
+                # stored study_uid disagrees with the study this display key
+                # resolves to (via the same canonical resolver tier-4 uses), so the
+                # bare-number viewer dicts can never surface another study's volume.
+                # Reject -> caller treats it as a miss -> clean reload; the viewport
+                # display identity-gate (series_uid) remains the final backstop.
+                # Multi-study gated + positive-mismatch-only => single-study and
+                # correctly-cached entries are byte-identical. Kill switch
+                # AIPACS_CACHE_STUDY_IDENTITY=0 restores legacy validation.
+                try:
+                    import os as _os_cid
+                    if (_os_cid.getenv("AIPACS_CACHE_STUDY_IDENTITY", "1") or "1").strip() != "0":
+                        pw = self.parent_widget
+                        _multi = (
+                            bool(getattr(pw, '_is_multistudy_hint', False))
+                            or len(getattr(pw, '_studies_series', {}) or {}) > 1
+                        )
+                        if _multi:
+                            _cm = cur_meta if isinstance(cur_meta, dict) else {}
+                            _cm_series = _cm.get('series') if isinstance(_cm.get('series'), dict) else {}
+                            _ent_study = str(
+                                (_cm_series or {}).get('study_uid')
+                                or _cm.get('study_uid') or ''
+                            ).strip()
+                            _resolver = getattr(self, '_resolve_canonical_series_identity', None)
+                            _exp_study = ''
+                            if _ent_study and callable(_resolver):
+                                try:
+                                    _rid = _resolver(series_str)
+                                    if _rid and _rid[0]:
+                                        _exp_study = str(_rid[0]).strip()
+                                except Exception:
+                                    _exp_study = ''
+                            if _ent_study and _exp_study and _ent_study != _exp_study:
+                                logger.warning(
+                                    "[CACHE-STUDY-IDENTITY] tier reject key=%s "
+                                    "cached_study=...%s expected=...%s",
+                                    series_str, _ent_study[-12:], _exp_study[-12:],
+                                )
+                                return False
+                except Exception:
+                    pass
+
                 return True
             except Exception:
                 return False

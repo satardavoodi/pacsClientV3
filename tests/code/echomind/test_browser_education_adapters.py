@@ -77,6 +77,50 @@ class _FakeBrowser:
     def reload_page(self):
         self.calls.append(("reload_page",))
 
+    def get_page_title(self):
+        return "Example Title"
+
+    def get_dom_snapshot(self, max_elements=300):
+        return {"count": 1, "elements": [{"tag": "button", "text": "Go"}]}
+
+    def get_accessibility_tree(self, max_nodes=250):
+        return {"count": 1, "nodes": [{"role": "button", "name": "Go"}]}
+
+    def get_inputs(self, max_inputs=200):
+        return [{"id": "q", "value": "abc"}]
+
+    def get_buttons(self, max_buttons=200):
+        return [{"text": "Go"}]
+
+    def get_selected_element(self):
+        return {"found": True, "tag": "input", "id": "q"}
+
+    def get_scroll_state(self):
+        return {"x": 0, "y": 10}
+
+    def type_text(self, text, selector=None):
+        self.calls.append(("type_text", text, selector))
+        return True
+
+    def scroll_page(self, **kwargs):
+        self.calls.append(("scroll_page", kwargs))
+        return {"ok": True, "x": kwargs.get("x", 0), "y": kwargs.get("y", 20)}
+
+    def read_network_responses(self):
+        return {
+            "supported": True,
+            "entries": [{"name": "https://api/x"}],
+            "count": 1,
+            "captured_responses": [{"url": "https://api/x", "body": "{\"ok\":true}"}],
+            "captured_count": 1,
+        }
+
+    def clear_network_responses(self):
+        return {"ok": True}
+
+    def extract_structured_page_data(self):
+        return {"title": "Example Title", "tables": [], "forms": []}
+
 
 class _FakeTabWidget:
     def __init__(self):
@@ -154,6 +198,25 @@ def test_browser_navigation_actions():
     assert a.refresh_page(_cp("refresh_page"), {}).ok
     names = [c[0] for c in w.calls]
     assert names == ["navigate_back", "navigate_forward", "reload_page"]
+
+
+def test_browser_playwright_like_read_write_actions():
+    w = _FakeBrowser()
+    a = BrowserCommandAdapter(open_browser_launcher=lambda e: w)
+
+    assert a.get_page_title(_cp("browser_get_title"), {}).data["title"] == "Example Title"
+    assert a.get_dom_snapshot(_cp("browser_dom_snapshot", {"max_elements": 5}), {}).data["snapshot"]["count"] == 1
+    assert a.get_accessibility_tree(_cp("browser_accessibility_tree"), {}).data["tree"]["count"] == 1
+    assert a.get_inputs(_cp("browser_get_inputs"), {}).data["count"] == 1
+    assert a.get_buttons(_cp("browser_get_buttons"), {}).data["count"] == 1
+    assert a.get_selected_element(_cp("browser_selected_element"), {}).data["element"]["found"] is True
+    assert a.get_scroll_state(_cp("browser_scroll_state"), {}).data["scroll"]["y"] == 10
+    assert a.type_text(_cp("browser_type_text", {"selector": "#q", "text": "more"}), {}).ok
+    assert a.scroll_page(_cp("browser_scroll", {"delta_y": 100}), {}).ok
+    assert a.read_network_responses(_cp("browser_network"), {}).data["network"]["count"] == 1
+    assert a.read_network_responses(_cp("browser_network"), {}).data["network"]["captured_count"] == 1
+    assert a.clear_network_responses(_cp("browser_clear_network"), {}).data["result"]["ok"] is True
+    assert a.extract_structured_page_data(_cp("browser_structured_data"), {}).data["structured_data"]["title"] == "Example Title"
 
 
 # ── 2. education adapter ────────────────────────────────────────────────────

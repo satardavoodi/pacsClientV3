@@ -7,14 +7,20 @@ contract: selectors/values are JSON-encoded into the JS (no breakout) and the
 fill offer is domain-EXACT.
 """
 import json
+from pathlib import Path
 
 from modules.web_browser import autofill as AF
 from modules.web_browser import page_tools as PT
 
+_ROOT = Path(__file__).resolve().parents[3]
+
 
 def test_whole_page_read_snippets_are_nonempty_js():
     for js in (PT.JS_PAGE_TEXT, PT.JS_PAGE_HTML, PT.JS_SELECTED_TEXT,
-               PT.JS_DOM_SUMMARY):
+               PT.JS_PAGE_TITLE, PT.JS_DOM_SUMMARY, PT.JS_SCROLL_STATE,
+               PT.JS_SELECTED_ELEMENT, PT.JS_NETWORK_ENTRIES,
+               PT.JS_NETWORK_CAPTURE_INSTALL, PT.JS_CLEAR_NETWORK_CAPTURE,
+               PT.JS_STRUCTURED_PAGE_DATA):
         assert isinstance(js, str) and js.strip()
         assert "catch" in js  # every snippet is guarded
 
@@ -40,6 +46,36 @@ def test_click_submit_table_links_builders():
     assert "document.links" in PT.js_get_links(50)
     table_js = PT.js_extract_table("table.x", max_rows=5, max_cols=3)
     assert json.dumps("table.x") in table_js and "5" in table_js
+
+
+def test_snapshot_accessibility_inputs_buttons_scroll_and_type_builders():
+    assert "elements" in PT.js_dom_snapshot(10)
+    assert "nodes" in PT.js_accessibility_tree(10)
+    assert "input,select,textarea" in PT.js_get_inputs(10)
+    assert "role=button" in PT.js_get_buttons(10)
+    assert json.dumps("#field") in PT.js_type_text("#field", "abc")
+    assert json.dumps("abc") in PT.js_type_text("#field", "abc")
+    assert "scrollBy" in PT.js_scroll_page(delta_y=100)
+    assert "scrollTo" in PT.js_scroll_page(x=0, y=200)
+
+
+def test_network_capture_injection_wraps_fetch_and_xhr():
+    js = PT.JS_NETWORK_CAPTURE_INSTALL
+    assert "__aipacsNetworkCapture" in js
+    assert "window.fetch" in js
+    assert "XMLHttpRequest" in js
+    assert "captured_at" in js
+    assert "MAX_BODY" in js
+    assert "getResponses" in js
+    assert "clear:function" in js
+    assert "captured_responses" in PT.JS_NETWORK_ENTRIES
+
+
+def test_network_capture_is_default_on_in_browser_widget():
+    src = (_ROOT / "modules" / "web_browser" / "widget.py").read_text(encoding="utf-8")
+    assert 'NETWORK_CAPTURE_ENV = "AIPACS_BROWSER_NETWORK_CAPTURE"' in src
+    assert 'NETWORK_CAPTURE_DEFAULT = "1"' in src
+    assert "os.environ.get(NETWORK_CAPTURE_ENV, NETWORK_CAPTURE_DEFAULT) == \"0\"" in src
 
 
 def test_autofill_host_helpers():

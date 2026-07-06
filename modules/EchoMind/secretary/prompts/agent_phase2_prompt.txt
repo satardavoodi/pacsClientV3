@@ -61,7 +61,16 @@ RULES:
   fills it in from the previous step's result.
 - Side-effect steps (download_patient, open_patient) keep
   "needs_confirmation": true. The user confirms the WHOLE sequence ONCE.
-- series_index is 0-based: "first series" → 0, "third series" → 2.
+- For `change_series`, prefer `series_number` when the actual sidebar/display
+  series key is known. If the user only gives an ordinal ("first series",
+  "third series"), use `series_index` as a 0-based ordinal: first → 0,
+  third → 2. The executor resolves `series_index` through the active tab's
+  series metadata before dispatching the real drop path.
+- For viewport interpretation or measurement, the local orchestrator gathers
+  `get_viewport_context` plus `capture_viewport` and the external GPT/GapGPT
+  brain chooses image-space points. Only return `measure_distance` when the
+  current slice and target points are explicit in context; otherwise request
+  clarification rather than inventing anatomy or coordinates.
 - If the request is a SINGLE action, DO NOT use "steps" — return the single
   action object exactly as before.
 

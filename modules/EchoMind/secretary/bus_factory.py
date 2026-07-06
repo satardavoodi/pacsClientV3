@@ -221,6 +221,11 @@ def build_command_bus(
             reg.register("viewer_write", vw_adapter, actions={
                 "change_series":        "change_series",
                 "query_viewport_state": "query_viewport_state",
+                "get_viewport_context": "get_viewport_context",
+                "capture_viewport":     "capture_viewport",
+                "activate_tool":        "activate_tool",
+                "measure_distance":     "measure_distance",
+                "get_measurements":     "get_measurements",
                 "switch_tab":           "switch_tab",
                 "get_series_info":      "get_series_info",
                 "change_layout":        "change_layout",

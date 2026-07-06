@@ -31,9 +31,9 @@ def _src() -> str:
 
 # --- source-pins ---------------------------------------------------------------------
 
-def test_flag_default_on():
+def test_flag_retired_trim_unconditional():
     s = _src()
-    assert 'os.getenv("AIPACS_STATUS_REFRESH_DICOM_ONLY", "1")' in s, "trim flag must default ON"
+    assert 'os.getenv("AIPACS_STATUS_REFRESH_DICOM_ONLY"' not in s, "flag retired — the dicom-only trim is unconditional now"
 
 
 def test_helper_defined_and_wired():
@@ -139,13 +139,3 @@ def test_no_cache_entry_falls_back_to_full_recompute():
     assert handled is False          # first population must compute everything
     m.apply(("u2", "p"), "u2")
     assert m.full_recompute == 1     # caller pops -> _compute_local_status_flags runs
-
-
-def test_kill_switch_is_byte_identical_legacy():
-    m = _Mirror(enabled=False)
-    key = ("u3", "p")
-    m._local_status_cache[key] = {"data": {"dicom": False}, "timestamp": 0.0}
-    assert m._refresh_local_status_dicom_flag(key, "u3") is False
-    m.apply(key, "u3")
-    assert m.full_recompute == 1     # always the legacy pop + full recompute when off
-    assert key not in m._local_status_cache

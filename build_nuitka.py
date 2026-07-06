@@ -209,6 +209,9 @@ def build_command(spec: ModuleType) -> list[str]:
     standalone  = getattr(spec, "STANDALONE", True)
     onefile     = getattr(spec, "ONEFILE", False)
     win_console = getattr(spec, "WINDOWS_CONSOLE", False)
+    win_console_mode = os.environ.get("AIPACS_NUITKA_CONSOLE_MODE") or str(
+        getattr(spec, "WINDOWS_CONSOLE_MODE", "attach") or "attach"
+    )
     icon        = getattr(spec, "ICON", "")
     plugins     = getattr(spec, "PLUGINS", [])
     nofollow    = getattr(spec, "NOFOLLOW_IMPORTS", [])
@@ -248,8 +251,8 @@ def build_command(spec: ModuleType) -> list[str]:
     # Windows specifics
     if sys.platform == "win32":
         if not win_console:
-            cmd.append("--windows-console-mode=disable")
-        if icon and (PROJECT_ROOT / icon).is_file():
+            cmd.append(f"--windows-console-mode={win_console_mode}")
+        if icon and os.environ.get("AIPACS_NUITKA_ENABLE_EXE_ICON", "").strip().lower() in {"1", "true", "yes", "on"} and (PROJECT_ROOT / icon).is_file():
             cmd.append(f"--windows-icon-from-ico={icon}")
 
     # Company / product info (optional, nice-to-have in exe properties)

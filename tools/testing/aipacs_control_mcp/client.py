@@ -53,13 +53,13 @@ class AipacsControlClient:
 
     # ── core ─────────────────────────────────────────────────────────
     def send(self, action: str, entities: Optional[dict] = None,
-             timeout_ms: int = 30000) -> dict:
+             timeout_ms: int = 30000, mode: str = "") -> dict:
         req_id = self._next_id
         self._next_id += 1
-        line = json.dumps(
-            {"id": req_id, "action": action, "entities": entities or {}},
-            default=str,
-        ).encode("utf-8") + b"\n"
+        req = {"id": req_id, "action": action, "entities": entities or {}}
+        if mode:
+            req["mode"] = mode
+        line = json.dumps(req, default=str).encode("utf-8") + b"\n"
         self._sock.write(line)
         self._sock.flush()
         deadline = time.monotonic() + timeout_ms / 1000.0
@@ -83,14 +83,15 @@ class AipacsControlClient:
             if self._sock.waitForReadyRead(int(min(remaining * 1000, 250)) or 1):
                 self._buf += bytes(self._sock.readAll().data())
 
-    def fire(self, action: str, entities: Optional[dict] = None) -> int:
+    def fire(self, action: str, entities: Optional[dict] = None,
+             mode: str = "") -> int:
         """Fire-and-forget (burst mode): write the request, don't wait."""
         req_id = self._next_id
         self._next_id += 1
-        line = json.dumps(
-            {"id": req_id, "action": action, "entities": entities or {}},
-            default=str,
-        ).encode("utf-8") + b"\n"
+        req = {"id": req_id, "action": action, "entities": entities or {}}
+        if mode:
+            req["mode"] = mode
+        line = json.dumps(req, default=str).encode("utf-8") + b"\n"
         self._sock.write(line)
         self._sock.flush()
         return req_id

@@ -17,6 +17,35 @@ import logging
 import qtawesome as qta
 
 logger = logging.getLogger(__name__)
+
+PREFERRED_COLUMNS = [
+    "case_id",
+    "patient_id",
+    "patient_uid",
+    "study_instance_uid",
+    "series_instance_uid",
+    "sop_instance_uid",
+    "module_name",
+    "modality",
+    "labels_pred",
+    "pred_mass",
+    "patient_name",
+    "dicom_full_path",
+    "box",
+    "scores",
+    "ai_bone_age_years",
+    "ai_bone_age_months",
+    "ai_sex",
+    "corrected_bone_age_years",
+    "corrected_bone_age_months",
+    "corrected_sex",
+    "validation_status",
+    "reviewer_id",
+    "review_timestamp",
+    "correction_notes",
+    "export_status",
+    "server_sync_status",
+]
 # =========================================================
 # DataSet CSV Reader (NOW CONNECTABLE + debuggable)
 # =========================================================
@@ -73,16 +102,16 @@ def read_dataset_csvs(csv_paths):
                     score = pick(r, ["scores", "score", "prob", "confidence", "conf", "p"])
                     label = pick(r, ["labels_pred", "label", "class", "pred", "prediction"])
 
-                    rows.append({
-                        "patient_uid": pick(r, ["patient_uid", "patient_id", "PatientID"]),
-                        "study_instance_uid": pick(r, ["study_instance_uid", "study_uid", "StudyInstanceUID"]),
-                        "labels_pred": label,
-                        "pred_mass": pick(r, ["pred_mass", "mass", "pred", "prediction", "value"]),
-                        "patient_name": pick(r, ["patient_name", "PatientName"]),
-                        "dicom_full_path": pick(r, ["dicom_full_path", "dicom_path", "path", "file"]),
-                        "box": box,
-                        "scores": score,
-                    })
+                    row_out = dict(r)
+                    row_out.setdefault("patient_uid", pick(r, ["patient_uid", "patient_id", "PatientID"]))
+                    row_out.setdefault("study_instance_uid", pick(r, ["study_instance_uid", "study_uid", "StudyInstanceUID"]))
+                    row_out.setdefault("labels_pred", label)
+                    row_out.setdefault("pred_mass", pick(r, ["pred_mass", "mass", "pred", "prediction", "value"]))
+                    row_out.setdefault("patient_name", pick(r, ["patient_name", "PatientName"]))
+                    row_out.setdefault("dicom_full_path", pick(r, ["dicom_full_path", "dicom_path", "path", "file"]))
+                    row_out.setdefault("box", box)
+                    row_out.setdefault("scores", score)
+                    rows.append(row_out)
                     n += 1
 
             logger.info(f"[DataSetTab] loaded {n} rows from: {path}  cols={cols}")
@@ -97,20 +126,9 @@ def read_dataset_csvs(csv_paths):
 # =========================================================
 class DataSetTableWidget(QWidget):
     """
-    Simple, clean, future-expandable table
-    Styled similar to patient_table_widget
+    Simple, clean, future-expandable table.
+    Supports generic CSV/feedback structures, not only MG rows.
     """
-
-    HEADERS = [
-        "Patient UID",
-        "Study Instance UID",
-        "Labels Pred",
-        "Pred Mass",
-        "Patient Name",
-        "DICOM Full Path",
-        "Box",
-        "Scores",
-    ]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -122,8 +140,8 @@ class DataSetTableWidget(QWidget):
         layout.setSpacing(6)
 
         self.table = QTableWidget()
-        self.table.setColumnCount(len(self.HEADERS))
-        self.table.setHorizontalHeaderLabels(self.HEADERS)
+        self.table.setColumnCount(0)
+        self._columns = []
 
         # Behavior
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -188,34 +206,33 @@ class DataSetTableWidget(QWidget):
         self.table.setRowCount(0)
 
     def set_rows(self, rows):
-        """
-        rows = [
-          {
-            patient_uid,
-            study_instance_uid,
-            labels_pred,
-            pred_mass,
-            patient_name,
-            dicom_full_path,
-            box,
-            scores
-          }
-        ]
-        """
         self.clear()
+        self._columns = self._resolve_columns(rows)
+        self.table.setColumnCount(len(self._columns))
+        self.table.setHorizontalHeaderLabels(self._columns)
 
         for row_data in rows:
             row = self.table.rowCount()
             self.table.insertRow(row)
 
-            self._set_item(row, 0, row_data.get("patient_uid"))
-            self._set_item(row, 1, row_data.get("study_instance_uid"))
-            self._set_item(row, 2, row_data.get("labels_pred"))
-            self._set_item(row, 3, row_data.get("pred_mass"))
-            self._set_item(row, 4, row_data.get("patient_name"))
-            self._set_item(row, 5, row_data.get("dicom_full_path"))
-            self._set_item(row, 6, row_data.get("box"))
-            self._set_item(row, 7, row_data.get("scores"))
+            for col_idx, col_name in enumerate(self._columns):
+                self._set_item(row, col_idx, row_data.get(col_name))
+
+    def _resolve_columns(self, rows):
+        seen = set()
+        columns = []
+        for col in PREFERRED_COLUMNS:
+            for row in rows:
+                if col in row and col not in seen:
+                    seen.add(col)
+                    columns.append(col)
+                    break
+        for row in rows:
+            for col in row.keys():
+                if col not in seen:
+                    seen.add(col)
+                    columns.append(col)
+        return columns
 
     def _set_item(self, row, col, value):
         item = QTableWidgetItem("" if value is None else str(value))

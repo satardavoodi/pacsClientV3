@@ -40,17 +40,23 @@ from database._pool import get_db_connection
 
 logger = logging.getLogger(__name__)
 
-# Ownership-reassignment guard (P1). insert_study / insert_series UPDATE the owning
-# patient_fk / study_fk on a UID conflict. That is correct for a genuine metadata
-# refresh, but a mis-routed caller could otherwise SILENTLY move a study to the
-# wrong patient (or a series to the wrong study) and make the bad link durable. We
-# always LOG such an owner change ([CrossPatientReassignment] /
-# [CrossStudyReassignment]) so it is auditable. When AIPACS_DB_ENFORCE_OWNER=1 we
-# additionally REFUSE the owner change (keep the original owner; still refresh the
-# other metadata). Default OFF (observe-only) so legitimate corrections/imports are
-# unaffected — the upstream server-owner guards already block known bad routes.
+# Ownership-reassignment guard (P1 / OPT-18). insert_study / insert_series UPDATE the
+# owning patient_fk / study_fk on a UID conflict. That is correct for a genuine metadata
+# refresh, but a mis-routed caller or a NON-CONFORMANT duplicate SeriesInstanceUID across
+# studies could otherwise SILENTLY move a study to the wrong patient (or a series to the
+# wrong study) and make the bad link durable. We always LOG such an owner change
+# ([CrossPatientReassignment] / [CrossStudyReassignment]) so it is auditable. When
+# AIPACS_DB_ENFORCE_OWNER=1 we additionally REFUSE the owner change (keep the original
+# owner; still refresh the other metadata).
+#
+# DEFAULT ON since 2026-07-05 (OPT-18, audit finding #2): a wrong repoint is a clinical
+# ISOLATION hazard, and on conformant data (unique SeriesInstanceUIDs) enforcement never
+# triggers, so blocking the duplicate-UID case is the safe clinical default. Multi-study /
+# previous-exam loads use DISTINCT UIDs and never conflict. Set AIPACS_DB_ENFORCE_OWNER=0
+# for OBSERVE-ONLY (log without blocking) — e.g. a deliberate admin re-attribution / merge
+# session — which restores the pre-OPT-18 behaviour.
 _DB_ENFORCE_OWNER = os.environ.get(
-    "AIPACS_DB_ENFORCE_OWNER", "0"
+    "AIPACS_DB_ENFORCE_OWNER", "1"
 ).strip().lower() not in ("0", "false", "no", "off", "")
 
 

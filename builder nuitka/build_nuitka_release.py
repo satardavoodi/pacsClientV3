@@ -180,9 +180,16 @@ class BuildContext:
             if stage_num not in STAGES:
                 continue
             stage_state = stages_payload.get(str(stage_num))
-            if isinstance(stage_state, dict) and stage_state.get("status") == "completed":
+            if (
+                isinstance(stage_state, dict)
+                and stage_state.get("status") == "completed"
+                and self._stage_artifacts_valid(stage_state)
+            ):
                 stage_state.pop("error", None)
                 normalized_completed.add(stage_num)
+            elif isinstance(stage_state, dict) and stage_state.get("status") == "completed":
+                stage_state["status"] = "stale"
+                stage_state["stale_reason"] = "completed stage artifacts are missing or belong to a different project root"
         self.state["completed_stages"] = sorted(normalized_completed)
 
         failed_stage = self.state.get("failed_stage")
@@ -204,6 +211,22 @@ class BuildContext:
         if current_stage not in STAGES:
             current_stage = None
         self.state["current_stage"] = current_stage
+
+    def _stage_artifacts_valid(self, stage_state: dict[str, Any]) -> bool:
+        artifact_paths = stage_state.get("artifact_paths")
+        if not isinstance(artifact_paths, list) or not artifact_paths:
+            return False
+
+        project_root = PROJECT_ROOT.resolve()
+        for raw_path in artifact_paths:
+            try:
+                artifact_path = Path(str(raw_path)).resolve()
+                artifact_path.relative_to(project_root)
+            except (OSError, ValueError):
+                return False
+            if not artifact_path.exists():
+                return False
+        return True
 
     def save_state(self) -> None:
         self.state["updated_at_utc"] = utc_now()
@@ -368,11 +391,8 @@ def ensure_stage_entrypoints() -> None:
 
             app = QApplication(sys.argv)
             label = QLabel("AIPacs Qt shell stage")
-            label.setWindowTitle("AIPacs Qt Shell")
-            label.resize(360, 80)
             label.show()
-
-            QTimer.singleShot(250, app.quit)
+            QTimer.singleShot(50, app.quit)
             raise SystemExit(app.exec())
             """
         ).strip()
@@ -614,6 +634,92 @@ def _env_truthy(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _find_vs_installation_path() -> Path | None:
+    vswhere = Path(os.environ.get("ProgramFiles(x86)", "")) / "Microsoft Visual Studio" / "Installer" / "vswhere.exe"
+    if not vswhere.exists():
+        return None
+    try:
+        result = subprocess.run(
+            [
+                str(vswhere),
+                "-latest",
+                "-products",
+                "*",
+                "-requires",
+                "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+                "-property",
+                "installationPath",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    installation_path = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+    return Path(installation_path) if installation_path else None
+
+
+def _find_vcvarsall_bat() -> Path | None:
+    installation_path = _find_vs_installation_path()
+    candidates = []
+    if installation_path is not None:
+        candidates.append(installation_path / "VC" / "Auxiliary" / "Build" / "vcvarsall.bat")
+    candidates.append(
+        Path(os.environ.get("ProgramFiles(x86)", ""))
+        / "Microsoft Visual Studio"
+        / "2022"
+        / "BuildTools"
+        / "VC"
+        / "Auxiliary"
+        / "Build"
+        / "vcvarsall.bat"
+    )
+    return next((candidate for candidate in candidates if candidate.exists()), None)
+
+
+def _vs_build_tools_available() -> bool:
+    return _find_vcvarsall_bat() is not None
+
+
+def _windows_python313_needs_msvc() -> bool:
+    return os.name == "nt" and sys.version_info[:2] == (3, 13)
+
+
+def _apply_vcvars_env(env: dict[str, str], log_path: Path) -> dict[str, str]:
+    vcvarsall = _find_vcvarsall_bat()
+    if vcvarsall is None:
+        append_log(log_path, "[WARN] --msvc=latest selected, but vcvarsall.bat was not found")
+        return env
+    try:
+        result = subprocess.run(
+            f'cmd.exe /d /s /c "call "{vcvarsall}" x64 >nul && set"',
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+            timeout=10,
+            shell=True,
+            check=False,
+        )
+    except Exception:
+        append_log(log_path, f"[WARN] Failed to load MSVC environment from {vcvarsall}")
+        return env
+    if result.returncode != 0:
+        append_log(log_path, f"[WARN] vcvarsall.bat exited with code {result.returncode}: {vcvarsall}")
+        return env
+    updated = env.copy()
+    for line in result.stdout.splitlines():
+        if "=" in line:
+            key, value = line.split("=", 1)
+            updated[key] = value
+    append_log(log_path, f"[INFO] Loaded MSVC environment from {vcvarsall}")
+    return updated
+
+
 def get_spec_list(spec: ModuleType, name: str) -> list[Any]:
     value = getattr(spec, name, [])
     if value is None:
@@ -661,25 +767,25 @@ def create_nuitka_command(
     cmd.append(f"--product-version={_nuitka_version}")
     cmd.append("--company-name=AIPacs")
     cmd.append("--file-description=AIPacs - staged Nuitka build")
-    cmd.append("--windows-console-mode=disable")
+    console_mode = os.environ.get("AIPACS_NUITKA_CONSOLE_MODE") or str(
+        getattr(ctx.spec, "WINDOWS_CONSOLE_MODE", "attach") or "attach"
+    )
+    cmd.append(f"--windows-console-mode={console_mode}")
 
     icon = getattr(ctx.spec, "ICON", "")
-    if icon:
+    if icon and _env_truthy("AIPACS_NUITKA_ENABLE_EXE_ICON"):
         icon_path = PROJECT_ROOT / icon
         if icon_path.exists():
             cmd.append(f"--windows-icon-from-ico={icon}")
 
-    # Nuitka 4.0.8 does not support "--cache-dir". Keep project-local cache
+    # Nuitka does not support "--cache-dir". Keep project-local cache
     # strategy via tool-specific environment variables where possible.
     cmd.append(f"--report={report_path}")
     cmd.append("--assume-yes-for-downloads")
-    cmd.append("--warn-unusual-code")
-    cmd.append("--warn-implicit-exceptions")
     # Keep hash-based internals deterministic across compile/runtime and avoid
     # accidental cwd imports in frozen startup.
     cmd.append("--python-flag=static_hashes")
     cmd.append("--python-flag=safe_path")
-
     lto = getattr(ctx.spec, "LTO", "auto")
     if profile in {"minimal", "qt_shell", "heavy_native", "full_core"} and lto == "yes":
         lto = "no"
@@ -702,6 +808,8 @@ def create_nuitka_command(
         cmd.append("--clang")
     elif compiler in {"msvc", "latest"}:
         cmd.append("--msvc=latest")
+    elif _windows_python313_needs_msvc() and (shutil.which("cl") is not None or _vs_build_tools_available()):
+        cmd.append("--msvc=latest")
 
     forced: set[str] = set()
     include_packages: set[str] = set()
@@ -714,28 +822,24 @@ def create_nuitka_command(
     }
 
     if profile == "minimal":
-        forced = {"_project_root", "aipacs_runtime"}
+        forced = set()
         include_packages = set()
         nofollow = set()
     elif profile == "qt_shell":
         cmd.append("--enable-plugin=pyside6")
-        forced = set()
+        forced = {"base64"}
         include_packages = set()
         nofollow = set()
     elif profile == "core":
-        cmd.append("--enable-plugin=pyside6")
-        cmd.append("--include-package-data=PySide6")
         include_packages = {
             "database",
             "modules.module_system",
         }
         forced = {
+            "base64",
             "database",
             "database.core",
             "database.manager",
-            "PySide6.QtCore",
-            "PySide6.QtGui",
-            "PySide6.QtWidgets",
         }
     elif profile == "dicom":
         include_packages = {"numpy", "pydicom"}
@@ -779,6 +883,7 @@ def create_nuitka_command(
             [
                 # Optional Web Browser stays external, but its PySide6
                 # QtWebEngine native runtime must live in the compiled Engine.
+                "base64",
                 "PySide6.QtWebEngineCore",
                 "PySide6.QtWebEngineWidgets",
                 "pydicom",
@@ -803,7 +908,7 @@ def create_nuitka_command(
 
     if profile == "full_core":
         pass
-    elif profile in {"dicom", "heavy_native", "core"}:
+    elif profile == "heavy_native":
         forced.update(
             {
                 "PySide6.QtCore",
@@ -853,23 +958,22 @@ def resolve_built_dist(stage: Stage, entrypoint: str) -> Path:
 def run_nuitka_stage(ctx: BuildContext, stage: Stage, log_path: Path, profile: str, entrypoint: str) -> StageResult:
     cmd, report_path, output_root = create_nuitka_command(ctx, stage, profile=profile, entrypoint=entrypoint)
 
-    # Remove any stale Nuitka intermediate ".build" tree left by a previously
-    # interrupted compile. Nuitka refuses to overwrite an already-present
-    # generated C file (e.g. "AssertionError: ...main.build\\module.PIL.c"),
-    # which would otherwise hard-fail the stage on resume. The ".dist" output is
-    # preserved; only the regenerable intermediate is cleared.
+    # Remove stale Nuitka output left by a previously interrupted or failed
+    # compile. Keeping an old .dist can make smoke tests execute a payload built
+    # with an older command line, even after the current compile succeeds.
     try:
-        for build_dir in Path(output_root).glob("*.build"):
-            if build_dir.is_dir():
-                append_log(log_path, f"[INFO] Removing stale Nuitka build dir: {build_dir}")
-                shutil.rmtree(build_dir, ignore_errors=True)
+        if Path(output_root).exists():
+            append_log(log_path, f"[INFO] Removing stale Nuitka output dir: {output_root}")
+            shutil.rmtree(output_root, ignore_errors=True)
     except Exception as _clean_err:  # pragma: no cover - defensive only
-        append_log(log_path, f"[WARN] Could not pre-clean build dir: {_clean_err}")
+        append_log(log_path, f"[WARN] Could not pre-clean Nuitka output dir: {_clean_err}")
 
     env = os.environ.copy()
     # Keep compiler cache optional; forcing cache env vars has shown unstable
     # artifacts with some toolchain combinations.
     append_log(log_path, "[INFO] Compiler cache env override disabled (using toolchain defaults)")
+    if "--msvc=latest" in cmd:
+        env = _apply_vcvars_env(env, log_path)
     if "--zig" in cmd:
         # Let Nuitka select and manage Zig by default; forcing CC/CXX/LINK to
         # a PATH Zig can pin older toolchains and produce unstable binaries.
@@ -954,12 +1058,33 @@ def stage_00_preflight(ctx: BuildContext, stage: Stage, log_path: Path) -> Stage
     append_log(log_path, line)
 
     compiler = str(getattr(ctx.spec, "C_COMPILER", "") or "").strip().lower()
+    compiler_override = str(getattr(ctx.args, "compiler", "auto") or "auto").strip().lower()
+    if compiler_override != "auto":
+        compiler = compiler_override
     if compiler == "zig":
         check(shutil.which("zig") is not None, "Zig compiler available", "C_COMPILER=zig but zig is not on PATH")
+    elif compiler in {"msvc", "latest"}:
+        check(
+            shutil.which("cl") is not None or _vs_build_tools_available(),
+            "MSVC compiler available",
+            "C_COMPILER=msvc but Visual Studio Build Tools were not found",
+        )
+    elif compiler == "mingw64":
+        check(
+            shutil.which("gcc") is not None or shutil.which("g++") is not None,
+            "MinGW compiler found",
+            "C_COMPILER=mingw64 but gcc/g++ is not on PATH",
+        )
     else:
         has_msvc = shutil.which("cl") is not None
+        has_vs_build_tools = _vs_build_tools_available()
         has_mingw = shutil.which("gcc") is not None or shutil.which("g++") is not None
-        check(has_msvc or has_mingw, "MSVC/MinGW compiler found", "No supported C compiler found (MSVC or MinGW)")
+        has_zig = shutil.which("zig") is not None
+        check(
+            has_msvc or has_vs_build_tools or has_mingw or has_zig,
+            "MSVC/MinGW/Zig compiler found",
+            "No supported C compiler found (MSVC, MinGW, or Zig)",
+        )
 
     ccache_found = shutil.which("ccache") is not None
     clcache_found = shutil.which("clcache") is not None
@@ -1330,7 +1455,7 @@ def stage_10_inno_setup(ctx: BuildContext, stage: Stage, log_path: Path) -> Stag
         command=cmd,
         output_paths=[str(INSTALLER_OUTPUT_DIR)],
         artifact_paths=[str(primary), str(versioned)],
-        notes=["Inno Setup installer built"],
+        notes=[f"Inno Setup installer built: {primary}"],
     )
 
 
@@ -1717,7 +1842,11 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         help="Override compiler selection for Nuitka compile stages",
     )
-    parser.add_argument("--spec", default="AIPacs_nuitka.spec", help="Nuitka spec path")
+    parser.add_argument(
+        "--spec",
+        default="builder nuitka/AIPacs_nuitka.spec.py",
+        help="Nuitka spec path",
+    )
     return parser.parse_args()
 
 
@@ -1728,12 +1857,28 @@ def validate_stage_number(value: int | None, arg_name: str) -> None:
         raise StageError(f"{arg_name} must be one of: {', '.join(str(x) for x in STAGES)}")
 
 
+def print_installer_artifacts() -> None:
+    primary_installer = INSTALLER_OUTPUT_DIR / "ai-pacs-nuitka-installer.exe"
+    if not primary_installer.exists():
+        return
+
+    print(f"Installer: {primary_installer}")
+    versioned_installers = sorted(
+        INSTALLER_OUTPUT_DIR.glob("ai-pacs-nuitka-installer v*.exe"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    if versioned_installers:
+        print(f"Versioned installer: {versioned_installers[0]}")
+
+
 def run_pipeline(ctx: BuildContext) -> int:
     selected_stages, is_resume = parse_stage_selection(ctx.args)
     if is_resume:
         selected_stages = compute_resume_stages(ctx)
         if not selected_stages:
             print("All stages are already complete. Nothing to resume.")
+            print_installer_artifacts()
             return 0
 
     print_header("AIPacs Nuitka Incremental Pipeline")
@@ -1773,6 +1918,7 @@ def run_pipeline(ctx: BuildContext) -> int:
     print(f"Checkpoints: {CHECKPOINTS_DIR}")
     print(f"Logs: {LOGS_DIR}")
     print(f"Reports: {REPORTS_DIR}")
+    print_installer_artifacts()
     return 0
 
 

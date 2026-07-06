@@ -1248,7 +1248,9 @@ class _VCProgressiveMixin:
                 pass
         return None
 
-    def display_key_for_active_series_uid(self, series_uid) -> str | None:
+    def display_key_for_active_series_uid(
+        self, series_uid, *, event_study_uid=None, event_series_number=None
+    ) -> str | None:
         """Return the viewer DISPLAY KEY of a viewport that is AWAITING **or** PROGRESSIVELY
         DISPLAYING the series with this globally-unique ``series_uid``, or None.
 
@@ -1260,9 +1262,18 @@ class _VCProgressiveMixin:
         ``series_uid`` (series numbers collide across a patient's studies). Returns a key ONLY for
         a series this patient's own tab is showing/awaiting (the map comes solely from this
         patient's ``_server_series_info`` → cross-patient safe). Never raises.
+
+        OPT-06 study-scoped fallback (2026-07-05): when the caller also passes the DM event's own
+        ``event_study_uid`` + ``event_series_number`` (only done when
+        ``AIPACS_GROW_LANE_STUDY_NUMBER_BIND`` is on) AND the ``series_uid`` match above found
+        nothing — the case where a previous-exam/secondary series' offset-key entry carries a
+        stale/degenerate series_uid — a viewport is matched by the CANONICAL
+        ``(study_uid, series_number)`` instead. STRICTLY study-scoped (both must equal the event's
+        own study+number), so it can never cross-study collide; it never overrides the series_uid
+        match. Absent kwargs → byte-identical legacy.
         """
         su = str(series_uid or "").strip()
-        if not su:
+        if not su and not (event_study_uid and event_series_number):
             return None
         try:
             ssi = getattr(self.parent_widget, "_server_series_info", None) or {}
@@ -1283,15 +1294,52 @@ class _VCProgressiveMixin:
             except Exception:
                 return ""
 
-        for node in self.lst_nodes_viewer or []:
-            vtk_w = getattr(node, "vtk_widget", None)
-            if vtk_w is None:
-                continue
-            for key in (getattr(vtk_w, "_awaiting_series_number", None),
-                        getattr(vtk_w, "_progressive_series_number", None)):
-                key = str(key) if key else None
-                if key and _uid_for_key(key) == su:
-                    return key
+        # 1) Primary: exact globally-unique series_uid match (never cross-study).
+        if su:
+            for node in self.lst_nodes_viewer or []:
+                vtk_w = getattr(node, "vtk_widget", None)
+                if vtk_w is None:
+                    continue
+                for key in (getattr(vtk_w, "_awaiting_series_number", None),
+                            getattr(vtk_w, "_progressive_series_number", None)):
+                    key = str(key) if key else None
+                    if key and _uid_for_key(key) == su:
+                        return key
+
+        # 2) OPT-06 study-scoped fallback: (study_uid, series_number). Only when the
+        #    series_uid match found nothing AND the DM event identity was supplied.
+        ev_study = str(event_study_uid or "").strip()
+        ev_num = str(event_series_number or "").strip()
+        if ev_study and ev_num:
+            for node in self.lst_nodes_viewer or []:
+                vtk_w = getattr(node, "vtk_widget", None)
+                if vtk_w is None:
+                    continue
+                for key in (getattr(vtk_w, "_awaiting_series_number", None),
+                            getattr(vtk_w, "_progressive_series_number", None)):
+                    key = str(key) if key else None
+                    if not key:
+                        continue
+                    try:
+                        _r_study, _r_series, _ = self._resolve_canonical_series_identity(key)
+                    except Exception:
+                        continue
+                    if (str(_r_study or "").strip() == ev_study
+                            and str(_r_series or "").strip() == ev_num):
+                        # SUCCESS marker: the study-scoped fallback bound a series the
+                        # unique series_uid could NOT (stale offset-key uid) — the OPT-06
+                        # fix taking effect. Cross-checkable in the live-verify log.
+                        try:
+                            lg = getattr(self, "logger", None)
+                            if lg is not None:
+                                lg.info(
+                                    "[GROW-LANE-STUDYNUM-BIND] bound display_key=%s "
+                                    "study=%s num=%s (series_uid match failed)",
+                                    key, ev_study, ev_num,
+                                )
+                        except Exception:
+                            pass
+                        return key
         return None
 
     def _resolve_series_identity(self, vtk_w, sn) -> str:

@@ -276,6 +276,90 @@ class _VCSwitchMixin:
             except Exception:
                 pass
 
+            # ── Render-drop detector (OPT-20 diagnostic; LOG-ONLY, default-on) ─────────
+            # Under heavy GUI-thread contention (many previous-exam studies downloading)
+            # a rapidly-switched series' FAST render-apply can be DROPPED: the metadata
+            # load completes but the repaint never lands (no first_image) and nothing
+            # re-renders it — sess-9721c090163f: previous-exam 1000004 rendered 1/5,
+            # 1000006 1/3. This arms a short single-shot check that fires only if, after
+            # the window, THIS switch (tracked by a per-viewport generation counter) never
+            # recorded a first image (_last_rendered_gen) and was not superseded and is not
+            # still awaiting a download — then it logs [RENDER-DROP] so the drop rate +
+            # timing can be measured before a convergence fix. Purely additive telemetry:
+            # it never touches rendering and is wrapped so it can never disturb the switch.
+            # Kill switch AIPACS_RENDER_DROP_DETECT=0; window AIPACS_RENDER_DROP_MS.
+            try:
+                import os as _os_rd
+                if (_os_rd.getenv("AIPACS_RENDER_DROP_DETECT", "1") or "1").strip() != "0":
+                    _rd_series = str(series_number)
+                    _rd_gen = int(getattr(vtk_widget, "_render_drop_gen", 0)) + 1
+                    vtk_widget._render_drop_gen = _rd_gen
+                    _rd_widget = vtk_widget
+                    try:
+                        _rd_ms = int(float(_os_rd.getenv("AIPACS_RENDER_DROP_MS", "2500") or "2500"))
+                    except (TypeError, ValueError):
+                        _rd_ms = 2500
+
+                    def _render_drop_check():
+                        try:
+                            if int(getattr(_rd_widget, "_render_drop_gen", -1)) != _rd_gen:
+                                return  # superseded by a newer switch on this viewport
+                            if int(getattr(_rd_widget, "_last_rendered_gen", -999)) == _rd_gen:
+                                return  # this switch rendered (phase_summary saw first image)
+                            if getattr(_rd_widget, "_awaiting_series_number", None):
+                                return  # still legitimately awaiting a download, not a drop
+                            _is_off = False
+                            try:
+                                _is_off = int(_rd_series) >= 1_000_000
+                            except (TypeError, ValueError):
+                                _is_off = False
+                            self.logger.warning(
+                                "[RENDER-DROP] series=%s viewer=%s previous_exam=%s waited_ms=%s "
+                                "intended=%s note=load_completed_no_first_image_repaint_dropped",
+                                _rd_series,
+                                getattr(_rd_widget, "id_vtk_widget", None),
+                                _is_off, _rd_ms,
+                                str(getattr(_rd_widget, "_intended_series_key", "")),
+                            )
+                            # ── OPT-20 RENDER-CONVERGENCE (flag-gated, default OFF) ──────
+                            # ROOT (48456): on a rapidly re-switched LARGE previous-exam
+                            # image the worker-thread load finishes and queues the UI apply
+                            # fire-and-forget, but _apply_loaded_series_data's stale-request
+                            # guard (_is_request_current False -> [APPLY STALE]) drops the
+                            # repaint, and NOTHING re-renders it. The load + metadata are
+                            # fine (will_yield=True); only the paint was lost. Re-issue the
+                            # SAME series ONCE — identical to the manual re-click that
+                            # succeeds. SAFE: this branch is only reached when the switch was
+                            # NOT superseded (gen match), NOT already rendered, and NOT
+                            # awaiting a download; bounded to 1 retry per series per drop
+                            # episode (reset on the next successful render), so it cannot
+                            # loop even if the series is genuinely un-renderable. Kill switch
+                            # AIPACS_RENDER_DROP_RECONVERGE=0 (currently default OFF pending
+                            # live validation; flip to 1 to enable recovery).
+                            if (_os_rd.getenv("AIPACS_RENDER_DROP_RECONVERGE", "0") or "0").strip() != "0":
+                                try:
+                                    _rc = getattr(self, "_render_drop_retries", None)
+                                    if _rc is None:
+                                        _rc = {}
+                                        self._render_drop_retries = _rc
+                                    if int(_rc.get(_rd_series, 0)) < 1:
+                                        _rc[_rd_series] = int(_rc.get(_rd_series, 0)) + 1
+                                        self.logger.warning(
+                                            "[RENDER-DROP-RECONVERGE] re-issuing series=%s viewer=%s attempt=%s",
+                                            _rd_series, getattr(_rd_widget, "id_vtk_widget", None),
+                                            _rc[_rd_series],
+                                        )
+                                        self.change_series_on_viewer(_rd_series)
+                                except Exception:
+                                    pass
+                        except Exception:
+                            pass
+
+                    from PySide6.QtCore import QTimer as _QTimer_rd
+                    _QTimer_rd.singleShot(_rd_ms, _render_drop_check)
+            except Exception:
+                pass
+
             # FAST drag/drop can arrive before the per-viewer slider reference is
             # wired on some layout transitions. Series switching itself does not
             # depend on slider presence, so resolve it best-effort and continue.
@@ -1607,6 +1691,20 @@ class _VCSwitchMixin:
                         first_render_request_ms = max(0.0, float(first_render_ev.get("mono_ms", switch_start_mono_ms)) - switch_start_mono_ms)
                     if first_visible_ev is not None:
                         first_image_visible_ms = max(0.0, float(first_visible_ev.get("mono_ms", switch_start_mono_ms)) - switch_start_mono_ms)
+                        # Render-drop detector: a first image became visible for this
+                        # switch -> stamp the current per-viewport generation as rendered
+                        # so the armed [RENDER-DROP] check does not flag it (gen-based so a
+                        # PRIOR render of the same series can't mask a later real drop).
+                        try:
+                            vtk_widget._last_rendered_gen = int(getattr(vtk_widget, "_render_drop_gen", 0))
+                            # Reset the render-convergence retry budget for this series: the
+                            # drop episode is over (it painted), so a FUTURE drop of the same
+                            # series is again allowed its single recovery re-issue.
+                            _rc_reset = getattr(self, "_render_drop_retries", None)
+                            if isinstance(_rc_reset, dict):
+                                _rc_reset.pop(str(series_number), None)
+                        except Exception:
+                            pass
                     logger.info(
                         "[VIEWER_SWITCH] phase=phase_summary switch_id=%s series=%s series_uid=%s "
                         "switch_start_ms=%.3f switch_series_ms=%.1f total_ms=%.1f "

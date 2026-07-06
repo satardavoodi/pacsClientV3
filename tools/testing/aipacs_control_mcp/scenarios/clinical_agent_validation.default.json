@@ -1,0 +1,34 @@
+{
+  "name": "clinical_agent_validation_default",
+  "comment": "End-to-end Secretary/EchoMind agent validation through the live AI-PACS GUI and CommandBus. Default selects yesterday's first CT patient after proving an initial MRI list can load. Set patient_id for a fixed case. Measurement uses CommandBus image-space points when supplied by the scenario or external GPT/GapGPT brain.",
+  "launch_app": false,
+  "source": "server",
+  "initial_modality": "MRI",
+  "target_modality": "CT",
+  "modality_aliases": {
+    "MRI": "MR"
+  },
+  "patient_limit": 50,
+  "series_index": 0,
+  "viewport": 0,
+  "launch_wait_s": 180,
+  "open_timeout_s": 60,
+  "series_timeout_s": 90,
+  "viewport_timeout_s": 90,
+  "probe_fps": 20.0,
+  "external_brain": {
+    "enabled": true,
+    "required": true,
+    "allow_local_fallback": false,
+    "backend": "echomind_active_company_gapgpt",
+    "model": "",
+    "max_rows": 20,
+    "max_series": 20,
+    "timeout_seconds": 60,
+    "note": "The local runner is only the orchestrator/executor. Patient, series, slice, and measurement decisions are delegated through modules.EchoMind.llm_client using the same EchoMind Secretary connection. Default AI-PACS deployment uses the company GapGPT backend; OpenAI is used only if EchoMind settings explicitly select OpenAI."
+  },
+  "measurement": {
+    "mode": "commandbus",
+    "note": "Preferred mode. The runner captures viewport context/screenshot, asks the external GPT/GapGPT brain for image-space points, then executes measure_distance through CommandBus. For deterministic QA, add points_image: [[x1,y1],[x2,y2]]. Legacy coordinate_drag remains available with absolute screen coordinates: tool_click, start, end."
+  }
+}

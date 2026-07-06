@@ -23,6 +23,8 @@ from modules.viewer.interactor_styles import ToolAccess
 from PacsClient.pacs.patient_tab.utils import BoxManager, show_message
 from PacsClient.utils.utils import load_mg_ai_runs
 from modules.ai_imaging.ai_module_ui.csv_table import read_csv_table
+from modules.ai_imaging.ai_module_ui.feedback_schema import write_mg_feedback_csv, load_feedback_row, upsert_bone_age_feedback_csv
+from modules.ai_imaging.ai_module_ui.feedback_schema import write_mg_feedback_csv
 
 # ------------------------------ Custom Events ------------------------------
 
@@ -185,8 +187,9 @@ class DXSidebar(BaseSidebar):
     Sidebar for DX (Bone Age) modality.
     """
 
-    def __init__(self, parent, study_uid: str):
+    def __init__(self, parent, study_uid: str, imaging_tab=None):
         super().__init__(parent, study_uid)
+        self.imaging_tab = imaging_tab
         self.build_ui()
         self.load_data()
 
@@ -200,9 +203,51 @@ class DXSidebar(BaseSidebar):
         self.feature_label = QLabel("Features")
         self.feature_list = QListWidget()
 
+        self.corrected_years_label = QLabel("Corrected Bone Age Years")
+        self.corrected_years_edit = QLineEdit()
+        self.corrected_years_edit.setPlaceholderText("e.g. 13.5")
+
+        self.corrected_months_label = QLabel("Corrected Bone Age Months")
+        self.corrected_months_edit = QLineEdit()
+        self.corrected_months_edit.setPlaceholderText("e.g. 162")
+
+        self.corrected_sex_label = QLabel("Corrected Sex")
+        self.corrected_sex_combo = QComboBox()
+        self.corrected_sex_combo.addItems(["", "male", "female"])
+
+        self.validation_label = QLabel("Validation Status")
+        self.validation_combo = QComboBox()
+        self.validation_combo.addItems(["pending_review", "confirmed", "corrected", "excluded"])
+
+        self.reviewer_label = QLabel("Reviewer")
+        self.reviewer_edit = QLineEdit()
+        self.reviewer_edit.setPlaceholderText("Reviewer ID")
+        if self.imaging_tab is not None:
+            self.reviewer_edit.setText(self.imaging_tab._default_reviewer_id())
+
+        self.notes_label = QLabel("Correction Notes")
+        self.notes_edit = QTextEdit()
+        self.notes_edit.setPlaceholderText("Optional notes")
+
+        self.save_review_btn = QPushButton("Save Review")
+        self.save_review_btn.clicked.connect(self._save_review)
+
         self.layout.addWidget(title)
         self.layout.addWidget(self.feature_label)
         self.layout.addWidget(self.feature_list)
+        self.layout.addWidget(self.corrected_years_label)
+        self.layout.addWidget(self.corrected_years_edit)
+        self.layout.addWidget(self.corrected_months_label)
+        self.layout.addWidget(self.corrected_months_edit)
+        self.layout.addWidget(self.corrected_sex_label)
+        self.layout.addWidget(self.corrected_sex_combo)
+        self.layout.addWidget(self.validation_label)
+        self.layout.addWidget(self.validation_combo)
+        self.layout.addWidget(self.reviewer_label)
+        self.layout.addWidget(self.reviewer_edit)
+        self.layout.addWidget(self.notes_label)
+        self.layout.addWidget(self.notes_edit)
+        self.layout.addWidget(self.save_review_btn)
         self.layout.addStretch()
 
     def load_data(self):
@@ -220,8 +265,14 @@ class DXSidebar(BaseSidebar):
             self.feature_list.clear()
 
             # نمایش اطلاعات bone age
-            years = data.get("predicted_bone_age_years")
-            months = data.get("predicted_bone_age_months")
+            years = data.get("bone_age_years")
+            if years is None:
+                years = data.get("predicted_bone_age_years")
+
+            months = data.get("bone_age_months")
+            if months is None:
+                months = data.get("predicted_bone_age_months")
+
             sex = data.get("sex")
 
             if years is not None:
@@ -231,8 +282,54 @@ class DXSidebar(BaseSidebar):
             if sex:
                 self.feature_list.addItem(f"Sex: {sex}")
 
+            feedback_path = ATTACHMENT_PATH / self.study_uid / "bone_age_feedback.csv"
+            feedback_row = load_feedback_row(feedback_path, "case_id", self.study_uid)
+            if feedback_row:
+                self.corrected_years_edit.setText(str(feedback_row.get("corrected_bone_age_years") or ""))
+                self.corrected_months_edit.setText(str(feedback_row.get("corrected_bone_age_months") or ""))
+                corrected_sex = str(feedback_row.get("corrected_sex") or "")
+                idx = self.corrected_sex_combo.findText(corrected_sex)
+                self.corrected_sex_combo.setCurrentIndex(idx if idx >= 0 else 0)
+                validation_status = str(feedback_row.get("validation_status") or "pending_review")
+                idx = self.validation_combo.findText(validation_status)
+                self.validation_combo.setCurrentIndex(idx if idx >= 0 else 0)
+                self.reviewer_edit.setText(str(feedback_row.get("reviewer_id") or self.reviewer_edit.text() or ""))
+                self.notes_edit.setPlainText(str(feedback_row.get("correction_notes") or ""))
+
         except Exception as e:
             print(f"[DXSidebar] failed to load bone age: {e}")
+
+    def _save_review(self):
+        try:
+            bone_json = ATTACHMENT_PATH / self.study_uid / "bone_age.json"
+            result_data = {}
+            if bone_json.exists():
+                with open(bone_json, "r", encoding="utf-8") as f:
+                    result_data = json.load(f)
+
+            corrected_data = {
+                "bone_age_years": self.corrected_years_edit.text().strip(),
+                "bone_age_months": self.corrected_months_edit.text().strip(),
+                "sex": self.corrected_sex_combo.currentText().strip(),
+            }
+            review_metadata = {
+                "validation_status": self.validation_combo.currentText().strip() or "pending_review",
+                "reviewer_id": self.reviewer_edit.text().strip(),
+                "correction_notes": self.notes_edit.toPlainText().strip(),
+                "export_status": "local_only",
+                "server_sync_status": "not_synced",
+            }
+            upsert_bone_age_feedback_csv(
+                self.study_uid,
+                ATTACHMENT_PATH / self.study_uid,
+                {},
+                result_data,
+                corrected_data=corrected_data,
+                review_metadata=review_metadata,
+            )
+            show_message("Bone age review saved")
+        except Exception as e:
+            show_message(f"Failed to save bone age review: {e}")
 
 
 # ------------------------------ Multi-select Combo ------------------------------
@@ -503,6 +600,19 @@ class ImagingToolsTab(AbstractTab):
         self.feature_view.setPlaceholderText("features selection")
         self.feature_view.setReadOnly(False)
 
+        self.validation_label = QLabel("Validation Status")
+        self.validation_combo = QComboBox()
+        self.validation_combo.addItems(["pending_review", "confirmed", "corrected", "excluded"])
+
+        self.reviewer_label = QLabel("Reviewer")
+        self.reviewer_edit = QLineEdit()
+        self.reviewer_edit.setPlaceholderText("Reviewer ID")
+        self.reviewer_edit.setText(self._default_reviewer_id())
+
+        self.notes_label = QLabel("Correction Notes")
+        self.notes_edit = QTextEdit()
+        self.notes_edit.setPlaceholderText("Optional notes")
+
         self.mg_runs_label = QLabel("AI Results")
         self.mg_runs_combo = QComboBox()
 
@@ -720,7 +830,11 @@ class ImagingToolsTab(AbstractTab):
         if sex := data.get("sex"):
             lines.append(f"Sex: {sex}")
             
-        if age_years_val := data.get("predicted_bone_age_years"):
+        age_years_val = data.get("bone_age_years")
+        if age_years_val is None:
+            age_years_val = data.get("predicted_bone_age_years")
+
+        if age_years_val is not None:
             try:
                 # تبدیل سن اعشاری به سال + ماه با رُند به بالا
                 y = int(age_years_val)
@@ -789,6 +903,15 @@ class ImagingToolsTab(AbstractTab):
 
         layout.addWidget(self.feature_label)
         layout.addWidget(self.feature_view)
+
+        layout.addWidget(self.validation_label)
+        layout.addWidget(self.validation_combo)
+
+        layout.addWidget(self.reviewer_label)
+        layout.addWidget(self.reviewer_edit)
+
+        layout.addWidget(self.notes_label)
+        layout.addWidget(self.notes_edit)
 
         # 🔽 MG AI runs dropdown
         layout.addWidget(self.mg_runs_label)
@@ -1044,7 +1167,8 @@ class ImagingToolsTab(AbstractTab):
         if modality == "DX":
             self.current_sidebar = DXSidebar(
                 parent=self.left_sidebar_widget,
-                study_uid=self.study_uid
+                study_uid=self.study_uid,
+                imaging_tab=self
             )
         else:
             # MG (default)
@@ -1110,6 +1234,31 @@ class ImagingToolsTab(AbstractTab):
         print('status:', status)
         print('corner_ijk_points:', corner_ijk_points)
         update_csv(csv_path=csv_path, row=row, status=status, corner_ijk_points=corner_ijk_points)
+
+        try:
+            row_data = row.rows[0] if hasattr(row, 'rows') and row.rows else {}
+            corrected_status = "abnormal" if status else "normal"
+            corrected_classification = data_selected.get('classification', [])
+            review_metadata = {
+                'validation_status': self.validation_combo.currentText().strip() or 'reviewed',
+                'reviewer_id': self.reviewer_edit.text().strip(),
+                'correction_notes': self.notes_edit.toPlainText().strip(),
+                'export_status': 'local_only',
+                'server_sync_status': 'not_synced',
+            }
+            write_mg_feedback_csv(
+                self.study_uid,
+                ATTACHMENT_PATH / self.study_uid,
+                str(csv_path),
+                row_data,
+                selected_box=corner_ijk_points,
+                corrected_status=corrected_status,
+                corrected_classification=corrected_classification,
+                review_metadata=review_metadata,
+            )
+        except Exception as e:
+            print(f"[MG] failed to save feedback CSV: {e}")
+
         show_message('updated')
 
     # ---------- Helpers ----------
@@ -1192,6 +1341,10 @@ class ImagingToolsTab(AbstractTab):
             except Exception:
                 pass
 
+        entry.setdefault("validation_status", "pending_review")
+        entry.setdefault("reviewer_id", self._default_reviewer_id())
+        entry.setdefault("correction_notes", "")
+
         entry["box_object"] = box_object
         self._sidebar_store[key] = entry
 
@@ -1228,6 +1381,17 @@ class ImagingToolsTab(AbstractTab):
 
             features_text = entry.get("features", "")
 
+            validation_status = str(entry.get("validation_status", "pending_review") or "pending_review")
+            idx = self.validation_combo.findText(validation_status)
+            self.validation_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self.reviewer_edit.setText(str(entry.get("reviewer_id") or self._default_reviewer_id() or ""))
+            self.notes_edit.setPlainText(str(entry.get("correction_notes") or ""))
+        else:
+            idx = self.validation_combo.findText("pending_review")
+            self.validation_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self.reviewer_edit.setText(self._default_reviewer_id())
+            self.notes_edit.clear()
+
         # Status
         if status_val == 1:
             self.rb_abnormal.setChecked(True)
@@ -1262,9 +1426,22 @@ class ImagingToolsTab(AbstractTab):
         self.class_combo.setCheckedItems([])
 
         self.feature_view.clear()
+        idx = self.validation_combo.findText("pending_review")
+        self.validation_combo.setCurrentIndex(idx if idx >= 0 else 0)
+        self.reviewer_edit.setText(self._default_reviewer_id())
+        self.notes_edit.clear()
 
         if reset_items:
             self._sidebar_store.clear()
+
+    def _default_reviewer_id(self) -> str:
+        try:
+            auth_user = getattr(self.window(), 'auth_user', None)
+            if isinstance(auth_user, dict):
+                return str(auth_user.get('username') or auth_user.get('full_name') or '').strip()
+        except Exception:
+            pass
+        return ""
 
     def _on_apply_clicked(self):
         """

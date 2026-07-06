@@ -70,6 +70,26 @@ _LIFECYCLE_GROW_ACTIVE = os.getenv(
     "AIPACS_LIFECYCLE_GROW_ACTIVE", "1"
 ).strip().lower() in ("1", "true", "yes", "on")
 
+# ── OPT-06 study-scoped grow-lane fallback bind (2026-07-05, DEFAULT OFF).
+#    The grow lane re-keys a DM download event to the awaiting viewport by matching
+#    the event's globally-unique series_uid against the series_uid stored in this
+#    patient's _server_series_info[display_key]. For a PREVIOUS-EXAM / secondary
+#    study whose offset-key entry carries a stale/degenerate series_uid, that match
+#    fails → the event is dropped (sn is None) or mis-resolved to a bare number →
+#    the awaiting viewport never grows (the "series N shows in current AND previous
+#    exam" / "needs a second drag" class: OPT-03/06/20). When ON, and ONLY after the
+#    series_uid match already failed, the lane also binds by the CANONICAL
+#    (study_uid, series_number): a viewport's awaiting/progressive display key is
+#    matched to the DM event when BOTH its resolved study_uid and its resolved
+#    original series_number equal the event's own study+number. STRICTLY study-scoped
+#    (never number-only), so it can never cross-study collide; it never overrides a
+#    series_uid match; default OFF = byte-identical legacy. Kill switch / promote via
+#    AIPACS_GROW_LANE_STUDY_NUMBER_BIND. NEEDS LIVE SOURCE-BUILD VERIFY (48912 /
+#    a multi-study previous-exam patient: the prev-exam series grows on the FIRST drag).
+_GROW_LANE_STUDY_NUMBER_BIND = os.getenv(
+    "AIPACS_GROW_LANE_STUDY_NUMBER_BIND", "0"
+).strip().lower() in ("1", "true", "yes", "on")
+
 
 _seam_b_last_log = [0.0]  # module-level throttle for the confirmation log
 
@@ -331,6 +351,33 @@ class HomeDownloadService:
                     pass
                 return sn
 
+            def _dm_event_series_number(uid, series_uid):
+                """Authoritative bare series_number for a DM progress/completion event,
+                read from ITS OWN study's DM task series_list by the globally-unique
+                series_uid — independent of the viewer's series_uid->number maps, which
+                can be stale/degenerate for a previous-exam/secondary series. Tries the
+                event's own study first, then the primary. Returns None when unknown.
+                Used ONLY by the OPT-06 study-scoped grow-lane fallback (flag-gated at
+                the call site), so it costs nothing when the flag is off."""
+                su = str(series_uid or "").strip()
+                if not su:
+                    return None
+                try:
+                    for _skey in (uid, study_uid):
+                        if not _skey:
+                            continue
+                        task = dm._tasks.get(_skey)
+                        if not task:
+                            continue
+                        for s in getattr(task, 'series_list', []) or []:
+                            if str(getattr(s, 'series_uid', '')) == su:
+                                n = str(getattr(s, 'series_number', '') or '').strip()
+                                if n:
+                                    return n
+                except Exception:
+                    pass
+                return None
+
             def _resolve_series_total(sn_str):
                 """Look up DICOM image_count for a series from the DM task."""
                 try:
@@ -574,14 +621,25 @@ class HomeDownloadService:
                     except Exception:
                         pass
 
-            def _active_display_key_for_uid(series_uid):
+            def _active_display_key_for_uid(series_uid, event_study_uid=None, event_series_number=None):
                 """Display key of a viewport in THIS patient's tab awaiting/progressively-displaying
                 series_uid, else None. The cross-patient-safe admission gate for sibling-study grow
-                events — the map comes solely from this patient's own server_series_info."""
+                events — the map comes solely from this patient's own server_series_info.
+
+                When AIPACS_GROW_LANE_STUDY_NUMBER_BIND is on the caller also passes the DM event's
+                own (study_uid, series_number); the viewer then adds a STUDY-SCOPED fallback bind for
+                a previous-exam/secondary series whose stored series_uid is stale. Flag OFF (default)
+                → the legacy single-arg call is made verbatim (byte-identical)."""
                 try:
                     w = widget_ref()
                     vc = getattr(w, "viewer_controller", None) if w else None
                     if vc is not None and hasattr(vc, "display_key_for_active_series_uid"):
+                        if _GROW_LANE_STUDY_NUMBER_BIND and (event_study_uid or event_series_number):
+                            return vc.display_key_for_active_series_uid(
+                                series_uid,
+                                event_study_uid=event_study_uid,
+                                event_series_number=event_series_number,
+                            )
                         return vc.display_key_for_active_series_uid(series_uid)
                 except Exception:
                     pass
@@ -597,7 +655,15 @@ class HomeDownloadService:
                 study, the canonical _resolve_sn number; else None for a background SECONDARY-study
                 series no viewport here shows (it must not grow a viewport). PRIMARY / single-study
                 stays byte-identical (display key == resolved number)."""
-                dk = _active_display_key_for_uid(series_uid) if series_uid else None
+                _ev_num = None
+                if series_uid:
+                    # OPT-06 (flag-gated): pass the DM event's own study+number so the
+                    # viewer can bind a previous-exam/secondary series by canonical
+                    # (study_uid, series_number) when its stored series_uid is stale.
+                    _ev_num = _dm_event_series_number(uid, series_uid) if _GROW_LANE_STUDY_NUMBER_BIND else None
+                    dk = _active_display_key_for_uid(series_uid, event_study_uid=uid, event_series_number=_ev_num)
+                else:
+                    dk = None
                 resolved = str(dk) if dk else (_resolve_sn(series_uid) if uid == study_uid else None)
                 # VISIBLE diagnostic via the VIEWER logger (home_download's own `_logger` does NOT
                 # reach the log files — console only). For a previous-exam / secondary-study event
@@ -622,12 +688,22 @@ class HomeDownloadService:
                                 _k = getattr(_vw, _at, None)
                                 if _k:
                                     _info = _ssi.get(str(_k)) if isinstance(_ssi, dict) else None
-                                    _u = (str((_info or {}).get("series_uid")
-                                              or (_info or {}).get("series_instance_uid") or ""))[-20:]
+                                    # Full stored series_uid (no truncation) so the live
+                                    # verify shows the exact stored-vs-DM mismatch (OPT-06).
+                                    _u = str((_info or {}).get("series_uid")
+                                             or (_info or {}).get("series_instance_uid") or "")
                                     _aw.append((str(_k), _u))
                         if _aw and (resolved is None or str(resolved) not in [k for k, _ in _aw]):
-                            _lg.info("[GROW-LANE-TRACE] uid=%s series_uid=%s resolved=%s awaiting=%s",
-                                     str(uid)[-14:], str(series_uid or "")[-20:], resolved, _aw)
+                            # UNMATCHED trace (a successful study-scoped bind makes `resolved`
+                            # one of the awaiting keys → this branch is skipped, i.e. success is
+                            # silent). ev_num = the DM event's own authoritative series_number
+                            # (present only when the OPT-06 flag is on): if ev_num is None or
+                            # matches no awaiting canonical number, the fallback could not help
+                            # — that is the exact datum the live verify needs.
+                            _lg.info(
+                                "[GROW-LANE-TRACE] uid=%s series_uid=%s ev_num=%s resolved=%s awaiting=%s",
+                                str(uid), str(series_uid or ""), _ev_num, resolved, _aw,
+                            )
                 except Exception:
                     pass
                 return resolved

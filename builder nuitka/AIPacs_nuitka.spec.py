@@ -59,7 +59,8 @@ OUTPUT_DIR = "builder nuitka/output/dist/AIPacs_nuitka"
 
 STANDALONE = True          # one self-contained folder (default, fastest startup)
 ONEFILE = False            # flip to True (or pass --onefile) for a single .exe
-WINDOWS_CONSOLE = False    # no console window for the GUI app
+WINDOWS_CONSOLE = False    # legacy bool; WINDOWS_CONSOLE_MODE is authoritative
+WINDOWS_CONSOLE_MODE = "attach"  # Python 3.13 + Nuitka 4.0.8 + PySide6 fails with disable
 ICON = "Qss/images/favicon.ico"
 
 # --------------------------------------------------------------------------- #
@@ -142,6 +143,7 @@ FORCED_IMPORTS = [
     # Project bootstrap helpers
     "_project_root",
     "aipacs_runtime",
+    "base64",
     "PacsClient.utils.data_paths",
     # Database
     "database",

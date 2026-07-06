@@ -16,6 +16,7 @@ Architecture: `docs/reports/TESTING_AUTOMATION_ARCHITECTURE_REVIEW_2026-06-04.md
 | MCP server | `tools/testing/aipacs_control_mcp/server.py` |
 | Python client + CLI | `tools/testing/aipacs_control_mcp/client.py` |
 | Scenarios | `tools/testing/aipacs_control_mcp/scenarios/*.json` |
+| Clinical validation runner | `tools/testing/aipacs_control_mcp/clinical_agent_validation.py` |
 | Session recordings | `tools/testing/aipacs_control_mcp/sessions/*.jsonl` (auto) |
 
 ## Requirements
@@ -71,7 +72,11 @@ get_series_info` (per-series numbers/counts of the active tab), `open_mpr`,
 1=Download Manager, patients from 2), `trigger_download`,
 `query_download_state`, `wait_for_download`, `query_viewport_state`
 (series/slices/awaiting/progressive/spinner per viewport),
-`query_thumbnail_state`, `snapshot_health`. `change_layout` is a typed
+`query_thumbnail_state`, `snapshot_health`. **Browser:** `browser_open`,
+`web_search`, `browser_open_url`, `browser_get_url`, `browser_get_text`,
+`browser_get_html`, `browser_get_links`, `browser_dom_summary`,
+`browser_find_element`, `browser_extract_table`, `browser_screenshot`,
+`browser_fill_field`, `browser_click`, `browser_submit_form`. `change_layout` is a typed
 NOT_IMPLEMENTED stub until the toolbar layout route is mapped (P1).
 **Lifecycle:** `launch_app` (source build only, full env restore, auto-dismiss
 startup notifications, auto Sign In, readiness ping), `stop_app`, `app_status`,
@@ -91,6 +96,45 @@ live-adapter API these tools depend on — run it whenever adapters change.
 & "<repo>\.venv\Scripts\python.exe" tools\testing\aipacs_control_mcp\client.py open_patient '{\"patient_id\": \"44704\"}'
 & "<repo>\.venv\Scripts\python.exe" tools\testing\aipacs_control_mcp\client.py change_series '{\"series_number\": 201, \"viewport\": 0}'
 ```
+
+## Clinical agent validation run
+
+The live end-to-end workflow requested for Secretary/EchoMind validation is:
+
+```powershell
+& "<repo>\.venv\Scripts\python.exe" tools\testing\aipacs_control_mcp\clinical_agent_validation.py `
+  --launch-app `
+  --config tools\testing\aipacs_control_mcp\scenarios\clinical_agent_validation.default.json
+```
+
+It loads yesterday's MRI/MR list, switches to CT, searches/opens a patient,
+imports a series into a viewport, navigates the stack, captures/OCRs the GUI,
+and attempts measurement. Output lands in
+`user_data/echomind/agent_runs/clinical_validation/<timestamp>/`.
+See `docs/agent_control/clinical_agent_validation_pipeline.md`.
+
+Architecture requirement: this runner is only the local orchestrator/executor.
+The default scenario requires the external GPT brain (`external_brain.enabled=true`,
+`required=true`) for patient, series, slice, and measurement-strategy decisions.
+The brain call goes through the same EchoMind Secretary connection
+(`modules.EchoMind.llm_client`), so the AI-PACS company backend / GapGPT is the
+default. Those decisions are logged to `external_brain_decisions.jsonl`.
+
+## Smooth visible demo
+
+For watching the agent operate the UI without blink/hiccup, use the paced demo:
+
+```powershell
+& "<repo>\.venv\Scripts\python.exe" tools\testing\aipacs_control_mcp\smooth_visible_agent_demo.py `
+  --launch-app --monitor A --pause-s 2.5
+```
+
+This demo focuses the `AIPacs` window once, then sends only in-app CommandBus
+actions. It avoids repeated restore/maximize/foreground calls, which were the
+main cause of visible blinking during manual demonstrations.
+Output lands in `user_data/echomind/agent_runs/smooth_visible_demo/<timestamp>/`
+with `report.json`, `commands.jsonl`, and `conversation.jsonl`.
+If an old app is already running without the test server, add `--stop-existing`.
 
 ## Safety
 

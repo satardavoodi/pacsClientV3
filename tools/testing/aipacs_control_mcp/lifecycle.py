@@ -162,6 +162,21 @@ def _app_windows():
                 continue
     except Exception:
         pass
+    if wins:
+        return wins
+    # Some Windows launches show the venv command line while reporting the
+    # executable as the system Python. In that case pid discovery can miss the
+    # source app even though the visible top-level window is the real one.
+    try:
+        for w in _desktop().windows():
+            try:
+                title = w.window_text() or ""
+                if "AIPacs" in title or "AI-PACS" in title:
+                    wins.append(w)
+            except Exception:
+                continue
+    except Exception:
+        pass
     return wins
 
 
