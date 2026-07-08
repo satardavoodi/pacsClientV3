@@ -1,5 +1,5 @@
 import csv
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -22,6 +22,43 @@ BASE_FIELD_ORDER = [
 ]
 
 
+MG_FIELD_ORDER = [
+    "record_id",
+    "finding_uid",
+    "source_csv",
+    "source_row_key",
+    "source_row_index",
+    "source_box_index",
+    "source_kind",
+    "ai_box",
+    "ai_classification",
+    "ai_confidence",
+    "ai_laterality",
+    "ai_view",
+    "ai_lesion_type",
+    "ai_location",
+    "ai_quadrant",
+    "ai_clock_position",
+    "ai_depth",
+    "ai_birads_category",
+    "corrected_box",
+    "corrected_classification",
+    "corrected_status",
+    "corrected_laterality",
+    "corrected_view",
+    "corrected_lesion_type",
+    "corrected_location",
+    "corrected_quadrant",
+    "corrected_clock_position",
+    "corrected_depth",
+    "corrected_birads_category",
+    "corrected_confidence",
+    "polygon_ijk_points",
+    "polygon_world_points",
+    "human_action",
+]
+
+
 def _normalize_sex(value):
     if value is None:
         return ""
@@ -35,6 +72,10 @@ def _normalize_sex(value):
     if sex in ("f", "female", "1"):
         return "female"
     return sex
+
+
+def _utc_timestamp():
+    return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _read_csv_rows(path: Path):
@@ -68,6 +109,10 @@ def _ordered_fields(rows):
     for field in BASE_FIELD_ORDER:
         seen.add(field)
         ordered.append(field)
+    for field in MG_FIELD_ORDER:
+        if field not in seen:
+            seen.add(field)
+            ordered.append(field)
     for row in rows:
         for field in row.keys():
             if field not in seen:
@@ -96,6 +141,22 @@ def _preserve_feedback_fields(existing_row, new_row):
         if existing_value not in (None, ""):
             new_row[field] = existing_value
     return new_row
+
+
+def _merge_feedback_row(existing_row, new_row, *, preserve_existing_human_fields: bool):
+    if preserve_existing_human_fields:
+        return _preserve_feedback_fields(existing_row, new_row)
+    merged = dict(existing_row or {})
+    merged.update(new_row)
+    return merged
+
+
+def _pick(row, keys):
+    for key in keys:
+        value = row.get(key)
+        if value not in (None, ""):
+            return value
+    return ""
 
 
 def build_bone_age_feedback_row(study_uid: str, metadata_context: dict | None, result_data: dict | None):
@@ -184,15 +245,20 @@ def upsert_bone_age_feedback_csv(study_uid: str, attachment_dir: Path, metadata_
         row["correction_notes"] = review_metadata.get("correction_notes") or ""
         row["export_status"] = review_metadata.get("export_status") or row.get("export_status", "local_only")
         row["server_sync_status"] = review_metadata.get("server_sync_status") or row.get("server_sync_status", "not_synced")
-        row["review_timestamp"] = review_metadata.get("review_timestamp") or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        row["review_timestamp"] = review_metadata.get("review_timestamp") or _utc_timestamp()
 
     path = attachment_dir / "bone_age_feedback.csv"
 
     rows = _read_csv_rows(path)
     replaced = False
+    preserve_existing_human_fields = not (corrected_data or review_metadata)
     for idx, existing in enumerate(rows):
         if (existing.get("case_id") or "") == study_uid:
-            rows[idx] = _preserve_feedback_fields(existing, row)
+            rows[idx] = _merge_feedback_row(
+                existing,
+                row,
+                preserve_existing_human_fields=preserve_existing_human_fields,
+            )
             replaced = True
             break
 
@@ -204,7 +270,17 @@ def upsert_bone_age_feedback_csv(study_uid: str, attachment_dir: Path, metadata_
     return path
 
 
-def build_mg_feedback_row(study_uid: str, source_csv_path: str, row_data: dict, *, selected_box, corrected_status: str, corrected_classification):
+def build_mg_feedback_row(
+    study_uid: str,
+    source_csv_path: str,
+    row_data: dict,
+    *,
+    selected_box,
+    corrected_status: str,
+    corrected_classification,
+    mammography_fields: dict | None = None,
+):
+    mammography_fields = mammography_fields or {}
     patient_id = (
         row_data.get("patient_id")
         or row_data.get("patient_uid")
@@ -229,6 +305,7 @@ def build_mg_feedback_row(study_uid: str, source_csv_path: str, row_data: dict, 
         or ""
     )
     dicom_full_path = row_data.get("dicom_full_path") or row_data.get("dicom_path") or row_data.get("path") or ""
+    source_row_key = mammography_fields.get("source_row_key") or dicom_full_path
     selected_box_str = "" if not selected_box else str([float(v) for v in selected_box])
 
     corrected_classification_str = ""
@@ -250,13 +327,20 @@ def build_mg_feedback_row(study_uid: str, source_csv_path: str, row_data: dict, 
         or row_data.get("conf")
         or ""
     )
-    record_id = f"{study_uid}:{dicom_full_path}:{selected_box_str}"
+    requested_finding_uid = mammography_fields.get("finding_uid")
+    record_id = (
+        mammography_fields.get("record_id")
+        or (requested_finding_uid if requested_finding_uid and not selected_box_str else None)
+        or f"{study_uid}:{dicom_full_path}:{selected_box_str}"
+    )
+    finding_uid = requested_finding_uid or record_id
 
     return {
         "schema": "eagleeye_feedback_v1",
         "schema_version": 1,
         "case_id": study_uid,
         "record_id": record_id,
+        "finding_uid": finding_uid,
         "patient_id": patient_id,
         "study_instance_uid": study_instance_uid,
         "series_instance_uid": series_instance_uid,
@@ -264,13 +348,36 @@ def build_mg_feedback_row(study_uid: str, source_csv_path: str, row_data: dict, 
         "module_name": "mammography",
         "modality": "MG",
         "source_csv": source_csv_path,
-        "source_row_key": dicom_full_path,
+        "source_row_key": source_row_key,
+        "source_row_index": mammography_fields.get("source_row_index", ""),
+        "source_box_index": mammography_fields.get("source_box_index", ""),
+        "source_kind": mammography_fields.get("source_kind", ""),
         "ai_box": selected_box_str,
         "ai_classification": ai_classification,
         "ai_confidence": ai_confidence,
+        "ai_laterality": _pick(row_data, ["laterality", "side", "breast_side", "Laterality"]),
+        "ai_view": _pick(row_data, ["view", "image_view", "ViewPosition", "view_position"]),
+        "ai_lesion_type": _pick(row_data, ["lesion_type", "finding_type", "labels_pred", "label", "class"]),
+        "ai_location": _pick(row_data, ["location", "breast_location"]),
+        "ai_quadrant": _pick(row_data, ["quadrant"]),
+        "ai_clock_position": _pick(row_data, ["clock_position", "clock"]),
+        "ai_depth": _pick(row_data, ["depth"]),
+        "ai_birads_category": _pick(row_data, ["birads", "bi_rads", "birads_category"]),
         "corrected_box": selected_box_str if corrected_status == "abnormal" else "",
         "corrected_classification": corrected_classification_str,
         "corrected_status": corrected_status,
+        "corrected_laterality": mammography_fields.get("laterality", ""),
+        "corrected_view": mammography_fields.get("view", ""),
+        "corrected_lesion_type": mammography_fields.get("lesion_type", ""),
+        "corrected_location": mammography_fields.get("location", ""),
+        "corrected_quadrant": mammography_fields.get("quadrant", ""),
+        "corrected_clock_position": mammography_fields.get("clock_position", ""),
+        "corrected_depth": mammography_fields.get("depth", ""),
+        "corrected_birads_category": mammography_fields.get("birads_category", ""),
+        "corrected_confidence": mammography_fields.get("confidence", ""),
+        "polygon_ijk_points": mammography_fields.get("polygon_ijk_points", ""),
+        "polygon_world_points": mammography_fields.get("polygon_world_points", ""),
+        "human_action": mammography_fields.get("human_action", "update"),
         "validation_status": "reviewed",
         "reviewer_id": "",
         "review_timestamp": "",
@@ -280,7 +387,18 @@ def build_mg_feedback_row(study_uid: str, source_csv_path: str, row_data: dict, 
     }
 
 
-def write_mg_feedback_csv(study_uid: str, attachment_dir: Path, source_csv_path: str, row_data: dict, *, selected_box, corrected_status: str, corrected_classification, review_metadata: dict | None = None):
+def write_mg_feedback_csv(
+    study_uid: str,
+    attachment_dir: Path,
+    source_csv_path: str,
+    row_data: dict,
+    *,
+    selected_box,
+    corrected_status: str,
+    corrected_classification,
+    review_metadata: dict | None = None,
+    mammography_fields: dict | None = None,
+):
     row = build_mg_feedback_row(
         study_uid,
         source_csv_path,
@@ -288,6 +406,7 @@ def write_mg_feedback_csv(study_uid: str, attachment_dir: Path, source_csv_path:
         selected_box=selected_box,
         corrected_status=corrected_status,
         corrected_classification=corrected_classification,
+        mammography_fields=mammography_fields,
     )
     review_metadata = review_metadata or {}
     if review_metadata:
@@ -296,7 +415,7 @@ def write_mg_feedback_csv(study_uid: str, attachment_dir: Path, source_csv_path:
         row["correction_notes"] = review_metadata.get("correction_notes") or ""
         row["export_status"] = review_metadata.get("export_status") or row.get("export_status", "local_only")
         row["server_sync_status"] = review_metadata.get("server_sync_status") or row.get("server_sync_status", "not_synced")
-        row["review_timestamp"] = review_metadata.get("review_timestamp") or datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        row["review_timestamp"] = review_metadata.get("review_timestamp") or _utc_timestamp()
 
     path = attachment_dir / "mg_feedback.csv"
 
@@ -304,7 +423,11 @@ def write_mg_feedback_csv(study_uid: str, attachment_dir: Path, source_csv_path:
     replaced = False
     for idx, existing in enumerate(rows):
         if (existing.get("record_id") or "") == row["record_id"]:
-            rows[idx] = _preserve_feedback_fields(existing, row)
+            rows[idx] = _merge_feedback_row(
+                existing,
+                row,
+                preserve_existing_human_fields=False,
+            )
             replaced = True
             break
 

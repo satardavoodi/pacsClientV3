@@ -49,10 +49,12 @@ Name: "optional"; Description: "Optional modules — copied now, activated on fi
 #if AdvancedMprAvailable
 Name: "optional\advanced_mpr"; Description: "Advanced MPR — 3D reconstruction with bundled Slicer runtime (large download)"; Types: custom
 #endif
+Name: "optional\data_analysis"; Description: "Data Analysis — statistics and reporting dashboards"; Types: custom
 Name: "optional\printing"; Description: "Printing — medical film printing and DICOM export workflows"; Types: custom
 Name: "optional\run_cd"; Description: "Run CD — portable DICOM media export and delivery"; Types: custom
 Name: "optional\web_browser"; Description: "Web Browser — embedded browser access inside the workstation"; Types: custom
 Name: "optional\echomind"; Description: "EchoMind — AI assistant and guided reporting features"; Types: custom
+Name: "optional\consultation"; Description: "Online Consultation — cloud-based physician-to-physician case consultation"; Types: custom
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -74,10 +76,8 @@ Source: "{#StageDir}\core\*"; DestDir: "{app}"; Components: core; Flags: ignorev
 ; Module package feed (registry of available optional modules)
 Source: "{#StageDir}\plugin_packages\module_package_feed.json"; DestDir: "{commonappdata}\AIPacs\module_packages"; Components: core; Flags: ignoreversion skipifsourcedoesntexist
 
-; Default-enabled external package used to keep analytics dependencies out of Engine
-Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{commonappdata}\AIPacs\module_packages\data_analysis"; Components: core; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
-
 ; Optional module packages (same as PyInstaller build - plugin system is build-agnostic)
+Source: "{#StageDir}\plugin_packages\data_analysis\*"; DestDir: "{commonappdata}\AIPacs\module_packages\data_analysis"; Components: optional\data_analysis; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 #if AdvancedMprAvailable
 Source: "{#StageDir}\plugin_packages\advanced_mpr\*"; DestDir: "{commonappdata}\AIPacs\module_packages\advanced_mpr"; Components: optional\advanced_mpr; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 #endif
@@ -85,6 +85,7 @@ Source: "{#StageDir}\plugin_packages\printing\*"; DestDir: "{commonappdata}\AIPa
 Source: "{#StageDir}\plugin_packages\run_cd\*"; DestDir: "{commonappdata}\AIPacs\module_packages\run_cd"; Components: optional\run_cd; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\web_browser\*"; DestDir: "{commonappdata}\AIPacs\module_packages\web_browser"; Components: optional\web_browser; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 Source: "{#StageDir}\plugin_packages\echomind\*"; DestDir: "{commonappdata}\AIPacs\module_packages\echomind"; Components: optional\echomind; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
+Source: "{#StageDir}\plugin_packages\consultation\*"; DestDir: "{commonappdata}\AIPacs\module_packages\consultation"; Components: optional\consultation; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\AIPacs.exe"
@@ -411,16 +412,20 @@ begin
     '  Stitching' + #13#10;
 
   if OptionalModuleSelected('advanced_mpr') then Items := Items + '  Advanced MPR  [selected]' + #13#10;
+  if OptionalModuleSelected('data_analysis') then Items := Items + '  Data Analysis  [selected]' + #13#10;
   if OptionalModuleSelected('printing')     then Items := Items + '  Printing  [selected]' + #13#10;
   if OptionalModuleSelected('run_cd')       then Items := Items + '  Run CD  [selected]' + #13#10;
   if OptionalModuleSelected('web_browser')  then Items := Items + '  Web Browser  [selected]' + #13#10;
   if OptionalModuleSelected('echomind')     then Items := Items + '  EchoMind  [selected]' + #13#10;
+  if OptionalModuleSelected('consultation') then Items := Items + '  Online Consultation  [selected]' + #13#10;
 
   if not OptionalModuleSelected('advanced_mpr') and
+     not OptionalModuleSelected('data_analysis') and
      not OptionalModuleSelected('printing') and
      not OptionalModuleSelected('run_cd') and
      not OptionalModuleSelected('web_browser') and
-     not OptionalModuleSelected('echomind') then
+     not OptionalModuleSelected('echomind') and
+     not OptionalModuleSelected('consultation') then
     Result := Items + '  No optional modules selected'
   else
     Result := Items;
@@ -587,12 +592,15 @@ begin
     '    "zeta_boost": true,' + #13#10 +
     '    "education": true,' + #13#10 +
     '    "stitching": true,' + #13#10 +
-    '    "data_analysis": true,' + #13#10 +
+    '    "offline_cloud_server": true,' + #13#10 +
+    '    "identity": true,' + #13#10 +
+    '    "data_analysis": ' + BoolToJson(OptionalModuleSelected('data_analysis')) + ',' + #13#10 +
     '    "advanced_mpr": ' + BoolToJson(OptionalModuleSelected('advanced_mpr')) + ',' + #13#10 +
     '    "printing": ' + BoolToJson(OptionalModuleSelected('printing')) + ',' + #13#10 +
     '    "run_cd": ' + BoolToJson(OptionalModuleSelected('run_cd')) + ',' + #13#10 +
     '    "web_browser": ' + BoolToJson(OptionalModuleSelected('web_browser')) + ',' + #13#10 +
-    '    "echomind": ' + BoolToJson(OptionalModuleSelected('echomind')) + #13#10 +
+    '    "echomind": ' + BoolToJson(OptionalModuleSelected('echomind')) + ',' + #13#10 +
+    '    "consultation": ' + BoolToJson(OptionalModuleSelected('consultation')) + #13#10 +
     '  },' + #13#10 +
     '  "module_packages": {' + #13#10 +
     '    "viewer": {"module_id":"viewer","title":"Viewer","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
@@ -600,12 +608,15 @@ begin
     '    "zeta_boost": {"module_id":"zeta_boost","title":"ZetaBoost","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
     '    "education": {"module_id":"education","title":"Education Module","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
     '    "stitching": {"module_id":"stitching","title":"Stitching Module","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
-    '    "data_analysis": {"module_id":"data_analysis","title":"Data Analysis","tier":"optional","package_kind":"bundled_unlock","status":"selected_for_install","installed_from":"bundled_setup_selection","requires_restart":true},' + #13#10 +
+    '    "offline_cloud_server": {"module_id":"offline_cloud_server","title":"Offline Cloud Server","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
+    '    "identity": {"module_id":"identity","title":"Identity & Accounts","tier":"basic","package_kind":"core","status":"core","installed_from":"core_bundle","requires_restart":false},' + #13#10 +
+    '    "data_analysis": {"module_id":"data_analysis","title":"Data Analysis","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('data_analysis') + '","installed_from":"' + OptionalModuleSourceValue('data_analysis') + '","requires_restart":true},' + #13#10 +
     '    "advanced_mpr": {"module_id":"advanced_mpr","title":"Advanced MPR","tier":"optional","package_kind":"runtime_payload","status":"' + OptionalModuleStatusValue('advanced_mpr') + '","installed_from":"' + OptionalModuleSourceValue('advanced_mpr') + '","requires_restart":true},' + #13#10 +
     '    "printing": {"module_id":"printing","title":"Printing Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('printing') + '","installed_from":"' + OptionalModuleSourceValue('printing') + '","requires_restart":true},' + #13#10 +
     '    "run_cd": {"module_id":"run_cd","title":"Run CD Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('run_cd') + '","installed_from":"' + OptionalModuleSourceValue('run_cd') + '","requires_restart":true},' + #13#10 +
     '    "web_browser": {"module_id":"web_browser","title":"Web Browser Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('web_browser') + '","installed_from":"' + OptionalModuleSourceValue('web_browser') + '","requires_restart":true},' + #13#10 +
-    '    "echomind": {"module_id":"echomind","title":"EchoMind Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('echomind') + '","installed_from":"' + OptionalModuleSourceValue('echomind') + '","requires_restart":true}' + #13#10 +
+    '    "echomind": {"module_id":"echomind","title":"EchoMind Module","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('echomind') + '","installed_from":"' + OptionalModuleSourceValue('echomind') + '","requires_restart":true},' + #13#10 +
+    '    "consultation": {"module_id":"consultation","title":"Online Consultation","tier":"optional","package_kind":"bundled_unlock","status":"' + OptionalModuleStatusValue('consultation') + '","installed_from":"' + OptionalModuleSourceValue('consultation') + '","requires_restart":true}' + #13#10 +
     '  },' + #13#10 +
     '  "graphics": {' + #13#10 +
     '    "user_declared_gpu": ' + BoolToJson(GpuCheckBox.Checked) + ',' + #13#10 +

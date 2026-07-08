@@ -9,6 +9,7 @@ import asyncio
 import copy
 import json
 import logging as _logging
+import os
 import time
 import traceback
 import vtk
@@ -203,7 +204,45 @@ class _PWMetadataMixin:
             if existing_series_name and existing_series_name == metadata['series']['series_name']:
                 # this series has been created before
                 if len(metadata['instances']) == len(self.lst_thumbnails_data[i]['metadata']['instances']):
-                    return False
+                    # OPT-20 cross/multi-study display-miss fix (2026-07-06). This
+                    # `return False` treated a same-series_name + same-instance-count
+                    # series as a DUPLICATE and refused to add it. But this branch is
+                    # only reached when the incoming series_number DIFFERS from this
+                    # existing item (the exact-number case is handled above), and for a
+                    # multi-study / previous-exam patient a DISTINCT series (its own
+                    # patient-unique offset series_number, e.g. 3000001) routinely shares
+                    # the name+count of a primary/other-study series (scout / localizer /
+                    # DX / same-protocol repeat). Dropping it here meant it was never
+                    # appended -> replace_series_data returned -1 -> the async apply
+                    # render loop was gated off (series_idx < 0) -> the series never
+                    # displayed (49317 slot-3 3000001/3000002; the "different studies of
+                    # one patient won't show" bug). A DIFFERENT series_number is a
+                    # DIFFERENT series and must be placed. Only skip as a TRUE duplicate
+                    # when the incoming series_number is already present somewhere in the
+                    # list; otherwise fall through to the existing append below (same
+                    # end-append the different-count pairing path uses — no ordering
+                    # change for any currently-working case). Isolation is unaffected:
+                    # each series keeps its own offset series_number + stamped study_uid /
+                    # series_uid, and the viewport identity gate (qt_fast_container.
+                    # _start_qt_viewer, fail-closed on series_uid) still blocks any
+                    # cross-exam paint. Flag AIPACS_SERIES_APPEND_STUDY_DISTINCT
+                    # (default on; =0 = byte-identical legacy return-False).
+                    _distinct_ok = (os.getenv("AIPACS_SERIES_APPEND_STUDY_DISTINCT", "1") or "1").strip() != "0"
+                    _incoming_present = any(
+                        str(_it.get('metadata', {}).get('series', {}).get('series_number')) == series_number
+                        for _it in self.lst_thumbnails_data
+                    )
+                    if (not _distinct_ok) or _incoming_present:
+                        return False
+                    try:
+                        _print_logger.info(
+                            "[SERIES-APPEND-DISTINCT] append distinct series=%s "
+                            "(shares name='%s'+count with existing series=%s) — not a duplicate",
+                            series_number, series_name, existing_series_number,
+                        )
+                    except Exception:
+                        pass
+                    # fall through to the append below (distinct, not-yet-present series)
 
                 self.lst_thumbnails_data.append(new_data)
                 inserted_index = len(self.lst_thumbnails_data) - 1

@@ -109,6 +109,7 @@ class ContourWidget(vtk.vtkContourWidget):
 class PolygonSegmentationInteractorStyle(AbstractInteractorStyle):
     def __init__(self, image_viewer, on_polygon_finished=None):
         super().__init__(image_viewer)
+        self.on_polygon_finished = on_polygon_finished
         self.active_widget = self.create_contour_widget()
         self.active_widget.Off()
         self.active_contours = []
@@ -286,12 +287,32 @@ class PolygonSegmentationInteractorStyle(AbstractInteractorStyle):
         except Exception as e:
             print(f"[poly] ERROR: cannot map display-world to input-ijk: {e}")
             return
+        callback = getattr(self, "on_polygon_finished", None)
+        if callable(callback):
+            try:
+                handled = bool(callback(pts_world_out, ijk_list_3d, obj))
+            except Exception as e:
+                print(f"[poly] polygon-finished callback failed: {e}")
+                handled = False
+            if handled:
+                polygon_segmentation_object = PolygonSegmentationObject(obj)
+                self.add_object_to_store_widgets(polygon_segmentation_object, self.tool_access.POLYGON_SEGMENTATION)
+                try:
+                    obj.ProcessEventsOff()
+                except Exception:
+                    pass
+                self.active_widget = self.create_contour_widget()
+                self.active_contours.append(obj)
+                self.get_information()
+                return
+
         try:
             url = get_server_url('segmentation')
 
         except Exception as e:
             print(f"[poly] ERROR: cannot connect to server: {e}")
             return
+
         # send to server
         payload = build_payload_ijk(self.server_config, ijk_list_3d)
         url = f"{url}/dicom-info/"

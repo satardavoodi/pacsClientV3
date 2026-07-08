@@ -677,6 +677,84 @@ def check_education_payload_set() -> GateCheck:
 # Orchestration
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# BINARY ARCHITECTURE SCAN (ARM64 plan §7.3, 2026-07-07)
+# ---------------------------------------------------------------------------
+# "Do not accidentally install x64-only native DLLs into an ARM64-native
+# application" — and vice versa. Reads the PE header machine field of every
+# staged .exe/.dll/.pyd and compares against the build's target architecture.
+# Called by build_release.py post-stage: ENFORCED for --arch arm64 (a single
+# x64 binary in the native tree = broken install), warn-only for x64 unless
+# AIPACS_ENFORCE_ARCH_SCAN=1 (established x64 trees may legitimately carry the
+# odd x86 helper — establish the baseline before enforcing).
+
+PE_MACHINE_NAMES = {0x014C: "x86", 0x01C4: "ARMNT", 0x8664: "x64", 0xAA64: "arm64"}
+_ARCH_TO_MACHINE = {"x64": 0x8664, "arm64": 0xAA64}
+_BINARY_SUFFIXES = {".exe", ".dll", ".pyd"}
+
+
+def read_pe_machine(path: Path) -> int | None:
+    """PE header machine value of a Windows binary; None when unreadable."""
+    try:
+        with open(path, "rb") as fh:
+            if fh.read(2) != b"MZ":
+                return None
+            fh.seek(0x3C)
+            pe_off = int.from_bytes(fh.read(4), "little")
+            fh.seek(pe_off)
+            if fh.read(4) != b"PE\x00\x00":
+                return None
+            return int.from_bytes(fh.read(2), "little")
+    except Exception:
+        return None
+
+
+def check_stage_binary_architecture(
+    stage_dir: Path | None = None,
+    expected_arch: str = "x64",
+    enforce: bool = True,
+) -> GateCheck:
+    """Every staged native binary must match the target architecture."""
+    name = "stage_binary_architecture"
+    expected_machine = _ARCH_TO_MACHINE.get(expected_arch)
+    if expected_machine is None:
+        return _failed(name, f"unknown expected_arch {expected_arch!r}")
+    stage = stage_dir or STAGE_DIR
+    root = stage / "core" if (stage / "core").exists() else stage
+    if not root.exists():
+        return _warned(name, f"no staged tree at {root} — nothing to scan")
+
+    scanned = 0
+    mismatches: list[str] = []
+    unreadable = 0
+    for path in root.rglob("*"):
+        if path.suffix.lower() not in _BINARY_SUFFIXES or not path.is_file():
+            continue
+        machine = read_pe_machine(path)
+        if machine is None:
+            unreadable += 1
+            continue
+        scanned += 1
+        if machine != expected_machine:
+            got = PE_MACHINE_NAMES.get(machine, hex(machine))
+            mismatches.append(f"{path.relative_to(root)} = {got}")
+
+    if not mismatches:
+        return _passed(
+            name,
+            f"{scanned} binaries scanned under {root} — all {expected_arch}"
+            + (f" ({unreadable} unreadable skipped)" if unreadable else ""),
+        )
+    detail = [
+        f"expected {expected_arch}; {len(mismatches)} wrong-architecture binaries "
+        f"out of {scanned} scanned under {root}:",
+        *mismatches[:20],
+    ]
+    if len(mismatches) > 20:
+        detail.append(f"... and {len(mismatches) - 20} more")
+    return _failed(name, *detail) if enforce else _warned(name, *detail)
+
+
 def run_pre_build_gate() -> list[GateCheck]:
     return [check_source_freshness(), check_plugin_mirrors()]
 

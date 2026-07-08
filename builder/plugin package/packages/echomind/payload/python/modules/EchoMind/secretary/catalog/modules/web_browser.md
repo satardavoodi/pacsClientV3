@@ -84,7 +84,44 @@ Reloads the current page. No entities. **needs_confirmation:** `false`
 
 ---
 
-## 3. Choosing the Right Action
+## 3. Structured Page Tools
+
+Use these when the user asks what is loaded in the browser, wants page data, or
+asks the agent to interact with forms/buttons. Prefer structured access over
+screenshots/OCR.
+
+Read-only:
+
+* `browser_get_url`, `browser_get_title`
+* `browser_structured_data` — metadata, JSON-LD, forms, tables, cards
+* `browser_dom_snapshot {max_elements?}` — compact rendered DOM elements
+* `browser_accessibility_tree {max_nodes?}` — role/name/native-control tree
+* `browser_get_text`, `browser_get_html`
+* `browser_get_links`, `browser_get_buttons`, `browser_get_inputs`
+* `browser_find_element {selector}`, `browser_extract_table {selector?}`
+* `browser_selected_text`, `browser_selected_element`
+* `browser_scroll_state`
+* `browser_network` — resource timing entries and captured fetch/XHR response bodies
+* `browser_clear_network` — clear the captured fetch/XHR response-body buffer
+* `browser_screenshot {path?}` — use after structured reads or when DOM access is insufficient
+
+Interact:
+
+* `browser_fill_field {selector, value}`
+* `browser_type_text {text, selector?}`
+* `browser_click {selector}`
+* `browser_scroll {delta_y?, delta_x?, x?, y?}`
+* `browser_submit_form {selector?}`
+
+Preferred read hierarchy:
+1. structured page data / DOM / table/input/button/link actions
+2. accessibility-like tree
+3. visible text
+4. screenshot + OCR only when structured access is unavailable
+
+---
+
+## 4. Choosing the Right Action
 
 * "search X on google / the web", "google X" → `web_search` with `query=X`
 * "open google and search X" → `web_search` (NOT open_url)
@@ -92,6 +129,9 @@ Reloads the current page. No entities. **needs_confirmation:** `false`
 * "open the browser" (nothing else) → `open_browser`
 * "go back" → `browser_back`; "go forward" → `browser_forward`
 * "refresh / reload the page" → `refresh_page`
+* "read this page" → start with `browser_structured_data` or `browser_get_text`
+* "what fields/buttons are here" → `browser_get_inputs` / `browser_get_buttons`
+* "click/fill/type/submit" → inspect first, then use `browser_click`, `browser_fill_field`, `browser_type_text`, or `browser_submit_form`
 * "log into <site>", "sign in to <site>" → `login_website` with `site=<site>`
 * "what is the agent doing", "task status" → `agent_task_status`
 * "cancel the search/task" → `cancel_agent_task`
@@ -102,7 +142,7 @@ its text to verify the result, saves a screenshot, and reports through
 the module icon badge + the notification inbox. The user keeps working
 the whole time.
 
-## 4. Output Contract
+## 5. Output Contract
 
 ```json
 {
@@ -114,7 +154,7 @@ the whole time.
 }
 ```
 
-## 5. Error Envelopes
+## 6. Error Envelopes
 
 `MODULE_UNAVAILABLE` (browser module not installed/enabled),
 `MISSING_QUERY`, `INVALID_URL`, `ACTION_FAILED`. All recoverable; report

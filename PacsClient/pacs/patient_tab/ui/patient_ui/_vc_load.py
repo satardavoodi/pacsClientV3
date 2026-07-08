@@ -1265,6 +1265,20 @@ class _VCLoadMixin:
                 elif not correct_path.exists():
                     logger.debug(f"   ❌ Ignored stale series_path from metadata: {correct_path}")
 
+            # [APPLY-LOOP] (OPT-20 residual diagnostic, gated by AIPACS_APPLY_TRACE). When a
+            # miss has [APPLY-ENTER] but NO [APPLY-GATE], the render loop was skipped: this
+            # says whether it was refresh=False / series_idx<0 (loop never ran) vs. a
+            # per-viewer skip (target not found / per-viewer stale). Pins the 3000001/3000002
+            # slot-3 sub-case that survived the index-gate fix.
+            if (os.getenv("AIPACS_APPLY_TRACE", "0") or "0").strip() != "0":
+                try:
+                    logger.info(
+                        "[APPLY-LOOP] series=%s series_idx=%s refresh=%s viewers=%s target_viewer=%s",
+                        series_number, series_idx, refresh_viewer,
+                        len(self.lst_nodes_viewer or []), target_viewer_id,
+                    )
+                except Exception:
+                    pass
             if refresh_viewer and series_idx >= 0:
                 # Update ALL viewers currently showing this series (not just selected)
                 for vi, node_viewer in enumerate(self.lst_nodes_viewer or []):
@@ -1274,7 +1288,13 @@ class _VCLoadMixin:
                     if target_viewer_id is not None and getattr(vtk_w, 'id_vtk_widget', None) != target_viewer_id:
                         continue
                     if expected_token is not None and not self._is_request_current(vtk_w, expected_token):
-                        logger.debug(f"   âڈ­ï¸ڈ [APPLY STALE] viewer[{vi}] series={series_number} skipped")
+                        # PER-VIEWER stale skip (distinct from the [APPLY-STALE-EARLY] top guard).
+                        # Upgraded to a gated INFO so the OPT-20 slot-3 residual is visible.
+                        if (os.getenv("AIPACS_APPLY_TRACE", "0") or "0").strip() != "0":
+                            logger.info(
+                                "[APPLY-STALE-VIEWER] series=%s viewer=%s per_viewer_token_stale -> render skipped",
+                                series_number, getattr(vtk_w, 'id_vtk_widget', '?'),
+                            )
                         continue
                     # BUG (48456, 2026-07-06): last_series_show holds the SERIES NUMBER
                     # (_pw_viewers.py sets it = metadata['series']['series_number']), NOT a

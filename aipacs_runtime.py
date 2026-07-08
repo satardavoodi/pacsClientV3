@@ -860,20 +860,107 @@ def compare_release_versions(left: str, right: str) -> int:
     return 0
 
 
+def _native_machine_name() -> str:
+    """Host machine per IsWow64Process2 ("ARM64"/"AMD64"/…); "" when unknown.
+
+    Local, stdlib-only twin of PacsClient.utils.runtime_arch_log (this module
+    must not import PacsClient — it is imported BY it). On an ARM64 host an
+    x64-emulated process still sees the TRUE host machine here, which is what
+    per-architecture update selection needs.
+    """
+    if sys.platform != "win32":
+        return ""
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        if not hasattr(kernel32, "IsWow64Process2"):
+            return ""
+        process_machine = ctypes.c_ushort(0)
+        native_machine = ctypes.c_ushort(0)
+        if not kernel32.IsWow64Process2(
+            kernel32.GetCurrentProcess(),
+            ctypes.byref(process_machine),
+            ctypes.byref(native_machine),
+        ):
+            return ""
+        return {0x8664: "AMD64", 0xAA64: "ARM64", 0x014C: "x86", 0x01C4: "ARMNT"}.get(
+            native_machine.value, ""
+        )
+    except Exception:
+        return ""
+
+
+def resolve_source_location(source: dict[str, Any], native_arch: str | None = None) -> str:
+    """Per-architecture update location (ARM64 plan §4, 2026-07-07).
+
+    A source entry may carry ``"location_by_arch": {"x64": ..., "arm64": ...}``.
+    Selection keys on the HOST machine (so an x64 build running under
+    Windows-on-ARM emulation is offered the arm64 package = the migration
+    path); entries without the key — every existing config — resolve exactly
+    as before via ``location``. Pure given ``native_arch``; never raises.
+    """
+    legacy = str(source.get("location") or "").strip()
+    by_arch = source.get("location_by_arch")
+    if not isinstance(by_arch, dict) or not by_arch:
+        return legacy
+    if native_arch is None:
+        native_arch = _native_machine_name()
+    key = "arm64" if str(native_arch or "").strip().upper() == "ARM64" else "x64"
+    picked = str(by_arch.get(key) or "").strip()
+    return picked or legacy
+
+
 def active_update_source() -> dict[str, Any]:
     payload = load_update_sources()
     active_id = str(payload.get("active_source_id") or "").strip()
     sources = payload.get("sources") or []
+
+    def _with_arch_location(source: dict[str, Any]) -> dict[str, Any]:
+        out = dict(source)
+        resolved = resolve_source_location(source)
+        if resolved:
+            out["location"] = resolved
+        return out
+
     if isinstance(sources, list):
         for source in sources:
             if not isinstance(source, dict):
                 continue
             if str(source.get("id") or "").strip() == active_id:
-                return dict(source)
+                return _with_arch_location(source)
         for source in sources:
             if isinstance(source, dict):
-                return dict(source)
+                return _with_arch_location(source)
     return {"id": "", "title": "", "type": "file", "location": "", "channel": "stable"}
+
+
+def build_profile() -> str:
+    """Build profile: "standard" (default) or "arm64_lite" (ARM64 plan §5).
+
+    The arm64-lite package is the FAST-only native Windows-on-ARM build (the
+    FAST domain is VTK-free by architecture). Resolution: env
+    ``AIPACS_BUILD_PROFILE`` override → installation profile ``build_profile``
+    key (stamped by the arm64 installer) → "standard". Never raises.
+    """
+    try:
+        env = os.environ.get("AIPACS_BUILD_PROFILE", "").strip().lower()
+        if env in ("standard", "arm64_lite"):
+            return env
+        profile = load_installation_profile()
+        value = str(profile.get("build_profile") or "").strip().lower()
+        if value in ("standard", "arm64_lite"):
+            return value
+    except Exception:
+        pass
+    return "standard"
+
+
+def vtk_features_available() -> bool:
+    """False on the arm64-lite build: VTK-dependent modules (Standard/Advanced
+    MPR, 3D, dental/curved MPR) are not shipped there until the Phase-2 VTK
+    win_arm64 wheel lands. The standard build is unaffected (always True)."""
+    return build_profile() != "arm64_lite"
 
 
 def _source_reference(source: str | Path | None = None) -> dict[str, Any]:

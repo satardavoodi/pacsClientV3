@@ -301,7 +301,12 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
         try:
             AiCls = _ensure_ai_main_window()
             study_uid = (entities or {}).get("study_uid")
-            window = AiCls(study_uid=study_uid) if study_uid else AiCls()
+            mode = (
+                (entities or {}).get("eagle_eye_mode")
+                or (entities or {}).get("module_mode")
+                or (entities or {}).get("modality")
+            )
+            window = AiCls(study_uid=study_uid, eagle_eye_mode=mode) if study_uid else AiCls(eagle_eye_mode=mode)
             try:
                 window.show()
             except Exception:
@@ -578,4 +583,3 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
                 )
             except Exception:
                 pass
-

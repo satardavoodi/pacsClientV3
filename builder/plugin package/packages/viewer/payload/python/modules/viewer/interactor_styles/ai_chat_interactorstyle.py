@@ -24,6 +24,7 @@ from pathlib import Path
 from urllib.parse import urljoin
 from PacsClient.utils.config import SOURCE_PATH, ATTACHMENT_PATH, IMAGES_LOGIN_PATH
 from PacsClient.utils.utils import SERVERS_FILE, get_server_url
+from modules.ai_imaging.ai_module_ui.feedback_schema import write_bone_age_feedback_csv
 from modules.viewer.advanced.viewer_2d import create_text_actor
 
 
@@ -481,12 +482,13 @@ class BoneAgeWorker(QThread):
     error = Signal(str)
 
     def __init__(self, study_uid: str, sex: str | None, boneage_url: str,
-                 headers: dict | None = None):
+                 headers: dict | None = None, metadata_context: dict | None = None):
         super().__init__()
         self.study_uid = study_uid
         self.sex = sex
         self.boneage = boneage_url
         self.headers = headers or {}
+        self.metadata_context = metadata_context or {}
         self.canceled = False
         self.data = None
 
@@ -544,6 +546,10 @@ class BoneAgeWorker(QThread):
             if json_path is not None:
                 data["_json_path"] = str(json_path)
 
+            feedback_csv_path = self._save_feedback_csv(data)
+            if feedback_csv_path is not None:
+                data["_feedback_csv_path"] = str(feedback_csv_path)
+
             self.finished.emit(data)
 
         except Exception as e:
@@ -552,14 +558,33 @@ class BoneAgeWorker(QThread):
     def _save_result_json(self, data: dict):
         """
         ذخیره نتیجه‌ی bone age در یک JSON:
-        sex, predicted_bone_age_months, predicted_bone_age_years, modality
+        Canonical keys + legacy compatibility keys.
         مسیر: ATTACHMENT_PATH / <study_uid> / bone_age.json
         """
         try:
+            # Canonical, stable schema for DX bone-age results.
+            canonical_years = data.get("predicted_bone_age_years")
+            canonical_months = data.get("predicted_bone_age_months")
+            canonical_sex = data.get("sex")
+            if isinstance(canonical_sex, str):
+                _sx = canonical_sex.strip().lower()
+                if _sx in ("m", "male", "0"):
+                    canonical_sex = "male"
+                elif _sx in ("f", "female", "1"):
+                    canonical_sex = "female"
+                else:
+                    canonical_sex = _sx or None
+
             payload = {
-                "sex": data.get("sex"),
-                "predicted_bone_age_months": data.get("predicted_bone_age_months"),
-                "predicted_bone_age_years": data.get("predicted_bone_age_years"),
+                "schema": "bone_age_v1",
+                "schema_version": 1,
+                # Canonical keys (new)
+                "bone_age_years": canonical_years,
+                "bone_age_months": canonical_months,
+                "sex": canonical_sex,
+                # Legacy keys (kept for backward compatibility)
+                "predicted_bone_age_months": canonical_months,
+                "predicted_bone_age_years": canonical_years,
                 # چون این Worker فقط برای DX استفاده می‌شود، مودالیتی را ثابت DX می‌گذاریم
                 "modality": "DX",
             }
@@ -577,6 +602,22 @@ class BoneAgeWorker(QThread):
 
         except Exception as e:
             print(f"[DX] failed to save bone age JSON: {e}")
+            return None
+
+    def _save_feedback_csv(self, data: dict):
+        try:
+            out_dir = ATTACHMENT_PATH / self.study_uid
+            out_dir.mkdir(parents=True, exist_ok=True)
+            out_path = write_bone_age_feedback_csv(
+                self.study_uid,
+                out_dir,
+                self.metadata_context,
+                data,
+            )
+            print(f"[DX] bone age feedback CSV saved at: {out_path}")
+            return out_path
+        except Exception as e:
+            print(f"[DX] failed to save bone age feedback CSV: {e}")
             return None
 
 class AIChatInteractorStyle(AbstractInteractorStyle):
@@ -753,6 +794,20 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
     def open_ai_module(self):
         if self.patient_widget is not None:
+            try:
+                metadata_fixed = getattr(self.image_viewer, 'metadata_fixed', {}) or {}
+                metadata = getattr(self.image_viewer, 'metadata', {}) or {}
+                modality = str(
+                    metadata_fixed.get('modality')
+                    or metadata.get('series', {}).get('modality', '')
+                    or ''
+                ).upper()
+                if modality == "DX":
+                    self.patient_widget._preferred_eagle_eye_mode = "bone_age"
+                elif modality == "MG":
+                    self.patient_widget._preferred_eagle_eye_mode = "mammography"
+            except Exception:
+                pass
             self.patient_widget.switch_right_panel('ai_module')  # open AI module
 
     # --------- MG (Mammography) pipeline  ---------
@@ -865,6 +920,23 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         print(f'patient sex : {patient_sex}\n')
         # اگر key واقعی چیز دیگری است، فقط همین خط را عوض کن.
 
+        metadata_fixed = getattr(self.image_viewer, 'metadata_fixed', None)
+        if not isinstance(metadata_fixed, dict):
+            metadata_fixed = {}
+        metadata = getattr(self.image_viewer, 'metadata', None)
+        if not isinstance(metadata, dict):
+            metadata = {}
+        series_meta = metadata.get('series', {}) if isinstance(metadata.get('series', {}), dict) else {}
+        instances = metadata.get('instances') if isinstance(metadata.get('instances'), list) else []
+        first_instance = instances[0] if instances and isinstance(instances[0], dict) else {}
+
+        metadata_context = {
+            'patient_id': metadata_fixed.get('patient_id') or metadata_fixed.get('patient_code') or metadata.get('patient_id') or metadata.get('PatientID'),
+            'patient_code': metadata_fixed.get('patient_code'),
+            'series_instance_uid': series_meta.get('series_uid') or series_meta.get('SeriesInstanceUID') or metadata_fixed.get('series_uid') or metadata_fixed.get('series_instance_uid'),
+            'sop_instance_uid': first_instance.get('sop_instance_uid') or first_instance.get('SOPInstanceUID'),
+        }
+
         # 1) Loading overlay (consistent with Eagle Eye tab)
         from PacsClient.components.loading_overlay import AiPacsLoadingOverlay
         from PySide6.QtCore import Qt as QtCore_Qt, QTimer
@@ -896,6 +968,7 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             study_uid=study_uid,
             sex=patient_sex,
             boneage_url=boneage_url,
+            metadata_context=metadata_context,
         )
         self._current_worker = worker
 

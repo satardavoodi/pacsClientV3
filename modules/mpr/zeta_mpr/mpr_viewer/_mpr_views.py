@@ -45,6 +45,70 @@ _MPR_DEFER_3D = (_os.getenv("AIPACS_MPR_DEFER_3D", "1") or "1").strip().lower() 
 # AIPACS_MPR_PREWARM=0.
 _MPR_PREWARM = (_os.getenv("AIPACS_MPR_PREWARM", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
 
+# ── OPT-21 Phase-3/4 step trace (2026-07-07, WoA/Snapdragon investigation) ───
+# On PC2 (Snapdragon X Elite, Windows 11 ARM64) the app dies with a NATIVE
+# access violation somewhere inside the FIRST QVTKRenderWindowInteractor
+# construction/Initialize of _create_axial_view — no log line sits between the
+# individual native calls, so the exact crashing call is unknown. The known
+# Windows-on-ARM bug class (microsoft/OpenCLOn12#68) crashes inside
+# OpenGLOn12.dll (Mesa GLon12) during GL init / extension discovery, which is
+# exactly this window. This trace logs a line IMMEDIATELY before and after
+# every native-boundary step so the LAST line in viewer_diagnostics.log names
+# the exact crashing call, and [MPR-GL-CAPS] records the GL vendor/renderer/
+# version VTK ACTUALLY receives (Phase-3: compare against GLview's
+# "D3D12 (Qualcomm Adreno X1-85 GPU) / OpenGL 4.6 Mesa").
+# Default ON — ~16 short lines once per MPR open, zero per-frame cost.
+# Kill switch AIPACS_MPR_STEP_TRACE=0.
+_MPR_STEP_TRACE = (_os.getenv("AIPACS_MPR_STEP_TRACE", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
+_GL_CAPS_LOGGED = False
+
+
+def _mpr_step(view: str, step: str, phase: str) -> None:
+    """One immediate-flush trace line per native-boundary step (crash bisector)."""
+    if _MPR_STEP_TRACE:
+        try:
+            logger.info("[MPR-STEP] view=%s step=%s phase=%s", view, step, phase)
+        except Exception:
+            pass
+
+
+def _log_vtk_gl_capabilities(vtk_widget) -> None:
+    """Phase-3: log the OpenGL vendor/renderer/version VTK actually got (once)."""
+    global _GL_CAPS_LOGGED
+    if _GL_CAPS_LOGGED or not _MPR_STEP_TRACE:
+        return
+    try:
+        rw = vtk_widget.GetRenderWindow()
+        caps = rw.ReportCapabilities() or ""
+        wanted = ("opengl vendor", "opengl renderer", "opengl version", "class:")
+        lines = [
+            ln.strip() for ln in caps.splitlines()
+            if any(k in ln.lower() for k in wanted)
+        ]
+        try:
+            from vtkmodules.vtkCommonCore import vtkVersion
+            vtk_ver = vtkVersion.GetVTKVersion()
+        except Exception:
+            vtk_ver = "?"
+        # WoA diagnostics: state explicitly whether this VTK/GL stack runs
+        # natively or under x64 emulation (ARM64 emulation strategy 2026-07-07).
+        try:
+            from PacsClient.utils.runtime_arch_log import get_runtime_architecture
+            _arch = get_runtime_architecture()
+            _emu = f"emulated={_arch.get('emulated')} host={_arch.get('native_arch')}"
+        except Exception:
+            _emu = "emulated=?"
+        logger.warning(
+            "[MPR-GL-CAPS] vtk=%s render_window=%s %s | %s",
+            vtk_ver, type(rw).__name__, _emu, " | ".join(lines[:8]) or "no-caps-reported",
+        )
+        _GL_CAPS_LOGGED = True
+    except Exception as exc:
+        try:
+            logger.warning("[MPR-GL-CAPS] capabilities report failed: %r", exc)
+        except Exception:
+            pass
+
 
 def _emit_geometry_contract_missing_guard(*, feature: str) -> None:
     logger.warning(
@@ -381,22 +445,30 @@ class _MprViewsMixin:
             fallback_reason="fixed_layout_primary_source_view",
         )
         _emit_geometry_contract_missing_guard(feature="zeta_mpr_create_axial_view")
+        _mpr_step('axial', 'qt_container', 'begin')
         container = QFrame()
         container.setStyleSheet("background: #000; border: 1px solid #333;")
         container_layout = QVBoxLayout(container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.setSpacing(0)
+        _mpr_step('axial', 'qt_container', 'end')
 
+        _mpr_step('axial', 'qvtk_interactor_ctor', 'begin')
         vtk_widget = QVTKRenderWindowInteractor(container)
+        _mpr_step('axial', 'qvtk_interactor_ctor', 'end')
         vtk_widget.setStyleSheet("border: none; background: black;")
         container_layout.addWidget(vtk_widget)
 
         renderer = vtk.vtkRenderer()
         renderer.SetBackground(0, 0, 0)
+        _mpr_step('axial', 'render_window_add_renderer', 'begin')
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
+        _mpr_step('axial', 'render_window_add_renderer', 'end')
 
         slice_mapper = vtk.vtkImageResliceMapper()
+        _mpr_step('axial', 'reslice_mapper_set_input', 'begin')
         slice_mapper.SetInputData(self.image_data)
+        _mpr_step('axial', 'reslice_mapper_set_input', 'end')
         slice_mapper.SliceFacesCameraOn()
         slice_mapper.SliceAtFocalPointOn()
         slice_mapper.SetResampleToScreenPixels(False)
@@ -417,11 +489,18 @@ class _MprViewsMixin:
         camera.SetFocalPoint(focal_point)
         camera.SetViewUp(view_up)
         camera.ParallelProjectionOn()
+        _mpr_step('axial', 'reset_camera', 'begin')
         renderer.ResetCamera()
+        _mpr_step('axial', 'reset_camera', 'end')
         camera.Zoom(1.2)
 
+        _mpr_step('axial', 'interactor_initialize', 'begin')
         vtk_widget.Initialize()
+        _mpr_step('axial', 'interactor_initialize', 'end')
+        _mpr_step('axial', 'interactor_start', 'begin')
         vtk_widget.Start()
+        _mpr_step('axial', 'interactor_start', 'end')
+        _log_vtk_gl_capabilities(vtk_widget)
 
         self._add_click_handler(vtk_widget, renderer, 'axial')
 
@@ -430,9 +509,12 @@ class _MprViewsMixin:
             'actor': image_slice, 'mapper': slice_mapper
         }
         self._register_view('axial', container, vtk_widget, row, col)
+        _mpr_step('axial', 'crosshairs_and_text', 'begin')
         self._create_crosshairs(renderer, 'axial')
         self._create_slice_info_text(renderer, 'axial')
+        _mpr_step('axial', 'crosshairs_and_text', 'end')
         layout.addWidget(container, row, col)
+        _mpr_step('axial', 'create_view', 'end')
 
     def _create_sagittal_view(self, layout, row, col):
         """Create sagittal view (YZ plane) - MPR reconstructed with interpolation"""

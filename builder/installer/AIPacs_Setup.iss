@@ -13,6 +13,24 @@
 #endif
 #define AdvancedMprPayloadExe StageDir + "\plugin_packages\advanced_mpr\payload\AIPacsAdvancedViewer.exe"
 #define AdvancedMprAvailable FileExists(AdvancedMprPayloadExe)
+; ── ARM64 plan §4 (2026-07-07): single-source arch variants ─────────────────
+; The arm64-native installer is AIPacs_Setup_arm64.iss — a thin wrapper that
+; sets ARM64_BUILD=1 and #includes this file. Everything arch-specific in here
+; is conditional on ARM64_BUILD; without it this script compiles byte-identical
+; to the historical x64 installer.
+#ifdef ARM64_BUILD
+  #define ArchSuffix " (ARM64)"
+  #define InstallPackageKind "arm64"
+#elif defined WOA_EMULATED_BUILD
+  ; x64 payload packaged FOR Windows-on-ARM machines (emulation strategy
+  ; 2026-07-07): only installable on ARM64 hosts, informative first page,
+  ; stamps install_package=x64_on_arm64 so the app applies the WoA profile.
+  #define ArchSuffix " (ARM64 emulated)"
+  #define InstallPackageKind "x64_on_arm64"
+#else
+  #define ArchSuffix ""
+  #define InstallPackageKind "x64"
+#endif
 
 [Setup]
 AppId={{2D6A29F1-11CF-4A1B-9C3A-0D6B14661E65}
@@ -27,14 +45,30 @@ OutputBaseFilename={#InstallerBaseName}
 Compression=lzma2/ultra64
 SolidCompression=no
 WizardStyle=modern
+#ifdef ARM64_BUILD
+; ARM64-native package: only installable on Windows-on-ARM, native 64-bit mode.
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#elif defined WOA_EMULATED_BUILD
+; WoA emulation SKU: the x64 payload, but the PACKAGE is ARM64-machines-only —
+; a plain x64 PC must use the classic x64 installer. Installs in x64-emulation
+; mode ({autopf} = the x64 Program Files view), same AppId => upgrades any
+; previous plain-x64 install on the same machine cleanly.
+ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=x64compatible
+#else
+; x64 package: x64compatible ALSO allows install on ARM64 hosts under x64
+; emulation (how PC2 got the x64 build) — InitializeSetup below points such
+; machines at the dedicated WoA package.
+ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 PrivilegesRequired=admin
 DisableReadyMemo=no
 SetupIconFile=..\..\Qss\images\favicon.ico
 ; Installer EULA must remain proprietary and require explicit acceptance.
 LicenseFile=EULA.txt
 UninstallDisplayIcon={app}\AIPacs.exe
-UninstallDisplayName={#MyAppName} {#MyAppVersion}
+UninstallDisplayName={#MyAppName} {#MyAppVersion}{#ArchSuffix}
 VersionInfoVersion={#MyAppVersion}
 ; Standard-update behaviour: when AIPacs is running during an upgrade, use the
 ; Windows Restart Manager to close it automatically so its files are not locked.
@@ -586,6 +620,11 @@ begin
     '  "app_name": "AIPacs",' + #13#10 +
     '  "app_version": "{#MyAppVersion}",' + #13#10 +
     '  "generated_at_utc": "",' + #13#10 +
+    // ARM64 emulation strategy (2026-07-07): the installed PACKAGE TYPE is
+    // stamped so the app can log it ([WOA-PROFILE]) and apply the emulation
+    // runtime profile. "x64" = classic; "x64_on_arm64" = the WoA SKU
+    // (AIPacs_Setup_woa.iss, x64 payload installed knowingly on ARM64).
+    '  "install_package": "' + '{#InstallPackageKind}' + '",' + #13#10 +
     '  "installer": {' + #13#10 +
     '    "current_version": "{#MyAppVersion}",' + #13#10 +
     '    "detected_existing_version": "' + InstalledVersionValue() + '",' + #13#10 +
@@ -764,3 +803,35 @@ begin
       );
   end;
 end;
+
+#ifdef WOA_EMULATED_BUILD
+// ── ARM64 emulation strategy (2026-07-07): this IS the sanctioned package for
+// Windows-on-ARM machines. Informative only — always continues; suppressible
+// for silent installs.
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  SuppressibleMsgBox(
+    'AIPacs for Windows on ARM (emulated x64 package).' + #13#10 + #13#10 +
+    'The application runs through Windows'' built-in x64 emulation. The first launches are slower while Windows translates the application; later launches are faster.' + #13#10 + #13#10 +
+    '3D/MPR rendering uses the Microsoft OpenGL compatibility layer. If MPR reports a graphics problem, update the GPU driver and the "OpenCL and OpenGL Compatibility Pack" from the Microsoft Store, then re-run the test in Settings > Viewer Configuration > Hardware Requirements Check.',
+    mbInformation, MB_OK, IDOK);
+end;
+#elif !defined ARM64_BUILD
+// ── ARM64 plan §4 (2026-07-07): warn when the CLASSIC x64 package is being
+// installed on a Windows-on-ARM machine. x64compatible allows this (Prism
+// emulation), but the dedicated WoA package ("ARM64 emulated" SKU) is the
+// supported path there — it stamps the emulation runtime profile.
+// SuppressibleMsgBox keeps silent/automated installs working (/SUPPRESSMSGBOXES
+// defaults to Yes = continue).
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  if IsArm64 then
+    Result := SuppressibleMsgBox(
+      'This computer uses Windows on ARM (ARM64), but this is the standard x64 package of AIPacs.' + #13#10 + #13#10 +
+      'A dedicated "AIPacs (ARM64 emulated)" package exists for ARM64 computers — it installs the same application configured for Windows-on-ARM (emulation profile, diagnostics). Please use that package if available.' + #13#10 + #13#10 +
+      'Continue installing the standard x64 package on this ARM64 computer?',
+      mbConfirmation, MB_YESNO, IDYES) = IDYES;
+end;
+#endif

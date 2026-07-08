@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import asdict, is_dataclass
 from datetime import datetime
 import logging
+import os
 from pathlib import Path
 from typing import Any, Callable, Optional
 
@@ -307,16 +308,53 @@ class ViewerWriteCommandAdapter:
                 pass
 
         slider = getattr(vtk_w, "slider", None) or getattr(node, "slider", None)
-        try:
-            method(
-                series_index=series_number,
-                flag_change_selected_widget=False,
-                vtk_widget=vtk_w,
-                slider=slider,
-            )
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("viewer_write.change_series failed")
-            return _err(plan.action, "DISPATCH_FAILED", str(exc))
+
+        # OPT-23 (2026-07-08): defer the actual viewport switch to the NEXT event-loop
+        # turn, matching the real drop handler (`_vw_dragdrop.dropEvent` ->
+        # `QTimer.singleShot(0, _do_series_switch)`; see this file's docstring fidelity
+        # note). EchoMind dispatch runs INLINE on the UI thread, so calling `method(...)`
+        # synchronously here (a) never let the loading spinner shown above PAINT before
+        # the heavy switch (the user saw a dead freeze instead of "loading"), and (b)
+        # blocked the command-bus / IPC drain for the whole switch (incl. the Advanced/VTK
+        # render). Deferring to singleShot(0) yields control back so the spinner paints and
+        # the drain returns immediately; the switch itself is unchanged (async for a
+        # cache-miss; the Advanced/VTK render stays GUI-thread but is now visibly
+        # "loading"). Flag AIPACS_ECHOMIND_DEFER_SWITCH (default on; =0 = legacy inline).
+        # Result semantics unchanged: this already reported "async load dispatched" and
+        # never waited for the load to finish.
+        def _do_switch() -> None:
+            try:
+                method(
+                    series_index=series_number,
+                    flag_change_selected_widget=False,
+                    vtk_widget=vtk_w,
+                    slider=slider,
+                )
+            except Exception:  # noqa: BLE001
+                logger.exception("viewer_write.change_series deferred switch failed")
+
+        _defer = (os.getenv("AIPACS_ECHOMIND_DEFER_SWITCH", "1") or "1").strip() != "0"
+        if _defer:
+            try:
+                from PySide6.QtCore import QTimer
+                QTimer.singleShot(0, _do_switch)
+            except Exception:  # noqa: BLE001 — no Qt loop (e.g. tests) -> run inline
+                try:
+                    _do_switch()
+                except Exception as exc:  # noqa: BLE001
+                    logger.exception("viewer_write.change_series failed")
+                    return _err(plan.action, "DISPATCH_FAILED", str(exc))
+        else:
+            try:
+                method(
+                    series_index=series_number,
+                    flag_change_selected_widget=False,
+                    vtk_widget=vtk_w,
+                    slider=slider,
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("viewer_write.change_series failed")
+                return _err(plan.action, "DISPATCH_FAILED", str(exc))
         return CommandResult(
             ok=True, action=plan.action,
             message=f"series {series_number} -> viewport {viewport} (async load dispatched)",

@@ -27,6 +27,7 @@ from modules.viewer.viewer_backend_config import (
     save_viewer_backend,
 )
 from .storage_cleanup_panel import StorageCleanupPanelWidget
+from .hardware_check_panel import HardwareCheckPanelWidget
 
 try:
     from PacsClient.utils.config import SOCKET_CONFIG_PATH
@@ -511,6 +512,14 @@ class ModalityGridConfigWidget(QWidget):
         storage_scroll_host_layout.setContentsMargins(0, 0, 0, 0)
         storage_scroll_host_layout.setSpacing(0)
         storage_scroll_host_layout.addWidget(self.storage_cleanup_panel)
+
+        # ---------- Hardware Requirements Check (OPT-21, 2026-07-07) ----------
+        # One-time-per-install capability check (OpenGL/GPU for 3D/MPR, CPU,
+        # RAM, disk). Result persists to hardware_check.json and is reused by
+        # the MPR OpenGL pre-flight gate, so MPR opening never re-probes.
+        self.hardware_check_panel = HardwareCheckPanelWidget()
+        storage_scroll_host_layout.addWidget(self.hardware_check_panel)
+
         storage_scroll_host_layout.addStretch(1)
 
         storage_scroll_area = QScrollArea()

@@ -279,7 +279,20 @@ class _PWPanelsMixin:
             # Do not show loading here. Loading belongs to the confirmed AI run path
             # after sensitivity/retry dialogs in AIChatInteractorStyle.
             if self.method_add_new_tab:
-                self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
+                eagle_eye_mode = getattr(self, '_preferred_eagle_eye_mode', None)
+                if not eagle_eye_mode:
+                    try:
+                        selected = getattr(self, 'selected_widget', None)
+                        metadata = getattr(getattr(selected, 'image_viewer', None), 'metadata', {}) or {}
+                        modality = str(metadata.get('series', {}).get('modality', '') or '').upper()
+                        eagle_eye_mode = "bone_age" if modality == "DX" else "mammography" if modality == "MG" else None
+                    except Exception:
+                        eagle_eye_mode = None
+                self.method_add_new_tab(
+                    open_ai_client_tab=True,
+                    study_uid=self.study_uid,
+                    eagle_eye_mode=eagle_eye_mode,
+                )
 
         elif option == 'advanced_tools':
             print("[PatientWidget] Advanced Analysis requested")

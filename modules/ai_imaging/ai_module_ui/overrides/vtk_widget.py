@@ -566,6 +566,21 @@ class AIVTKWidget(VTKWidget):
         )
 
         boxes_scores = []
+        series_ai_data = self._get_series_ai_cached(df_det, check_all_rows=False)
+        source_row_index = None
+        source_row_key = ""
+        source_row_data = {}
+        if series_ai_data is not None:
+            try:
+                source_row_index = int(series_ai_data.index[0])
+            except Exception:
+                source_row_index = None
+            try:
+                source_row_data = series_ai_data.iloc[0].to_dict()
+            except Exception:
+                source_row_data = {}
+            source_row_key = str(source_row_data.get("dicom_full_path") or "")
+
         boxes = self._extract_value_field_for_metadata(
             df_det, 'box', series_uid, instance_names, instance_tokens, instance_numbers
         )
@@ -624,29 +639,43 @@ class AIVTKWidget(VTKWidget):
             extra={"component": "viewer"},
         )
 
-        if new_boxes:
-            boxes += new_boxes
-            scores += [None] * len(new_boxes)
+        candidates = []
+        for idx, box in enumerate(boxes):
+            candidates.append({
+                "box": box,
+                "score_value": scores[idx] if idx < len(scores) else None,
+                "source_kind": "ai",
+                "source_box_index": idx,
+            })
+        for idx, box in enumerate(new_boxes):
+            candidates.append({
+                "box": box,
+                "score_value": None,
+                "source_kind": "human_csv_new",
+                "source_box_index": idx,
+            })
 
-        if len(scores) < len(boxes):
+        if len(scores) < len(candidates):
             _AI_MG_LOGGER.warning(
                 "[MG][SCORE_LENGTH_MISMATCH] series_uid=%s boxes=%d scores=%d",
                 series_uid,
-                len(boxes),
+                len(candidates),
                 len(scores),
                 extra={"component": "viewer"},
             )
 
         _AI_MG_LOGGER.warning(
             "[MG][COMPUTE_STEP] step=before_for_loop series_uid=%s boxes=%d scores=%d removed=%d",
-            series_uid, len(boxes), len(scores), len(removed_boxes),
+            series_uid, len(candidates), len(scores), len(removed_boxes),
             extra={"component": "viewer"},
         )
 
-        for i in range(len(boxes)):
-            if boxes[i] in removed_boxes:
+        for item in candidates:
+            i = len(boxes_scores)
+            box = item["box"]
+            if box in removed_boxes:
                 continue
-            score_value = scores[i] if i < len(scores) else None
+            score_value = item.get("score_value")
             try:
                 score = float(f'{score_value:.2f}') if score_value is not None else 'Custom'
             except (TypeError, ValueError):
@@ -673,10 +702,28 @@ class AIVTKWidget(VTKWidget):
                         str(exc),
                         extra={"component": "viewer"},
                     )
+            display_number = len(boxes_scores) + 1
+            source_kind = item.get("source_kind") or "ai"
+            display_name = f"AI Finding {display_number}" if source_kind == "ai" else f"Human Finding {display_number}"
+            finding_uid = (
+                f"{self.image_viewer.metadata_fixed.get('study_uid', '')}:"
+                f"{source_row_key}:"
+                f"{source_kind}:"
+                f"{item.get('source_box_index')}"
+            )
+            common_fields = {
+                "display_name": display_name,
+                "finding_uid": finding_uid,
+                "source_row_key": source_row_key,
+                "source_row_index": source_row_index,
+                "source_box_index": item.get("source_box_index"),
+                "source_kind": source_kind,
+                "source_csv": str(self.csv_details_path or ""),
+            }
             if classification_label is not None:
-                boxes_scores.append({'box': boxes[i], 'score': score, 'classification': classification_label})
+                boxes_scores.append({'box': box, 'score': score, 'classification': classification_label, **common_fields})
             else:
-                boxes_scores.append({'box': boxes[i], 'score': score})
+                boxes_scores.append({'box': box, 'score': score, **common_fields})
 
         _AI_MG_LOGGER.warning(
             "[MG][COMPUTE_STEP] step=after_for_loop series_uid=%s boxes_scores=%d",
@@ -685,7 +732,7 @@ class AIVTKWidget(VTKWidget):
         )
 
         stats = {
-            "total": len(boxes),
+            "total": len(candidates),
             "new": len(new_boxes),
             "removed": len(removed_boxes),
             "final": len(boxes_scores),
@@ -822,13 +869,23 @@ class AIVTKWidget(VTKWidget):
         return result
 
     def start_process_series(self, vtk_image_data, metadata, series_index, id_vtk_widget, metadata_fixed):
-        print(f"[MG][VTK] start_process_series called for series={series_index} modality={metadata.get('series', {}).get('modality', 'N/A')}")
+        series_meta = metadata.get('series', {}) if isinstance(metadata, dict) else {}
+        modality = str(series_meta.get('modality', '') or '').upper()
+        print(f"[MG][VTK] start_process_series called for series={series_index} modality={modality or 'N/A'}")
         super().start_process_series(vtk_image_data, metadata, series_index, id_vtk_widget, metadata_fixed)
 
-        study_uid = self.image_viewer.metadata_fixed['study_uid']
-
         # ---- MG: load CSV paths from manifest (via utils)
-        if self.image_viewer.metadata['series']['modality'].upper() == 'MG':
+        if modality == 'MG':
+            image_viewer_meta_fixed = getattr(self.image_viewer, 'metadata_fixed', None)
+            if isinstance(image_viewer_meta_fixed, dict):
+                study_uid = image_viewer_meta_fixed.get('study_uid')
+            else:
+                study_uid = None
+            if not study_uid and isinstance(metadata_fixed, dict):
+                study_uid = metadata_fixed.get('study_uid')
+            if not study_uid:
+                print("[MG] CSV setup skipped: missing study_uid")
+                return
             det_csv, cls_csv = load_mg_ai_manifest(
                 study_uid=study_uid,
                 attachments_path=ATTACHMENT_PATH
@@ -850,13 +907,8 @@ class AIVTKWidget(VTKWidget):
                     self.csv_classification = ATTACHMENT_PATH / study_uid / 'classification.csv'
                     print("[MG] CSV paths loaded from default")
 
-        # connect apply button
-        try:
-            self.patient_widget.imaging_tab_ui.apply_btn.clicked.disconnect(self.on_apply)
-        except Exception:
-            pass
-
-        self.patient_widget.imaging_tab_ui.apply_btn.clicked.connect(self.on_apply)
+        # Apply is owned by ImagingToolsTab. Keeping per-viewer connections here
+        # causes duplicate CSV writes when the tab-level handler is also wired.
 
         try:
             self._ensure_ai_prefetch_for_all_series()
@@ -1206,12 +1258,21 @@ class AIVTKWidget(VTKWidget):
             if not isinstance(box, (list, tuple)) or len(box) != 4:
                 continue
             classification = item.get('classification', [])
+            display_name = str(item.get("display_name") or f"AI Finding {i + 1}")
             imaging_tab.sidebar_upsert_item(
-                key=f"Box {i + 1}",
+                key=display_name,
                 status=1,
                 box_object=None,
                 csv_box=[float(v) for v in box],
                 classification=classification if classification is not None else [],
+                mammography_fields={
+                    "finding_uid": item.get("finding_uid"),
+                    "source_row_key": item.get("source_row_key"),
+                    "source_row_index": item.get("source_row_index"),
+                    "source_box_index": item.get("source_box_index"),
+                    "source_kind": item.get("source_kind"),
+                    "source_csv": item.get("source_csv"),
+                },
                 select=False,
             )
             seeded += 1

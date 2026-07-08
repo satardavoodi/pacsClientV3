@@ -1228,6 +1228,60 @@ synchronous build) builds the three 2D planes first and defers `_create_3d_view`
   geometry/crosshairs identical, close-mid-build no crash). Guard:
   `tests/code/viewer/test_mpr_defer_3d_view.py`. `_mpr_views.py`/`_mpr_layout.py` are not plugin-mirrored.
 
+### MPR OpenGL pre-flight + production native-fault log (OPT-21, 2026-07-07)
+An end-user PC whose display driver cannot provide OpenGL 3.2 (generic/basic adapter, ancient
+driver, some RDP) dies with a NATIVE access violation creating the FIRST VTK OpenGL render window
+— Standard MPR's axial pane (`_mpr_views._create_axial_view`) — killing the whole app with no
+traceback (PC2, 2026-07-07; FAST 2D is VTK-free so the machine looks healthy until the MPR click).
+Two default-on guards, master plan **OPT-21**:
+- **`modules/mpr/opengl_preflight.py`**: PERSISTED once-per-INSTALL check (user directive
+  2026-07-07 — never re-probe per session/MPR click). `opengl_preflight()` order: flag off →
+  allow; in-memory cache; persisted PASS in `<config>/hardware_check.json` → trusted with ZERO
+  probing; persisted FAIL or no file → probe now (graceful Qt `QOpenGLContext`+`QOffscreenSurface`,
+  fails gracefully where VTK crashes natively; pure `evaluate_opengl_support` requires >= 3.2) and
+  persist — so a healthy machine probes exactly once EVER and a machine whose driver was upgraded
+  self-heals on the next attempt. `toggle_zeta_mpr` calls it BEFORE any volume load / VTK window
+  construction; on failure it shows an "update your GPU driver" dialog (pointing at the Settings
+  check), resets tool state, and returns. Flag `AIPACS_MPR_OPENGL_PREFLIGHT` (`=0` = legacy
+  no-probe). Keep the probe import-light (Qt only inside the probe), never raising, and ALWAYS
+  ahead of `_load_full_vtk_for_mpr` / `StandardMPRViewer(` — the guard test pins that order. A
+  passing probe is a pre-filter, not a guarantee; a failing probe reliably predicts a native crash
+  and must block. **`hardware_check.json` is machine-generated state — NEVER ship/seed it as a
+  config template** (it would copy the dev machine's results to end users).
+- **Settings → Viewer Configuration → "Hardware Requirements Check"**
+  (`settings_ui/hardware_check_panel.py`, hosted in `viewerconfigsetting.py`'s right scroll
+  column): shows the persisted result (OpenGL/GPU, CPU cores, RAM, free disk — ok/warning/fail via
+  the pure `evaluate_hardware`) with a "Run Hardware Check" button →
+  `run_hardware_check(persist=True)` re-tests on demand (after a driver update) and refreshes the
+  MPR gate. Only the OpenGL item gates MPR; CPU/RAM/disk are informational. Purely additive UI.
+- **`PacsClient/utils/native_fault_log.py`**: `main.py` enables `faulthandler` →
+  `user_data/logs/native_fault.log` early in startup (all threads, session-start markers, module
+  handle kept alive for process lifetime). The production build previously had NO faulthandler —
+  the dev-machine `native_fault.log` came from external tracer tools only. Flag
+  `AIPACS_NATIVE_FAULT_LOG` (`=0` off). Must never raise/break startup.
+- **PC2 turned out to be Windows-on-ARM (Snapdragon X Elite / Adreno X1-85) — the "weak GPU /
+  no GL 3.2" framing is WITHDRAWN for that machine** (GLview: GL 3.0–4.5 render tests pass, 4.6
+  Mesa on `D3D12 (Adreno)`). Our x64 build runs under Prism emulation; OpenGL is served by the
+  Microsoft compatibility pack (Mesa GLon12 / `OpenGLOn12.dll`), which has a KNOWN systematic
+  ARM64 access-violation regression at GL init/extension discovery (microsoft/OpenCLOn12#68;
+  pack v1.2403.9.0 is the documented known-good). The Qt pre-flight may PASS there while VTK
+  still crashes deeper — the decisive evidence is the `[MPR-STEP]` bisector + `[MPR-GL-CAPS]`
+  (`_mpr_views.py`, `AIPACS_MPR_STEP_TRACE` default-on), the `[RUNTIME_ARCH]` banner
+  (`PacsClient/utils/runtime_arch_log.py`, wired in `main.py`; hardware check shows a "Process
+  architecture" row that WARNS under emulation), `native_fault.log`, and
+  `tools/diagnostics/collect_pc_crash_evidence.ps1` (run on the end-user PC; Event-Viewer
+  faulting module + pack/driver versions + exe PE arch). Full analysis:
+  `docs/reports/WOA_ARM64_MPR_CRASH_INVESTIGATION_2026-07-07.md`. Slow startup on that machine =
+  Prism JIT translation (separate cause). Do NOT reflexively disable GPU/VTK features there —
+  follow the report's evidence ladder (faulting module → pack version swap → driver update).
+- Guards: `tests/code/viewer/test_mpr_opengl_preflight.py` (incl. once-per-install persistence
+  pins: persisted-PASS-zero-probe, fail-reprobe-self-heal, settings wiring, step-trace pins) +
+  `tests/code/system/test_native_faulthandler.py` + `tests/code/system/test_runtime_arch_log.py`
+  (34 green). None of these files are plugin-mirrored. Staged follow-up: reuse the same probe for
+  the other VTK hosts (Advanced viewer, dental VTK-MPR, curved-MPR picking host). NEEDS live
+  sanity on a good GPU (MPR opens unchanged; Settings panel renders/updates) + the PC2 evidence
+  collection.
+
 ### MPR annotations — smooth FAST-like ruler/arrow (2026-06-28)
 Standard MPR ruler/arrow live in `modules/mpr/zeta_mpr/mpr_measurement_tools.py::MPRMeasurementTools`
 and use VTK built-in widgets (`vtkDistanceWidget` ruler/angle, `vtkCaptionWidget`, a two-click
@@ -1580,6 +1634,68 @@ that path or the render gate around `_vc_load.py:~1259`, know the fix and its in
   post-success spinner clears; the real failure signals are `ViewportLoadFailed` and a NON-None
   `ViewportLoadingStateCleared`). `_vc_load.py` / `_vc_switch.py` are NOT plugin-mirrored. As-built +
   the three wrong turns: master plan OPT-20 (§9/§15).
+
+#### Multi-study display-miss: distinct series sharing a name+count must be APPENDED (49317 slot-3, 2026-07-07)
+A SECOND, distinct OPT-20 cause behind "different studies of one patient won't all show" (49317 slot-3
+`3000001`/`3000002`: `[APPLY-ENTER]` present, `refresh=True`, but `[APPLY-GATE]` ABSENT ⇒ the render loop
+was gated off by `series_idx < 0`, NOT the token gate — `[APPLY-STALE-EARLY]=0` and both token gates run on
+the SAME UI thread with no yield, so the token was current at both). Root cause:
+`add_new_data_to_lst_thumbnails_data` (`_pw_metadata.py`) had a **study-blind** pairing/dedup — a series
+sharing a `series_name` AND instance count with an already-present series hit `return False` and was NEVER
+appended, even when its `series_number` DIFFERED. A multi-study / previous-exam patient's studies routinely
+share a name (scout / localizer / DX / same-protocol repeat), so the distinct secondary series was dropped
+→ `replace_series_data` returned **-1** → `series_idx < 0` gated off the async apply render loop → the
+series never displayed. Before editing that method (or `replace_series_data`), know:
+- **A DIFFERENT `series_number` is a DIFFERENT series and MUST be placed.** The exact same-series case is
+  already handled by the `series_number ==` branch above; this branch is only reached for a distinct
+  number. Fix (flag `AIPACS_SERIES_APPEND_STUDY_DISTINCT`, default on; `=0` = byte-identical legacy
+  `return False`): only skip as a TRUE duplicate when the incoming `series_number` is **already present**
+  in `lst_thumbnails_data`; otherwise fall through to the existing end-append (same insert position the
+  different-count pairing path uses — no ordering change for any currently-working case). Log
+  `[SERIES-APPEND-DISTINCT] append distinct series=… (shares name+count with existing series=…)`.
+- **Do NOT restore the study-blind `return False`** — it is the bug. Do NOT dedup two series by
+  `series_name` when their `series_number` differs.
+- **Isolation is unaffected** (the "not import with each other" half): each series keeps its own
+  patient-unique offset `series_number` + its own stamped `study_uid`/`series_uid`, and the viewport
+  identity gate (`qt_fast_container._start_qt_viewer`, fail-closed on `series_uid`) still blocks any
+  cross-exam paint. This fix only changes list PLACEMENT (whether a distinct series is stored), never
+  identity. `_pw_metadata.py` is NOT plugin-mirrored. Guard:
+  `tests/code/viewer/test_series_append_study_distinct.py` (8 checks, real method). NEEDS live verify on
+  49317. Residual `1100000` (DICOMized document, `[APPLY-ENTER]=0`, apply never ran) is a distinct path =
+  OPT-07 document handling, not this gate.
+
+### Two main-thread freezes: web-browser prewarm (OPT-22) + EchoMind import (OPT-23) (2026-07-08)
+Regression review of two reported UI-thread freezes (report
+`docs/reports/REGRESSION_REVIEW_STARTUP_AND_ECHOMIND_FREEZE_2026-07-08.md`; master plan OPT-22/OPT-23).
+Both were **main-thread blocking, NOT the unified-pipeline / series-identity work** (neither appears in
+the 2026-07-07 stall stacks).
+- **OPT-22 — startup freeze = web-browser Chromium prewarm on the GUI thread** (`modules/web_browser/
+  prewarm.py`). `_construct_warm_view` builds a `QWebEngineView` (Chromium engine boot) on the GUI
+  thread; the 21 s `interaction_active=False` stall ends exactly at "Chromium engine warmed".
+  **Pre-existing** (prewarm + call site landed v3.3.9 2026-06-27; untouched v3.4.6); marker-gated so it
+  only fires after the browser is used once. `QWebEngineView` is **GUI-thread-only — cannot be
+  off-threaded**, so the fix is TIMING: `AIPACS_BROWSER_PREWARM_IDLE_ONLY` (default on) warms only after
+  a real idle gap (no click/key/wheel for `_IDLE_MS`=5 s) past a longer initial delay (`_DELAY_MS`=20 s),
+  poll-rechecks, and SKIPS the warm if the user is busy past `_MAX_WAIT_MS`=10 min. Do NOT restore the
+  fixed 4 s delay (that lands during patient-list load). Keep the `AIPACS_BROWSER_PREWARM=0` kill switch +
+  marker gate; `IDLE_ONLY=0` = byte-identical legacy. Guard `tests/code/system/test_browser_prewarm_idle_gate.py`.
+- **OPT-23 — EchoMind import freeze = inline dispatch on the UI thread** (`modules/EchoMind/secretary/
+  adapters/viewer_write_adapter.py::change_series`). Dispatch runs inline (`test_server` `singleShot(0)` →
+  `bus.execute` → `change_series_on_viewer`); the adapter called `method_change_series_on_viewer(...)`
+  **inline**, so the spinner shown just above never painted and the switch (incl. the Advanced/VTK
+  render) blocked the drain. Fix `AIPACS_ECHOMIND_DEFER_SWITCH` (default on): schedule the switch via
+  `QTimer.singleShot(0, ...)` — **matching the real drop** (`_vw_dragdrop.dropEvent → singleShot(0,
+  _do_series_switch)`, which the file's fidelity note already claimed). Do NOT revert to the inline call.
+  Guard `tests/code/echomind/test_echomind_defer_switch.py`. **Follow-ups (NOT done, in the report):** the
+  Advanced/VTK `ImageViewer2D`+`Render()` per switch is GUI-thread-inherent (spinner only, not
+  off-threadable); the AI-seg `on_contour_closed→requests.post` sync network POST (up to 6.5 s) should
+  move off-thread. **CORRECTION 2026-07-07: BOTH files ARE plugin-mirrored** (`prewarm.py` →
+  web_browser package, `viewer_write_adapter.py` → echomind package — the release-gate mirror
+  check caught the drift; synced via `tools/dev/sync_plugin_mirrors.py`). After editing either,
+  always run the sync. Both fixes NEED live source-build verify.
+- **Sandbox note:** `prewarm.py` hit the known FUSE mount-staleness (in-sandbox `py_compile` read a
+  truncated 6306 B copy); the Read tool confirms the real 314-line file is complete/well-formed and it
+  compiles on the Windows host. The EchoMind fix compiled + its 3 guard tests pass in-sandbox.
 
 ## VS Code Agent Mode environment (configured 2026-06-02)
 

@@ -235,7 +235,7 @@ class _HPModulesMixin:
 
     def add_new_tab_widget(self, patient_id=None, patient_name=None, folder_path=None, open_ai_client_tab=False,
                         caller=None, study_uid=None, enable_progressive_mode=False, report_status='pending',
-                        viewer_backend_override=None):
+                        viewer_backend_override=None, eagle_eye_mode=None):
 
         if open_ai_client_tab is True:
             try:
@@ -257,11 +257,14 @@ class _HPModulesMixin:
 
                     if study_uid and existing_study_uid and str(existing_study_uid) != str(study_uid):
                         continue
+                    existing_mode = getattr(existing_tab, 'eagle_eye_mode', None)
+                    if eagle_eye_mode and existing_mode and str(existing_mode) != str(eagle_eye_mode):
+                        continue
 
                     self.tab_widget.setCurrentWidget(existing_tab)
                     return existing_tab
 
-                ai_client = _ensure_ai_main_window()(study_uid=study_uid)
+                ai_client = _ensure_ai_main_window()(study_uid=study_uid, eagle_eye_mode=eagle_eye_mode)
                 try:
                     ai_client._eagle_eye_study_uid = study_uid
                 except Exception:

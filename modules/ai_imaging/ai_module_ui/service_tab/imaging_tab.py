@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QFileDialog, QGroupBox, QHBoxLayout,
     QLabel, QListView, QLineEdit, QMainWindow, QMessageBox, QPushButton,
     QRadioButton, QSizePolicy, QStackedWidget, QTextEdit, QVBoxLayout, QWidget, QListWidget,
-    QProgressBar
+    QProgressBar, QDialog, QDialogButtonBox, QFormLayout, QScrollArea
 )
 
 from . import AbstractTab
@@ -24,7 +24,7 @@ from PacsClient.pacs.patient_tab.utils import BoxManager, show_message
 from PacsClient.utils.utils import load_mg_ai_runs
 from modules.ai_imaging.ai_module_ui.csv_table import read_csv_table
 from modules.ai_imaging.ai_module_ui.feedback_schema import write_mg_feedback_csv, load_feedback_row, upsert_bone_age_feedback_csv
-from modules.ai_imaging.ai_module_ui.feedback_schema import write_mg_feedback_csv
+from modules.ai_imaging.ai_module_ui.mg_csv_schema import infer_mg_csv_contract, normalize_mg_action
 
 # ------------------------------ Custom Events ------------------------------
 
@@ -403,16 +403,155 @@ class CheckComboBox(QComboBox):
         self.lineEdit().setText(text)
 
 
+class MGFindingEditorDialog(QDialog):
+    def __init__(
+            self,
+            parent=None,
+            *,
+            title="Mammography Finding",
+            contract=None,
+            ai_values=None,
+            corrected_values=None,
+            box_points=None,
+            action="corrected",
+            validation_status="pending",
+            reviewer_id="",
+            notes="",
+    ):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(520, 620)
+        self.contract = contract or infer_mg_csv_contract()
+        self.ai_values = ai_values or {}
+        self.corrected_values = corrected_values or {}
+        self.box_points = box_points
+        self._mandatory_inputs = {}
+        self._optional_inputs = {}
+
+        root = QVBoxLayout(self)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        body = QWidget()
+        body_layout = QVBoxLayout(body)
+
+        body_layout.addWidget(QLabel("Mandatory CSV / Retraining Fields"))
+        mandatory_form = QFormLayout()
+        body_layout.addLayout(mandatory_form)
+
+        for spec in self.contract.get("mandatory", []):
+            ai_value = self._value_for_spec(spec)
+            if spec.automatic or not spec.editable:
+                widget = QLineEdit(str(ai_value or ""))
+                widget.setReadOnly(True)
+            else:
+                widget = QLineEdit(str(self.corrected_values.get(spec.name) or ai_value or ""))
+            mandatory_form.addRow(QLabel(spec.label), widget)
+            self._mandatory_inputs[spec.name] = (spec, widget)
+
+        body_layout.addWidget(QLabel("Automatic Fields"))
+        automatic_form = QFormLayout()
+        body_layout.addLayout(automatic_form)
+        for spec in self.contract.get("automatic", []):
+            widget = QLineEdit(str(self._value_for_spec(spec) or ""))
+            widget.setReadOnly(True)
+            automatic_form.addRow(QLabel(spec.label), widget)
+
+        body_layout.addWidget(QLabel("Optional Review / Documentation Fields"))
+        optional_form = QFormLayout()
+        body_layout.addLayout(optional_form)
+        for spec in self.contract.get("optional", []):
+            widget = QLineEdit(str(self.corrected_values.get(spec.name) or self.ai_values.get(spec.name) or ""))
+            optional_form.addRow(QLabel(spec.label), widget)
+            self._optional_inputs[spec.name] = (spec, widget)
+
+        body_layout.addWidget(QLabel("Validation"))
+        validation_form = QFormLayout()
+        body_layout.addLayout(validation_form)
+        self.action_combo = QComboBox()
+        self.action_combo.addItems(["confirmed", "rejected", "corrected", "new_human_finding"])
+        self._set_combo_text(self.action_combo, normalize_mg_action(action))
+        self.validation_combo = QComboBox()
+        self.validation_combo.addItems(["pending", "confirmed", "rejected", "corrected", "new_human_finding", "excluded"])
+        self._set_combo_text(self.validation_combo, normalize_mg_action(validation_status) if validation_status else normalize_mg_action(action))
+        self.reviewer_edit = QLineEdit(str(reviewer_id or ""))
+        self.notes_edit = QTextEdit()
+        self.notes_edit.setPlainText(str(notes or ""))
+        validation_form.addRow(QLabel("Action"), self.action_combo)
+        validation_form.addRow(QLabel("Validation Status"), self.validation_combo)
+        validation_form.addRow(QLabel("Reviewer"), self.reviewer_edit)
+        validation_form.addRow(QLabel("Notes"), self.notes_edit)
+
+        scroll.setWidget(body)
+        root.addWidget(scroll)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self._accept_if_valid)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _value_for_spec(self, spec):
+        if spec.name in ("box", "new_box") and self.box_points:
+            return str([float(v) for v in self.box_points])
+        if spec.name in ("xmin", "ymin", "xmax", "ymax") and self.box_points:
+            idx = {"xmin": 0, "ymin": 1, "xmax": 2, "ymax": 3}[spec.name]
+            return str(float(self.box_points[idx]))
+        return self.ai_values.get(spec.name, "")
+
+    def _set_combo_text(self, combo, value):
+        idx = combo.findText(str(value or ""))
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _accept_if_valid(self):
+        missing = []
+        for _name, (spec, widget) in self._mandatory_inputs.items():
+            value = widget.text().strip()
+            if spec.required and not spec.automatic and spec.editable and not value:
+                missing.append(spec.label)
+        if missing:
+            QMessageBox.warning(self, "Missing Mandatory Fields", "Please fill: " + ", ".join(missing))
+            return
+        self.accept()
+
+    def result_data(self):
+        mandatory_values = {
+            name: widget.text().strip()
+            for name, (_spec, widget) in self._mandatory_inputs.items()
+        }
+        optional_values = {
+            name: widget.text().strip()
+            for name, (_spec, widget) in self._optional_inputs.items()
+        }
+        action = self.action_combo.currentText().strip()
+        return {
+            "mandatory": mandatory_values,
+            "optional": optional_values,
+            "action": action,
+            "validation_status": self.validation_combo.currentText().strip() or action,
+            "reviewer_id": self.reviewer_edit.text().strip(),
+            "correction_notes": self.notes_edit.toPlainText().strip(),
+        }
+
+
 # ------------------------------ Main Tab ------------------------------
+
+def normalize_eagle_eye_mode(mode):
+    value = str(mode or "").strip().lower()
+    if value in ("mg", "mammo", "mammography", "breast"):
+        return "mammography"
+    if value in ("dx", "bone", "bone_age", "bone-age", "boneage"):
+        return "bone_age"
+    return None
+
 
 class ImagingToolsTab(AbstractTab):
     # Signal emitted when tab is fully loaded and rendered
     fully_loaded = Signal()
     
-    def __init__(self, study_uid: Optional[str] = None):
+    def __init__(self, study_uid: Optional[str] = None, eagle_eye_mode: Optional[str] = None):
         super().__init__()
         self.tool_access = ToolAccess()
         self.study_uid = study_uid
+        self.eagle_eye_mode = normalize_eagle_eye_mode(eagle_eye_mode)
         self._sidebar_store: dict[str, dict] = {}
         self.vtk_initialized = False
         self.current_sidebar = None
@@ -445,7 +584,8 @@ class ImagingToolsTab(AbstractTab):
         # Create patient widget
         self.patient_widget = AIPatientWidget(
             study_uid=study_uid,
-            imaging_tab_ui=self
+            imaging_tab_ui=self,
+            eagle_eye_mode=self.eagle_eye_mode,
         )
         self.patient_widget_layout.addWidget(self.patient_widget)
 
@@ -574,6 +714,12 @@ class ImagingToolsTab(AbstractTab):
         self.lst_boxes_combo.currentIndexChanged.connect(
             lambda _: self.sidebar_load_current()
         )
+        self.lst_boxes_combo.activated.connect(
+            lambda _: self._open_mg_finding_editor("corrected")
+        )
+        self.finding_status_display = QLabel("Status: Pending")
+        self.finding_summary_label = QLabel("")
+        self.finding_summary_label.setWordWrap(True)
 
         # -------- Status
         self.status_label = QLabel("Status")
@@ -613,11 +759,64 @@ class ImagingToolsTab(AbstractTab):
         self.notes_edit = QTextEdit()
         self.notes_edit.setPlaceholderText("Optional notes")
 
+        self.laterality_label = QLabel("Laterality")
+        self.laterality_combo = QComboBox()
+        self.laterality_combo.addItems(["", "Left", "Right", "Bilateral", "Unknown"])
+
+        self.view_label = QLabel("View")
+        self.view_combo = QComboBox()
+        self.view_combo.addItems(["", "CC", "MLO", "ML", "LM", "XCCL", "XCCM", "Other"])
+
+        self.lesion_type_label = QLabel("Lesion Type")
+        self.lesion_type_combo = QComboBox()
+        self.lesion_type_combo.addItems([
+            "",
+            "No Finding",
+            "Mass",
+            "Suspicious Calcification",
+            "Focal Asymmetry",
+            "Architectural Distortion",
+            "Other",
+        ])
+
+        self.location_label = QLabel("Location")
+        self.location_edit = QLineEdit()
+        self.location_edit.setPlaceholderText("Free-text location")
+
+        self.quadrant_label = QLabel("Quadrant")
+        self.quadrant_combo = QComboBox()
+        self.quadrant_combo.addItems(["", "UOQ", "UIQ", "LOQ", "LIQ", "Central", "Retroareolar", "Axillary Tail"])
+
+        self.clock_label = QLabel("Clock Position")
+        self.clock_edit = QLineEdit()
+        self.clock_edit.setPlaceholderText("e.g. 2 o'clock")
+
+        self.depth_label = QLabel("Depth")
+        self.depth_combo = QComboBox()
+        self.depth_combo.addItems(["", "Anterior", "Middle", "Posterior"])
+
+        self.birads_label = QLabel("BI-RADS")
+        self.birads_combo = QComboBox()
+        self.birads_combo.addItems(["", "0", "1", "2", "3", "4A", "4B", "4C", "5", "6"])
+
+        self.confidence_label = QLabel("Human Confidence")
+        self.confidence_edit = QLineEdit()
+        self.confidence_edit.setPlaceholderText("0.00 - 1.00")
+
+        self.human_action_label = QLabel("Human Action")
+        self.human_action_combo = QComboBox()
+        self.human_action_combo.addItems(["update", "confirm", "correct", "remove", "new_finding"])
+
         self.mg_runs_label = QLabel("AI Results")
         self.mg_runs_combo = QComboBox()
 
         # -------- Apply
         self.apply_btn = QPushButton("Apply")
+        self.new_finding_btn = QPushButton("New Finding")
+        self.save_finding_btn = QPushButton("Save Finding")
+        self.confirm_finding_btn = QPushButton("Confirm")
+        self.reject_finding_btn = QPushButton("Reject")
+        self.edit_finding_btn = QPushButton("Correct / Edit")
 
         # پایه‌ی classification (اگر بعداً override شد مشکلی نیست)
         base_classes = [
@@ -629,6 +828,11 @@ class ImagingToolsTab(AbstractTab):
         self.class_combo.addItemsCheckable(base_classes)
         self.class_combo.setCheckedItems([])
         self.apply_btn.clicked.connect(self._on_apply_clicked)
+        self.new_finding_btn.clicked.connect(self._on_new_mg_finding_clicked)
+        self.save_finding_btn.clicked.connect(self._on_save_mg_finding_clicked)
+        self.confirm_finding_btn.clicked.connect(lambda: self._open_mg_finding_editor("confirmed"))
+        self.reject_finding_btn.clicked.connect(lambda: self._open_mg_finding_editor("rejected"))
+        self.edit_finding_btn.clicked.connect(lambda: self._open_mg_finding_editor("corrected"))
 
     def _load_mg_runs_into_dropdown(self):
         """بارگذاری داده‌های MG به صورت امن"""
@@ -895,35 +1099,29 @@ class ImagingToolsTab(AbstractTab):
         layout.addWidget(self.detail_box_label)
         layout.addWidget(self.lst_boxes_combo)
 
-        layout.addWidget(self.status_label)
-        layout.addWidget(self.status_group)
+        layout.addWidget(self.finding_status_display)
+        layout.addWidget(self.finding_summary_label)
 
-        layout.addWidget(self.classification_label)
-        layout.addWidget(self.class_combo)
-
-        layout.addWidget(self.feature_label)
-        layout.addWidget(self.feature_view)
-
-        layout.addWidget(self.validation_label)
-        layout.addWidget(self.validation_combo)
-
-        layout.addWidget(self.reviewer_label)
-        layout.addWidget(self.reviewer_edit)
-
-        layout.addWidget(self.notes_label)
-        layout.addWidget(self.notes_edit)
+        layout.addWidget(self.confirm_finding_btn)
+        layout.addWidget(self.reject_finding_btn)
+        layout.addWidget(self.edit_finding_btn)
+        layout.addWidget(self.new_finding_btn)
 
         # 🔽 MG AI runs dropdown
         layout.addWidget(self.mg_runs_label)
         layout.addWidget(self.mg_runs_combo)
 
-        layout.addWidget(self.apply_btn)
         layout.addStretch()
 
     def detect_modality(self) -> str:
         """
         Detect modality based on available AI results.
         """
+        if self.eagle_eye_mode == "bone_age":
+            return "DX"
+        if self.eagle_eye_mode == "mammography":
+            return "MG"
+
         study_uid = self.study_uid
 
         # DX if bone age result exists
@@ -2300,6 +2498,8 @@ class ImagingToolsTab(AbstractTab):
             row_data = row.rows[0] if hasattr(row, 'rows') and row.rows else {}
             corrected_status = "abnormal" if status else "normal"
             corrected_classification = data_selected.get('classification', [])
+            mammography_fields = self._collect_mg_review_fields()
+            data_selected.update(mammography_fields)
             review_metadata = {
                 'validation_status': self.validation_combo.currentText().strip() or 'reviewed',
                 'reviewer_id': self.reviewer_edit.text().strip(),
@@ -2316,6 +2516,7 @@ class ImagingToolsTab(AbstractTab):
                 corrected_status=corrected_status,
                 corrected_classification=corrected_classification,
                 review_metadata=review_metadata,
+                mammography_fields=mammography_fields,
             )
         except Exception as e:
             print(f"[MG] failed to save feedback CSV: {e}")
@@ -2343,6 +2544,412 @@ class ImagingToolsTab(AbstractTab):
         entry["classification"] = list(items)  # ذخیره به صورت لیست
         self._sidebar_store[key] = entry
 
+    def _combo_set_text(self, combo: QComboBox, value: str):
+        value = str(value or "")
+        idx = combo.findText(value)
+        combo.setCurrentIndex(idx if idx >= 0 else 0)
+
+    def _collect_mg_review_fields(self) -> dict:
+        key = self.lst_boxes_combo.currentText().strip()
+        entry = self._sidebar_store.get(key, {}) if key else {}
+        finding_uid = entry.get("finding_uid") or key
+        return {
+            "finding_uid": finding_uid,
+            "laterality": self.laterality_combo.currentText().strip(),
+            "view": self.view_combo.currentText().strip(),
+            "lesion_type": self.lesion_type_combo.currentText().strip(),
+            "location": self.location_edit.text().strip(),
+            "quadrant": self.quadrant_combo.currentText().strip(),
+            "clock_position": self.clock_edit.text().strip(),
+            "depth": self.depth_combo.currentText().strip(),
+            "birads_category": self.birads_combo.currentText().strip(),
+            "confidence": self.confidence_edit.text().strip(),
+            "human_action": self.human_action_combo.currentText().strip() or "update",
+        }
+
+    def _load_mg_review_fields(self, entry: dict | None):
+        entry = entry or {}
+        self._combo_set_text(self.laterality_combo, entry.get("laterality", ""))
+        self._combo_set_text(self.view_combo, entry.get("view", ""))
+        self._combo_set_text(self.lesion_type_combo, entry.get("lesion_type", ""))
+        self.location_edit.setText(str(entry.get("location", "") or ""))
+        self._combo_set_text(self.quadrant_combo, entry.get("quadrant", ""))
+        self.clock_edit.setText(str(entry.get("clock_position", "") or ""))
+        self._combo_set_text(self.depth_combo, entry.get("depth", ""))
+        self._combo_set_text(self.birads_combo, entry.get("birads_category", ""))
+        self.confidence_edit.setText(str(entry.get("confidence", "") or ""))
+        self._combo_set_text(self.human_action_combo, entry.get("human_action", "update"))
+
+    def _current_mg_box_points(self):
+        key = self.lst_boxes_combo.currentText().strip()
+        if not key or key not in self._sidebar_store:
+            return None
+        data_selected = self._sidebar_store[key]
+        box_object: BoxManager = data_selected.get('box_object', None)
+        if box_object:
+            return box_object.ijk_points
+        csv_box = data_selected.get('csv_box', None)
+        if isinstance(csv_box, (list, tuple)) and len(csv_box) == 4:
+            return [float(v) for v in csv_box]
+        return None
+
+    def _on_new_mg_finding_clicked(self):
+        if self.detect_modality() == "DX":
+            return
+        selected_widget = getattr(self.patient_widget, "selected_widget", None)
+        if selected_widget is None and getattr(self.patient_widget, "lst_nodes_viewer", None):
+            selected_widget = getattr(self.patient_widget.lst_nodes_viewer[0], "vtk_widget", None)
+            try:
+                self.patient_widget.set_viewer_to_main_viewer(self.patient_widget.lst_nodes_viewer[0])
+            except Exception:
+                pass
+        if selected_widget is None:
+            show_message("Open a mammography image before creating a new finding.")
+            return
+
+        self._pending_mg_new_finding = True
+        self.finding_status_display.setText("Status: Draw new finding polygon")
+        self.finding_summary_label.setText("Place four polygon points on the image.")
+
+        try:
+            self.patient_widget.toolbar_manager.turn_off_all_tools()
+            self.patient_widget.toolbar_manager.activate_tool(selected_widget, self.tool_access.POLYGON_SEGMENTATION)
+            style = getattr(selected_widget, "current_style", None)
+            if style is not None:
+                style.on_polygon_finished = self._on_mg_new_polygon_finished
+        except Exception as e:
+            self._pending_mg_new_finding = False
+            show_message(f"Could not activate polygon tool: {e}")
+
+    def _bbox_from_polygon_ijk(self, ijk_points):
+        points = list(ijk_points or [])
+        if len(points) >= 2 and all(
+            abs(float(points[-1][d]) - float(points[0][d])) < 1e-6
+            for d in range(min(3, len(points[0]), len(points[-1])))
+        ):
+            points = points[:-1]
+        if len(points) != 4:
+            return None
+        xs = [float(p[0]) for p in points]
+        ys = [float(p[1]) for p in points]
+        return [min(xs), min(ys), max(xs), max(ys)]
+
+    def _next_human_finding_number(self):
+        max_seen = 0
+        for key in self._sidebar_store:
+            text = str(key or "")
+            if text.startswith("Human Finding "):
+                try:
+                    max_seen = max(max_seen, int(text.rsplit(" ", 1)[-1]))
+                except Exception:
+                    pass
+        return max_seen + 1
+
+    def _on_mg_new_polygon_finished(self, pts_world, ijk_points, contour_widget):
+        if not getattr(self, "_pending_mg_new_finding", False):
+            return False
+        bbox = self._bbox_from_polygon_ijk(ijk_points)
+        if bbox is None:
+            show_message("New mammography finding requires exactly four polygon points.")
+            return True
+
+        self._pending_mg_new_finding = False
+        count = self._next_human_finding_number()
+        key = f"Human Finding {count}"
+        finding_uid = f"{self.study_uid}:human:{count}"
+
+        try:
+            csv_path, row = self._resolve_active_mg_csv_and_row()
+            row_data = row.rows[0] if hasattr(row, 'rows') and row.rows else {}
+            source_row_key = row_data.get("dicom_full_path", "")
+        except Exception:
+            source_row_key = ""
+
+        self.sidebar_upsert_item(
+            key=key,
+            status=1,
+            classification=[],
+            features="",
+            select=True,
+            box_object=None,
+            csv_box=bbox,
+            mammography_fields={
+                "finding_uid": finding_uid,
+                "human_action": "new_finding",
+                "source_kind": "human_polygon",
+                "source_row_key": source_row_key,
+                "source_box_index": count - 1,
+                "polygon_ijk_points": [list(p) for p in ijk_points],
+                "polygon_world_points": [list(p) for p in pts_world],
+            },
+        )
+        self.rb_abnormal.setChecked(True)
+        self._combo_set_text(self.human_action_combo, "new_finding")
+        QTimer.singleShot(0, lambda: self._open_mg_finding_editor("new_human_finding"))
+        return True
+
+    def _active_mg_classification_columns(self):
+        try:
+            selected = getattr(self.patient_widget, 'selected_widget', None)
+            vtk_widget = getattr(selected, 'vtk_widget', selected)
+            cls_path = getattr(vtk_widget, 'csv_classification', None)
+            if not cls_path or not hasattr(vtk_widget, 'load_csv'):
+                return []
+            df_cls = vtk_widget.load_csv(cls_path)
+            return list(getattr(df_cls, 'columns', []) or []) if df_cls is not None else []
+        except Exception:
+            return []
+
+    def _open_mg_finding_editor(self, action: str):
+        if self.detect_modality() == "DX":
+            return
+        key = self.lst_boxes_combo.currentText().strip()
+        if not key or key not in self._sidebar_store:
+            show_message("Please select a finding.")
+            return
+
+        entry = self._sidebar_store.get(key, {})
+        box_points = self._current_mg_box_points()
+        normalized_action = normalize_mg_action(action)
+        if normalized_action == "new_human_finding" and not box_points:
+            show_message("Draw or select a new box before saving a new finding.")
+            return
+
+        try:
+            csv_path, row = self._resolve_active_mg_csv_and_row()
+            row_data = row.rows[0] if hasattr(row, 'rows') and row.rows else {}
+            detection_columns = list(getattr(row, 'columns', []) or row_data.keys())
+        except Exception:
+            csv_path = ""
+            row = None
+            row_data = {}
+            detection_columns = []
+
+        ai_values = dict(row_data)
+        classification = entry.get("classification")
+        if isinstance(classification, list):
+            ai_values["labels_pred"] = "|".join(str(v) for v in classification if str(v).strip())
+        elif classification:
+            ai_values["labels_pred"] = str(classification)
+        ai_values.setdefault("box", str(box_points or entry.get("csv_box") or ""))
+
+        contract = infer_mg_csv_contract(
+            detection_columns=detection_columns,
+            classification_columns=self._active_mg_classification_columns(),
+        )
+        dialog = MGFindingEditorDialog(
+            self,
+            title=f"{key} - {normalized_action.replace('_', ' ').title()}",
+            contract=contract,
+            ai_values=ai_values,
+            corrected_values=entry,
+            box_points=box_points,
+            action=normalized_action,
+            validation_status=entry.get("validation_status") or normalized_action,
+            reviewer_id=entry.get("reviewer_id") or self._default_reviewer_id(),
+            notes=entry.get("correction_notes", ""),
+        )
+        if dialog.exec() != QDialog.Accepted:
+            return
+
+        data = dialog.result_data()
+        self._save_mg_editor_result(
+            key=key,
+            action=data["action"],
+            dialog_data=data,
+            csv_path=csv_path,
+            row=row,
+            row_data=row_data,
+            box_points=box_points,
+        )
+
+    def _save_mg_editor_result(self, *, key, action, dialog_data, csv_path, row, row_data, box_points):
+        normalized_action = normalize_mg_action(action)
+        entry = self._sidebar_store.get(key, {})
+        mandatory = dict(dialog_data.get("mandatory") or {})
+        optional = dict(dialog_data.get("optional") or {})
+
+        label_value = mandatory.get("labels_pred") or optional.get("lesion_type") or ""
+        corrected_classification = [label_value] if label_value else entry.get("classification", [])
+        corrected_status = "normal" if normalized_action == "rejected" else "abnormal"
+
+        mammography_fields = {
+            **optional,
+            "finding_uid": entry.get("finding_uid") or f"{self.study_uid}:{key}",
+            "human_action": normalized_action,
+            "source_kind": entry.get("source_kind"),
+            "source_row_key": entry.get("source_row_key"),
+            "source_row_index": entry.get("source_row_index"),
+            "source_box_index": entry.get("source_box_index"),
+            "polygon_ijk_points": entry.get("polygon_ijk_points"),
+            "polygon_world_points": entry.get("polygon_world_points"),
+        }
+        review_metadata = {
+            "validation_status": dialog_data.get("validation_status") or normalized_action,
+            "reviewer_id": dialog_data.get("reviewer_id") or "",
+            "correction_notes": dialog_data.get("correction_notes") or "",
+            "export_status": "local_only",
+            "server_sync_status": "not_synced",
+        }
+
+        if row is not None and csv_path and box_points and normalized_action in ("rejected", "new_human_finding"):
+            try:
+                update_csv(
+                    csv_path=csv_path,
+                    row=row,
+                    status=(normalized_action != "rejected"),
+                    corner_ijk_points=box_points,
+                )
+            except Exception as e:
+                print(f"[MG] detection CSV update skipped: {e}")
+
+        try:
+            write_mg_feedback_csv(
+                self.study_uid,
+                ATTACHMENT_PATH / self.study_uid,
+                str(csv_path or ""),
+                row_data or {},
+                selected_box=box_points,
+                corrected_status=corrected_status,
+                corrected_classification=corrected_classification,
+                review_metadata=review_metadata,
+                mammography_fields=mammography_fields,
+            )
+        except Exception as e:
+            show_message(f"Failed to save mammography correction: {e}")
+            return
+
+        entry.update(optional)
+        entry.update({
+            "classification": corrected_classification,
+            "validation_status": review_metadata["validation_status"],
+            "reviewer_id": review_metadata["reviewer_id"],
+            "correction_notes": review_metadata["correction_notes"],
+            "human_action": normalized_action,
+            "status": 0 if normalized_action == "rejected" else 1,
+        })
+        self._sidebar_store[key] = entry
+        self.sidebar_load_current()
+        show_message("Mammography finding saved")
+
+    def _resolve_active_mg_csv_and_row(self):
+        selected = getattr(self.patient_widget, 'selected_widget', None)
+        vtk_widget = getattr(selected, 'vtk_widget', selected)
+
+        if vtk_widget is None and hasattr(self.patient_widget, 'lst_nodes_viewer') and self.patient_widget.lst_nodes_viewer:
+            first_node = self.patient_widget.lst_nodes_viewer[0]
+            vtk_widget = getattr(first_node, 'vtk_widget', None)
+
+        if vtk_widget is None:
+            raise ValueError("No viewer available.")
+
+        csv_path = getattr(vtk_widget, 'csv_details_path', None)
+        if not csv_path:
+            det_csv = None
+            cls_csv = None
+
+            try:
+                if getattr(self, 'mg_runs_combo', None) is not None:
+                    run_data = self.mg_runs_combo.currentData()
+                    if isinstance(run_data, tuple) and len(run_data) >= 1:
+                        det_csv = run_data[0]
+                        cls_csv = run_data[1] if len(run_data) > 1 else None
+            except Exception:
+                pass
+
+            if not det_csv:
+                try:
+                    run_info = load_mg_ai_runs(self.study_uid, ATTACHMENT_PATH) or {}
+                    active = run_info.get("active", {}) if isinstance(run_info, dict) else {}
+                    det_csv = active.get("detection") if isinstance(active, dict) else None
+                    cls_csv = active.get("classification") if isinstance(active, dict) else None
+                except Exception:
+                    pass
+
+            if det_csv:
+                det_path = Path(det_csv)
+                if not det_path.is_absolute():
+                    det_path = ATTACHMENT_PATH / self.study_uid / det_csv
+
+                cls_path = None
+                if cls_csv:
+                    cls_path = Path(cls_csv)
+                    if not cls_path.is_absolute():
+                        cls_path = ATTACHMENT_PATH / self.study_uid / cls_csv
+
+                try:
+                    if hasattr(vtk_widget, 'csv_details_path'):
+                        vtk_widget.csv_details_path = det_path
+                    if hasattr(vtk_widget, 'csv_classification'):
+                        vtk_widget.csv_classification = cls_path
+                    if hasattr(vtk_widget, '_csv_cache') and isinstance(vtk_widget._csv_cache, dict):
+                        vtk_widget._csv_cache.clear()
+                    if hasattr(vtk_widget, '_series_ai_cache') and isinstance(vtk_widget._series_ai_cache, dict):
+                        vtk_widget._series_ai_cache.clear()
+                except Exception:
+                    pass
+
+                csv_path = det_path
+
+        if not csv_path:
+            raise ValueError("CSV details not available in viewer.")
+
+        if not hasattr(vtk_widget, 'load_csv') or not hasattr(vtk_widget, 'get_series_ai_data_from_df'):
+            raise ValueError("Viewer does not support CSV apply.")
+
+        df = vtk_widget.load_csv(csv_path)
+        if df is None:
+            raise ValueError("CSV file could not be loaded.")
+
+        row = vtk_widget.get_series_ai_data_from_df(df)
+        if row is None:
+            raise ValueError("Current series row not found in CSV.")
+        return csv_path, row
+
+    def _on_save_mg_finding_clicked(self):
+        if self.detect_modality() == "DX":
+            return
+        key = self.lst_boxes_combo.currentText().strip()
+        if not key or key not in self._sidebar_store:
+            show_message("Please select or create a finding.")
+            return
+
+        mammography_fields = self._collect_mg_review_fields()
+        self._sidebar_store[key].update(mammography_fields)
+        corner_ijk_points = self._current_mg_box_points()
+
+        try:
+            csv_path, row = self._resolve_active_mg_csv_and_row()
+            row_data = row.rows[0] if hasattr(row, 'rows') and row.rows else {}
+        except Exception:
+            csv_path = ""
+            row_data = {}
+
+        corrected_status = "abnormal" if self.rb_abnormal.isChecked() else "normal"
+        corrected_classification = self.class_combo.checkedItems()
+        review_metadata = {
+            'validation_status': self.validation_combo.currentText().strip() or 'reviewed',
+            'reviewer_id': self.reviewer_edit.text().strip(),
+            'correction_notes': self.notes_edit.toPlainText().strip(),
+            'export_status': 'local_only',
+            'server_sync_status': 'not_synced',
+        }
+        try:
+            write_mg_feedback_csv(
+                self.study_uid,
+                ATTACHMENT_PATH / self.study_uid,
+                str(csv_path),
+                row_data,
+                selected_box=corner_ijk_points,
+                corrected_status=corrected_status,
+                corrected_classification=corrected_classification,
+                review_metadata=review_metadata,
+                mammography_fields=mammography_fields,
+            )
+            show_message("Mammography finding saved")
+        except Exception as e:
+            show_message(f"Failed to save mammography finding: {e}")
+
     # ---------- Sidebar Store API ----------
     def sidebar_upsert_item(
             self, *,
@@ -2353,6 +2960,7 @@ class ImagingToolsTab(AbstractTab):
             select: bool = True,
             box_object: BoxManager = None,
             csv_box: list[float] | None = None,
+            mammography_fields: dict | None = None,
     ):
         """
         Add / update MG sidebar item.
@@ -2402,9 +3010,13 @@ class ImagingToolsTab(AbstractTab):
             except Exception:
                 pass
 
+        if mammography_fields:
+            entry.update({k: v for k, v in mammography_fields.items() if v is not None})
+
         entry.setdefault("validation_status", "pending_review")
         entry.setdefault("reviewer_id", self._default_reviewer_id())
         entry.setdefault("correction_notes", "")
+        entry.setdefault("human_action", "update")
 
         entry["box_object"] = box_object
         self._sidebar_store[key] = entry
@@ -2447,11 +3059,25 @@ class ImagingToolsTab(AbstractTab):
             self.validation_combo.setCurrentIndex(idx if idx >= 0 else 0)
             self.reviewer_edit.setText(str(entry.get("reviewer_id") or self._default_reviewer_id() or ""))
             self.notes_edit.setPlainText(str(entry.get("correction_notes") or ""))
+            self._load_mg_review_fields(entry)
+            validation_text = str(entry.get("validation_status") or entry.get("human_action") or "pending")
+            self.finding_status_display.setText(f"Status: {validation_text}")
+            summary_parts = []
+            if cls_list:
+                summary_parts.append("AI/Label: " + ", ".join(cls_list))
+            if entry.get("csv_box"):
+                summary_parts.append("Box: " + str(entry.get("csv_box")))
+            if entry.get("human_action"):
+                summary_parts.append("Action: " + str(entry.get("human_action")))
+            self.finding_summary_label.setText("\n".join(summary_parts))
         else:
             idx = self.validation_combo.findText("pending_review")
             self.validation_combo.setCurrentIndex(idx if idx >= 0 else 0)
             self.reviewer_edit.setText(self._default_reviewer_id())
             self.notes_edit.clear()
+            self._load_mg_review_fields({})
+            self.finding_status_display.setText("Status: Pending")
+            self.finding_summary_label.clear()
 
         # Status
         if status_val == 1:
@@ -2491,6 +3117,9 @@ class ImagingToolsTab(AbstractTab):
         self.validation_combo.setCurrentIndex(idx if idx >= 0 else 0)
         self.reviewer_edit.setText(self._default_reviewer_id())
         self.notes_edit.clear()
+        self._load_mg_review_fields({})
+        self.finding_status_display.setText("Status: Pending")
+        self.finding_summary_label.clear()
 
         if reset_items:
             self._sidebar_store.clear()

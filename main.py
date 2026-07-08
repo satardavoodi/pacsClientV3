@@ -66,6 +66,18 @@ from PacsClient.utils.runtime_correlation import (
     session_id as _corr_session_id,
 )
 
+# ── OPT-21: native-crash tracing (2026-07-07) ───────────────────────────────
+# Enable faulthandler as early as possible so a native fault (VTK/OpenGL/driver
+# access violation) leaves the Python stack of all threads in
+# user_data/logs/native_fault.log — even in the frozen build, which previously
+# died with ZERO trace (PC2 Standard-MPR crash). Default ON; kill switch
+# AIPACS_NATIVE_FAULT_LOG=0. Must never break startup.
+try:
+    from PacsClient.utils.native_fault_log import enable_native_fault_log as _enable_nfl
+    _enable_nfl()
+except Exception:
+    pass
+
 
 def _maybe_nuitka_smoke_test_exit() -> None:
     """Fast startup check for staged Nuitka smoke tests."""
@@ -680,6 +692,29 @@ if __name__ == "__main__":
     configure_diagnostic_logging(process_role="main", force=True)
     logging.getLogger(__name__).info("Application bootstrap started", extra={"component": "ui"})
 
+    # ── OPT-21 Phase-2: architecture / Windows-on-ARM emulation banner ──────
+    # PC2 (Snapdragon X Elite, Windows 11 ARM64) runs our x64 build under the
+    # Prism emulator with OpenGL served by the D3D12 mapping layer — invisible
+    # in logs until now. One [RUNTIME_ARCH] line, never raises.
+    try:
+        from PacsClient.utils.runtime_arch_log import log_runtime_architecture as _log_arch
+        _log_arch()
+    except Exception:
+        pass
+
+    # ── ARM64 emulation strategy (2026-07-07): WoA runtime profile ──────────
+    # On an ARM64 host running this x64 build under emulation, log the full
+    # [WOA-PROFILE] diagnostic block (arch, installed package type, VTK/MPR =
+    # emulated) and apply emulation-friendly defaults for env vars the user
+    # has not set (currently: browser prewarm off). Native machines: no-op.
+    # Must run BEFORE app/module construction so env defaults take effect.
+    # Kill switch AIPACS_WOA_PROFILE=0.
+    try:
+        from PacsClient.utils.woa_profile import apply_woa_runtime_profile as _woa
+        _woa()
+    except Exception:
+        pass
+
     # ── BACKEND_SWITCH v2.3.7: Startup banner ────────────────────────────
     try:
         from modules.viewer.viewer_backend_config import (
@@ -1203,7 +1238,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.4.6")
+    app.setApplicationVersion("3.4.7")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality

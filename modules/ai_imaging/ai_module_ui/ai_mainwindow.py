@@ -55,15 +55,25 @@ def _ee_retint_widget_tree(root, theme: dict) -> None:
         pass
 
 
+def normalize_eagle_eye_mode(mode):
+    value = str(mode or "").strip().lower()
+    if value in ("mg", "mammo", "mammography", "breast"):
+        return "mammography"
+    if value in ("dx", "bone", "bone_age", "bone-age", "boneage"):
+        return "bone_age"
+    return None
+
+
 class AiMainWindow(QMainWindow):
     # Signal emitted when Eagle Eye is fully loaded and ready
     eagle_eye_ready = Signal()
     
-    def __init__(self, study_uid=None):
+    def __init__(self, study_uid=None, eagle_eye_mode=None):
         print("\n" + "=" * 80)
         print("[AiMainWindow] Initializing AiMainWindow.")
         print("=" * 80)
         super().__init__()
+        self.eagle_eye_mode = normalize_eagle_eye_mode(eagle_eye_mode)
         
         self._apply_dark_theme()
 
@@ -78,11 +88,11 @@ class AiMainWindow(QMainWindow):
         self.setCentralWidget(self.tab_widget)
 
         # Imaging Tools
-        self.imaging_tab = ImagingToolsTab(study_uid=study_uid)
+        self.imaging_tab = ImagingToolsTab(study_uid=study_uid, eagle_eye_mode=self.eagle_eye_mode)
         self.tab_widget.addTab(self.imaging_tab, "Imaging Tools")
 
         # DataSet (KEEP REFERENCE!)
-        self.dataset_tab = DataSetTab(study_uid=study_uid)
+        self.dataset_tab = DataSetTab(study_uid=study_uid, module_mode=self.eagle_eye_mode)
         self.tab_widget.addTab(self.dataset_tab, "Data Set")
 
         # Model Training
