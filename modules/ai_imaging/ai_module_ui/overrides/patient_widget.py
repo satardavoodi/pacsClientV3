@@ -10,11 +10,20 @@ from modules.ai_imaging.ai_module_ui.toolbar import ToolBarManager
 from .vtk_widget import AIVTKWidget
 from PacsClient.utils import CallerTypes
 from PacsClient.utils.config import SOURCE_PATH
-from modules.viewer.viewer_backend_config import BACKEND_VTK
+from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT, BACKEND_VTK
 
 import logging
 
 logger = logging.getLogger(__name__)
+
+
+def _normalize_eagle_eye_mode(mode):
+    value = str(mode or "").strip().lower()
+    if value in ("mg", "mammo", "mammography", "breast"):
+        return "mammography"
+    if value in ("dx", "bone", "bone_age", "bone-age", "boneage"):
+        return "bone_age"
+    return None
 
 
 class AIPatientWidget(PatientWidget):
@@ -23,10 +32,11 @@ class AIPatientWidget(PatientWidget):
     Removes all duplicated code and properly inherits from base class
     """
     
-    def __init__(self, parent=None, study_uid: str = None, imaging_tab_ui=None):
+    def __init__(self, parent=None, study_uid: str = None, imaging_tab_ui=None, eagle_eye_mode=None):
         # Set up AI-specific properties
         self.type_viewer = None
         self.imaging_tab_ui = imaging_tab_ui
+        self.eagle_eye_mode = _normalize_eagle_eye_mode(eagle_eye_mode)
         
         # Determine import folder path based on study_uid
         sample_study = Path.cwd() / r'sample_files\sample dicom/2.16.840.1.113669.632.20.20250825.152409026.1.1'
@@ -46,9 +56,8 @@ class AIPatientWidget(PatientWidget):
             logger.debug(f'[MG][INIT] ║ ❌ Error in override patient widget: {e}')
             import_folder_path = sample_study
 
-        # ⚠️ IMPORTANT: Always start with 1×2 layout for mammography
-        # If the series is not MG, we'll hide the second viewer later
-        logger.debug(f'[MG][INIT] ║ Initializing with 1×2 layout (for mammography)')
+        initial_layout = (1, 1) if self.eagle_eye_mode == "bone_age" else (1, 2)
+        logger.debug(f'[MG][INIT] ║ Initializing with layout {initial_layout} for mode={self.eagle_eye_mode}')
         logger.debug(f'[MG][INIT] ╚═══════════════════════════════════════')
         
         # Initialize parent class with 1×2 layout.
@@ -57,8 +66,9 @@ class AIPatientWidget(PatientWidget):
         # viewer_backend_override so it loads in Advanced mode even when the
         # global 2D viewer is set to FAST. The ViewerController honours this
         # per-widget override (see _vc_backend._get_requested_viewer_backend).
-        super().__init__(parent, str(import_folder_path), size_init_viewers=(1, 2),
-                         caller=CallerTypes.IMPORT, viewer_backend_override=BACKEND_VTK)
+        backend_override = BACKEND_PYDICOM_QT if self.eagle_eye_mode == "bone_age" else BACKEND_VTK
+        super().__init__(parent, str(import_folder_path), size_init_viewers=initial_layout,
+                         caller=CallerTypes.IMPORT, viewer_backend_override=backend_override)
         self.ordering_by_instances_number = False
 
     def header_layout_ui(self):
@@ -78,6 +88,11 @@ class AIPatientWidget(PatientWidget):
         logger.debug(f"[MG][LAYOUT] ║ get_optimal_layout_for_series called")
         logger.debug(f"[MG][LAYOUT] ║ modality: {modality}")
         
+        if self.eagle_eye_mode == "bone_age":
+            logger.debug(f"[MG][LAYOUT] ║ Forced Bone Age mode, returning 1×1")
+            self._hide_second_viewer_if_exists()
+            return (1, 1)
+
         if modality == 'MG':
             logger.debug(f"[MG][LAYOUT] ║ ✓ Returning 1×2 layout for mammography")
             logger.debug(f"[MG][LAYOUT] ║ Both viewers will be visible")
@@ -94,9 +109,9 @@ class AIPatientWidget(PatientWidget):
     def _ensure_both_viewers_visible(self):
         """Ensure both viewers are visible for MG modality"""
         try:
-            if hasattr(self, 'lst_node_viewers') and len(self.lst_node_viewers) >= 2:
+            if hasattr(self, 'lst_nodes_viewer') and len(self.lst_nodes_viewer) >= 2:
                 logger.debug(f"[MG][LAYOUT] Making both viewers visible")
-                for i, node in enumerate(self.lst_node_viewers[:2]):
+                for i, node in enumerate(self.lst_nodes_viewer[:2]):
                     if node and node.widget:
                         node.widget.setVisible(True)
                         logger.debug(f"[MG][LAYOUT] ✓ Viewer {i+1} visible")
@@ -106,9 +121,9 @@ class AIPatientWidget(PatientWidget):
     def _hide_second_viewer_if_exists(self):
         """Hide second viewer for non-MG modalities"""
         try:
-            if hasattr(self, 'lst_node_viewers') and len(self.lst_node_viewers) >= 2:
+            if hasattr(self, 'lst_nodes_viewer') and len(self.lst_nodes_viewer) >= 2:
                 logger.debug(f"[MG][LAYOUT] Hiding second viewer (Original View)")
-                second_node = self.lst_node_viewers[1]
+                second_node = self.lst_nodes_viewer[1]
                 if second_node and second_node.widget:
                     second_node.widget.setVisible(False)
                     logger.debug(f"[MG][LAYOUT] ✓ Second viewer hidden")
@@ -120,17 +135,23 @@ class AIPatientWidget(PatientWidget):
         Override default layout for AI imaging tab.
         We always start with 1×2 layout and hide/show viewers based on modality
         """
-        # Always return 1×2 - we'll hide the second viewer if not needed
+        if self.eagle_eye_mode == "bone_age":
+            logger.debug(f"[MG][LAYOUT] _get_default_layout_from_config: mode=bone_age, returning (1, 1)")
+            return (1, 1)
         logger.debug(f"[MG][LAYOUT] _get_default_layout_from_config: modality={modality}, returning (1, 2)")
         return (1, 2)
 
     def creator_vtk_widget(self):
         """Override to create AI-specific VTK widget"""
+        if self.eagle_eye_mode == "bone_age":
+            return super().creator_vtk_widget()
         height = self.sidebar.height() if hasattr(self, 'sidebar') and self.sidebar else 480
         return AIVTKWidget(height_viewer=height, patient_widget=self, type_viewer=self.type_viewer)
 
     def create_dummy_vtk_widget(self):
         """AI-specific lightweight placeholder using AIVTKWidget."""
+        if self.eagle_eye_mode == "bone_age":
+            return super().create_dummy_vtk_widget()
         try:
             vtk_widget = self.creator_vtk_widget()
             if vtk_widget is None:
@@ -177,7 +198,14 @@ class AIPatientWidget(PatientWidget):
                     status=box_object.status_abnormal,
                     box_object=box_object, 
                     classification=box_object.classification_label,
-                    features=features_text  # Add classification to features box
+                    features=features_text,  # Add classification to features box
+                    mammography_fields={
+                        "finding_uid": getattr(box_object, "finding_uid", None),
+                        "source_row_key": getattr(box_object, "source_row_key", None),
+                        "source_row_index": getattr(box_object, "source_row_index", None),
+                        "source_box_index": getattr(box_object, "source_box_index", None),
+                        "source_kind": getattr(box_object, "source_kind", None),
+                    },
                 )
                 logger.debug(f"[MG][SIDEBAR] ✓ sidebar_upsert_item completed for box {idx}")
             else:
@@ -262,17 +290,23 @@ class AIPatientWidget(PatientWidget):
 
         # For MG, mirror the same series onto the other viewer — DEFERRED.
         try:
-            if hasattr(self, 'lst_node_viewers') and len(self.lst_node_viewers) >= 2:
+            if self.eagle_eye_mode == "bone_age":
+                return result
+            modality = ''
+            if hasattr(self, 'lst_nodes_viewer') and len(self.lst_nodes_viewer) >= 2:
                 if 0 <= series_index < len(self.lst_thumbnails_data):
                     modality = str(
-                        self.lst_thumbnails_data[series_index].get('modality', '')
+                        self.lst_thumbnails_data[series_index]
+                        .get('metadata', {})
+                        .get('series', {})
+                        .get('modality', '')
                     ).upper()
-                    if modality == 'MG':
-                        self._schedule_mg_mirror(
-                            series_index=series_index,
-                            primary_vtk_widget=vtk_widget,
-                            allow_paired=allow_paired,
-                        )
+                if modality == 'MG':
+                    self._schedule_mg_mirror(
+                        series_index=series_index,
+                        primary_vtk_widget=vtk_widget,
+                        allow_paired=allow_paired,
+                    )
         except Exception as e:
             logger.warning(f"[MG] viewer sync after series change failed: {e}")
 
@@ -288,7 +322,7 @@ class AIPatientWidget(PatientWidget):
         """
         def _do_mirror():
             try:
-                node_list = list(getattr(self, 'lst_node_viewers', []) or [])[:2]
+                node_list = list(getattr(self, 'lst_nodes_viewer', []) or [])[:2]
             except Exception:
                 return
             for node in node_list:
@@ -328,4 +362,3 @@ class AIPatientWidget(PatientWidget):
                 _do_mirror()
             except Exception:
                 pass
-

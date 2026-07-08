@@ -5271,10 +5271,37 @@ class ToolbarManager:
             logger.info("🚀 [MPR OPEN] Opening Zeta MPR (toggle ON)")
             logger.info("=" * 60)
             
+            # ── OPT-21 OpenGL pre-flight guard (2026-07-07) ────────────────────
+            # A machine whose display driver cannot provide OpenGL 3.2 dies with a
+            # NATIVE crash inside the first QVTKRenderWindowInteractor (end-user
+            # PC2: process death in _create_axial_view, no traceback). Probe once
+            # with a plain Qt context (fails gracefully) BEFORE any volume load or
+            # VTK window construction. Flag AIPACS_MPR_OPENGL_PREFLIGHT=0 = legacy.
+            from modules.mpr.opengl_preflight import opengl_preflight
+            _gl_ok, _gl_reason = opengl_preflight()
+            if not _gl_ok:
+                logger.error("[MPR OPENGL_PREFLIGHT] blocked MPR open: %s", _gl_reason)
+                try:
+                    QMessageBox.warning(
+                        self.patient_widget,
+                        "MPR unavailable on this computer",
+                        "3D/MPR rendering could not start because this computer's "
+                        "graphics driver does not provide OpenGL 3.2 or newer.\n\n"
+                        f"Details: {_gl_reason}\n\n"
+                        "Please update the graphics (GPU) driver, then re-run the test "
+                        "from Settings → Viewer Configuration → Hardware Requirements "
+                        "Check.\nThe 2D viewer is not affected.",
+                    )
+                except Exception:
+                    pass
+                self.tool_selected = None
+                self.handle_buttons_checked()
+                return
+
             # Deactivate any other active tools
             logger.info("   🔧 [MPR OPEN] Deactivating other tools...")
             self.check_and_deactivate_tools()
-            
+
             # Get the selected widget (active viewer)
             selected_widget = self.patient_widget.selected_widget
             logger.info(f"   📋 [MPR OPEN] selected_widget: {selected_widget}")
@@ -5529,6 +5556,11 @@ class ToolbarManager:
                 # requested view(s) with a slab (MIP/MinIP/Thick Slab) instead of the 4-panel.
                 # None for a normal MPR open → StandardMPRViewer builds the full 4-panel as before.
                 _proj = getattr(self, '_mpr_projection_request', None) or {}
+                # OPT-21/WoA diagnostics: MPR open construction time. On an
+                # emulated (Windows-on-ARM) session this is the KPI that shows
+                # the emulation cost of the first VTK/OpenGL window.
+                import time as _time
+                _mpr_open_t0 = _time.perf_counter()
                 zeta_widget = StandardMPRViewer(
                     vtk_image_data=vtk_image_data,
                     parent=parent_widget,
@@ -5539,6 +5571,14 @@ class ToolbarManager:
                     slab_thickness_mm=_proj.get('slab_thickness_mm'),
                 )
                 self._mpr_projection_request = None  # consume (one-shot)
+                try:
+                    logger.warning(
+                        "[MPR-OPEN-KPI] standard_mpr_construct_ms=%.1f defer_3d=%s",
+                        (_time.perf_counter() - _mpr_open_t0) * 1000.0,
+                        os.environ.get("AIPACS_MPR_DEFER_3D", "1"),
+                    )
+                except Exception:
+                    pass
 
                 # Add to layout at the same position
                 if parent_layout and grid_position:

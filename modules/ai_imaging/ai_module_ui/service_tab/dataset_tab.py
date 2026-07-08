@@ -19,6 +19,7 @@ import qtawesome as qta
 logger = logging.getLogger(__name__)
 
 PREFERRED_COLUMNS = [
+    "source_csv_file",
     "case_id",
     "patient_id",
     "patient_uid",
@@ -103,6 +104,7 @@ def read_dataset_csvs(csv_paths):
                     label = pick(r, ["labels_pred", "label", "class", "pred", "prediction"])
 
                     row_out = dict(r)
+                    row_out.setdefault("source_csv_file", os.path.basename(path))
                     row_out.setdefault("patient_uid", pick(r, ["patient_uid", "patient_id", "PatientID"]))
                     row_out.setdefault("study_instance_uid", pick(r, ["study_instance_uid", "study_uid", "StudyInstanceUID"]))
                     row_out.setdefault("labels_pred", label)
@@ -243,6 +245,15 @@ class DataSetTableWidget(QWidget):
 # =========================================================
 # DataSet Tab (AbstractTab)  (NOW UPDATABLE)
 # =========================================================
+def _normalize_module_mode(mode):
+    value = str(mode or "").strip().lower()
+    if value in ("mg", "mammo", "mammography", "breast"):
+        return "mammography"
+    if value in ("dx", "bone", "bone_age", "bone-age", "boneage"):
+        return "bone_age"
+    return None
+
+
 class DataSetTab(AbstractTab):
     """
     New AI Tool Tab: Data Set
@@ -251,9 +262,10 @@ class DataSetTab(AbstractTab):
       - reading from CSV paths
     """
 
-    def __init__(self, study_uid=None, csv_paths=None, data_provider=None):
+    def __init__(self, study_uid=None, csv_paths=None, data_provider=None, module_mode=None):
         super().__init__()
         self.study_uid = study_uid
+        self.module_mode = _normalize_module_mode(module_mode)
         self._csv_paths = []
         self._data_provider = data_provider  # optional callable -> list[dict]
         self._rows_cache = []
@@ -420,12 +432,30 @@ class DataSetTab(AbstractTab):
         if not csvs:
             return []
         
-        # prefer your known filenames first
+        # prefer module-specific feedback and server-result CSVs first
         preferred = []
         rest = []
         for p in csvs:
             name = os.path.basename(p).lower()
-            if "updated_csv_with_boxes" in name or "classification" in name or "dataset" in name:
+            if self.module_mode == "bone_age":
+                is_preferred = name in ("bone_age_feedback.csv", "bone_age.csv") or name.startswith("bone_age")
+            elif self.module_mode == "mammography":
+                is_preferred = (
+                    name == "mg_feedback.csv"
+                    or "updated_csv_with_boxes" in name
+                    or "classification" in name
+                    or "mammography" in name
+                    or "dataset" in name
+                )
+            else:
+                is_preferred = (
+                    name in ("mg_feedback.csv", "bone_age_feedback.csv")
+                    or "updated_csv_with_boxes" in name
+                    or "classification" in name
+                    or "dataset" in name
+                )
+
+            if is_preferred:
                 preferred.append(p)
                 logger.info(f"[DataSetTab]   ✓ Preferred: {os.path.basename(p)}")
             else:
@@ -477,8 +507,8 @@ class DataSetTab(AbstractTab):
                     self._update_status("Data provider returned no rows", "warning")
                 return
 
-            # Try cached rows
-            if self._rows_cache:
+            # Try cached rows only for provider/pushed datasets. CSV refresh should reread disk.
+            if self._rows_cache and not self._csv_paths:
                 logger.info(f"[DataSetTab] Using cached rows: {len(self._rows_cache)}")
                 self.dataset_table.set_rows(self._rows_cache)
                 self._update_status(f"Displaying {len(self._rows_cache)} cached rows", "success")

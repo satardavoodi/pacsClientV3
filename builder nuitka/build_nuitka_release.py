@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+import time
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -407,10 +408,12 @@ def ensure_stage_entrypoints() -> None:
             from __future__ import annotations
 
             import os
+            import sys
+            from pathlib import Path
 
-            import database
-            import database.core
-            import database.manager
+            sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+            import database._pool
             import modules.module_system
 
             if os.environ.get("AIPACS_STAGE_SMOKE") == "1":
@@ -487,6 +490,21 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest().upper()
+
+
+def copy2_with_retry(src: Path, dst: Path, *, attempts: int = 8, delay_s: float = 1.0) -> None:
+    last_error: OSError | None = None
+    for attempt in range(attempts):
+        try:
+            shutil.copy2(src, dst)
+            return
+        except OSError as exc:
+            last_error = exc
+            if attempt == attempts - 1:
+                break
+            time.sleep(delay_s)
+    if last_error is not None:
+        raise last_error
 
 
 def run_command_with_log(
@@ -820,6 +838,7 @@ def create_nuitka_command(
         for item in get_spec_list(ctx.spec, "NOFOLLOW_IMPORTS")
         if str(item).startswith("modules.")
     }
+    filtered_nofollow_from_spec.update(OPTIONAL_PLUGIN_MODULES)
 
     if profile == "minimal":
         forced = set()
@@ -831,15 +850,11 @@ def create_nuitka_command(
         include_packages = set()
         nofollow = set()
     elif profile == "core":
-        include_packages = {
-            "database",
-            "modules.module_system",
-        }
+        include_packages = set()
         forced = {
             "base64",
-            "database",
-            "database.core",
-            "database.manager",
+            "database._pool",
+            "modules.module_system",
         }
     elif profile == "dicom":
         include_packages = {"numpy", "pydicom"}
@@ -1417,21 +1432,23 @@ def stage_10_inno_setup(ctx: BuildContext, stage: Stage, log_path: Path) -> Stag
     ]
 
     rc = run_command_with_log(cmd, cwd=INSTALLER_DIR, log_path=log_path)
+    primary = INSTALLER_OUTPUT_DIR / "ai-pacs-nuitka-installer.exe"
     if rc != 0:
-        raise StageError(f"Installer compile failed with exit code {rc}")
+        log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+        if "Successful compile" not in log_text or not primary.exists():
+            raise StageError(f"Installer compile failed with exit code {rc}")
 
     compiled = sorted(INSTALLER_OUTPUT_DIR.glob("*.exe"), key=lambda p: p.stat().st_mtime, reverse=True)
     if not compiled:
         raise StageError("Installer compilation finished but no output executable was found")
 
     compiled_installer = compiled[0]
-    primary = INSTALLER_OUTPUT_DIR / "ai-pacs-nuitka-installer.exe"
     versioned = INSTALLER_OUTPUT_DIR / f"ai-pacs-nuitka-installer v{ctx.version}.exe"
     if compiled_installer.resolve() != primary.resolve():
-        shutil.copy2(compiled_installer, primary)
+        copy2_with_retry(compiled_installer, primary)
     else:
         primary = compiled_installer
-    shutil.copy2(primary, versioned)
+    copy2_with_retry(primary, versioned)
 
     metadata = {
         "version": ctx.version,

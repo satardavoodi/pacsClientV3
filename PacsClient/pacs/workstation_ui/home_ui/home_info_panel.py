@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.4.6",
-    "build_date": "2026-07-06",
-    "release_date": "2026-07-06",
+    "version": "3.4.7",
+    "build_date": "2026-07-08",
+    "release_date": "2026-07-08",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Faster patient list and startup (smarter caching, lighter checks)",
-        "More reliable multi-study and previous-exam series display",
-        "AI assistant: unified command entry point and validation pipeline",
-        "Built-in browser tooling improvements",
-        "Stability, logging, and single-instance handling improvements",
+        "Windows-on-ARM (ARM64) support with a dedicated installer",
+        "More robust MPR on varied GPUs (OpenGL pre-flight + safe failure)",
+        "Fixed two rare UI freezes (startup and AI-assistant switch)",
+        "Better crash diagnostics (hardware check + native fault log)",
+        "Multi-study display and broad stability fixes",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.4.6",
+        "AI-PACS Version 3.4.7",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۴.۶",
+        "AI-PACS نسخهٔ ۳.۴.۷",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

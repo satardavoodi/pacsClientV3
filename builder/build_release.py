@@ -44,8 +44,63 @@ UPDATES_MODULES_DIR = UPDATES_OUTPUT_DIR / "modules"
 STAGED_PLUGIN_PACKAGE_DIR = STAGE_DIR / "plugin_packages"
 SPEC_FILE = BUILDER_DIR / "spec" / "appA_workstation.spec"
 INSTALLER_SCRIPT = BUILDER_DIR / "installer" / "AIPacs_Setup.iss"
+INSTALLER_SCRIPT_ARM64 = BUILDER_DIR / "installer" / "AIPacs_Setup_arm64.iss"
+INSTALLER_SCRIPT_WOA = BUILDER_DIR / "installer" / "AIPacs_Setup_woa.iss"
 REQUIRED_RELEASE_GRAPHICS_BINARIES = ("opengl32sw.dll", "osmesa.dll", "pipe_swrast.dll")
 PRIMARY_INSTALLER_BASENAME = "ai-pacs installer"
+
+# ── ARM64 plan §5/§7 (2026-07-07): per-architecture build support ────────────
+# --arch selects the target. Default "x64" keeps every name/path/behavior
+# byte-identical to the historical pipeline. "arm64" must run on an ARM64
+# builder (PyInstaller cannot cross-build) and produces
+# "ai-pacs installer arm64 …" artifacts from AIPacs_Setup_arm64.iss.
+SUPPORTED_BUILD_ARCHES = ("x64", "arm64")
+CURRENT_BUILD_ARCH = "x64"
+
+# WoA emulation SKU (strategy 2026-07-07): the SAME x64 payload compiled into a
+# second, ARM64-machines-only installer ("AIPacs (ARM64 emulated)") that stamps
+# install_package=x64_on_arm64 so the app applies the WoA runtime profile.
+# Built from the normal x64 pipeline via --with-woa-installer (no ARM64 builder
+# needed).
+WOA_INSTALLER_BASENAME = f"{PRIMARY_INSTALLER_BASENAME} arm64-emulated"
+
+
+def installer_basename() -> str:
+    """Arch-suffixed installer base name ("" suffix for x64 = legacy names)."""
+    suffix = " arm64" if CURRENT_BUILD_ARCH == "arm64" else ""
+    return f"{PRIMARY_INSTALLER_BASENAME}{suffix}"
+
+
+def installer_script_for_arch() -> Path:
+    return INSTALLER_SCRIPT_ARM64 if CURRENT_BUILD_ARCH == "arm64" else INSTALLER_SCRIPT
+
+
+def validate_build_arch(arch: str) -> None:
+    """Refuse impossible builds early (ARM64 plan §7.6).
+
+    PyInstaller freezes for the ARCHITECTURE OF THE RUNNING PYTHON — there is
+    no cross-compilation. An "arm64" build therefore requires an ARM64 host +
+    ARM64 CPython (see tools/build/setup_arm64_env.ps1)."""
+    import platform
+
+    machine = (platform.machine() or "").upper()
+    if arch == "arm64":
+        if machine != "ARM64":
+            raise SystemExit(
+                "[ARCH] --arch arm64 requires an ARM64 Windows builder running an "
+                f"ARM64 CPython (this interpreter reports machine={machine!r}). "
+                "PyInstaller cannot cross-build. Bootstrap the builder with "
+                "tools/build/setup_arm64_env.ps1 and re-run from .venv-arm64."
+            )
+        if not INSTALLER_SCRIPT_ARM64.exists():
+            raise SystemExit(f"[ARCH] missing installer variant: {INSTALLER_SCRIPT_ARM64}")
+        print("[ARCH] Building the Windows ARM64 (native) package. "
+              "Ensure the env was created from requirements-arm64.txt (arm64-lite profile; "
+              "vtk/SimpleITK wheels are Phase 2/3).")
+    elif machine == "ARM64":
+        print("[WARN] [ARCH] Building the x64 package ON an ARM64 host — the build itself "
+              "runs under emulation and the produced package is x64. Use --arch arm64 for "
+              "the native package.")
 PACKAGE_IGNORE_PATTERNS = (
     "__pycache__",
     "*.pyc",
@@ -873,7 +928,7 @@ def cleanup_old_installer_builds() -> int:
         return 0
     
     removed_count = 0
-    pattern = f"{PRIMARY_INSTALLER_BASENAME} build *.exe"
+    pattern = f"{installer_basename()} build *.exe"
     
     for artifact in INSTALLER_OUTPUT_DIR.glob(pattern):
         try:
@@ -912,7 +967,7 @@ def compile_installer(version: str) -> Path | None:
 
     INSTALLER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     compile_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    compile_basename = f"{PRIMARY_INSTALLER_BASENAME} build {compile_stamp}"
+    compile_basename = f"{installer_basename()} build {compile_stamp}"
     run_command(
         [
             str(iscc),
@@ -920,7 +975,7 @@ def compile_installer(version: str) -> Path | None:
             f"/DStageDir={STAGE_DIR}",
             f"/DInstallerOutputDir={INSTALLER_OUTPUT_DIR}",
             f"/DInstallerBaseName={compile_basename}",
-            str(INSTALLER_SCRIPT),
+            str(installer_script_for_arch()),
         ],
         cwd=BUILDER_DIR / "installer",
     )
@@ -941,11 +996,61 @@ def compile_installer(version: str) -> Path | None:
     return fallback_candidates[0]
 
 
+def compile_woa_installer(version: str) -> Path | None:
+    """Compile the Windows-on-ARM emulation SKU from the SAME x64 stage.
+
+    ARM64 emulation strategy (2026-07-07): "AIPacs (ARM64 emulated)" =
+    AIPacs_Setup_woa.iss (ArchitecturesAllowed=arm64, informative first page,
+    install_package=x64_on_arm64 stamp). Opt-in via --with-woa-installer; only
+    meaningful on the x64 pipeline. Best-effort: a failure here must not sink
+    the primary x64 artifact (prints a WARN instead)."""
+    print_step("Compiling WoA (ARM64 emulated) installer variant")
+    if CURRENT_BUILD_ARCH != "x64":
+        print("[WARN] --with-woa-installer only applies to the x64 pipeline — skipped.")
+        return None
+    if not INSTALLER_SCRIPT_WOA.exists():
+        print(f"[WARN] missing {INSTALLER_SCRIPT_WOA} — WoA installer skipped.")
+        return None
+    iscc = find_iscc()
+    if iscc is None:
+        print("[WARN] ISCC.exe not found — WoA installer skipped.")
+        return None
+    try:
+        INSTALLER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        run_command(
+            [
+                str(iscc),
+                f"/DMyAppVersion={version}",
+                f"/DStageDir={STAGE_DIR}",
+                f"/DInstallerOutputDir={INSTALLER_OUTPUT_DIR}",
+                f"/DInstallerBaseName={WOA_INSTALLER_BASENAME} v{version}",
+                str(INSTALLER_SCRIPT_WOA),
+            ],
+            cwd=BUILDER_DIR / "installer",
+        )
+        produced = INSTALLER_OUTPUT_DIR / f"{WOA_INSTALLER_BASENAME} v{version}.exe"
+        if produced.exists():
+            unversioned = INSTALLER_OUTPUT_DIR / f"{WOA_INSTALLER_BASENAME}.exe"
+            try:
+                shutil.copy2(produced, unversioned)
+            except OSError as exc:
+                print(f"[WARN] Could not write {unversioned}: {exc}")
+            print(f"[OK] WoA installer: {produced}")
+            return produced
+        print("[WARN] WoA installer compile produced no expected .exe output.")
+        return None
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"[WARN] WoA installer compile failed (primary x64 artifact unaffected): {exc}")
+        return None
+
+
 def normalize_installer_artifacts(compiled_installer: Path, version: str) -> dict[str, str]:
     INSTALLER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    primary = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME}.exe"
-    versioned = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME} v{version}.exe"
+    primary = INSTALLER_OUTPUT_DIR / f"{installer_basename()}.exe"
+    versioned = INSTALLER_OUTPUT_DIR / f"{installer_basename()} v{version}.exe"
 
     if compiled_installer.resolve() != primary.resolve():
         try:
@@ -960,7 +1065,7 @@ def normalize_installer_artifacts(compiled_installer: Path, version: str) -> dic
             shutil.copy2(primary, versioned)
     except OSError as exc:
         fallback_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-        fallback_versioned = INSTALLER_OUTPUT_DIR / f"{PRIMARY_INSTALLER_BASENAME} v{version} {fallback_stamp}.exe"
+        fallback_versioned = INSTALLER_OUTPUT_DIR / f"{installer_basename()} v{version} {fallback_stamp}.exe"
         print(f"[WARN] Could not write versioned installer at {versioned}: {exc}")
         print(f"[WARN] Writing versioned installer fallback to {fallback_versioned}")
         shutil.copy2(primary, fallback_versioned)
@@ -1231,6 +1336,29 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--arch",
+        choices=list(SUPPORTED_BUILD_ARCHES),
+        default="x64",
+        help=(
+            "Target architecture. 'x64' (default) = the historical pipeline, "
+            "byte-identical names. 'arm64' = Windows-on-ARM native package "
+            "(MUST run on an ARM64 builder from .venv-arm64 — PyInstaller cannot "
+            "cross-build; see tools/build/setup_arm64_env.ps1 and "
+            "docs/plans/architecture/ARM64_WINDOWS_PLATFORM_PLAN_2026-07-07.md)."
+        ),
+    )
+    parser.add_argument(
+        "--with-woa-installer",
+        action="store_true",
+        help=(
+            "Additionally compile the Windows-on-ARM emulation SKU "
+            "('ai-pacs installer arm64-emulated …') from the same x64 stage — "
+            "AIPacs_Setup_woa.iss: ARM64-machines-only installer of the x64 "
+            "payload, stamps install_package=x64_on_arm64 for the WoA runtime "
+            "profile. x64 pipeline only."
+        ),
+    )
+    parser.add_argument(
         "--skip-release-gate",
         action="store_true",
         help=(
@@ -1331,8 +1459,11 @@ def verify_frozen_mpr_geometry(source_dir: Path) -> None:
 
 
 def main() -> int:
+    global CURRENT_BUILD_ARCH
     lock_path = _acquire_build_lock()
     args = parse_args()
+    CURRENT_BUILD_ARCH = args.arch
+    validate_build_arch(args.arch)
     try:
         if args.clean_only:
             clean_outputs(preserve_build=False, preserve_installer=False)
@@ -1438,6 +1569,22 @@ def main() -> int:
             print("[WARN] --skip-release-gate: post-stage release gate SKIPPED (emergencies only).")
         else:
             run_release_gate_post_stage()
+            # ARM64 plan §7.3: no wrong-architecture binary may ship. Enforced
+            # for arm64 (an x64 DLL in the native tree = broken install);
+            # warn-only for x64 until a clean baseline is confirmed
+            # (AIPACS_ENFORCE_ARCH_SCAN=1 to enforce there too).
+            from builder import release_gate as _rg
+            _arch_check = _rg.check_stage_binary_architecture(
+                STAGE_DIR,
+                expected_arch=args.arch,
+                enforce=(args.arch == "arm64")
+                or os.environ.get("AIPACS_ENFORCE_ARCH_SCAN", "").strip() == "1",
+            )
+            if not _rg.report([_arch_check], label="binary-arch"):
+                raise SystemExit(
+                    "[RELEASE_GATE] Staged bundle contains wrong-architecture binaries "
+                    f"(expected {args.arch}). See the listing above."
+                )
 
         installer_artifacts: dict[str, str] = {}
         if not args.skip_installer_compile:
@@ -1448,6 +1595,10 @@ def main() -> int:
                 if removed > 0:
                     print(f"[INFO] Cleaned up {removed} old build artifact(s) from installer folder.")
                 write_installer_release_metadata(installer_artifacts, version)
+            if args.with_woa_installer:
+                woa_artifact = compile_woa_installer(version)
+                if woa_artifact is not None:
+                    installer_artifacts["woa"] = str(woa_artifact)
 
         publish_update_bundle(version, module_packages, installer_artifacts)
 

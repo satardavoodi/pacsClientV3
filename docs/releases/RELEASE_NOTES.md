@@ -1,9 +1,29 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.6 (2026-07-06)
-**Previous Stable:** v3.4.5 (2026-07-04)
-**Release Date:** 2026-07-06
+**Current Stable Version:** v3.4.7 (2026-07-08)
+**Previous Stable:** v3.4.6 (2026-07-06)
+**Release Date:** 2026-07-08
 **Branch:** beta-version
+
+---
+
+## v3.4.7 (2026-07-08) - Patch release: Windows-on-ARM support, MPR GPU robustness, UI-freeze fixes
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Adds Windows-on-ARM (ARM64) platform support, hardens MPR/3D against
+GPU/driver failures, fixes two UI-thread freeze regressions, and improves
+multi-study display correctness.
+
+### Included
+
+- Windows-on-ARM (ARM64): platform plan, ARM64/WoA installers, requirements-arm64, runtime-arch log, WoA runtime profile, ARM64 packaging tests
+- MPR/3D robustness: OpenGL pre-flight + Settings hardware-requirements check, native fault-handler log, crash-evidence collector (WoA ARM64 MPR crash investigation)
+- Regression fixes (OPT-22/OPT-23): startup web-browser prewarm idle-gate and EchoMind deferred series-switch (two UI-thread freezes)
+- Multi-study: distinct series-append (a series sharing name + count under a different study now displays)
+- Release parity: module_package.json refresh across plugin packages; release-gate/build refinements
+- Canonical version markers advanced to v3.4.7; full local state published to all remotes
 
 ---
 

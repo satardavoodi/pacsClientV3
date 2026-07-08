@@ -4591,6 +4591,8 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             box = box_score['box']
             score = box_score['score']
             classification_label = box_score.get('classification', '')
+            display_name = str(box_score.get('display_name') or f'Box {len(lst_boxes_object) + 1}').strip()
+            finding_uid = str(box_score.get('finding_uid') or display_name).strip()
 
             if not (isinstance(box, (list, tuple)) and len(box) == 4):
                 continue  # ط±ط¯ ط¨ط§ع©ط³ ظ†ط§ظ…ط¹طھط¨ط±
@@ -4610,8 +4612,9 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             self._box_actors.append(actor)
 
             # add text up of box
-            box_name = f'Box{len(lst_boxes_object) + 1}, \t\tscore: {score}'
-            text_actor = create_text_actor(world_position=((p1[0] + p0[0]) / 2, p1[1] + 2, p1[2]), text=box_name)
+            box_name = display_name
+            text = f'{display_name}, \t\tscore: {score}'
+            text_actor = create_text_actor(world_position=((p1[0] + p0[0]) / 2, p1[1] + 2, p1[2]), text=text)
             try:
                 if self.renderer:
                     text_actor.SetCamera(self.renderer.GetActiveCamera())
@@ -4621,6 +4624,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             # create box object for manage
             box_object = BoxManager(box_name=box_name, box_name_actor=text_actor, box_actor=actor, status_abnormal=True,
                                     ijk_points=corner_ijk_points, classification_label=classification_label)
+            box_object.finding_uid = finding_uid
+            box_object.source_row_key = box_score.get('source_row_key')
+            box_object.source_row_index = box_score.get('source_row_index')
+            box_object.source_box_index = box_score.get('source_box_index')
+            box_object.source_kind = box_score.get('source_kind')
             lst_boxes_object.append(box_object)
 
             self.renderer.AddActor(text_actor)

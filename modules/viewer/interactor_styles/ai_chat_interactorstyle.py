@@ -794,6 +794,20 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
 
     def open_ai_module(self):
         if self.patient_widget is not None:
+            try:
+                metadata_fixed = getattr(self.image_viewer, 'metadata_fixed', {}) or {}
+                metadata = getattr(self.image_viewer, 'metadata', {}) or {}
+                modality = str(
+                    metadata_fixed.get('modality')
+                    or metadata.get('series', {}).get('modality', '')
+                    or ''
+                ).upper()
+                if modality == "DX":
+                    self.patient_widget._preferred_eagle_eye_mode = "bone_age"
+                elif modality == "MG":
+                    self.patient_widget._preferred_eagle_eye_mode = "mammography"
+            except Exception:
+                pass
             self.patient_widget.switch_right_panel('ai_module')  # open AI module
 
     # --------- MG (Mammography) pipeline  ---------

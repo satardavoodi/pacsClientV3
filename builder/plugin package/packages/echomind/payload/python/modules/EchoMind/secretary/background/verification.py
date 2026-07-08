@@ -26,10 +26,14 @@ logger = logging.getLogger(__name__)
 
 def artifacts_dir() -> Path:
     try:
-        from PacsClient.utils.data_paths import USER_DATA_ROOT
-        d = Path(USER_DATA_ROOT) / "EchoMind" / "agent_artifacts"
+        from PacsClient.utils.data_paths import ECHOMIND_DIR
+        d = Path(ECHOMIND_DIR) / "agent_artifacts"
     except Exception:
-        d = Path.home() / ".aipacs_agent_artifacts"
+        try:
+            from PacsClient.utils.data_paths import USER_DATA_ROOT
+            d = Path(USER_DATA_ROOT) / "echomind" / "agent_artifacts"
+        except Exception:
+            d = Path.home() / ".aipacs_agent_artifacts"
     d.mkdir(parents=True, exist_ok=True)
     return d
 

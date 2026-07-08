@@ -4,7 +4,7 @@
   "module_id": "offline_cloud_server",
   "title": "Offline Cloud Server",
   "tier": "basic",
-  "version": "3.3.0",
+  "version": "3.4.6",
   "package_kind": "core",
   "payload_dir": "payload",
   "python_paths": [

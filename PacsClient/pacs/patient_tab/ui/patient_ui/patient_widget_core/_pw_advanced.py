@@ -761,7 +761,11 @@ class _PWAdvancedMixin:
         try:
             # Open the Eagle Eye tab
             if self.method_add_new_tab:
-                ai_widget = self.method_add_new_tab(open_ai_client_tab=True, study_uid=self.study_uid)
+                ai_widget = self.method_add_new_tab(
+                    open_ai_client_tab=True,
+                    study_uid=self.study_uid,
+                    eagle_eye_mode=getattr(self, '_preferred_eagle_eye_mode', None),
+                )
                 
                 # Tab is now visible - hide loading after a short delay for UI to render
                 # Process events to ensure tab is painted
