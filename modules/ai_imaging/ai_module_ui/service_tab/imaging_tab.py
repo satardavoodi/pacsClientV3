@@ -1099,9 +1099,30 @@ class ImagingToolsTab(AbstractTab):
         layout.addWidget(self.detail_box_label)
         layout.addWidget(self.lst_boxes_combo)
 
+        # خلاصه/وضعیت فایندینگ انتخاب‌شده
         layout.addWidget(self.finding_status_display)
         layout.addWidget(self.finding_summary_label)
 
+        # فیلدهای کلاسیک پنل MG (سمت چپ) — نباید حذف شوند
+        layout.addWidget(self.status_label)
+        layout.addWidget(self.status_group)
+
+        layout.addWidget(self.classification_label)
+        layout.addWidget(self.class_combo)
+
+        layout.addWidget(self.feature_label)
+        layout.addWidget(self.feature_view)
+
+        layout.addWidget(self.validation_label)
+        layout.addWidget(self.validation_combo)
+
+        layout.addWidget(self.reviewer_label)
+        layout.addWidget(self.reviewer_edit)
+
+        layout.addWidget(self.notes_label)
+        layout.addWidget(self.notes_edit)
+
+        # اکشن‌های جدید finding
         layout.addWidget(self.confirm_finding_btn)
         layout.addWidget(self.reject_finding_btn)
         layout.addWidget(self.edit_finding_btn)
@@ -1110,6 +1131,9 @@ class ImagingToolsTab(AbstractTab):
         # 🔽 MG AI runs dropdown
         layout.addWidget(self.mg_runs_label)
         layout.addWidget(self.mg_runs_combo)
+
+        # Apply کلاسیک را هم نگه می‌داریم تا UX قبلی حفظ شود
+        layout.addWidget(self.apply_btn)
 
         layout.addStretch()
 
