@@ -4,6 +4,7 @@ import math
 import json
 import os
 import threading
+import requests
 from pathlib import Path
 from typing import Optional
 
@@ -1012,6 +1013,15 @@ class ImagingToolsTab(AbstractTab):
         _add_btn('Fit', 'fa5s.expand', 'Zoom to fit (selected viewer)',
                  self._eagle_zoom_fit)
 
+        sep2 = QLabel('|')
+        layout.addWidget(sep2)
+
+        self._dual_view_btn = _add_btn(
+            'Dual View', 'fa5s.columns',
+            'Show projected lesion coordinates between CC and MLO views',
+            self._on_dual_view_clicked
+        )
+
         layout.addStretch()
         return bar
 
@@ -1116,6 +1126,529 @@ class ImagingToolsTab(AbstractTab):
             iv.zoom_to_fit()
         except Exception as e:
             print(f"[EagleEye] zoom_to_fit failed: {e}")
+
+    # ---------- Dual-View Projection ----------
+
+    def _on_dual_view_clicked(self):
+        """
+        اجرای Dual-View Projection:
+        پیدا کردن جفت CC/MLO برای هر laterality و تخمین مختصات نظیر.
+        """
+        if self.detect_modality() != "MG":
+            show_message("Dual View is only available for Mammography (MG) modality.")
+            return
+
+        self.set_processing_status("Running Dual-View Projection...", active=True)
+
+        # اجرا در ترد جداگانه برای جلوگیری از فریز UI
+        thread = threading.Thread(target=self._run_dual_view_projection, daemon=True)
+        thread.start()
+
+    def _run_dual_view_projection(self):
+        """اجرای projection در ترد پس‌زمینه"""
+        try:
+            # جمع‌آوری اطلاعات viewer ها
+            viewer_data = self._collect_viewer_data_for_dual_view()
+
+            if not viewer_data:
+                QTimer.singleShot(0, lambda: self._show_dual_view_error("No viewer data available for Dual View."))
+                return
+
+            # گروه‌بندی بر اساس laterality
+            groups = self._group_views_by_laterality(viewer_data)
+
+            if not groups:
+                QTimer.singleShot(0, lambda: self._show_dual_view_error(
+                    "Could not find CC/MLO pairs. Ensure both views are loaded."))
+                return
+
+            # تلاش برای استفاده از API
+            results = self._call_dual_view_api(groups)
+
+            if results is None:
+                # اگر API در دسترس نبود، محاسبه محلی
+                results = self._local_dual_view_projection(groups)
+
+            # نمایش نتایج در UI thread
+            QTimer.singleShot(0, lambda: self._display_dual_view_results(results))
+
+        except Exception as e:
+            QTimer.singleShot(0, lambda: self._show_dual_view_error(f"Dual View failed: {e}"))
+
+    def _collect_viewer_data_for_dual_view(self) -> list:
+        """جمع‌آوری اطلاعات از تمام viewer ها (تصویر، باکس‌ها، metadata)"""
+        data = []
+        pw = getattr(self, 'patient_widget', None)
+        if pw is None:
+            return data
+
+        nodes = getattr(pw, 'lst_nodes_viewer', []) or []
+
+        for node in nodes:
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is None:
+                continue
+
+            # خواندن metadata
+            laterality = getattr(vtk_widget, 'laterality', '') or ''
+            view_position = getattr(vtk_widget, 'view_position', '') or ''
+            png_path = getattr(vtk_widget, 'png_full_path', '') or ''
+            dicom_path = getattr(vtk_widget, 'dicom_full_path', '') or ''
+
+            # اگر metadata در widget نبود، از CSV بخوان
+            if not laterality or not view_position:
+                csv_path = getattr(vtk_widget, 'csv_details_path', None)
+                if csv_path and os.path.isfile(str(csv_path)):
+                    try:
+                        df = read_csv_table(str(csv_path))
+                        if hasattr(vtk_widget, 'get_series_ai_data_from_df'):
+                            row = vtk_widget.get_series_ai_data_from_df(df)
+                            if row is not None and hasattr(row, 'rows') and row.rows:
+                                row_data = row.rows[0]
+                                if not laterality:
+                                    laterality = str(row_data.get('laterality', '')).upper()
+                                if not view_position:
+                                    view_position = str(row_data.get('view_position', '')).upper()
+                                if not png_path:
+                                    png_path = str(row_data.get('png_full_path', ''))
+                                if not dicom_path:
+                                    dicom_path = str(row_data.get('dicom_full_path', ''))
+                    except Exception:
+                        pass
+
+            # اگر هنوز laterality یا view ندارد، تلاش از DICOM
+            if (not laterality or not view_position) and dicom_path and os.path.isfile(dicom_path):
+                try:
+                    import pydicom
+                    ds = pydicom.dcmread(dicom_path, stop_before_pixels=True, force=True)
+                    if not laterality:
+                        laterality = str(
+                            getattr(ds, 'ImageLaterality', '') or getattr(ds, 'Laterality', '') or ''
+                        ).upper()
+                    if not view_position:
+                        view_position = str(getattr(ds, 'ViewPosition', '') or '').upper()
+                except Exception:
+                    pass
+
+            # استخراج باکس‌ها
+            boxes, scores = self._extract_boxes_from_viewer(vtk_widget)
+
+            if laterality and view_position:
+                data.append({
+                    'laterality': laterality,
+                    'view_position': view_position,
+                    'png_path': png_path,
+                    'dicom_path': dicom_path,
+                    'boxes': boxes,
+                    'scores': scores,
+                    'vtk_widget': vtk_widget
+                })
+
+        return data
+
+    def _extract_boxes_from_viewer(self, vtk_widget) -> tuple:
+        """استخراج باکس‌ها و امتیازات از یک viewer widget"""
+        boxes = []
+        scores = []
+
+        csv_path = getattr(vtk_widget, 'csv_details_path', None)
+        if not csv_path or not os.path.isfile(str(csv_path)):
+            return boxes, scores
+
+        try:
+            df = read_csv_table(str(csv_path))
+            if hasattr(vtk_widget, 'get_series_ai_data_from_df'):
+                row = vtk_widget.get_series_ai_data_from_df(df)
+                if row is not None and hasattr(row, 'rows') and row.rows:
+                    row_data = row.rows[0]
+
+                    # خواندن باکس‌ها
+                    box_val = row_data.get('box', '')
+                    parsed_boxes = _parse_box_cell(box_val)
+                    for b in parsed_boxes:
+                        boxes.append(b)
+                        scores.append(float(row_data.get('score', 0.5)))
+
+                    # باکس‌های جدید
+                    new_box_val = row_data.get('new_box', '')
+                    new_parsed = _parse_box_cell(new_box_val)
+                    for b in new_parsed:
+                        boxes.append(b)
+                        scores.append(0.5)
+        except Exception as e:
+            print(f"[DualView] Error extracting boxes: {e}")
+
+        return boxes, scores
+
+    def _group_views_by_laterality(self, viewer_data: list) -> dict:
+        """گروه‌بندی viewer ها بر اساس laterality"""
+        groups = {}  # {laterality: {'CC': data, 'MLO': data}}
+
+        for vd in viewer_data:
+            lat = vd['laterality']
+            view = vd['view_position']
+
+            if lat not in groups:
+                groups[lat] = {}
+
+            if view in ('CC', 'MLO'):
+                groups[lat][view] = vd
+
+        # فقط گروه‌هایی که هر دو نما را دارند یا حداقل یکی باکس دارد
+        valid_groups = {}
+        for lat, views in groups.items():
+            if 'CC' in views or 'MLO' in views:
+                valid_groups[lat] = views
+
+        return valid_groups
+
+    def _call_dual_view_api(self, groups: dict) -> dict | None:
+        """تلاش برای فراخوانی API سرور Dual-View Projection"""
+        try:
+            api_base = os.environ.get("AI_API_URL", "http://localhost:8002")
+            # تست اتصال
+            health = requests.get(f"{api_base}/health", timeout=3)
+            if health.status_code != 200:
+                return None
+        except Exception:
+            return None
+
+        results = {}
+
+        for lat, views in groups.items():
+            cc_data = views.get('CC', {})
+            mlo_data = views.get('MLO', {})
+
+            cc_path = cc_data.get('png_path', '') if cc_data else ''
+            mlo_path = mlo_data.get('png_path', '') if mlo_data else ''
+
+            if not cc_path or not mlo_path:
+                continue
+            if not os.path.isfile(cc_path) or not os.path.isfile(mlo_path):
+                continue
+
+            payload = {
+                "cc_image_path": cc_path,
+                "mlo_image_path": mlo_path,
+                "cc_boxes": cc_data.get('boxes', []),
+                "cc_scores": cc_data.get('scores', []),
+                "mlo_boxes": mlo_data.get('boxes', []),
+                "mlo_scores": mlo_data.get('scores', [])
+            }
+
+            try:
+                resp = requests.post(
+                    f"{api_base}/api/v1/dual_view_projection",
+                    json=payload,
+                    timeout=30
+                )
+                if resp.status_code == 200:
+                    results[lat] = resp.json()
+            except Exception as e:
+                print(f"[DualView] API call failed for {lat}: {e}")
+
+        return results if results else None
+
+    def _local_dual_view_projection(self, groups: dict) -> dict:
+        """
+        محاسبه محلی projection (بدون نیاز به API).
+        از DualViewMatcher مستقیم استفاده می‌کند.
+        """
+        results = {}
+
+        try:
+            import sys
+            # اطمینان از در دسترس بودن مسیر
+            project_root = str(Path(__file__).resolve().parents[4])
+            if project_root not in sys.path:
+                sys.path.insert(0, project_root)
+
+            # تلاش برای import ماژول
+            from DUAL_VIEW_MATCHER import DualViewMatcher
+            matcher = DualViewMatcher()
+        except ImportError:
+            # اگر ماژول موجود نبود، از روش ساده هندسی استفاده کن
+            for lat, views in groups.items():
+                results[lat] = self._simple_geometric_projection(views)
+            return results
+
+        for lat, views in groups.items():
+            cc_data = views.get('CC', {})
+            mlo_data = views.get('MLO', {})
+
+            cc_path = cc_data.get('png_path', '') if cc_data else ''
+            mlo_path = mlo_data.get('png_path', '') if mlo_data else ''
+
+            if not cc_path or not mlo_path:
+                results[lat] = self._simple_geometric_projection(views)
+                continue
+
+            if not os.path.isfile(cc_path) or not os.path.isfile(mlo_path):
+                results[lat] = self._simple_geometric_projection(views)
+                continue
+
+            try:
+                lesions = matcher.match_lesions_with_projection(
+                    cc_boxes=cc_data.get('boxes', []),
+                    cc_scores=cc_data.get('scores', []),
+                    mlo_boxes=mlo_data.get('boxes', []),
+                    mlo_scores=mlo_data.get('scores', []),
+                    cc_img_path=cc_path,
+                    mlo_img_path=mlo_path
+                )
+                paired = sum(1 for l in lesions if l['match_type'] == 'paired')
+                projected = sum(1 for l in lesions if l.get('projected_box') is not None)
+
+                results[lat] = {
+                    "status": "ok",
+                    "summary": {
+                        "total_lesions": len(lesions),
+                        "paired": paired,
+                        "projected": projected,
+                        "cc_only": sum(1 for l in lesions if l['match_type'] == 'cc_only'),
+                        "mlo_only": sum(1 for l in lesions if l['match_type'] == 'mlo_only')
+                    },
+                    "lesions": lesions
+                }
+            except Exception as e:
+                print(f"[DualView] Local projection failed for {lat}: {e}")
+                results[lat] = self._simple_geometric_projection(views)
+
+        return results
+
+    def _simple_geometric_projection(self, views: dict) -> dict:
+        """
+        محاسبه ساده هندسی projection (fallback).
+        فقط مختصات نسبی را map می‌کند.
+        """
+        cc_data = views.get('CC', {})
+        mlo_data = views.get('MLO', {})
+
+        lesions = []
+
+        # CC boxes -> project to MLO
+        for i, box in enumerate(cc_data.get('boxes', [])):
+            score = cc_data.get('scores', [0.5])[i] if i < len(cc_data.get('scores', [])) else 0.5
+            lesions.append({
+                'cc_box': box,
+                'cc_score': score,
+                'mlo_box': None,
+                'mlo_score': None,
+                'match_type': 'cc_only',
+                'match_confidence': 0.0,
+                'projected_box': box,  # ساده‌ترین حالت: همان مختصات
+                'projected_confidence': 0.3,
+                'projection_method': 'geometric_simple'
+            })
+
+        # MLO boxes -> project to CC
+        for i, box in enumerate(mlo_data.get('boxes', [])):
+            score = mlo_data.get('scores', [0.5])[i] if i < len(mlo_data.get('scores', [])) else 0.5
+            lesions.append({
+                'cc_box': None,
+                'cc_score': None,
+                'mlo_box': box,
+                'mlo_score': score,
+                'match_type': 'mlo_only',
+                'match_confidence': 0.0,
+                'projected_box': box,
+                'projected_confidence': 0.3,
+                'projection_method': 'geometric_simple'
+            })
+
+        return {
+            "status": "ok",
+            "summary": {
+                "total_lesions": len(lesions),
+                "paired": 0,
+                "projected": len(lesions),
+                "cc_only": len(cc_data.get('boxes', [])),
+                "mlo_only": len(mlo_data.get('boxes', []))
+            },
+            "lesions": lesions
+        }
+
+    def _display_dual_view_results(self, results: dict):
+        """نمایش نتایج Dual-View Projection در UI"""
+        self.set_processing_status("Dual View Complete", active=False)
+
+        if not results:
+            show_message("No dual-view results available.")
+            return
+
+        # ساخت متن خلاصه برای feature_view
+        summary_lines = ["═══ Dual-View Projection Results ═══\n"]
+
+        for lat, result in results.items():
+            if not isinstance(result, dict):
+                continue
+
+            summary = result.get('summary', {})
+            lesions = result.get('lesions', [])
+
+            summary_lines.append(f"▶ Laterality: {lat}")
+            summary_lines.append(f"  Total Lesions: {summary.get('total_lesions', 0)}")
+            summary_lines.append(f"  Paired (CC↔MLO): {summary.get('paired', 0)}")
+            summary_lines.append(f"  Projected: {summary.get('projected', 0)}")
+            summary_lines.append(f"  CC Only: {summary.get('cc_only', 0)}")
+            summary_lines.append(f"  MLO Only: {summary.get('mlo_only', 0)}")
+            summary_lines.append("")
+
+            for i, lesion in enumerate(lesions):
+                match_type = lesion.get('match_type', 'unknown')
+                cc_box = lesion.get('cc_box')
+                mlo_box = lesion.get('mlo_box')
+                projected_box = lesion.get('projected_box')
+                proj_conf = lesion.get('projected_confidence', 0)
+                proj_method = lesion.get('projection_method', '')
+
+                summary_lines.append(f"  Lesion #{i + 1} [{match_type}]:")
+
+                if cc_box:
+                    summary_lines.append(f"    CC:  [{cc_box[0]:.0f}, {cc_box[1]:.0f}, {cc_box[2]:.0f}, {cc_box[3]:.0f}]")
+                if mlo_box:
+                    summary_lines.append(f"    MLO: [{mlo_box[0]:.0f}, {mlo_box[1]:.0f}, {mlo_box[2]:.0f}, {mlo_box[3]:.0f}]")
+
+                if projected_box and match_type != 'paired':
+                    target_view = "MLO" if match_type == 'cc_only' else "CC"
+                    summary_lines.append(
+                        f"    ➜ Projected to {target_view}: "
+                        f"[{projected_box[0]:.0f}, {projected_box[1]:.0f}, "
+                        f"{projected_box[2]:.0f}, {projected_box[3]:.0f}]"
+                    )
+                    summary_lines.append(
+                        f"      Confidence: {proj_conf:.1%} ({proj_method})"
+                    )
+
+                summary_lines.append("")
+
+        # نمایش در feature_view
+        self.feature_view.setPlainText("\n".join(summary_lines))
+
+        # رسم باکس‌های projected روی viewer ها
+        self._draw_projected_boxes_on_viewers(results)
+
+    def _draw_projected_boxes_on_viewers(self, results: dict):
+        """رسم باکس‌های projected بر روی viewer های مربوطه"""
+        pw = getattr(self, 'patient_widget', None)
+        if pw is None:
+            return
+
+        nodes = getattr(pw, 'lst_nodes_viewer', []) or []
+
+        for node in nodes:
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is None:
+                continue
+
+            # تشخیص laterality و view_position
+            lat = getattr(vtk_widget, 'laterality', '') or ''
+            view_pos = getattr(vtk_widget, 'view_position', '') or ''
+
+            if not lat or not view_pos:
+                continue
+
+            lat = lat.upper()
+            view_pos = view_pos.upper()
+
+            # پیدا کردن نتایج مربوط به این viewer
+            lat_result = results.get(lat)
+            if not lat_result or not isinstance(lat_result, dict):
+                continue
+
+            lesions = lat_result.get('lesions', [])
+
+            for lesion in lesions:
+                projected_box = lesion.get('projected_box')
+                match_type = lesion.get('match_type', '')
+
+                if not projected_box:
+                    continue
+
+                # cc_only → projected box باید روی MLO نمایش داده شود
+                # mlo_only → projected box باید روی CC نمایش داده شود
+                should_draw = False
+                if match_type == 'cc_only' and view_pos == 'MLO':
+                    should_draw = True
+                elif match_type == 'mlo_only' and view_pos == 'CC':
+                    should_draw = True
+
+                if should_draw:
+                    self._draw_projected_box_on_widget(vtk_widget, projected_box)
+
+    def _draw_projected_box_on_widget(self, vtk_widget, box: list):
+        """رسم یک باکس projected (خط‌چین آبی) روی یک viewer widget"""
+        try:
+            # استفاده از BoxManager اگر در دسترس باشد
+            if hasattr(vtk_widget, 'add_overlay_box'):
+                vtk_widget.add_overlay_box(
+                    box, color=(0.2, 0.6, 1.0), opacity=0.7, dashed=True, label="Projected"
+                )
+                return
+
+            # Fallback: اگر VTK renderer در دسترس است
+            image_viewer = getattr(vtk_widget, 'image_viewer', None)
+            if image_viewer is None:
+                return
+
+            renderer = getattr(image_viewer, 'renderer', None)
+            if renderer is None:
+                return
+
+            import vtk
+
+            x1, y1, x2, y2 = box
+
+            # ایجاد خطوط مربع (projected box)
+            points = vtk.vtkPoints()
+            points.InsertNextPoint(x1, y1, 0)
+            points.InsertNextPoint(x2, y1, 0)
+            points.InsertNextPoint(x2, y2, 0)
+            points.InsertNextPoint(x1, y2, 0)
+
+            lines = vtk.vtkCellArray()
+            for i in range(4):
+                line = vtk.vtkLine()
+                line.GetPointIds().SetId(0, i)
+                line.GetPointIds().SetId(1, (i + 1) % 4)
+                lines.InsertNextCell(line)
+
+            polydata = vtk.vtkPolyData()
+            polydata.SetPoints(points)
+            polydata.SetLines(lines)
+
+            mapper = vtk.vtkPolyDataMapper2D()
+            coord = vtk.vtkCoordinate()
+            coord.SetCoordinateSystemToWorld()
+            mapper.SetTransformCoordinate(coord)
+            mapper.SetInputData(polydata)
+
+            actor = vtk.vtkActor2D()
+            actor.SetMapper(mapper)
+            actor.GetProperty().SetColor(0.2, 0.6, 1.0)  # آبی روشن
+            actor.GetProperty().SetLineWidth(2.0)
+            actor.GetProperty().SetLineStipplePattern(0xAAAA)  # خط‌چین
+            actor.GetProperty().SetLineStippleRepeatFactor(2)
+
+            renderer.AddActor2D(actor)
+
+            # ذخیره reference برای پاک کردن بعدی
+            if not hasattr(vtk_widget, '_projected_actors'):
+                vtk_widget._projected_actors = []
+            vtk_widget._projected_actors.append(actor)
+
+            # رندر مجدد
+            render_window = getattr(image_viewer, 'image_render_window', None)
+            if render_window:
+                render_window.Render()
+
+        except Exception as e:
+            print(f"[DualView] Failed to draw projected box: {e}")
+
+    def _show_dual_view_error(self, message: str):
+        """نمایش خطای Dual View"""
+        self.set_processing_status("Dual View Failed", active=False)
+        show_message(message)
 
     def home_layout(self):
         layout = QHBoxLayout()

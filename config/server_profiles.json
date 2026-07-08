@@ -2,7 +2,7 @@
   "schema_version": 1,
   "enabled": true,
   "primary_profile_id": "razi",
-  "active_profile_id": "razi",
+  "active_profile_id": "test",
   "profiles": [
     {
       "id": "razi",
@@ -43,6 +43,29 @@
         "ai_segmentation": "5.57.36.202:9000",
         "reception_api": "http://5.57.36.202:8800",
         "mammography": null,
+        "bonj": null
+      },
+      "status": {
+        "last_checked": null,
+        "reachable": null
+      }
+    },
+    {
+      "id": "test",
+      "display_name": "test",
+      "host": "80.210.31.214",
+      "socket_port": 50052,
+      "dicom_port": 104,
+      "ae_title": "aipacs",
+      "poor_connectivity": true,
+      "enabled": true,
+      "server_type": "ai_pacs",
+      "modules": {
+        "ai_breast": "80.210.31.214:8002",
+        "ai_boneage": "80.210.31.214:8003",
+        "ai_segmentation": "80.210.31.214:9000",
+        "reception_api": "http://80.210.31.214:8800",
+        "mammography": "80.210.31.214:8002",
         "bonj": null
       },
       "status": {
