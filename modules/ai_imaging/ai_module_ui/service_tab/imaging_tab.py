@@ -1745,8 +1745,9 @@ class ImagingToolsTab(AbstractTab):
                             best_nad_diff = nad_diff
                             best_j = j
 
-                    # آستانه: اختلاف NAD کمتر از 15% طول NAD
-                    threshold = max(cc_nad * 0.20, 100)
+                    # آستانه: اختلاف NAD کمتر از 30% طول NAD یا 200px
+                    # (مقدار بزرگتر انتخاب می‌شود تا lesion‌های واقعی pair شوند)
+                    threshold = max(max(cc_nad, mlo_nad) * 0.30, 200)
 
                     if best_j >= 0 and best_nad_diff < threshold:
                         used_mlo.add(best_j)
@@ -2037,55 +2038,37 @@ class ImagingToolsTab(AbstractTab):
 
     def _compute_nad(self, box: list, nipple: tuple, laterality: str, view: str) -> float:
         """
-        محاسبه Nipple-Anchor Distance (NAD).
+        محاسبه Nipple-Anchor Distance (NAD) — فاصله افقی مرکز ضایعه تا نیپل.
         
-        NAD = فاصله مرکز ضایعه تا نیپل در راستای عمود بر جدار سینه.
+        ═══ اصل فیزیکی ═══
         
-        اصل فیزیکی:
-        - در CC view: محور عمود بر chest wall = محور X (horizontal)
-        - در MLO view: محور عمود بر chest wall = محوری با زاویه ~45° نسبت به vertical
+        در نمایش استاندارد ماموگرافی (DICOM display):
+        - R breast: بافت سمت راست، chest wall = لبه راست تصویر
+        - L breast: بافت سمت چپ، chest wall = لبه چپ تصویر
+        
+        خط PNL (Posterior Nipple Line) در هر دو نما CC و MLO به صورت افقی
+        (عمود بر لبه chest wall) اندازه‌گیری می‌شود. فاصله نیپل تا ضایعه
+        در این محور افقی در هر دو نما تقریباً برابر است (قانون Kopans).
         
         ═══ فرمول ═══
         
-        CC view:
-            NAD_CC = |lesion_center_x - nipple_x|
-            (فاصله افقی از نیپل = عمق ضایعه در بافت)
+        CC view & MLO view (یکسان):
+            NAD = |lesion_center_x - nipple_x|
+            (فاصله افقی از نیپل = عمق ضایعه در بافت پستان)
         
-        MLO view (با زاویه oblique θ ≈ 45°):
-            NAD_MLO = distance along the axis perpendicular to chest wall
-            = |Δx · cos(θ) + Δy · sin(θ)|
-            
-            در عمل θ = 45° → cos(45°) = sin(45°) = 0.707
-            NAD_MLO = 0.707 · |Δx + Δy|  (projection روی محور oblique)
+        توضیح: در نمایش استاندارد، chest wall در لبه عمودی تصویر قرار دارد
+        (راست برای R، چپ برای L) و PNL افقی است — هم در CC و هم در MLO.
+        بعد عمودی (Y) در MLO نشان‌دهنده موقعیت superior-inferior است و
+        ارتباطی به عمق ضایعه ندارد.
         
         Returns:
             NAD distance in pixels
         """
         lesion_cx = (box[0] + box[2]) / 2.0
-        lesion_cy = (box[1] + box[3]) / 2.0
-        nipple_x, nipple_y = nipple
+        nipple_x = nipple[0]
 
-        if view == 'CC':
-            # CC: NAD = فاصله افقی مرکز ضایعه تا نیپل
-            # این مستقیماً عمق ضایعه در بافت پستان را نشان می‌دهد
-            nad = abs(lesion_cx - nipple_x)
-
-        else:  # MLO
-            # MLO: محور عمود بر chest wall با زاویه 45° است
-            # Projection مرکز ضایعه روی این محور
-            # θ = 45° (استاندارد MLO angle)
-            # NAD = |Δx·cos(θ) + Δy·sin(θ)|
-            import math
-            theta = math.radians(45)
-            dx = lesion_cx - nipple_x
-            dy = lesion_cy - nipple_y
-            # جهت بر اساس laterality
-            if laterality == 'R':
-                # R: chest wall سمت راست → عمق = فاصله به سمت چپ
-                nad = abs(dx * math.cos(theta) + dy * math.sin(theta))
-            else:
-                # L: chest wall سمت چپ → عمق = فاصله به سمت راست
-                nad = abs(-dx * math.cos(theta) + dy * math.sin(theta))
+        # NAD = فاصله افقی مرکز ضایعه تا نیپل (در هر دو نمای CC و MLO)
+        nad = abs(lesion_cx - nipple_x)
 
         return nad
 
@@ -2111,21 +2094,19 @@ class ImagingToolsTab(AbstractTab):
         
         CC → MLO:
             1. NAD = |lesion_x - nipple_x| (در CC)
-            2. در MLO: نقطه‌ای روی محور oblique (45°) با همان NAD از nipple_MLO
-            3. projected_x = nipple_mlo_x + NAD · cos(45°) · direction
-            4. projected_y = nipple_mlo_y + NAD · sin(45°)
+            2. در MLO: نقطه‌ای با همان NAD افقی از nipple_MLO
+            3. projected_x = nipple_mlo_x + NAD · direction
+            4. projected_y ≈ nipple_mlo_y + relative_offset
         
         MLO → CC:
-            1. NAD = oblique distance (در MLO)
+            1. NAD = |lesion_x - nipple_x| (در MLO)
             2. در CC: نقطه‌ای با همان NAD افقی از nipple_CC
             3. projected_x = nipple_cc_x + NAD · direction
-            4. projected_y ≈ nipple_cc_y (نامشخص، از Y نسبی استفاده می‌شود)
+            4. projected_y ≈ nipple_cc_y + relative_offset
         
         Returns:
             [x1, y1, x2, y2] projected box in target view
         """
-        import math
-
         x1, y1, x2, y2 = source_box
         box_w = x2 - x1
         box_h = y2 - y1
@@ -2135,52 +2116,43 @@ class ImagingToolsTab(AbstractTab):
         src_nip_x, src_nip_y = source_nipple
         tgt_nip_x, tgt_nip_y = target_nipple
 
-        theta = math.radians(45)  # MLO standard angle
-
         if source_view == 'CC' and target_view == 'MLO':
             # ── CC → MLO Projection ──
             # Step 1: NAD in CC = horizontal distance from nipple
             nad = abs(lesion_cx - src_nip_x)
 
-            # Step 2: Direction (medial/lateral relative to nipple)
+            # Step 2: Direction (depth direction relative to nipple)
             if laterality == 'R':
-                # R: lesion is to the right of nipple → depth direction positive
                 direction = 1 if lesion_cx > src_nip_x else -1
             else:
-                # L: lesion is to the left of nipple → depth direction positive
                 direction = -1 if lesion_cx < src_nip_x else 1
 
-            # Step 3: Project onto MLO oblique axis
-            # In MLO, the depth axis is at 45° from horizontal
-            proj_cx = tgt_nip_x + direction * nad * math.cos(theta)
-            proj_cy = tgt_nip_y + nad * math.sin(theta)
+            # Step 3: Project onto MLO — same horizontal NAD from MLO nipple
+            # (PNL is horizontal in standard display for both CC and MLO)
+            proj_cx = tgt_nip_x + direction * nad
 
-            # Step 4: اطلاعات Y نسبی (medial-lateral position in CC → sup-inf hint in MLO)
-            # در CC، Y position اطلاعات superior-inferior دارد
-            # این در MLO به shift عمودی ترجمه می‌شود
+            # Step 4: Y position in MLO is ambiguous from CC alone
+            # Use MLO nipple Y as anchor with a relative offset from CC
             y_relative = (lesion_cy - src_nip_y)
-            # اعمال shift (کوچک) بر Y در MLO
-            proj_cy += y_relative * 0.3  # 30% of CC vertical offset
+            proj_cy = tgt_nip_y + y_relative * 0.5
 
         elif source_view == 'MLO' and target_view == 'CC':
             # ── MLO → CC Projection ──
-            # Step 1: NAD in MLO = oblique distance from nipple
-            dx = lesion_cx - src_nip_x
-            dy = lesion_cy - src_nip_y
-            if laterality == 'R':
-                nad = abs(dx * math.cos(theta) + dy * math.sin(theta))
-                direction = 1 if (dx * math.cos(theta) + dy * math.sin(theta)) > 0 else -1
-            else:
-                nad = abs(-dx * math.cos(theta) + dy * math.sin(theta))
-                direction = -1 if (-dx * math.cos(theta) + dy * math.sin(theta)) > 0 else 1
+            # Step 1: NAD in MLO = horizontal distance from nipple
+            nad = abs(lesion_cx - src_nip_x)
 
-            # Step 2: Project onto CC horizontal axis
-            # In CC, depth = horizontal distance from nipple
+            # Step 2: Direction
+            if laterality == 'R':
+                direction = 1 if lesion_cx > src_nip_x else -1
+            else:
+                direction = -1 if lesion_cx < src_nip_x else 1
+
+            # Step 3: Project onto CC — same horizontal NAD from CC nipple
             proj_cx = tgt_nip_x + direction * nad
 
-            # Step 3: Y position in CC is ambiguous from MLO alone
-            # Use relative Y position with scaling
-            proj_cy = tgt_nip_y + (lesion_cy - src_nip_y) * 0.5
+            # Step 4: Y position in CC is ambiguous from MLO alone
+            # Use CC nipple Y as anchor with a relative offset
+            proj_cy = tgt_nip_y + (lesion_cy - src_nip_y) * 0.3
 
         else:
             # Fallback
@@ -2274,52 +2246,78 @@ class ImagingToolsTab(AbstractTab):
             print(f"[DualView] Drawing projected boxes failed (non-critical): {e}")
 
     def _draw_projected_boxes_on_viewers(self, results: dict, groups: dict = None):
-        """رسم باکس‌های projected بر روی viewer های مربوطه"""
+        """رسم باکس‌های projected بر روی viewer های مربوطه."""
         if not groups:
             print("[DualView] No groups data for drawing")
             return
 
-        # استفاده مستقیم از vtk_widgets ذخیره شده در groups
-        # (همان widgets که در collect با موفقیت شناسایی شدند)
-        vtk_widgets_info = []
         for lat, views in groups.items():
-            for view_pos, view_data in views.items():
-                vtk_widget = view_data.get('vtk_widget')
-                if vtk_widget is not None:
-                    vtk_widgets_info.append((vtk_widget, lat, view_pos))
-
-        print(f"[DualView] Drawing: found {len(vtk_widgets_info)} viewer widgets from groups")
-
-        if not vtk_widgets_info:
-            print("[DualView] No viewer widgets found for drawing")
-            return
-
-        for vtk_widget, lat, view_pos in vtk_widgets_info:
-
-            # پیدا کردن نتایج مربوط به این laterality
             lat_result = results.get(lat)
             if not lat_result or not isinstance(lat_result, dict):
                 continue
-
             lesions = lat_result.get('lesions', [])
 
-            for lesion in lesions:
-                projected_box = lesion.get('projected_box')
-                match_type = lesion.get('match_type', '')
-
-                if not projected_box:
+            for view_pos, view_data in views.items():
+                vtk_widget = view_data.get('vtk_widget')
+                if vtk_widget is None:
                     continue
 
-                # cc_only → projected box باید روی MLO نمایش داده شود
-                # mlo_only → projected box باید روی CC نمایش داده شود
-                should_draw = False
-                if match_type == 'cc_only' and view_pos == 'MLO':
-                    should_draw = True
-                elif match_type == 'mlo_only' and view_pos == 'CC':
-                    should_draw = True
+                own_boxes = view_data.get('boxes', []) or []
+                self._clear_projected_actors(vtk_widget)
 
-                if should_draw:
-                    self._draw_projected_box_on_widget(vtk_widget, projected_box)
+                if own_boxes:
+                    # نمای دارای باکس واقعی: فقط در صورت paired، آبی هایلایت شود
+                    # با لیبل match_confidence (نه score تشخیص)
+                    for lesion in lesions:
+                        if lesion.get('match_type') != 'paired':
+                            continue
+                        own_box = lesion.get('cc_box') if view_pos == 'CC' else lesion.get('mlo_box')
+                        if own_box:
+                            conf = lesion.get('match_confidence', 1.0)
+                            self._draw_projected_box_on_widget(
+                                vtk_widget, own_box,
+                                color=(0.1, 0.4, 1.0),
+                                confidence=conf,
+                            )
+                    continue
+
+                # نمای بدون باکس: رسم Projection با لیبل NAD confidence
+                for lesion in lesions:
+                    projected_box = lesion.get('projected_box')
+                    match_type = lesion.get('match_type', '')
+                    if not projected_box:
+                        continue
+                    should_draw = (
+                        (match_type == 'cc_only' and view_pos == 'MLO') or
+                        (match_type == 'mlo_only' and view_pos == 'CC')
+                    )
+                    if should_draw:
+                        conf = lesion.get('projected_confidence', 0.6)
+                        self._draw_projected_box_on_widget(
+                            vtk_widget, projected_box, confidence=conf
+                        )
+
+        print("[DualView] Drawing finished with own-box protection rule")
+
+
+    def _clear_projected_actors(self, vtk_widget):
+        """پاک کردن actor های projected کشیده‌شده در اجرای قبلی روی این widget."""
+        try:
+            image_viewer = getattr(vtk_widget, 'image_viewer', None)
+            actors = getattr(vtk_widget, '_projected_actors', None)
+            if image_viewer is not None and actors:
+                remove_fn = getattr(image_viewer, 'remove_actors', None) or getattr(image_viewer, 'remove_actor', None)
+                if remove_fn:
+                    for a in actors:
+                        try:
+                            remove_fn(a) if remove_fn.__name__ == 'remove_actor' else None
+                        except Exception:
+                            pass
+            vtk_widget._projected_actors = []
+        except Exception as e:
+            print(f"[DualView] Failed clearing previous projected actors: {e}")
+
+
 
     def _try_add_widget_info(self, vtk_widget, vtk_widgets_info: list):
         """تلاش برای خواندن laterality/view_position از metadata و افزودن به لیست"""
@@ -2335,30 +2333,28 @@ class ImagingToolsTab(AbstractTab):
         except Exception:
             pass
 
-    def _draw_projected_box_on_widget(self, vtk_widget, box: list):
-        """رسم یک باکس projected (رنگ آبی/فیروزه‌ای) روی یک viewer widget"""
+    def _draw_projected_box_on_widget(self, vtk_widget, box: list, color: tuple = (0.0, 0.9, 1.0),
+                                    confidence: float = 0.6):
+        """رسم یک باکس (projected یا تأییدشده) با لیبل میزان کانفیدنس NAD
+        (نه امتیاز تشخیص AI) روی viewer widget."""
         try:
             image_viewer = getattr(vtk_widget, 'image_viewer', None)
             if image_viewer is None:
                 print("[DualView] No image_viewer on widget")
                 return
 
-            # استفاده از draw_boxes_ijk (مثل باکس‌های detection اما با رنگ متفاوت)
-            # فرمت: [{'box': [x1, y1, x2, y2], 'score': float}, ...]
             x1, y1, x2, y2 = box
-            # score=0 → عدم نمایش score label
-            boxes_scores = [{'box': [x1, y1, x2, y2], 'score': 0.0}]
-
-            # رنگ فیروزه‌ای (cyan) برای تمایز از باکس‌های اصلی (سبز)
-            projected_color = (0.0, 0.9, 1.0)  # cyan/turquoise
+            # از فیلد 'score' برای نمایش confidence نیپل-انکر استفاده می‌کنیم
+            # (این عدد دیگر امتیاز تشخیص AI نیست، بلکه اطمینان تطبیق/پروجکشن NAD است)
+            boxes_scores = [{'box': [x1, y1, x2, y2], 'score': float(confidence)}]
 
             if hasattr(image_viewer, 'draw_boxes_ijk'):
                 lst_actors = image_viewer.draw_boxes_ijk(
-                    boxes_scores, color=projected_color, line_width=2.5
+                    boxes_scores, color=color, line_width=2.5
                 )
-                print(f"[DualView] Drew projected box via draw_boxes_ijk: {box}, actors={len(lst_actors) if lst_actors else 0}")
+                print(f"[DualView] Drew box (color={color}, NAD_confidence={confidence:.2f}) "
+                    f"via draw_boxes_ijk: {box}, actors={len(lst_actors) if lst_actors else 0}")
 
-                # ذخیره reference برای پاک کردن بعدی
                 if not hasattr(vtk_widget, '_projected_actors'):
                     vtk_widget._projected_actors = []
                 if lst_actors:
@@ -2367,9 +2363,10 @@ class ImagingToolsTab(AbstractTab):
                 print("[DualView] image_viewer has no draw_boxes_ijk method")
 
         except Exception as e:
-            print(f"[DualView] Failed to draw projected box: {e}")
+            print(f"[DualView] Failed to draw box: {e}")
             import traceback
             traceback.print_exc()
+            
 
     def _show_dual_view_error(self, message: str):
         """نمایش خطای Dual View"""
