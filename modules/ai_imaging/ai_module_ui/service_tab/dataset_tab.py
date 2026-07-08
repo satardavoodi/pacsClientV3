@@ -6,7 +6,9 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QHeaderView,
     QPushButton,
-    QLabel
+    QLabel,
+    QMenu,
+    QAbstractItemView,
 )
 from PySide6.QtCore import Qt
 from .abstract_tab import AbstractTab
@@ -132,6 +134,8 @@ class DataSetTableWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._columns = []
+        self._visible_columns = set()
         self._setup_ui()
 
     def _setup_ui(self):
@@ -141,19 +145,27 @@ class DataSetTableWidget(QWidget):
 
         self.table = QTableWidget()
         self.table.setColumnCount(0)
-        self._columns = []
 
         # Behavior
-        self.table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self.table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.table.setSelectionMode(QTableWidget.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setAlternatingRowColors(True)
         self.table.verticalHeader().setVisible(False)
+        self.table.setWordWrap(False)
+        self.table.setTextElideMode(Qt.ElideRight)
+        self.table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
 
         # Header
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionResizeMode(QHeaderView.Interactive)
         header.setHighlightSections(False)
+        header.setMinimumSectionSize(80)
+        header.setStretchLastSection(False)
+
+        # Force horizontal scrolling instead of squeezing columns.
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
         # Styling (aligned with patient_table_widget vibe)
         self.table.setStyleSheet("""
@@ -207,7 +219,16 @@ class DataSetTableWidget(QWidget):
 
     def set_rows(self, rows):
         self.clear()
+        previous_visible = set(self._visible_columns)
         self._columns = self._resolve_columns(rows)
+        if not previous_visible:
+            self._visible_columns = set(self._columns)
+        else:
+            # Keep user visibility choices for columns that still exist.
+            kept = {c for c in previous_visible if c in self._columns}
+            newly_added = [c for c in self._columns if c not in previous_visible]
+            self._visible_columns = kept.union(newly_added)
+
         self.table.setColumnCount(len(self._columns))
         self.table.setHorizontalHeaderLabels(self._columns)
 
@@ -217,6 +238,58 @@ class DataSetTableWidget(QWidget):
 
             for col_idx, col_name in enumerate(self._columns):
                 self._set_item(row, col_idx, row_data.get(col_name))
+
+        self._apply_visibility()
+        self._apply_readable_widths()
+
+    def get_all_columns(self):
+        return list(self._columns)
+
+    def get_visible_columns(self):
+        return [c for c in self._columns if c in self._visible_columns]
+
+    def set_visible_columns(self, columns):
+        self._visible_columns = {c for c in columns if c in self._columns}
+        if not self._visible_columns and self._columns:
+            # Keep at least one column visible.
+            self._visible_columns = {self._columns[0]}
+        self._apply_visibility()
+
+    def toggle_column_visibility(self, column_name, visible):
+        if column_name not in self._columns:
+            return
+        if visible:
+            self._visible_columns.add(column_name)
+        else:
+            if len(self._visible_columns) <= 1 and column_name in self._visible_columns:
+                return
+            self._visible_columns.discard(column_name)
+        self._apply_visibility()
+
+    def show_all_columns(self):
+        self._visible_columns = set(self._columns)
+        self._apply_visibility()
+
+    def _apply_visibility(self):
+        for idx, col in enumerate(self._columns):
+            self.table.setColumnHidden(idx, col not in self._visible_columns)
+
+    def _apply_readable_widths(self):
+        for idx, col in enumerate(self._columns):
+            if col not in self._visible_columns:
+                continue
+
+            low = col.lower()
+            if "uid" in low or "path" in low or "json" in low:
+                self.table.setColumnWidth(idx, 320)
+            elif "box" in low or "score" in low:
+                self.table.setColumnWidth(idx, 220)
+            elif "timestamp" in low or "time" in low:
+                self.table.setColumnWidth(idx, 180)
+            elif "patient" in low or "study" in low or "series" in low:
+                self.table.setColumnWidth(idx, 200)
+            else:
+                self.table.setColumnWidth(idx, 140)
 
     def _resolve_columns(self, rows):
         seen = set()
@@ -236,7 +309,7 @@ class DataSetTableWidget(QWidget):
 
     def _set_item(self, row, col, value):
         item = QTableWidgetItem("" if value is None else str(value))
-        item.setTextAlignment(Qt.AlignCenter)
+        item.setTextAlignment(Qt.AlignVCenter | Qt.AlignLeft)
         self.table.setItem(row, col, item)
 
 
@@ -319,6 +392,23 @@ class DataSetTab(AbstractTab):
         """)
         self.refresh_btn.clicked.connect(self.refresh)
         header_layout.addWidget(self.refresh_btn)
+
+        # Column visibility menu button
+        self.columns_btn = QPushButton("Columns")
+        self.columns_btn.setStyleSheet("""
+            QPushButton {
+                background: #1a202c;
+                border: 1px solid #2d3748;
+                padding: 8px 12px;
+                border-radius: 6px;
+                color: #f7fafc;
+                font-weight: bold;
+            }
+            QPushButton:hover { background: #2d3748; }
+            QPushButton:pressed { background: #0b1015; }
+        """)
+        self.columns_btn.clicked.connect(self._show_columns_menu)
+        header_layout.addWidget(self.columns_btn)
         
         layout.addLayout(header_layout)
         
@@ -446,7 +536,12 @@ class DataSetTab(AbstractTab):
         
         # Update status
         if rows:
-            self._update_status(f"Displaying {len(rows)} rows", "success")
+            visible_cols = len(self.dataset_table.get_visible_columns())
+            total_cols = len(self.dataset_table.get_all_columns())
+            self._update_status(
+                f"Displaying {len(rows)} rows | Columns: {visible_cols}/{total_cols}",
+                "success",
+            )
         else:
             self._update_status("No data to display", "warning")
 
@@ -515,6 +610,48 @@ class DataSetTab(AbstractTab):
             import traceback
             traceback.print_exc()
             self._update_status(f"Error loading data: {str(e)}", "error")
+
+    def _show_columns_menu(self):
+        columns = self.dataset_table.get_all_columns()
+        if not columns:
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background: #111827;
+                color: #f7fafc;
+                border: 1px solid #374151;
+            }
+            QMenu::item:selected {
+                background: #1f2937;
+            }
+        """)
+
+        all_action = menu.addAction("Show All Columns")
+        all_action.triggered.connect(self._show_all_columns)
+        menu.addSeparator()
+
+        visible = set(self.dataset_table.get_visible_columns())
+        for col in columns:
+            act = menu.addAction(col)
+            act.setCheckable(True)
+            act.setChecked(col in visible)
+            act.toggled.connect(lambda checked, c=col: self._toggle_column_from_menu(c, checked))
+
+        menu.exec(self.columns_btn.mapToGlobal(self.columns_btn.rect().bottomLeft()))
+
+    def _toggle_column_from_menu(self, column_name, checked):
+        self.dataset_table.toggle_column_visibility(column_name, checked)
+        visible_cols = len(self.dataset_table.get_visible_columns())
+        total_cols = len(self.dataset_table.get_all_columns())
+        self._update_status(f"Columns: {visible_cols}/{total_cols}", "info")
+
+    def _show_all_columns(self):
+        self.dataset_table.show_all_columns()
+        visible_cols = len(self.dataset_table.get_visible_columns())
+        total_cols = len(self.dataset_table.get_all_columns())
+        self._update_status(f"Columns reset: {visible_cols}/{total_cols}", "info")
     
     def _update_status(self, message: str, status_type: str = "info"):
         """Update status label with message and color based on type"""

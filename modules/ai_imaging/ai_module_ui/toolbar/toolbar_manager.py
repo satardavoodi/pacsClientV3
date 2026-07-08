@@ -89,3 +89,15 @@ class ToolBarManager:
     def turn_off_all_tools(self):
         self.check_and_deactivate_tools()
         # self.handle_buttons_checked()
+
+    def turn_off_all_tools_after_switch(self, target_widget=None):
+        """Compatibility hook used by shared viewer switch pipeline.
+
+        In AI module mode, only deactivate the active tool when the switched
+        target is the selected widget (or when no target is provided).
+        """
+        if target_widget is not None:
+            selected = getattr(self.patient_widget, 'selected_widget', None)
+            if selected is not None and selected is not target_widget:
+                return
+        self.turn_off_all_tools()
