@@ -1,0 +1,45 @@
+{
+  "schema": 1,
+  "checked_at": "2026-07-08T17:35:07",
+  "opengl": {
+    "ok": true,
+    "detail": "OpenGL 3.3",
+    "major": 3,
+    "minor": 3,
+    "renderer": "Gallium 0.4 on llvmpipe (LLVM 3.6, 256 bits)",
+    "vendor": "VMware, Inc."
+  },
+  "items": [
+    {
+      "key": "opengl",
+      "label": "OpenGL / GPU driver (3D & MPR rendering)",
+      "status": "ok",
+      "detail": "OpenGL 3.3 \u2014 Gallium 0.4 on llvmpipe (LLVM 3.6, 256 bits)"
+    },
+    {
+      "key": "cpu",
+      "label": "Processor (CPU)",
+      "status": "ok",
+      "detail": "12 logical cores"
+    },
+    {
+      "key": "ram",
+      "label": "Memory (RAM)",
+      "status": "ok",
+      "detail": "15.8 GB"
+    },
+    {
+      "key": "disk",
+      "label": "Free disk space (image storage)",
+      "status": "warning",
+      "detail": "22 GB free (50 GB recommended for the image cache)"
+    },
+    {
+      "key": "platform",
+      "label": "Process architecture",
+      "status": "ok",
+      "detail": "process AMD64 / host ?"
+    }
+  ],
+  "overall": "warning"
+}
