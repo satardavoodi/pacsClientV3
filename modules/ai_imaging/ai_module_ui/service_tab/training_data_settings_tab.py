@@ -256,10 +256,6 @@ class BoneAgeSettingsWidget(QWidget):
         self.spn_weight_decay.setValue(0.01)
         train_form.addRow("Weight Decay:", self.spn_weight_decay)
 
-        self.cmb_optimizer = QComboBox()
-        self.cmb_optimizer.addItems(["AdamW", "Adam", "SGD", "RAdam", "LAMB"])
-        train_form.addRow("Optimizer:", self.cmb_optimizer)
-
         self.cmb_scheduler = QComboBox()
         self.cmb_scheduler.addItems(["CosineAnnealing", "StepLR", "OneCycleLR", "ReduceOnPlateau"])
         train_form.addRow("LR Scheduler:", self.cmb_scheduler)
@@ -431,7 +427,6 @@ class BoneAgeSettingsWidget(QWidget):
             "batch_size": self.spn_batch.value(),
             "learning_rate": self.spn_lr.value(),
             "weight_decay": self.spn_weight_decay.value(),
-            "optimizer": self.cmb_optimizer.currentText(),
             "scheduler": self.cmb_scheduler.currentText(),
             "warmup_epochs": self.spn_warmup.value(),
             "use_clahe": self.chk_clahe.isChecked(),
@@ -532,10 +527,6 @@ class MammographySettingsWidget(QWidget):
         self.spn_det_wd.setSingleStep(0.0001)
         self.spn_det_wd.setValue(0.0005)
         det_form.addRow("Weight Decay:", self.spn_det_wd)
-
-        self.cmb_det_optimizer = QComboBox()
-        self.cmb_det_optimizer.addItems(["SGD", "AdamW", "Adam"])
-        det_form.addRow("Optimizer:", self.cmb_det_optimizer)
 
         self.spn_det_momentum = QDoubleSpinBox()
         self.spn_det_momentum.setRange(0.0, 0.99)
@@ -729,7 +720,6 @@ class MammographySettingsWidget(QWidget):
             "det_batch_size": self.spn_det_batch.value(),
             "det_lr": self.spn_det_lr.value(),
             "det_weight_decay": self.spn_det_wd.value(),
-            "det_optimizer": self.cmb_det_optimizer.currentText(),
             "det_momentum": self.spn_det_momentum.value(),
             "cls_model": self.cmb_cls_model.currentText(),
             "cls_n_estimators": self.spn_n_estimators.value(),

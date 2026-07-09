@@ -1,6 +1,7 @@
 {
-  "active_sort_col": 3,
+  "active_sort_col": 1,
   "sort_states": {
-    "3": 2
+    "3": 0,
+    "1": 2
   }
 }

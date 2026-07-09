@@ -7,7 +7,7 @@
     {
       "id": "razi",
       "display_name": "razi",
-      "host": "192.168.2.222",
+      "host": "81.16.117.196",
       "socket_port": 50052,
       "dicom_port": 105,
       "ae_title": "aipacs",
@@ -15,11 +15,11 @@
       "enabled": true,
       "server_type": "ai_pacs",
       "modules": {
-        "ai_breast": "192.168.2.222:8002",
-        "ai_boneage": "192.168.2.222:8003",
-        "ai_segmentation": "192.168.2.222:9000",
+        "ai_breast": "81.16.117.196:8002",
+        "ai_boneage": "81.16.117.196:8003",
+        "ai_segmentation": "81.16.117.196:9000",
         "reception_api": "http://81.16.117.196:8080",
-        "mammography": null,
+        "mammography": "81.16.117.196:8002",
         "bonj": null
       },
       "status": {

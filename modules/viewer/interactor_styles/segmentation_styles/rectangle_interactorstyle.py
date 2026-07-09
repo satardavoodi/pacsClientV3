@@ -3,7 +3,12 @@ from typing import List, Tuple
 from . import AbstractInteractorStyle
 from ..interactor_utils.server_connection import download_file, post_json
 from ..interactor_utils.convertors import (world_to_ijk_vtk, build_payload_ijk)
-from PacsClient.utils.config import server_config, SEGMENTS_PATH
+from PacsClient.utils.config import (
+    server_config,
+    SEGMENTS_PATH,
+    refresh_segmentation_server_config,
+    resolve_segmentation_server_ip,
+)
 
 class RectangleSegmentationInteractorStyle(AbstractInteractorStyle):
     """
@@ -17,7 +22,7 @@ class RectangleSegmentationInteractorStyle(AbstractInteractorStyle):
         super().__init__(image_viewer)
 
         # ---- تنظیمات سرور/کیس مثل پلیگان ----
-        self.server_config = server_config
+        self.server_config = refresh_segmentation_server_config(port=9000)
         self.set_server(self.server_config["SERVER_IP"], self.server_config["SERVER_PORT"])
         self.set_case(
             dicom_folder=self.server_config["DICOM_FOLDER"],
@@ -84,7 +89,7 @@ class RectangleSegmentationInteractorStyle(AbstractInteractorStyle):
             ip (str): Server IP or hostname.
             port (int, optional): Server port. Defaults to 9000.
         """
-        self.server_ip = ip
+        self.server_ip = str(ip or "").strip() or resolve_segmentation_server_ip()
         self.server_port = int(port)
 
 
@@ -152,7 +157,13 @@ class RectangleSegmentationInteractorStyle(AbstractInteractorStyle):
 
         # --- 4) ساخت payload و 5) ارسال ---
         payload = build_payload_ijk(self.server_config, ijk_list_3d)
-        url = f"http://{self.server_ip}:{self.server_port}/dicom-info/"
+        host = str(self.server_ip or "").strip() or resolve_segmentation_server_ip()
+        if not host:
+            print("[rect] send/download failed: segmentation server host is empty")
+            return
+
+        url = f"http://{host}:{self.server_port}/dicom-info/"
+        print(f"[rect] segmentation endpoint: host={host} port={self.server_port} url={url}")
 
         out_path = None
         try:
