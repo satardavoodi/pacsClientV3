@@ -20,7 +20,10 @@ class ToolBarManager:
             return
         try:
             if getattr(widget, 'current_style', None) is not None:
-                widget.current_style.Off()
+                if hasattr(widget.current_style, 'deactivate'):
+                    widget.current_style.deactivate()
+                else:
+                    widget.current_style.Off()
         except Exception:
             pass
         try:
@@ -97,7 +100,7 @@ class ToolBarManager:
         if self.tool_selected is None:
             selected_widget.set_new_interactorstyle(RulerInteractorStyle)
             if getattr(selected_widget, 'current_style', None) is not None:
-                selected_widget.current_style.On()
+                selected_widget.current_style.activate()
             self.tool_selected = self.tool_access.RULER
             self._active_tool_widget = selected_widget
 

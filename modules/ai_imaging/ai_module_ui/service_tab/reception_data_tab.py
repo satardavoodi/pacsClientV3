@@ -297,6 +297,23 @@ class ReceptionDataTab(QWidget):
         # Fetch data
 
         self.service.fetch_patient_data(pid)
+
+    def set_patient_id(self, patient_id, *, reset_if_changed: bool = True):
+        """
+        Update patient context for this tab.
+
+        When patient_id changes, reset fetch state so tab can load fresh data.
+        """
+        new_pid = str(patient_id).strip() if patient_id is not None else ""
+        old_pid = str(self.patient_id).strip() if self.patient_id is not None else ""
+        if new_pid == old_pid:
+            return
+
+        self.patient_id = new_pid or None
+        if reset_if_changed:
+            self.data_fetched = False
+            self.current_data = None
+            self._show_placeholder()
     
     def on_tab_activated(self):
         """Called when this tab becomes active."""
@@ -317,6 +334,7 @@ class ReceptionDataTab(QWidget):
         # Check if request was successful
         if not data.get("success"):
             error_msg = data.get("message", "Unknown error occurred")
+            self.data_fetched = False
 
             self._on_error(error_msg)
             return
@@ -325,6 +343,7 @@ class ReceptionDataTab(QWidget):
         patient_data = data.get("data")
 
         if not patient_data:
+            self.data_fetched = False
             self._on_error("No patient data found for this Patient ID")
             return
         
@@ -361,6 +380,8 @@ class ReceptionDataTab(QWidget):
         Args:
             error_message: The error message
         """
+
+        self.data_fetched = False
 
         # Clear content and show error
         self._clear_content()

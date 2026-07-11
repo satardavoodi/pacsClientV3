@@ -197,17 +197,17 @@ class CursorCorrelator3D:
         cc_view = views.get('CC')
         mlo_view = views.get('MLO')
 
-        # Build geometry for available views
-        cc_geom = self._build_geometry(cc_view) if cc_view else None
-        mlo_geom = self._build_geometry(mlo_view) if mlo_view else None
-
-        lat_result.cc_geometry = cc_geom
-        lat_result.mlo_geometry = mlo_geom
-
         # Extract pectoral angle from MLO view
         pectoral_angle_deg = None
         if mlo_view and mlo_view.dicom_path:
             pectoral_angle_deg = self._extract_pectoral_angle(mlo_view, laterality)
+
+        # Build geometry for available views
+        cc_geom = self._build_geometry(cc_view) if cc_view else None
+        mlo_geom = self._build_geometry(mlo_view, pectoral_angle_deg=pectoral_angle_deg) if mlo_view else None
+
+        lat_result.cc_geometry = cc_geom
+        lat_result.mlo_geometry = mlo_geom
 
         # Extract breast contours
         cc_contour = self._extract_breast_contour(cc_view) if cc_view else None
@@ -248,7 +248,11 @@ class CursorCorrelator3D:
 
         return lat_result
 
-    def _build_geometry(self, view: ViewData) -> Optional[MammogramGeometry]:
+    def _build_geometry(
+        self,
+        view: ViewData,
+        pectoral_angle_deg: Optional[float] = None,
+    ) -> Optional[MammogramGeometry]:
         """Build a MammogramGeometry from view data."""
         # Determine pixel spacing
         sp_x = view.pixel_spacing_x
@@ -300,6 +304,7 @@ class CursorCorrelator3D:
             chest_wall=chest_wall,
             laterality=view.laterality,
             view_position=view.view_position,
+            pectoral_angle_deg=pectoral_angle_deg if view.view_position == 'MLO' else None,
         )
 
     def _build_lesions(self, view: ViewData, geom: MammogramGeometry) -> List[LesionLocation]:

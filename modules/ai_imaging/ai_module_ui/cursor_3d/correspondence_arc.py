@@ -202,11 +202,16 @@ def compute_correspondence_arc(
         if 0 <= x < target_geom.image.width_px and 0 <= y < target_geom.image.height_px
     ]
 
-    # Step 6: Compute best guess point (geometric center of valid arc)
+    # Step 6: Compute best guess point from valid arc samples.
+    # Use centroid only as a guide, then snap to nearest arc point so the point
+    # always stays on the validated arc set.
     if arc_points_px:
         avg_x = sum(x for x, y in arc_points_px) / len(arc_points_px)
         avg_y = sum(y for x, y in arc_points_px) / len(arc_points_px)
-        best_point_px = (avg_x, avg_y)
+        best_point_px = min(
+            arc_points_px,
+            key=lambda p: (p[0] - avg_x) ** 2 + (p[1] - avg_y) ** 2,
+        )
         confidence = min(1.0, len(arc_points_px) / 50.0)  # More points = higher confidence
         message = f"Correspondence arc: {len(arc_points_px)} valid points at radius {distance_mm:.1f}mm"
     else:
@@ -275,9 +280,10 @@ def _compute_cc_to_mlo_arc_range(
         # Fallback: assume typical MLO pectoral angle (50°)
         theta_pec_rad = math.radians(50.0)
 
-    # The arc should roughly align with the pectoral angle direction
-    # Center angle = direction toward chest wall + pectoral angle
-    center_angle_rad = chest_wall_angle_rad + theta_pec_rad
+    # The arc should roughly align with the pectoral angle direction.
+    # In image coords (y-down), pectoral is at TOP of MLO image.
+    # Subtract theta so arc sweeps through upper quadrant (negative y).
+    center_angle_rad = chest_wall_angle_rad - theta_pec_rad
 
     # Angular span: allow ±(30° + margin) from the center
     span_rad = math.radians(30.0 + angle_margin_deg)

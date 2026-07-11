@@ -75,9 +75,9 @@ class NipplePickerController(QObject):
         if len(viewers) < 2:
             QMessageBox.warning(
                 self._get_parent_widget(),
-                "3D Cursor",
-                "برای استفاده از 3D Cursor باید هر دو ویو CC و MLO بارگذاری شده باشند.\n"
-                "لطفاً CC و MLO یک طرف (R یا L) را روی دو ویویر بارگذاری کنید."
+            "3D Cursor",
+            "To use the 3D Cursor, both CC and MLO views must be loaded.\n"
+            "Please load the CC and MLO views for the same breast (Right or Left) into the two viewers."
             )
             return
 

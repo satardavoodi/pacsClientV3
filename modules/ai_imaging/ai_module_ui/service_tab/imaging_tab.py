@@ -1278,6 +1278,8 @@ class ImagingToolsTab(AbstractTab):
             self._on_mg_ruler_clicked
         )
 
+        # Dual View feature removed by request.
+
         layout.addStretch()
         return bar
 
@@ -1438,6 +1440,14 @@ class ImagingToolsTab(AbstractTab):
         except Exception as e:
             print(f"[ImagingToolsTab] Failed to toggle ruler: {e}")
             show_message("Failed to toggle ruler tool.")
+
+    def _on_dual_view_clicked(self):
+        """Dual View feature removed."""
+        show_message("Dual View has been disabled.")
+
+    def _on_dual_view_closed(self):
+        """Called when dual view widget is closed."""
+        self.set_processing_status("Idle", active=False)
 
     def _on_nipples_picked(self, nipple1, nipple2):
         """Called when user has selected both nipple points."""

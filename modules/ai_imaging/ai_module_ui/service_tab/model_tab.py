@@ -39,7 +39,9 @@ class ModelTrainingTab(AbstractTab):
         # ── Training Data Settings (tabbed: BoneAge + Mammography) ──
         self._settings_widget = TrainingDataSettingsTab()
         self._settings_widget.training_requested.connect(self._on_training_requested)
-        center.addWidget(self._settings_widget, 0, Qt.AlignTop)
+        # Insert at index 0 so this tab starts from the top instead of being
+        # pushed down by the base class placeholder stretch layout.
+        center.insertWidget(0, self._settings_widget, 0, Qt.AlignTop)
 
     def _on_training_requested(self, settings: dict):
         """Handle training request from settings widget."""

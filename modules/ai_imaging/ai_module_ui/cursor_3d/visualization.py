@@ -13,7 +13,7 @@ All geometric computation is done in the correlator using millimeters.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Dict, Optional, Tuple
 
 from .correlator import Cursor3DResult, CursorMatch, LateralityResult, ViewData
 
@@ -57,7 +57,12 @@ def _draw_laterality_results(
     lat_result: LateralityResult,
     views_by_key: Dict[str, ViewData],
 ):
-    """Draw results for one laterality."""
+    """Draw results for one laterality.
+
+    RULE: If BOTH CC and MLO have detected lesions (i.e. all matches are 'paired'),
+    do NOT draw any 3D cursor visualization — the AI boxes already show the lesions
+    in both views and no projection is needed.
+    """
     cc_key = f"{laterality}_CC"
     mlo_key = f"{laterality}_MLO"
 
@@ -69,6 +74,14 @@ def _draw_laterality_results(
         _clear_projected_actors(cc_view.vtk_widget)
     if mlo_view and mlo_view.vtk_widget:
         _clear_projected_actors(mlo_view.vtk_widget)
+
+    # If ALL matches are paired (lesion found in both CC and MLO), skip 3D cursor entirely
+    if lat_result.cursor_matches and all(
+        m.match_type == 'paired' for m in lat_result.cursor_matches
+    ):
+        print(f"[3D-Cursor] Skipping visualization for {laterality}: "
+              f"lesions found in BOTH CC and MLO — no projection needed.")
+        return
 
     for match in lat_result.cursor_matches:
         if match.match_type == 'paired':
@@ -117,14 +130,11 @@ def _draw_projected_cursor(match: CursorMatch, views_by_key: Dict[str, ViewData]
 
 def _draw_projected_region(match: CursorMatch, views_by_key: Dict[str, ViewData], laterality: str):
     """
-    Draw a semi-transparent blue REGION overlay showing the probable lesion zone.
+    Draw a semi-transparent blue VERTICAL RECTANGLE overlay showing the probable
+    lesion zone at the nipple-distance from the nipple point.
 
-    With only CC and MLO views, exact point localization is geometrically impossible.
-    Instead, we draw the correspondence arc band — the zone where the lesion could
-    plausibly exist — as a filled semi-transparent blue overlay.
-
-    The region is a thick arc band (annulus sector) centered at the nipple position
-    with radius equal to the preserved depth from nipple.
+    The rectangle spans the full height of the image (top to bottom) and is centered
+    horizontally at the distance from the nipple where the lesion is projected.
     """
     if match.target_lesion is None and match.correspondence_arc is None:
         return
@@ -136,19 +146,23 @@ def _draw_projected_region(match: CursorMatch, views_by_key: Dict[str, ViewData]
         return
 
     arc = match.correspondence_arc
+    target_center_px = match.target_lesion.center_px if match.target_lesion is not None else None
     if arc and arc.arc_points_px and len(arc.arc_points_px) >= 2:
-        # Draw filled arc band region
-        _draw_arc_region_on_widget(
+        # Draw full-height rectangle at the nipple distance
+        _draw_distance_rectangle_on_widget(
             vtk_widget=target_view.vtk_widget,
             arc=arc,
-            band_width_mm=15.0,  # ±7.5mm band around the arc radius
+            band_width_mm=None,  # Use module default (wider clinical strip)
+            view_type=match.target_view,  # 'CC' or 'MLO' — controls tilt angle
+            target_center_px=target_center_px,
         )
     elif match.target_lesion is not None:
-        # Fallback: draw a large region box (wider than the point box)
-        _draw_region_box_on_widget(
+        # Fallback: draw a full-height rectangle at the target lesion x-position
+        _draw_distance_rectangle_fallback(
             vtk_widget=target_view.vtk_widget,
             center_px=match.target_lesion.center_px,
             radius_mm=match.depth_mm,
+            nipple_px=(arc.center_x_px, arc.center_y_px) if arc else match.target_lesion.center_px,
             pixel_spacing_x=target_view.pixel_spacing_x or 0.1,
             pixel_spacing_y=target_view.pixel_spacing_y or 0.1,
         )
@@ -387,6 +401,397 @@ def _draw_arc_region_on_widget(vtk_widget, arc, band_width_mm: float = 15.0):
 
     except Exception as e:
         print(f"[3D-Cursor] Failed to draw arc region: {e}")
+
+
+# ─── Full-Height Rectangle at Nipple Distance ───────────────────────────────
+
+RECT_COLOR = (0.1, 0.4, 1.0)         # Deep blue fill
+RECT_OPACITY = 0.18                   # Semi-transparent fill
+RECT_BORDER_COLOR = (0.3, 0.65, 1.0) # Bright blue border
+RECT_BORDER_OPACITY = 0.9
+RECT_HALO_COLOR = (0.4, 0.75, 1.0)   # Outer halo glow color
+RECT_HALO_OPACITY = 0.08             # Very subtle outer glow
+RECT_HALO_LAYERS = 3                  # Number of halo expansion layers
+RECT_HALO_EXPAND_PX = 12.0           # Pixels expansion per halo layer
+RECT_BAND_WIDTH_MM = 140.0           # Default rectangle width in mm (wider clinical strip)
+RECT_LONG_AXIS_ANGLE_DEG = 90.0      # Fixed rectangle long-axis angle (vertical)
+
+
+def _draw_distance_rectangle_on_widget(
+    vtk_widget,
+    arc,
+    band_width_mm: Optional[float] = None,
+    view_type: str = 'CC',
+    target_center_px: Optional[Tuple[float, float]] = None,
+):
+    """
+    Draw a full-span rectangle with halo glow at the nipple-distance.
+
+    The long axis of the rectangle is perpendicular to the nipple→target line
+    and the strip passes through the target point.
+
+    Args:
+        vtk_widget: The VTK widget to draw on.
+        arc: CorrespondenceArc with nipple center and radius info.
+        band_width_mm: Total width of the rectangle band in mm (default RECT_BAND_WIDTH_MM).
+        view_type: 'CC' or 'MLO' — MLO gets a tilted rectangle.
+    """
+    if band_width_mm is None:
+        band_width_mm = RECT_BAND_WIDTH_MM
+    try:
+        import vtk as _vtk
+    except ImportError:
+        return
+
+    try:
+        image_viewer = getattr(vtk_widget, 'image_viewer', None)
+        if image_viewer is None:
+            return
+
+        renderer = getattr(image_viewer, 'renderer', None)
+        if renderer is None:
+            return
+
+        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
+        if ijk_to_world is None:
+            return
+
+        import math
+
+        # Nipple position (center of distance measurement)
+        nipple_x = arc.center_x_px
+        nipple_y = arc.center_y_px
+
+        # Target point (projected lesion location).
+        # Prefer validated lesion center so the strip follows in-breast clamped output.
+        if target_center_px is not None:
+            target_x, target_y = target_center_px
+        elif arc.best_point_px:
+            target_x, target_y = arc.best_point_px
+        elif arc.arc_points_px and len(arc.arc_points_px) >= 2:
+            mid_idx = len(arc.arc_points_px) // 2
+            target_x, target_y = arc.arc_points_px[mid_idx]
+        else:
+            mid_angle = (arc.start_angle_rad + arc.end_angle_rad) / 2.0
+            target_x = nipple_x + arc.radius_px * math.cos(mid_angle)
+            target_y = nipple_y + arc.radius_px * math.sin(mid_angle)
+
+        # Get image dimensions
+        metadata = getattr(image_viewer, 'metadata', None)
+        img_height = 0
+        img_width = 0
+        if metadata:
+            instances = metadata.get('instances', [])
+            if instances:
+                first_inst = instances[0] if isinstance(instances, list) else {}
+                img_height = first_inst.get('rows', 0) or 0
+                img_width = first_inst.get('columns', 0) or 0
+            if not img_height:
+                series_meta = metadata.get('series', {})
+                img_height = series_meta.get('rows', 0) or 0
+                img_width = series_meta.get('columns', 0) or 0
+
+        # Fallback: try from VTK image data dimensions
+        if not img_height:
+            try:
+                vtk_data = image_viewer.GetInput()
+                if vtk_data:
+                    dims = vtk_data.GetDimensions()
+                    img_width = dims[0]
+                    img_height = dims[1]
+            except Exception:
+                pass
+
+        if img_height <= 0:
+            img_height = 4000  # Fallback for mammography
+
+        # Band half-width in pixels (from mm)
+        avg_spacing = arc.radius_px / max(arc.radius_mm, 1.0) if arc.radius_mm > 0 else 1.0
+        half_width_px = (band_width_mm / 2.0) * avg_spacing if avg_spacing > 0 else 30.0
+        half_width_px = max(30.0, half_width_px)  # Minimum visible width
+
+        # Use fixed vertical orientation (90°) for the long axis.
+        perp_angle = math.radians(RECT_LONG_AXIS_ANGLE_DEG)
+
+        # Build a strip centered on target, sized to approximate breast extent.
+        # Use image height (breast length in MLO) as the maximum span — not the
+        # full diagonal, which makes the rectangle unreasonably long.
+        breast_extent_px = float(img_height) if img_height > 0 else 3584.0
+        band_half_height = breast_extent_px / 2.0
+
+        cos_perp = math.cos(perp_angle)
+        sin_perp = math.sin(perp_angle)
+
+        # Center the strip at projected target
+        cx = target_x
+        cy = target_y
+
+        # Unit vectors
+        perp_ux = cos_perp
+        perp_uy = sin_perp
+        along_angle = perp_angle - math.pi / 2.0
+        along_ux = math.cos(along_angle)
+        along_uy = math.sin(along_angle)
+
+        corners_px = [
+            (cx - half_width_px * along_ux - band_half_height * perp_ux,
+             cy - half_width_px * along_uy - band_half_height * perp_uy),
+            (cx + half_width_px * along_ux - band_half_height * perp_ux,
+             cy + half_width_px * along_uy - band_half_height * perp_uy),
+            (cx + half_width_px * along_ux + band_half_height * perp_ux,
+             cy + half_width_px * along_uy + band_half_height * perp_uy),
+            (cx - half_width_px * along_ux + band_half_height * perp_ux,
+             cy - half_width_px * along_uy + band_half_height * perp_uy),
+        ]
+
+        vtk_points = _vtk.vtkPoints()
+        for px, py in corners_px:
+            world_pt = ijk_to_world(px, py, None, y_flip=True)
+            vtk_points.InsertNextPoint(world_pt)
+
+        polygon = _vtk.vtkPolygon()
+        polygon.GetPointIds().SetNumberOfIds(4)
+        for i in range(4):
+            polygon.GetPointIds().SetId(i, i)
+
+        cells = _vtk.vtkCellArray()
+        cells.InsertNextCell(polygon)
+
+        poly_data = _vtk.vtkPolyData()
+        poly_data.SetPoints(vtk_points)
+        poly_data.SetPolys(cells)
+
+        mapper = _vtk.vtkPolyDataMapper()
+        mapper.SetInputData(poly_data)
+
+        # Filled rectangle actor
+        rect_actor = _vtk.vtkActor()
+        rect_actor.SetMapper(mapper)
+        rect_actor.GetProperty().SetColor(*RECT_COLOR)
+        rect_actor.GetProperty().SetOpacity(RECT_OPACITY)
+        rect_actor.GetProperty().LightingOff()
+        renderer.AddActor(rect_actor)
+
+        all_actors = [rect_actor]
+
+        # ─── Halo glow layers (expanding outward) ───
+        for halo_idx in range(1, RECT_HALO_LAYERS + 1):
+            expand = RECT_HALO_EXPAND_PX * halo_idx
+            hw_px = half_width_px + expand
+            halo_corners = [
+                (cx - hw_px * along_ux - band_half_height * perp_ux,
+                 cy - hw_px * along_uy - band_half_height * perp_uy),
+                (cx + hw_px * along_ux - band_half_height * perp_ux,
+                 cy + hw_px * along_uy - band_half_height * perp_uy),
+                (cx + hw_px * along_ux + band_half_height * perp_ux,
+                 cy + hw_px * along_uy + band_half_height * perp_uy),
+                (cx - hw_px * along_ux + band_half_height * perp_ux,
+                 cy - hw_px * along_uy + band_half_height * perp_uy),
+            ]
+            halo_pts = _vtk.vtkPoints()
+            for hpx, hpy in halo_corners:
+                hw = ijk_to_world(hpx, hpy, None, y_flip=True)
+                halo_pts.InsertNextPoint(hw)
+
+            halo_polygon = _vtk.vtkPolygon()
+            halo_polygon.GetPointIds().SetNumberOfIds(4)
+            for i in range(4):
+                halo_polygon.GetPointIds().SetId(i, i)
+
+            halo_cells = _vtk.vtkCellArray()
+            halo_cells.InsertNextCell(halo_polygon)
+
+            halo_pd = _vtk.vtkPolyData()
+            halo_pd.SetPoints(halo_pts)
+            halo_pd.SetPolys(halo_cells)
+
+            halo_mapper = _vtk.vtkPolyDataMapper()
+            halo_mapper.SetInputData(halo_pd)
+
+            halo_actor = _vtk.vtkActor()
+            halo_actor.SetMapper(halo_mapper)
+            halo_actor.GetProperty().SetColor(*RECT_HALO_COLOR)
+            # Opacity decreases with each layer outward
+            layer_opacity = RECT_HALO_OPACITY / halo_idx
+            halo_actor.GetProperty().SetOpacity(layer_opacity)
+            halo_actor.GetProperty().LightingOff()
+            renderer.AddActor(halo_actor)
+            all_actors.append(halo_actor)
+
+        # Border rectangle (outline) with glow-style wider line
+        border_points = _vtk.vtkPoints()
+        for px, py in corners_px:
+            world_pt = ijk_to_world(px, py, None, y_flip=True)
+            border_points.InsertNextPoint(world_pt)
+        # Close the loop
+        world_pt = ijk_to_world(corners_px[0][0], corners_px[0][1], None, y_flip=True)
+        border_points.InsertNextPoint(world_pt)
+
+        border_line = _vtk.vtkPolyLine()
+        border_line.GetPointIds().SetNumberOfIds(5)
+        for i in range(5):
+            border_line.GetPointIds().SetId(i, i)
+
+        border_cells = _vtk.vtkCellArray()
+        border_cells.InsertNextCell(border_line)
+
+        border_poly = _vtk.vtkPolyData()
+        border_poly.SetPoints(border_points)
+        border_poly.SetLines(border_cells)
+
+        border_mapper = _vtk.vtkPolyDataMapper()
+        border_mapper.SetInputData(border_poly)
+
+        border_actor = _vtk.vtkActor()
+        border_actor.SetMapper(border_mapper)
+        border_actor.GetProperty().SetColor(*RECT_BORDER_COLOR)
+        border_actor.GetProperty().SetOpacity(RECT_BORDER_OPACITY)
+        border_actor.GetProperty().SetLineWidth(3.0)
+        border_actor.GetProperty().LightingOff()
+        renderer.AddActor(border_actor)
+        all_actors.append(border_actor)
+
+        # Track actors for cleanup and Show/Hide toggle
+        if not hasattr(vtk_widget, '_projected_actors'):
+            vtk_widget._projected_actors = []
+        vtk_widget._projected_actors.extend(all_actors)
+
+        if not hasattr(vtk_widget, '_3d_cursor_region_actors'):
+            vtk_widget._3d_cursor_region_actors = []
+        vtk_widget._3d_cursor_region_actors.extend(all_actors)
+
+        # Render
+        renderer.ResetCameraClippingRange()
+        rw = getattr(image_viewer, 'image_render_window', None) or \
+             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
+        if rw:
+            rw.Render()
+
+        print(f"[3D-Cursor][REGION] Drew perpendicular strip through target: "
+              f"target=({target_x:.0f},{target_y:.0f})px width={2*half_width_px:.0f}px "
+              f"span={2*band_half_height:.0f}px depth={arc.radius_mm:.1f}mm halo_layers={RECT_HALO_LAYERS}")
+
+    except Exception as e:
+        print(f"[3D-Cursor] Failed to draw distance rectangle: {e}")
+
+
+def _draw_distance_rectangle_fallback(
+    vtk_widget,
+    center_px: tuple,
+    radius_mm: float,
+    nipple_px: tuple,
+    pixel_spacing_x: float,
+    pixel_spacing_y: float,
+):
+    """
+    Fallback: Draw a full-height rectangle when no arc data is available.
+    Uses center_px as the target x-position for the rectangle.
+    """
+    try:
+        import vtk as _vtk
+    except ImportError:
+        return
+
+    try:
+        image_viewer = getattr(vtk_widget, 'image_viewer', None)
+        if image_viewer is None:
+            return
+
+        renderer = getattr(image_viewer, 'renderer', None)
+        if renderer is None:
+            return
+
+        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
+        if ijk_to_world is None:
+            return
+
+        # Get image height
+        img_height = 0
+        metadata = getattr(image_viewer, 'metadata', None)
+        if metadata:
+            instances = metadata.get('instances', [])
+            if instances:
+                first_inst = instances[0] if isinstance(instances, list) else {}
+                img_height = first_inst.get('rows', 0) or 0
+        if not img_height:
+            try:
+                vtk_data = image_viewer.GetInput()
+                if vtk_data:
+                    dims = vtk_data.GetDimensions()
+                    img_height = dims[1]
+            except Exception:
+                pass
+        if img_height <= 0:
+            img_height = 4000
+
+        cx, cy = center_px
+        avg_spacing = (pixel_spacing_x + pixel_spacing_y) / 2.0
+        half_width_px = (
+            max(30.0, (RECT_BAND_WIDTH_MM / 2.0) / avg_spacing)
+            if avg_spacing > 0 else 30.0
+        )
+
+        # Rectangle at the target x-position, full image height
+        x_left = cx - half_width_px
+        x_right = cx + half_width_px
+        y_top = 0.0
+        y_bottom = float(img_height)
+
+        corners_px = [
+            (x_left, y_top),
+            (x_right, y_top),
+            (x_right, y_bottom),
+            (x_left, y_bottom),
+        ]
+
+        vtk_points = _vtk.vtkPoints()
+        for px, py in corners_px:
+            world_pt = ijk_to_world(px, py, None, y_flip=True)
+            vtk_points.InsertNextPoint(world_pt)
+
+        polygon = _vtk.vtkPolygon()
+        polygon.GetPointIds().SetNumberOfIds(4)
+        for i in range(4):
+            polygon.GetPointIds().SetId(i, i)
+
+        cells = _vtk.vtkCellArray()
+        cells.InsertNextCell(polygon)
+
+        poly_data = _vtk.vtkPolyData()
+        poly_data.SetPoints(vtk_points)
+        poly_data.SetPolys(cells)
+
+        mapper = _vtk.vtkPolyDataMapper()
+        mapper.SetInputData(poly_data)
+
+        rect_actor = _vtk.vtkActor()
+        rect_actor.SetMapper(mapper)
+        rect_actor.GetProperty().SetColor(*RECT_COLOR)
+        rect_actor.GetProperty().SetOpacity(RECT_OPACITY)
+        rect_actor.GetProperty().LightingOff()
+        renderer.AddActor(rect_actor)
+
+        # Track actors
+        if not hasattr(vtk_widget, '_projected_actors'):
+            vtk_widget._projected_actors = []
+        vtk_widget._projected_actors.append(rect_actor)
+
+        if not hasattr(vtk_widget, '_3d_cursor_region_actors'):
+            vtk_widget._3d_cursor_region_actors = []
+        vtk_widget._3d_cursor_region_actors.append(rect_actor)
+
+        # Render
+        renderer.ResetCameraClippingRange()
+        rw = getattr(image_viewer, 'image_render_window', None) or \
+             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
+        if rw:
+            rw.Render()
+
+        print(f"[3D-Cursor][REGION] Drew full-height rectangle (fallback): "
+              f"center=({cx:.0f},{cy:.0f}) width={2*half_width_px:.0f}px height={img_height}px")
+
+    except Exception as e:
+        print(f"[3D-Cursor] Failed to draw distance rectangle (fallback): {e}")
 
 
 def _draw_region_box_on_widget(

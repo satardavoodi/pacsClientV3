@@ -138,6 +138,35 @@ class MammogramGeometry:
     chest_wall: ChestWallOrientation
     laterality: str  # 'R' or 'L'
     view_position: str  # 'CC' or 'MLO'
+    pectoral_angle_deg: Optional[float] = None  # Angle from vertical in MLO
+
+    def _depth_normal_unit_vector(self) -> Tuple[float, float]:
+        """
+        Unit vector (nx, ny) for the depth direction (perpendicular to chest wall).
+
+        For CC this remains horizontal toward chest wall.
+        For MLO, if pectoral angle is available, the depth normal tilts by that angle.
+        """
+        # Base normal: horizontal toward chest wall.
+        if self.chest_wall == ChestWallOrientation.RIGHT:
+            base_angle = 0.0
+            side_sign = 1.0
+        else:
+            base_angle = math.pi
+            side_sign = -1.0
+
+        # MLO depth is measured along the normal to oblique chest wall.
+        if self.view_position == 'MLO' and self.pectoral_angle_deg is not None:
+            tilt = math.radians(float(self.pectoral_angle_deg))
+            # In image coords y-down, pectoral muscle is at TOP of MLO.
+            # Depth goes UPWARD (negative y) toward chest wall.
+            # R-MLO: angle = 0 - 60° = -60° → (0.5, -0.866) = up-right ✓
+            # L-MLO: angle = π + 60° → (-0.5, -0.866) = up-left ✓
+            angle = base_angle - side_sign * tilt
+        else:
+            angle = base_angle
+
+        return (math.cos(angle), math.sin(angle))
 
     def compute_lesion_depth_mm(self, lesion: LesionLocation) -> float:
         """
@@ -154,9 +183,15 @@ class MammogramGeometry:
         Returns:
             Depth in millimeters (always >= 0).
         """
-        lesion_cx_mm = lesion.center_mm[0]
+        lesion_cx_mm, lesion_cy_mm = lesion.center_mm
         nipple_x_mm = self.nipple.x_mm
-        return abs(lesion_cx_mm - nipple_x_mm)
+        nipple_y_mm = self.nipple.y_mm
+        nx, ny = self._depth_normal_unit_vector()
+
+        dx = lesion_cx_mm - nipple_x_mm
+        dy = lesion_cy_mm - nipple_y_mm
+        # Perpendicular distance to chest wall line through nipple.
+        return abs(dx * nx + dy * ny)
 
     def compute_lesion_height_mm(self, lesion: LesionLocation) -> float:
         """
@@ -189,12 +224,39 @@ class MammogramGeometry:
 
         Used for out-of-field validation.
         """
-        if self.chest_wall == ChestWallOrientation.RIGHT:
-            # Chest wall on right edge → max depth = right_edge_mm - nipple_x_mm
-            return self.image.width_mm - self.nipple.x_mm
-        else:
-            # Chest wall on left edge → max depth = nipple_x_mm - left_edge_mm
-            return self.nipple.x_mm
+        nx, ny = self._depth_normal_unit_vector()
+        candidates = []
+
+        # Intersect with vertical image borders in mm-space.
+        if abs(nx) > 1e-8:
+            if nx > 0:
+                tx = (self.image.width_mm - self.nipple.x_mm) / nx
+            else:
+                tx = (0.0 - self.nipple.x_mm) / nx
+            if tx >= 0:
+                candidates.append(tx)
+
+        # Intersect with horizontal image borders in mm-space.
+        if abs(ny) > 1e-8:
+            if ny > 0:
+                ty = (self.image.height_mm - self.nipple.y_mm) / ny
+            else:
+                ty = (0.0 - self.nipple.y_mm) / ny
+            if ty >= 0:
+                candidates.append(ty)
+
+        if not candidates:
+            return 0.0
+        return max(0.0, min(candidates))
+
+    def project_depth_to_pixel(self, depth_mm: float) -> Tuple[float, float]:
+        """
+        Project a depth from nipple along depth-normal direction into pixel space.
+        """
+        nx, ny = self._depth_normal_unit_vector()
+        x_mm = self.nipple.x_mm + nx * depth_mm
+        y_mm = self.nipple.y_mm + ny * depth_mm
+        return self.image.mm_to_px(x_mm, y_mm)
 
     def project_depth_to_pixel_x(self, depth_mm: float) -> float:
         """
@@ -206,9 +268,7 @@ class MammogramGeometry:
         Returns:
             x coordinate in pixels.
         """
-        direction = self.depth_direction_sign()
-        x_mm = self.nipple.x_mm + direction * depth_mm
-        x_px = x_mm / self.image.pixel_spacing.x
+        x_px, _ = self.project_depth_to_pixel(depth_mm)
         return x_px
 
     def is_depth_within_field(self, depth_mm: float) -> bool:
