@@ -1,4 +1,4 @@
-import ast
+﻿import ast
 import csv
 import math
 import json
@@ -29,7 +29,7 @@ from modules.ai_imaging.ai_module_ui.mg_csv_schema import infer_mg_csv_contract,
 # ------------------------------ Custom Events ------------------------------
 
 class _BoneAgeLoadedEvent(QEvent):
-    """رویداد سفارشی برای انتقال داده‌های بارگذاری شده از ترد پس‌زمینه به ترد اصلی"""
+    """Ø±ÙˆÛŒØ¯Ø§Ø¯ Ø³ÙØ§Ø±Ø´ÛŒ Ø¨Ø±Ø§ÛŒ Ø§Ù†ØªÙ‚Ø§Ù„ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø´Ø¯Ù‡ Ø§Ø² ØªØ±Ø¯ Ù¾Ø³â€ŒØ²Ù…ÛŒÙ†Ù‡ Ø¨Ù‡ ØªØ±Ø¯ Ø§ØµÙ„ÛŒ"""
     EVENT_TYPE = QEvent.Type(QEvent.registerEventType())
     
     def __init__(self, data: dict):
@@ -38,6 +38,36 @@ class _BoneAgeLoadedEvent(QEvent):
 
 
 # ------------------------------ Box helpers ------------------------------
+
+def _read_dicom_pixel_geometry(dicom_path: str) -> dict:
+    """
+    Read actual image dimensions and pixel spacing from a DICOM file.
+    Returns dict with 'img_width', 'img_height', 'pixel_spacing_x', 'pixel_spacing_y'.
+    All measurements should use these values instead of hardcoded defaults.
+    """
+    result = {'img_width': None, 'img_height': None,
+              'pixel_spacing_x': None, 'pixel_spacing_y': None}
+    if not dicom_path or not os.path.isfile(str(dicom_path)):
+        return result
+    try:
+        import pydicom
+        ds = pydicom.dcmread(str(dicom_path), stop_before_pixels=True, force=True)
+        cols = getattr(ds, 'Columns', None)
+        rows = getattr(ds, 'Rows', None)
+        if cols is not None:
+            result['img_width'] = int(cols)
+        if rows is not None:
+            result['img_height'] = int(rows)
+        # ImagerPixelSpacing is more accurate for mammography (detector spacing)
+        # PixelSpacing is the fallback
+        spacing = getattr(ds, 'ImagerPixelSpacing', None) or getattr(ds, 'PixelSpacing', None)
+        if spacing is not None and len(spacing) >= 2:
+            result['pixel_spacing_y'] = float(spacing[0])  # row spacing
+            result['pixel_spacing_x'] = float(spacing[1])  # col spacing
+    except Exception:
+        pass
+    return result
+
 
 def _parse_box_cell(val):
     if val is None or (isinstance(val, float) and math.isnan(val)):
@@ -51,7 +81,7 @@ def _parse_box_cell(val):
         data = ast.literal_eval(s)
     except Exception:
         return []
-    # نرمال‌سازی: همیشه list[list[float]]
+    # Ù†Ø±Ù…Ø§Ù„â€ŒØ³Ø§Ø²ÛŒ: Ù‡Ù…ÛŒØ´Ù‡ list[list[float]]
     if isinstance(data, (list, tuple)) and len(data) == 4:
         return [list(map(float, data))]
     if isinstance(data, (list, tuple)) and all(isinstance(x, (list, tuple)) and len(x) == 4 for x in data):
@@ -87,7 +117,7 @@ def _remove_if_exists(boxes, cand, tol=1e-4):
 def update_csv(csv_path: str, row, *, status: bool, corner_ijk_points):
     df = read_csv_table(csv_path)
 
-    # پیدا کردن ردیف هدف (بهتره با dicom_full_path)
+    # Ù¾ÛŒØ¯Ø§ Ú©Ø±Ø¯Ù† Ø±Ø¯ÛŒÙ Ù‡Ø¯Ù (Ø¨Ù‡ØªØ±Ù‡ Ø¨Ø§ dicom_full_path)
     target_idx = None
     if "dicom_full_path" in row.columns:
         key = str(row["dicom_full_path"].iloc[0])
@@ -95,16 +125,16 @@ def update_csv(csv_path: str, row, *, status: bool, corner_ijk_points):
         if hit:
             target_idx = hit[0]
     if target_idx is None:
-        raise ValueError("ردیف هدف پیدا نشد؛ dicom_full_path لازم است.")
+        raise ValueError("Ø±Ø¯ÛŒÙ Ù‡Ø¯Ù Ù¾ÛŒØ¯Ø§ Ù†Ø´Ø¯Ø› dicom_full_path Ù„Ø§Ø²Ù… Ø§Ø³Øª.")
 
-    # تضمین ستون‌ها + dtype object
+    # ØªØ¶Ù…ÛŒÙ† Ø³ØªÙˆÙ†â€ŒÙ‡Ø§ + dtype object
     for col in ("box", "new_box", "removed"):
         if col not in df.columns:
             df[col] = ""
         if getattr(df[col], "dtype", object) != object:
             df[col] = df[col].astype(object)
 
-    # پارس ستون‌ها
+    # Ù¾Ø§Ø±Ø³ Ø³ØªÙˆÙ†â€ŒÙ‡Ø§
     boxes = _parse_box_cell(df.at[target_idx, "box"])
     new_boxes = _parse_box_cell(df.at[target_idx, "new_box"])
     removed = _parse_box_cell(df.at[target_idx, "removed"])
@@ -115,10 +145,10 @@ def update_csv(csv_path: str, row, *, status: bool, corner_ijk_points):
     in_new = _contains(new_boxes, cand)
     in_rem = _contains(removed, cand)
 
-    if status:  # True (Abnormal) --> اگر در box و new_box نبود، به new_box اضافه
+    if status:  # True (Abnormal) --> Ø§Ú¯Ø± Ø¯Ø± box Ùˆ new_box Ù†Ø¨ÙˆØ¯ØŒ Ø¨Ù‡ new_box Ø§Ø¶Ø§ÙÙ‡
         if not in_box and not in_new:
             _append_unique(new_boxes, cand)
-            _remove_if_exists(removed, cand)  # حذف از removed در صورت وجود
+            _remove_if_exists(removed, cand)  # Ø­Ø°Ù Ø§Ø² removed Ø¯Ø± ØµÙˆØ±Øª ÙˆØ¬ÙˆØ¯
     else:
         # False (Normal)
         if in_new:
@@ -130,7 +160,7 @@ def update_csv(csv_path: str, row, *, status: bool, corner_ijk_points):
         else:
             pass
 
-    # نوشتن به CSV (به صورت رشته)
+    # Ù†ÙˆØ´ØªÙ† Ø¨Ù‡ CSV (Ø¨Ù‡ ØµÙˆØ±Øª Ø±Ø´ØªÙ‡)
     df.at[target_idx, "new_box"] = str(new_boxes) if new_boxes else ""
     df.at[target_idx, "removed"] = str(removed) if removed else ""
 
@@ -264,7 +294,7 @@ class DXSidebar(BaseSidebar):
 
             self.feature_list.clear()
 
-            # نمایش اطلاعات bone age
+            # Ù†Ù…Ø§ÛŒØ´ Ø§Ø·Ù„Ø§Ø¹Ø§Øª bone age
             years = data.get("bone_age_years")
             if years is None:
                 years = data.get("predicted_bone_age_years")
@@ -335,7 +365,7 @@ class DXSidebar(BaseSidebar):
 # ------------------------------ Multi-select Combo ------------------------------
 
 class CheckComboBox(QComboBox):
-    """QComboBox با آیتم‌های چک‌باکسی (multi-select) و نمایش خلاصه انتخاب‌ها در خطِ ویرایش."""
+    """QComboBox Ø¨Ø§ Ø¢ÛŒØªÙ…â€ŒÙ‡Ø§ÛŒ Ú†Ú©â€ŒØ¨Ø§Ú©Ø³ÛŒ (multi-select) Ùˆ Ù†Ù…Ø§ÛŒØ´ Ø®Ù„Ø§ØµÙ‡ Ø§Ù†ØªØ®Ø§Ø¨â€ŒÙ‡Ø§ Ø¯Ø± Ø®Ø·Ù ÙˆÛŒØ±Ø§ÛŒØ´."""
     selectionChanged = Signal(list)  # emits list[str] of selected texts
 
     def __init__(self, parent=None, placeholder="Select..."):
@@ -344,13 +374,13 @@ class CheckComboBox(QComboBox):
         self.setView(QListView(self))
         self.view().pressed.connect(self._on_item_pressed)
 
-        # نمایش متن داخل خود کامبو (فقط خواندنی)
+        # Ù†Ù…Ø§ÛŒØ´ Ù…ØªÙ† Ø¯Ø§Ø®Ù„ Ø®ÙˆØ¯ Ú©Ø§Ù…Ø¨Ùˆ (ÙÙ‚Ø· Ø®ÙˆØ§Ù†Ø¯Ù†ÛŒ)
         self.setEditable(True)
         self.lineEdit().setReadOnly(True)
         self.lineEdit().setPlaceholderText(placeholder)
         self.setInsertPolicy(QComboBox.NoInsert)
 
-        # تلاش برای باز نگه داشتن پاپ‌آپ هنگام تیک‌زدن‌های پیاپی
+        # ØªÙ„Ø§Ø´ Ø¨Ø±Ø§ÛŒ Ø¨Ø§Ø² Ù†Ú¯Ù‡ Ø¯Ø§Ø´ØªÙ† Ù¾Ø§Ù¾â€ŒØ¢Ù¾ Ù‡Ù†Ú¯Ø§Ù… ØªÛŒÚ©â€ŒØ²Ø¯Ù†â€ŒÙ‡Ø§ÛŒ Ù¾ÛŒØ§Ù¾ÛŒ
         self._keep_open = True
 
     # --- API ---
@@ -555,7 +585,7 @@ class ImagingToolsTab(AbstractTab):
         self._sidebar_store: dict[str, dict] = {}
         self.vtk_initialized = False
         self.current_sidebar = None
-        self.mg_runs_loaded = False  # فلگ جدید برای مدیریت بارگذاری MG runs
+        self.mg_runs_loaded = False  # ÙÙ„Ú¯ Ø¬Ø¯ÛŒØ¯ Ø¨Ø±Ø§ÛŒ Ù…Ø¯ÛŒØ±ÛŒØª Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ MG runs
 
         # ---- init MG widgets FIRST (important)
         self._init_mg_widgets()
@@ -641,7 +671,7 @@ class ImagingToolsTab(AbstractTab):
             self.processing_bar.hide()
 
     def _remove_patient_widget_buttons(self):
-        """حذف دکمه‌های غیرضروری از patient_widget"""
+        """Ø­Ø°Ù Ø¯Ú©Ù…Ù‡â€ŒÙ‡Ø§ÛŒ ØºÛŒØ±Ø¶Ø±ÙˆØ±ÛŒ Ø§Ø² patient_widget"""
         if hasattr(self.patient_widget, 'btn_series'):
             self.patient_widget.sidebar.layout().removeWidget(self.patient_widget.btn_series)
             self.patient_widget.btn_series.setParent(None)
@@ -667,7 +697,7 @@ class ImagingToolsTab(AbstractTab):
                 self.patient_widget.container_layout.setContentsMargins(0, 0, 0, 0)
 
     def _post_init_setup(self):
-        """اجرای عملیات سنگین پس از نمایش UI اولیه"""
+        """Ø§Ø¬Ø±Ø§ÛŒ Ø¹Ù…Ù„ÛŒØ§Øª Ø³Ù†Ú¯ÛŒÙ† Ù¾Ø³ Ø§Ø² Ù†Ù…Ø§ÛŒØ´ UI Ø§ÙˆÙ„ÛŒÙ‡"""
         # Patient widget is already visible, just finalize setup
         QTimer.singleShot(100, self._finalize_loading)
         
@@ -677,15 +707,15 @@ class ImagingToolsTab(AbstractTab):
         QApplication.processEvents()
         QApplication.processEvents()
         
-        # فعال‌سازی tab پیش‌فرض (فقط button style، بدون switch برای جلوگیری از لودینگ دوباره)
+        # ÙØ¹Ø§Ù„â€ŒØ³Ø§Ø²ÛŒ tab Ù¾ÛŒØ´â€ŒÙØ±Ø¶ (ÙÙ‚Ø· button styleØŒ Ø¨Ø¯ÙˆÙ† switch Ø¨Ø±Ø§ÛŒ Ø¬Ù„ÙˆÚ¯ÛŒØ±ÛŒ Ø§Ø² Ù„ÙˆØ¯ÛŒÙ†Ú¯ Ø¯ÙˆØ¨Ø§Ø±Ù‡)
         if hasattr(self.patient_widget, 'btn_ai_module'):
             self.patient_widget.btn_ai_module.setChecked(True)
             # Don't call switch_right_panel here - it's already called and causes double loading
         
-        # بارگذاری سایدبار
+        # Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø³Ø§ÛŒØ¯Ø¨Ø§Ø±
         QTimer.singleShot(150, self.left_sidebar_layout_ui)
         
-        # بارگذاری داده‌های bone age
+        # Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ bone age
         QTimer.singleShot(200, self._load_bone_age_feature_if_exists)
 
         # Ensure the AI patient widget is treated as active in this window
@@ -818,7 +848,7 @@ class ImagingToolsTab(AbstractTab):
         self.reject_finding_btn = QPushButton("Reject")
         self.edit_finding_btn = QPushButton("Correct / Edit")
 
-        # پایه‌ی classification (اگر بعداً override شد مشکلی نیست)
+        # Ù¾Ø§ÛŒÙ‡â€ŒÛŒ classification (Ø§Ú¯Ø± Ø¨Ø¹Ø¯Ø§Ù‹ override Ø´Ø¯ Ù…Ø´Ú©Ù„ÛŒ Ù†ÛŒØ³Øª)
         base_classes = [
             "No Finding",
             "Mass",
@@ -835,7 +865,7 @@ class ImagingToolsTab(AbstractTab):
         self.edit_finding_btn.clicked.connect(lambda: self._open_mg_finding_editor("corrected"))
 
     def _load_mg_runs_into_dropdown(self):
-        """بارگذاری داده‌های MG به صورت امن"""
+        """Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ MG Ø¨Ù‡ ØµÙˆØ±Øª Ø§Ù…Ù†"""
         if not self.mg_runs_combo:
             return
             
@@ -972,7 +1002,7 @@ class ImagingToolsTab(AbstractTab):
 
     def _load_bone_age_feature_if_exists(self):
         """
-        بارگذاری داده‌های bone age به صورت غیرهمزمان
+        Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ bone age Ø¨Ù‡ ØµÙˆØ±Øª ØºÛŒØ±Ù‡Ù…Ø²Ù…Ø§Ù†
         """
         if not self.study_uid:
             QTimer.singleShot(0, lambda: self._update_bone_age_ui({}))
@@ -980,13 +1010,13 @@ class ImagingToolsTab(AbstractTab):
 
         json_path = ATTACHMENT_PATH / self.study_uid / "bone_age.json"
         
-        # تنظیم حالت لودینگ در UI
+        # ØªÙ†Ø¸ÛŒÙ… Ø­Ø§Ù„Øª Ù„ÙˆØ¯ÛŒÙ†Ú¯ Ø¯Ø± UI
         if hasattr(self, "feature_view") and self.feature_view is not None:
             self.feature_view.setPlaceholderText("Loading bone age data...")
             self.feature_view.clear()
             self.feature_view.setEnabled(False)
         
-        # اجرای بارگذاری در ترد جداگانه
+        # Ø§Ø¬Ø±Ø§ÛŒ Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø± ØªØ±Ø¯ Ø¬Ø¯Ø§Ú¯Ø§Ù†Ù‡
         threading.Thread(
             target=self._load_bone_json_async,
             args=(json_path,),
@@ -994,7 +1024,7 @@ class ImagingToolsTab(AbstractTab):
         ).start()
 
     def _load_bone_json_async(self, json_path: Path):
-        """بارگذاری فایل JSON در ترد پس‌زمینه"""
+        """Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ ÙØ§ÛŒÙ„ JSON Ø¯Ø± ØªØ±Ø¯ Ù¾Ø³â€ŒØ²Ù…ÛŒÙ†Ù‡"""
         try:
             data = {}
             if json_path.exists():
@@ -1004,11 +1034,11 @@ class ImagingToolsTab(AbstractTab):
             print(f"[DX] Failed to load bone_age.json: {e}")
             data = {"error": str(e)}
         
-        # انتقال داده به ترد اصلی از طریق رویداد سفارشی
+        # Ø§Ù†ØªÙ‚Ø§Ù„ Ø¯Ø§Ø¯Ù‡ Ø¨Ù‡ ØªØ±Ø¯ Ø§ØµÙ„ÛŒ Ø§Ø² Ø·Ø±ÛŒÙ‚ Ø±ÙˆÛŒØ¯Ø§Ø¯ Ø³ÙØ§Ø±Ø´ÛŒ
         QApplication.postEvent(self, _BoneAgeLoadedEvent(data))
 
     def customEvent(self, event: QEvent):
-        """پردازش رویدادهای سفارشی"""
+        """Ù¾Ø±Ø¯Ø§Ø²Ø´ Ø±ÙˆÛŒØ¯Ø§Ø¯Ù‡Ø§ÛŒ Ø³ÙØ§Ø±Ø´ÛŒ"""
         if event.type() == _BoneAgeLoadedEvent.EVENT_TYPE:
             self._handle_bone_age_loaded(event)
             event.accept()
@@ -1016,11 +1046,11 @@ class ImagingToolsTab(AbstractTab):
             super().customEvent(event)
 
     def _handle_bone_age_loaded(self, event: _BoneAgeLoadedEvent):
-        """پردازش داده‌های bone age دریافت شده"""
+        """Ù¾Ø±Ø¯Ø§Ø²Ø´ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ bone age Ø¯Ø±ÛŒØ§ÙØª Ø´Ø¯Ù‡"""
         self._update_bone_age_ui(event.data)
 
     def _update_bone_age_ui(self, data: dict):
-        """به‌روزرسانی UI با داده‌های bone age"""
+        """Ø¨Ù‡â€ŒØ±ÙˆØ²Ø±Ø³Ø§Ù†ÛŒ UI Ø¨Ø§ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ bone age"""
         if not hasattr(self, "feature_view") or self.feature_view is None:
             return
             
@@ -1040,7 +1070,7 @@ class ImagingToolsTab(AbstractTab):
 
         if age_years_val is not None:
             try:
-                # تبدیل سن اعشاری به سال + ماه با رُند به بالا
+                # ØªØ¨Ø¯ÛŒÙ„ Ø³Ù† Ø§Ø¹Ø´Ø§Ø±ÛŒ Ø¨Ù‡ Ø³Ø§Ù„ + Ù…Ø§Ù‡ Ø¨Ø§ Ø±ÙÙ†Ø¯ Ø¨Ù‡ Ø¨Ø§Ù„Ø§
                 y = int(age_years_val)
                 fractional = float(age_years_val) - y
                 months_float = fractional * 12.0
@@ -1066,7 +1096,7 @@ class ImagingToolsTab(AbstractTab):
             self.feature_view.setPlaceholderText("No bone age data available")
 
     def _on_mg_run_changed(self, index: int):
-        """پردازش تغییر در انتخاب MG runs با مدیریت خطا"""
+        """Ù¾Ø±Ø¯Ø§Ø²Ø´ ØªØºÛŒÛŒØ± Ø¯Ø± Ø§Ù†ØªØ®Ø§Ø¨ MG runs Ø¨Ø§ Ù…Ø¯ÛŒØ±ÛŒØª Ø®Ø·Ø§"""
         if index < 0 or index >= self.mg_runs_combo.count():
             return
             
@@ -1074,7 +1104,7 @@ class ImagingToolsTab(AbstractTab):
         if not data or len(data) < 2:
             return
 
-        det_csv, cls_csv = data[:2]  # فقط دو مقدار اول را در نظر بگیر
+        det_csv, cls_csv = data[:2]  # ÙÙ‚Ø· Ø¯Ùˆ Ù…Ù‚Ø¯Ø§Ø± Ø§ÙˆÙ„ Ø±Ø§ Ø¯Ø± Ù†Ø¸Ø± Ø¨Ú¯ÛŒØ±
 
         try:
             self._save_mg_manifest_selection(det_csv, cls_csv)
@@ -1082,7 +1112,7 @@ class ImagingToolsTab(AbstractTab):
         except Exception as e:
             error_msg = f"Error in MG run change: {str(e)}"
             print(error_msg)
-            # نمایش پیام خطا به کاربر
+            # Ù†Ù…Ø§ÛŒØ´ Ù¾ÛŒØ§Ù… Ø®Ø·Ø§ Ø¨Ù‡ Ú©Ø§Ø±Ø¨Ø±
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Error", error_msg)
             
@@ -1090,7 +1120,7 @@ class ImagingToolsTab(AbstractTab):
         """
         Build MG sidebar UI using pre-initialized widgets.
         """
-        # پاک کردن layout قبلی
+        # Ù¾Ø§Ú© Ú©Ø±Ø¯Ù† layout Ù‚Ø¨Ù„ÛŒ
         while layout.count():
             child = layout.takeAt(0)
             if child.widget():
@@ -1099,11 +1129,11 @@ class ImagingToolsTab(AbstractTab):
         layout.addWidget(self.detail_box_label)
         layout.addWidget(self.lst_boxes_combo)
 
-        # خلاصه/وضعیت فایندینگ انتخاب‌شده
+        # Ø®Ù„Ø§ØµÙ‡/ÙˆØ¶Ø¹ÛŒØª ÙØ§ÛŒÙ†Ø¯ÛŒÙ†Ú¯ Ø§Ù†ØªØ®Ø§Ø¨â€ŒØ´Ø¯Ù‡
         layout.addWidget(self.finding_status_display)
         layout.addWidget(self.finding_summary_label)
 
-        # فیلدهای کلاسیک پنل MG (سمت چپ) — نباید حذف شوند
+        # ÙÛŒÙ„Ø¯Ù‡Ø§ÛŒ Ú©Ù„Ø§Ø³ÛŒÚ© Ù¾Ù†Ù„ MG (Ø³Ù…Øª Ú†Ù¾) â€” Ù†Ø¨Ø§ÛŒØ¯ Ø­Ø°Ù Ø´ÙˆÙ†Ø¯
         layout.addWidget(self.status_label)
         layout.addWidget(self.status_group)
 
@@ -1122,17 +1152,17 @@ class ImagingToolsTab(AbstractTab):
         layout.addWidget(self.notes_label)
         layout.addWidget(self.notes_edit)
 
-        # اکشن‌های جدید finding
+        # Ø§Ú©Ø´Ù†â€ŒÙ‡Ø§ÛŒ Ø¬Ø¯ÛŒØ¯ finding
         layout.addWidget(self.confirm_finding_btn)
         layout.addWidget(self.reject_finding_btn)
         layout.addWidget(self.edit_finding_btn)
         layout.addWidget(self.new_finding_btn)
 
-        # 🔽 MG AI runs dropdown
+        # ðŸ”½ MG AI runs dropdown
         layout.addWidget(self.mg_runs_label)
         layout.addWidget(self.mg_runs_combo)
 
-        # Apply کلاسیک را هم نگه می‌داریم تا UX قبلی حفظ شود
+        # Apply Ú©Ù„Ø§Ø³ÛŒÚ© Ø±Ø§ Ù‡Ù… Ù†Ú¯Ù‡ Ù…ÛŒâ€ŒØ¯Ø§Ø±ÛŒÙ… ØªØ§ UX Ù‚Ø¨Ù„ÛŒ Ø­ÙØ¸ Ø´ÙˆØ¯
         layout.addWidget(self.apply_btn)
 
         layout.addStretch()
@@ -1161,7 +1191,7 @@ class ImagingToolsTab(AbstractTab):
     def _build_viewer_toolbar(self):
         """Slim always-visible toolbar above the Eagle Eye viewer.
 
-        Reuses the app-wide capture pipeline (modules.viewer.viewport_capture →
+        Reuses the app-wide capture pipeline (modules.viewer.viewport_capture â†’
         study attachment folder, same gallery as the main viewer) and the
         standard image_viewer zoom APIs. Colors use the Eagle Eye palette hex
         values so AiMainWindow's theme retint maps them to the live theme.
@@ -1220,7 +1250,7 @@ class ImagingToolsTab(AbstractTab):
         _add_btn('Copy', 'fa5s.copy',
                  'Copy the visible viewer image to the clipboard',
                  self._eagle_copy_image)
-        _add_btn('Save As…', 'fa5s.save',
+        _add_btn('Save Asâ€¦', 'fa5s.save',
                  'Save the visible viewer image to a file',
                  self._eagle_save_image_as)
 
@@ -1238,10 +1268,17 @@ class ImagingToolsTab(AbstractTab):
         layout.addWidget(sep2)
 
         self._dual_view_btn = _add_btn(
-            'Dual View', 'fa5s.columns',
-            'Show projected lesion coordinates between CC and MLO views',
-            self._on_dual_view_clicked
+            '3D Cursor', 'fa5s.columns',
+            'Correlate lesion positions between CC and MLO views using 3D cursor (mm-based)',
+            self._on_3d_cursor_clicked
         )
+        self._mg_ruler_btn = _add_btn(
+            'Ruler', 'fa5s.ruler',
+            'Enable distance measurement ruler on the selected mammography viewer',
+            self._on_mg_ruler_clicked
+        )
+
+        # Dual View feature removed by request.
 
         layout.addStretch()
         return bar
@@ -1348,134 +1385,427 @@ class ImagingToolsTab(AbstractTab):
         except Exception as e:
             print(f"[EagleEye] zoom_to_fit failed: {e}")
 
-    # ---------- Dual-View Projection ----------
+    # ---------- 3D Cursor (CC/MLO Correlation) ----------
 
-    def _on_dual_view_clicked(self):
+    def _on_3d_cursor_clicked(self):
         """
-        اجرای Dual-View Projection:
-        پیدا کردن جفت CC/MLO برای هر laterality و تخمین مختصات نظیر.
+        Run 3D Cursor correlation between CC and MLO views.
+
+        New flow (v2):
+            1. User clicks "3D Cursor" button.
+            2. An instruction dialog appears asking user to click nipple on view 1.
+            3. User clicks nipple on view 1.
+            4. Dialog asks for nipple on view 2.
+            5. User clicks nipple on view 2.
+            6. Correlation runs with user-selected nipple positions.
         """
         if self.detect_modality() != "MG":
-            show_message("Dual View is only available for Mammography (MG) modality.")
+            show_message("3D Cursor is only available for Mammography (MG) modality.")
             return
 
-        self.set_processing_status("Running Dual-View Projection...", active=True)
+        # Start the manual nipple picking flow
+        from modules.ai_imaging.ai_module_ui.cursor_3d.nipple_picker import NipplePickerController
+
+        self._nipple_picker = NipplePickerController(self)
+        self._nipple_picker.start(callback=self._on_nipples_picked)
+
+    def _on_mg_ruler_clicked(self):
+        """Toggle ruler measurement tool on the selected viewer in MG mode."""
+        if self.detect_modality() != "MG":
+            show_message("Ruler is only available for Mammography (MG) modality.")
+            return
+
+        pw = getattr(self, 'patient_widget', None)
+        if pw is None:
+            show_message("Viewer is not ready.")
+            return
+
+        selected = getattr(pw, 'selected_widget', None)
+        if selected is None:
+            # Fallback: pick any viewer (prefer non-fixed, but accept any).
+            nodes = getattr(pw, 'lst_nodes_viewer', None) or []
+            for node in nodes:
+                vtk_w = getattr(node, 'vtk_widget', None)
+                if vtk_w is not None:
+                    selected = vtk_w
+                    break
+
+        if selected is None:
+            show_message("No active viewer found for ruler.")
+            return
+
+        try:
+            pw.toolbar_manager.activate_tool(selected, self.tool_access.RULER)
+            self.set_processing_status("Ruler toggled", active=False)
+        except Exception as e:
+            print(f"[ImagingToolsTab] Failed to toggle ruler: {e}")
+            show_message("Failed to toggle ruler tool.")
+
+    def _on_dual_view_clicked(self):
+        """Dual View feature removed."""
+        show_message("Dual View has been disabled.")
+
+    def _on_dual_view_closed(self):
+        """Called when dual view widget is closed."""
+        self.set_processing_status("Idle", active=False)
+
+    def _on_nipples_picked(self, nipple1, nipple2):
+        """Called when user has selected both nipple points."""
+        print(f"[3D-Cursor] Nipples picked: "
+              f"{nipple1.view_key}=({nipple1.x_px:.1f},{nipple1.y_px:.1f}), "
+              f"{nipple2.view_key}=({nipple2.x_px:.1f},{nipple2.y_px:.1f})")
+
+        self.set_processing_status("Running 3D Cursor Analysis...", active=True)
         QApplication.processEvents()
 
-        # اجرا مستقیم (بدون ترد) — محاسبات فقط ریاضی هستند و سریع‌اند
         try:
-            self._run_dual_view_projection_sync()
+            self._run_3d_cursor_analysis_with_nipples(nipple1, nipple2)
         except Exception as e:
             import traceback
             traceback.print_exc()
-            self.set_processing_status("Dual View Failed", active=False)
-            show_message(f"Dual View failed: {e}")
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message(f"3D Cursor failed: {e}")
 
-    def _run_dual_view_projection_sync(self):
-        """اجرای projection مستقیم روی main thread"""
-        # جمع‌آوری اطلاعات viewer ها
-        viewer_data = self._collect_viewer_data_for_dual_view()
+    def _run_3d_cursor_analysis_with_nipples(self, nipple1, nipple2):
+        """Execute 3D cursor correlation with user-provided nipple positions."""
+        from modules.ai_imaging.ai_module_ui.cursor_3d import CursorCorrelator3D
+        from modules.ai_imaging.ai_module_ui.cursor_3d.visualization import (
+            draw_3d_cursor_results,
+            format_3d_cursor_summary,
+        )
 
-        if not viewer_data:
-            # Fallback: خواندن مستقیم از CSV فایل detection
-            print("[DualView] No viewer data from widgets, trying CSV fallback...")
-            viewer_data = self._collect_data_from_csv_fallback()
+        # Build a mapping from vtk_widget to manual nipple position
+        manual_nipples = {}  # vtk_widget -> (x_px, y_px)
+        if nipple1 and nipple1.vtk_widget:
+            manual_nipples[id(nipple1.vtk_widget)] = (nipple1.x_px, nipple1.y_px)
+        if nipple2 and nipple2.vtk_widget:
+            manual_nipples[id(nipple2.vtk_widget)] = (nipple2.x_px, nipple2.y_px)
 
-        if not viewer_data:
-            self._show_dual_view_error(
-                "No viewer data available for Dual View.\nEnsure AI detection has been run for this study.")
+        if len(manual_nipples) != 2:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message("دو نقطه nipple باید روی دو ویویر متفاوت انتخاب شوند.")
             return
 
-        # گروه‌بندی بر اساس laterality
-        groups = self._group_views_by_laterality(viewer_data)
+        # Collect view data from viewer widgets
+        view_data_list = self._collect_views_for_3d_cursor()
 
-        if not groups:
-            self._show_dual_view_error(
-                "Could not find CC/MLO pairs. Ensure both views are loaded.")
+        if not view_data_list:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message(
+                "No view data available for 3D Cursor.\n"
+                "Ensure AI detection has been run and both CC/MLO views are loaded."
+            )
             return
 
-        print(f"[DualView] Groups: {list(groups.keys())}")
-        for lat, views in groups.items():
-            print(f"[DualView]   {lat}: {list(views.keys())}, "
-                  f"CC boxes={len(views.get('CC', {}).get('boxes', []))}, "
-                  f"MLO boxes={len(views.get('MLO', {}).get('boxes', []))}")
+        # Inject manual nipple positions into ViewData
+        for vd in view_data_list:
+            widget_id = id(vd.vtk_widget) if vd.vtk_widget else None
+            if widget_id and widget_id in manual_nipples:
+                vd.manual_nipple_px = manual_nipples[widget_id]
 
-        # محاسبه محلی projection
-        results = self._local_dual_view_projection(groups)
+        # Keep only the two selected views (the ones user clicked).
+        selected_views = []
+        for vd in view_data_list:
+            widget_id = id(vd.vtk_widget) if vd.vtk_widget else None
+            if widget_id and widget_id in manual_nipples:
+                selected_views.append(vd)
 
-        # نمایش نتایج (groups شامل vtk_widget هر view است)
-        self._display_dual_view_results(results, groups)
+        # Filter selected views with valid pixel spacing
+        valid_views = [v for v in selected_views
+                       if v.pixel_spacing_x and v.pixel_spacing_x > 0
+                       and v.pixel_spacing_y and v.pixel_spacing_y > 0]
 
-    def _collect_data_from_csv_fallback(self) -> list:
+        if not valid_views:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message("DICOM Pixel Spacing metadata is missing for all views.")
+            return
+
+        if len(valid_views) != 2:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message("3D Cursor نیاز به دو ویوی معتبر (CC و MLO) با Pixel Spacing دارد.")
+            return
+
+        lats = {str(v.laterality or '').upper() for v in valid_views}
+        vps = {str(v.view_position or '').upper() for v in valid_views}
+        if len(lats) != 1 or vps != {'CC', 'MLO'}:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message(
+                "دو ویوی انتخاب‌شده باید از یک طرف (R یا L) و شامل CC و MLO باشند.\n"
+                "لطفاً ابتدا CC/MLO یک laterality را بارگذاری کنید."
+            )
+            return
+
+        missing_manual = [f"{v.laterality}-{v.view_position}" for v in valid_views if v.manual_nipple_px is None]
+        if missing_manual:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message(f"نقطه nipple برای ویوهای زیر ثبت نشده: {', '.join(missing_manual)}")
+            return
+
+        # Run correlator
+        correlator = CursorCorrelator3D()
+        result = correlator.correlate(valid_views)
+
+        if result.total_cursors == 0:
+            self.set_processing_status("3D Cursor Complete", active=False)
+            show_message(
+                "No 3D cursor correlations found.\n"
+                "Ensure both CC and MLO views have detected lesions."
+            )
+            return
+
+        # Display text summary
+        summary_text = format_3d_cursor_summary(result)
+        self.feature_view.setPlainText(summary_text)
+
+        # Draw projected boxes/rulers on the same selected views only
+        views_by_key = {f"{v.laterality}_{v.view_position}": v for v in valid_views}
+        try:
+            draw_3d_cursor_results(result, views_by_key)
+        except Exception as e:
+            print(f"[3D-Cursor] Drawing failed (non-critical): {e}")
+
+        self.set_processing_status("3D Cursor Complete", active=False)
+        QMessageBox.information(self, "3D Cursor - CC/MLO Correlation", summary_text)
+
+    def _run_3d_cursor_analysis(self):
+        """Execute the 3D cursor correlation using mm-based geometry."""
+        from modules.ai_imaging.ai_module_ui.cursor_3d import CursorCorrelator3D
+        from modules.ai_imaging.ai_module_ui.cursor_3d.visualization import (
+            draw_3d_cursor_results,
+            format_3d_cursor_summary,
+        )
+
+        # Collect view data from viewer widgets or CSV fallback
+        view_data_list = self._collect_views_for_3d_cursor()
+
+        if not view_data_list:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message(
+                "No view data available for 3D Cursor.\n"
+                "Ensure AI detection has been run and both CC/MLO views are loaded.\n"
+                "DICOM Pixel Spacing metadata is required for mm-based analysis."
+            )
+            return
+
+        # Filter views that have valid pixel spacing (required for mm-based computation)
+        valid_views = [v for v in view_data_list
+                       if v.pixel_spacing_x and v.pixel_spacing_x > 0
+                       and v.pixel_spacing_y and v.pixel_spacing_y > 0]
+
+        if not valid_views:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message(
+                "DICOM Pixel Spacing metadata is missing for all views.\n"
+                "3D Cursor requires physical measurements (mm) and cannot operate "
+                "without Pixel Spacing.\n\n"
+                "This is resolution-independent - all calculations use millimeters."
+            )
+            return
+
+        # Run correlator
+        correlator = CursorCorrelator3D()
+        result = correlator.correlate(valid_views)
+
+        if result.total_cursors == 0:
+            self.set_processing_status("3D Cursor Complete", active=False)
+            show_message(
+                "No 3D cursor correlations found.\n"
+                "Ensure both CC and MLO views have detected lesions, "
+                "or at least one view has a lesion and the other view is available."
+            )
+            return
+
+        # Display text summary
+        summary_text = format_3d_cursor_summary(result)
+        self.feature_view.setPlainText(summary_text)
+
+        # Draw projected boxes on viewer widgets
+        views_by_key = {f"{v.laterality}_{v.view_position}": v for v in valid_views}
+        try:
+            draw_3d_cursor_results(result, views_by_key)
+        except Exception as e:
+            print(f"[3D-Cursor] Drawing failed (non-critical): {e}")
+
+        self.set_processing_status("3D Cursor Complete", active=False)
+        QMessageBox.information(self, "3D Cursor - CC/MLO Correlation", summary_text)
+
+    def _collect_views_for_3d_cursor(self) -> list:
         """
-        خواندن مستقیم از CSV detection (بدون وابستگی به viewer widgets).
-        از csv_details_path یک vtk_widget یا manifest فایل استفاده می‌شود.
+        Collect view data from viewer widgets or CSV fallback.
+        Returns a list of ViewData objects for the correlator.
         """
+        views = self._collect_views_from_widgets()
+        if not views:
+            views = self._collect_views_from_csv_fallback()
+        return views
+
+    def _collect_views_from_widgets(self) -> list:
+        """Collect ViewData from active viewer widgets."""
         data = []
-        csv_path = None
-
-        # پیدا کردن CSV path
         pw = getattr(self, 'patient_widget', None)
-        if pw:
-            # از اولین vtk_widget
-            nodes = getattr(pw, 'lst_nodes_viewer', None) or []
-            for node in nodes:
-                w = getattr(node, 'vtk_widget', None)
-                if w and getattr(w, 'csv_details_path', None):
-                    csv_path = str(w.csv_details_path)
-                    break
+        if pw is None:
+            return data
 
-            if not csv_path:
-                node_viewers = getattr(pw, 'lst_node_viewers', None) or []
-                for node in node_viewers:
-                    w = getattr(node, 'widget', None)
-                    if w and getattr(w, 'csv_details_path', None):
-                        csv_path = str(w.csv_details_path)
-                        break
+        vtk_widgets = []
+        nodes = getattr(pw, 'lst_nodes_viewer', None) or []
+        for node in nodes:
+            w = getattr(node, 'vtk_widget', None)
+            if w is not None:
+                vtk_widgets.append(w)
+        node_viewers = getattr(pw, 'lst_node_viewers', None) or []
+        for node in node_viewers:
+            w = getattr(node, 'widget', None)
+            if w is not None and w not in vtk_widgets:
+                vtk_widgets.append(w)
 
-        # fallback: از manifest
-        if not csv_path and self.study_uid:
+        for vtk_widget in vtk_widgets:
+            vd = self._extract_view_data_from_widget(vtk_widget)
+            if vd is not None:
+                data.append(vd)
+
+        return data
+
+    def _extract_view_data_from_widget(self, vtk_widget) -> 'Optional[object]':
+        """Extract ViewData from a single vtk_widget."""
+        from modules.ai_imaging.ai_module_ui.cursor_3d.correlator import ViewData
+
+        laterality = ''
+        view_position = ''
+        dicom_path = ''
+
+        # Read from image_viewer metadata
+        try:
+            iv = getattr(vtk_widget, 'image_viewer', None)
+            if iv:
+                meta = getattr(iv, 'metadata', {}) or {}
+                series_meta = meta.get('series', {})
+                laterality = str(series_meta.get('laterality', '') or '').upper()
+                view_position = str(series_meta.get('view_position', '') or '').upper()
+                instances = meta.get('instances', [])
+                if instances and isinstance(instances, list):
+                    inst = instances[0]
+                    if isinstance(inst, dict):
+                        dicom_path = str(inst.get('instance_path', '') or '')
+        except Exception:
+            pass
+
+        # Read boxes from CSV
+        boxes = []
+        scores = []
+        csv_path = getattr(vtk_widget, 'csv_details_path', None)
+        if csv_path and os.path.isfile(str(csv_path)):
             try:
-                from PacsClient.utils.utils import load_mg_ai_manifest
-                det_csv, _ = load_mg_ai_manifest(
-                    study_uid=self.study_uid,
-                    attachments_path=ATTACHMENT_PATH
-                )
-                if det_csv:
-                    csv_path = str(det_csv)
+                df = read_csv_table(str(csv_path))
+                all_rows = []
+                if hasattr(vtk_widget, 'get_series_ai_data_from_df'):
+                    series_data = vtk_widget.get_series_ai_data_from_df(df, check_all_rows=True)
+                    if series_data is not None:
+                        if isinstance(series_data, list):
+                            for tbl in series_data:
+                                if hasattr(tbl, 'rows'):
+                                    all_rows.extend(tbl.rows)
+                        elif hasattr(series_data, 'rows') and series_data.rows:
+                            all_rows = series_data.rows
+                    if not all_rows:
+                        series_data_single = vtk_widget.get_series_ai_data_from_df(df, check_all_rows=False)
+                        if series_data_single is not None:
+                            if isinstance(series_data_single, list):
+                                for tbl in series_data_single:
+                                    if hasattr(tbl, 'rows'):
+                                        all_rows.extend(tbl.rows)
+                            elif hasattr(series_data_single, 'rows') and series_data_single.rows:
+                                all_rows = series_data_single.rows
+
+                for row_data in all_rows:
+                    if not dicom_path:
+                        dicom_path = str(row_data.get('dicom_full_path', '') or '')
+                    box_val = row_data.get('box', '')
+                    parsed_boxes = _parse_box_cell(box_val)
+                    score_val = row_data.get('score', '0.5')
+                    try:
+                        score_f = float(score_val) if score_val else 0.5
+                    except (ValueError, TypeError):
+                        score_f = 0.5
+                    for b in parsed_boxes:
+                        boxes.append(b)
+                        scores.append(score_f)
+                    new_box_val = row_data.get('new_box', '')
+                    for b in _parse_box_cell(new_box_val):
+                        boxes.append(b)
+                        scores.append(0.5)
             except Exception:
                 pass
 
-        # fallback: default path
-        if not csv_path and self.study_uid:
-            default = ATTACHMENT_PATH / self.study_uid / 'updated_csv_with_boxes.csv'
-            if default.exists():
-                csv_path = str(default)
+        # Read laterality/view from DICOM if not available from metadata
+        if (not laterality or not view_position) and dicom_path and os.path.isfile(str(dicom_path)):
+            try:
+                import pydicom
+                ds = pydicom.dcmread(str(dicom_path), stop_before_pixels=True, force=True)
+                if not laterality:
+                    lat_val = getattr(ds, 'ImageLaterality', None) or getattr(ds, 'Laterality', None) or ''
+                    laterality = str(lat_val).upper().strip()
+                if not view_position:
+                    vp_val = getattr(ds, 'ViewPosition', None) or ''
+                    view_position = str(vp_val).upper().strip()
+            except Exception:
+                pass
 
-        if not csv_path or not os.path.isfile(csv_path):
-            print(f"[DualView] No CSV found for fallback")
+        if not laterality or not view_position:
+            return None
+
+        # Read pixel spacing and dimensions
+        geom = _read_dicom_pixel_geometry(dicom_path)
+        # Fallback: try VTK image data
+        if geom['img_width'] is None or geom['img_height'] is None:
+            try:
+                iv = getattr(vtk_widget, 'image_viewer', None)
+                if iv and getattr(iv, 'vtk_image_data', None):
+                    dims = iv.vtk_image_data.GetDimensions()
+                    if geom['img_width'] is None and dims[0] > 1:
+                        geom['img_width'] = int(dims[0])
+                    if geom['img_height'] is None and dims[1] > 1:
+                        geom['img_height'] = int(dims[1])
+                    if geom['pixel_spacing_x'] is None:
+                        sp = iv.vtk_image_data.GetSpacing()
+                        if sp[0] > 0:
+                            geom['pixel_spacing_x'] = float(sp[0])
+                        if sp[1] > 0:
+                            geom['pixel_spacing_y'] = float(sp[1])
+            except Exception:
+                pass
+
+        return ViewData(
+            laterality=laterality,
+            view_position=view_position,
+            dicom_path=dicom_path,
+            boxes_px=boxes,
+            scores=scores,
+            img_width=geom['img_width'],
+            img_height=geom['img_height'],
+            pixel_spacing_x=geom['pixel_spacing_x'],
+            pixel_spacing_y=geom['pixel_spacing_y'],
+            vtk_widget=vtk_widget,
+        )
+
+    def _collect_views_from_csv_fallback(self) -> list:
+        """Collect ViewData directly from detection CSV (no viewer widgets)."""
+        from modules.ai_imaging.ai_module_ui.cursor_3d.correlator import ViewData
+
+        data = []
+        csv_path = self._find_detection_csv_path()
+        if not csv_path:
             return data
-
-        print(f"[DualView] Reading CSV fallback: {csv_path}")
 
         try:
             df = read_csv_table(csv_path)
-        except Exception as e:
-            print(f"[DualView] Failed to read CSV: {e}")
+        except Exception:
             return data
 
-        # هر ردیف CSV یک تصویر/series است
         for row in df.rows:
             dicom_path = str(row.get('dicom_full_path', '') or '')
-            png_path = str(row.get('png_full_path', '') or '')
-            laterality = ''
-            view_position = ''
-
-            # ابتدا از ستون‌های CSV بخوان (اگر وجود دارد)
             laterality = str(row.get('laterality', '') or '').upper().strip()
             view_position = str(row.get('view_position', '') or '').upper().strip()
 
-            # اگر نبود، از DICOM بخوان
             if (not laterality or not view_position) and dicom_path and os.path.isfile(dicom_path):
                 try:
                     import pydicom
@@ -1486,916 +1816,75 @@ class ImagingToolsTab(AbstractTab):
                     if not view_position:
                         vp_val = getattr(ds, 'ViewPosition', None) or ''
                         view_position = str(vp_val).upper().strip()
-                except Exception as e:
-                    print(f"[DualView] DICOM read error: {e}")
+                except Exception:
+                    continue
 
             if not laterality or not view_position:
-                print(f"[DualView] Skipping row: no lat/view for {Path(dicom_path).name if dicom_path else 'N/A'}")
                 continue
 
-            # استخراج باکس‌ها
             boxes = []
             scores = []
-            box_val = row.get('box', '')
-            parsed_boxes = _parse_box_cell(box_val)
-            score_val = row.get('score', '0.5')
-            try:
-                score_f = float(score_val) if score_val else 0.5
-            except (ValueError, TypeError):
-                score_f = 0.5
-
-            for b in parsed_boxes:
+            for b in _parse_box_cell(row.get('box', '')):
                 boxes.append(b)
-                scores.append(score_f)
-
-            print(f"[DualView] CSV row: {laterality}-{view_position}, boxes={len(boxes)}")
-
-            data.append({
-                'laterality': laterality,
-                'view_position': view_position,
-                'png_path': png_path,
-                'dicom_path': dicom_path,
-                'boxes': boxes,
-                'scores': scores,
-                'vtk_widget': None  # از CSV، بدون widget
-            })
-
-        return data
-
-    def _collect_viewer_data_for_dual_view(self) -> list:
-        """جمع‌آوری اطلاعات از تمام viewer ها (تصویر، باکس‌ها، metadata)"""
-        data = []
-        pw = getattr(self, 'patient_widget', None)
-        if pw is None:
-            print("[DualView] No patient_widget found")
-            return data
-
-        # جمع‌آوری تمام vtk_widget ها از هر دو مسیر ممکن
-        vtk_widgets = []
-        nodes = getattr(pw, 'lst_nodes_viewer', None) or []
-        for node in nodes:
-            w = getattr(node, 'vtk_widget', None)
-            if w is not None:
-                vtk_widgets.append(w)
-
-        # مسیر دوم: lst_node_viewers
-        node_viewers = getattr(pw, 'lst_node_viewers', None) or []
-        for node in node_viewers:
-            w = getattr(node, 'widget', None)
-            if w is not None and w not in vtk_widgets:
-                vtk_widgets.append(w)
-
-        print(f"[DualView] Found {len(vtk_widgets)} vtk_widgets")
-
-        for vtk_widget in vtk_widgets:
-            laterality = ''
-            view_position = ''
-            png_path = ''
-            dicom_path = ''
-
-            # ابتدا از image_viewer.metadata بخوان (معتبرترین منبع)
-            try:
-                iv = getattr(vtk_widget, 'image_viewer', None)
-                if iv:
-                    meta = getattr(iv, 'metadata', {}) or {}
-                    series_meta = meta.get('series', {})
-                    # بعضی viewer ها laterality/view را در metadata دارند
-                    laterality = str(series_meta.get('laterality', '') or '').upper()
-                    view_position = str(series_meta.get('view_position', '') or '').upper()
-
-                    # از instances خواندن dicom path
-                    instances = meta.get('instances', [])
-                    if instances and isinstance(instances, list):
-                        inst = instances[0]
-                        if isinstance(inst, dict):
-                            dicom_path = str(inst.get('instance_path', '') or '')
-            except Exception as e:
-                print(f"[DualView] Error reading image_viewer metadata: {e}")
-
-            # از CSV بخوان (هم metadata و هم باکس‌ها)
-            csv_path = getattr(vtk_widget, 'csv_details_path', None)
-            all_rows_for_series = []
-
-            if csv_path and os.path.isfile(str(csv_path)):
+                score_val = row.get('score', '0.5')
                 try:
-                    df = read_csv_table(str(csv_path))
-                    # پیدا کردن ردیف‌های مربوط به این series
-                    if hasattr(vtk_widget, 'get_series_ai_data_from_df'):
-                        # check_all_rows=True returns list[CsvTable]
-                        series_data = vtk_widget.get_series_ai_data_from_df(df, check_all_rows=True)
-                        if series_data is not None:
-                            if isinstance(series_data, list):
-                                # list of CsvTable objects
-                                for tbl in series_data:
-                                    if hasattr(tbl, 'rows'):
-                                        all_rows_for_series.extend(tbl.rows)
-                            elif hasattr(series_data, 'rows') and series_data.rows:
-                                all_rows_for_series = series_data.rows
-
-                        # fallback: single row
-                        if not all_rows_for_series:
-                            series_data_single = vtk_widget.get_series_ai_data_from_df(df, check_all_rows=False)
-                            if series_data_single is not None:
-                                if isinstance(series_data_single, list):
-                                    for tbl in series_data_single:
-                                        if hasattr(tbl, 'rows'):
-                                            all_rows_for_series.extend(tbl.rows)
-                                elif hasattr(series_data_single, 'rows') and series_data_single.rows:
-                                    all_rows_for_series = series_data_single.rows
-                except Exception as e:
-                    print(f"[DualView] Error reading CSV: {e}")
-
-                # اگر هنوز metadata نداریم، از اولین ردیف CSV بخوان
-                if all_rows_for_series:
-                    row0 = all_rows_for_series[0]
-                    if not dicom_path:
-                        dicom_path = str(row0.get('dicom_full_path', '') or '')
-                    if not png_path:
-                        png_path = str(row0.get('png_full_path', '') or '')
-
-            # اگر هنوز laterality یا view ندارد، از DICOM بخوان
-            if (not laterality or not view_position) and dicom_path and os.path.isfile(str(dicom_path)):
-                try:
-                    import pydicom
-                    ds = pydicom.dcmread(str(dicom_path), stop_before_pixels=True, force=True)
-                    if not laterality:
-                        lat_val = getattr(ds, 'ImageLaterality', None) or getattr(ds, 'Laterality', None) or ''
-                        laterality = str(lat_val).upper().strip()
-                    if not view_position:
-                        vp_val = getattr(ds, 'ViewPosition', None) or ''
-                        view_position = str(vp_val).upper().strip()
-                except Exception as e:
-                    print(f"[DualView] Error reading DICOM: {e}")
-
-            # استخراج باکس‌ها از تمام ردیف‌ها
-            boxes = []
-            scores = []
-            for row_data in all_rows_for_series:
-                box_val = row_data.get('box', '')
-                parsed_boxes = _parse_box_cell(box_val)
-                score_val = row_data.get('score', '0.5')
-                try:
-                    score_f = float(score_val) if score_val else 0.5
+                    scores.append(float(score_val) if score_val else 0.5)
                 except (ValueError, TypeError):
-                    score_f = 0.5
-
-                for b in parsed_boxes:
-                    boxes.append(b)
-                    scores.append(score_f)
-
-                # new_box
-                new_box_val = row_data.get('new_box', '')
-                new_parsed = _parse_box_cell(new_box_val)
-                for b in new_parsed:
-                    boxes.append(b)
                     scores.append(0.5)
 
-            print(f"[DualView] Widget: lat={laterality}, view={view_position}, "
-                  f"boxes={len(boxes)}, png={bool(png_path)}, dicom={bool(dicom_path)}")
+            geom = _read_dicom_pixel_geometry(dicom_path)
 
-            if laterality and view_position:
-                data.append({
-                    'laterality': laterality,
-                    'view_position': view_position,
-                    'png_path': png_path,
-                    'dicom_path': dicom_path,
-                    'boxes': boxes,
-                    'scores': scores,
-                    'vtk_widget': vtk_widget
-                })
-            else:
-                print(f"[DualView] Skipping widget: no laterality/view_position")
+            data.append(ViewData(
+                laterality=laterality,
+                view_position=view_position,
+                dicom_path=dicom_path,
+                boxes_px=boxes,
+                scores=scores,
+                img_width=geom['img_width'],
+                img_height=geom['img_height'],
+                pixel_spacing_x=geom['pixel_spacing_x'],
+                pixel_spacing_y=geom['pixel_spacing_y'],
+                vtk_widget=None,
+            ))
 
-        print(f"[DualView] Collected {len(data)} valid views")
         return data
 
-    def _group_views_by_laterality(self, viewer_data: list) -> dict:
-        """گروه‌بندی viewer ها بر اساس laterality و ادغام باکس‌ها"""
-        groups = {}  # {laterality: {'CC': data, 'MLO': data}}
-
-        for vd in viewer_data:
-            lat = vd['laterality']
-            view = vd['view_position']
-
-            if view not in ('CC', 'MLO'):
-                continue
-
-            if lat not in groups:
-                groups[lat] = {}
-
-            if view not in groups[lat]:
-                groups[lat][view] = vd
-            else:
-                # ادغام باکس‌ها (اگر چند ردیف برای یک laterality+view داریم)
-                existing = groups[lat][view]
-                existing['boxes'].extend(vd['boxes'])
-                existing['scores'].extend(vd['scores'])
-                # png_path: اولین مقدار معتبر
-                if not existing['png_path'] and vd['png_path']:
-                    existing['png_path'] = vd['png_path']
-
-        # فقط گروه‌هایی که حداقل یکی باکس دارد
-        valid_groups = {}
-        for lat, views in groups.items():
-            has_boxes = any(len(v.get('boxes', [])) > 0 for v in views.values())
-            if has_boxes and ('CC' in views or 'MLO' in views):
-                valid_groups[lat] = views
-
-        return valid_groups
-
-    def _local_dual_view_projection(self, groups: dict) -> dict:
-        """
-        محاسبه محلی projection بر اساس روش Nipple-Anchor Distance (NAD).
-        
-        ═══ اصل علمی ═══
-        در ماموگرافی، فاصله نیپل تا ضایعه (Nipple-to-Lesion Distance) در امتداد
-        عمود بر جدار سینه (chest wall) در هر دو نمای CC و MLO تقریباً برابر است.
-        
-        این اصل بر مبنای آناتومی پستان استوار است:
-        - CC view: تصویر از بالا به پایین (cranio-caudal)
-        - MLO view: تصویر مایل (mediolateral oblique، معمولاً 45°)
-        
-        ═══ الگوریتم ═══
-        1. تشخیص نیپل: بیرونی‌ترین نقطه لبه پستان (anterior-most point)
-        2. تشخیص جدار سینه: لبه خلفی تصویر (posterior edge)  
-        3. محاسبه NAD (Nipple-Anchor Distance): فاصله مرکز ضایعه تا نیپل
-           در راستای عمود بر جدار سینه
-        4. Projection: نقطه‌ای در نمای مقابل که همان NAD را از نیپل دارد
-        
-        References:
-        - Kopans DB. "Breast Imaging" (3rd ed), Lippincott Williams & Wilkins
-        - Defined in ACR BI-RADS Atlas as standard triangulation method
-        """
-        results = {}
-
-        for lat, views in groups.items():
-            cc_data = views.get('CC', {})
-            mlo_data = views.get('MLO', {})
-
-            cc_boxes = cc_data.get('boxes', []) if cc_data else []
-            cc_scores = cc_data.get('scores', []) if cc_data else []
-            mlo_boxes = mlo_data.get('boxes', []) if mlo_data else []
-            mlo_scores = mlo_data.get('scores', []) if mlo_data else []
-
-            lesions = []
-
-            # ─── تشخیص نیپل از تصویر DICOM واقعی ───
-            # DICOM files locally available → detect nipple from pixel data
-            cc_dicom = cc_data.get('dicom_path', '') if cc_data else ''
-            mlo_dicom = mlo_data.get('dicom_path', '') if mlo_data else ''
-
-            cc_nipple = self._detect_nipple_from_dicom(cc_dicom, lat, 'CC', cc_boxes)
-            mlo_nipple = self._detect_nipple_from_dicom(mlo_dicom, lat, 'MLO', mlo_boxes)
-
-            print(f"[DualView-NAD] {lat}: CC nipple={cc_nipple}, MLO nipple={mlo_nipple}")
-
-            # ─── تطبیق و Projection ───
-            if cc_boxes and mlo_boxes:
-                # هر دو نما باکس دارند → تطبیق بر اساس NAD
-                used_mlo = set()
-                for i, cc_box in enumerate(cc_boxes):
-                    cc_score = cc_scores[i] if i < len(cc_scores) else 0.5
-                    cc_nad = self._compute_nad(cc_box, cc_nipple, lat, 'CC')
-
-                    # پیدا کردن باکس MLO با نزدیک‌ترین NAD
-                    best_j = -1
-                    best_nad_diff = float('inf')
-                    for j, mlo_box in enumerate(mlo_boxes):
-                        if j in used_mlo:
-                            continue
-                        mlo_nad = self._compute_nad(mlo_box, mlo_nipple, lat, 'MLO')
-                        nad_diff = abs(cc_nad - mlo_nad)
-                        if nad_diff < best_nad_diff:
-                            best_nad_diff = nad_diff
-                            best_j = j
-
-                    # آستانه: اختلاف NAD کمتر از 30% طول NAD یا 200px
-                    # (مقدار بزرگتر انتخاب می‌شود تا lesion‌های واقعی pair شوند)
-                    threshold = max(max(cc_nad, mlo_nad) * 0.30, 200)
-
-                    if best_j >= 0 and best_nad_diff < threshold:
-                        used_mlo.add(best_j)
-                        mlo_score = mlo_scores[best_j] if best_j < len(mlo_scores) else 0.5
-                        confidence = max(0.4, 1.0 - (best_nad_diff / threshold))
-                        lesions.append({
-                            'cc_box': cc_box,
-                            'cc_score': cc_score,
-                            'mlo_box': mlo_boxes[best_j],
-                            'mlo_score': mlo_score,
-                            'match_type': 'paired',
-                            'match_confidence': round(confidence, 2),
-                            'projected_box': None,
-                            'projected_confidence': 1.0,
-                            'projection_method': 'nipple_anchor_distance'
-                        })
-                    else:
-                        # CC-only → project to MLO using NAD
-                        proj_box = self._project_box_nipple_anchor(
-                            cc_box, cc_nipple, mlo_nipple, lat, 'CC', 'MLO')
-                        lesions.append({
-                            'cc_box': cc_box,
-                            'cc_score': cc_score,
-                            'mlo_box': None,
-                            'mlo_score': None,
-                            'match_type': 'cc_only',
-                            'match_confidence': 0.0,
-                            'projected_box': proj_box,
-                            'projected_confidence': 0.6,
-                            'projection_method': 'nipple_anchor_distance'
-                        })
-
-                # باکس‌های MLO بدون جفت
-                for j, mlo_box in enumerate(mlo_boxes):
-                    if j in used_mlo:
-                        continue
-                    mlo_score = mlo_scores[j] if j < len(mlo_scores) else 0.5
-                    proj_box = self._project_box_nipple_anchor(
-                        mlo_box, mlo_nipple, cc_nipple, lat, 'MLO', 'CC')
-                    lesions.append({
-                        'cc_box': None,
-                        'cc_score': None,
-                        'mlo_box': mlo_box,
-                        'mlo_score': mlo_score,
-                        'match_type': 'mlo_only',
-                        'match_confidence': 0.0,
-                        'projected_box': proj_box,
-                        'projected_confidence': 0.6,
-                        'projection_method': 'nipple_anchor_distance'
-                    })
-
-            elif cc_boxes:
-                for i, cc_box in enumerate(cc_boxes):
-                    cc_score = cc_scores[i] if i < len(cc_scores) else 0.5
-                    proj_box = self._project_box_nipple_anchor(
-                        cc_box, cc_nipple, mlo_nipple, lat, 'CC', 'MLO')
-                    lesions.append({
-                        'cc_box': cc_box,
-                        'cc_score': cc_score,
-                        'mlo_box': None,
-                        'mlo_score': None,
-                        'match_type': 'cc_only',
-                        'match_confidence': 0.0,
-                        'projected_box': proj_box,
-                        'projected_confidence': 0.6,
-                        'projection_method': 'nipple_anchor_distance'
-                    })
-
-            elif mlo_boxes:
-                for i, mlo_box in enumerate(mlo_boxes):
-                    mlo_score = mlo_scores[i] if i < len(mlo_scores) else 0.5
-                    proj_box = self._project_box_nipple_anchor(
-                        mlo_box, mlo_nipple, cc_nipple, lat, 'MLO', 'CC')
-                    lesions.append({
-                        'cc_box': None,
-                        'cc_score': None,
-                        'mlo_box': mlo_box,
-                        'mlo_score': mlo_score,
-                        'match_type': 'mlo_only',
-                        'match_confidence': 0.0,
-                        'projected_box': proj_box,
-                        'projected_confidence': 0.6,
-                        'projection_method': 'nipple_anchor_distance'
-                    })
-
-            paired_count = sum(1 for l in lesions if l['match_type'] == 'paired')
-            projected_count = sum(1 for l in lesions if l.get('projected_box') is not None)
-
-            results[lat] = {
-                "status": "ok",
-                "summary": {
-                    "total_lesions": len(lesions),
-                    "paired": paired_count,
-                    "projected": projected_count,
-                    "cc_only": sum(1 for l in lesions if l['match_type'] == 'cc_only'),
-                    "mlo_only": sum(1 for l in lesions if l['match_type'] == 'mlo_only')
-                },
-                "lesions": lesions
-            }
-
-            print(f"[DualView-NAD] Result for {lat}: {len(lesions)} lesions, "
-                  f"{paired_count} paired, {projected_count} projected")
-
-        return results
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # Nipple-Anchor Distance (NAD) — Core Methods
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def _detect_nipple_from_dicom(self, dicom_path: str, laterality: str, view: str, boxes: list) -> tuple:
-        """
-        تشخیص موقعیت نیپل (anterior-most edge of breast) از DICOM.
-        
-        ═══ اصل ═══
-        در ماموگرافی دیجیتال full-field:
-        - یک طرف تصویر padding (saturated/white) است
-        - طرف دیگر بافت پستان
-        - Chest wall = لبه‌ای که بافت به detector چسبیده (مقابل padding)
-        - Nipple = مرز بافت با padding (anterior edge)
-        
-        R breast: padding سمت LEFT، بافت سمت RIGHT، chest wall=RIGHT edge
-                  → nipple = leftmost column of breast tissue
-        L breast: padding سمت RIGHT، بافت سمت LEFT، chest wall=LEFT edge
-                  → nipple = rightmost column of breast tissue
-        """
-        import os
-        try:
-            if not dicom_path or not os.path.exists(str(dicom_path)):
-                return self._estimate_nipple_from_boxes(boxes, laterality, view)
-
-            actual_path = str(dicom_path)
-            if os.path.isdir(actual_path):
-                dcm_files = [f for f in os.listdir(actual_path)
-                             if f.lower().endswith('.dcm')]
-                if not dcm_files:
-                    return self._estimate_nipple_from_boxes(boxes, laterality, view)
-                actual_path = os.path.join(actual_path, dcm_files[0])
-
-            import pydicom
-            import numpy as np
-
-            ds = pydicom.dcmread(actual_path, force=True)
-            pixel_array = ds.pixel_array
-
-            if pixel_array is None or pixel_array.size == 0:
-                return self._estimate_nipple_from_boxes(boxes, laterality, view)
-
-            img = pixel_array.astype(np.float32)
-            h, w = img.shape[:2]
-            img_max = img.max()
-
-            if img_max < 1:
-                return self._estimate_nipple_from_boxes(boxes, laterality, view)
-
-            # ── تشخیص padding vs breast tissue ──
-            # Padding = ستون‌هایی که mean آنها > 95% max (saturated)
-            # Breast = ستون‌هایی که mean آنها < 95% max
-            saturation_threshold = img_max * 0.95
-
-            # تعیین اینکه padding کدام سمت است
-            left_saturated = img[:, :w // 4].mean() > saturation_threshold
-            right_saturated = img[:, 3 * w // 4:].mean() > saturation_threshold
-
-            if left_saturated and not right_saturated:
-                # padding سمت LEFT → breast سمت RIGHT → R breast standard
-                # nipple = اولین ستون غیر-saturated از سمت چپ
-                nipple_x = self._find_breast_edge_from_left(img, saturation_threshold)
-                # Y نیپل: وسط ناحیه بافت در ستون nipple_x
-                nipple_y = self._find_breast_vertical_center(img, nipple_x, saturation_threshold)
-            elif right_saturated and not left_saturated:
-                # padding سمت RIGHT → breast سمت LEFT → L breast standard
-                # nipple = آخرین ستون غیر-saturated از سمت راست
-                nipple_x = self._find_breast_edge_from_right(img, saturation_threshold)
-                nipple_y = self._find_breast_vertical_center(img, nipple_x, saturation_threshold)
-            else:
-                # No clear padding → use intensity gradient method
-                # breast tissue is darker, padding/air is brighter
-                # Try with lower threshold
-                lower_thresh = img_max * 0.80
-                left_bright = img[:, :w // 4].mean() > lower_thresh
-                right_bright = img[:, 3 * w // 4:].mean() > lower_thresh
-
-                if left_bright and not right_bright:
-                    nipple_x = self._find_breast_edge_from_left(img, lower_thresh)
-                    nipple_y = self._find_breast_vertical_center(img, nipple_x, lower_thresh)
-                elif right_bright and not left_bright:
-                    nipple_x = self._find_breast_edge_from_right(img, lower_thresh)
-                    nipple_y = self._find_breast_vertical_center(img, nipple_x, lower_thresh)
-                else:
-                    # Cannot determine → fallback
-                    return self._estimate_nipple_from_boxes(boxes, laterality, view)
-
-            nipple = (int(nipple_x), int(nipple_y))
-            print(f"[DualView-NAD] Nipple detected from DICOM: {nipple} "
-                  f"(img={w}x{h}, lat={laterality}, view={view})")
-            return nipple
-
-        except Exception as e:
-            print(f"[DualView-NAD] DICOM nipple detection failed: {e}, using box estimate")
-            return self._estimate_nipple_from_boxes(boxes, laterality, view)
-
-    def _find_breast_edge_from_left(self, img, threshold) -> int:
-        """پیدا کردن اولین ستون از سمت چپ که بافت (غیر-saturated) است"""
-        import numpy as np
-        h, w = img.shape[:2]
-        for x in range(w):
-            col_mean = img[h // 4: 3 * h // 4, x].mean()  # middle 50% of height
-            if col_mean < threshold:
-                return x
-        return w // 4  # fallback
-
-    def _find_breast_edge_from_right(self, img, threshold) -> int:
-        """پیدا کردن آخرین ستون از سمت راست که بافت (غیر-saturated) است"""
-        import numpy as np
-        h, w = img.shape[:2]
-        for x in range(w - 1, -1, -1):
-            col_mean = img[h // 4: 3 * h // 4, x].mean()
-            if col_mean < threshold:
-                return x
-        return 3 * w // 4  # fallback
-
-    def _find_breast_vertical_center(self, img, x_col: int, threshold) -> int:
-        """پیدا کردن مرکز عمودی بافت در ستون مشخص"""
-        import numpy as np
-        h, w = img.shape[:2]
-        x_col = max(0, min(w - 1, x_col))
-        # ناحیه‌ای از ستون‌های اطراف nipple_x بگیر (robust)
-        x_start = max(0, x_col)
-        x_end = min(w, x_col + 50)
-        region = img[:, x_start:x_end].mean(axis=1)
-        # پیدا کردن ناحیه‌ای که بافت است (زیر threshold)
-        tissue_rows = np.where(region < threshold)[0]
-        if len(tissue_rows) > 0:
-            return int((tissue_rows[0] + tissue_rows[-1]) / 2)
-        return h // 2  # fallback
-
-    def _estimate_nipple_from_boxes(self, boxes: list, laterality: str, view: str) -> tuple:
-        """
-        تخمین موقعیت نیپل بر اساس باکس‌ها و laterality.
-        
-        اصل: نیپل بیرونی‌ترین نقطه (anterior-most) پستان است.
-        
-        در تصاویر ماموگرافی دیجیتال استاندارد:
-        - R (Right breast): چرخش به چپ → نیپل سمت چپ تصویر (x کوچک)
-        - L (Left breast): چرخش به راست → نیپل سمت راست تصویر (x بزرگ)
-        
-        بدون تصویر، از بیرونی‌ترین نقطه باکس‌ها + offset استفاده می‌کنیم.
-        اگر باکسی نداریم، از مقدار پیش‌فرض استفاده می‌شود.
-        
-        Returns:
-            (nipple_x, nipple_y) in image coordinates
-        """
-        # مقادیر پیش‌فرض بر اساس ابعاد معمول ماموگرافی (2796×3584)
-        DEFAULT_IMG_W = 2796
-        DEFAULT_IMG_H = 3584
-
-        if not boxes:
-            # بدون باکس: نیپل را در مرکز-جلو تصویر تخمین بزن
-            if laterality == 'R':
-                # R: nipple سمت چپ، وسط Y
-                return (int(DEFAULT_IMG_W * 0.05), int(DEFAULT_IMG_H * 0.45))
-            else:
-                # L: nipple سمت راست، وسط Y
-                return (int(DEFAULT_IMG_W * 0.95), int(DEFAULT_IMG_H * 0.45))
-
-        # با باکس: nipple = anterior-most point
-        if laterality == 'R':
-            # R: nipple = minimum x (لبه چپ)
-            min_x = min(b[0] for b in boxes)
-            # nipple جلوتر از بیرونی‌ترین باکس است
-            nipple_x = max(0, int(min_x * 0.3))
-        else:
-            # L: nipple = maximum x (لبه راست)
-            max_x = max(b[2] for b in boxes)
-            nipple_x = min(DEFAULT_IMG_W, int(max_x + (DEFAULT_IMG_W - max_x) * 0.7))
-
-        # Y نیپل: معمولاً در یک‌سوم بالایی تا وسط تصویر
-        if view == 'CC':
-            # CC: nipple در وسط Y (چون تصویر از بالا)
-            avg_y = sum((b[1] + b[3]) / 2 for b in boxes) / len(boxes)
-            nipple_y = int(avg_y * 0.8)
-        else:
-            # MLO: nipple معمولاً بالاتر (به دلیل زاویه oblique)
-            avg_y = sum((b[1] + b[3]) / 2 for b in boxes) / len(boxes)
-            nipple_y = int(avg_y * 0.6)
-
-        return (nipple_x, nipple_y)
-
-    def _compute_nad(self, box: list, nipple: tuple, laterality: str, view: str) -> float:
-        """
-        محاسبه Nipple-Anchor Distance (NAD) — فاصله افقی مرکز ضایعه تا نیپل.
-        
-        ═══ اصل فیزیکی ═══
-        
-        در نمایش استاندارد ماموگرافی (DICOM display):
-        - R breast: بافت سمت راست، chest wall = لبه راست تصویر
-        - L breast: بافت سمت چپ، chest wall = لبه چپ تصویر
-        
-        خط PNL (Posterior Nipple Line) در هر دو نما CC و MLO به صورت افقی
-        (عمود بر لبه chest wall) اندازه‌گیری می‌شود. فاصله نیپل تا ضایعه
-        در این محور افقی در هر دو نما تقریباً برابر است (قانون Kopans).
-        
-        ═══ فرمول ═══
-        
-        CC view & MLO view (یکسان):
-            NAD = |lesion_center_x - nipple_x|
-            (فاصله افقی از نیپل = عمق ضایعه در بافت پستان)
-        
-        توضیح: در نمایش استاندارد، chest wall در لبه عمودی تصویر قرار دارد
-        (راست برای R، چپ برای L) و PNL افقی است — هم در CC و هم در MLO.
-        بعد عمودی (Y) در MLO نشان‌دهنده موقعیت superior-inferior است و
-        ارتباطی به عمق ضایعه ندارد.
-        
-        Returns:
-            NAD distance in pixels
-        """
-        lesion_cx = (box[0] + box[2]) / 2.0
-        nipple_x = nipple[0]
-
-        # NAD = فاصله افقی مرکز ضایعه تا نیپل (در هر دو نمای CC و MLO)
-        nad = abs(lesion_cx - nipple_x)
-
-        return nad
-
-    def _project_box_nipple_anchor(
-        self,
-        source_box: list,
-        source_nipple: tuple,
-        target_nipple: tuple,
-        laterality: str,
-        source_view: str,
-        target_view: str
-    ) -> list:
-        """
-        Projection باکس از یک نما به نمای مقابل با روش Nipple-Anchor Distance.
-        
-        ═══ اصل علمی ═══
-        
-        قانون اصلی (Kopans' Rule):
-            فاصله نیپل-ضایعه عمود بر جدار سینه در CC ≈ همین فاصله در MLO
-            NAD_CC ≈ NAD_MLO
-        
-        ═══ الگوریتم Projection ═══
-        
-        CC → MLO:
-            1. NAD = |lesion_x - nipple_x| (در CC)
-            2. در MLO: نقطه‌ای با همان NAD افقی از nipple_MLO
-            3. projected_x = nipple_mlo_x + NAD · direction
-            4. projected_y ≈ nipple_mlo_y + relative_offset
-        
-        MLO → CC:
-            1. NAD = |lesion_x - nipple_x| (در MLO)
-            2. در CC: نقطه‌ای با همان NAD افقی از nipple_CC
-            3. projected_x = nipple_cc_x + NAD · direction
-            4. projected_y ≈ nipple_cc_y + relative_offset
-        
-        Returns:
-            [x1, y1, x2, y2] projected box in target view
-        """
-        x1, y1, x2, y2 = source_box
-        box_w = x2 - x1
-        box_h = y2 - y1
-        lesion_cx = (x1 + x2) / 2.0
-        lesion_cy = (y1 + y2) / 2.0
-
-        src_nip_x, src_nip_y = source_nipple
-        tgt_nip_x, tgt_nip_y = target_nipple
-
-        if source_view == 'CC' and target_view == 'MLO':
-            # ── CC → MLO Projection ──
-            # Step 1: NAD in CC = horizontal distance from nipple
-            nad = abs(lesion_cx - src_nip_x)
-
-            # Step 2: Direction (depth direction relative to nipple)
-            if laterality == 'R':
-                direction = 1 if lesion_cx > src_nip_x else -1
-            else:
-                direction = -1 if lesion_cx < src_nip_x else 1
-
-            # Step 3: Project onto MLO — same horizontal NAD from MLO nipple
-            # (PNL is horizontal in standard display for both CC and MLO)
-            proj_cx = tgt_nip_x + direction * nad
-
-            # Step 4: Y position in MLO is ambiguous from CC alone
-            # Use MLO nipple Y as anchor with a relative offset from CC
-            y_relative = (lesion_cy - src_nip_y)
-            proj_cy = tgt_nip_y + y_relative * 0.5
-
-        elif source_view == 'MLO' and target_view == 'CC':
-            # ── MLO → CC Projection ──
-            # Step 1: NAD in MLO = horizontal distance from nipple
-            nad = abs(lesion_cx - src_nip_x)
-
-            # Step 2: Direction
-            if laterality == 'R':
-                direction = 1 if lesion_cx > src_nip_x else -1
-            else:
-                direction = -1 if lesion_cx < src_nip_x else 1
-
-            # Step 3: Project onto CC — same horizontal NAD from CC nipple
-            proj_cx = tgt_nip_x + direction * nad
-
-            # Step 4: Y position in CC is ambiguous from MLO alone
-            # Use CC nipple Y as anchor with a relative offset
-            proj_cy = tgt_nip_y + (lesion_cy - src_nip_y) * 0.3
-
-        else:
-            # Fallback
-            proj_cx = lesion_cx
-            proj_cy = lesion_cy
-
-        # ── Build projected box (clamped to image bounds) ──
-        IMG_W, IMG_H = 2796, 3584  # standard mammography dimensions
-        # Clamp center to valid area (leave margin for box size)
-        proj_cx = max(box_w / 2, min(IMG_W - box_w / 2, proj_cx))
-        proj_cy = max(box_h / 2, min(IMG_H - box_h / 2, proj_cy))
-
-        proj_x1 = int(max(0, proj_cx - box_w / 2))
-        proj_y1 = int(max(0, proj_cy - box_h / 2))
-        proj_x2 = int(min(IMG_W, proj_cx + box_w / 2))
-        proj_y2 = int(min(IMG_H, proj_cy + box_h / 2))
-
-        print(f"[DualView-NAD] {source_view}→{target_view}: "
-              f"src_center=({lesion_cx:.0f},{lesion_cy:.0f}) "
-              f"NAD={nad:.0f}px "
-              f"proj_center=({proj_cx:.0f},{proj_cy:.0f})")
-
-        return [proj_x1, proj_y1, proj_x2, proj_y2]
-
-    def _display_dual_view_results(self, results: dict, groups: dict = None):
-        """نمایش نتایج Dual-View Projection در UI"""
-        self.set_processing_status("Dual View Complete", active=False)
-
-        if not results:
-            show_message("No dual-view results available.")
-            return
-
-        # ساخت متن خلاصه برای feature_view
-        summary_lines = ["═══ Dual-View Projection Results ═══", ""]
-
-        for lat, result in results.items():
-            if not isinstance(result, dict):
-                continue
-
-            summary = result.get('summary', {})
-            lesions = result.get('lesions', [])
-
-            summary_lines.append(f"▶ Laterality: {lat}")
-            summary_lines.append(f"  Total Lesions: {summary.get('total_lesions', 0)}")
-            summary_lines.append(f"  Paired (CC↔MLO): {summary.get('paired', 0)}")
-            summary_lines.append(f"  Projected: {summary.get('projected', 0)}")
-            summary_lines.append(f"  CC Only: {summary.get('cc_only', 0)}")
-            summary_lines.append(f"  MLO Only: {summary.get('mlo_only', 0)}")
-            summary_lines.append("")
-
-            for i, lesion in enumerate(lesions):
-                match_type = lesion.get('match_type', 'unknown')
-                cc_box = lesion.get('cc_box')
-                mlo_box = lesion.get('mlo_box')
-                projected_box = lesion.get('projected_box')
-                proj_conf = lesion.get('projected_confidence', 0)
-                proj_method = lesion.get('projection_method', '')
-
-                summary_lines.append(f"  Lesion #{i + 1} [{match_type}]:")
-
-                if cc_box:
-                    summary_lines.append(f"    CC:  [{cc_box[0]:.0f}, {cc_box[1]:.0f}, {cc_box[2]:.0f}, {cc_box[3]:.0f}]")
-                if mlo_box:
-                    summary_lines.append(f"    MLO: [{mlo_box[0]:.0f}, {mlo_box[1]:.0f}, {mlo_box[2]:.0f}, {mlo_box[3]:.0f}]")
-
-                if projected_box and match_type != 'paired':
-                    target_view = "MLO" if match_type == 'cc_only' else "CC"
-                    summary_lines.append(
-                        f"    ➜ Projected to {target_view}: "
-                        f"[{projected_box[0]:.0f}, {projected_box[1]:.0f}, "
-                        f"{projected_box[2]:.0f}, {projected_box[3]:.0f}]"
-                    )
-                    summary_lines.append(
-                        f"      Confidence: {proj_conf:.1%} ({proj_method})"
-                    )
-
-                summary_lines.append("")
-
-        # نمایش در feature_view
-        text = "\n".join(summary_lines)
-        self.feature_view.setPlainText(text)
-        print(f"[DualView] Display complete, text length={len(text)}")
-
-        # نمایش پاپ‌آپ تایید
-        QMessageBox.information(self, "Dual-View Projection", text)
-
-        # رسم باکس‌های projected روی viewer ها (بدون صدای خطا)
-        try:
-            self._draw_projected_boxes_on_viewers(results, groups)
-        except Exception as e:
-            print(f"[DualView] Drawing projected boxes failed (non-critical): {e}")
-
-    def _draw_projected_boxes_on_viewers(self, results: dict, groups: dict = None):
-        """رسم باکس‌های projected بر روی viewer های مربوطه."""
-        if not groups:
-            print("[DualView] No groups data for drawing")
-            return
-
-        for lat, views in groups.items():
-            lat_result = results.get(lat)
-            if not lat_result or not isinstance(lat_result, dict):
-                continue
-            lesions = lat_result.get('lesions', [])
-
-            for view_pos, view_data in views.items():
-                vtk_widget = view_data.get('vtk_widget')
-                if vtk_widget is None:
-                    continue
-
-                own_boxes = view_data.get('boxes', []) or []
-                self._clear_projected_actors(vtk_widget)
-
-                if own_boxes:
-                    # نمای دارای باکس واقعی: فقط در صورت paired، آبی هایلایت شود
-                    # با لیبل match_confidence (نه score تشخیص)
-                    for lesion in lesions:
-                        if lesion.get('match_type') != 'paired':
-                            continue
-                        own_box = lesion.get('cc_box') if view_pos == 'CC' else lesion.get('mlo_box')
-                        if own_box:
-                            conf = lesion.get('match_confidence', 1.0)
-                            self._draw_projected_box_on_widget(
-                                vtk_widget, own_box,
-                                color=(0.1, 0.4, 1.0),
-                                confidence=conf,
-                            )
-                    continue
-
-                # نمای بدون باکس: رسم Projection با لیبل NAD confidence
-                for lesion in lesions:
-                    projected_box = lesion.get('projected_box')
-                    match_type = lesion.get('match_type', '')
-                    if not projected_box:
-                        continue
-                    should_draw = (
-                        (match_type == 'cc_only' and view_pos == 'MLO') or
-                        (match_type == 'mlo_only' and view_pos == 'CC')
-                    )
-                    if should_draw:
-                        conf = lesion.get('projected_confidence', 0.6)
-                        self._draw_projected_box_on_widget(
-                            vtk_widget, projected_box, confidence=conf
-                        )
-
-        print("[DualView] Drawing finished with own-box protection rule")
-
-
-    def _clear_projected_actors(self, vtk_widget):
-        """پاک کردن actor های projected کشیده‌شده در اجرای قبلی روی این widget."""
-        try:
-            image_viewer = getattr(vtk_widget, 'image_viewer', None)
-            actors = getattr(vtk_widget, '_projected_actors', None)
-            if image_viewer is not None and actors:
-                remove_fn = getattr(image_viewer, 'remove_actors', None) or getattr(image_viewer, 'remove_actor', None)
-                if remove_fn:
-                    for a in actors:
-                        try:
-                            remove_fn(a) if remove_fn.__name__ == 'remove_actor' else None
-                        except Exception:
-                            pass
-            vtk_widget._projected_actors = []
-        except Exception as e:
-            print(f"[DualView] Failed clearing previous projected actors: {e}")
-
-
-
-    def _try_add_widget_info(self, vtk_widget, vtk_widgets_info: list):
-        """تلاش برای خواندن laterality/view_position از metadata و افزودن به لیست"""
-        try:
-            iv = getattr(vtk_widget, 'image_viewer', None)
-            if iv:
-                meta = getattr(iv, 'metadata', {}) or {}
-                series_meta = meta.get('series', {})
-                lat = str(series_meta.get('laterality', '') or '').upper()
-                view_pos = str(series_meta.get('view_position', '') or '').upper()
-                if lat and view_pos:
-                    vtk_widgets_info.append((vtk_widget, lat, view_pos))
-        except Exception:
-            pass
-
-    def _draw_projected_box_on_widget(self, vtk_widget, box: list, color: tuple = (0.0, 0.9, 1.0),
-                                    confidence: float = 0.6):
-        """رسم یک باکس (projected یا تأییدشده) با لیبل میزان کانفیدنس NAD
-        (نه امتیاز تشخیص AI) روی viewer widget."""
-        try:
-            image_viewer = getattr(vtk_widget, 'image_viewer', None)
-            if image_viewer is None:
-                print("[DualView] No image_viewer on widget")
-                return
-
-            x1, y1, x2, y2 = box
-            # از فیلد 'score' برای نمایش confidence نیپل-انکر استفاده می‌کنیم
-            # (این عدد دیگر امتیاز تشخیص AI نیست، بلکه اطمینان تطبیق/پروجکشن NAD است)
-            boxes_scores = [{'box': [x1, y1, x2, y2], 'score': float(confidence)}]
-
-            if hasattr(image_viewer, 'draw_boxes_ijk'):
-                lst_actors = image_viewer.draw_boxes_ijk(
-                    boxes_scores, color=color, line_width=2.5
+    def _find_detection_csv_path(self) -> Optional[str]:
+        """Find the AI detection CSV path from available sources."""
+        pw = getattr(self, 'patient_widget', None)
+        if pw:
+            nodes = getattr(pw, 'lst_nodes_viewer', None) or []
+            for node in nodes:
+                w = getattr(node, 'vtk_widget', None)
+                if w and getattr(w, 'csv_details_path', None):
+                    p = str(w.csv_details_path)
+                    if os.path.isfile(p):
+                        return p
+            node_viewers = getattr(pw, 'lst_node_viewers', None) or []
+            for node in node_viewers:
+                w = getattr(node, 'widget', None)
+                if w and getattr(w, 'csv_details_path', None):
+                    p = str(w.csv_details_path)
+                    if os.path.isfile(p):
+                        return p
+
+        if self.study_uid:
+            try:
+                from PacsClient.utils.utils import load_mg_ai_manifest
+                det_csv, _ = load_mg_ai_manifest(
+                    study_uid=self.study_uid,
+                    attachments_path=ATTACHMENT_PATH,
                 )
-                print(f"[DualView] Drew box (color={color}, NAD_confidence={confidence:.2f}) "
-                    f"via draw_boxes_ijk: {box}, actors={len(lst_actors) if lst_actors else 0}")
+                if det_csv and os.path.isfile(str(det_csv)):
+                    return str(det_csv)
+            except Exception:
+                pass
 
-                if not hasattr(vtk_widget, '_projected_actors'):
-                    vtk_widget._projected_actors = []
-                if lst_actors:
-                    vtk_widget._projected_actors.extend(lst_actors)
-            else:
-                print("[DualView] image_viewer has no draw_boxes_ijk method")
+            default = ATTACHMENT_PATH / self.study_uid / 'updated_csv_with_boxes.csv'
+            if default.exists():
+                return str(default)
 
-        except Exception as e:
-            print(f"[DualView] Failed to draw box: {e}")
-            import traceback
-            traceback.print_exc()
-            
-
-    def _show_dual_view_error(self, message: str):
-        """نمایش خطای Dual View"""
-        self.set_processing_status("Dual View Failed", active=False)
-        show_message(message)
+        return None
 
     def home_layout(self):
         layout = QHBoxLayout()
@@ -2436,7 +1925,7 @@ class ImagingToolsTab(AbstractTab):
         """
         Initialize modality-specific sidebar with safe signal handling.
         """
-        # پاک کردن سایدبار قبلی
+        # Ù¾Ø§Ú© Ú©Ø±Ø¯Ù† Ø³Ø§ÛŒØ¯Ø¨Ø§Ø± Ù‚Ø¨Ù„ÛŒ
         if self.current_sidebar:
             self.current_sidebar.setParent(None)
             self.current_sidebar.deleteLater()
@@ -2458,17 +1947,17 @@ class ImagingToolsTab(AbstractTab):
                 imaging_tab=self
             )
             
-            # مدیریت امن سیگنال‌ها
+            # Ù…Ø¯ÛŒØ±ÛŒØª Ø§Ù…Ù† Ø³ÛŒÚ¯Ù†Ø§Ù„â€ŒÙ‡Ø§
             try:
-                # رفع اتصالات قبلی (اگر وجود داشته باشد)
+                # Ø±ÙØ¹ Ø§ØªØµØ§Ù„Ø§Øª Ù‚Ø¨Ù„ÛŒ (Ø§Ú¯Ø± ÙˆØ¬ÙˆØ¯ Ø¯Ø§Ø´ØªÙ‡ Ø¨Ø§Ø´Ø¯)
                 if hasattr(self.mg_runs_combo, '_mg_signal_connected') and self.mg_runs_combo._mg_signal_connected:
                     self.mg_runs_combo.currentIndexChanged.disconnect(self._on_mg_run_changed)
                     self.mg_runs_combo._mg_signal_connected = False
             except (TypeError, RuntimeError, AttributeError) as e:
-                # هیچ اتصالی وجود ندارد یا widget نامعتبر است
+                # Ù‡ÛŒÚ† Ø§ØªØµØ§Ù„ÛŒ ÙˆØ¬ÙˆØ¯ Ù†Ø¯Ø§Ø±Ø¯ ÛŒØ§ widget Ù†Ø§Ù…Ø¹ØªØ¨Ø± Ø§Ø³Øª
                 print(f"Info: No previous connection to disconnect: {e}")
             
-            # اتصال سیگنال جدید
+            # Ø§ØªØµØ§Ù„ Ø³ÛŒÚ¯Ù†Ø§Ù„ Ø¬Ø¯ÛŒØ¯
             try:
                 self.mg_runs_combo.currentIndexChanged.connect(self._on_mg_run_changed)
                 self.mg_runs_combo._mg_signal_connected = True
@@ -2476,11 +1965,11 @@ class ImagingToolsTab(AbstractTab):
                 print(f"Error connecting signal: {e}")
                 self.mg_runs_combo._mg_signal_connected = False
             
-            # بارگذاری داده‌های MG اگر قبلاً بارگذاری نشده باشد
+            # Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ MG Ø§Ú¯Ø± Ù‚Ø¨Ù„Ø§Ù‹ Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ù†Ø´Ø¯Ù‡ Ø¨Ø§Ø´Ø¯
             if not self.mg_runs_loaded:
                 QTimer.singleShot(50, self._load_mg_runs_into_dropdown)
         
-        # پاک کردن layout قبلی
+        # Ù¾Ø§Ú© Ú©Ø±Ø¯Ù† layout Ù‚Ø¨Ù„ÛŒ
         while self.left_sidebar_layout.count():
             child = self.left_sidebar_layout.takeAt(0)
             if child.widget():
@@ -2546,7 +2035,7 @@ class ImagingToolsTab(AbstractTab):
 
     # ---------- Helpers ----------
     def _normalize_status(self, value):
-        """ورودی‌های مختلف را به 0/1 تبدیل می‌کند: 1=abnormal, 0=normal"""
+        """ÙˆØ±ÙˆØ¯ÛŒâ€ŒÙ‡Ø§ÛŒ Ù…Ø®ØªÙ„Ù Ø±Ø§ Ø¨Ù‡ 0/1 ØªØ¨Ø¯ÛŒÙ„ Ù…ÛŒâ€ŒÚ©Ù†Ø¯: 1=abnormal, 0=normal"""
         if isinstance(value, str):
             v = value.strip().lower()
             return 1 if v in ("abnormal", "abn", "1", "true", "yes", "y") else 0
@@ -2557,12 +2046,12 @@ class ImagingToolsTab(AbstractTab):
         return 0
 
     def _on_class_selection_changed(self, items: list[str]):
-        """با تغییر انتخابِ کلاس‌ها، استور فعلی به‌روزرسانی می‌شود."""
+        """Ø¨Ø§ ØªØºÛŒÛŒØ± Ø§Ù†ØªØ®Ø§Ø¨Ù Ú©Ù„Ø§Ø³â€ŒÙ‡Ø§ØŒ Ø§Ø³ØªÙˆØ± ÙØ¹Ù„ÛŒ Ø¨Ù‡â€ŒØ±ÙˆØ²Ø±Ø³Ø§Ù†ÛŒ Ù…ÛŒâ€ŒØ´ÙˆØ¯."""
         key = self.lst_boxes_combo.currentText().strip()
         if not key:
             return
         entry = self._sidebar_store.get(key, {})
-        entry["classification"] = list(items)  # ذخیره به صورت لیست
+        entry["classification"] = list(items)  # Ø°Ø®ÛŒØ±Ù‡ Ø¨Ù‡ ØµÙˆØ±Øª Ù„ÛŒØ³Øª
         self._sidebar_store[key] = entry
 
     def _combo_set_text(self, combo: QComboBox, value: str):
@@ -2988,7 +2477,7 @@ class ImagingToolsTab(AbstractTab):
         DX modality ignores this method.
         """
 
-        # 🚫 DX isolation
+        # ðŸš« DX isolation
         if self.detect_modality() == "DX":
             return
 
@@ -3052,7 +2541,7 @@ class ImagingToolsTab(AbstractTab):
         For DX modality, this method must do nothing.
         """
 
-        # 🚫 DX isolation
+        # ðŸš« DX isolation
         if self.detect_modality() == "DX":
             return
 
@@ -3120,7 +2609,7 @@ class ImagingToolsTab(AbstractTab):
         DX modality ignores this method.
         """
 
-        # 🚫 DX isolation
+        # ðŸš« DX isolation
         if self.detect_modality() == "DX":
             return
 

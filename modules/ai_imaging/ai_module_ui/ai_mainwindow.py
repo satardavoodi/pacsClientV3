@@ -108,6 +108,9 @@ class AiMainWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
+        # Sync reception context with PACS-backed imaging widget as soon as possible.
+        self._sync_reception_patient_context()
+
         # Auto refresh when user opens Data Set tab
         self.tab_widget.currentChanged.connect(self._on_tab_changed)
         QTimer.singleShot(0, self.dataset_tab.refresh)
@@ -120,14 +123,60 @@ class AiMainWindow(QMainWindow):
 
     def _on_imaging_tab_ready(self):
         """Called when ImagingToolsTab is fully loaded and rendered."""
+        self._sync_reception_patient_context()
         print("[AiMainWindow] Imaging tab fully loaded, emitting eagle_eye_ready signal")
         # Emit immediately - no delay needed
         self.eagle_eye_ready.emit()
+
+    def _resolve_reception_patient_id(self):
+        """Resolve patient_id for Reception tab from imaging widget, then DB fallback by study_uid."""
+        # 1) Preferred: active imaging widget context
+        try:
+            imaging_tab = getattr(self, 'imaging_tab', None)
+            patient_widget = getattr(imaging_tab, 'patient_widget', None) if imaging_tab is not None else None
+            pid = getattr(patient_widget, 'patient_id', None) if patient_widget is not None else None
+            if pid is not None and str(pid).strip() and str(pid).strip().lower() not in ("none", "null"):
+                return str(pid).strip()
+        except Exception:
+            pass
+
+        # 2) Fallback: lookup patient from study_uid in local DB (PACS source of truth)
+        try:
+            study_uid = getattr(self.imaging_tab, 'study_uid', None)
+            if study_uid:
+                from database.manager import get_patient_by_study_uid
+                patient = get_patient_by_study_uid(study_uid)
+                pid = (patient or {}).get('patient_id')
+                if pid is not None and str(pid).strip() and str(pid).strip().lower() not in ("none", "null"):
+                    return str(pid).strip()
+        except Exception:
+            pass
+
+        return None
+
+    def _sync_reception_patient_context(self):
+        """Bind Reception tab to the same PACS patient context used by Imaging tab."""
+        try:
+            reception_tab = getattr(self, 'reception_tab', None)
+            if reception_tab is None:
+                return
+
+            patient_id = self._resolve_reception_patient_id()
+            if patient_id:
+                reception_tab.set_patient_id(patient_id)
+        except Exception:
+            pass
     
     def _on_tab_changed(self, index: int):
         w = self.tab_widget.widget(index)
         if w is self.dataset_tab:
             self.dataset_tab.refresh()
+        if hasattr(self, 'reception_tab') and w is self.reception_tab:
+            self._sync_reception_patient_context()
+            try:
+                self.reception_tab.on_tab_activated()
+            except Exception:
+                pass
         try:
             if w is self.imaging_tab:
                 self.imaging_tab.patient_widget.on_tab_activated()

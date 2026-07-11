@@ -313,18 +313,43 @@ class AIPatientWidget(PatientWidget):
         return result
 
     def _schedule_mg_mirror(self, *, series_index, primary_vtk_widget, allow_paired):
-        """Mirror MG series load onto every other viewer, on a later event tick.
+        """Auto-pair CC/MLO: when user loads R-CC, find and load R-MLO on other viewer.
 
-        Runs on a 0-ms QTimer so the primary switch's VTK paint/render and the
-        OLE drag-drop's COM context have fully released before we kick the
-        second heavy series load. See change_series_on_viewer docstring for
-        the crash-hardening context.
+        If user drops R-CC on one viewer, this finds the R-MLO series in the
+        available thumbnails and loads it on the other viewer (and vice versa).
+        If no complementary view is found, mirrors the same series (legacy).
         """
         def _do_mirror():
             try:
                 node_list = list(getattr(self, 'lst_nodes_viewer', []) or [])[:2]
             except Exception:
                 return
+
+            # Determine the laterality/view of the dropped series
+            dropped_lat = ''
+            dropped_vp = ''
+            if 0 <= series_index < len(self.lst_thumbnails_data):
+                smeta = (self.lst_thumbnails_data[series_index]
+                         .get('metadata', {}).get('series', {}))
+                dropped_lat = str(smeta.get('laterality', '') or '').upper()
+                dropped_vp = str(smeta.get('view_position', '') or '').upper()
+
+            # Find the complementary view index
+            complement_index = None
+            if dropped_lat and dropped_vp in ('CC', 'MLO'):
+                target_vp = 'MLO' if dropped_vp == 'CC' else 'CC'
+                for idx, thumb in enumerate(self.lst_thumbnails_data):
+                    if idx == series_index:
+                        continue
+                    tmeta = thumb.get('metadata', {}).get('series', {})
+                    t_lat = str(tmeta.get('laterality', '') or '').upper()
+                    t_vp = str(tmeta.get('view_position', '') or '').upper()
+                    if t_lat == dropped_lat and t_vp == target_vp:
+                        complement_index = idx
+                        break
+
+            mirror_index = complement_index if complement_index is not None else series_index
+
             for node in node_list:
                 try:
                     node_widget = getattr(node, 'vtk_widget', None)
@@ -333,30 +358,31 @@ class AIPatientWidget(PatientWidget):
                 if node_widget is None or node_widget is primary_vtk_widget:
                     continue
                 try:
-                    # Cheap shiboken liveness probe — guards against the
-                    # mirror viewer being torn down between schedule and fire.
                     _ = node_widget.objectName()
                 except Exception:
                     continue
                 try:
                     super(AIPatientWidget, self).change_series_on_viewer(
-                        series_index,
+                        mirror_index,
                         flag_change_selected_widget=False,
                         vtk_widget=node_widget,
                         slider=getattr(node, 'slider', None),
                         allow_paired=allow_paired,
                     )
+                    if complement_index is not None:
+                        logger.info(
+                            "[MG][AUTO-PAIR] %s-%s dropped → loaded %s-%s on other viewer",
+                            dropped_lat, dropped_vp, dropped_lat, target_vp,
+                        )
                 except Exception as mirror_err:
                     logger.warning(
                         "[MG] mirror series=%s onto secondary viewer failed: %s",
-                        series_index, mirror_err,
+                        mirror_index, mirror_err,
                     )
 
         try:
             QTimer.singleShot(0, _do_mirror)
         except Exception as sched_err:
-            # If scheduling itself fails, fall back to a synchronous mirror
-            # rather than silently skipping it — preserves prior behavior.
             logger.warning("[MG] mirror scheduling failed (%s); running inline", sched_err)
             try:
                 _do_mirror()

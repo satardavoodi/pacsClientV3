@@ -1584,6 +1584,20 @@ class AIVTKWidget(VTKWidget):
             except Exception:
                 pass
 
+            # 3D Cursor region overlay actors (blue semi-transparent band).
+            for actor in (getattr(self, "_3d_cursor_region_actors", None) or []):
+                try:
+                    actor.SetVisibility(vis)
+                except Exception:
+                    pass
+
+            # Projected actors from 3D cursor (rulers, markers, etc.).
+            for actor in (getattr(self, "_projected_actors", None) or []):
+                try:
+                    actor.SetVisibility(vis)
+                except Exception:
+                    pass
+
             rw = getattr(viewer, "render_window", None) or getattr(self, "render_window", None)
             if rw is not None:
                 rw.Render()
@@ -1606,7 +1620,10 @@ class AIVTKWidget(VTKWidget):
 
     def set_new_interactorstyle(self, style):
         if self.type_viewer == TYPES_VIEWER.fixed_viewer:
-            return
+            # Allow measurement tools (ruler) on the fixed/original viewer
+            from modules.viewer.interactor_styles import RulerInteractorStyle as _Ruler
+            if style is not _Ruler:
+                return
         super().set_new_interactorstyle(style)
 
     def on_apply(self):

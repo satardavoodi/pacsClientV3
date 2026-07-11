@@ -43,9 +43,53 @@ server_ip = str(_segmentation_url or "")
 ip = server_ip
 import re
 
-match = re.search(r'http://(\d+\.\d+\.\d+\.\d+):\d+', server_ip)
-if match:
-    ip = match.group(1)
+_host_match = re.search(r'^(?:https?://)?([^/:]+)', server_ip.strip())
+if _host_match and _host_match.group(1):
+    ip = _host_match.group(1).strip()
+
+
+def resolve_segmentation_server_ip() -> str:
+    """Resolve segmentation host from active app settings.
+
+    Priority:
+      1) Segmentation endpoint from server profile / servers_address.json
+      2) Active socket host from socket_config.json (same host user sets in Settings)
+      3) Existing module-level fallback (if already parsed)
+    """
+    # 1) Preferred: explicit segmentation endpoint
+    try:
+        seg_url = get_server_url("segmentation")
+        if seg_url:
+            seg_url = str(seg_url).strip()
+            m = re.search(r'^(?:https?://)?([^/:]+)', seg_url)
+            if m and m.group(1):
+                return str(m.group(1)).strip()
+    except Exception:
+        pass
+
+    # 2) Fallback: active socket host (the same server host user sets in settings)
+    try:
+        from modules.network.socket_config import get_socket_server_settings
+
+        srv = get_socket_server_settings() or {}
+        host = str(srv.get("host") or "").strip()
+        if host:
+            return host
+    except Exception:
+        pass
+
+    # 3) Last fallback
+    return str(ip or "").strip()
+
+
+def refresh_segmentation_server_config(port: int = 9000) -> dict:
+    """Refresh global segmentation server_config from active runtime settings."""
+    host = resolve_segmentation_server_ip()
+    server_config["SERVER_IP"] = host
+    server_config["SERVER_PORT"] = int(port)
+    return server_config
+
+
 server_config = {
     # "SERVER_IP": "80.210.31.214",
     # "SERVER_IP": "81.16.117.196",
