@@ -10,20 +10,54 @@ Based on backend architectures:
 import os
 import json
 import logging
+from collections import Counter
 from pathlib import Path
 from typing import Optional, Dict, Any
 
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, Signal, QObject
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QGroupBox,
     QLabel, QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox,
     QPushButton, QFileDialog, QFormLayout, QCheckBox,
-    QScrollArea, QFrame, QProgressBar, QTextEdit, QSizePolicy,
-    QGridLayout, QMessageBox
+    QScrollArea, QFrame, QTextEdit, QMessageBox
 )
-from PySide6.QtGui import QFont, QColor, QPalette
+
+from .feedback_collector import (
+    collect_bone_age_labels, collect_mammography_labels,
+    collect_detection_csv_labels, collect_all_training_data_summary,
+    build_training_payload,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class _UiCallDispatcher(QObject):
+    """Thread-safe UI dispatcher for callables."""
+
+    invoke = Signal(object)
+
+    def __init__(self):
+        super().__init__()
+        self.invoke.connect(self._run, Qt.QueuedConnection)
+
+    def _run(self, fn):
+        try:
+            fn()
+        except Exception as e:
+            logger.debug(f"[TrainingUI] UI callback failed: {e}")
+
+
+_UI_DISPATCHER = _UiCallDispatcher()
+
+
+def _run_on_ui(fn):
+    try:
+        _UI_DISPATCHER.invoke.emit(fn)
+    except Exception:
+        try:
+            fn()
+        except Exception:
+            pass
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default settings per backend (from actual backend code)
@@ -86,9 +120,30 @@ MAMMO_DEFAULTS = {
     "run_dual_view_matching": True,
 }
 
-# API endpoints
-BONE_AGE_API_URL = os.environ.get("AIPACS_BONE_AGE_API", "http://127.0.0.1:8001")
-MAMMO_API_URL = os.environ.get("AIPACS_MAMMO_API", "http://127.0.0.1:8000")
+
+PUBLIC_DETECTOR_BACKBONE_URLS = {
+    "ResNet50-FPN": "https://download.pytorch.org/models/resnet50-0676ba61.pth",
+    "ResNet101-FPN": "https://download.pytorch.org/models/resnet101-63fe2227.pth",
+    "ResNeXt101-FPN": "https://download.pytorch.org/models/resnext101_32x8d-110c445d.pth",
+    "EfficientNet-B4-BiFPN": "https://download.pytorch.org/models/efficientnet_b4_rwightman-23ab8bcd.pth",
+}
+
+PUBLIC_CLASSIFIER_MODEL_URLS = {
+    # Tree-based classifier families usually do not have official universal pretrained
+    # weights like CNN backbones. Keep blank by default (scratch/continue from local).
+    "XGBoost-Stacked": "",
+    "XGBoost-Single": "",
+    "LightGBM": "",
+    "RandomForest": "",
+}
+
+PUBLIC_BONEAGE_BACKBONE_URLS = {
+    "eva02_base_patch14_448.mim_in22k_ft_in22k_in1k": "https://huggingface.co/timm/eva02_base_patch14_448.mim_in22k_ft_in22k_in1k/resolve/main/model.safetensors",
+    "eva02_large_patch14_448.mim_in22k_ft_in22k_in1k": "https://huggingface.co/timm/eva02_large_patch14_448.mim_in22k_ft_in22k_in1k/resolve/main/model.safetensors",
+    "eva02_small_patch14_336.mim_in22k_ft_in22k_in1k": "https://huggingface.co/timm/eva02_small_patch14_336.mim_in22k_ft_in22k_in1k/resolve/main/model.safetensors",
+    "vit_base_patch16_384": "https://huggingface.co/timm/vit_base_patch16_384.augreg_in21k_ft_in1k/resolve/main/model.safetensors",
+    "vit_large_patch16_384": "https://huggingface.co/timm/vit_large_patch16_384.augreg_in21k_ft_in1k/resolve/main/model.safetensors",
+}
 
 
 def _settings_file_path() -> Path:
@@ -121,6 +176,87 @@ def _save_settings(settings: Dict[str, Any]):
             json.dump(settings, f, indent=2, ensure_ascii=False)
     except Exception as e:
         logger.warning(f"Failed to save training settings: {e}")
+
+
+def _default_models_root() -> Path:
+    """Return writable base directory for trained/user models."""
+    try:
+        from aipacs_runtime import user_data_root
+        return Path(user_data_root()) / "models"
+    except Exception:
+        return Path(os.getcwd()) / "models"
+
+
+def _default_patients_root() -> Path:
+    """Return default user-data patients folder used for local DICOM storage."""
+    try:
+        from aipacs_runtime import user_data_root
+        return Path(user_data_root()) / "patients"
+    except Exception:
+        return Path(os.getcwd()) / "user_data" / "patients"
+
+
+def _normalize_mammo_img_size(raw_size: int) -> int:
+    """Clamp/quantize detected DICOM size to the training spinbox constraints."""
+    if raw_size <= 0:
+        return 1024
+    # UI supports 512..2048 with step 128.
+    clamped = max(512, min(2048, raw_size))
+    step = 128
+    snapped = int(round(clamped / step) * step)
+    return max(512, min(2048, snapped))
+
+
+def _detect_mg_dicom_image_size(search_root: Path, max_scan_files: int = 300) -> Optional[int]:
+    """Detect dominant MG DICOM image size from a folder tree.
+
+    Returns the most frequent max(rows, cols) among MG DICOM files.
+    """
+    if not search_root or not search_root.exists() or not search_root.is_dir():
+        return None
+
+    try:
+        import pydicom
+    except Exception:
+        return None
+
+    size_counter: Counter[int] = Counter()
+    scanned = 0
+
+    for root, _, files in os.walk(str(search_root)):
+        for name in files:
+            low = name.lower()
+            if not low.endswith((".dcm", ".dicom")):
+                continue
+
+            fpath = Path(root) / name
+            try:
+                ds = pydicom.dcmread(
+                    str(fpath),
+                    stop_before_pixels=True,
+                    force=True,
+                    specific_tags=["Rows", "Columns", "Modality"],
+                )
+                modality = str(getattr(ds, "Modality", "") or "").upper()
+                if modality and modality != "MG":
+                    continue
+
+                rows = int(getattr(ds, "Rows", 0) or 0)
+                cols = int(getattr(ds, "Columns", 0) or 0)
+                if rows > 0 and cols > 0:
+                    size_counter[max(rows, cols)] += 1
+                    scanned += 1
+            except Exception:
+                continue
+
+            if scanned >= max_scan_files:
+                break
+        if scanned >= max_scan_files:
+            break
+
+    if not size_counter:
+        return None
+    return size_counter.most_common(1)[0][0]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -330,23 +466,38 @@ class BoneAgeSettingsWidget(QWidget):
 
         layout.addWidget(path_group)
 
-        # ── API Connection ──
-        api_group = _SectionGroup("Backend API")
-        api_form = QFormLayout(api_group)
+        # ── Model Save / Selection ──
+        model_group = _SectionGroup("Model Save & Selection")
+        model_form = QFormLayout(model_group)
+        model_form.setSpacing(8)
 
-        self.txt_api_url = QLineEdit(BONE_AGE_API_URL)
-        api_form.addRow("API URL:", self.txt_api_url)
+        self.cmb_model_source = QComboBox()
+        self.cmb_model_source.addItem("AI Pacs Model", "iran_nobat")
+        self.cmb_model_source.addItem("Scratch", "scratch")
+        model_form.addRow("Training Init:", self.cmb_model_source)
 
-        api_btn_row = QHBoxLayout()
-        self.btn_test_api = QPushButton("🔗 Test Connection")
-        self.btn_test_api.clicked.connect(self._on_test_connection)
-        api_btn_row.addWidget(self.btn_test_api)
-        self.lbl_api_status = QLabel("")
-        api_btn_row.addWidget(self.lbl_api_status)
-        api_btn_row.addStretch()
-        api_form.addRow("", api_btn_row)
+        self.txt_pretrained_model_url = QLineEdit()
+        self.txt_pretrained_model_url.setPlaceholderText("Public pretrained backbone URL...")
+        model_form.addRow("Backbone URL:", self.txt_pretrained_model_url)
 
-        layout.addWidget(api_group)
+        self.lbl_url_hint = QLabel(
+            "URLs are public model links only (no private server links)."
+        )
+        self.lbl_url_hint.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        model_form.addRow("", self.lbl_url_hint)
+
+        save_row = QHBoxLayout()
+        self.txt_model_output_dir = QLineEdit()
+        self.txt_model_output_dir.setPlaceholderText("Select folder for saving trained model...")
+        self.txt_model_output_dir.setReadOnly(True)
+        save_row.addWidget(self.txt_model_output_dir)
+        self.btn_browse_output_dir = QPushButton("Browse")
+        self.btn_browse_output_dir.setFixedWidth(80)
+        self.btn_browse_output_dir.clicked.connect(self._on_browse_output_dir)
+        save_row.addWidget(self.btn_browse_output_dir)
+        model_form.addRow("Save Model To:", save_row)
+
+        layout.addWidget(model_group)
 
         layout.addStretch()
         scroll.setWidget(container)
@@ -372,8 +523,22 @@ class BoneAgeSettingsWidget(QWidget):
         if saved.get("data_path"):
             self.txt_data_path.setText(saved["data_path"])
             self._update_file_count(saved["data_path"])
-        if saved.get("api_url"):
-            self.txt_api_url.setText(saved["api_url"])
+
+        default_out = _default_models_root() / "bone_age"
+        self.txt_model_output_dir.setText(str(saved.get("model_output_dir") or default_out))
+        src = str(saved.get("model_source") or "iran_nobat")
+        idx = self.cmb_model_source.findData(src)
+        self.cmb_model_source.setCurrentIndex(idx if idx >= 0 else 0)
+
+        saved_model_url = str(saved.get("pretrained_model_url") or "").strip()
+        if saved_model_url:
+            self.txt_pretrained_model_url.setText(saved_model_url)
+        else:
+            self.txt_pretrained_model_url.setText(
+                PUBLIC_BONEAGE_BACKBONE_URLS.get(self.cmb_backbone.currentText(), "")
+            )
+
+        self.cmb_backbone.currentTextChanged.connect(self._on_boneage_backbone_changed)
 
     def _on_browse(self):
         try:
@@ -388,6 +553,13 @@ class BoneAgeSettingsWidget(QWidget):
             self._update_file_count(folder)
             self.settings_changed.emit()
 
+    def _on_browse_output_dir(self):
+        start_dir = str(_default_models_root() / "bone_age")
+        folder = QFileDialog.getExistingDirectory(self, "Select Model Output Directory", start_dir)
+        if folder:
+            self.txt_model_output_dir.setText(folder)
+            self.settings_changed.emit()
+
     def _update_file_count(self, folder: str):
         if not folder or not os.path.isdir(folder):
             self.lbl_file_count.setText("Invalid folder")
@@ -399,20 +571,11 @@ class BoneAgeSettingsWidget(QWidget):
                     count += 1
         self.lbl_file_count.setText(f"📁 {count} image files found")
 
-    def _on_test_connection(self):
-        import requests
-        url = self.txt_api_url.text().strip().rstrip("/")
-        try:
-            resp = requests.get(url + "/", timeout=5)
-            if resp.status_code == 200:
-                self.lbl_api_status.setText("✅ Connected")
-                self.lbl_api_status.setStyleSheet("color: #a6e3a1;")
-            else:
-                self.lbl_api_status.setText(f"⚠️ Status {resp.status_code}")
-                self.lbl_api_status.setStyleSheet("color: #f9e2af;")
-        except Exception as e:
-            self.lbl_api_status.setText(f"❌ Failed: {str(e)[:40]}")
-            self.lbl_api_status.setStyleSheet("color: #f38ba8;")
+    def _on_boneage_backbone_changed(self, backbone: str):
+        cur = self.txt_pretrained_model_url.text().strip()
+        known_values = set(v for v in PUBLIC_BONEAGE_BACKBONE_URLS.values() if v)
+        if (not cur) or (cur in known_values):
+            self.txt_pretrained_model_url.setText(PUBLIC_BONEAGE_BACKBONE_URLS.get(backbone, ""))
 
     def get_settings(self) -> Dict[str, Any]:
         """Return current BoneAge settings as dict."""
@@ -437,7 +600,9 @@ class BoneAgeSettingsWidget(QWidget):
             "use_flip_tta": self.chk_flip_tta.isChecked(),
             "target_max": self.spn_target_max.value(),
             "data_path": self.txt_data_path.text(),
-            "api_url": self.txt_api_url.text().strip(),
+            "model_source": self.cmb_model_source.currentData(),
+            "pretrained_model_url": self.txt_pretrained_model_url.text().strip(),
+            "model_output_dir": self.txt_model_output_dir.text().strip(),
         }
 
 
@@ -605,6 +770,43 @@ class MammographySettingsWidget(QWidget):
 
         layout.addWidget(pipe_group)
 
+        # ── Model Save / Selection ──
+        model_group = _SectionGroup("Model Save & Selection")
+        model_form = QFormLayout(model_group)
+        model_form.setSpacing(8)
+
+        self.cmb_model_source = QComboBox()
+        self.cmb_model_source.addItem("AI Pacs Model", "iran_nobat")
+        self.cmb_model_source.addItem("Scratch", "scratch")
+        model_form.addRow("Training Init:", self.cmb_model_source)
+
+        self.txt_detector_pretrained_url = QLineEdit()
+        self.txt_detector_pretrained_url.setPlaceholderText("Public detector backbone URL...")
+        model_form.addRow("Detector URL:", self.txt_detector_pretrained_url)
+
+        self.txt_classifier_pretrained_url = QLineEdit()
+        self.txt_classifier_pretrained_url.setPlaceholderText("Public classifier init URL (optional)...")
+        model_form.addRow("Classifier URL:", self.txt_classifier_pretrained_url)
+
+        self.lbl_url_hint = QLabel(
+            "URLs are public model links only (no private server links)."
+        )
+        self.lbl_url_hint.setStyleSheet("color: #a6adc8; font-size: 11px;")
+        model_form.addRow("", self.lbl_url_hint)
+
+        save_row = QHBoxLayout()
+        self.txt_model_output_dir = QLineEdit()
+        self.txt_model_output_dir.setPlaceholderText("Select folder for saving trained model...")
+        self.txt_model_output_dir.setReadOnly(True)
+        save_row.addWidget(self.txt_model_output_dir)
+        self.btn_browse_output_dir = QPushButton("Browse")
+        self.btn_browse_output_dir.setFixedWidth(80)
+        self.btn_browse_output_dir.clicked.connect(self._on_browse_output_dir)
+        save_row.addWidget(self.btn_browse_output_dir)
+        model_form.addRow("Save Model To:", save_row)
+
+        layout.addWidget(model_group)
+
         # ── Data Path ──
         path_group = _SectionGroup("Training Data Path")
         path_layout = QVBoxLayout(path_group)
@@ -625,25 +827,11 @@ class MammographySettingsWidget(QWidget):
         self.lbl_file_count.setStyleSheet("color: #a6adc8; font-size: 11px;")
         path_layout.addWidget(self.lbl_file_count)
 
+        self.lbl_detected_size = QLabel("Auto image size: waiting for MG DICOM scan")
+        self.lbl_detected_size.setStyleSheet("color: #89b4fa; font-size: 11px;")
+        path_layout.addWidget(self.lbl_detected_size)
+
         layout.addWidget(path_group)
-
-        # ── API Connection ──
-        api_group = _SectionGroup("Backend API")
-        api_form = QFormLayout(api_group)
-
-        self.txt_api_url = QLineEdit(MAMMO_API_URL)
-        api_form.addRow("API URL:", self.txt_api_url)
-
-        api_btn_row = QHBoxLayout()
-        self.btn_test_api = QPushButton("🔗 Test Connection")
-        self.btn_test_api.clicked.connect(self._on_test_connection)
-        api_btn_row.addWidget(self.btn_test_api)
-        self.lbl_api_status = QLabel("")
-        api_btn_row.addWidget(self.lbl_api_status)
-        api_btn_row.addStretch()
-        api_form.addRow("", api_btn_row)
-
-        layout.addWidget(api_group)
 
         layout.addStretch()
         scroll.setWidget(container)
@@ -658,17 +846,45 @@ class MammographySettingsWidget(QWidget):
             idx = self.cmb_det_backbone.findText(saved["det_backbone"])
             if idx >= 0:
                 self.cmb_det_backbone.setCurrentIndex(idx)
+        if saved.get("det_img_size"):
+            self.spn_det_img_size.setValue(saved["det_img_size"])
         if saved.get("det_epochs"):
             self.spn_det_epochs.setValue(saved["det_epochs"])
         if saved.get("det_batch_size"):
             self.spn_det_batch.setValue(saved["det_batch_size"])
         if saved.get("det_lr"):
             self.spn_det_lr.setValue(saved["det_lr"])
+        path_for_detection = ""
         if saved.get("data_path"):
             self.txt_data_path.setText(saved["data_path"])
             self._update_file_count(saved["data_path"])
-        if saved.get("api_url"):
-            self.txt_api_url.setText(saved["api_url"])
+            path_for_detection = str(saved["data_path"])
+
+        default_out = _default_models_root() / "mammography"
+        self.txt_model_output_dir.setText(str(saved.get("model_output_dir") or default_out))
+        src = str(saved.get("model_source") or "iran_nobat")
+        idx = self.cmb_model_source.findData(src)
+        self.cmb_model_source.setCurrentIndex(idx if idx >= 0 else 0)
+
+        saved_det_url = str(saved.get("pretrained_detector_url") or "").strip()
+        saved_cls_url = str(saved.get("pretrained_classifier_url") or "").strip()
+        if saved_det_url:
+            self.txt_detector_pretrained_url.setText(saved_det_url)
+        else:
+            self.txt_detector_pretrained_url.setText(
+                PUBLIC_DETECTOR_BACKBONE_URLS.get(self.cmb_det_backbone.currentText(), "")
+            )
+        if saved_cls_url:
+            self.txt_classifier_pretrained_url.setText(saved_cls_url)
+        else:
+            self.txt_classifier_pretrained_url.setText(
+                PUBLIC_CLASSIFIER_MODEL_URLS.get(self.cmb_cls_model.currentText(), "")
+            )
+
+        self.cmb_det_backbone.currentTextChanged.connect(self._on_detector_backbone_changed)
+        self.cmb_cls_model.currentTextChanged.connect(self._on_classifier_model_changed)
+
+        self._auto_detect_and_apply_img_size(path_for_detection)
 
     def _on_browse(self):
         try:
@@ -681,6 +897,14 @@ class MammographySettingsWidget(QWidget):
         if folder:
             self.txt_data_path.setText(folder)
             self._update_file_count(folder)
+            self._auto_detect_and_apply_img_size(folder)
+            self.settings_changed.emit()
+
+    def _on_browse_output_dir(self):
+        start_dir = str(_default_models_root() / "mammography")
+        folder = QFileDialog.getExistingDirectory(self, "Select Model Output Directory", start_dir)
+        if folder:
+            self.txt_model_output_dir.setText(folder)
             self.settings_changed.emit()
 
     def _update_file_count(self, folder: str):
@@ -694,20 +918,51 @@ class MammographySettingsWidget(QWidget):
                     count += 1
         self.lbl_file_count.setText(f"📁 {count} image files found")
 
-    def _on_test_connection(self):
-        import requests
-        url = self.txt_api_url.text().strip().rstrip("/")
-        try:
-            resp = requests.get(url + "/", timeout=5)
-            if resp.status_code == 200:
-                self.lbl_api_status.setText("✅ Connected")
-                self.lbl_api_status.setStyleSheet("color: #a6e3a1;")
-            else:
-                self.lbl_api_status.setText(f"⚠️ Status {resp.status_code}")
-                self.lbl_api_status.setStyleSheet("color: #f9e2af;")
-        except Exception as e:
-            self.lbl_api_status.setText(f"❌ Failed: {str(e)[:40]}")
-            self.lbl_api_status.setStyleSheet("color: #f38ba8;")
+    def _on_detector_backbone_changed(self, backbone: str):
+        cur = self.txt_detector_pretrained_url.text().strip()
+        known_values = set(v for v in PUBLIC_DETECTOR_BACKBONE_URLS.values() if v)
+        if (not cur) or (cur in known_values):
+            self.txt_detector_pretrained_url.setText(PUBLIC_DETECTOR_BACKBONE_URLS.get(backbone, ""))
+
+    def _on_classifier_model_changed(self, cls_model: str):
+        cur = self.txt_classifier_pretrained_url.text().strip()
+        known_values = set(v for v in PUBLIC_CLASSIFIER_MODEL_URLS.values() if v)
+        if (not cur) or (cur in known_values):
+            self.txt_classifier_pretrained_url.setText(PUBLIC_CLASSIFIER_MODEL_URLS.get(cls_model, ""))
+
+    def _auto_detect_and_apply_img_size(self, preferred_folder: str = ""):
+        """Auto-detect MG DICOM image size from user data and apply to det image size."""
+        search_roots = []
+        if preferred_folder:
+            search_roots.append(Path(preferred_folder))
+        search_roots.append(_default_patients_root())
+
+        seen = set()
+        detected_raw = None
+        source_root = None
+        for root in search_roots:
+            key = str(root.resolve()) if root.exists() else str(root)
+            if key in seen:
+                continue
+            seen.add(key)
+
+            found = _detect_mg_dicom_image_size(root)
+            if found:
+                detected_raw = found
+                source_root = root
+                break
+
+        if detected_raw:
+            detected = _normalize_mammo_img_size(detected_raw)
+            self.spn_det_img_size.setValue(detected)
+            self.lbl_detected_size.setText(
+                f"Auto image size: {detected} (detected {detected_raw}px from {source_root})"
+            )
+            return
+
+        self.lbl_detected_size.setText(
+            "Auto image size: no MG DICOM found (keeping current value)"
+        )
 
     def get_settings(self) -> Dict[str, Any]:
         """Return current Mammography settings as dict."""
@@ -732,7 +987,10 @@ class MammographySettingsWidget(QWidget):
             "use_dual_view": self.chk_dual_view.isChecked(),
             "views": self.cmb_views.currentText(),
             "data_path": self.txt_data_path.text(),
-            "api_url": self.txt_api_url.text().strip(),
+            "model_source": self.cmb_model_source.currentData(),
+            "pretrained_detector_url": self.txt_detector_pretrained_url.text().strip(),
+            "pretrained_classifier_url": self.txt_classifier_pretrained_url.text().strip(),
+            "model_output_dir": self.txt_model_output_dir.text().strip(),
         }
 
 
@@ -841,6 +1099,28 @@ class TrainingDataSettingsTab(QWidget):
         action_bar = QHBoxLayout()
         action_bar.addStretch()
 
+        self.btn_collect = QPushButton("📋 Collect Labels")
+        self.btn_collect.setFixedHeight(40)
+        self.btn_collect.setFixedWidth(180)
+        self.btn_collect.setToolTip(
+            "Scan all confirmed/rejected labels from the Imaging Tools tab\n"
+            "and show how many training samples are available."
+        )
+        self.btn_collect.setStyleSheet("""
+            QPushButton {
+                background-color: #89b4fa;
+                color: #1e1e2e;
+                border: none;
+                border-radius: 6px;
+                font-size: 13px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #74c7ec; }
+            QPushButton:pressed { background-color: #89dceb; }
+        """)
+        self.btn_collect.clicked.connect(self._on_collect_labels)
+        action_bar.addWidget(self.btn_collect)
+
         self.btn_train = QPushButton("🚀 Start Training")
         self.btn_train.setFixedHeight(40)
         self.btn_train.setFixedWidth(200)
@@ -905,67 +1185,159 @@ class TrainingDataSettingsTab(QWidget):
             self.tabs.addTab(self.mammo_tab, "🩻  Mammography")
             self._log("🔄 Settings reset to defaults.")
 
+    def _on_collect_labels(self):
+        """Collect labeled feedback data from imaging tab CSVs and show summary."""
+        import threading
+
+        def _do_collect():
+            try:
+                summary = collect_all_training_data_summary()
+                ba = summary["bone_age"]
+                mg = summary["mammography_feedback"]
+                det = summary["mammography_detection"]
+                self._log("─── Collected Labels Summary ───")
+                self._log(f"🦴 BoneAge: {ba['total']} labeled (confirmed={ba['confirmed']}, corrected={ba['corrected']})")
+                self._log(f"🩻 MG Feedback: {mg['total']} entries (positive={mg['positive']}, negative={mg['negative']})")
+                self._log(f"📦 MG Detection CSV: {det['total']} images (positive={det['positive']}, negative={det['negative']})")
+                total = ba['total'] + mg['total'] + det['total']
+                if total == 0:
+                    self._log("⚠️ No labeled data found. Use the Imaging Tools tab to confirm/reject AI predictions first.")
+                else:
+                    self._log(f"✅ Total {total} labeled entries ready for training.")
+                self._log("────────────────────────────────")
+            except Exception as e:
+                self._log(f"❌ Label collection failed: {e}")
+
+        thread = threading.Thread(target=_do_collect, daemon=True)
+        thread.start()
+
     def _on_train(self):
-        """Gather settings from current tab and emit training request."""
+        """Gather settings from current tab, collect labels, and start local training."""
         current_idx = self.tabs.currentIndex()
         if current_idx == 0:
             settings = self.bone_age_tab.get_settings()
         else:
             settings = self.mammo_tab.get_settings()
 
-        # Validate data path
+        # Validate: either data_path OR we have collected feedback labels
         data_path = settings.get("data_path", "")
-        if not data_path or not os.path.isdir(data_path):
-            QMessageBox.warning(self, "No Data", "Please select a valid training data folder first.")
+        backend = settings.get("backend", "bone_age")
+
+        # Collect labeled data from feedback CSVs
+        if backend == "bone_age":
+            labeled = collect_bone_age_labels()
+        else:
+            labeled_fb = collect_mammography_labels()
+            labeled_det = collect_detection_csv_labels()
+            labeled = labeled_fb + labeled_det
+
+        has_labels = len(labeled) > 0
+        has_data_path = data_path and os.path.isdir(data_path)
+
+        if not has_labels and not has_data_path:
+            QMessageBox.warning(
+                self, "No Training Data",
+                "No labeled data found.\n\n"
+                "Either:\n"
+                "1. Use the Imaging Tools tab to confirm/reject AI predictions (labels will be collected automatically), or\n"
+                "2. Select a training data folder with prepared images."
+            )
             return
 
-        self._log(f"🚀 Starting training [{settings['backend']}]...")
-        self._log(f"   Data: {data_path}")
-        self._log(f"   Backend: {settings.get('api_url', 'N/A')}")
+        self._log(f"🚀 Starting training [{backend}]...")
+        if has_labels:
+            self._log(f"   Collected labels: {len(labeled)} entries from user feedback")
+        if has_data_path:
+            self._log(f"   Data folder: {data_path}")
+        self._log(f"   Training init: {settings.get('model_source', 'iran_nobat')}")
+
+        # Build full training payload with labels
+        payload = build_training_payload(backend, settings)
 
         # Emit signal for external handler
         self.training_requested.emit(settings)
 
-        # Also try sending to backend
-        self._send_to_backend(settings)
+        # Save training data locally as backup
+        self._save_training_data_locally(settings, payload)
 
-    def _send_to_backend(self, settings: Dict[str, Any]):
-        """Send training request to the backend API."""
-        import threading
+        # ── Actually run training ──
+        self._start_local_training(labeled, settings, backend)
 
-        def _do_request():
-            try:
-                import requests
-                api_url = settings.get("api_url", "").rstrip("/")
-                if not api_url:
-                    self._log("⚠️ No API URL configured.")
-                    return
+    def _save_training_data_locally(self, settings: Dict[str, Any], payload: Optional[Dict[str, Any]] = None):
+        """Save the collected training data + settings locally as a JSON file
+        so it can be used later when the backend supports /train."""
+        import json
+        from datetime import datetime
 
-                backend = settings.get("backend", "")
-                if backend == "bone_age":
-                    endpoint = f"{api_url}/train"
+        try:
+            output_dir = settings.get("model_output_dir", "")
+            if not output_dir:
+                output_dir = str(_default_models_root() / settings.get("backend", "unknown"))
+
+            os.makedirs(output_dir, exist_ok=True)
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            out_path = os.path.join(output_dir, f"training_data_{timestamp}.json")
+
+            data_to_save = payload if payload else {"settings": settings}
+            with open(out_path, "w", encoding="utf-8") as f:
+                json.dump(data_to_save, f, indent=2, ensure_ascii=False, default=str)
+
+            self._log(f"💾 Training data saved: {out_path}")
+        except Exception as e:
+            self._log(f"❌ Failed to save training data locally: {e}")
+
+    def _start_local_training(self, labeled: list, settings: Dict[str, Any], backend: str):
+        """Launch actual training in a background thread."""
+        from .local_training_runner import run_training_async
+
+        self._log("⏳ Training started in background...")
+        self.btn_train.setEnabled(False)
+        self.btn_train.setText("Training...")
+
+        def _on_progress(pct: int, msg: str):
+            _run_on_ui(lambda: self._log(f"   [{pct}%] {msg}"))
+
+        def _on_complete(result: Dict[str, Any]):
+            def _finish():
+                self.btn_train.setEnabled(True)
+                self.btn_train.setText("Start Training")
+                status = result.get("status", "unknown")
+                if status == "completed":
+                    acc = result.get("accuracy", 0)
+                    model_path = result.get("model_path", "")
+                    det_model_path = result.get("detection_model_path", "")
+                    cls_model_path = result.get("classification_model_path", "")
+                    self._log(f"✅ Training completed successfully!")
+                    self._log(f"   Accuracy: {acc:.1%}")
+                    self._log(f"   Samples: {result.get('samples_loaded', 0)} "
+                              f"(+{result.get('positives', 0)} / -{result.get('negatives', 0)})")
+                    self._log(f"   Backbone: {result.get('backbone', settings.get('det_backbone', '-'))}")
+                    self._log(f"   Training init: {result.get('model_source', settings.get('model_source', '-'))}")
+                    self._log(
+                        "   Init artifacts: "
+                        f"detector={'ok' if result.get('detector_init_ready') else 'missing'}, "
+                        f"classifier={'ok' if result.get('classifier_init_ready') else 'missing'}"
+                    )
+                    if result.get("detector_init_path"):
+                        self._log(f"   Detector init model: {result.get('detector_init_path')}")
+                    if result.get("classifier_init_path"):
+                        self._log(f"   Classifier init model: {result.get('classifier_init_path')}")
+                    if det_model_path:
+                        self._log(f"   Detection model saved: {det_model_path}")
+                    if cls_model_path:
+                        self._log(f"   Classification model saved: {cls_model_path}")
+                    if model_path and model_path != cls_model_path:
+                        self._log(f"   Model saved: {model_path}")
                 else:
-                    endpoint = f"{api_url}/api/v1/train"
+                    error = result.get("error", "Unknown error")
+                    self._log(f"❌ Training failed: {error}")
+            _run_on_ui(_finish)
 
-                payload = {k: v for k, v in settings.items() if k != "api_url"}
-
-                resp = requests.post(endpoint, json=payload, timeout=60)
-                if resp.status_code == 200:
-                    self._log(f"✅ Training started on backend: {resp.json()}")
-                elif resp.status_code == 404:
-                    self._log(f"⚠️ /train endpoint not found on server. Training will run locally.")
-                else:
-                    self._log(f"⚠️ Backend responded: {resp.status_code} - {resp.text[:200]}")
-            except Exception as e:
-                self._log(f"⚠️ Backend request failed: {str(e)[:100]}")
-                self._log("   Training settings saved. Run training manually or ensure backend is running.")
-
-        thread = threading.Thread(target=_do_request, daemon=True)
-        thread.start()
+        run_training_async(labeled, settings, _on_progress, _on_complete)
 
     def _log(self, msg: str):
-        """Append message to log widget (thread-safe via QTimer)."""
-        QTimer.singleShot(0, lambda: self.txt_log.append(msg))
+        """Append message to log widget via thread-safe queued dispatch."""
+        _run_on_ui(lambda: self.txt_log.append(msg))
 
     def get_all_settings(self) -> Dict[str, Any]:
         """Return all settings for both backends."""
