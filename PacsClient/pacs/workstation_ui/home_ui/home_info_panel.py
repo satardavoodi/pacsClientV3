@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.4.7",
-    "build_date": "2026-07-08",
-    "release_date": "2026-07-08",
+    "version": "3.4.8",
+    "build_date": "2026-07-11",
+    "release_date": "2026-07-11",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Windows-on-ARM (ARM64) support with a dedicated installer",
-        "More robust MPR on varied GPUs (OpenGL pre-flight + safe failure)",
-        "Fixed two rare UI freezes (startup and AI-assistant switch)",
-        "Better crash diagnostics (hardware check + native fault log)",
-        "Multi-study display and broad stability fixes",
+        "EagleEye Mammography: 3D dual-view cursor with breast/nipple detection",
+        "EagleEye: polygon and box findings workflow, feedback and model training",
+        "Reception: assignment and report approval-status sync",
+        "New Admission Reports dashboard in Data Analysis",
+        "Faster patient search; more reliable downloads and image overlays",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.4.7",
+        "AI-PACS Version 3.4.8",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۴.۷",
+        "AI-PACS نسخهٔ ۳.۴.۸",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

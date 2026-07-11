@@ -1,9 +1,34 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.7 (2026-07-08)
-**Previous Stable:** v3.4.6 (2026-07-06)
-**Release Date:** 2026-07-08
+**Current Stable Version:** v3.4.8 (2026-07-11)
+**Previous Stable:** v3.4.7 (2026-07-08)
+**Release Date:** 2026-07-11
 **Branch:** beta-version
+
+---
+
+## v3.4.8 (2026-07-11) - Patch release: EagleEye Mammography 3D cursor, INO reception sync, Admission Reports
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Consolidates the EagleEye Mammography 3D-cursor work merged from the
+`sadra` branch, EagleEye model-training/feedback, INO reception assignment and
+report approval-flags sync, the new Admission Reports dashboard, viewport
+overlay-metadata unification, and download/network reliability work.
+
+### Included
+
+- EagleEye Mammography: new `cursor_3d` module (dual-view widget, breast contour, nipple detect/pick, pectoral detection, correlator, correspondence arc, MLO depth projection), rewritten imaging tab, polygon + rectangle findings/box workflow
+- EagleEye: findings feedback collector, local training runner, training-data settings tab
+- Segmentation host now resolves from the active server profile instead of a hardcoded IP
+- INO reception: internal-assignment foundation, report workflow + approval-flags sync (patient/report status now reflects correctly in INO)
+- Data Analysis: new Admission Reports dashboard over the reception Reports API
+- Viewport overlay metadata unification (canonical provider)
+- Download manager: network monitor plus resume/retry reliability
+- Patient-search client optimization (removed redundant per-search probe and pool churn)
+- Windows-on-ARM: Nuitka ARM64/WoA installer variants
+- Canonical version markers advanced to v3.4.8; full local state published to all remotes
 
 ---
 
