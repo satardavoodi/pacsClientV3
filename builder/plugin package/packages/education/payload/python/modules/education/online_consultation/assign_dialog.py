@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -172,6 +173,7 @@ class ConsultationAssignDialog(QDialog):
     # Internal-tab INO loading/submit (queued cross-thread → GUI thread).
     _ino_users_loaded = Signal(object)   # {"ok":bool, "users":[AssignableUser], ...}
     _ino_assign_done = Signal(object)    # {"ok":int, "errors":[str], "name":str}
+    _ino_status_done = Signal(object)    # {"ok":bool, "local":bool, "status_set":str}
     # Emitted AFTER the INO server confirms an internal assignment, so the
     # patient list can turn the Assign icon red (server-derived) and refresh.
     internal_assigned = Signal(str, str)  # (reception_id, assignee_name)
@@ -204,6 +206,7 @@ class ConsultationAssignDialog(QDialog):
         try:
             self._ino_users_loaded.connect(self._on_ino_users)
             self._ino_assign_done.connect(self._on_ino_assign_done)
+            self._ino_status_done.connect(self._on_ino_status_done)
         except Exception:
             pass
         from .profile_dialog import resolve_palette
@@ -276,25 +279,80 @@ class ConsultationAssignDialog(QDialog):
         sub.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
         root.addWidget(sub)
 
-        # Current-assignment details panel (loaded from the actual assignment
-        # record): who it's assigned to, who assigned it, the type (Internal /
-        # External) and the comment. Hidden when there is no assignment yet.
+        # ── Current-assignment card (structured, from the real record) ────────
+        # Labeled rows + a status badge + status actions. Hidden until assigned.
         self._assign_details = QFrame()
         self._assign_details.setObjectName("assignDetails")
         self._assign_details.setStyleSheet(
             f"QFrame#assignDetails{{background:{p['surface2']};border:1px solid "
-            f"{p['border']};border-radius:8px;}}")
+            f"{p['border']};border-left:4px solid #3b82f6;border-radius:9px;}}")
         _adl = QVBoxLayout(self._assign_details)
-        _adl.setContentsMargins(12, 8, 12, 8)
-        _adl.setSpacing(2)
-        self._assign_details_title = QLabel()
-        self._assign_details_body = QLabel()
-        self._assign_details_body.setWordWrap(True)
-        self._assign_details_body.setTextFormat(Qt.RichText)
-        self._assign_details_body.setStyleSheet(
-            f"color:{p['text']};font-size:12px;")
-        _adl.addWidget(self._assign_details_title)
-        _adl.addWidget(self._assign_details_body)
+        _adl.setContentsMargins(14, 10, 14, 12)
+        _adl.setSpacing(8)
+
+        # header: title + status badge
+        _hdr = QHBoxLayout()
+        _hdr.setSpacing(8)
+        self._assign_details_title = QLabel("Current assignment · وضعیت ارجاع فعلی")
+        self._assign_details_title.setStyleSheet(
+            f"color:{p['text']};font-size:13px;font-weight:700;")
+        self._ad_status_badge = QLabel()
+        self._ad_status_badge.setAlignment(Qt.AlignCenter)
+        _hdr.addWidget(self._assign_details_title)
+        _hdr.addStretch(1)
+        _hdr.addWidget(self._ad_status_badge)
+        _adl.addLayout(_hdr)
+
+        # labeled field rows
+        self._ad_grid = QGridLayout()
+        self._ad_grid.setHorizontalSpacing(10)
+        self._ad_grid.setVerticalSpacing(5)
+        self._ad_grid.setColumnStretch(1, 1)
+        self._ad_fields = {}
+        _rows = [
+            ("assigned_to", "👤  Assigned to"),
+            ("assigned_by", "✍️  Assigned by"),
+            ("type", "🏷️  Assignment type"),
+            ("assigned_at", "🕒  Assigned at"),
+            ("comment", "💬  Comment"),
+        ]
+        for _r, (_key, _cap) in enumerate(_rows):
+            cap = QLabel(_cap)
+            cap.setStyleSheet(
+                f"color:{p['text_muted']};font-size:11px;font-weight:600;")
+            cap.setMinimumWidth(120)
+            val = QLabel("—")
+            val.setWordWrap(True)
+            val.setStyleSheet(f"color:{p['text']};font-size:12px;")
+            self._ad_grid.addWidget(cap, _r, 0, Qt.AlignTop | Qt.AlignLeft)
+            self._ad_grid.addWidget(val, _r, 1, Qt.AlignTop | Qt.AlignLeft)
+            self._ad_fields[_key] = (cap, val)
+        _adl.addLayout(self._ad_grid)
+
+        # status actions
+        self._ad_actions_row = QHBoxLayout()
+        self._ad_actions_row.setSpacing(8)
+        self._ad_hint = QLabel("")
+        self._ad_hint.setWordWrap(True)
+        self._ad_hint.setStyleSheet(f"color:{p['text_muted']};font-size:10px;")
+        self._ad_buttons = {}
+        for _key, _text in (
+            ("active", "Mark Active"),
+            ("completed", "Mark Completed"),
+            ("deactivated", "Deactivate"),
+            ("cancelled", "Cancel / Unassign"),
+        ):
+            b = QPushButton(_text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet("font-size:11px;padding:5px 10px;")
+            b.clicked.connect(
+                lambda _=False, k=_key: self._on_assignment_status_action(k))
+            self._ad_buttons[_key] = b
+            self._ad_actions_row.addWidget(b)
+        self._ad_actions_row.addStretch(1)
+        _adl.addLayout(self._ad_actions_row)
+        _adl.addWidget(self._ad_hint)
+
         self._assign_details.setVisible(False)
         root.addWidget(self._assign_details)
 
@@ -743,6 +801,13 @@ class ConsultationAssignDialog(QDialog):
         self.state_label.setText(
             f"Assigning (internal) to {len(targets)} user(s)…")
 
+        # Assigning over an existing assignment is a REASSIGN (recorded as such).
+        try:
+            from modules.network import ino_assignment_history as _hist
+            is_reassign = bool(_hist.current_assignee(rid))
+        except Exception:
+            is_reassign = False
+
         def _run():
             ok, errors, last_ok_name = 0, [], ""
             try:
@@ -753,7 +818,7 @@ class ConsultationAssignDialog(QDialog):
                         rid, c.get("_ino_assign_type", "radiologist"),
                         c.get("_ino_id", ""), assignee_name=c.get("name", ""),
                         assignee_source=c.get("_ino_source", ""), study_uid=study_uid,
-                        comment=comment,
+                        comment=comment, is_reassignment=is_reassign,
                     )
                     if r.get("ok"):
                         ok += 1
@@ -808,54 +873,128 @@ class ConsultationAssignDialog(QDialog):
                 "Internal assignment failed — " + "; ".join(errors), "error")
 
     def _load_assignment_details(self):
-        """Populate the upper-section 'current assignment' panel from the actual
-        assignment record (INO internal history). Shows assigned-to / assigned-by
-        / type / comment. Best-effort; hidden when there is no assignment."""
+        """Populate the 'current assignment' card from the REAL record (INO
+        internal history): assigned-to / assigned-by / type / when / comment +
+        the lifecycle status badge, and enable the allowed status actions."""
         panel = getattr(self, "_assign_details", None)
         if panel is None:
             return
         rec = None
         try:
             from modules.network import ino_assignment_history as _hist
-            rows = _hist.read_for_reception(self.patient_id)
-            # latest server-confirmed assignment (skip failed / unassigned)
-            for r in rows:
-                if not r.get("server_ok"):
-                    continue
-                act = str(r.get("action") or "").lower()
-                if act in ("assigned", "reassigned"):
-                    rec = r
-                elif act == "unassigned":
-                    rec = None
+            rec = _hist.current_assignment_details(self.patient_id)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("assignment details load failed: %s", exc)
             rec = None
         if not rec:
             panel.setVisible(False)
             return
-        p = self._p
-        assigned_to = str(rec.get("assignee_name") or "").strip() or "—"
-        assigned_by = self._resolve_assigner_name(str(rec.get("assigned_by") or ""))
-        when = str(rec.get("timestamp") or "")[:19].replace("T", " ")
-        comment = str(rec.get("comment") or "").strip()
-        # Internal (INO center) vs External (consultation). This record is INO.
-        kind_label = "ارجاع داخلی مرکز — Internal"
-        self._assign_details_title.setText("وضعیت ارجاع فعلی — Current assignment")
-        self._assign_details_title.setStyleSheet(
-            f"color:{p['text']};font-size:12px;font-weight:600;")
-        bits = [
-            f"<b>Assigned to:</b> {assigned_to}",
-            f"<b>Type:</b> <span style='color:#ef4444;'>{kind_label}</span>",
-        ]
-        if assigned_by:
-            bits.append(f"<b>Assigned by:</b> {assigned_by}")
-        if when:
-            bits.append(f"<b>When:</b> {when}")
-        body = " &nbsp;·&nbsp; ".join(bits)
-        if comment:
-            body += f"<br><b>Comment:</b> {comment}"
-        self._assign_details_body.setText(body)
+
+        status = str(rec.get("assignment_status") or "").strip().lower()
+        try:
+            from modules.network import ino_assignment_models as _m
+            s_label = _m.status_label(status) or "—"
+            s_color = _m.status_color(status)
+        except Exception:
+            s_label, s_color = (status.capitalize() or "—"), "#6b7280"
+
+        # status badge
+        self._ad_status_badge.setText(s_label)
+        self._ad_status_badge.setStyleSheet(
+            "background:%s22;color:%s;border:1px solid %s66;border-radius:10px;"
+            "padding:3px 12px;font-size:11px;font-weight:700;"
+            % (s_color, s_color, s_color))
+
+        # labeled rows
+        def _set(key, text):
+            cap, val = self._ad_fields[key]
+            has = bool(str(text or "").strip())
+            val.setText(str(text) if has else "—")
+            cap.setVisible(True)
+            val.setVisible(True)
+            return has
+
+        _set("assigned_to", str(rec.get("assignee_name") or "").strip())
+        _set("assigned_by", self._resolve_assigner_name(str(rec.get("assigned_by") or "")))
+        _set("type", "Internal — ارجاع داخلی مرکز")
+        _set("assigned_at", str(rec.get("timestamp") or "")[:19].replace("T", " "))
+        has_comment = _set("comment", str(rec.get("comment") or "").strip())
+        # hide the comment row entirely when there is none
+        cap, val = self._ad_fields["comment"]
+        cap.setVisible(has_comment)
+        val.setVisible(has_comment)
+
+        self._update_assignment_actions(status)
         panel.setVisible(True)
+
+    def _update_assignment_actions(self, status: str):
+        """Enable only the transitions that make sense for the current status, and
+        say plainly which ones are server-backed."""
+        st = str(status or "").strip().lower()
+        allowed = {
+            "active": ("completed", "deactivated", "cancelled"),
+            "completed": ("active", "deactivated"),
+            "deactivated": ("active", "cancelled"),
+            "cancelled": (),
+        }.get(st, ("completed", "deactivated", "cancelled"))
+        for key, btn in self._ad_buttons.items():
+            btn.setEnabled(key in allowed)
+        self._ad_hint.setText(
+            "Cancel / Unassign is sent to the INO server and applied only after "
+            "confirmation. Mark Active / Completed / Deactivate are local "
+            "workflow states (INO exposes no endpoint for them)."
+        )
+
+    def _on_assignment_status_action(self, status_key: str):
+        """Apply a status change: server call for cancel/unassign, local record for
+        the workflow states. The UI updates ONLY after the result comes back."""
+        import threading
+
+        rid = self.patient_id
+        for b in self._ad_buttons.values():
+            b.setEnabled(False)
+        self._set_state(f"Updating assignment status → {status_key}…", "info")
+
+        def _run():
+            out = {"ok": False, "message": "unknown"}
+            try:
+                from modules.network.ino_assignment import get_internal_assignment_service
+                out = get_internal_assignment_service().set_assignment_status(
+                    rid, status_key) or out
+            except Exception as exc:  # pragma: no cover - defensive
+                out = {"ok": False, "message": assign_core.humanize_server_error(exc)}
+            try:
+                self._ino_status_done.emit(out)
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=_run, name="INOAssignStatus", daemon=True).start()
+
+    def _on_ino_status_done(self, res: object):
+        data = res if isinstance(res, dict) else {}
+        if data.get("ok"):
+            local = bool(data.get("local"))
+            what = str(data.get("status_set") or "updated")
+            self._set_state(
+                f"Assignment status: {what}"
+                + (" (local workflow state)" if local else " — confirmed by server."),
+                "success")
+            # refresh the card from the record + update the patient-list indicator
+            self._load_assignment_details()
+            try:
+                self.internal_assigned.emit(str(self.patient_id), "")
+            except RuntimeError:
+                pass
+        else:
+            if data.get("permission_denied"):
+                msg = "not permitted"
+            elif data.get("disabled"):
+                msg = "internal assignment is disabled"
+            else:
+                msg = assign_core.humanize_server_error(data.get("message") or "failed")
+            self._set_state(f"Status change failed — {msg}", "error")
+            logger.warning("[ino-assignment] status change failed: %s", msg)
+            self._load_assignment_details()  # restore the true state (no fake UI)
 
     def _resolve_assigner_name(self, assigner_id: str) -> str:
         """Best-effort id→name for the 'Assigned by' line. Shows the logged-in

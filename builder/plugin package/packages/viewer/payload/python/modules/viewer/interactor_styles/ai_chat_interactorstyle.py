@@ -882,7 +882,6 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             else:
                 show_message("EAGLE EYE (MG) completed successfully!")
 
-            # ✅ در هر دو حالت، AI module باز شود
             self.open_ai_module()
 
         worker.finished.connect(on_finished)

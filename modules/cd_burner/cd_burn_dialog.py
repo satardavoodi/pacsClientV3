@@ -823,6 +823,13 @@ class CDBurnDialog(QDialog):
             light_viewer_path = selection.get('path')
             viewer_display_name = selection.get('display_name')
 
+        # Never silently produce a disc with no viewer.
+        if not self._confirm_viewer_available(light_viewer_path):
+            self.burn_btn.setEnabled(True)
+            self.prepare_btn.setEnabled(True)
+            self.cancel_btn.setText("Close")
+            return
+
         viewer_warning_text = ""
         if light_viewer_path:
             analysis = self.burn_manager.inspect_viewer_portability(light_viewer_path)
@@ -912,6 +919,10 @@ class CDBurnDialog(QDialog):
             light_viewer_path = selection.get('path')
             viewer_display_name = selection.get('display_name')
 
+        # Never silently produce a folder/disc with no viewer.
+        if not self._confirm_viewer_available(light_viewer_path):
+            return
+
         self.log_output.append(f"[info] {self._get_viewer_launch_summary(light_viewer_path)}")
         self.log_output.append(f"[options]\n{self._options_summary(options, viewer_display_name)}")
 
@@ -936,6 +947,39 @@ class CDBurnDialog(QDialog):
             viewer_display_name=viewer_display_name,
             options=options,
         )
+
+    def _confirm_viewer_available(self, light_viewer_path: Optional[str]) -> bool:
+        """Guard: NEVER silently burn a disc with no viewer.
+
+        If the user asked to include the viewer but it could not be resolved on
+        THIS computer, the burn used to fall through to the no-viewer path and
+        produce a disc containing only DICOM files. autorun.inf then falls back
+        to ``open=OPEN_DICOM_FOLDER.cmd``, so inserting the disc merely opens
+        Explorer and the patient has no way to view the images — which looks
+        exactly like "AutoRun is broken" (investigated 2026-07-11, disc
+        ZALAGHI MASOOME: viewer_included=false, no VIEWER/, no AIPacsViewer.exe).
+        Make it an explicit, informed decision instead.
+        """
+        if not self.include_viewer_cb.isChecked():
+            return True  # the user deliberately excluded the viewer
+        if light_viewer_path and Path(light_viewer_path).exists():
+            return True
+
+        reply = QMessageBox.warning(
+            self,
+            "Viewer not found — the disc would have NO viewer",
+            "The AI-PACS viewer could not be found on this computer.\n\n"
+            "If you continue, the disc will contain ONLY the DICOM files and NO "
+            "viewer. Inserting it will just open the folder in Explorer, and the "
+            "patient will not be able to open the images without their own DICOM "
+            "viewer.\n\n"
+            "To fix this: open Settings → Light Viewer and make sure the default "
+            "AI-PACS viewer is available (or choose a custom viewer executable).\n\n"
+            "Burn a disc WITHOUT a viewer anyway?",
+            QMessageBox.Cancel | QMessageBox.Yes,
+            QMessageBox.Cancel,
+        )
+        return reply == QMessageBox.Yes
 
     def _get_viewer_launch_summary(self, light_viewer_path: Optional[str]) -> str:
         """Return a user-facing summary of the expected media launch target."""

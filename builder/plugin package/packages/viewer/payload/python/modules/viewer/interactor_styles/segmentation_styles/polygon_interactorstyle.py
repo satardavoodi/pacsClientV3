@@ -27,7 +27,12 @@ from ..tools_object_manager import PolygonSegmentationObject
 from ..interactor_utils.server_connection import download_file, post_json
 from ..interactor_utils.convertors import (get_world_points, world_to_ijk_vtk,
                                            build_payload_ijk, rect_from_quad_by_longest_diagonal)
-from PacsClient.utils.config import server_config, SEGMENTS_PATH
+from PacsClient.utils.config import (
+    server_config,
+    SEGMENTS_PATH,
+    refresh_segmentation_server_config,
+    resolve_segmentation_server_ip,
+)
 from PacsClient.utils.utils import get_server_url
 
 
@@ -114,7 +119,7 @@ class PolygonSegmentationInteractorStyle(AbstractInteractorStyle):
         self.active_widget.Off()
         self.active_contours = []
 
-        self.server_config = server_config
+        self.server_config = refresh_segmentation_server_config(port=9000)
         self.set_server(self.server_config["SERVER_IP"],
                         self.server_config["SERVER_PORT"])
 
@@ -171,7 +176,7 @@ class PolygonSegmentationInteractorStyle(AbstractInteractorStyle):
             ip (str): Server IP or hostname.
             port (int, optional): Server port. Defaults to 9000.
         """
-        self.server_ip = ip
+        self.server_ip = str(ip or "").strip() or resolve_segmentation_server_ip()
         self.server_port = int(port)
 
     def set_case(self, dicom_folder: str, *, out_dir: str | None = None,
@@ -308,9 +313,17 @@ class PolygonSegmentationInteractorStyle(AbstractInteractorStyle):
 
         try:
             url = get_server_url('segmentation')
+            if not url:
+                host = str(self.server_ip or "").strip() or resolve_segmentation_server_ip()
+                if host:
+                    url = f"http://{host}:{self.server_port}"
 
         except Exception as e:
             print(f"[poly] ERROR: cannot connect to server: {e}")
+            return
+
+        if not url:
+            print("[poly] ERROR: segmentation server host is empty; check server settings")
             return
 
         # send to server
@@ -362,7 +375,13 @@ class PolygonSegmentationInteractorStyle(AbstractInteractorStyle):
             return None, None
 
         payload = build_payload_ijk(self.server_config, ijk_list_3d)
-        url = f"http://{self.server_ip}:{self.server_port}/dicom-info/"
+        host = str(self.server_ip or "").strip() or resolve_segmentation_server_ip()
+        if not host:
+            print("[poly] send/download failed: segmentation server host is empty")
+            return None, payload
+
+        url = f"http://{host}:{self.server_port}/dicom-info/"
+        print(f"[poly] segmentation endpoint: host={host} port={self.server_port} url={url}")
 
         try:
             print(f"\npayload: {payload}\n")
