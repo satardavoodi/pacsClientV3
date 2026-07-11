@@ -124,6 +124,17 @@ hiddenimports = load_hiddenimports(
         "PacsClient.utils.data_paths",
         "PacsClient.utils.theme_manager",
         "modules.zeta_boost",
+        # INO internal-assignment + report-status modules are imported LAZILY
+        # (inside functions) from core UI, so PyInstaller's static analysis of
+        # main.py never discovers them — they must be pinned as hidden imports or
+        # they go missing in the frozen build (the feature then dies with a
+        # ModuleNotFoundError). Keep this list in sync with modules/network/ino_*.
+        "modules.network.ino_assignment",
+        "modules.network.ino_assignment_socket",
+        "modules.network.ino_assignment_models",
+        "modules.network.ino_assignment_history",
+        "modules.network.ino_report_workflow",
+        "modules.network.ino_notifications",
         "pydicom.encoders",
         "pydicom.pixel_data_handlers",
         "pydicom.pixel_data_handlers.numpy_handler",

@@ -89,6 +89,50 @@ STATUS_COLORS = {
 }
 
 
+# --- Status -> INO reception approvalFlags mapping (2026-07-09) ---------------
+# INO Reception renders the patient/report state from ``report.approvalFlags``
+# (physicianApproved / secretaryApproved), NOT from the raw ``report.status``
+# string. The ``/api/pacs/update-report`` call historically sent only
+# ``status``, so a DOWNGRADE (e.g. Completed -> Awaiting Physician) changed
+# ``report.status`` but left the approval flags set, and INO kept showing the
+# report as approved (root cause + live proof reception 46682:
+# docs/reports/AINO_RECEPTION_STATUS_SYNC_REVIEW_2026-07-09.md). We now send
+# ``approvalFlags`` consistent with the chosen status so INO's displayed status
+# follows a downgrade too. Flag-gated (default ON); ``=0`` restores the legacy
+# status-only body. Harmless if the server ignores the field.
+UPDATE_REPORT_APPROVAL_FLAGS = (
+    os.environ.get("AIPACS_UPDATE_REPORT_APPROVAL_FLAGS", "1") or "1"
+).strip() != "0"
+
+# Physician has signed off at/after the physician-approved stage. Secretary has
+# finalized at/after the secretary-approved stage. Everything else (pending /
+# awaiting_*) is not yet approved.
+_PHYSICIAN_APPROVED_STATES = {
+    "physician_approved",
+    "awaiting_secretary_approval",  # physician approved, awaiting secretary
+    "secretary_approved",
+    "completed",
+    "archived",
+}
+_SECRETARY_APPROVED_STATES = {"secretary_approved", "completed", "archived"}
+
+
+def approval_flags_for_status(status: str) -> Dict[str, bool]:
+    """Map an internal report status to INO's ``approvalFlags`` booleans.
+
+    Pure / no I/O. Returns
+    ``{"physicianApproved": bool, "secretaryApproved": bool}`` so that a report
+    DOWNGRADE clears the flags INO renders the patient status from — the fix for
+    "status not updating on the reception side". A forward transition to
+    completed/approved sets them. Unknown statuses map to False/False (safe).
+    """
+    s = (status or "").strip()
+    return {
+        "physicianApproved": s in _PHYSICIAN_APPROVED_STATES,
+        "secretaryApproved": s in _SECRETARY_APPROVED_STATES,
+    }
+
+
 class SocketReportStatusService(QObject):
     """
     Socket-based Report Status Service for PACS Client

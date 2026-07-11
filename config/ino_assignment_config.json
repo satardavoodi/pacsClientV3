@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "assignment_api_base_url": "",
+  "transport": "socket",
+  "note": "Internal-center (INO) assignment config. SAME-CENTER radiologist/typist assignment, separate from AI-PACS Consultation/External Assignment. TWO services (ASSIGN_CLIENT_GUIDE_FA): (1) eligible-USER lists are read from the RECEPTION/RIS API base (:8080) — GET /api/personnel (physicians) + GET /api/AdminUser/getCenterUsers (center users), with the logged-in reception token; (2) the ASSIGN write/read is the PACS-client contract on the PACS HTTP service PORT 8000 — PUT/GET /api/patients/{ReceptionID}/assign {assign_type, assignee_id, assignee_name, assignee_source, study_uid}. 'transport' selects the assign write path: 'socket' (DEFAULT — AssignStudy over the imaging socket :50052 that AI-PACS already holds; works without the PACS HTTP service being exposed) or 'rest' (PUT over PACS HTTP :8000). Either transport falls back to the other on a connection failure. 'assignment_api_base_url' sets the PACS REST base (for transport=rest or the REST fallback); leave EMPTY to auto-derive http://{reception-host}:8000. ReceptionID is the numeric reception number. Keep 'enabled' false until a live assign is verified on the source build; while false the Internal tab falls back to its previous behavior and nothing internal fires."
+}

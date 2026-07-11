@@ -9384,7 +9384,16 @@ class ToolbarManager:
             layout = QVBoxLayout(dropdown)
             layout.setContentsMargins(10, 10, 10, 10)
             layout.setSpacing(4)
-            
+
+            # Ensure INO permission/auth rejections from the background approval
+            # sync surface to the user (GUI-thread install; idempotent). AI-PACS
+            # must never silently succeed when INO's role rules deny the action.
+            try:
+                from modules.network.ino_report_workflow import install_ui_notifier
+                install_ui_notifier()
+            except Exception:
+                pass
+
             # Header
             header = QLabel("📊 Change Report Status")
             header.setStyleSheet("""

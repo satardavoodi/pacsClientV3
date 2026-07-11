@@ -11,8 +11,53 @@ Python so it is unit-testable headless. The Qt dialog/page in
 
 from __future__ import annotations
 
+import re
+
 INTERNAL = "internal"
 EXTERNAL = "external"
+
+# A Mongo/INO ObjectId (24 hex chars). We must never show one to the user as if
+# it were a contact address — it is an internal identifier, not information.
+_OBJECTID_RE = re.compile(r"^[0-9a-fA-F]{24}$")
+
+
+def is_objectid_like(value) -> bool:
+    """True when ``value`` is a 24-hex ObjectId (INO/Mongo internal id)."""
+    return bool(_OBJECTID_RE.match(str(value or "").strip()))
+
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+# "Cannot PUT /api/patients/49639/assign" — Express' default 404 body.
+_CANNOT_VERB_RE = re.compile(
+    r"Cannot\s+(GET|POST|PUT|PATCH|DELETE)\s+([^\s<]+)", re.IGNORECASE)
+
+
+def humanize_server_error(message, *, max_len: int = 180) -> str:
+    """Turn a raw server error (often an HTML page) into ONE readable line.
+
+    Handles the common cases so the UI never dumps an HTML document at the user:
+    * an Express ``Cannot PUT /path`` 404 body → a plain "endpoint not
+      available" sentence naming the path;
+    * any HTML → tags stripped, whitespace collapsed, truncated;
+    * plain text → collapsed + truncated.
+    """
+    raw = str(message or "").strip()
+    if not raw:
+        return "Unknown error"
+    m = _CANNOT_VERB_RE.search(raw)
+    if m:
+        return (f"The server does not provide this endpoint "
+                f"({m.group(1).upper()} {m.group(2)}). "
+                f"It may not be configured for this center.")
+    text = _HTML_TAG_RE.sub(" ", raw)
+    text = " ".join(text.split())
+    # Drop a leading boilerplate DOCTYPE/title residue if any survived.
+    text = text.replace("DOCTYPE html", "").replace("Error", "", 1).strip(" :–-")
+    if not text:
+        text = "Server error"
+    if len(text) > max_len:
+        text = text[: max_len - 1].rstrip() + "…"
+    return text
 
 # Internal registry rows carry this caption in the UI so a physician can never
 # mistake them for an image-bearing Drive consultation.
@@ -60,6 +105,44 @@ def consultant_display(consultant: dict) -> dict:
         "badge": "Internal" if kind == INTERNAL else "External",
         "address": consultant_address(c),
     }
+
+
+# ── INO internal-user grouping (Internal tab) ──────────────────────────────────
+# INO exposes eligible internal-assignment users as TWO distinct groups that must
+# be displayed SEPARATELY so the reader can tell physicians from secretaries:
+#   * ris_personnel → Personnel / Staff Management  (primarily physicians)
+#   * ris_user      → Center Users                  (physicians + secretaries/other)
+# Order is stable (physicians first). A row is INO when it carries ``_ino``; its
+# group is ``_ino_source``. Rows with an unknown/empty source fall into "other".
+INO_GROUP_PHYSICIANS = "ris_personnel"
+INO_GROUP_USERS = "ris_user"
+INO_GROUP_OTHER = "other"
+
+INO_GROUP_TITLES = {
+    INO_GROUP_PHYSICIANS: "پزشکان (پرسنل مرکز) — Physicians",
+    INO_GROUP_USERS: "کاربران مرکز (منشی/سایر) — Users / Secretaries",
+    INO_GROUP_OTHER: "سایر — Other",
+}
+_INO_GROUP_ORDER = (INO_GROUP_PHYSICIANS, INO_GROUP_USERS, INO_GROUP_OTHER)
+
+
+def partition_ino_groups(rows: list[dict]) -> list[tuple[str, str, list[dict]]]:
+    """Split INO internal-user rows into ordered, labeled groups.
+
+    Returns a list of ``(group_key, title, rows)`` in stable order
+    (physicians → users/secretaries → other), OMITTING empty groups. Pure —
+    the Qt renderer only iterates the result and draws a header + the cards.
+    """
+    buckets: dict[str, list[dict]] = {k: [] for k in _INO_GROUP_ORDER}
+    for r in rows or []:
+        src = str((r or {}).get("_ino_source") or "").strip()
+        key = src if src in (INO_GROUP_PHYSICIANS, INO_GROUP_USERS) else INO_GROUP_OTHER
+        buckets[key].append(r)
+    return [
+        (key, INO_GROUP_TITLES[key], buckets[key])
+        for key in _INO_GROUP_ORDER
+        if buckets[key]
+    ]
 
 
 # ── routing + payloads ─────────────────────────────────────────────────────────

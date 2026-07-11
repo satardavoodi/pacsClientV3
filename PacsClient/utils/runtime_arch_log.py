@@ -84,8 +84,8 @@ def get_runtime_architecture() -> Dict[str, Any]:
     try:
         native = _native_machine_via_iswow64process2()
         info["native_arch"] = native
+        proc = info["process_arch"]
         if native:
-            proc = info["process_arch"]
             if native == "ARM64" and proc in ("AMD64", "X86", "I386", "I686"):
                 info["emulated"] = True   # x64/x86 build under Windows-on-ARM (Prism)
             elif native == proc:
@@ -94,6 +94,24 @@ def get_runtime_architecture() -> Dict[str, Any]:
                 info["emulated"] = True   # classic WOW64
             else:
                 info["emulated"] = False
+    except Exception:
+        pass
+    # Robust fallback (IsWow64Process2 returned nothing useful on the live
+    # Snapdragon test machine — native_arch=None, emulated stayed None). The
+    # authoritative WoA gate lives in aipacs_runtime (env + identifier signals
+    # that survive emulation). Importing aipacs_runtime here is safe (it never
+    # imports PacsClient at module top).
+    try:
+        from aipacs_runtime import is_windows_on_arm_emulated, native_host_arch
+
+        if is_windows_on_arm_emulated():
+            info["emulated"] = True
+            if not info.get("native_arch"):
+                info["native_arch"] = native_host_arch() or "ARM64"
+        elif info["emulated"] is None:
+            info["emulated"] = False
+            if not info.get("native_arch"):
+                info["native_arch"] = native_host_arch() or None
     except Exception:
         pass
     return info

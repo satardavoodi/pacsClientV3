@@ -601,6 +601,10 @@ class DataAnalysisDashboard(QWidget):
         self.title_label = QLabel("Data Analysis Command Center")
         self.subtitle_label = QLabel("Live dashboards for users, studies, modules, servers and storage")
         self.account_label = QLabel("Account: -")
+        # Wrap the long subtitle/account lines instead of clipping them
+        # (e.g. "… | User Filter: All" was being cut off on the right).
+        self.subtitle_label.setWordWrap(True)
+        self.account_label.setWordWrap(True)
         title_col.addWidget(self.title_label)
         title_col.addWidget(self.subtitle_label)
         title_col.addWidget(self.account_label)
@@ -611,8 +615,14 @@ class DataAnalysisDashboard(QWidget):
         self.generated_at_label = QLabel("Last update: -")
         self.refresh_btn = QPushButton("Refresh")
         self.refresh_btn.clicked.connect(lambda: self.refresh_data(force_storage_refresh=True))
+        self.auto_refresh_checkbox = QCheckBox("Auto refresh")
+        self.auto_refresh_checkbox.toggled.connect(self._toggle_auto_refresh)
         top_row.addWidget(self.generated_at_label)
+        top_row.addStretch(1)
         top_row.addWidget(self.refresh_btn)
+        # Auto-refresh moved up here so the filter row below has room and the
+        # checkbox label is no longer clipped on the right ("Auto re…").
+        top_row.addWidget(self.auto_refresh_checkbox)
 
         filter_row = QHBoxLayout()
         self.date_filter = QComboBox()
@@ -623,8 +633,10 @@ class DataAnalysisDashboard(QWidget):
         self.user_filter.currentIndexChanged.connect(self._on_data_filter_changed)
         self.modality_filter = QComboBox()
         self.modality_filter.currentIndexChanged.connect(self._apply_filters)
-        self.auto_refresh_checkbox = QCheckBox("Auto refresh")
-        self.auto_refresh_checkbox.toggled.connect(self._toggle_auto_refresh)
+        # Min widths so option text (e.g. "All Servers", "All Users") is not
+        # clipped to "All Serve" when the header is compressed.
+        for _cb in (self.date_filter, self.server_filter, self.user_filter, self.modality_filter):
+            _cb.setMinimumWidth(96)
         filter_row.addWidget(QLabel("Date:"))
         filter_row.addWidget(self.date_filter)
         filter_row.addWidget(QLabel("Server:"))
@@ -633,7 +645,7 @@ class DataAnalysisDashboard(QWidget):
         filter_row.addWidget(self.user_filter)
         filter_row.addWidget(QLabel("Modality:"))
         filter_row.addWidget(self.modality_filter)
-        filter_row.addWidget(self.auto_refresh_checkbox)
+        filter_row.addStretch(1)
 
         controls.addLayout(top_row)
         controls.addLayout(filter_row)
@@ -716,6 +728,22 @@ class DataAnalysisDashboard(QWidget):
         op.addWidget(self._section("Storage Footprint by Section", self.storage_footprint_chart))
 
         self.tabs.addTab(self.ops_tab, "Operations")
+
+        # Admission Reports (گزارش پذیرش) — pulls admission/reporting data from
+        # the web admission software's Reports API and renders it as a Persian
+        # dashboard. Fully self-contained + async (its own background worker),
+        # added as an ADDITIVE tab so the existing storage tabs above are
+        # untouched. Never blocks the GUI; a failure here must never break the
+        # storage dashboard.
+        self.admission_tab = None
+        try:
+            from .admission_reports import AdmissionReportsTab
+
+            self.admission_tab = AdmissionReportsTab(self, auth_user=self._auth_user)
+            self.tabs.addTab(self.admission_tab, "گزارش پذیرش")
+        except Exception:
+            logger.exception("data_analysis: failed to build admission reports tab")
+            self.admission_tab = None
 
         self.apply_theme()
 
@@ -1135,3 +1163,13 @@ class DataAnalysisDashboard(QWidget):
             stylesheet = stylesheet.replace(key, val)
 
         self.setStyleSheet(stylesheet)
+
+        # The Admission Reports tab owns its own (Persian/RTL, dark-chart)
+        # styling — re-apply it after the dashboard-wide sheet so its subtree
+        # keeps its look. Never let a theming error break the dashboard.
+        admission_tab = getattr(self, "admission_tab", None)
+        if admission_tab is not None:
+            try:
+                admission_tab.apply_theme(theme)
+            except Exception:  # pragma: no cover - defensive
+                logger.debug("data_analysis: admission tab theming skipped", exc_info=True)

@@ -84,7 +84,20 @@ def reporter(
     prompt = (
         "You are EchoMind report generation. Produce a structured radiology report in English. "
         "Return only valid JSON with keys Report Title, Pathological Findings, Normal Findings. "
-        "Include Impression and Recommendations only if they are explicitly supported by the input."
+        "PHYSICIAN-PROVIDED CONTENT PRESERVATION (highest priority): Do NOT independently generate, "
+        "invent, or infer any new impression, conclusion, suggestion, follow-up advice, "
+        "clinical/laboratory/pathologic correlation, biopsy, further-imaging, or management "
+        "recommendation the physician did not provide. However, ANY impression, recommendation, "
+        "suggestion, or correlation the physician EXPLICITLY dictated in the input MUST be preserved "
+        "(meaning intact) in the report and MUST NOT be deleted, omitted, weakened, or softened — "
+        "e.g. 'findings are suggestive of ...', 'clinical correlation is recommended', 'biopsy is "
+        "recommended', 'further evaluation is recommended'. "
+        "Include the Impression and Recommendations keys whenever the physician provided such content; "
+        "omit them only when the physician provided none. "
+        "SEX-SPECIFIC ANATOMY: Do NOT infer or assume the patient's sex. Include a sex-specific organ "
+        "(prostate, uterus, ovaries, seminal vesicles, cervix, testes) ONLY IF the physician explicitly "
+        "mentioned that organ; if no information was given about it, OMIT it entirely and do NOT emit a "
+        "normal/'unremarkable' statement for it. NEVER include both male and female organs in the same report."
     )
     if modality:
         prompt += f"\nModality: {modality}."

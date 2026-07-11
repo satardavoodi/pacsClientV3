@@ -14,6 +14,21 @@
 #define AdvancedMprPayloadExe StageDir + "\plugin_packages\advanced_mpr\payload\AIPacsAdvancedViewer.exe"
 #define AdvancedMprAvailable FileExists(AdvancedMprPayloadExe)
 
+; ── ARM64 / Windows-on-ARM variants (parity with the PyInstaller installer) ──
+; Single-source: AIPacs_Nuitka_Setup_arm64.iss / _woa.iss set one of these
+; symbols and #include this file. Without them this compiles byte-identical to
+; the historical x64 Nuitka installer.
+#ifdef ARM64_BUILD
+  #define ArchSuffix " (ARM64)"
+  #define InstallPackageKind "arm64"
+#elif defined WOA_EMULATED_BUILD
+  #define ArchSuffix " (ARM64 emulated)"
+  #define InstallPackageKind "x64_on_arm64"
+#else
+  #define ArchSuffix ""
+  #define InstallPackageKind "x64"
+#endif
+
 [Setup]
 ; DIFFERENT GUID from PyInstaller version to allow coexistence
 AppId={{3E7B29F2-22DF-4B2C-8D3A-1E7C25772F76}
@@ -29,12 +44,21 @@ OutputBaseFilename={#InstallerBaseName}
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
+#ifdef ARM64_BUILD
+ArchitecturesAllowed=arm64
+ArchitecturesInstallIn64BitMode=arm64
+#elif defined WOA_EMULATED_BUILD
+ArchitecturesAllowed=arm64
 ArchitecturesInstallIn64BitMode=x64compatible
+#else
+ArchitecturesInstallIn64BitMode=x64compatible
+#endif
 PrivilegesRequired=admin
 DisableReadyMemo=no
 SetupIconFile=..\..\Qss\images\favicon.ico
 LicenseFile=..\..\LICENSE
 UninstallDisplayIcon={app}\AIPacs.exe
+UninstallDisplayName={#MyAppName} {#MyAppVersion}{#ArchSuffix}
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -136,6 +160,22 @@ begin
   end;
 #endif
   Result := WizardIsComponentSelected('optional\' + ModuleId);
+end;
+
+function ResolvedInstallPackageKind(): String;
+begin
+  // Auto-detect at INSTALL time so ONE Nuitka installer stamps the correct
+  // package kind for the machine (parity with the PyInstaller installer;
+  // user directive 2026-07-08). Same x64 payload; on ARM64 the app then
+  // applies the Windows-on-ARM emulation runtime profile + hardware-GL fix.
+#ifdef ARM64_BUILD
+  Result := 'arm64';
+#else
+  if IsArm64 then
+    Result := 'x64_on_arm64'
+  else
+    Result := 'x64';
+#endif
 end;
 
 function OptionalModuleStatusValue(const ModuleId: String): String;
@@ -580,6 +620,7 @@ begin
     '  "app_name": "AIPacs",' + #13#10 +
     '  "app_version": "{#MyAppVersion}",' + #13#10 +
     '  "generated_at_utc": "",' + #13#10 +
+    '  "install_package": "' + ResolvedInstallPackageKind() + '",' + #13#10 +
     '  "installer": {' + #13#10 +
     '    "current_version": "{#MyAppVersion}",' + #13#10 +
     '    "detected_existing_version": "' + InstalledVersionValue() + '",' + #13#10 +
@@ -653,4 +694,29 @@ begin
       );
   end;
 end;
+
+#ifdef WOA_EMULATED_BUILD
+// ARM64 emulation SKU (Nuitka) — informative first page; always continues.
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  SuppressibleMsgBox(
+    'AIPacs (Nuitka) for Windows on ARM (emulated x64 package).' + #13#10 + #13#10 +
+    'The application runs through Windows'' built-in x64 emulation. First launches are slower while Windows translates the application; later launches are faster.' + #13#10 + #13#10 +
+    '3D/MPR rendering uses the system hardware OpenGL. If MPR reports a graphics problem, update the GPU driver and re-run the test in Settings > Viewer Configuration > Hardware Requirements Check.',
+    mbInformation, MB_OK, IDOK);
+end;
+#elif !defined ARM64_BUILD
+// Standard x64 Nuitka package on a Windows-on-ARM host: point at the WoA package.
+function InitializeSetup(): Boolean;
+begin
+  Result := True;
+  if IsArm64 then
+    Result := SuppressibleMsgBox(
+      'This computer uses Windows on ARM (ARM64), but this is the standard x64 Nuitka package of AIPacs.' + #13#10 + #13#10 +
+      'A dedicated "AIPacs (ARM64 emulated)" Nuitka package exists for ARM64 computers. Please use that package if available.' + #13#10 + #13#10 +
+      'Continue installing the standard x64 package on this ARM64 computer?',
+      mbConfirmation, MB_YESNO, IDYES) = IDYES;
+end;
+#endif
 

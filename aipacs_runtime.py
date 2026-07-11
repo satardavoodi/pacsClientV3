@@ -891,6 +891,69 @@ def _native_machine_name() -> str:
         return ""
 
 
+def native_host_arch() -> str:
+    """Best-effort HOST architecture ("ARM64"/"AMD64"/"x86"/""), robust.
+
+    IsWow64Process2 is authoritative but on some Windows-on-ARM builds it
+    returns 0/unknown from an emulated x64 process (observed live on the
+    Snapdragon test machine 2026-07-08 — native_arch came back empty). Fall
+    back to signals that survive emulation: PROCESSOR_ARCHITEW6432 (set by WOW),
+    platform.machine() (Python 3.13 reports the true host even when emulated),
+    and the PROCESSOR_IDENTIFIER string ("ARMv8 … Qualcomm"). Stdlib only.
+    """
+    native = _native_machine_name()
+    if native:
+        return native
+    try:
+        alt = (os.environ.get("PROCESSOR_ARCHITEW6432") or "").upper()
+        if alt in ("ARM64", "AMD64", "X86"):
+            return alt
+        import platform as _pf
+
+        mach = (_pf.machine() or "").upper()
+        if mach in ("ARM64", "AARCH64"):
+            return "ARM64"
+        ident = (os.environ.get("PROCESSOR_IDENTIFIER") or "").upper()
+        if "ARM" in ident or "QUALCOMM" in ident or "SNAPDRAGON" in ident or "ORYON" in ident:
+            return "ARM64"
+        if mach in ("AMD64", "X86_64"):
+            return "AMD64"
+    except Exception:
+        pass
+    return ""
+
+
+def process_view_arch() -> str:
+    """What THIS process runs as ("AMD64"/"X86"/"ARM64"): the emulated view.
+
+    An x64 process under Windows-on-ARM emulation reports AMD64 here (via
+    PROCESSOR_ARCHITECTURE) even though the host is ARM64 — that mismatch is
+    the emulation tell.
+    """
+    proc = (os.environ.get("PROCESSOR_ARCHITECTURE") or "").upper()
+    if proc:
+        return proc
+    return "AMD64" if sys.maxsize > 2**32 else "X86"
+
+
+def is_windows_on_arm_emulated() -> bool:
+    """True when an x64/x86 build runs under Windows-on-ARM (Prism) emulation.
+
+    This is THE gate for the WoA graphics + runtime profile. Must be cheap +
+    never raise (called at graphics-config time, before logging). The decisive
+    live case: bundled software OpenGL (llvmpipe) executes a SIMD instruction
+    Prism can't emulate → 0xc000001d ILLEGAL INSTRUCTION at VTK init, while the
+    hardware D3D12/Adreno GL path works — so the "safe = software" default is
+    INVERTED here and this flag flips it (see build_windows_graphics_environment).
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        return native_host_arch() == "ARM64" and process_view_arch() in ("AMD64", "X86", "IA64")
+    except Exception:
+        return False
+
+
 def resolve_source_location(source: dict[str, Any], native_arch: str | None = None) -> str:
     """Per-architecture update location (ARM64 plan §4, 2026-07-07).
 
@@ -1796,6 +1859,27 @@ def build_windows_graphics_environment(
     frozen_runtime = is_frozen() if frozen is None else bool(frozen)
     software = dict(profile.get("software_rendering") or detect_software_graphics_support())
 
+    # ── Windows-on-ARM emulation: software-GL is the DANGEROUS path here ─────
+    # ROOT CAUSE (live faulthandler, Snapdragon X Elite, 2026-07-08): the
+    # bundled Mesa software renderer (llvmpipe / opengl32sw.dll) executes a SIMD
+    # instruction Prism's x64-on-ARM emulator does not support → 0xc000001d
+    # ILLEGAL INSTRUCTION at vtk_widget.Initialize(). The machine's HARDWARE
+    # OpenGL (D3D12 → Adreno, GL 4.6, proven by GLview) works. So on emulated
+    # WoA the safe/software default is INVERTED: we must NOT force the bundled
+    # llvmpipe; use the system/desktop OpenGL (→ OpenGLOn12 → D3D12 → Adreno).
+    # Escape hatch AIPACS_WOA_FORCE_SOFTWARE_GL=1 restores the legacy software
+    # path (e.g. to A/B the crash). Only flips the SOFTWARE branch — an explicit
+    # GPU profile is already hardware and untouched.
+    woa_emulated = False
+    try:
+        woa_emulated = is_windows_on_arm_emulated()
+    except Exception:
+        woa_emulated = False
+    _woa_force_sw = str(os.environ.get("AIPACS_WOA_FORCE_SOFTWARE_GL", "")).strip().lower() in (
+        "1", "true", "yes", "on",
+    )
+    woa_hardware = bool(woa_emulated and not use_gpu and not _woa_force_sw)
+
     env: dict[str, str] = {}
     clear_env = [
         "AIPACS_GRAPHICS_EXECUTION_MODE",
@@ -1846,6 +1930,40 @@ def build_windows_graphics_environment(
             }
         )
         warning = ""
+        execution_mode = GRAPHICS_EXECUTION_GPU
+    elif woa_hardware:
+        # Windows-on-ARM, emulated, software profile requested → use the
+        # SYSTEM/desktop OpenGL (hardware D3D12→Adreno) instead of the crashing
+        # bundled llvmpipe. Do NOT put the Mesa software DLLs on PATH and do NOT
+        # force QT_OPENGL=software / VTK softpipe. Chromium keeps GPU disabled
+        # (WebEngine stability under emulation is separate from VTK).
+        chromium_flags = [
+            "--enable-media-stream",
+            "--disable-gpu",
+            "--in-process-gpu",
+            "--disable-gpu-compositing",
+            "--disable-features=VizDisplayCompositor,UseSkiaRenderer",
+            "--use-angle=d3d11",
+        ]
+        env.update(
+            {
+                "AIPACS_GRAPHICS_EXECUTION_MODE": GRAPHICS_EXECUTION_GPU,
+                "ANGLE_DEFAULT_PLATFORM": "d3d11",
+                "QT_OPENGL": "desktop",
+                "QSG_RHI_BACKEND": "d3d11",
+                "QTWEBENGINE_CHROMIUM_FLAGS": " ".join(chromium_flags),
+                "VTK_USE_HARDWARE": "1",
+                # Diagnostic breadcrumb (read by the WoA profile + logs).
+                "AIPACS_WOA_GRAPHICS": "hardware_desktop_gl",
+            }
+        )
+        warning = (
+            "Windows-on-ARM emulation: using the system hardware OpenGL "
+            "(D3D12) instead of the bundled software renderer, which crashes "
+            "under emulation. If MPR still fails, update the GPU driver and the "
+            "Microsoft OpenCL/OpenGL Compatibility Pack."
+        )
+        viewer_backend_override = ""
         execution_mode = GRAPHICS_EXECUTION_GPU
     else:
         chromium_flags = [

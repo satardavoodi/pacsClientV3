@@ -838,6 +838,23 @@ class _PWPanelsMixin:
                     )
                     print(f"📥 [Thread] Status response: {status_response}")
 
+                # 2b. Sync the INO reception APPROVAL FLAGS to match the status.
+                #     The socket update above only touches the PACS-side store;
+                #     INO shows the patient state from report.approvalFlags, set
+                #     by a SEPARATE workflow endpoint (resolve reception→workflow
+                #     id → PATCH approval-flags, which also drives report.status).
+                #     Already on a background thread. Best-effort; the resolver's
+                #     exact receptionID match makes it a safe no-op if patient_id
+                #     is not a numeric reception id. Flag AIPACS_INO_APPROVAL_SYNC.
+                if status_changed:
+                    try:
+                        from modules.network.ino_report_workflow import (
+                            sync_report_approval_for_status,
+                        )
+                        sync_report_approval_for_status(patient_id, new_status)
+                    except Exception as exc:
+                        logger.warning("[PatientWidget] INO approval sync skipped: %s", exc)
+
                 # 3. REST comment sync — same endpoint as the Main Page, sent
                 #    regardless of status change so a comment-only update lands.
                 if comment_store is not None and comment_text:

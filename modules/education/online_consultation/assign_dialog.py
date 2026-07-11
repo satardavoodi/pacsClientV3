@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QDialog,
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -158,7 +159,24 @@ class _QuotaWorker(QThread):
 
 
 class ConsultationAssignDialog(QDialog):
-    """Pick consultant(s) for one patient row and send the consultation(s)."""
+    """Pick consultant(s) for one patient row and send the consultation(s).
+
+    Data-source separation (2026-07-09): the **Internal** tab sources its users
+    from **INO** (same-center: /api/personnel + /api/AdminUser/getCenterUsers via
+    ``InternalAssignmentService``) and submits through the INO internal-assignment
+    workflow — NOT the consultation registry. The **External** tab is unchanged
+    (AI-PACS consultation registry / Drive). Flag-gated: when INO assignment is
+    disabled the Internal tab falls back to its previous consultation-internal
+    behaviour (no regression).
+    """
+
+    # Internal-tab INO loading/submit (queued cross-thread → GUI thread).
+    _ino_users_loaded = Signal(object)   # {"ok":bool, "users":[AssignableUser], ...}
+    _ino_assign_done = Signal(object)    # {"ok":int, "errors":[str], "name":str}
+    _ino_status_done = Signal(object)    # {"ok":bool, "local":bool, "status_set":str}
+    # Emitted AFTER the INO server confirms an internal assignment, so the
+    # patient list can turn the Assign icon red (server-derived) and refresh.
+    internal_assigned = Signal(str, str)  # (reception_id, assignee_name)
 
     def __init__(self, patient_id: str, patient_name: str,
                  study_uids: list[str] | None = None,
@@ -184,11 +202,23 @@ class ConsultationAssignDialog(QDialog):
         self._multi_worker = None
         self._quota_worker = None
         self._registry_worker = None  # best-effort post-upload record (external)
+        self._internal_loading = False
+        try:
+            self._ino_users_loaded.connect(self._on_ino_users)
+            self._ino_assign_done.connect(self._on_ino_assign_done)
+            self._ino_status_done.connect(self._on_ino_status_done)
+        except Exception:
+            pass
         from .profile_dialog import resolve_palette
 
         self._p = resolve_palette()
         self.setWindowTitle("Assign consultation")
-        self.setMinimumSize(560, 560)
+        # Roomier default so the user list is readable and cards aren't clipped.
+        self.setMinimumSize(640, 720)
+        try:
+            self.resize(720, 800)
+        except Exception:  # pragma: no cover - defensive
+            pass
         # Derived hub gate (owner directive 2026-06-11): when the AI-PACS Cloud
         # Hub is not configured, the External tab is disabled with the reason
         # and the send path refuses external. Fails OPEN on any error so the
@@ -205,6 +235,7 @@ class ConsultationAssignDialog(QDialog):
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("external capability check failed (failing open): %s", exc)
         self._build()
+        self._load_assignment_details()
         self._load_consultants()
 
     # ── identity / metadata ───────────────────────────────────────────────────
@@ -247,6 +278,83 @@ class ConsultationAssignDialog(QDialog):
         sub = QLabel(" · ".join(sub_bits))
         sub.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
         root.addWidget(sub)
+
+        # ── Current-assignment card (structured, from the real record) ────────
+        # Labeled rows + a status badge + status actions. Hidden until assigned.
+        self._assign_details = QFrame()
+        self._assign_details.setObjectName("assignDetails")
+        self._assign_details.setStyleSheet(
+            f"QFrame#assignDetails{{background:{p['surface2']};border:1px solid "
+            f"{p['border']};border-left:4px solid #3b82f6;border-radius:9px;}}")
+        _adl = QVBoxLayout(self._assign_details)
+        _adl.setContentsMargins(14, 10, 14, 12)
+        _adl.setSpacing(8)
+
+        # header: title + status badge
+        _hdr = QHBoxLayout()
+        _hdr.setSpacing(8)
+        self._assign_details_title = QLabel("Current assignment · وضعیت ارجاع فعلی")
+        self._assign_details_title.setStyleSheet(
+            f"color:{p['text']};font-size:13px;font-weight:700;")
+        self._ad_status_badge = QLabel()
+        self._ad_status_badge.setAlignment(Qt.AlignCenter)
+        _hdr.addWidget(self._assign_details_title)
+        _hdr.addStretch(1)
+        _hdr.addWidget(self._ad_status_badge)
+        _adl.addLayout(_hdr)
+
+        # labeled field rows
+        self._ad_grid = QGridLayout()
+        self._ad_grid.setHorizontalSpacing(10)
+        self._ad_grid.setVerticalSpacing(5)
+        self._ad_grid.setColumnStretch(1, 1)
+        self._ad_fields = {}
+        _rows = [
+            ("assigned_to", "👤  Assigned to"),
+            ("assigned_by", "✍️  Assigned by"),
+            ("type", "🏷️  Assignment type"),
+            ("assigned_at", "🕒  Assigned at"),
+            ("comment", "💬  Comment"),
+        ]
+        for _r, (_key, _cap) in enumerate(_rows):
+            cap = QLabel(_cap)
+            cap.setStyleSheet(
+                f"color:{p['text_muted']};font-size:11px;font-weight:600;")
+            cap.setMinimumWidth(120)
+            val = QLabel("—")
+            val.setWordWrap(True)
+            val.setStyleSheet(f"color:{p['text']};font-size:12px;")
+            self._ad_grid.addWidget(cap, _r, 0, Qt.AlignTop | Qt.AlignLeft)
+            self._ad_grid.addWidget(val, _r, 1, Qt.AlignTop | Qt.AlignLeft)
+            self._ad_fields[_key] = (cap, val)
+        _adl.addLayout(self._ad_grid)
+
+        # status actions
+        self._ad_actions_row = QHBoxLayout()
+        self._ad_actions_row.setSpacing(8)
+        self._ad_hint = QLabel("")
+        self._ad_hint.setWordWrap(True)
+        self._ad_hint.setStyleSheet(f"color:{p['text_muted']};font-size:10px;")
+        self._ad_buttons = {}
+        for _key, _text in (
+            ("active", "Mark Active"),
+            ("completed", "Mark Completed"),
+            ("deactivated", "Deactivate"),
+            ("cancelled", "Cancel / Unassign"),
+        ):
+            b = QPushButton(_text)
+            b.setCursor(Qt.PointingHandCursor)
+            b.setStyleSheet("font-size:11px;padding:5px 10px;")
+            b.clicked.connect(
+                lambda _=False, k=_key: self._on_assignment_status_action(k))
+            self._ad_buttons[_key] = b
+            self._ad_actions_row.addWidget(b)
+        self._ad_actions_row.addStretch(1)
+        _adl.addLayout(self._ad_actions_row)
+        _adl.addWidget(self._ad_hint)
+
+        self._assign_details.setVisible(False)
+        root.addWidget(self._assign_details)
 
         self.state_label = QLabel("Loading consultants…")
         self.state_label.setWordWrap(True)
@@ -303,10 +411,13 @@ class ConsultationAssignDialog(QDialog):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
+        # Guarantee several cards are visible before scrolling kicks in — the
+        # list is the primary content of the dialog, so give it real estate.
+        scroll.setMinimumHeight(320)
         host = QWidget()
         lay = QVBoxLayout(host)
         lay.setContentsMargins(8, 8, 8, 8)
-        lay.setSpacing(6)
+        lay.setSpacing(8)
         lay.addStretch(1)
         scroll.setWidget(host)
         return scroll, lay
@@ -319,6 +430,19 @@ class ConsultationAssignDialog(QDialog):
             if w:
                 w.deleteLater()
 
+    def _set_state(self, text: str, kind: str = "info"):
+        """Set the status line with a colour that matches the message kind
+        (info=muted, error=red, success=green) — so a failure reads clearly."""
+        color = {"error": "#ef4444", "success": "#10b981"}.get(
+            kind, self._p["text_muted"])
+        weight = "600" if kind in ("error", "success") else "400"
+        try:
+            self.state_label.setStyleSheet(
+                f"color:{color};font-size:12px;font-weight:{weight};")
+            self.state_label.setText(text)
+        except Exception:  # pragma: no cover - defensive
+            pass
+
     def _build_internal_tab(self) -> QWidget:
         p = self._p
         host = QWidget()
@@ -327,7 +451,7 @@ class ConsultationAssignDialog(QDialog):
         lay.setSpacing(8)
         self.int_search = QLineEdit()
         self.int_search.setPlaceholderText(
-            "Search center physicians (name, specialty, expertise)…")
+            "Search center users — physicians & secretaries (name, role)…")
         self.int_search.textChanged.connect(lambda _t: self._render_internal())
         lay.addWidget(self.int_search)
         scroll, self.int_list = self._make_card_list()
@@ -407,12 +531,26 @@ class ConsultationAssignDialog(QDialog):
 
     def _on_consultants(self, rows: list):
         rows = [r for r in (rows or []) if isinstance(r, dict)]
-        self._internal_rows = [
-            r for r in rows
-            if assign_core.consultant_kind(r) == assign_core.INTERNAL]
-        self._external_rows = [
-            r for r in rows
-            if assign_core.consultant_kind(r) == assign_core.EXTERNAL]
+        # EXTERNAL tab = the AI-PACS WEBSITE registered users (from the
+        # consultation registry `/consultants`). Show ALL of them — the
+        # registry "type" (internal/external) is a per-consultant DELIVERY
+        # detail resolved at send time (decide_route), not a reason to hide a
+        # registered AI-PACS user from the External assignment list. (Previously
+        # this filtered to type==external, so registered users that happened to
+        # be type=internal never appeared → the External list looked empty.)
+        self._external_rows = list(rows)
+        # INTERNAL tab: source from INO (same-center users) when the internal
+        # assignment feature is enabled; otherwise fall back to the previous
+        # consultation-internal rows (no regression).
+        if self._ino_internal_enabled():
+            self._internal_rows = []
+            self._int_selected.clear()
+            self._internal_loading = True
+            self._start_ino_internal_load()
+        else:
+            self._internal_rows = [
+                r for r in rows
+                if assign_core.consultant_kind(r) == assign_core.INTERNAL]
         if not rows:
             self.state_label.setText("No consultants are available yet.")
         else:
@@ -481,25 +619,37 @@ class ConsultationAssignDialog(QDialog):
         f = QFrame()
         f.setObjectName("card")
         lay = QHBoxLayout(f)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(10)
-        lay.addWidget(selector, 0, Qt.AlignTop)
+        lay.setContentsMargins(12, 10, 12, 10)
+        lay.setSpacing(12)
+        lay.addWidget(selector, 0, Qt.AlignVCenter)
+
         col = QVBoxLayout()
-        col.setSpacing(1)
-        name = QLabel(d["name"])
-        name.setStyleSheet(f"color:{p['text']};font-size:13px;font-weight:500;")
-        bits = [b for b in (d["specialty"], str(c.get("expertise") or ""),
-                            d["availability"], d["address"]) if b]
-        sub = QLabel(" · ".join(bits))
-        sub.setWordWrap(True)
-        sub.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
+        col.setSpacing(3)
+        name = QLabel(d["name"] or "—")
+        name.setWordWrap(True)
+        name.setStyleSheet(f"color:{p['text']};font-size:14px;font-weight:600;")
         col.addWidget(name)
-        col.addWidget(sub)
+
+        # Secondary line: role/specialty + expertise + availability. NEVER show a
+        # raw ObjectId "address" (INO ids are internal, not contact info); a real
+        # e-mail / hub address is kept.
+        addr = d["address"]
+        if assign_core.is_objectid_like(addr) or c.get("_ino"):
+            addr = ""
+        bits = [b for b in (d["specialty"], str(c.get("expertise") or ""),
+                            d["availability"], addr) if b]
+        if bits:
+            sub = QLabel(" · ".join(bits))
+            sub.setWordWrap(True)
+            sub.setStyleSheet(f"color:{p['text_muted']};font-size:12px;")
+            col.addWidget(sub)
         lay.addLayout(col, 1)
+
         profile = QPushButton("View profile")
-        profile.setStyleSheet("font-size:11px;padding:4px 10px;")
+        profile.setCursor(Qt.PointingHandCursor)
+        profile.setStyleSheet("font-size:11px;padding:5px 12px;")
         profile.clicked.connect(lambda _=False, cc=c: self._open_profile(cc))
-        lay.addWidget(profile)
+        lay.addWidget(profile, 0, Qt.AlignVCenter)
         return f
 
     def _open_profile(self, consultant: dict):
@@ -511,27 +661,50 @@ class ConsultationAssignDialog(QDialog):
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("consultant profile dialog failed: %s", exc)
 
+    def _insert_internal_group_header(self, title: str, count: int):
+        """A small section label separating the two INO user groups."""
+        lbl = QLabel(f"{title} ({count})" if count else title)
+        lbl.setStyleSheet(
+            f"color:{self._p['text']};font-size:12px;font-weight:600;"
+            "padding:8px 2px 2px;")
+        self.int_list.insertWidget(self.int_list.count() - 1, lbl)
+
+    def _insert_internal_card(self, c: dict):
+        addr = assign_core.consultant_address(c).lower()
+        check = QCheckBox()
+        check.setChecked(addr in self._int_selected)
+        check.toggled.connect(
+            lambda on, a=addr: self._on_internal_toggled(a, on))
+        self.int_list.insertWidget(
+            self.int_list.count() - 1, self._consultant_card(c, check))
+
     def _render_internal(self):
         self._clear_card_list(self.int_list)
         rows = [c for c in self._internal_rows
                 if self._matches(c, self.int_search.text())]
         if not rows:
-            empty = QLabel("No center physician matches."
+            empty = QLabel("No center user matches."
                            if self._internal_rows else
-                           "No center physicians are available yet.")
+                           "No center users are available yet.")
             empty.setStyleSheet(
                 f"color:{self._p['text_muted']};font-size:12px;padding:10px;")
             self.int_list.insertWidget(0, empty)
             self._update_internal_state()
             return
-        for c in rows:
-            addr = assign_core.consultant_address(c).lower()
-            check = QCheckBox()
-            check.setChecked(addr in self._int_selected)
-            check.toggled.connect(
-                lambda on, a=addr: self._on_internal_toggled(a, on))
-            self.int_list.insertWidget(
-                self.int_list.count() - 1, self._consultant_card(c, check))
+        # INO exposes TWO distinct user groups that must be shown SEPARATELY:
+        #   * Personnel / Staff Management  → primarily physicians (ris_personnel)
+        #   * Center Users                  → physicians + secretaries/others (ris_user)
+        # Group + label them so the reader can tell Physicians from
+        # Secretaries/other users. Non-INO rows (feature OFF fallback) render flat.
+        ino_rows = [c for c in rows if c.get("_ino")]
+        if ino_rows:
+            for _key, title, grp in assign_core.partition_ino_groups(rows):
+                self._insert_internal_group_header(title, len(grp))
+                for c in grp:
+                    self._insert_internal_card(c)
+        else:
+            for c in rows:
+                self._insert_internal_card(c)
         self._update_internal_state()
 
     def _on_internal_toggled(self, addr: str, on: bool):
@@ -550,6 +723,307 @@ class ConsultationAssignDialog(QDialog):
             self.int_send_btn.setEnabled(n > 0)
         except Exception:  # pragma: no cover - defensive
             pass
+
+    # ── INTERNAL tab = INO (same-center) source + submit ───────────────────────
+    def _ino_internal_enabled(self) -> bool:
+        try:
+            from modules.network.ino_assignment import is_enabled
+            return bool(is_enabled())
+        except Exception:
+            return False
+
+    def _start_ino_internal_load(self):
+        """Load eligible INO users (personnel + center users) off the GUI thread."""
+        import threading
+
+        def _run():
+            out = {"ok": False, "users": []}
+            try:
+                from modules.network.ino_assignment import get_internal_assignment_service
+                res = get_internal_assignment_service().list_users("all")
+                out = res if isinstance(res, dict) else out
+            except Exception as exc:  # pragma: no cover - defensive
+                out = {"ok": False, "message": str(exc), "users": []}
+            try:
+                self._ino_users_loaded.emit(out)
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=_run, name="INOAssignDialogLoad", daemon=True).start()
+
+    def _ino_user_to_row(self, u) -> dict:
+        """Adapt an INO AssignableUser to the internal-card row shape so the
+        existing renderer/selection works. Marked ``_ino`` for the submit branch."""
+        assign_types = list(getattr(u, "assign_types", []) or [])
+        return {
+            "consultation_address": getattr(u, "id", ""),  # used as the selection key
+            "name": getattr(u, "full_name", "") or getattr(u, "username", ""),
+            "full_name": getattr(u, "full_name", ""),
+            "specialty": getattr(u, "role", ""),
+            "availability": "",
+            "type": "internal",
+            "_ino": True,
+            "_ino_id": getattr(u, "id", ""),
+            "_ino_source": getattr(u, "source", ""),
+            "_ino_assign_type": (assign_types[0] if assign_types else "radiologist"),
+        }
+
+    def _on_ino_users(self, res: object):
+        self._internal_loading = False
+        data = res if isinstance(res, dict) else {}
+        users = data.get("users") or []
+        self._internal_rows = [self._ino_user_to_row(u) for u in users]
+        if not users and data.get("ok") is False and data.get("message"):
+            self._set_state(
+                "Could not load center users from INO — "
+                + assign_core.humanize_server_error(data.get("message")),
+                "error")
+        self._render_internal()
+
+    def _send_ino_internal(self, selected: list):
+        """Submit the selected INO users through the internal-assignment API."""
+        import threading
+
+        rid = self.patient_id
+        study_uid = self.study_uids[0] if self.study_uids else ""
+        try:
+            comment = self.int_note.toPlainText().strip()
+        except Exception:
+            comment = ""
+        targets = [c for c in selected if c.get("_ino")]
+        if not targets:
+            return
+        # Assign each selected user by their own role: a Physician (personnel) →
+        # reporting radiologist; a center user → typist (the INO/PACS assign
+        # endpoint supports both). A reception holds one radiologist + one typist,
+        # so a second pick of the same role overwrites the first (last wins).
+        self.int_send_btn.setEnabled(False)
+        self.state_label.setText(
+            f"Assigning (internal) to {len(targets)} user(s)…")
+
+        # Assigning over an existing assignment is a REASSIGN (recorded as such).
+        try:
+            from modules.network import ino_assignment_history as _hist
+            is_reassign = bool(_hist.current_assignee(rid))
+        except Exception:
+            is_reassign = False
+
+        def _run():
+            ok, errors, last_ok_name = 0, [], ""
+            try:
+                from modules.network.ino_assignment import get_internal_assignment_service
+                svc = get_internal_assignment_service()
+                for c in targets:
+                    r = svc.assign(
+                        rid, c.get("_ino_assign_type", "radiologist"),
+                        c.get("_ino_id", ""), assignee_name=c.get("name", ""),
+                        assignee_source=c.get("_ino_source", ""), study_uid=study_uid,
+                        comment=comment, is_reassignment=is_reassign,
+                    )
+                    if r.get("ok"):
+                        ok += 1
+                        last_ok_name = c.get("name", "") or last_ok_name
+                    else:
+                        if r.get("permission_denied"):
+                            msg = "not permitted"
+                        elif r.get("auth_error"):
+                            msg = "sign-in expired"
+                        else:
+                            msg = assign_core.humanize_server_error(
+                                r.get("message") or "failed")
+                        errors.append(f"{c.get('name','?')}: {msg}")
+            except Exception as exc:  # pragma: no cover - defensive
+                errors.append(assign_core.humanize_server_error(exc))
+            try:
+                self._ino_assign_done.emit({"ok": ok, "errors": errors, "name": last_ok_name})
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=_run, name="INOAssignDialogSend", daemon=True).start()
+
+    def _on_ino_assign_done(self, res: object):
+        data = res if isinstance(res, dict) else {}
+        ok = int(data.get("ok") or 0)
+        errors = list(data.get("errors") or [])
+        name = str(data.get("name") or "")
+        if ok and not errors:
+            # SERVER-CONFIRMED success (svc.assign returns ok only on a real
+            # server 2xx / socket accept, and it recorded server_ok history).
+            self._notify_internal_assigned(name)
+            try:
+                self.internal_assigned.emit(str(self.patient_id), name)
+            except RuntimeError:
+                pass
+            self._set_state(f"Internal assignment done ({ok}).", "success")
+            self.accept()
+            return
+        self._update_internal_state()
+        if ok:
+            # Partial success still confirms at least one assignment on the server.
+            self._notify_internal_assigned(name)
+            try:
+                self.internal_assigned.emit(str(self.patient_id), name)
+            except RuntimeError:
+                pass
+            self._set_state(
+                f"Assigned {ok}; {len(errors)} failed — " + "; ".join(errors),
+                "error")
+        else:
+            self._set_state(
+                "Internal assignment failed — " + "; ".join(errors), "error")
+
+    def _load_assignment_details(self):
+        """Populate the 'current assignment' card from the REAL record (INO
+        internal history): assigned-to / assigned-by / type / when / comment +
+        the lifecycle status badge, and enable the allowed status actions."""
+        panel = getattr(self, "_assign_details", None)
+        if panel is None:
+            return
+        rec = None
+        try:
+            from modules.network import ino_assignment_history as _hist
+            rec = _hist.current_assignment_details(self.patient_id)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("assignment details load failed: %s", exc)
+            rec = None
+        if not rec:
+            panel.setVisible(False)
+            return
+
+        status = str(rec.get("assignment_status") or "").strip().lower()
+        try:
+            from modules.network import ino_assignment_models as _m
+            s_label = _m.status_label(status) or "—"
+            s_color = _m.status_color(status)
+        except Exception:
+            s_label, s_color = (status.capitalize() or "—"), "#6b7280"
+
+        # status badge
+        self._ad_status_badge.setText(s_label)
+        self._ad_status_badge.setStyleSheet(
+            "background:%s22;color:%s;border:1px solid %s66;border-radius:10px;"
+            "padding:3px 12px;font-size:11px;font-weight:700;"
+            % (s_color, s_color, s_color))
+
+        # labeled rows
+        def _set(key, text):
+            cap, val = self._ad_fields[key]
+            has = bool(str(text or "").strip())
+            val.setText(str(text) if has else "—")
+            cap.setVisible(True)
+            val.setVisible(True)
+            return has
+
+        _set("assigned_to", str(rec.get("assignee_name") or "").strip())
+        _set("assigned_by", self._resolve_assigner_name(str(rec.get("assigned_by") or "")))
+        _set("type", "Internal — ارجاع داخلی مرکز")
+        _set("assigned_at", str(rec.get("timestamp") or "")[:19].replace("T", " "))
+        has_comment = _set("comment", str(rec.get("comment") or "").strip())
+        # hide the comment row entirely when there is none
+        cap, val = self._ad_fields["comment"]
+        cap.setVisible(has_comment)
+        val.setVisible(has_comment)
+
+        self._update_assignment_actions(status)
+        panel.setVisible(True)
+
+    def _update_assignment_actions(self, status: str):
+        """Enable only the transitions that make sense for the current status, and
+        say plainly which ones are server-backed."""
+        st = str(status or "").strip().lower()
+        allowed = {
+            "active": ("completed", "deactivated", "cancelled"),
+            "completed": ("active", "deactivated"),
+            "deactivated": ("active", "cancelled"),
+            "cancelled": (),
+        }.get(st, ("completed", "deactivated", "cancelled"))
+        for key, btn in self._ad_buttons.items():
+            btn.setEnabled(key in allowed)
+        self._ad_hint.setText(
+            "Cancel / Unassign is sent to the INO server and applied only after "
+            "confirmation. Mark Active / Completed / Deactivate are local "
+            "workflow states (INO exposes no endpoint for them)."
+        )
+
+    def _on_assignment_status_action(self, status_key: str):
+        """Apply a status change: server call for cancel/unassign, local record for
+        the workflow states. The UI updates ONLY after the result comes back."""
+        import threading
+
+        rid = self.patient_id
+        for b in self._ad_buttons.values():
+            b.setEnabled(False)
+        self._set_state(f"Updating assignment status → {status_key}…", "info")
+
+        def _run():
+            out = {"ok": False, "message": "unknown"}
+            try:
+                from modules.network.ino_assignment import get_internal_assignment_service
+                out = get_internal_assignment_service().set_assignment_status(
+                    rid, status_key) or out
+            except Exception as exc:  # pragma: no cover - defensive
+                out = {"ok": False, "message": assign_core.humanize_server_error(exc)}
+            try:
+                self._ino_status_done.emit(out)
+            except RuntimeError:
+                pass
+
+        threading.Thread(target=_run, name="INOAssignStatus", daemon=True).start()
+
+    def _on_ino_status_done(self, res: object):
+        data = res if isinstance(res, dict) else {}
+        if data.get("ok"):
+            local = bool(data.get("local"))
+            what = str(data.get("status_set") or "updated")
+            self._set_state(
+                f"Assignment status: {what}"
+                + (" (local workflow state)" if local else " — confirmed by server."),
+                "success")
+            # refresh the card from the record + update the patient-list indicator
+            self._load_assignment_details()
+            try:
+                self.internal_assigned.emit(str(self.patient_id), "")
+            except RuntimeError:
+                pass
+        else:
+            if data.get("permission_denied"):
+                msg = "not permitted"
+            elif data.get("disabled"):
+                msg = "internal assignment is disabled"
+            else:
+                msg = assign_core.humanize_server_error(data.get("message") or "failed")
+            self._set_state(f"Status change failed — {msg}", "error")
+            logger.warning("[ino-assignment] status change failed: %s", msg)
+            self._load_assignment_details()  # restore the true state (no fake UI)
+
+    def _resolve_assigner_name(self, assigner_id: str) -> str:
+        """Best-effort id→name for the 'Assigned by' line. Shows the logged-in
+        user's name when the assigner is the current user; else the raw id."""
+        aid = str(assigner_id or "").strip()
+        if not aid:
+            return ""
+        try:
+            au = self.auth_user if isinstance(self.auth_user, dict) else {}
+            cur_id = str(au.get("id") or au.get("user_id") or "")
+            if aid == cur_id or aid == "":
+                return str(au.get("full_name") or au.get("username") or aid)
+        except Exception:
+            pass
+        return aid
+
+    def _notify_internal_assigned(self, assignee_name: str):
+        """Create a local INO (internal) notification for a confirmed assignment.
+
+        Uses the INTERNAL notification store (never the consultation/Drive
+        workflow). Best-effort — a notification failure must not affect the
+        assignment result."""
+        try:
+            from modules.network import ino_notifications
+            ino_notifications.notify_assignment(
+                self.patient_id, assignee_name=assignee_name,
+                patient_name=getattr(self, "patient_name", ""))
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("ino notification create failed: %s", exc)
 
     def _render_external(self):
         self._clear_card_list(self.ext_list)
@@ -648,6 +1122,12 @@ class ConsultationAssignDialog(QDialog):
             return
         selected = self._selected_internal_consultants()
         if not selected:
+            return
+        # INO internal-assignment path: when the selected rows come from INO,
+        # submit through the internal-assignment API (NOT the consultation
+        # registry / Drive). This is the same-center, free, operational route.
+        if self._ino_internal_enabled() and any(c.get("_ino") for c in selected):
+            self._send_ino_internal(selected)
             return
         note = self.int_note.toPlainText().strip()
         try:

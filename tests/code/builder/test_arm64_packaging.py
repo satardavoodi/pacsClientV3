@@ -129,6 +129,19 @@ def test_iss_stamps_install_package_kind():
     assert '"install_package": "' in src  # written into installation_profile.json
 
 
+def test_iss_install_package_kind_is_runtime_auto_detected():
+    # ONE installer must stamp the correct package kind for the machine it runs
+    # on (user directive: installer understands ARM vs x64). The profile write
+    # uses the runtime resolver (IsArm64), not only the compile-time #define.
+    src = ISS.read_text(encoding="utf-8", errors="replace")
+    assert "function ResolvedInstallPackageKind(): String;" in src
+    assert "ResolvedInstallPackageKind()" in src[src.index("WriteInstallationProfile"):]
+    resolver = src[src.index("function ResolvedInstallPackageKind"): src.index("function OptionalModuleStatusValue")]
+    assert "IsArm64" in resolver
+    assert "'x64_on_arm64'" in resolver
+    assert "'x64'" in resolver
+
+
 def test_iss_woa_first_page_is_informative_not_blocking():
     src = ISS.read_text(encoding="utf-8", errors="replace")
     idx = src.index("#ifdef WOA_EMULATED_BUILD", src.index("[Code]"))

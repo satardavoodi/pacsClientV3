@@ -263,6 +263,10 @@ def reporter(
             • Use ONLY the provided normal_template for the "Normal Findings" section.
             • Maintain the exact formatting and tone unless a region is affected by the provided pathological findings.
             • If a pathological finding affects a specific region, remove or adjust ONLY that region from the normal_template accordingly.
+            • SEX-SPECIFIC ANATOMY: Do NOT infer or assume the patient's sex. Even if the provided template lists
+              sex-specific organs (prostate, uterus, ovaries, seminal vesicles, cervix, testes), OMIT any such organ
+              the physician did NOT explicitly mention — do NOT auto-complete a normal/"unremarkable" statement for it,
+              and NEVER output both male and female organs in the same report.
             • Output must follow the standard JSON schema: { "Report Title", "Pathological Findings", "Normal Findings" } with <|end|> at the end."""
                         )
     else:
@@ -271,7 +275,11 @@ def reporter(
             "• No 'normal_template' was provided.\n"
             "• Therefore, construct the 'Report Title' using RSNA-style rules.\n"
             "• Construct 'Normal Findings' automatically using META-driven RSNA structure.\n"
-            "• Exclude any organ mentioned in Pathological Findings.\n\n"
+            "• Exclude any organ mentioned in Pathological Findings.\n"
+            "• SEX-SPECIFIC ANATOMY: Do NOT infer or assume the patient's sex. Include a sex-specific organ "
+            "(prostate, uterus, ovaries, seminal vesicles, cervix, testes) ONLY IF the physician explicitly "
+            "mentioned it; otherwise OMIT it entirely and do NOT emit a normal/'unremarkable' statement for it. "
+            "NEVER output both male and female organs in the same report.\n\n"
         )
 
 
@@ -309,6 +317,24 @@ def reporter(
                         – "اکیپشوس" → Osteophytosis
 
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        CT — PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS (READ FIRST)
+                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        This rule applies to EVERY CT body region (head, chest, abdomen/pelvis, spine, MSK, angiography, etc.).
+                        CRITICAL DISTINCTION between GENERATING new content and PRESERVING dictated content:
+                        - FORBIDDEN: You must NOT independently generate, invent, infer, or expand a NEW impression,
+                          conclusion, differential diagnosis, suggestion, follow-up advice, clinical correlation,
+                          laboratory correlation, pathologic correlation, biopsy recommendation, further-imaging
+                          recommendation, or management recommendation that the physician did NOT dictate.
+                        - MANDATORY: ANY impression, conclusion, suggestion, recommendation, follow-up, or
+                          clinical/laboratory/pathologic correlation the physician EXPLICITLY dictated is SOURCE
+                          CONTENT and MUST be preserved (meaning and intent intact) in the final report — e.g.
+                          "the above findings are suggestive of ...", "clinical correlation is recommended",
+                          "correlation with laboratory findings is recommended", "further evaluation is recommended",
+                          "biopsy is recommended".
+                        - The "do not invent" rule NEVER authorizes deleting, omitting, suppressing, weakening,
+                          softening, or replacing physician-dictated content. When unsure, KEEP it (meaning intact).
+
+                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         CRITICAL: IMPRESSION / RECOMMENDATIONS PRESENCE-LOCK (HARD RULE)
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         You MUST treat "Impression" and "Recommendations" as REQUIRED FIELDS **IFF** they exist in the input transcript.
@@ -317,7 +343,7 @@ def reporter(
                         - Impression EXISTS if the input includes ANY explicit diagnostic conclusion/جمع‌بندی تشخیصی such as:
                         "impression", "جمع‌بندی", "نتیجه", "در مجموع", "مطرح‌کننده", "suggestive of", "compatible with", "favored diagnosis", "به نفع", "به احتمال زیاد", etc.
                         - Recommendations EXISTS if the input includes ANY explicit advice/اقدام پیشنهادی such as:
-                        "recommend", "توصیه", "follow-up", "biopsy", "correlation", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
+                        "recommend", "توصیه", "follow-up", "biopsy", "correlation", "clinical correlation", "laboratory correlation", "pathologic correlation", "further evaluation", "further imaging", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
 
                         HARD CONSTRAINTS:
                         1) If Impression EXISTS in input → output JSON MUST include "Impression" as a NON-EMPTY string.
@@ -435,12 +461,20 @@ def reporter(
                             • Abdominal wall: no hernia or abnormal soft tissue mass.
 
                         – PELVIS CT:
+                            ── SEX-SPECIFIC ANATOMY RULE (STRICT — applies to prostate, uterus, ovaries, seminal vesicles, cervix, vagina, testes) ──
+                            • DO NOT infer or assume the patient's sex. If the physician did not state the sex and it cannot be
+                              reliably determined from the physician-provided content, do NOT assume it.
+                            • Include a sex-specific organ ONLY IF the physician EXPLICITLY mentioned that organ (or provided a
+                              finding that clearly requires it). If the physician gave no information about a sex-specific organ,
+                              OMIT that organ entirely — do NOT emit a normal/"unremarkable" statement for it.
+                            • NEVER include BOTH male and female organs in the same report. A report must never list, e.g., the
+                              prostate AND the uterus/ovaries together just because this template mentions both.
                             • Urinary bladder: normal wall thickness; no intraluminal filling defect, calculus, or mural mass.
                             • Distal ureters: not dilated; no ureteric calculus at the ureterovesical junction.
-                            • Uterus (if applicable): normal in size and attenuation; no intraluminal mass or myometrial lesion.
-                            • Ovaries (if applicable): normal in size; no ovarian mass or complex cyst.
-                            • Prostate (if applicable): normal in size; no hypodense lesion.
-                            • Seminal vesicles (if applicable): symmetric and unremarkable.
+                            • Uterus — INCLUDE ONLY IF the physician explicitly mentioned it: normal in size and attenuation; no intraluminal mass or myometrial lesion. (Otherwise OMIT entirely.)
+                            • Ovaries — INCLUDE ONLY IF the physician explicitly mentioned them: normal in size; no ovarian mass or complex cyst. (Otherwise OMIT entirely.)
+                            • Prostate — INCLUDE ONLY IF the physician explicitly mentioned it: normal in size; no hypodense lesion. (Otherwise OMIT entirely.)
+                            • Seminal vesicles — INCLUDE ONLY IF the physician explicitly mentioned them: symmetric and unremarkable. (Otherwise OMIT entirely.)
                             • Rectum and sigmoid colon: normal wall thickness; no pericolonic fat stranding.
                             • No pelvic lymphadenopathy; no free pelvic fluid.
                             • Pelvic floor musculature: symmetric and unremarkable.
@@ -612,6 +646,24 @@ def reporter(
                             – Do not create normal findings for irrelevant regions.
 
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        MRI — PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS (READ FIRST)
+                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                        This rule applies to EVERY MRI body region (brain, spine, MSK, breast, abdomen/pelvis, etc.).
+                        CRITICAL DISTINCTION between GENERATING new content and PRESERVING dictated content:
+                        - FORBIDDEN: You must NOT independently generate, invent, infer, or expand a NEW impression,
+                          conclusion, differential diagnosis, suggestion, follow-up advice, clinical correlation,
+                          laboratory correlation, pathologic correlation, biopsy recommendation, further-imaging
+                          recommendation, or management recommendation that the physician did NOT dictate.
+                        - MANDATORY: ANY impression, conclusion, suggestion, recommendation, follow-up, or
+                          clinical/laboratory/pathologic correlation the physician EXPLICITLY dictated is SOURCE
+                          CONTENT and MUST be preserved (meaning and intent intact) in the final report — e.g.
+                          "the above findings are suggestive of ...", "clinical correlation is recommended",
+                          "correlation with laboratory findings is recommended", "further evaluation is recommended",
+                          "biopsy is recommended", "short-term follow-up MRI is recommended".
+                        - The "do not invent" rule NEVER authorizes deleting, omitting, suppressing, weakening,
+                          softening, or replacing physician-dictated content. When unsure, KEEP it (meaning intact).
+
+                        ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         CRITICAL: IMPRESSION / RECOMMENDATIONS PRESENCE-LOCK (HARD RULE)
                         ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                         You MUST treat "Impression" and "Recommendations" as REQUIRED FIELDS **IFF** they exist in the input transcript.
@@ -620,7 +672,7 @@ def reporter(
                         - Impression EXISTS if the input includes ANY explicit diagnostic conclusion/جمع‌بندی تشخیصی such as:
                         "impression", "جمع‌بندی", "نتیجه", "در مجموع", "مطرح‌کننده", "suggestive of", "compatible with", "favored diagnosis", "به نفع", "به احتمال زیاد", etc.
                         - Recommendations EXISTS if the input includes ANY explicit advice/اقدام پیشنهادی such as:
-                        "recommend", "توصیه", "follow-up", "biopsy", "MR perfusion", "correlation", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
+                        "recommend", "توصیه", "follow-up", "biopsy", "MR perfusion", "correlation", "clinical correlation", "laboratory correlation", "pathologic correlation", "further evaluation", "further imaging", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
 
                         HARD CONSTRAINTS (NON-NEGOTIABLE):
                         1) If Impression EXISTS in the input:
@@ -809,10 +861,20 @@ def reporter(
                             Bowel: visualised loops are unremarkable; no wall thickening, mass, or obstruction.
                             Peritoneum: no free intraperitoneal fluid or peritoneal implants.
                             Bladder: normal wall thickness and signal.
-                            Female pelvis (if applicable): uterus is normal in size, position, and signal;
-                              endometrial stripe within normal limits; ovaries normal bilaterally; no adnexal mass.
-                            Male pelvis (if applicable): prostate normal in size and signal; no focal T2-hypointense
-                              lesion; seminal vesicles symmetric and unremarkable.
+                            ── SEX-SPECIFIC ANATOMY RULE (STRICT — prostate, uterus, ovaries, seminal vesicles, cervix, vagina, testes) ──
+                            • DO NOT infer or assume the patient's sex. If the physician did not state the sex and it cannot be
+                              reliably determined from the physician-provided content, do NOT assume it.
+                            • Include a sex-specific organ ONLY IF the physician EXPLICITLY mentioned that organ (or gave a finding
+                              that clearly requires it). If the physician gave no information about it, OMIT that organ entirely —
+                              do NOT emit a normal/"unremarkable" statement for it.
+                            • NEVER include BOTH the "Female pelvis" and "Male pelvis" lines in the same report. Emit at most the
+                              ONE set of organs the physician actually referenced; if none were referenced, emit NEITHER.
+                            Female pelvis — INCLUDE ONLY IF the physician explicitly mentioned uterus/ovaries/adnexa/cervix: uterus is
+                              normal in size, position, and signal; endometrial stripe within normal limits; ovaries normal bilaterally;
+                              no adnexal mass. (Otherwise OMIT entirely.)
+                            Male pelvis — INCLUDE ONLY IF the physician explicitly mentioned prostate/seminal vesicles/testes: prostate
+                              normal in size and signal; no focal T2-hypointense lesion; seminal vesicles symmetric and unremarkable.
+                              (Otherwise OMIT entirely.)
                             Pelvic bones: normal marrow signal; no osseous lesion.
                         
                         – PROSTATE (mpMRI / PI-RADS):
@@ -974,7 +1036,7 @@ def reporter(
                   "Normal Findings": "[Single sentence: uterus, adnexa, cervical length if measured]",
                   "Doppler": "[UA S/D ratio | MCA PSV | DV flow | Uterine artery notching — OMIT if no Doppler performed]",
                   "Impression": "[GA confirmation, fetal wellbeing summary, growth status, any abnormalities]",
-                  "Recommendations": "[Follow-up timing, repeat scan, referral — OMIT if routine normal]"
+                  "Recommendations": "[Follow-up timing, repeat scan, referral — OMIT if routine normal UNLESS the physician explicitly dictated a recommendation, which MUST be preserved]"
                 }
 
                 ─────────────────────────────────────────────────────
@@ -1121,8 +1183,14 @@ def reporter(
                 ─────────────────────────────────────────────────────
                 SECTION 9 — IMPRESSION & RECOMMENDATIONS LOCK
                 ─────────────────────────────────────────────────────
+                • PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS: You must NOT independently generate a NEW
+                  impression, suggestion, recommendation, follow-up, or clinical/laboratory/pathologic
+                  correlation the physician did NOT dictate. BUT any such statement the physician
+                  EXPLICITLY dictated (e.g. "suggestive of ...", "clinical correlation is recommended",
+                  "further evaluation is recommended", "biopsy is recommended") is SOURCE CONTENT and
+                  MUST be preserved (meaning intact) — never delete, omit, weaken, or soften it.
                 • Impression: REQUIRED — always include. Summarize: confirmed GA, fetal wellbeing, growth status, fluid/placenta, any significant findings
-                • Recommendations: OMIT if fully normal and routine. Include when: anomaly detected, growth restriction (<10th percentile), abnormal Doppler, short cervix, follow-up scan needed, referral indicated
+                • Recommendations: OMIT ONLY if fully normal, routine, AND the physician dictated no recommendation. ALWAYS include (and preserve verbatim in meaning) any recommendation, follow-up, correlation, or referral the physician explicitly dictated — even for an otherwise normal study. Otherwise include when: anomaly detected, growth restriction (<10th percentile), abnormal Doppler, short cervix, follow-up scan needed, referral indicated
 
                 ─────────────────────────────────────────────────────
                 SECTION 10 — SELF-CHECK BEFORE OUTPUT
@@ -1167,7 +1235,25 @@ def reporter(
                 • Always produce concise, grouped, non-redundant normal findings.
                 • Exclude any anatomical region described in the pathological findings.
                 • Do not generate normal findings for irrelevant organs.
-                                    
+
+
+                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                ULTRASOUND — PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS (READ FIRST)
+                ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                This rule applies to EVERY ultrasound study (abdominal, pelvic, thyroid, breast, scrotal, MSK, vascular/Doppler, OB/GYN, etc.).
+                CRITICAL DISTINCTION between GENERATING new content and PRESERVING dictated content:
+                - FORBIDDEN: You must NOT independently generate, invent, infer, or expand a NEW impression,
+                  conclusion, suggestion, differential, follow-up advice, clinical correlation, laboratory
+                  correlation, pathologic correlation, biopsy recommendation, further-imaging recommendation,
+                  or management recommendation that the physician did NOT dictate.
+                - MANDATORY: ANY impression, conclusion, suggestion, recommendation, follow-up, or
+                  clinical/laboratory/pathologic correlation the physician EXPLICITLY dictated is SOURCE
+                  CONTENT and MUST be preserved (meaning and intent intact) in the final report — e.g.
+                  "the above findings are suggestive of ...", "clinical correlation is recommended",
+                  "correlation with laboratory findings is recommended", "further evaluation is recommended",
+                  "biopsy is recommended".
+                - The "do not invent" rule NEVER authorizes deleting, omitting, suppressing, weakening,
+                  softening, or replacing physician-dictated content. When unsure, KEEP it (meaning intact).
 
                 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                 CRITICAL: IMPRESSION / RECOMMENDATIONS PRESENCE-LOCK (HARD RULE)
@@ -1178,7 +1264,7 @@ def reporter(
                 - Impression EXISTS if the input includes ANY explicit diagnostic conclusion/جمع‌بندی تشخیصی such as:
                 "impression", "جمع‌بندی", "نتیجه", "در مجموع", "مطرح‌کننده", "suggestive of", "compatible with", "favored diagnosis", "به نفع", "به احتمال زیاد", etc.
                 - Recommendations EXISTS if the input includes ANY explicit advice/اقدام پیشنهادی such as:
-                "recommend", "توصیه", "follow-up", "biopsy", "MR perfusion", "correlation", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
+                "recommend", "توصیه", "follow-up", "biopsy", "correlation", "clinical correlation", "laboratory correlation", "pathologic correlation", "further evaluation", "further imaging", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
 
                 HARD CONSTRAINTS (NON-NEGOTIABLE):
                 1) If Impression EXISTS in the input:
@@ -1281,7 +1367,7 @@ def reporter(
                 • Urinary Bladder:
                 – Smooth walls; no debris or masses.
 
-                • Prostate (if included in scan):
+                • Prostate — INCLUDE ONLY IF the physician explicitly mentioned the prostate (see SEX-SPECIFIC ANATOMY RULE below); otherwise OMIT entirely:
                 – Normal morphology and echogenicity; normal volume.
 
                 • Soft Tissues:
@@ -1327,17 +1413,24 @@ def reporter(
                 -----------------------------------------------------------------------
                 ISUOG NORMAL FINDINGS — GYNECOLOGIC ULTRASOUND
                 -----------------------------------------------------------------------
+                ── SEX-SPECIFIC ANATOMY RULE (STRICT — prostate, uterus, ovaries, cervix, adnexa, testes/scrotum) ──
+                • DO NOT infer or assume the patient's sex. If the physician did not state the sex and it cannot be
+                  reliably determined from the physician-provided content, do NOT assume it.
+                • Include a sex-specific organ (uterus, ovaries, cervix, prostate, etc.) ONLY IF the physician EXPLICITLY
+                  mentioned that organ (or gave a finding that clearly requires it). If the physician gave no information
+                  about it, OMIT that organ entirely — do NOT emit a normal/"unremarkable" statement for it.
+                • NEVER include BOTH male organs (prostate) AND female organs (uterus/ovaries) in the same report.
 
-                • Uterus:
+                • Uterus — INCLUDE ONLY IF the physician explicitly mentioned it; otherwise OMIT:
                 – Normal size and contour.
                 – Myometrium homogeneous.
                 – Endometrium appropriate for menstrual phase.
 
-                • Ovaries:
+                • Ovaries — INCLUDE ONLY IF the physician explicitly mentioned them; otherwise OMIT:
                 – Normal size with physiological follicles.
                 – No adnexal masses or abnormal free fluid.
 
-                • Cervix:
+                • Cervix — INCLUDE ONLY IF the physician explicitly mentioned it; otherwise OMIT:
                 – Normal length and morphology.
 
                 -----------------------------------------------------------------------
@@ -1359,7 +1452,7 @@ def reporter(
         
                 """
             )
-        elif modality_lower == "mammography":
+        elif modality_lower in ("mammography", "mamography", "mammogram", "mamogram"):
             specific_instructions = (r"""
                 ====================================================================
                 SECTION 0 — REGEX-LOCKED JSON SCHEMA (HARD ENFORCEMENT)
@@ -1393,6 +1486,26 @@ def reporter(
                 - ALL values MUST be strings (non-null).
                 - NO extra fields, no markdown, no commentary, no numbering.
                 - If validation fails → regenerate until valid.
+
+                ====================================================================
+                SECTION 0b — PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS (SCHEMA-SAFE)
+                ====================================================================
+                The mammography schema above is FIXED and regex-locked; it has NO separate
+                "Impression" or "Recommendations" key, and you MUST NOT add one.
+                DISTINCTION between generating and preserving:
+                - FORBIDDEN: Do NOT independently generate/invent a NEW impression, suggestion,
+                  correlation, biopsy recommendation, follow-up, or further-imaging recommendation
+                  the physician did NOT dictate.
+                - MANDATORY: ANY impression, suggestion, correlation, or recommendation the physician
+                  EXPLICITLY dictated MUST be preserved (meaning intact) INSIDE the existing schema —
+                  it must NEVER be dropped, omitted, weakened, or softened:
+                  • A physician's diagnostic conclusion/suggestion (e.g. "these findings are suggestive
+                    of malignancy", "suspicious for recurrence") → keep it within "Pathological Findings".
+                  • A physician's management/recommendation/correlation (e.g. "biopsy is recommended",
+                    "clinical correlation is recommended", "short-term follow-up recommended") → keep it
+                    within "Pathological Findings" and reflect it in the "BI-RADS Category" value/label.
+                  • Do NOT invent a BI-RADS category the physician did not give; if the physician stated
+                    one, insert it EXACTLY as provided.
 
                 ====================================================================
                 SECTION 1 — STRICT REPORT GENERATION ORDER (MANDATORY)
@@ -1694,7 +1807,25 @@ def reporter(
                             • Construct the “Normal Findings” using RSNA radiography reporting standards when no normal_template is provided.
                             • Always generate concise, grouped, non-redundant normal findings.
                             • Exclude anatomical regions explicitly described in pathological findings.
-                            
+
+
+                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                            RADIOLOGY (X-RAY) — PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS (READ FIRST)
+                            ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+                            This rule applies to EVERY radiograph type (general X-ray, bone age, bone density/DEXA, barium studies, skeletal survey, etc.).
+                            CRITICAL DISTINCTION between GENERATING new content and PRESERVING dictated content:
+                            - FORBIDDEN: You must NOT independently generate, invent, infer, or expand a NEW impression,
+                              conclusion, suggestion, differential, follow-up advice, clinical correlation, laboratory
+                              correlation, pathologic correlation, biopsy recommendation, further-imaging recommendation,
+                              or management recommendation that the physician did NOT dictate.
+                            - MANDATORY: ANY impression, conclusion, suggestion, recommendation, follow-up, or
+                              clinical/laboratory/pathologic correlation the physician EXPLICITLY dictated is SOURCE
+                              CONTENT and MUST be preserved (meaning and intent intact) in the final report — e.g.
+                              "the above findings are suggestive of ...", "clinical correlation is recommended",
+                              "correlation with laboratory findings is recommended", "further evaluation is recommended",
+                              "biopsy is recommended".
+                            - The "do not invent" rule NEVER authorizes deleting, omitting, suppressing, weakening,
+                              softening, or replacing physician-dictated content. When unsure, KEEP it (meaning intact).
 
                             ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
                             CRITICAL: IMPRESSION / RECOMMENDATIONS PRESENCE-LOCK (HARD RULE)
@@ -1705,7 +1836,7 @@ def reporter(
                             - Impression EXISTS if the input includes ANY explicit diagnostic conclusion/جمع‌بندی تشخیصی such as:
                             "impression", "جمع‌بندی", "نتیجه", "در مجموع", "مطرح‌کننده", "suggestive of", "compatible with", "favored diagnosis", "به نفع", "به احتمال زیاد", etc.
                             - Recommendations EXISTS if the input includes ANY explicit advice/اقدام پیشنهادی such as:
-                            "recommend", "توصیه", "follow-up", "biopsy", "MR perfusion", "correlation", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
+                            "recommend", "توصیه", "follow-up", "biopsy", "correlation", "clinical correlation", "laboratory correlation", "pathologic correlation", "further evaluation", "further imaging", "repeat imaging", "نمونه‌برداری", "بررسی بیشتر", etc.
 
                             HARD CONSTRAINTS (NON-NEGOTIABLE):
                             1) If Impression EXISTS in the input:
@@ -1860,10 +1991,11 @@ def reporter(
                                 " • Use *extreme exaggeration*—vivid, dramatic phrasing.\n"
 
                                 # 4. Forbidden content
-                                "4. Absolutely *no*:\n"
+                                "4. Absolutely *no* SELF-GENERATED content (this NEVER applies to content the physician explicitly dictated):\n"
                                 " • Internal reasoning, chain-of-thought, or instructions.\n"
-                                " • Suggestions, implications, speculations, differential diagnoses, recommendations.\n"
-                                " • Words like 'potentially,' 'possible,' 'suggestion,' 'may,' or 'which may be.'\n\n"
+                                " • NEW suggestions, implications, speculations, differential diagnoses, or recommendations that YOU invent and the physician did NOT provide.\n"
+                                " • EXCEPTION — PRESERVE PHYSICIAN CONTENT: If the physician EXPLICITLY dictated an impression, suggestion, recommendation, follow-up, or clinical/laboratory/pathologic correlation (e.g. 'suggestive of ...', 'clinical correlation is recommended', 'biopsy is recommended'), you MUST keep it (meaning intact) — never delete, omit, weaken, or soften it, and do not strip words like 'suggestive of' when they are the physician's own wording.\n"
+                                " • Do not add speculative hedging words ('potentially,' 'possible,' 'may,' 'which may be') on YOUR OWN initiative; keep the physician's wording as dictated.\n\n"
 
                                 # 5. JSON Structure Rules
                                 "5. JSON OUTPUT RULES:\n"
@@ -1888,13 +2020,26 @@ def reporter(
             specific_instructions = (
                 "• For other modalities: Infer appropriate standards (e.g., ACR for X-ray).\n"
                 "• Use modality-specific terminology in findings (e.g., density for CT, signal for MRI).\n"
+                "\nPRESERVE PHYSICIAN-PROVIDED CONCLUSIONS: Do NOT independently generate a NEW impression, "
+                "suggestion, recommendation, follow-up, or clinical/laboratory/pathologic correlation the "
+                "physician did NOT dictate. BUT any impression, suggestion, recommendation, follow-up, or "
+                "correlation the physician EXPLICITLY dictated (e.g. 'suggestive of ...', 'clinical correlation "
+                "is recommended', 'biopsy is recommended', 'further evaluation is recommended') is SOURCE CONTENT "
+                "and MUST be preserved (meaning intact) in the report — never delete, omit, weaken, or soften it. "
+                "If the report includes Impression/Recommendations fields, place it there; otherwise keep it in "
+                "the most appropriate existing field.\n"
             )
         modality_logic = base_modality_logic + specific_instructions + "\n\n"
     else:
         modality_logic = (
             "MODALITY LOGIC:\n"
             "• No specific modality provided - infer from user input (e.g., 'CT', 'MRI', 'Sonography', 'Mammography', 'Radiology').\n"
-            "• Customize 'Report Title' and 'Normal Findings' based on inferred modality using RSNA/ACR standards.\n\n"
+            "• Customize 'Report Title' and 'Normal Findings' based on inferred modality using RSNA/ACR standards.\n"
+            "• PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS: Do NOT independently generate a NEW impression, suggestion, "
+            "recommendation, follow-up, or clinical/laboratory/pathologic correlation the physician did NOT dictate; "
+            "BUT any such statement the physician EXPLICITLY dictated (e.g. 'suggestive of ...', 'clinical correlation "
+            "is recommended', 'biopsy is recommended') MUST be preserved (meaning intact) — never delete, omit, weaken, "
+            "or soften it.\n\n"
         )
 
     system_prompt = (

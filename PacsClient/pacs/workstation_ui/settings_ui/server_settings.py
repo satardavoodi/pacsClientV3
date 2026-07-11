@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
     QWidget, QLabel, QVBoxLayout, QHBoxLayout, QGridLayout,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView,
     QPushButton, QMessageBox, QScrollArea, QSpinBox,
-    QAbstractItemView, QFrame, QSizePolicy, QCheckBox,
+    QAbstractItemView, QFrame, QSizePolicy, QCheckBox, QComboBox,
 )
 
 from pynetdicom import AE
@@ -1624,8 +1624,144 @@ class ServerSettingsWidget(QWidget):
         btn_row.addWidget(load_btn, 1)
         pl.addLayout(btn_row)
 
+        # ── Internal Assignment (INO) — assign a reporting radiologist/typist ──
+        self._build_ino_assign_subsection(pl)
+
         lay.addWidget(panel)
         parent.addWidget(card)
+
+    def _build_ino_assign_subsection(self, pl):
+        """Config for INO internal-center assignment (separate PACS assign service).
+
+        The eligible-USER lists use the Reception/Workflow base above (:8080). The
+        ASSIGN write uses the PACS HTTP service (:8000) — or the imaging socket
+        (:50052) as a fallback. Exposed here so any center/server can point it at
+        the right host without touching config files.
+        """
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setObjectName("FormLabel")
+        pl.addWidget(sep)
+
+        hdr = QLabel("Internal Assignment (INO)")
+        hdr.setObjectName("SectionTitle")
+        pl.addWidget(hdr)
+        sub = QLabel(
+            "Assign a reporting radiologist / typist to a reception. The assign "
+            "API is the PACS service (port 8000), separate from the reception "
+            "REST above; the socket transport reuses the imaging socket (50052)."
+        )
+        sub.setObjectName("SectionSubtitle")
+        sub.setWordWrap(True)
+        pl.addWidget(sub)
+
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(8)
+
+        self._ino_assign_enable = QCheckBox("Enable internal assignment")
+        grid.addWidget(self._ino_assign_enable, 0, 0, 1, 4)
+
+        lbl_base = QLabel("Assign base URL:")
+        lbl_base.setObjectName("FormLabel")
+        lbl_base.setMinimumWidth(95)
+        self._ino_assign_base_edit = QLineEdit()
+        self._ino_assign_base_edit.setPlaceholderText(
+            "auto – http://{reception-host}:8000 (leave empty)")
+        self._ino_assign_base_edit.setMinimumHeight(30)
+        self._ino_assign_status = QLabel("-")
+        self._ino_assign_status.setObjectName("FormLabel")
+        self._ino_assign_status.setAlignment(Qt.AlignCenter)
+        self._ino_assign_status.setMinimumWidth(110)
+        grid.addWidget(lbl_base, 1, 0)
+        grid.addWidget(self._ino_assign_base_edit, 1, 1)
+        grid.addWidget(self._ino_assign_status, 1, 2)
+        grid.setColumnStretch(1, 1)
+
+        lbl_tr = QLabel("Transport:")
+        lbl_tr.setObjectName("FormLabel")
+        self._ino_assign_transport = QComboBox()
+        self._ino_assign_transport.addItem("Socket (imaging :50052) — default", "socket")
+        self._ino_assign_transport.addItem("REST (PACS HTTP :8000)", "rest")
+        self._ino_assign_transport.setMinimumHeight(30)
+        grid.addWidget(lbl_tr, 2, 0)
+        grid.addWidget(self._ino_assign_transport, 2, 1)
+        pl.addLayout(grid)
+
+        row = QHBoxLayout()
+        row.setSpacing(12)
+        save = QPushButton("Save Assignment Settings")
+        save.setProperty("role", "primary")
+        save.setMinimumHeight(30)
+        save.clicked.connect(self._save_ino_assign_settings)
+        load = QPushButton("Load")
+        load.setMinimumHeight(30)
+        load.clicked.connect(self._load_ino_assign_settings)
+        row.addWidget(save, 1)
+        row.addWidget(load, 1)
+        pl.addLayout(row)
+
+        self._load_ino_assign_settings()
+
+    def _set_ino_assign_status(self, text, ok=None):
+        lbl = getattr(self, "_ino_assign_status", None)
+        if not lbl:
+            return
+        lbl.setText(text)
+        if ok is True:
+            lbl.setStyleSheet("color: #10b981; font-weight: 700;")
+        elif ok is False:
+            lbl.setStyleSheet("color: #f59e0b; font-weight: 700;")
+        else:
+            lbl.setStyleSheet("color: #9ca3af;")
+
+    def _load_ino_assign_settings(self):
+        if getattr(self, "_ino_assign_enable", None) is None:
+            return
+        enabled, base, transport = False, "", "rest"
+        try:
+            from modules.network.ino_assignment import _config, get_ino_assignment_transport
+            cfg = _config() or {}
+            enabled = bool(cfg.get("enabled", False))
+            base = str(cfg.get("assignment_api_base_url") or "").strip()
+            transport = get_ino_assignment_transport()
+        except Exception as exc:
+            log.warning("INO assignment config load failed: %s", exc)
+        self._ino_assign_enable.setChecked(enabled)
+        self._ino_assign_base_edit.setText(base)
+        idx = self._ino_assign_transport.findData(transport)
+        self._ino_assign_transport.setCurrentIndex(idx if idx >= 0 else 0)
+        self._set_ino_assign_status("Loaded", ok=None)
+
+    def _save_ino_assign_settings(self):
+        if getattr(self, "_ino_assign_enable", None) is None:
+            return
+        raw = (self._ino_assign_base_edit.text() or "").strip()
+        base = "" if not raw else (raw if "://" in raw else "http://" + raw).rstrip("/")
+        updates = {
+            "enabled": bool(self._ino_assign_enable.isChecked()),
+            "assignment_api_base_url": base,
+            "transport": self._ino_assign_transport.currentData() or "rest",
+        }
+        try:
+            from modules.network.ino_assignment import save_ino_assignment_config
+            ok = bool(save_ino_assignment_config(updates))
+        except Exception as exc:
+            log.error("Failed to save INO assignment config: %s", exc)
+            ok = False
+        if not ok:
+            self._set_ino_assign_status("Save Failed", ok=False)
+            QMessageBox.critical(self, "Error", "Failed to save Internal Assignment settings.")
+            return
+        self._ino_assign_base_edit.setText(base)
+        self._set_ino_assign_status("Saved", ok=True)
+        QMessageBox.information(
+            self, "Saved",
+            "Internal Assignment settings saved.\n"
+            "Assign uses the PACS service (:8000) or the socket (:50052) per the "
+            "selected transport. Leave the base URL empty to auto-derive :8000 "
+            "from the reception host.",
+        )
 
     def _set_reception_api_status(self, text, ok=None):
         lbl = getattr(self, "_reception_api_status", None)

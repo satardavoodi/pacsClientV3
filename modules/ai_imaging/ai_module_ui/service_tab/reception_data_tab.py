@@ -1644,6 +1644,21 @@ class ReceptionDataTab(QWidget):
             "status": new_status
         }
 
+        # Also send approvalFlags consistent with the chosen status. INO renders
+        # the patient/report status from report.approvalFlags, not the raw
+        # report.status string, so without this a downgrade (Completed ->
+        # Awaiting) left INO showing the report as approved. Flag-gated
+        # (AIPACS_UPDATE_REPORT_APPROVAL_FLAGS, default ON); =0 = legacy body.
+        try:
+            from modules.network.socket_report_status_service import (
+                UPDATE_REPORT_APPROVAL_FLAGS,
+                approval_flags_for_status,
+            )
+            if UPDATE_REPORT_APPROVAL_FLAGS:
+                update_data["approvalFlags"] = approval_flags_for_status(new_status)
+        except Exception:
+            pass
+
         import logging
         logger = logging.getLogger(__name__)
 
@@ -1694,6 +1709,20 @@ class ReceptionDataTab(QWidget):
                     # (same mechanism as the Patient-Tab sync dropdown) so the
                     # toolbar badge / home table stay in sync with the send.
                     self._propagate_status_to_pacs(new_status)
+
+                    # Sync the INO reception APPROVAL FLAGS to match the status.
+                    # update-report only writes report.status; INO shows the
+                    # patient state from report.approvalFlags, which are set by a
+                    # SEPARATE workflow endpoint (resolve workflow id from the
+                    # reporting worklist → PATCH approval-flags). Fire-and-forget
+                    # off-thread; best-effort; flag AIPACS_INO_APPROVAL_SYNC.
+                    try:
+                        from modules.network.ino_report_workflow import (
+                            sync_report_approval_for_status_async,
+                        )
+                        sync_report_approval_for_status_async(reception_id, new_status)
+                    except Exception:
+                        pass
 
                     success_msg = response_data.get("message", "Report saved successfully.")
                     QMessageBox.information(dialog, "Success", success_msg)

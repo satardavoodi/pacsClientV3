@@ -830,6 +830,32 @@ class MainWindowWidget(QWidget):
         user_icon_label.setPixmap(user_icon.pixmap(36, 36))
         user_icon_label.setAlignment(Qt.AlignCenter)
         lay.addWidget(user_icon_label)
+        self.user_icon_label = user_icon_label
+        # INO internal-assignment notifications: red unread badge on the user icon,
+        # click opens the notifications popup, and clicking a notification selects
+        # the assigned patient in the list (INTERNAL only — never consultation/Drive).
+        try:
+            from modules.network import ino_notifications as _ino_notif
+
+            _ino_notif.attach_profile_badge(user_icon_label)
+
+            def _ino_navigate_to_patient(reception_id):
+                try:
+                    from PacsClient.pacs.workstation_ui.home_ui.patient_table_widget import (
+                        PatientTableWidget,
+                    )
+                    for tbl in self.findChildren(PatientTableWidget):
+                        try:
+                            if tbl.select_patient_by_id(reception_id):
+                                return
+                        except Exception:
+                            continue
+                except Exception:
+                    pass
+
+            _ino_notif.set_navigate_callback(_ino_navigate_to_patient)
+        except Exception:
+            pass
 
         text_lay = QVBoxLayout()
         text_lay.setSpacing(2)

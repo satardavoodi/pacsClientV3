@@ -41,6 +41,18 @@ REQUEST_RETRY_BASE_DELAY = 1.0    # seconds, base delay for request retry
 # _dm_workers._check_auto_retry.
 MAX_RETRIES_TEMPORARY = 10         # network/timeout/disconnect failures
 
+# A4 (OPT-04 / DM net-resume, 2026-07-08): under the OPT-IN unstable-network
+# policy (env AIPACS_DM_NET_RESUME=1) a TEMPORARY/network failure keeps retrying
+# (capped 30 s backoff) rather than stranding after MAX_RETRIES_TEMPORARY (10 ≈
+# 2.75 min of wall-clock) — an outage longer than ~3 min otherwise drains the
+# count-based budget while still offline and leaves the study permanently FAILED.
+# This large cap approximates "retry while the failure is still temporary"; the
+# reachability monitor (A1/A3) also resets retry_count on reconnect, so this is a
+# safety net, not the primary trigger. Default policy is OFF → the effective cap
+# stays MAX_RETRIES_TEMPORARY. See
+# docs/reports/DOWNLOAD_MANAGER_RESUME_RETRY_RELIABILITY_AUDIT_2026-07-08.md.
+MAX_RETRIES_TEMPORARY_UNSTABLE = 100000
+
 # Substrings (lowercased) that mark a failure as TEMPORARY (network) → retry up
 # to MAX_RETRIES_TEMPORARY. Kept broad: an unstable connection is the common
 # real-world case.

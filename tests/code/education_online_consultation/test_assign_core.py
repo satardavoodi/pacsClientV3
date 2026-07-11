@@ -69,6 +69,74 @@ def test_consultant_display_snapshot():
     assert d["address"] == "a@x.com"
 
 
+# ── INO internal-user grouping (Internal tab, 2026-07-10) ──────────────────────
+def test_partition_ino_groups_splits_physicians_and_users():
+    rows = [
+        {"name": "Dr P1", "_ino": True, "_ino_source": "ris_personnel"},
+        {"name": "Secretary S1", "_ino": True, "_ino_source": "ris_user"},
+        {"name": "Dr P2", "_ino": True, "_ino_source": "ris_personnel"},
+        {"name": "User U2", "_ino": True, "_ino_source": "ris_user"},
+    ]
+    groups = core.partition_ino_groups(rows)
+    keys = [g[0] for g in groups]
+    # Physicians first, then users; each group carries its members.
+    assert keys == [core.INO_GROUP_PHYSICIANS, core.INO_GROUP_USERS]
+    physicians = dict((g[0], g[2]) for g in groups)[core.INO_GROUP_PHYSICIANS]
+    users = dict((g[0], g[2]) for g in groups)[core.INO_GROUP_USERS]
+    assert [r["name"] for r in physicians] == ["Dr P1", "Dr P2"]
+    assert [r["name"] for r in users] == ["Secretary S1", "User U2"]
+    # Titles distinguish physicians from secretaries/other users.
+    titles = {g[0]: g[1] for g in groups}
+    assert "Physicians" in titles[core.INO_GROUP_PHYSICIANS]
+    assert "Secretaries" in titles[core.INO_GROUP_USERS]
+
+
+def test_partition_ino_groups_omits_empty_groups_and_buckets_unknown():
+    rows = [
+        {"name": "Dr Only", "_ino": True, "_ino_source": "ris_personnel"},
+        {"name": "Mystery", "_ino": True, "_ino_source": ""},
+    ]
+    groups = core.partition_ino_groups(rows)
+    keys = [g[0] for g in groups]
+    # No ris_user rows → that group is omitted; unknown source → "other".
+    assert core.INO_GROUP_USERS not in keys
+    assert keys == [core.INO_GROUP_PHYSICIANS, core.INO_GROUP_OTHER]
+
+
+def test_partition_ino_groups_empty_input():
+    assert core.partition_ino_groups([]) == []
+
+
+# ── card/message hygiene (UI readability, 2026-07-10) ──────────────────────────
+def test_is_objectid_like():
+    assert core.is_objectid_like("69f314c684663b7ae6e6318a")   # 24-hex INO id
+    assert not core.is_objectid_like("dr.vahid@gmail.com")
+    assert not core.is_objectid_like("")
+    assert not core.is_objectid_like("12345")
+
+
+def test_humanize_server_error_express_404_html():
+    html = ("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+            "<title>Error</title></head><body>"
+            "<pre>Cannot PUT /api/patients/49639/assign</pre></body></html>")
+    out = core.humanize_server_error(html)
+    assert "PUT /api/patients/49639/assign" in out
+    assert "does not provide this endpoint" in out
+    assert "<" not in out and "html" not in out.lower()
+
+
+def test_humanize_server_error_strips_html_and_truncates():
+    out = core.humanize_server_error("<b>boom</b> happened")
+    assert out == "boom happened"
+    long = "x" * 500
+    assert len(core.humanize_server_error(long)) <= 180
+
+
+def test_humanize_server_error_empty():
+    assert core.humanize_server_error("") == "Unknown error"
+    assert core.humanize_server_error(None) == "Unknown error"
+
+
 # ── payloads ───────────────────────────────────────────────────────────────────
 def test_internal_payload_shape_and_no_drive_fields():
     payload = core.build_internal_payload(

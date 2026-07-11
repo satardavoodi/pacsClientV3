@@ -3410,6 +3410,12 @@ class PatientTableWidget(QWidget):
         is_reported = bool(kwargs.get('is_reported', False))
         assign_to = kwargs.get('assign_to', '')
         is_assigned = bool(kwargs.get('is_assigned', bool(assign_to)))
+        # The Assign icon is derived from the PERSISTED assignment record (the
+        # history store only records an assignment the server confirmed —
+        # server_ok), so it reflects the confirmed server-side state, is never a
+        # transient UI flag, and survives refresh / reopen. One shared mapping
+        # (_assign_icon_state) is used here AND on refresh so they can't drift.
+        _ino_icon = self._assign_icon_state(patient_id)
         status_widget = self._build_local_status_widget(study_uid, patient_id)
 
         # Report status - get from kwargs or default to pending
@@ -3456,14 +3462,21 @@ class PatientTableWidget(QWidget):
             self._report_status_cache[study_uid] = report_status
 
         assign_label = QLabel()
-        assign_label.setPixmap(self._icon_pixmap(
-            'fa5s.user-check' if is_assigned else 'fa5s.user-times',
-            '#3b82f6' if is_assigned else '#6b7280',
-            16, 16))
+        if _ino_icon is not None:
+            # status-driven: active=red · completed=green · deactivated/cancelled=gray
+            assign_label.setPixmap(self._icon_pixmap(
+                _ino_icon['icon'], _ino_icon['color'], 16, 16))
+            assign_label.setToolTip(_ino_icon['tooltip'])
+        else:
+            # INO assignment feature off → legacy kwargs behaviour, unchanged.
+            assign_label.setPixmap(self._icon_pixmap(
+                'fa5s.user-check' if is_assigned else 'fa5s.user-times',
+                '#ef4444' if is_assigned else '#6b7280',
+                16, 16))
+            if assign_to:
+                assign_label.setToolTip(f"Assigned to: {assign_to}")
         assign_label.setAlignment(Qt.AlignCenter)
         assign_label.setStyleSheet("background: transparent; border: none;")
-        if assign_to:
-            assign_label.setToolTip(f"Assigned to: {assign_to}")
 
         # Assign-consultation popup (ADR-0006): cell-click → dialog, wired
         # EXACTLY like the Report column popup (cell-widget mousePressEvent;
@@ -3809,9 +3822,118 @@ class PatientTableWidget(QWidget):
                 study_date=study_date,
                 modality=modality,
             )
+            # After the INO server confirms an internal assignment, refresh the
+            # Assign icon for this patient (server-derived red) — not a local flag.
+            try:
+                dialog.internal_assigned.connect(self._on_internal_assigned_confirmed)
+            except Exception:
+                pass
             dialog.exec()
         except Exception as e:
             print(f"Error opening assign consultation dialog: {e}")
+
+    def _on_internal_assigned_confirmed(self, reception_id: str, assignee_name: str):
+        """INO server confirmed an internal assignment → re-render that patient's
+        Assign icon red from the (persistent, server_ok) history, and reflect the
+        reporter. Server-derived, so it survives refresh/reopen."""
+        try:
+            self.refresh_assign_icon_for_patient(str(reception_id))
+        except Exception:
+            pass
+        try:
+            # Also surface the reporter in the Report column (best-effort).
+            if assignee_name:
+                self.update_reporting_physician_for_patient(
+                    str(reception_id), "", assignee_name)
+        except Exception:
+            pass
+
+    def _assign_icon_state(self, reception_id):
+        """THE single source for the Assign-column icon.
+
+        Derived from the PERSISTED assignment record (``ino_assignment_history``),
+        whose assign/unassign rows are ``server_ok``-gated — so the icon reflects
+        the confirmed server-side state, never a transient local UI flag, and it
+        survives refresh / reopening the patient list. Returns None when the INO
+        assignment feature is off (caller then keeps the legacy behaviour).
+
+        Mapping (see ino_assignment_models.assign_icon_for_status):
+            active      → red   user-check    (assigned, needs action)
+            completed   → green check-circle
+            deactivated → gray  user-minus
+            cancelled   → gray  user-slash    (crossed out)
+            (never assigned) → gray user-times
+        """
+        try:
+            from modules.network.ino_assignment import is_enabled as _ino_on
+            if not _ino_on():
+                return None
+            from modules.network import ino_assignment_history as _hist
+            from modules.network import ino_assignment_models as _m
+            rec = _hist.current_assignment_details(reception_id)
+            if not rec:
+                return _m.assign_icon_for_status("", "")
+            return _m.assign_icon_for_status(
+                rec.get("assignment_status"), rec.get("assignee_name", ""))
+        except Exception:
+            return None
+
+    def refresh_assign_icon_for_patient(self, reception_id: str):
+        """Re-paint the Assign-column icon for a reception from the persisted,
+        server-confirmed record. O(1) per row; no server call (the history row was
+        written with the server's answer at assign/unassign time)."""
+        state = self._assign_icon_state(reception_id)
+        if state is None:
+            return
+        pid_col = COL.get('patient_id', 1)
+        for r in range(self.results_table.rowCount()):
+            item = self.results_table.item(r, pid_col)
+            if not item or str(item.text()).strip() != str(reception_id).strip():
+                continue
+            w = self.results_table.cellWidget(r, COL['assign'])
+            if w is None:
+                continue
+            try:
+                w.setPixmap(self._icon_pixmap(
+                    state['icon'], state['color'], 16, 16))
+                w.setToolTip(state['tooltip'])
+            except Exception:
+                pass
+
+    def select_patient_by_id(self, reception_id: str) -> bool:
+        """Search the patient list for a reception/patient id and select+scroll to
+        it. Used by the internal-assignment notification click (INTERNAL only —
+        never opens the consultation / Drive workflow). Returns True if found."""
+        rid = str(reception_id).strip()
+        if not rid:
+            return False
+        pid_col = COL.get('patient_id', 1)
+        target = -1
+        try:
+            matches = self.search_in_table(rid, pid_col)
+            if matches:
+                target = matches[0]
+        except Exception:
+            target = -1
+        if target < 0:
+            for r in range(self.results_table.rowCount()):
+                item = self.results_table.item(r, pid_col)
+                if item and str(item.text()).strip() == rid:
+                    target = r
+                    break
+        if target < 0:
+            return False
+        try:
+            self.results_table.selectRow(target)
+            self.results_table.scrollToItem(
+                self.results_table.item(target, pid_col))
+            try:
+                self.highlight_selected_row(target)
+            except Exception:
+                pass
+        except Exception:
+            return False
+        return True
 
     def _on_report_status_clicked(self, study_uid: str, current_status: str, patient_name: str, patient_id: str, reporting_physician: str = ""):
         """Handle click on report status icon"""
@@ -3902,7 +4024,21 @@ class PatientTableWidget(QWidget):
             self._change_report_status(uid, old_st, new_st, comment, patient_id)
         
         dialog.statusChanged.connect(on_status_changed)
-        
+
+        # Internal-center assignment (separate from external consultation): when
+        # the popup's Assign field submits successfully, update this patient's
+        # reporter cell immediately (assigned → shown in RED via
+        # _apply_report_status_display) without a full list reload.
+        def on_internal_assigned(rid, name, pid=patient_id, pname=patient_name):
+            try:
+                self.update_reporting_physician_for_patient(pid, pname, name)
+            except Exception:
+                pass
+        try:
+            dialog.assigned.connect(on_internal_assigned)
+        except Exception:
+            pass
+
         print(f"💬 [UI] Dialog exec() called...")
         if dialog.exec():
             print(f"✅ [UI] Dialog accepted")
@@ -4382,6 +4518,20 @@ class PatientTableWidget(QWidget):
                     status_response = self.report_status_service.update_report_status(
                         study_uid, new_status, user_id=None, comment=comment
                     )
+                    # Sync the INO reception APPROVAL FLAGS to match the status —
+                    # the socket update above only touches the PACS-side store;
+                    # INO displays the patient state from report.approvalFlags,
+                    # set by a separate workflow endpoint (resolve reception→
+                    # workflow id → PATCH approval-flags, which also drives
+                    # report.status). Already on a background thread; best-effort;
+                    # safe no-op if patient_id is not a numeric reception id.
+                    try:
+                        from modules.network.ino_report_workflow import (
+                            sync_report_approval_for_status,
+                        )
+                        sync_report_approval_for_status(patient_id, new_status)
+                    except Exception as _exc:
+                        logger.warning(f"[PatientTable] INO approval sync skipped: {_exc}")
 
                 comment_sync = self._sync_comment_to_server(patient_id, comment)
                 if comment_sync.get('success'):
@@ -4926,6 +5076,31 @@ class PatientTableWidget(QWidget):
                 "(Click to change)"
             )
             return
+
+        # Internal-center assignment: a reception ASSIGNED to a physician but not
+        # yet completed shows the name in RED (assigned/pending) — semantically
+        # distinct from the GREEN completed reporter above. Flag-gated: when
+        # internal assignment is disabled this is skipped and the original status
+        # icon is shown (byte-identical legacy behaviour).
+        try:
+            from modules.network.ino_assignment import is_enabled as _ino_assign_enabled
+            if _ino_assign_enabled() and physician_text:
+                from modules.network.ino_assignment_models import reporter_display
+                _name, _color = reporter_display(report_status, physician_text)
+                if _name and _color:
+                    report_label.clear()
+                    report_label.setText(_name)
+                    report_label.setAlignment(Qt.AlignCenter)
+                    report_label.setStyleSheet(
+                        f"background: transparent; border: none; color: {_color}; font-size: 11px; font-weight: 600;"
+                    )
+                    report_label.setToolTip(
+                        f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n"
+                        f"Assigned to: {_name}\n(Assigned — reporting pending)\n(Click to change)"
+                    )
+                    return
+        except Exception:
+            pass
 
         icon_name = status_icon_map.get(report_status, 'fa5s.file-alt')
         color = STATUS_COLORS.get(report_status, '#f59e0b')

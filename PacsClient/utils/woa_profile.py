@@ -104,12 +104,19 @@ def apply_woa_runtime_profile() -> Dict[str, Any]:
             result["applied"].append(name)
             logger.warning("[WOA-PROFILE] set %s=%s (%s)", name, value, why)
 
+        graphics = os.environ.get("AIPACS_WOA_GRAPHICS") or os.environ.get(
+            "AIPACS_GRAPHICS_EXECUTION_MODE"
+        ) or "unknown"
+        result["graphics"] = graphics
         logger.warning(
             "[WOA-PROFILE] Windows-on-ARM emulated session: process=%s host=%s "
-            "install_package=%s vtk_mpr=emulated-x64-via-OpenGLOn12 tuned=%s "
+            "install_package=%s graphics=%s vtk_mpr=emulated-x64 tuned=%s "
             "(profile flag AIPACS_WOA_PROFILE=%s). First launches are slower "
-            "while Windows builds the x64 translation cache.",
-            arch.get("process_arch"), arch.get("native_arch"), package,
+            "while Windows builds the x64 translation cache. NOTE: MPR/VTK now "
+            "target the system hardware OpenGL (D3D12) — the bundled software "
+            "renderer (llvmpipe) crashes with an illegal instruction under "
+            "emulation.",
+            arch.get("process_arch"), arch.get("native_arch"), package, graphics,
             ",".join(result["applied"]) or "none", "on" if _flag_enabled() else "OFF",
         )
     except Exception as exc:

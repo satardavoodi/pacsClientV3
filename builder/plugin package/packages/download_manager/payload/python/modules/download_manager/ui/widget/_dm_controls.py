@@ -237,7 +237,28 @@ class _DMControlsMixin:
             raise
 
     def _on_start_selected(self):
-        """Start/Resume selected download (PAUSED, FAILED, CANCELLED)."""
+        """Start/Resume selected download (PAUSED, FAILED, CANCELLED, COMPLETED).
+
+        I1 (DM resume unification, 2026-07-08): DEFAULT-ON — this delegates to the
+        SAME ``_on_per_patient_resume`` the inline row Resume button uses, so the
+        selected-Start and row-Resume paths can never drift again. The legacy
+        inline copy below was a hand-forked duplicate that was MISSING the
+        COMPLETED branch (right-side Start did nothing on a completed study while
+        the row Resume force-reset it) and restarted CANCELLED from 0 instead of
+        resuming from partial files. Kill switch ``AIPACS_DM_UNIFY_RESUME=0`` ⇒
+        byte-identical legacy path. See
+        docs/reports/DOWNLOAD_MANAGER_RESUME_RETRY_RELIABILITY_AUDIT_2026-07-08.md.
+        """
+        import os as _os_ur
+        if _os_ur.environ.get('AIPACS_DM_UNIFY_RESUME', '1') != '0':
+            logger.info("🔵 [BUTTON CLICK] Start Selected (unified resume path)")
+            if self._selected_study_uid:
+                self._on_per_patient_resume(self._selected_study_uid)
+                self.refresh_table_order()
+            else:
+                logger.warning("⚠️ [BUTTON WARNING] Start Selected clicked but no study selected")
+            return
+
         logger.info("🔵 [BUTTON CLICK] Start Selected button clicked")
         if self._selected_study_uid:
             logger.info(f"Starting download for selected study: {self._selected_study_uid[:40]}...")

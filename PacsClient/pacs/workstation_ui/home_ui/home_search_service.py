@@ -43,6 +43,27 @@ def _progressive_local_enabled() -> bool:
 _LOCAL_SEARCH_BATCH = 100
 
 
+# ── OPT-24 (2026-07-11): patient-search client-side waste removal ──────────────
+# MEASURED (2026-07-11 logs): the ~5 s patient-list latency is SERVER-side —
+# [NET_TIMING] endpoint=GetPatientList server_wait_ms=5016..5941 transfer_ms=0-1
+# parse_ms=0, while a patient_id lookup on the SAME socket returns in 139 ms.
+# The client cannot remove that. But our side was adding avoidable work to EVERY
+# search, which is what these flags fix:
+#   * test_connection() pre-flight = a FULL extra GetPatientList round-trip
+#     (~125 ms). ~140 of 215 server calls in one session were just these probes.
+#   * socket_service.cleanup() after each search closed all 5 pooled connections,
+#     so the connection pool never actually pooled anything.
+#   * the socket config FILE was rewritten to disk on each search (111 writes).
+# Each is independently kill-switchable; all default ON.
+def _env_on(name: str, default: str = "1") -> bool:
+    return (_os.environ.get(name, default) or default).strip() != "0"
+
+
+# How long a successful search lets us trust connectivity without re-probing.
+_CONNECTIVITY_TTL_S = 300.0
+# (OPT-24 shipped 2026-07-11 — see master plan §15.)
+
+
 class HomeSearchService:
     """Async patient search (local + Socket server).
 
@@ -70,6 +91,67 @@ class HomeSearchService:
 
     def _thread_pool(self) -> ThreadPoolExecutor:
         return self._home.thread_pool
+
+    # ── OPT-24b: connectivity freshness (avoids a probe round-trip per search) ──
+    def _connectivity_is_fresh(self) -> bool:
+        """True when a recent search proved the socket server is reachable."""
+        try:
+            import time as _t
+            return _t.monotonic() < float(getattr(self, "_conn_ok_until", 0.0) or 0.0)
+        except Exception:
+            return False
+
+    def _mark_connectivity(self, ok: bool) -> None:
+        try:
+            import time as _t
+            self._conn_ok_until = (_t.monotonic() + _CONNECTIVITY_TTL_S) if ok else 0.0
+        except Exception:
+            pass
+
+    # ── OPT-24d: one-shot enrich-cost A/B probe (diagnostic, no behaviour change) ──
+    def _maybe_probe_enrich_cost(self, loop, socket_service, socket_params, search_ms: float) -> None:
+        """Once per process, re-run the SAME query with include_study_count=False and
+        log its server time next to the real search's, to settle whether the ~5 s is
+        the per-patient ENRICHMENT or the date+modality SCAN.
+
+        Fire-and-forget, off the UI thread, result discarded. Never raises.
+        Kill switch: AIPACS_SEARCH_ENRICH_PROBE=0.
+        """
+        try:
+            if not _env_on("AIPACS_SEARCH_ENRICH_PROBE"):
+                return
+            if getattr(self.__class__, "_enrich_probe_done", False):
+                return
+            if not socket_params or not socket_params.get("include_study_count"):
+                return
+            self.__class__._enrich_probe_done = True
+
+            probe_params = dict(socket_params)
+            probe_params["include_study_count"] = False
+
+            def _probe() -> None:
+                import time as _t
+                t0 = _t.perf_counter()
+                try:
+                    rows = socket_service.search_patients_sync(probe_params)
+                    enrich_ms = (_t.perf_counter() - t0) * 1000.0
+                    saved = search_ms - enrich_ms
+                    verdict = (
+                        "ENRICHMENT is the cost -> lazy-enrich + background backfill is worth building"
+                        if saved > 1000.0 else
+                        "SCAN is the cost (not enrichment) -> needs a SERVER-side index; no client fix helps"
+                    )
+                    _logger.warning(
+                        "[SEARCH-ENRICH-PROBE] with_study_count_ms=%.0f without_study_count_ms=%.0f "
+                        "delta_ms=%.0f rows=%d -> %s",
+                        search_ms, enrich_ms, saved, len(rows or []), verdict,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    _logger.warning("[SEARCH-ENRICH-PROBE] failed: %s", exc)
+
+            loop.run_in_executor(self._thread_pool(), _probe)
+        except Exception:
+            pass
 
     @staticmethod
     def _backfill_missing_patient_fields(patients: list[dict] | None) -> list[dict]:
@@ -523,25 +605,67 @@ class HomeSearchService:
             from modules.network.socket_patient_service import get_socket_patient_service
             socket_service = get_socket_patient_service()
 
-            is_connected = await loop.run_in_executor(self._thread_pool(), socket_service.test_connection)
-            if self._cancelled:
-                raise asyncio.CancelledError()
-
-            if not is_connected:
+            def _show_conn_failed() -> None:
                 cfg = socket_service.config
                 config_info = f"{cfg.get_socket_host()}:{cfg.get_socket_port()}"
                 home._update_connection_indicator_by_status('offline', 'Socket Connection Failed', config_info)
                 QMessageBox.critical(home, "Connection Failed",
                                      f"Failed to connect to Socket server at {config_info}")
-                return
+
+            # OPT-24b: the pre-flight probe is NOT a cheap ping — test_connection()
+            # does client.connect() + get_patient_list_safe(limit=1), i.e. a FULL extra
+            # GetPatientList round-trip (~125 ms) before EVERY search. Skip it while
+            # connectivity is FRESH (a recent search succeeded). We still probe on the
+            # first search of a session, and AFTER an empty result, because
+            # search_patients_sync() returns [] for BOTH "no patients" and "connection
+            # dead" — so an empty result cannot be trusted without a probe.
+            # Kill switch: AIPACS_SEARCH_SKIP_PROBE=0 -> probe every search (legacy).
+            _probed = False
+            if (not _env_on("AIPACS_SEARCH_SKIP_PROBE")) or (not self._connectivity_is_fresh()):
+                _probed = True
+                is_connected = await loop.run_in_executor(self._thread_pool(), socket_service.test_connection)
+                if self._cancelled:
+                    raise asyncio.CancelledError()
+                if not is_connected:
+                    self._mark_connectivity(False)
+                    _show_conn_failed()
+                    return
+                self._mark_connectivity(True)
 
             search_data = home.patient_search_widget.get_search_data()
             socket_params = self._convert_search_data_to_socket_params(search_data)
 
+            import time as _time
+            _t_search0 = _time.perf_counter()
             patients = await loop.run_in_executor(
                 self._thread_pool(),
                 lambda: socket_service.search_patients_sync(socket_params),
             )
+            _search_ms = (_time.perf_counter() - _t_search0) * 1000.0
+
+            # Empty result while the probe was SKIPPED -> disambiguate "no patients"
+            # from "connection dead" (the service returns [] for both).
+            if (not patients) and (not _probed):
+                still_ok = await loop.run_in_executor(self._thread_pool(), socket_service.test_connection)
+                self._mark_connectivity(bool(still_ok))
+                if not still_ok:
+                    _show_conn_failed()
+                    return
+            elif patients:
+                self._mark_connectivity(True)
+
+            # OPT-24d [SEARCH-PERF]: the one line that tells us where the time went.
+            # `search_ms` here is essentially all server_wait (transfer+parse are ~0),
+            # so compare it against the enrich A/B probe below.
+            try:
+                _logger.info(
+                    "[SEARCH-PERF] search_ms=%.0f rows=%d probed=%s params=%s",
+                    _search_ms, len(patients or []), _probed,
+                    {k: v for k, v in (socket_params or {}).items() if k != 'offset'},
+                )
+            except Exception:
+                pass
+
             patients = await loop.run_in_executor(
                 self._thread_pool(),
                 self._sort_studies_by_date_time_ascending,
@@ -549,6 +673,19 @@ class HomeSearchService:
             )
             if self._cancelled:
                 raise asyncio.CancelledError()
+
+            # OPT-24d: one-shot, background A/B probe — is the server's 5 s the
+            # per-patient ENRICHMENT (include_study_count) or the date+modality SCAN?
+            # Re-issues the SAME query with include_study_count=False and logs its
+            # server time. Runs ONCE per process, off the UI thread, result discarded
+            # (no behaviour change: we do NOT drop study_count from the real search,
+            # because count_of_series feeds the documented right-panel "grew" gate).
+            # If enrich_ms << search_ms  -> enrichment is the cost -> lazy-enrich +
+            #    background backfill is worth building (big perceived win).
+            # If enrich_ms ~= search_ms  -> it is the SCAN -> server-side index needed;
+            #    no client change can help. Either way we get a definitive answer.
+            # Kill switch: AIPACS_SEARCH_ENRICH_PROBE=0.
+            self._maybe_probe_enrich_cost(loop, socket_service, socket_params, _search_ms)
 
             total = len(patients or [])
             home.search_progress.setRange(0, max(1, total))
@@ -601,10 +738,22 @@ class HomeSearchService:
                 home.patient_table_widget.clear_table()
                 home._update_connection_indicator_by_status('busy', 'Socket Connected - No patients found')
 
-            try:
-                await loop.run_in_executor(self._thread_pool(), socket_service.cleanup)
-            except Exception:
-                pass
+            # OPT-24c: do NOT tear the shared service down after every search.
+            # `socket_service` is a process-wide singleton whose SocketConnectionPool
+            # holds up to 5 connections — but cleanup() -> disconnect_from_server() ->
+            # connection_pool.close_all() closed ALL of them after each search, so the
+            # pool never actually pooled anything and the next search paid 5 fresh TCP
+            # handshakes (95 pool rebuilds in one observed session).
+            # Keeping it warm is SAFE: SocketConnectionPool.get_connection() validates
+            # each pooled client with is_connected() and transparently discards/replaces
+            # a stale one, and the pool is closed properly at app shutdown
+            # (mainwindow_ui -> socket_service.cleanup()).
+            # Kill switch: AIPACS_SEARCH_KEEP_POOL=0 -> cleanup after each search (legacy).
+            if not _env_on("AIPACS_SEARCH_KEEP_POOL"):
+                try:
+                    await loop.run_in_executor(self._thread_pool(), socket_service.cleanup)
+                except Exception:
+                    pass
 
         except asyncio.CancelledError:
             try:
@@ -693,12 +842,17 @@ class HomeSearchService:
             from modules.network.socket_patient_service import get_socket_patient_service
             socket_service = get_socket_patient_service()
 
-            is_connected = await loop.run_in_executor(self._thread_pool(), socket_service.test_connection)
-            if self._cancelled:
-                raise asyncio.CancelledError()
-            if not is_connected:
-                QMessageBox.critical(home, "Connection Failed", "Failed to connect to the PACS socket server.")
-                return
+            # OPT-24b (same as search_server): skip the extra GetPatientList probe
+            # round-trip while connectivity is fresh from a recent successful search.
+            if (not _env_on("AIPACS_SEARCH_SKIP_PROBE")) or (not self._connectivity_is_fresh()):
+                is_connected = await loop.run_in_executor(self._thread_pool(), socket_service.test_connection)
+                if self._cancelled:
+                    raise asyncio.CancelledError()
+                if not is_connected:
+                    self._mark_connectivity(False)
+                    QMessageBox.critical(home, "Connection Failed", "Failed to connect to the PACS socket server.")
+                    return
+                self._mark_connectivity(True)
 
             param_sets = self._advanced_query_to_param_sets(query)
             merged: dict = {}

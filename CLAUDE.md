@@ -1259,6 +1259,20 @@ Two default-on guards, master plan **OPT-21**:
   handle kept alive for process lifetime). The production build previously had NO faulthandler —
   the dev-machine `native_fault.log` came from external tracer tools only. Flag
   `AIPACS_NATIVE_FAULT_LOG` (`=0` off). Must never raise/break startup.
+- **ROOT CAUSE FOUND 2026-07-08 (via the shipped faulthandler): the WoA MPR crash = the BUNDLED
+  SOFTWARE OpenGL (Mesa llvmpipe / `opengl32sw.dll`) hitting an ILLEGAL INSTRUCTION (`0xc000001d`,
+  NOT an access violation) under Prism emulation, at `vtk_widget.Initialize()`.** The install
+  defaulted to `cpu_safe` (software GL), so `[HW_CHECK]` showed `renderer=llvmpipe OpenGL 3.3`
+  instead of the hardware `D3D12 (Adreno) 4.6`. llvmpipe's x64 SIMD JIT emits an instruction Prism
+  can't emulate. **The safe/dangerous graphics choice is INVERTED on Windows-on-ARM** — software
+  crashes, hardware D3D12 works. FIX (default-on): `aipacs_runtime.build_windows_graphics_environment`
+  has a WoA branch (gated on `is_windows_on_arm_emulated()`) that, for the software profile, uses
+  the SYSTEM/desktop hardware OpenGL (`QT_OPENGL=desktop`, `VTK_USE_HARDWARE=1`, no Mesa DLLs on
+  PATH) instead of forcing llvmpipe; escape hatch `AIPACS_WOA_FORCE_SOFTWARE_GL=1`. `is_windows_on_arm_emulated`
+  is the WoA gate everywhere — IsWow64Process2 returned BLANK on the live box, so it falls back to
+  env `PROCESSOR_ARCHITECTURE`/`platform.machine()`/CPU-identifier signals. Guards
+  `tests/code/builder/test_woa_graphics.py`. Do NOT force software OpenGL on emulated WoA. The
+  OpenGLOn12 pack regression below is a SEPARATE hazard for OTHER machines (pack/driver update).
 - **PC2 turned out to be Windows-on-ARM (Snapdragon X Elite / Adreno X1-85) — the "weak GPU /
   no GL 3.2" framing is WITHDRAWN for that machine** (GLview: GL 3.0–4.5 render tests pass, 4.6
   Mesa on `D3D12 (Adreno)`). Our x64 build runs under Prism emulation; OpenGL is served by the

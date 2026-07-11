@@ -889,11 +889,25 @@ class OnlineConsultationPage(QWidget):
 
     def _registry_row(self, row: dict, box: str) -> QWidget:
         p = self._p
+        # Internal vs External is the primary distinction — colour the whole card:
+        # Internal = blue, External = amber, with a matching badge + left accent.
+        is_ext = assign_core.consultant_kind(row) == assign_core.EXTERNAL
+        kind_color = "#f59e0b" if is_ext else "#3b82f6"
         f = QFrame()
         f.setObjectName("card")
+        f.setStyleSheet(
+            "QFrame#card{background:%s;border:1px solid %s;border-left:4px solid %s;"
+            "border-radius:9px;}" % (p['surface2'], p['border'], kind_color))
         lay = QHBoxLayout(f)
         lay.setContentsMargins(12, 10, 12, 10)
         lay.setSpacing(10)
+
+        kind_badge = QLabel("External" if is_ext else "Internal")
+        kind_badge.setStyleSheet(
+            "background:%s22;color:%s;border:1px solid %s66;border-radius:9px;"
+            "padding:2px 10px;font-size:10px;font-weight:700;"
+            % (kind_color, kind_color, kind_color))
+        lay.addWidget(kind_badge, 0, Qt.AlignTop)
 
         status = str(row.get("status") or "pending")
         chip = QLabel(status.capitalize())

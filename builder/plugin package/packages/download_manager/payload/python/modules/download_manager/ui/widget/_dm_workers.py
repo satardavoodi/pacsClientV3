@@ -799,6 +799,19 @@ class _DMWorkersMixin:
         )
         logger.info(f"💾 [DATABASE] Updated study {study_uid[:40] if study_uid else 'None'}... to FAILED status due to error")
 
+        # L1 (DM state logging, 2026-07-08): structured, greppable transition line
+        # so the resume/retry lifecycle is auditable end-to-end (see the resume
+        # reliability audit report). Additive log only.
+        try:
+            from ...core.constants import classify_download_failure as _clf
+            logger.info(
+                "[DM-STATE] uid=%s new=FAILED reason=worker_error kind=%s",
+                (study_uid[:40] if study_uid else 'None'),
+                _clf(error_message),
+            )
+        except Exception:
+            pass
+
         # Log error to UI
         state = self.state_store.get(study_uid)
         patient_name = getattr(state, 'patient_name', 'Unknown') if state else 'Unknown'
@@ -881,10 +894,79 @@ class _DMWorkersMixin:
         stuck after 3. Permanent failures keep the original ``MAX_RETRIES``.
         """
         from ...core.constants import (
-            MAX_RETRIES, MAX_RETRIES_TEMPORARY, classify_download_failure,
+            MAX_RETRIES, MAX_RETRIES_TEMPORARY, MAX_RETRIES_TEMPORARY_UNSTABLE,
+            classify_download_failure,
         )
         kind = classify_download_failure(getattr(state, 'error_message', None))
-        return MAX_RETRIES_TEMPORARY if kind == 'temporary' else MAX_RETRIES
+        if kind != 'temporary':
+            return MAX_RETRIES
+        # A4 (OPT-04 / DM net-resume, 2026-07-08): under the unstable-network
+        # policy keep retrying a TEMPORARY/network failure across a long outage
+        # instead of stranding after MAX_RETRIES_TEMPORARY (10 ≈ 2.75 min).
+        # DEFAULT-ON; kill switch AIPACS_DM_NET_RESUME=0 restores the legacy
+        # count-based temporary cap (byte-identical).
+        import os as _os
+        if _os.environ.get('AIPACS_DM_NET_RESUME', '1') != '0':
+            return MAX_RETRIES_TEMPORARY_UNSTABLE
+        return MAX_RETRIES_TEMPORARY
+
+    def _rearm_network_failed_studies(self, reason: str = "net_up") -> int:
+        """A3 (OPT-04 / DM net-resume, 2026-07-08): re-arm studies parked in
+        FAILED by a TEMPORARY/network error so they resume automatically when
+        connectivity returns (or on demand).
+
+        Resets ``retry_count`` (so a multi-minute outage that drained the budget
+        no longer strands the study) and flips FAILED→PENDING; the existing 5 s
+        health sweep then starts the worker. PERMANENT failures (404/decode/…) are
+        left untouched so a genuinely dead study never hot-loops. DEFAULT-ON;
+        kill switch ``AIPACS_DM_NET_RESUME=0`` ⇒ no-op (legacy). Never raises.
+        This is the single re-arm mechanism the connectivity monitor, and any
+        future manual "resume all after outage" action, both call.
+        """
+        import os as _os
+        if _os.environ.get('AIPACS_DM_NET_RESUME', '1') == '0':
+            return 0
+        rearmed = 0
+        try:
+            from ...core.constants import classify_download_failure
+            failed = self.state_store.get_by_status(DownloadStatus.FAILED)
+            for state in failed:
+                if classify_download_failure(getattr(state, 'error_message', None)) != 'temporary':
+                    continue
+                suid = state.study_uid
+                try:
+                    self.state_store.update(
+                        suid,
+                        status=DownloadStatus.PENDING,
+                        retry_count=0,
+                        error_message=None,
+                    )
+                    rearmed += 1
+                    logger.info(
+                        "[DM-STATE] uid=%s old=FAILED new=PENDING reason=%s "
+                        "(network re-arm)", (suid[:40] if suid else 'None'), reason,
+                    )
+                except Exception:
+                    logger.exception(
+                        "[DM-NET] re-arm failed for %s",
+                        (suid[:40] if suid else 'None'),
+                    )
+            if rearmed:
+                logger.info(
+                    "[DM-NET] re-armed %d network-failed study(ies) (reason=%s)",
+                    rearmed, reason,
+                )
+                # Clear the "network exhausted" tracker so a fresh outage can
+                # surface its own popup later (never leave it latched).
+                try:
+                    if getattr(self, '_net_exhausted_studies', None):
+                        self._net_exhausted_studies.clear()
+                except Exception:
+                    pass
+                QTimer.singleShot(0, self._start_next_pending)
+        except Exception:
+            logger.exception("[DM-NET] _rearm_network_failed_studies failed (non-fatal)")
+        return rearmed
 
     def _check_auto_retry(self) -> None:
         """
@@ -942,6 +1024,14 @@ class _DMWorkersMixin:
                     logger.warning(
                         f"⚠️ {state.patient_name} exceeded max retries "
                         f"({cap}, kind={_kind}), requires manual intervention"
+                    )
+                    # L4 (DM state logging, 2026-07-08): distinct, greppable
+                    # exhaustion marker separating a drained temporary/network
+                    # budget from a permanent failure.
+                    logger.warning(
+                        "[DM-RETRY-EXHAUSTED] uid=%s kind=%s retry_count=%s cap=%s",
+                        (state.study_uid[:40] if state.study_uid else 'None'),
+                        _kind, state.retry_count, cap,
                     )
                     if _kind == 'temporary' and state.study_uid:
                         newly_exhausted.append(state.study_uid)
@@ -1041,6 +1131,21 @@ class _DMWorkersMixin:
         the normal completion/error handlers.
         """
         try:
+            # A1/A3 (OPT-04 / DM net-resume, 2026-07-08): poll the OPT-IN
+            # reachability monitor for an offline→online edge and re-arm
+            # network-parked studies. This runs on the GUI thread (the monitor's
+            # thread only sets a flag), so there is no cross-thread Qt call.
+            # No-op unless AIPACS_DM_NET_MONITOR=1 AND AIPACS_DM_NET_RESUME=1.
+            try:
+                _mon = getattr(self, '_net_monitor', None)
+                if _mon is not None and _mon.consume_online_edge():
+                    logger.info(
+                        "[DM-NET] connectivity restored — re-arming network-failed studies"
+                    )
+                    self._rearm_network_failed_studies("net_up")
+            except Exception:
+                logger.exception("[DM-NET] health-check net poll failed (non-fatal)")
+
             # Check current state
             active_count = self.worker_pool.get_active_count()
             pending = self.state_store.get_by_status(DownloadStatus.PENDING)

@@ -88,6 +88,17 @@ _FAST_STACK_PRESSURE_SAMPLE_MIN_INTERVAL_MS = 125.0
 # affects rendering, reference lines, geometry overlays, or filters — so it is
 # OFF by default and opt-in via AIPACS_FAST_STACK_PRESSURE=1.
 _FAST_STACK_PRESSURE_ENABLED = str(os.getenv('AIPACS_FAST_STACK_PRESSURE', '') or '').strip() == '1'
+# Canonical viewport-overlay metadata (2026-07-09). When ON, the four-corner
+# overlay TEXT (patient name/id/sex/age, study date, institution, series
+# description) is resolved through the single trunk provider
+# PacsClient.utils.overlay_metadata.build_overlay_metadata — one deterministic
+# source precedence (DICOM->DB->server), the English (alphabetic) PersonName
+# component, and "NA" only when a field is truly missing. OFF by default because
+# it changes clinically-visible identity text: opt in via
+# AIPACS_CANONICAL_OVERLAY_METADATA=1 to validate, then it becomes the default.
+# It only rewrites descriptive text — never series identity/number, geometry,
+# slice order, or the slice counter.
+_CANONICAL_OVERLAY_METADATA = str(os.getenv('AIPACS_CANONICAL_OVERLAY_METADATA', '') or '').strip() == '1'
 # Per-instance DICOM window/level on stack scroll (46370 series 61 — Siemens CSI
 # spectroscopy). A series can be HETEROGENEOUS: it may mix SPECTRUM secondary
 # captures (WC2048/WW4096) with REFERENCEIMAGE frames (WC301/WW637). The viewer
@@ -1941,6 +1952,30 @@ class QtViewerBridge:
 
             if not series.get("series_time"):
                 series["series_time"] = fixed.get("study_time", fixed.get("series_time", ""))
+
+        # Canonical overlay TEXT (flag-gated, default OFF). Route the descriptive
+        # fields through the single trunk provider so the name uses the English
+        # PersonName component, the source precedence is deterministic, and "NA"
+        # only appears when truly missing. Identity (series number), geometry and
+        # the slice counter are deliberately NOT touched here. Never raises into
+        # the paint path.
+        if _CANONICAL_OVERLAY_METADATA:
+            try:
+                from PacsClient.utils.overlay_metadata import build_overlay_metadata
+                canon = build_overlay_metadata(
+                    dicom=fixed, db=patient, series=series, name_pref="english",
+                )
+                patient["patient_name"] = canon["patient_name"]
+                patient["patient_id"] = canon["patient_id"]
+                patient["patient_age"] = canon["patient_age"]
+                patient["patient_sex"] = canon["patient_sex"]
+                study["study_date"] = canon["study_date"]
+                study["institution_name"] = canon["institution_name"]
+                # descriptive series text only (NOT series_number / identity)
+                if canon["series_description"] != "NA":
+                    series["series_description"] = canon["series_description"]
+            except Exception:
+                pass
 
         annotation_metadata["patient"] = patient
         annotation_metadata["study"] = study

@@ -16,8 +16,15 @@ class ReportStatusDialog(QDialog):
     """
     
     statusChanged = Signal(str, str, str)  # study_uid, old_status, new_status
-    
-    def __init__(self, parent=None, study_uid: str = "", current_status: str = "pending", 
+    assigned = Signal(str, str)            # reception_id, assignee_name (internal assignment)
+
+    def _emit_assigned(self, reception_id, name):
+        try:
+            self.assigned.emit(str(reception_id), str(name))
+        except Exception:
+            pass
+
+    def __init__(self, parent=None, study_uid: str = "", current_status: str = "pending",
                  patient_name: str = "", patient_id: str = "", reporting_physician: str = ""):
         super().__init__(parent)
         self.study_uid = study_uid
@@ -130,6 +137,24 @@ class ReportStatusDialog(QDialog):
             }
         """)
         layout.addWidget(self.comment_text)
+
+        # ── Internal-center Assignment (ارجاع داخلی مرکز) ────────────────
+        # A separate, same-center assignment field in this SAME upper section
+        # (alongside Status/Comment). It is the internal workflow ONLY — never
+        # the external Consultation flow. Flag-gated: when internal assignment
+        # is disabled the factory returns None and the popup is unchanged.
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.patient_toolbar.internal_assign_ui import (
+                build_internal_assign_row,
+            )
+            self._assign_row = build_internal_assign_row(
+                reception_id=self.patient_id,
+                on_assigned=lambda name, rid: self._emit_assigned(rid, name),
+            )
+            if self._assign_row is not None:
+                layout.addWidget(self._assign_row)
+        except Exception:
+            self._assign_row = None
 
         # ── Local Physician Reminder (2026-06-06) ────────────────────────
         # Strictly local: stored only on this workstation

@@ -323,6 +323,32 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         self._health_check_timer = QTimer(self)
         self._health_check_timer.timeout.connect(self._pipeline_health_check)
         self._health_check_timer.start(5000)  # Check every 5 seconds
+
+        # ── A1 network reachability monitor (OPT-04 / DM resume, 2026-07-08) ──
+        # DEFAULT-ON. A pure-stdlib socket probe runs OFF the GUI thread and
+        # records offline→online edges; the 5 s health check (GUI thread) polls it
+        # and re-arms network-parked studies (when AIPACS_DM_NET_RESUME is on).
+        # Kill switch AIPACS_DM_NET_MONITOR=0 ⇒ _net_monitor stays None and this
+        # whole path is byte-identical to legacy. Never raises.
+        self._net_monitor = None
+        try:
+            import os as _os_nm
+            if _os_nm.environ.get('AIPACS_DM_NET_MONITOR', '1') != '0':
+                from ..network.net_monitor import NetworkReachabilityMonitor
+                from ...core.constants import (
+                    DEFAULT_SOCKET_HOST as _NM_HOST,
+                    DEFAULT_SOCKET_PORT as _NM_PORT,
+                )
+                _nm_host = _os_nm.environ.get('AIPACS_SOCKET_HOST') or _NM_HOST
+                _nm_port = int(_os_nm.environ.get('AIPACS_SOCKET_PORT') or _NM_PORT)
+                _nm_interval = float(_os_nm.environ.get('AIPACS_DM_NET_MONITOR_INTERVAL_S', '15'))
+                self._net_monitor = NetworkReachabilityMonitor(
+                    _nm_host, _nm_port, interval_s=_nm_interval,
+                )
+                self._net_monitor.start()
+        except Exception:
+            logger.exception("[DM-NET] reachability monitor init failed (non-fatal)")
+            self._net_monitor = None
         
         # CRITICAL FIX: Progress throttle timer - prevents event loop flooding
         # Problem: Every downloaded image triggers _on_worker_progress()
@@ -466,6 +492,15 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
                 timer.stop()
             except Exception:
                 pass
+
+        # Stop the OPT-IN reachability monitor thread (A1) before other teardown.
+        try:
+            _mon = getattr(self, "_net_monitor", None)
+            if _mon is not None:
+                _mon.stop()
+                self._net_monitor = None
+        except Exception:
+            pass
 
         try:
             self._pending_progress.clear()

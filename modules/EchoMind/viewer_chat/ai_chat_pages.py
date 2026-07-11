@@ -4151,6 +4151,21 @@ class OneChatPage(QWidget):
                                 "status": selected_status,
                             }
 
+                            # Send approvalFlags consistent with the chosen
+                            # status — INO renders the patient/report status from
+                            # report.approvalFlags, not the raw status string, so
+                            # a downgrade otherwise doesn't reflect. Flag-gated
+                            # (AIPACS_UPDATE_REPORT_APPROVAL_FLAGS, default ON).
+                            try:
+                                from modules.network.socket_report_status_service import (
+                                    UPDATE_REPORT_APPROVAL_FLAGS,
+                                    approval_flags_for_status,
+                                )
+                                if UPDATE_REPORT_APPROVAL_FLAGS:
+                                    payload["approvalFlags"] = approval_flags_for_status(selected_status)
+                            except Exception:
+                                pass
+
                             logger.info(f"[RECEPTION_SERVER] → POST {url}")
                             logger.info(
                                 f"[RECEPTION_SERVER]   receptionId={reception_id}, "
@@ -4205,6 +4220,21 @@ class OneChatPage(QWidget):
                                     logger.warning(
                                         f"[RECEPTION_SERVER] PACS status sync skipped: {exc}"
                                     )
+                                # Sync the INO reception APPROVAL FLAGS to match
+                                # the status. update-report only writes
+                                # report.status; INO shows the patient state from
+                                # report.approvalFlags, set by a SEPARATE workflow
+                                # endpoint (resolve workflow id → PATCH
+                                # approval-flags). Fire-and-forget, best-effort.
+                                try:
+                                    from modules.network.ino_report_workflow import (
+                                        sync_report_approval_for_status_async,
+                                    )
+                                    sync_report_approval_for_status_async(
+                                        reception_id, selected_status
+                                    )
+                                except Exception:
+                                    pass
                             else:
                                 server_message = (response_json or {}).get("message", response_text[:200]) if response_text else "Server error"
 

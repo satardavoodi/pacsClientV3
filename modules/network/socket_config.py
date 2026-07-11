@@ -325,16 +325,41 @@ class SocketConfig:
     def update_server_settings(self, host: str, port: int, save_to_file: bool = True):
         """
         Update server settings
-        
+
         Args:
             host (str): Server host
             port (int): Server port
             save_to_file (bool): Whether to save changes to file
+
+        OPT-24a (2026-07-11): skip the DISK WRITE when nothing actually changed.
+        `home_search_service.search_server()` calls this before EVERY patient
+        search, and `save_config()` rewrote the config file unconditionally —
+        111 disk writes in one observed session with host/port never changing.
+        Writing an identical file is pure I/O waste (and it also churns the
+        socket connection pool downstream). The in-memory `set()` calls are kept
+        unconditionally so nothing else changes.
+        Kill switch: AIPACS_SOCKET_CFG_SKIP_UNCHANGED_SAVE=0 -> always save (legacy).
         """
+        import os as _os
+        _skip_unchanged = (
+            _os.environ.get("AIPACS_SOCKET_CFG_SKIP_UNCHANGED_SAVE", "1") or "1"
+        ).strip() != "0"
+
+        _unchanged = (
+            str(self.get("socket_host", "")) == str(host)
+            and str(self.get("socket_port", "")) == str(port)
+        )
+
         self.set("socket_host", host)
         self.set("socket_port", port)
-        if save_to_file:
+
+        if save_to_file and not (_skip_unchanged and _unchanged):
             self.save_config()
+        elif save_to_file:
+            logger.debug(
+                "⏭️ Socket server settings unchanged (%s:%s) — skipping config write",
+                host, port,
+            )
         logger.info(f"🔄 Updated server settings: {host}:{port}")
     
     def update_server_settings_temporary(self, host: str, port: int):

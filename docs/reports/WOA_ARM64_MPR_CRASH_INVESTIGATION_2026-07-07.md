@@ -1,5 +1,32 @@
 # Windows-on-ARM (Snapdragon X Elite) — MPR native crash + slow startup investigation
 
+> **RESOLVED 2026-07-08 — root cause found by the shipped faulthandler, and it was NOT the
+> OpenGLOn12 access-violation hypothesis.** Decisive evidence from `native_fault.log` +
+> `[HW_CHECK]` on the live Snapdragon machine:
+> - `[HW_CHECK] overall=ok opengl_ok=True detail=OpenGL 3.3 renderer=Gallium 0.4 on llvmpipe` —
+>   the app was using the **bundled SOFTWARE renderer (Mesa llvmpipe / `opengl32sw.dll`)**, NOT
+>   the hardware `D3D12 (Adreno) / 4.6` path GLview saw. The install defaulted to `cpu_safe`
+>   (software OpenGL).
+> - `Windows fatal exception: code 0xc000001d` (**EXCEPTION_ILLEGAL_INSTRUCTION**, not the
+>   `0xc0000005` access-violation I predicted) with `Current thread … _mpr_views.py:498 in
+>   _create_axial_view` = `vtk_widget.Initialize()` — the first real use of the GL context.
+> - **Mechanism:** llvmpipe is an x64 binary whose LLVM JIT emits a SIMD instruction that Prism's
+>   x64→ARM64 emulator cannot execute → illegal instruction → instant death, no traceback. The
+>   Qt pre-flight probe PASSED (it used the same software GL and returned 3.3 without hitting that
+>   specific instruction) — exactly the "probe passes while VTK crashes deeper" caveat.
+> - **The safe/dangerous choice is INVERTED on Windows-on-ARM:** software rendering (the safe
+>   default on a normal PC) crashes under emulation; the hardware D3D12/Adreno path works.
+> **FIX SHIPPED (default-on):** on an emulated WoA host the software graphics profile now uses the
+> **system/desktop hardware OpenGL** (D3D12→Adreno) instead of forcing bundled llvmpipe
+> (`aipacs_runtime.build_windows_graphics_environment` WoA branch; `QT_OPENGL=desktop`,
+> `VTK_USE_HARDWARE=1`, no Mesa DLLs on PATH; escape hatch `AIPACS_WOA_FORCE_SOFTWARE_GL=1`).
+> Emulation detection hardened (`is_windows_on_arm_emulated`, IsWow64Process2 came back blank on
+> this box → env/CPU-identifier fallback). The `[MPR-STEP]` bisector confirmed the crash window
+> (last line `render_window_add_renderer end`, next native call = the crash). This does NOT rule
+> out the separate OpenGLOn12 pack regression on OTHER machines — but on THIS machine the pack
+> path is the WORKING one and llvmpipe was the crash. Guards: `test_woa_graphics.py` (9),
+> updated `test_runtime_arch_log.py`. NEEDS live re-test on the Snapdragon box.
+
 **Date:** 2026-07-07 · **Machine:** PC2 "baba" = ASUS Vivobook S, Snapdragon X Elite X1E78100,
 Adreno X1-85 (driver 31.0.137.0), Windows 11 Home ARM64, 2880×1620@120 Hz.
 **Master plan item:** OPT-21 (extends the same-day PC2 crash work).

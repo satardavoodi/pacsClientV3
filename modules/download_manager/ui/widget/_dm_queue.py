@@ -470,8 +470,24 @@ class _DMQueueMixin:
             
             if study_uid not in self.download_rows:
                 logger.warning(f"study_uid {study_uid} not in download_rows during status update")
+                # L3 (DM state logging, 2026-07-08): greppable marker + counter for
+                # the OPT-04 completion-convergence miss (a study whose status
+                # update can't find its UI row → the health sweep re-spawns it and
+                # re-downloads the same series). Diagnostic only — no behavior
+                # change; the underlying convergence fix stays OPT-04 (deferred).
+                # See docs/reports/DOWNLOAD_MANAGER_RESUME_RETRY_RELIABILITY_AUDIT_2026-07-08.md.
+                try:
+                    _n = getattr(self, "_converge_miss_count", 0) + 1
+                    self._converge_miss_count = _n
+                    logger.warning(
+                        "[DM-CONVERGE-MISS] uid=%s status=%s total_misses=%d",
+                        (study_uid[:40] if study_uid else 'None'),
+                        getattr(status, 'value', status), _n,
+                    )
+                except Exception:
+                    pass
                 return
-            
+
             row = self.download_rows[study_uid]
             
             # Update status in table

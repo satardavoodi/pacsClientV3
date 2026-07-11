@@ -188,6 +188,23 @@ begin
   Result := WizardIsComponentSelected('optional\' + ModuleId);
 end;
 
+function ResolvedInstallPackageKind(): String;
+begin
+  // Auto-detect at INSTALL time so ONE installer stamps the correct package
+  // kind for the machine it runs on (user directive 2026-07-08: the installer
+  // must understand whether the PC is ARM or x64 and install accordingly).
+  // The payload is the same x64 build; on an ARM64 host the app then applies
+  // the Windows-on-ARM emulation runtime profile + hardware-GL fix.
+#ifdef ARM64_BUILD
+  Result := 'arm64';
+#else
+  if IsArm64 then
+    Result := 'x64_on_arm64'
+  else
+    Result := 'x64';
+#endif
+end;
+
 function OptionalModuleStatusValue(const ModuleId: String): String;
 begin
   if OptionalModuleSelected(ModuleId) then
@@ -624,7 +641,7 @@ begin
     // stamped so the app can log it ([WOA-PROFILE]) and apply the emulation
     // runtime profile. "x64" = classic; "x64_on_arm64" = the WoA SKU
     // (AIPacs_Setup_woa.iss, x64 payload installed knowingly on ARM64).
-    '  "install_package": "' + '{#InstallPackageKind}' + '",' + #13#10 +
+    '  "install_package": "' + ResolvedInstallPackageKind() + '",' + #13#10 +
     '  "installer": {' + #13#10 +
     '    "current_version": "{#MyAppVersion}",' + #13#10 +
     '    "detected_existing_version": "' + InstalledVersionValue() + '",' + #13#10 +
