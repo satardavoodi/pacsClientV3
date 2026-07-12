@@ -1259,11 +1259,46 @@ class _VCLoadMixin:
             # a non-existent path breaks all subsequent series loads.
             if metadata.get('series', {}).get('series_path'):
                 correct_path = Path(metadata['series']['series_path']).parent
-                if correct_path.exists() and str(correct_path) != self.parent_widget.import_folder_path:
+                # STUDY-PATH POISON FIX (49836, 2026-07-12). This used to repoint the
+                # TAB's import_folder_path at WHATEVER study the just-loaded series
+                # belongs to — including a SECONDARY / previous-exam study. On a
+                # multi-study patient whose studies share series NUMBERS (49836: study A
+                # and study B BOTH have series 2/3/4), loading a secondary series (offset
+                # key 1000004) repointed the tab path to study B; the next PRIMARY
+                # (plain-key) load then resolved `study_path/3` to **study B's** folder 3
+                # and handed study B's series 3 (uid …5932803366) to a viewport that
+                # intended study A's series 3 (uid …3657708721). The viewport identity
+                # gate correctly refused to paint it -> series 3 NEVER DISPLAYED.
+                #
+                # The tab's import_folder_path is the TAB's study (the primary). A
+                # secondary series must be loaded from its OWN entry `series_path`
+                # (the multi-study disk authority) and must NEVER redirect the tab path.
+                # So: only adopt the path when it belongs to the tab's PRIMARY study.
+                # Single-study tabs are byte-identical (their only study IS the primary).
+                # Kill switch: AIPACS_TAB_PATH_PRIMARY_ONLY=0 -> legacy (adopt any study).
+                _primary_only = (
+                    os.getenv("AIPACS_TAB_PATH_PRIMARY_ONLY", "1") or "1"
+                ).strip() != "0"
+                _tab_primary_uid = str(getattr(self.parent_widget, 'study_uid', '') or '').strip()
+                _cand_study_uid = str(correct_path.name or '').strip()
+                _is_primary_study = (
+                    (not _primary_only)
+                    or (not _tab_primary_uid)          # unknown primary -> legacy behaviour
+                    or (_cand_study_uid == _tab_primary_uid)
+                )
+
+                if not correct_path.exists():
+                    logger.debug(f"   ❌ Ignored stale series_path from metadata: {correct_path}")
+                elif not _is_primary_study:
+                    # Secondary / previous-exam study — do NOT poison the tab path.
+                    logger.info(
+                        "[TAB-PATH-GUARD] series=%s keeping tab study_path=%s "
+                        "(refused repoint to NON-primary study %s)",
+                        series_number, self.parent_widget.import_folder_path, _cand_study_uid,
+                    )
+                elif str(correct_path) != self.parent_widget.import_folder_path:
                     self.parent_widget.import_folder_path = str(correct_path)
                     logger.debug(f"   📄 Updated study path to: {correct_path}")
-                elif not correct_path.exists():
-                    logger.debug(f"   ❌ Ignored stale series_path from metadata: {correct_path}")
 
             # [APPLY-LOOP] (OPT-20 residual diagnostic, gated by AIPACS_APPLY_TRACE). When a
             # miss has [APPLY-ENTER] but NO [APPLY-GATE], the render loop was skipped: this

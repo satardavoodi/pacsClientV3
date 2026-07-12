@@ -334,7 +334,14 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         try:
             import os as _os_nm
             if _os_nm.environ.get('AIPACS_DM_NET_MONITOR', '1') != '0':
-                from ..network.net_monitor import NetworkReachabilityMonitor
+                # NOTE: this module is modules.download_manager.ui.widget.widget,
+                # so net_monitor (modules/download_manager/network/) is THREE
+                # levels up, not two. `..network` resolved to
+                # modules.download_manager.ui.network, which does not exist —
+                # the monitor raised ModuleNotFoundError on every startup and the
+                # network auto-resume feature was silently dead in the shipped
+                # build (seen in the field 2026-07-12).
+                from ...network.net_monitor import NetworkReachabilityMonitor
                 from ...core.constants import (
                     DEFAULT_SOCKET_HOST as _NM_HOST,
                     DEFAULT_SOCKET_PORT as _NM_PORT,

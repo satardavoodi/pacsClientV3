@@ -537,6 +537,14 @@ def check_stage_config_parity(stage_core: Path | None = None) -> GateCheck:
                 h.update(chunk)
         return h.hexdigest()
 
+    # The staged bundle must carry the SANITIZED template (centre-specific values
+    # emptied), NOT the developer's raw config/. Expected bytes are produced by the
+    # same function the build uses, so the two can never disagree.
+    from builder.config_sanitizer import sanitize_bytes, scan_for_center_values
+
+    def bdigest(payload: bytes) -> str:
+        return hashlib.sha256(payload).hexdigest()
+
     missing: list[str] = []
     differing: list[str] = []
     templates = iter_seedable_config_templates()
@@ -545,7 +553,9 @@ def check_stage_config_parity(stage_core: Path | None = None) -> GateCheck:
         dst = staged_config / rel
         if not dst.exists():
             missing.append(rel.as_posix())
-        elif digest(src) != digest(dst):
+            continue
+        expected = sanitize_bytes(rel.as_posix(), src.read_bytes())
+        if bdigest(expected) != digest(dst):
             differing.append(rel.as_posix())
 
     # A secrets file must NEVER ship inside the bundle.
@@ -555,7 +565,11 @@ def check_stage_config_parity(stage_core: Path | None = None) -> GateCheck:
         if p.is_file() and "secrets" in p.relative_to(staged_config).parts[:-1]
     ]
 
-    if missing or differing or leaked_secrets:
+    # HARD STOP: no centre-specific value (server IP, API key, OAuth client
+    # secret, reception URL, …) may ever reach a client build.
+    center_leaks = scan_for_center_values(staged_config)
+
+    if missing or differing or leaked_secrets or center_leaks:
         details = []
         if missing:
             details.append(
@@ -564,18 +578,26 @@ def check_stage_config_parity(stage_core: Path | None = None) -> GateCheck:
             )
         if differing:
             details.append(
-                f"templates whose staged bytes differ from repo config/: {differing} "
-                "— the stage is stale relative to the source tree; rebuild."
+                f"staged templates do not match the SANITIZED expectation: {differing} "
+                "— the stage is stale or was built from raw config/; rebuild."
             )
         if leaked_secrets:
             details.append(
                 f"SECRET files leaked into the staged bundle: {leaked_secrets} — "
                 "remove them; secrets/ must never ship."
             )
+        if center_leaks:
+            details.append(
+                "CENTRE-SPECIFIC VALUES WOULD SHIP: "
+                + ", ".join(f"{f}:{k} ({why})" for f, k, why in center_leaks)
+                + " — extend builder/config_sanitizer.SANITIZE so the production "
+                "build seeds empty fields."
+            )
         return _failed(name, *details)
     return _passed(
         name,
-        f"{len(templates)} config template(s) byte-identical in {staged_config}",
+        f"{len(templates)} config template(s) match the sanitized expectation in "
+        f"{staged_config}; no centre-specific values present",
     )
 
 

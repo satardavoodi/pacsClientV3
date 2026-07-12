@@ -185,13 +185,46 @@ def _keep_runtime_hiddenimport(name: str) -> bool:
     return True
 
 
+def sanitized_config_rel() -> str:
+    """SECURITY (2026-07-09) — build-time sanitization of centre-specific config.
+
+    The repo's ``config/`` holds the DEVELOPER centre's real values (PACS host IPs,
+    AE titles, reception API URL, EchoMind ``api_key``, Google OAuth
+    ``client_secret``), and ``aipacs_runtime.seed_user_config_defaults()`` copies the
+    BUNDLED config into every client's roaming config on first run — so packaging
+    ``config/`` verbatim seeded the dev centre's configuration (and secrets) into
+    every client site.
+
+    Generate a SANITIZED copy (application defaults kept, centre-specific values
+    emptied) and return its project-relative path, so the spec packages THAT. The
+    developer's own ``config/`` is only READ, never modified (source runs still use
+    it — seeding is frozen-only). ABORTS the build if anything would still leak.
+    """
+    import sys as _sys
+
+    if str(BUILDER_DIR) not in _sys.path:
+        _sys.path.insert(0, str(BUILDER_DIR))
+    from config_sanitizer import build_clean_config_tree, scan_for_center_values
+
+    rel = "generated-files/build/config_clean"
+    out = PROJECT_ROOT / rel
+    build_clean_config_tree(PROJECT_ROOT / "config", out)
+    leaks = scan_for_center_values(out)
+    if leaks:
+        raise SystemExit(
+            "[spec_utils] ABORT — centre-specific values would be packaged: %r" % (leaks,)
+        )
+    return rel
+
+
 def common_app_datas() -> list[tuple[str, str]]:
     datas: list[tuple[str, str]] = []
+    # NOTE: "config" is deliberately NOT in this curated list — the sanitized
+    # tree is added explicitly below (see sanitized_config_rel).
     curated = [
         "Qss",
         "Fonts",
         "json-styles",
-        "config",
         "education_assets",
         "modules/cd_burner/assets",
         # NOTE: the portable CD viewer (lightViewer_dist) is NOT shipped here.
@@ -209,6 +242,8 @@ def common_app_datas() -> list[tuple[str, str]]:
     ]
     for rel in curated:
         datas.extend(collect_tree_datas(rel))
+    # Ship the SANITIZED config tree at "config/" (never the developer's config/).
+    datas.extend(collect_tree_datas(sanitized_config_rel(), "config"))
     return dedupe_datas(datas)
 
 
@@ -226,10 +261,12 @@ def app_b_datas() -> list[tuple[str, str]]:
         "modules/mpr/advanced_3d_slicer/slicer_custom_app/docs",
         "modules/mpr/advanced_3d_slicer/slicer_custom_app/NewMPR2Slicer/Applications/NewMPR2SlicerApp/Resources",
         "modules/mpr/advanced_3d_slicer/slicer_custom_app/NewMPR2Slicer/Modules/Scripted/Home/Resources",
-        "config",  # for optional slicer_config.json lookup if user places it here
+        # "config" removed — App B also shipped the developer's raw config/.
     ]
     for rel in curated:
         datas.extend(collect_tree_datas(rel))
+    # Sanitized config (for the optional slicer_config.json lookup) — never raw.
+    datas.extend(collect_tree_datas(sanitized_config_rel(), "config"))
     # App B does not need full Qss/Fonts from App A unless launcher UI grows later.
     return dedupe_datas(datas)
 

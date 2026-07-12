@@ -133,6 +133,38 @@ class VoiceMessageBubble(QWidget):
 
         self.setObjectName("VoiceMessageBubble")
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        # Explicit background + foreground pair (theme tokens). This widget had NO
+        # stylesheet at all, so its button/slider colours came from the OS palette
+        # and flipped with Windows light/dark mode.
+        self.setStyleSheet(f"""
+            QWidget#VoiceMessageBubble {{
+                background: {CLR_BG_PANEL};
+                border: 1px solid {CLR_BORDER};
+                border-radius: 12px;
+            }}
+            QWidget#VoiceMessageBubble QPushButton {{
+                background: {CLR_BG};
+                color: {CLR_TEXT};
+                border: 1px solid {CLR_BORDER};
+                border-radius: 16px;
+                font-size: 14px;
+            }}
+            QWidget#VoiceMessageBubble QPushButton:hover {{
+                background: {CLR_ACCENT};
+                color: #ffffff;
+                border: 1px solid {CLR_ACCENT};
+            }}
+            QWidget#VoiceMessageBubble QSlider::groove:horizontal {{
+                height: 4px; background: {CLR_BORDER}; border-radius: 2px;
+            }}
+            QWidget#VoiceMessageBubble QSlider::sub-page:horizontal {{
+                background: {CLR_ACCENT}; border-radius: 2px;
+            }}
+            QWidget#VoiceMessageBubble QSlider::handle:horizontal {{
+                background: {CLR_TEXT}; border: none;
+                width: 10px; margin: -4px 0; border-radius: 5px;
+            }}
+        """)
 
         lay = QHBoxLayout(self)
         lay.setContentsMargins(12, 10, 12, 10)
@@ -997,9 +1029,18 @@ class TypingBubble(QWidget):
         root.addStretch();
         root.addWidget(card);
         root.addStretch()
+        self.msg.setObjectName("msgBot")
+        # THEME-SAFE central notification (2026-07-09). `color:` on QFrame#bubbleBot
+        # styles the FRAME only — Qt style sheets do NOT cascade `color` to child
+        # widgets the way CSS does, so the message QLabel had NO explicit colour and
+        # fell back to the OS/app palette. On a light system palette it rendered dark
+        # text on this dark bubble ("Transcribing…" unreadable). Declare an explicit
+        # background + foreground pair for every label in the bubble.
         self.setStyleSheet(f"""
             QFrame#bubbleBot {{ background:{CLR_BUBBLE_BOT}; border:1px solid {CLR_BORDER}; border-radius:12px; color:{CLR_TEXT}; }}
-            QLabel#nameBot  {{ color:#ffd48a; font-size:12px; }}
+            QFrame#bubbleBot QLabel {{ color:{CLR_TEXT}; background: transparent; }}
+            QLabel#msgBot   {{ color:{CLR_TEXT}; background: transparent; font-size:13px; }}
+            QLabel#nameBot  {{ color:#ffd48a; background: transparent; font-size:12px; }}
         """)
         self._base, self._dots = base_text, 0
         self._timer = QTimer(self);
@@ -1311,9 +1352,30 @@ class UnifiedComposer(QWidget):
         self.attach_frame.setObjectName("chip")
         self.attach_frame.setVisible(False)
         self.attach_frame.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Maximum)
-        self.attach_frame.setStyleSheet("""
-            QFrame#chip { background: transparent; border: none; margin-bottom: 6px; }
-        """)
+        # THEME-SAFE attachments panel (2026-07-09). It used to be
+        # `background: transparent` + WA_TranslucentBackground + a 0.60 opacity
+        # effect, so the voice/transcription area had NO surface of its own: its
+        # contrast was decided by whatever happened to be behind it and by the
+        # OS/app light-dark palette — the reported "too dark / blends into the
+        # surrounding UI / hard to see" state. Declare an EXPLICIT background +
+        # border instead (the child chips declare their own fg/bg pairs).
+        # AIPACS_ECHO_VOICE_CONTRAST=0 restores the byte-identical legacy look.
+        self._echo_voice_contrast = str(
+            os.environ.get("AIPACS_ECHO_VOICE_CONTRAST", "1")
+        ).strip().lower() not in ("0", "false", "no", "off")
+        if self._echo_voice_contrast:
+            self.attach_frame.setStyleSheet(f"""
+                QFrame#chip {{
+                    background: {CLR_BG_PANEL};
+                    border: 1px solid {CLR_BORDER};
+                    border-radius: 12px;
+                    margin-bottom: 6px;
+                }}
+            """)
+        else:
+            self.attach_frame.setStyleSheet("""
+                QFrame#chip { background: transparent; border: none; margin-bottom: 6px; }
+            """)
         # سازگاری با ارجاعات قدیمی
         self.lbl_file = QLabel("")
         self.btn_chip_x = QPushButton("✕", self.attach_frame)
@@ -1324,12 +1386,15 @@ class UnifiedComposer(QWidget):
         self._attach_overlay_host: QWidget | None = None
         self._attach_overlay_margin_px: int = 12
         self._attach_opacity_fx = QGraphicsOpacityEffect(self.attach_frame)
-        self._attach_opacity_fx.setOpacity(0.60)  # lower = more "in the back"
+        # Opaque when the contrast fix is on — a 0.60 opacity effect makes the
+        # effective colour depend on the backdrop, which is exactly the bug.
+        self._attach_opacity_fx.setOpacity(1.0 if self._echo_voice_contrast else 0.60)
         self.attach_frame.setGraphicsEffect(self._attach_opacity_fx)
-        try:
-            self.attach_frame.setAttribute(Qt.WA_TranslucentBackground, True)
-        except Exception:
-            pass
+        if not self._echo_voice_contrast:
+            try:
+                self.attach_frame.setAttribute(Qt.WA_TranslucentBackground, True)
+            except Exception:
+                pass
         # ---------- شِل (textbox + controls) ----------
         self.input_shell = AnimatedShellFrame(self)
         self.input_shell.setObjectName("shell")
@@ -3650,21 +3715,25 @@ class UnifiedComposer(QWidget):
         self._chips_layout.setSpacing(6)
         self._chips_scroll.setWidget(self._chips_wrap)
 
-        self._chips_wrap.setStyleSheet("""
-            QFrame#voiceChip, QFrame#imageChip {
-                background: #3a3a3a;
-                border: 1px solid #4a4a4a;
+        # Explicit background + foreground pair (theme tokens) so the chips never
+        # inherit the OS/app light-dark palette. Matches the per-chip voice style.
+        self._chips_wrap.setStyleSheet(f"""
+            QFrame#voiceChip, QFrame#imageChip {{
+                background: {CLR_BG_PANEL};
+                border: 1px solid {CLR_BORDER};
                 border-radius: 10px;
-            }
-            QLabel#chipText {
-                color: #ddd;
+            }}
+            QLabel#chipText {{
+                color: {CLR_TEXT};
+                background: transparent;
                 padding: 6px 8px;
                 font-size: 12px;
-            }
-            QToolButton#chipAction, QToolButton#chipClose {
+            }}
+            QLabel {{ color: {CLR_TEXT}; background: transparent; }}
+            QToolButton#chipAction, QToolButton#chipClose {{
                 min-width: 20px; min-height: 20px;
                 border: none;
-            }
+            }}
         """)
 
 
@@ -3937,41 +4006,71 @@ class UnifiedComposer(QWidget):
         cur_path = getattr(self, "_chip_playing_path", None)
         cur_state = getattr(self, "_chip_player", None) and self._chip_player.playbackState()
 
-        chip_style = """
-            QFrame#voiceChip {
-                background: rgba(255, 255, 255, 18);
-                border-radius: 18px;
-                border: 1px solid rgba(255, 255, 255, 80);
+        # THEME-SAFE voice chip (2026-07-09). The previous style was authored for a
+        # LIGHT surface: an almost-transparent white fill (rgba(255,255,255,18))
+        # with NEAR-BLACK text (#1e1e1e). Sitting on the dark chat — inside an
+        # attach_frame that is itself `background: transparent` + translucent — the
+        # chip had no background of its own, so its appearance was decided by
+        # whatever happened to be behind it, and the black label was invisible.
+        # Now every surface declares an EXPLICIT background + foreground pair from
+        # the app tokens, so it never inherits the OS/app light-dark palette.
+        chip_style = f"""
+            QFrame#voiceChip {{
+                background: {CLR_BG_PANEL};
+                border: 1px solid {CLR_BORDER};
+                border-radius: 12px;
                 padding: 8px;
-                background-image: qlineargradient(
-                    x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(255,255,255,35),
-                    stop:0.5 rgba(255,255,255,10),
-                    stop:1 rgba(255,255,255,25)
-                );
-            }
-            QFrame#voiceChip:hover {
-                background-color: rgba(255, 255, 255, 30);
-                border: 1px solid rgba(255, 255, 255, 120);
-            }
-            QLabel#chipText { font-size: 13px; font-weight: 500; color: #1e1e1e; }
-            QToolButton#chipAction {
-                background: rgba(255,255,255,35);
-                border: 1px solid rgba(255,255,255,80);
+            }}
+            QFrame#voiceChip:hover {{
+                border: 1px solid {CLR_ACCENT};
+            }}
+            QLabel#chipText {{
+                font-size: 13px; font-weight: 500;
+                color: {CLR_TEXT};
+                background: transparent;
+            }}
+            QLabel {{ color: {CLR_TEXT}; background: transparent; }}
+            QToolButton#chipAction {{
+                background: {CLR_BG};
+                color: {CLR_TEXT};
+                border: 1px solid {CLR_BORDER};
                 border-radius: 8px;
                 padding: 2px 6px;
-            }
-            QToolButton#chipAction:hover { background: rgba(255,255,255,65); }
-            QToolButton#chipClose {
-                background: rgba(255, 70, 70, 35);
-                border: 1px solid rgba(255, 70, 70, 90);
+            }}
+            QToolButton#chipAction:hover {{
+                background: {CLR_ACCENT};
+                color: #ffffff;
+                border: 1px solid {CLR_ACCENT};
+            }}
+            QToolButton#chipClose {{
+                background: rgba(239, 68, 68, 0.18);
+                border: 1px solid rgba(239, 68, 68, 0.55);
                 border-radius: 10px;
                 padding: 2px 7px;
                 font-size: 14px;
                 font-weight: 600;
-                color: #b00000;
-            }
-            QToolButton#chipClose:hover { background: rgba(255, 70, 70, 60); }
+                color: #fca5a5;
+            }}
+            QToolButton#chipClose:hover {{
+                background: rgba(239, 68, 68, 0.38);
+                color: #ffffff;
+            }}
+            QSlider::groove:horizontal {{
+                height: 4px;
+                background: {CLR_BORDER};
+                border-radius: 2px;
+            }}
+            QSlider::sub-page:horizontal {{
+                background: {CLR_ACCENT};
+                border-radius: 2px;
+            }}
+            QSlider::handle:horizontal {{
+                background: {CLR_TEXT};
+                border: none;
+                width: 10px;
+                margin: -4px 0;
+                border-radius: 5px;
+            }}
         """
 
         # ---------- Insert voice chips BEFORE image chips ----------

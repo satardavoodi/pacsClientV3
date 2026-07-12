@@ -50,6 +50,11 @@ class _HPOfflineMixin:
                 actor=self._current_actor_identity(),
                 source_server=None,
                 operation="offline_update",
+                # Offline-Sync media must be importable by third-party
+                # viewers/PACS, which require a DICOMDIR. The builder skips the
+                # rebuild when the DICOM payload is unchanged, so this stays
+                # cheap for the incremental autosave.
+                include_dicomdir=True,
             )
             if show_errors and result.get("errors"):
                 QMessageBox.warning(
@@ -205,6 +210,12 @@ class _HPOfflineMixin:
             actor=self._current_actor_identity(),
             source_server=source_server,
             operation=operation,
+            # This is the USER-FACING "Export to Offline Cloud" action — the
+            # media a third-party viewer/PACS will be pointed at. It must carry
+            # the readable DICOM/<Patient>/<StudyUID>/DICOMDIR interchange tree,
+            # exactly like the autosync path below. Without this the exported
+            # folder has no DICOMDIR and no patient-named folders.
+            include_dicomdir=True,
         )
 
         if export_result.get("ok") and not export_result.get("errors"):

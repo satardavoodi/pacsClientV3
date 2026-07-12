@@ -3432,6 +3432,10 @@ class PatientTableWidget(QWidget):
         report_layout.setAlignment(Qt.AlignCenter)
         
         report_label = QLabel()
+        # Stamp the reception id on the label so EVERY re-render path (initial,
+        # refresh, hydration, status change) can look up the real internal
+        # assignment record — the ONLY thing allowed to colour this cell red.
+        report_label.reception_id = str(patient_id or '')
         self._apply_report_status_display(report_label, report_status, str(reporting_physician or ''))
         report_label.setCursor(Qt.PointingHandCursor)
         
@@ -5077,28 +5081,50 @@ class PatientTableWidget(QWidget):
             )
             return
 
-        # Internal-center assignment: a reception ASSIGNED to a physician but not
-        # yet completed shows the name in RED (assigned/pending) — semantically
-        # distinct from the GREEN completed reporter above. Flag-gated: when
-        # internal assignment is disabled this is skipped and the original status
-        # icon is shown (byte-identical legacy behaviour).
+        # RED in the Report column means EXACTLY ONE thing:
+        #   this reception has an ACTIVE internal assignment AND the name shown is
+        #   the assignee.
+        # It is derived from the persisted, server_ok-gated assignment RECORD —
+        # never from the report's reporting-physician field.
+        #
+        # BUG THIS REPLACES (49868 / 49836): the old code called
+        # `reporter_display(report_status, physician_text)`, which returned RED for
+        # ANY non-completed report that merely had a reporting physician set in the
+        # RIS workflow — no assignment required. Once the feature became default-ON
+        # every such patient turned red (with a tooltip falsely claiming "Assigned
+        # to"). Do NOT colour this cell from `physician_text` again.
+        #
+        # Anything that is not an active assignment falls through to the ORIGINAL
+        # (pre-feature) status-icon colour scheme below.
         try:
             from modules.network.ino_assignment import is_enabled as _ino_assign_enabled
-            if _ino_assign_enabled() and physician_text:
-                from modules.network.ino_assignment_models import reporter_display
-                _name, _color = reporter_display(report_status, physician_text)
-                if _name and _color:
-                    report_label.clear()
-                    report_label.setText(_name)
-                    report_label.setAlignment(Qt.AlignCenter)
-                    report_label.setStyleSheet(
-                        f"background: transparent; border: none; color: {_color}; font-size: 11px; font-weight: 600;"
-                    )
-                    report_label.setToolTip(
-                        f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n"
-                        f"Assigned to: {_name}\n(Assigned — reporting pending)\n(Click to change)"
-                    )
-                    return
+            _rid = str(getattr(report_label, 'reception_id', '') or '').strip()
+            if _ino_assign_enabled() and _rid:
+                from modules.network import ino_assignment_history as _ino_hist
+                from modules.network import ino_assignment_models as _ino_m
+                _rec = _ino_hist.current_assignment_details(_rid)
+                _status = str((_rec or {}).get('assignment_status') or '').strip().lower()
+                if _rec and _status == _ino_m.STATUS_ACTIVE:
+                    _assignee = str(_rec.get('assignee_name') or '').strip()
+                    # Only red when the displayed physician IS the assignee (or the
+                    # cell has no physician yet, in which case we show the assignee).
+                    if _assignee and (
+                        not physician_text
+                        or _ino_m.same_person_name(_assignee, physician_text)
+                    ):
+                        report_label.clear()
+                        report_label.setText(_assignee)
+                        report_label.setAlignment(Qt.AlignCenter)
+                        report_label.setStyleSheet(
+                            "background: transparent; border: none; color: #ef4444; "
+                            "font-size: 11px; font-weight: 600;"
+                        )
+                        report_label.setToolTip(
+                            f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n"
+                            f"Assigned to: {_assignee}\n"
+                            "(Active internal assignment — reporting pending)\n(Click to change)"
+                        )
+                        return
         except Exception:
             pass
 

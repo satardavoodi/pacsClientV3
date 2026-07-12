@@ -1772,6 +1772,38 @@ series never displayed. Before editing that method (or `replace_series_data`), k
   49317. Residual `1100000` (DICOMized document, `[APPLY-ENTER]=0`, apply never ran) is a distinct path =
   OPT-07 document handling, not this gate.
 
+### TAB study_path must stay on the PRIMARY study — secondary series must never repoint it (49836, OPT-26, 2026-07-12)
+The recurring "a series just won't display on a multi-study patient" class, root-caused and LIVE-VERIFIED.
+Patient **49836**: 3 studies; study A (primary `…068`) and study B (`…059`) BOTH contain series numbered
+**2/3/4**. Series **3 never displayed**, repeatedly:
+`[IDENTITY-GATE] viewer=0 SKIP render: incoming series=3 uid=…5932803366 != intended uid=…3657708721`.
+The DICOM on disk proves the identities: `A/3` → SeriesUID `…43657708721`, `B/3` → `…35932803366`.
+Before editing the `series_path` → `import_folder_path` adoption in
+`_vc_load.py::_apply_loaded_series_data`, know:
+- **ROOT:** that block adopted `metadata['series']['series_path'].parent` as the **TAB's**
+  `import_folder_path` for **ANY** loaded series — including a **SECONDARY** study's. Loading study B's
+  series (offset key `1000004`) repointed the tab path to **study B**; the next **PRIMARY** (plain-key)
+  load then resolved `study_path/3` → **study B's folder 3** and handed B's series 3 to a viewport that
+  intended A's → the viewport identity gate (fail-closed on `series_uid`) correctly REFUSED to paint →
+  series 3 blank forever. **The gate did its job** — it prevented study B's images being shown as A's
+  series 3 (a wrong-image-on-screen event). The blank series was the SYMPTOM; the poisoned tab path was
+  the DEFECT. Data was COMPLETE on disk — this is NOT a download bug (do not re-chase downloads).
+- **THE RULE: `import_folder_path` is the TAB's study = the PRIMARY study. A secondary /
+  previous-exam series must load from its OWN `_server_series_info` entry `series_path` (the multi-study
+  disk authority) and must NEVER redirect the tab path.** Fix (flag `AIPACS_TAB_PATH_PRIMARY_ONLY`,
+  default on; `=0` = legacy adopt-any): only adopt when `correct_path.name == parent_widget.study_uid`.
+  A refused repoint logs `[TAB-PATH-GUARD] … refused repoint to NON-primary study …`.
+- **Byte-identical for single-study tabs** (their only study IS the primary) and fail-open when the
+  tab's primary `study_uid` is unknown. Do **NOT** restore the unconditional adopt — it is the bug.
+- `_resolve_plain_series_study_path` (the 48912/29694 poison guard) stays as the SECOND layer; this fix
+  kills the poison at its SOURCE. Guard: `tests/code/viewer/test_tab_path_primary_only.py` (9, incl. the
+  concrete 49836 sequence). `_vc_load.py` is NOT plugin-mirrored.
+- **Diagnostic gap (open):** `[MULTI-STUDY LOAD]` is a `logger.info` and app.log did not capture
+  viewer-module INFO in that session, so the study-path resolution was invisible — the bug had to be
+  proven by reading SeriesInstanceUIDs off the DICOM. Consider raising its level / routing it to
+  `viewer_diagnostics.log`. **Also: read logs HOST-side (Read/Grep tools), not via the sandbox mount —
+  the mount served a TRUNCATED `viewer_diagnostics.log` and made a healthy log look "stalled".**
+
 ### Two main-thread freezes: web-browser prewarm (OPT-22) + EchoMind import (OPT-23) (2026-07-08)
 Regression review of two reported UI-thread freezes (report
 `docs/reports/REGRESSION_REVIEW_STARTUP_AND_ECHOMIND_FREEZE_2026-07-08.md`; master plan OPT-22/OPT-23).
@@ -1804,6 +1836,42 @@ the 2026-07-07 stall stacks).
 - **Sandbox note:** `prewarm.py` hit the known FUSE mount-staleness (in-sandbox `py_compile` read a
   truncated 6306 B copy); the Read tool confirms the real 314-line file is complete/well-formed and it
   compiles on the Windows host. The EchoMind fix compiled + its 3 guard tests pass in-sandbox.
+
+### Eagle Eye / AI module — the training-settings folder scans must NEVER run on the GUI thread (OPT-27, 2026-07-12)
+Clicking **Eagle Eye** froze the whole app for ~1 minute ("the patient doesn't open" — patient 49874).
+Measured: ONE contiguous **54.8 s main-thread stall** (`[MAIN_THREAD_STALL] stall_duration_ms=54799.3`),
+every F11 sample on the same stack: `open_ai_module → switch_right_panel('ai_module') →
+add_new_tab_widget → AIMainWindow.__init__ → ModelTrainingTab → TrainingDataSettingsTab →
+MammographySettingsWidget.__init__ → _load_defaults → _auto_detect_and_apply_img_size →
+_detect_mg_dicom_image_size → pydicom.dcmread`. Before editing
+`modules/ai_imaging/ai_module_ui/service_tab/training_data_settings_tab.py` (NOT plugin-mirrored),
+**read `docs/reports/EAGLE_EYE_OPEN_FREEZE_TRAINING_SCAN_2026-07-12.md`**.
+- **ROOT:** the Eagle Eye tab constructor eagerly builds the *Model Training settings* widget, which
+  auto-detected the MG image size by `os.walk` + `pydicom.dcmread` over `user_data/patients` (here:
+  **53,250 DICOM / 31.7 GB**) **synchronously on the GUI thread**. Its `max_scan_files=300` cap counted
+  only **MG hits** — a non-MG file `continue`d BEFORE `scanned += 1`, so on a CT/MR/DX-heavy store the
+  cap never tripped and the walk read every DICOM on disk. Not patient-specific; unrelated to the AI
+  server 502 the same day.
+- **THE RULE: no folder walk / DICOM read on the GUI thread, and every scan is BOUNDED.**
+  `_detect_mg_dicom_image_size` now takes `max_examined_files` (files actually OPENED; default 2000) and
+  `deadline_s` (wall clock; default 3.0 s) — `max_scan_files` (MG hits) must never again be the ONLY stop
+  condition. `_run_scan_off_thread(work, apply)` runs the scan on a daemon thread and applies the result
+  via the module's existing thread-safe `_run_on_ui` dispatcher (swallows `RuntimeError` when the tab
+  closed mid-scan). Both `_update_file_count` `os.walk`s (BoneAge + Mammography) go through it too.
+- Flags: `AIPACS_AI_TRAINING_SCAN_ASYNC` (default on; `=0` = byte-identical legacy inline+unbounded),
+  `AIPACS_AI_TRAINING_SCAN_MAX_FILES` (2000), `AIPACS_AI_TRAINING_SCAN_DEADLINE_S` (3.0).
+- **Non-clinical by construction** — it only seeds a training spinbox default; no viewer/VTK/geometry/
+  download path is touched. Trade-off: if no MG DICOM is in the first 2000 files the label says "no MG
+  DICOM found (keeping current value)"; a user-selected data path (Browse) is still scanned FIRST.
+- **LIVE-VERIFIED on 49874 (2026-07-12 18:31):** worst stall on Eagle Eye open **54,799 ms → 1,444 ms**,
+  zero stall stacks in this file, `[TrainingUI] background mg-size-detect done in 3002 ms`. The same scan
+  against the real store: ~55 s → **1.88 s** (and off-thread). Remaining sub-1.5 s stalls are the AI
+  module's Advanced/VTK viewer (`ImageViewer2D.__init__`, `draw_boxes_ijk`, `create_overlay_box`) — a
+  separate, GUI-thread-inherent cost. Guard: `tests/code/ai_imaging/test_eagle_eye_training_scan_bounded.py`
+  (8; suite 18 green). STAGED: lazy-build `ModelTrainingTab` (AIMainWindow) so the training widgets aren't
+  constructed at all on Eagle Eye open; surface the AI server's error `detail` (`MamoWorker.run`'s
+  `raise_for_status()` discards the body — a 502 showed "Bad Gateway" while the body said "PACS request
+  failed: 127.0.0.1:8000 … actively refused", i.e. the AI server's OWN PACS HTTP API was down).
 
 ## VS Code Agent Mode environment (configured 2026-06-02)
 

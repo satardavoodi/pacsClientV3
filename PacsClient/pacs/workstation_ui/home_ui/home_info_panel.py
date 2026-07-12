@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.4.9",
+    "version": "3.5.0",
     "build_date": "2026-07-12",
     "release_date": "2026-07-12",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Radiography from devices without a series number now displays correctly",
-        "Patient CD: drag and drop DICOM files or folders into the Lite Viewer",
-        "CD burning: correct viewer and settings on a fresh install",
-        "Large images (panoramic, mammography) download reliably",
-        "Faster patient search and general stability improvements",
+        "Eagle Eye opens instantly (removed a long startup freeze)",
+        "Fixed a multi-study case where a series would not display",
+        "DICOMDIR support on patient CDs and offline sync media",
+        "Internal assignment panel for the reception workflow",
+        "Safer release builds (config sanitization) and stability fixes",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.4.9",
+        "AI-PACS Version 3.5.0",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۴.۹",
+        "AI-PACS نسخهٔ ۳.۵.۰",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

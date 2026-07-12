@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
+import re
 import shutil
 import sqlite3
 import sys
@@ -10,6 +12,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+
+_log = logging.getLogger(__name__)
 
 from aipacs_runtime import roaming_config_root, seed_user_config_defaults
 
@@ -541,6 +545,314 @@ def get_offline_cloud_study_info(server: dict[str, Any], study_uid: str) -> dict
         }
 
 
+DICOMDIR_NAME = "DICOMDIR"
+DICOMDIR_STAMP_NAME = ".aipacs_dicomdir.json"
+DICOMDIR_FILESET_ID = "AIPACS_OFFLINE"
+# Human-readable interchange tree: DICOM/<Patient_Name>/<StudyInstanceUID>/
+#   ├── DICOMDIR                (File IDs are relative to THIS folder → compliant)
+#   └── PT000000/ST000000/SE000000/IM000001
+# The readable names sit ABOVE the DICOMDIR, where the <=8-char [A-Z0-9_] File ID
+# rule (PS3.10) does not apply — which is why a single media-root DICOMDIR can
+# never have readable folder names.
+DICOM_INTERCHANGE_DIRNAME = "DICOM"
+
+
+def _dicom_content_signature(dicom_root: Path) -> dict[str, int]:
+    """Cheap (file_count, total_bytes) signature of the package's DICOM payload.
+
+    Used to skip regenerating DICOMDIR when nothing changed — the incremental
+    Offline-Sync autosave calls the export on every study-state change, and
+    rebuilding the whole File-set each time would be very expensive.
+    """
+    count = 0
+    total = 0
+    if dicom_root.is_dir():
+        for dirpath, _dirs, files in os.walk(dicom_root):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(dirpath, name))
+                    count += 1
+                except OSError:
+                    continue
+    return {"file_count": count, "total_bytes": total}
+
+
+def _clear_previous_dicomdir(root: Path) -> None:
+    """Remove the previous interchange output so the rebuild is authoritative.
+
+    Clears the readable ``DICOM/`` tree, plus (for packages written by the earlier
+    flat implementation) a root ``DICOMDIR`` and top-level ``PT<digits>`` folders.
+    The package's own ``patients/``, ``manifest.json`` and ``package.db`` are
+    NEVER touched.
+    """
+    shutil.rmtree(root / DICOM_INTERCHANGE_DIRNAME, ignore_errors=True)
+
+    legacy_dicomdir = root / DICOMDIR_NAME
+    if legacy_dicomdir.exists():
+        try:
+            legacy_dicomdir.unlink()
+        except OSError:
+            pass
+    for child in root.iterdir():
+        if child.is_dir() and re.fullmatch(r"PT\d+", child.name, re.IGNORECASE):
+            shutil.rmtree(child, ignore_errors=True)
+
+
+_ILLEGAL_FS_CHARS = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+
+def safe_folder_component(text: Any, *, fallback: str = "UNKNOWN", max_len: int = 64) -> str:
+    """Filesystem-safe, human-READABLE folder name from DICOM text.
+
+    ``DOE^JOHN`` -> ``DOE_JOHN``. Strips illegal characters, collapses runs of
+    whitespace/underscores, trims trailing dots/spaces (Windows rejects those)
+    and caps the length. The DICOM metadata itself is never modified — this only
+    affects the folder name.
+    """
+    value = str(text or "").strip()
+    value = value.replace("^", " ")               # DICOM PN component separator
+    value = _ILLEGAL_FS_CHARS.sub("", value)
+    value = re.sub(r"\s+", " ", value).strip()
+    value = value.replace(" ", "_")
+    value = re.sub(r"_+", "_", value).strip("._ ")
+    value = value[:max_len].strip("._ ")
+    return value or fallback
+
+
+def _study_patient_identity(study_dir: Path) -> tuple[str, str]:
+    """(PatientName, PatientID) from the first readable DICOM in the study dir."""
+    try:
+        from pydicom import dcmread
+    except Exception:
+        return "", ""
+    for candidate in sorted(study_dir.rglob("*")):
+        if not candidate.is_file():
+            continue
+        try:
+            ds = dcmread(str(candidate), stop_before_pixels=True)
+        except Exception:
+            continue
+        return (
+            str(getattr(ds, "PatientName", "") or ""),
+            str(getattr(ds, "PatientID", "") or ""),
+        )
+    return "", ""
+
+
+def _patient_folder_map(study_dirs: list[Path]) -> dict[Path, str]:
+    """Map each study dir -> its readable patient folder name.
+
+    Patients whose names collide (different PatientID, same readable name) are
+    disambiguated by appending the PatientID, so every patient keeps an
+    independent folder.
+    """
+    identity: dict[Path, tuple[str, str]] = {
+        d: _study_patient_identity(d) for d in study_dirs
+    }
+
+    # base readable name per patient id
+    base_by_pid: dict[str, str] = {}
+    for name, pid in identity.values():
+        key = pid or name
+        if key not in base_by_pid:
+            base_by_pid[key] = safe_folder_component(name or pid, fallback="UNKNOWN_PATIENT")
+
+    # detect collisions: same base name shared by >1 distinct patient key
+    owners: dict[str, set[str]] = {}
+    for key, base in base_by_pid.items():
+        owners.setdefault(base, set()).add(key)
+
+    folder_by_key: dict[str, str] = {}
+    for key, base in base_by_pid.items():
+        if len(owners[base]) > 1:
+            suffix = safe_folder_component(key, fallback="ID", max_len=24)
+            folder_by_key[key] = f"{base}_{suffix}"
+        else:
+            folder_by_key[key] = base
+
+    return {
+        d: folder_by_key[(pid or name)]
+        for d, (name, pid) in identity.items()
+    }
+
+
+def build_offline_cloud_dicomdir(
+    root: str | Path,
+    *,
+    fileset_id: str = DICOMDIR_FILESET_ID,
+    force: bool = False,
+) -> dict[str, Any]:
+    """Generate a standards-compliant DICOMDIR at the package ROOT.
+
+    Third-party viewers/PACS import interchange media through DICOMDIR. The
+    package's own payload lives at ``patients/dicom/<study_uid>/…``, but a DICOM
+    File ID component must be <= 8 chars of [A-Z0-9_] (PS3.10) — a StudyInstanceUID
+    can NEVER be a valid File ID — so a compliant DICOMDIR cannot reference that
+    layout in place. We therefore write the standard ``PT######/ST######/SE######/
+    IM######`` tree + ``DICOMDIR`` at the root (pydicom ``FileSet.write``), which
+    every DICOM reader understands. The AI-PACS package layout is left untouched,
+    so AI-PACS↔AI-PACS sync/import is byte-identical.
+
+    Skips the (expensive) rebuild when the DICOM payload is unchanged, unless
+    ``force``. Returns a dict with ``ok`` plus the counts required for logging.
+    """
+    paths = package_paths(root)
+    pkg_root = paths["root"]
+    dicom_root = paths["dicom"]
+
+    signature = _dicom_content_signature(dicom_root)
+    stamp_path = pkg_root / DICOMDIR_STAMP_NAME
+
+    if signature["file_count"] <= 0:
+        msg = "No DICOM files in the package — DICOMDIR not generated."
+        _log.warning("DICOMDIR: %s (%s)", msg, dicom_root)
+        return {"ok": False, "skipped": False, "error": msg, **signature}
+
+    # Unchanged payload + an interchange tree already present → nothing to do.
+    if (
+        not force
+        and (pkg_root / DICOM_INTERCHANGE_DIRNAME).is_dir()
+        and stamp_path.is_file()
+    ):
+        try:
+            previous = json.loads(stamp_path.read_text(encoding="utf-8"))
+        except Exception:
+            previous = {}
+        if (
+            previous.get("file_count") == signature["file_count"]
+            and previous.get("total_bytes") == signature["total_bytes"]
+        ):
+            _log.info(
+                "DICOMDIR: up to date (files=%s) — skipping rebuild",
+                signature["file_count"],
+            )
+            return {"ok": True, "skipped": True, **signature, **{
+                k: previous.get(k) for k in
+                ("patients", "studies", "series", "instances_added")
+                if k in previous
+            }}
+
+    study_dirs = sorted((d for d in dicom_root.iterdir() if d.is_dir()), key=lambda p: p.name)
+    if not study_dirs:
+        msg = "No study folders under patients/dicom — DICOMDIR not generated."
+        _log.warning("DICOMDIR: %s", msg)
+        return {"ok": False, "skipped": False, "error": msg, **signature}
+
+    try:
+        from modules.dicom_media.dicomdir import DicomDirBuilder
+    except Exception as exc:  # pragma: no cover - pydicom/module missing
+        msg = f"DICOMDIR builder unavailable: {exc}"
+        _log.error("DICOMDIR: %s", msg)
+        return {"ok": False, "skipped": False, "error": msg, **signature}
+
+    folder_by_study = _patient_folder_map(study_dirs)
+    _log.info(
+        "DICOMDIR: generating readable interchange tree for %s study folder(s), "
+        "%s DICOM file(s) at %s/%s",
+        len(study_dirs), signature["file_count"], pkg_root, DICOM_INTERCHANGE_DIRNAME,
+    )
+
+    # Rebuild from scratch so the output always matches the FINAL structure
+    # (a study removed from the package disappears from the interchange tree).
+    _clear_previous_dicomdir(pkg_root)
+    interchange_root = pkg_root / DICOM_INTERCHANGE_DIRNAME
+
+    totals = {
+        "files_found": 0, "series": 0, "instances_added": 0,
+        "duplicates_skipped": 0, "unreadable": 0, "failed": 0,
+    }
+    patient_folders: set[str] = set()
+    study_entries: list[dict[str, Any]] = []
+    failures: list[str] = []
+
+    for study_dir in study_dirs:
+        study_uid = study_dir.name
+        patient_folder = folder_by_study.get(study_dir) or "UNKNOWN_PATIENT"
+        # DICOM/<Patient_Name>/<StudyInstanceUID>/  — readable AND unique.
+        out_dir = interchange_root / patient_folder / study_uid
+
+        builder = DicomDirBuilder()
+        ok_study = builder.build_from_study_folders(
+            [str(study_dir)], str(out_dir), fileset_id=fileset_id
+        )
+        st = dict(builder.last_stats or {})
+
+        for key in totals:
+            try:
+                totals[key] += int(st.get(key) or 0)
+            except (TypeError, ValueError):
+                pass
+
+        if ok_study:
+            patient_folders.add(patient_folder)
+            study_entries.append({
+                "patient_folder": patient_folder,
+                "study_uid": study_uid,
+                "path": str(out_dir),
+                "dicomdir": str(out_dir / DICOMDIR_NAME),
+                "series": st.get("series"),
+                "instances": st.get("instances_added"),
+            })
+            _log.info(
+                "DICOMDIR: %s/%s — series=%s instances=%s",
+                patient_folder, study_uid, st.get("series"), st.get("instances_added"),
+            )
+        else:
+            failures.append(
+                f"{patient_folder}/{study_uid}: "
+                f"files_found={st.get('files_found')} "
+                f"instances_added={st.get('instances_added')} "
+                f"failed={st.get('failed')} unreadable={st.get('unreadable')}"
+            )
+            _log.error("DICOMDIR: FAILED for %s/%s", patient_folder, study_uid)
+
+    ok = not failures and bool(study_entries)
+    result: dict[str, Any] = {
+        "ok": ok,
+        "skipped": False,
+        **signature,
+        **totals,
+        "patients": len(patient_folders),
+        "studies": len(study_entries),
+        "patient_folders": sorted(patient_folders),
+        "studies_detail": study_entries,
+        "interchange_root": str(interchange_root),
+    }
+
+    if not ok:
+        result["error"] = (
+            "DICOMDIR generation failed for "
+            f"{len(failures)} of {len(study_dirs)} study folder(s): "
+            + "; ".join(failures[:5])
+        )
+        _log.error("DICOMDIR: %s", result["error"])
+        return result
+
+    if totals["failed"] or totals["unreadable"] or totals["duplicates_skipped"]:
+        _log.warning(
+            "DICOMDIR: completed with issues — failed=%s unreadable=%s duplicates_skipped=%s",
+            totals["failed"], totals["unreadable"], totals["duplicates_skipped"],
+        )
+
+    try:
+        stamp_path.write_text(json.dumps({
+            **signature,
+            "patients": result["patients"],
+            "studies": result["studies"],
+            "series": totals["series"],
+            "instances_added": totals["instances_added"],
+        }), encoding="utf-8")
+    except OSError:
+        pass
+
+    _log.info(
+        "DICOMDIR: OK — patients=%s studies=%s series=%s instances=%s under %s",
+        result["patients"], result["studies"], totals["series"],
+        totals["instances_added"], interchange_root,
+    )
+    return result
+
+
 def export_studies_to_offline_cloud(
     server: dict[str, Any],
     study_uids: list[str],
@@ -548,7 +860,16 @@ def export_studies_to_offline_cloud(
     actor: dict[str, Any] | None = None,
     source_server: dict[str, Any] | None = None,
     operation: str = "export",
+    include_dicomdir: bool = False,
 ) -> dict[str, Any]:
+    """Export studies into an Offline-Cloud package.
+
+    ``include_dicomdir`` (default **False**) additionally writes a
+    standards-compliant DICOMDIR + PT/ST/SE/IM tree at the package root so
+    third-party viewers/PACS can import the media. It is OFF by default so the
+    cloud-consultation / education packages (which are uploaded) stay exactly as
+    they are; the Offline-Sync call site turns it on.
+    """
     selected_uids = sorted({str(uid or "").strip() for uid in study_uids if str(uid or "").strip()})
     if not selected_uids:
         return {"ok": False, "exported": 0, "errors": ["No study selected."]}
@@ -570,6 +891,19 @@ def export_studies_to_offline_cloud(
                 errors.append(f"{study_uid}: {exc}")
         package_conn.commit()
 
+    # DICOMDIR is generated AFTER the final export structure is written, so its
+    # File IDs always match what is actually on disk.
+    dicomdir_result: dict[str, Any] | None = None
+    if include_dicomdir and exported:
+        dicomdir_result = build_offline_cloud_dicomdir(paths["root"])
+        if not dicomdir_result.get("ok"):
+            # Never silently produce an export that a third-party viewer cannot
+            # import — surface the exact cause.
+            errors.append(
+                "DICOMDIR generation failed: "
+                + str(dicomdir_result.get("error") or "see log for details")
+            )
+
     manifest = rebuild_offline_cloud_manifest(
         paths["root"],
         actor=actor,
@@ -577,7 +911,7 @@ def export_studies_to_offline_cloud(
         changed_studies=exported,
         operation=operation,
     )
-    return {
+    result: dict[str, Any] = {
         "ok": len(exported) > 0,
         "exported": len(exported),
         "study_uids": exported,
@@ -585,6 +919,14 @@ def export_studies_to_offline_cloud(
         "manifest_path": str(paths["manifest"]),
         "study_count": int(manifest.get("study_count") or 0),
     }
+    if dicomdir_result is not None:
+        result["dicomdir"] = dicomdir_result
+    _log.info(
+        "Offline export: studies=%s errors=%s dicomdir=%s",
+        len(exported), len(errors),
+        (dicomdir_result or {}).get("ok") if dicomdir_result is not None else "not requested",
+    )
+    return result
 
 
 def sync_offline_cloud_study_preview_to_local(

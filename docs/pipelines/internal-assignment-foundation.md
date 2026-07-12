@@ -430,6 +430,113 @@ Tests: `test_assign_icon_for_status` (6 states, each asserted visually distinct 
 red) and `test_assign_icon_end_to_end_from_history` (server assign → red; local completed →
 green; server unassign → gray cancelled). **46 network tests green.**
 
+## ONE internal-assignment engine, TWO entry points (2026-07-10)
+
+**The bug.** Internal assignment had **two UI implementations** of the same engine.
+Both called `InternalAssignmentService`, but the Reporting-Physician path was a
+thinner, older re-implementation:
+
+| | Assign column | Reporting Physician (old) |
+|---|---|---|
+| User list | `list_users("all")` → personnel **+** center users, grouped | `list_users("radiologist")` → **physicians only**, flat combo |
+| Assign call | `assign(..., comment, is_reassignment)` | `assign_async(...)` — **no comment, no reassign flag** |
+| Current assignment | local history record (assignee/assigner/when/comment/status) | server `current_assignment()` — **name only** |
+| Lifecycle actions | Active / Completed / Deactivate / Cancel | **none** |
+| Notification | `notify_assignment` (`assignment_in`) | `notify_local_assignment` (`assignment_out`) — **different kind** |
+| Patient-list refresh | Assign icon **+** reporter | reporter only — **icon never refreshed** |
+
+**The fix — one component in CORE.**
+`PacsClient/pacs/workstation_ui/home_ui/internal_assignment_panel.py` is now **THE**
+internal-assignment component: `InternalAssignmentPanel` (grouped INO users, comment,
+assign/reassign, current-assignment card with status badge, lifecycle actions,
+notification, `assigned` signal) + `InternalAssignmentDialog` wrapping it.
+
+```
+Assign column → ConsultationAssignDialog → Internal tab ─┐
+                                                         ├─► InternalAssignmentPanel
+Reporting Physician → Report popup → "مدیریت ارجاع…" ────┘      (one engine:
+                                                                InternalAssignmentService,
+External → ConsultationAssignDialog → External tab (UNCHANGED)   INO users, same API,
+                                                                 status model, permissions,
+                                                                 notifications, history)
+```
+
+* It lives in **core**, not the education plugin — internal assignment is an INO/core
+  feature and must not depend on the purchasable consultation module. Dependency
+  direction is **education → core**, never core → education.
+* `internal_assign_ui.py` (Report popup) is now an **entry point only**: a summary line
+  + "مدیریت ارجاع…" button that opens the shared dialog. **All** of its legacy logic
+  (physicians-only combo, `assign_async`, `notify_local_assignment`) was deleted.
+* `assign_dialog._build_internal_tab()` **embeds the same panel** when INO assignment is
+  enabled and re-emits `internal_assigned`; the legacy internal renderers are guarded to
+  no-op (`_render_internal`, `_update_internal_state`, `_load_assignment_details`,
+  `_on_consultants`). The legacy consultation-internal tab remains only as the
+  feature-OFF fallback.
+* User grouping moved to **core** (`ino_assignment_models.partition_user_groups`) so both
+  entry points group identically; `assign_core.partition_ino_groups` stays for the
+  feature-OFF path.
+* **External is untouched** and stays entirely in the education module.
+
+**Regression guard:** `test_reporting_physician_path_has_no_own_assignment_logic` fails if
+`assign_async` / `list_users(` / `svc.assign(` / `notify_local_assignment` /
+`set_assignment_status` ever reappear in `internal_assign_ui.py`. Plus
+`test_partition_user_groups_is_in_core`.
+
+**Validate both paths on the same patient/physician** — they must produce the same
+assignee, type, status, comment, notification, history row and patient-list icon, and both
+must offer the same lifecycle actions.
+
+## FALSE RED in the Report column — 49868 / 49836 (root cause + fix, 2026-07-10)
+
+**Symptom.** Two patients showed the reporting physician's name in **RED** in the Report
+column although **no internal assignment existed** for them.
+
+**Root cause — the colour was derived from the WRONG FIELD.**
+`patient_table_widget._apply_report_status_display` called
+
+```python
+reporter_display(report_status, physician_text)   # ← the bug
+```
+
+and `reporter_display` returned **RED for ANY non-completed report that merely had a
+reporting physician set** (in the RIS report workflow). It **never consulted the
+assignment record**. So every patient with a reporter and a non-completed status turned
+red — and the tooltip even falsely read *"Assigned to …"*.
+
+It only became visible when the feature was flipped **default-ON** (2026-07-10); while
+`is_enabled()` was False that branch never ran. So: not stale state, not a cache, not the
+report status being mistaken for an assignment — simply the wrong source field.
+
+**The rule now.** RED in the Report column means **exactly one** thing:
+
+> the reception has an **ACTIVE** internal assignment **and** the name displayed **is the
+> assignee**.
+
+Implemented as: the reception id is stamped on the report label at creation
+(`report_label.reception_id`, so *every* re-render path — initial, refresh, hydration,
+status change — can resolve it), then
+
+```python
+rec = ino_assignment_history.current_assignment_details(reception_id)
+if rec and rec["assignment_status"] == STATUS_ACTIVE:
+    if same_person_name(rec["assignee_name"], displayed_physician) or not displayed_physician:
+        → RED (assignee name)
+# anything else → the ORIGINAL pre-feature status-icon colour scheme
+```
+
+* Derived from the **persisted, `server_ok`-gated record** — a local-only/failed assign
+  can never colour a row.
+* A **different** physician than the assignee → **not** red (new pure
+  `ino_assignment_models.same_person_name`, tolerant of titles «دکتر»/«Dr.», case,
+  whitespace and an `(ID: …)` suffix).
+* `completed` / `deactivated` / `cancelled` are not `active` → **not** red.
+* Green "completed reporter" and all other states keep the **original** colour scheme.
+
+**`reporter_display` was DELETED** (it had no remaining callers). Guard test
+`test_reporter_display_is_gone` fails if it comes back; `test_same_person_name` and
+`test_report_red_requires_active_assignment_of_that_physician` pin the 49868/49836
+scenario (reporter present + no assignment ⇒ never red).
+
 ## Verification note
 Sandbox was offline this session, so pytest wasn't run here — run `tests/code/network/test_ino_assignment.py`
 and `tests/code/education_online_consultation/test_assign_core.py` on the Windows build.

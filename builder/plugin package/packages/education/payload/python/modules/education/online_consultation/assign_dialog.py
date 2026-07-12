@@ -234,6 +234,7 @@ class ConsultationAssignDialog(QDialog):
             )
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("external capability check failed (failing open): %s", exc)
+        self._ino_panel = None   # set when the shared internal panel is mounted
         self._build()
         self._load_assignment_details()
         self._load_consultants()
@@ -444,6 +445,29 @@ class ConsultationAssignDialog(QDialog):
             pass
 
     def _build_internal_tab(self) -> QWidget:
+        # ONE internal-assignment component (core). The Reporting-Physician entry
+        # point opens the very same panel — no duplicate form / status model /
+        # API logic lives here. EXTERNAL stays in this module's External tab.
+        if self._ino_internal_enabled():
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.internal_assignment_panel import (
+                    InternalAssignmentPanel,
+                )
+
+                host = QWidget()
+                lay = QVBoxLayout(host)
+                lay.setContentsMargins(10, 10, 10, 10)
+                lay.setSpacing(8)
+                self._ino_panel = InternalAssignmentPanel(
+                    self.patient_id, self.patient_name, parent=host)
+                # Re-emit so the patient list refreshes exactly as before.
+                self._ino_panel.assigned.connect(self._on_shared_panel_assigned)
+                lay.addWidget(self._ino_panel, 1)
+                return host
+            except Exception as exc:  # pragma: no cover - defensive
+                logger.warning("shared internal panel unavailable, using legacy tab: %s", exc)
+                self._ino_panel = None
+
         p = self._p
         host = QWidget()
         lay = QVBoxLayout(host)
@@ -539,10 +563,12 @@ class ConsultationAssignDialog(QDialog):
         # this filtered to type==external, so registered users that happened to
         # be type=internal never appeared → the External list looked empty.)
         self._external_rows = list(rows)
-        # INTERNAL tab: source from INO (same-center users) when the internal
-        # assignment feature is enabled; otherwise fall back to the previous
-        # consultation-internal rows (no regression).
-        if self._ino_internal_enabled():
+        # INTERNAL tab: when the shared internal panel is mounted it owns the
+        # whole internal flow (its own user load, form, statuses) — this dialog
+        # must not build a second internal list.
+        if getattr(self, "_ino_panel", None) is not None:
+            self._internal_rows = []
+        elif self._ino_internal_enabled():
             self._internal_rows = []
             self._int_selected.clear()
             self._internal_loading = True
@@ -679,6 +705,8 @@ class ConsultationAssignDialog(QDialog):
             self.int_list.count() - 1, self._consultant_card(c, check))
 
     def _render_internal(self):
+        if getattr(self, "_ino_panel", None) is not None:
+            return  # the shared panel owns the internal user list
         self._clear_card_list(self.int_list)
         rows = [c for c in self._internal_rows
                 if self._matches(c, self.int_search.text())]
@@ -717,6 +745,8 @@ class ConsultationAssignDialog(QDialog):
         self._update_internal_state()
 
     def _update_internal_state(self):
+        if getattr(self, "_ino_panel", None) is not None:
+            return  # the shared panel owns its own send button
         n = len(self._int_selected)
         try:
             self.int_send_btn.setText(f"Assign to selected ({n})")
@@ -872,10 +902,21 @@ class ConsultationAssignDialog(QDialog):
             self._set_state(
                 "Internal assignment failed — " + "; ".join(errors), "error")
 
+    def _on_shared_panel_assigned(self, reception_id: str, name: str):
+        """The shared internal panel confirmed an assign / status change — re-emit
+        so the patient list refreshes the Assign icon + reporter, exactly as the
+        Reporting-Physician entry point does."""
+        try:
+            self.internal_assigned.emit(str(reception_id), str(name))
+        except RuntimeError:
+            pass
+
     def _load_assignment_details(self):
         """Populate the 'current assignment' card from the REAL record (INO
         internal history): assigned-to / assigned-by / type / when / comment +
         the lifecycle status badge, and enable the allowed status actions."""
+        if getattr(self, "_ino_panel", None) is not None:
+            return  # the shared panel owns the card
         panel = getattr(self, "_assign_details", None)
         if panel is None:
             return

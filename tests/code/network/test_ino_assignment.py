@@ -47,20 +47,62 @@ def test_assignable_user_from_api():
     assert u.assign_types == ["radiologist"]
 
 
+def test_reporter_display_is_gone():
+    """REGRESSION (49868 / 49836): `reporter_display` coloured the Report cell RED
+    from the report's physician field alone — no assignment required. It must stay
+    deleted; red may only come from an ACTIVE assignment record."""
+    assert not hasattr(m, "reporter_display")
+
+
 @pytest.mark.parametrize(
-    "status,name,expect_text,expect_color",
+    "a,b,expected",
     [
-        ("completed", "Vahid Alizadeh", "Vahid Alizadeh", m.COLOR_COMPLETED),      # green
-        ("physician_approved", "Vahid Alizadeh", "Vahid Alizadeh", m.COLOR_ASSIGNED_PENDING),  # red (pending)
-        ("pending", "Vahid Alizadeh", "Vahid Alizadeh", m.COLOR_ASSIGNED_PENDING),  # red
-        ("pending", "", "", ""),                                                     # no name → icon fallback
-        ("completed", "6a4de81218a091772b582325", "", ""),                          # objectid-like → dropped
-        ("pending", "ID:123", "", ""),                                              # id marker → dropped
+        ("دکتر وحید علیزاده", "وحید علیزاده", True),      # title tolerated
+        ("Dr. Vahid Alizadeh", "vahid alizadeh", True),   # title + case
+        ("Vahid  Alizadeh", "Vahid Alizadeh", True),      # whitespace
+        ("Vahid Alizadeh (ID: 123)", "Vahid Alizadeh", True),
+        ("Vahid Alizadeh", "Reza Alizadeh", False),       # DIFFERENT physician → no red
+        ("", "Vahid Alizadeh", False),
+        ("Vahid Alizadeh", "", False),
     ],
 )
-def test_reporter_display_red_pending_green_completed(status, name, expect_text, expect_color):
-    text, color = m.reporter_display(status, name)
-    assert text == expect_text and color == expect_color
+def test_same_person_name(a, b, expected):
+    assert m.same_person_name(a, b) is expected
+
+
+def test_report_red_requires_active_assignment_of_that_physician(tmp_path, monkeypatch):
+    """The exact 49868/49836 scenario: a reception with a reporting physician set in
+    the RIS workflow but NO internal assignment must NOT be red."""
+    h = pytest.importorskip("modules.network.ino_assignment_history")
+    monkeypatch.setattr(h, "_base_dir", lambda: str(tmp_path))
+
+    def is_red(reception_id, displayed_physician):
+        rec = h.current_assignment_details(reception_id)
+        status = str((rec or {}).get("assignment_status") or "").lower()
+        if not rec or status != m.STATUS_ACTIVE:
+            return False
+        assignee = str(rec.get("assignee_name") or "").strip()
+        return bool(assignee) and (
+            not displayed_physician or m.same_person_name(assignee, displayed_physician))
+
+    # 49868 — reporter present, NO assignment at all → never red
+    assert is_red("49868", "دکتر وحید علیزاده") is False
+
+    # a real, server-confirmed assignment to that physician → red
+    h.record(m.AssignmentRecord(reception_id="49868", assign_type="radiologist",
+                                assignee_id="1", assignee_name="دکتر وحید علیزاده",
+                                assignee_source="ris_personnel", server_ok=True))
+    assert is_red("49868", "وحید علیزاده") is True          # title tolerated
+
+    # the report shows a DIFFERENT physician than the assignee → not red
+    assert is_red("49868", "دکتر رضا علیزاده") is False
+
+    # cancelled/completed are not "active" → not red
+    h.record(m.AssignmentRecord(reception_id="49868", assign_type="", assignee_id="",
+                                assignee_name="", assignee_source="",
+                                action=m.ACTION_STATUS_CHANGED,
+                                assignment_status="completed", server_ok=False))
+    assert is_red("49868", "وحید علیزاده") is False
 
 
 @pytest.mark.parametrize(
@@ -132,6 +174,46 @@ def test_assign_icon_end_to_end_from_history(tmp_path, monkeypatch):
                                 assignee_id="", assignee_name="", assignee_source="",
                                 action=m.ACTION_UNASSIGNED, server_ok=True))
     assert (icon()["icon"], icon()["color"]) == ("fa5s.user-slash", "#9ca3af")    # cancelled
+
+
+def test_partition_user_groups_is_in_core(tmp_path):
+    """User grouping lives in CORE so BOTH entry points (Assign column and
+    Reporting Physician) group identically — not only the education plugin."""
+    users = [
+        m.AssignableUser.from_personnel({"_id": "1", "FirstName": "Dr", "LastName": "A",
+                                         "PersonnelType": "پزشک", "IsActive": True}),
+        m.AssignableUser.from_center_user({"_id": "2", "FullName": "Sec B", "User": "b",
+                                           "roles": {"Name": "typist"}, "Deactive": False}),
+        m.AssignableUser.from_personnel({"_id": "3", "FirstName": "Dr", "LastName": "C",
+                                         "PersonnelType": "پزشک", "IsActive": True}),
+    ]
+    groups = m.partition_user_groups(users)
+    keys = [g[0] for g in groups]
+    assert keys == [m.GROUP_PHYSICIANS, m.GROUP_USERS]      # physicians first
+    assert len(dict((g[0], g[2]) for g in groups)[m.GROUP_PHYSICIANS]) == 2
+    assert "Physicians" in dict((g[0], g[1]) for g in groups)[m.GROUP_PHYSICIANS]
+    assert m.partition_user_groups([]) == []
+
+
+def test_reporting_physician_path_has_no_own_assignment_logic():
+    """REGRESSION GUARD for the two-implementations bug.
+
+    The Report-popup entry point must be an ENTRY POINT ONLY — it must not call
+    the assignment API, build its own user list, or create notifications. All of
+    that belongs to the ONE shared panel it opens.
+    """
+    import os
+    root = _repo_root()
+    path = os.path.join(
+        root, "PacsClient/pacs/patient_tab/ui/patient_ui/patient_toolbar/internal_assign_ui.py")
+    src = open(path, encoding="utf-8").read()
+    # it must delegate to the shared component…
+    assert "internal_assignment_panel" in src
+    assert "open_internal_assignment_dialog" in src
+    # …and must NOT re-implement assignment logic
+    for banned in ("assign_async", "svc.assign(", "list_users(",
+                   "notify_local_assignment", "set_assignment_status"):
+        assert banned not in src, f"legacy assignment logic reintroduced: {banned}"
 
 
 def test_status_labels_and_colors():

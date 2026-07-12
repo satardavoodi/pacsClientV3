@@ -135,6 +135,12 @@ hiddenimports = load_hiddenimports(
         "modules.network.ino_assignment_history",
         "modules.network.ino_report_workflow",
         "modules.network.ino_notifications",
+        # DICOMDIR builder: shared by the CD burner (optional plugin) and the
+        # core Offline-Sync export, which imports it LAZILY inside a function
+        # (PacsClient/utils/offline_cloud.build_offline_cloud_dicomdir) — pin it
+        # or DICOMDIR generation dies with ModuleNotFoundError in the frozen build.
+        "modules.dicom_media",
+        "modules.dicom_media.dicomdir",
         "pydicom.encoders",
         "pydicom.pixel_data_handlers",
         "pydicom.pixel_data_handlers.numpy_handler",

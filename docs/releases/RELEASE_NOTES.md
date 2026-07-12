@@ -1,9 +1,31 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.9 (2026-07-12)
-**Previous Stable:** v3.4.8 (2026-07-11)
+**Current Stable Version:** v3.5.0 (2026-07-12)
+**Previous Stable:** v3.4.9 (2026-07-12)
 **Release Date:** 2026-07-12
 **Branch:** beta-version
+
+---
+
+## v3.5.0 (2026-07-12) - Minor release: Eagle Eye open-freeze fix, DICOMDIR media, internal assignment, config sanitization
+
+### Summary
+
+Minor release advancing the stable line to the 3.5 series and publishing the full
+current beta-version working state. Headline: opening Eagle Eye no longer freezes
+the app for roughly a minute. Also adds a shared DICOMDIR builder for interchange
+media (patient CD + Offline Sync), an internal-assignment panel for the reception
+workflow, release-build config sanitization, and a multi-study series-display fix.
+
+### Included
+
+- **Eagle Eye open freeze (OPT-27):** clicking Eagle Eye walked the entire DICOM store with pydicom **on the GUI thread** to auto-detect a training image size (its cap counted only MG hits, so on a CT/MR-heavy store it read every file). Now bounded and run off-thread — measured **~55 s -> ~1.4 s**.
+- **Multi-study series-display fix (OPT-26):** loading a secondary study's series repointed the tab's study path, so a later primary-study load resolved to the wrong study's folder and the identity gate correctly refused to paint — leaving the series blank. The tab path now stays pinned to the primary study.
+- **DICOMDIR on interchange media:** one shared builder in core (`modules/dicom_media`) used by both the patient-CD burner and Offline Sync; the CD burner is now a thin shim over it.
+- **Internal assignment panel** for the reception/INO workflow.
+- **Release-build config sanitization** (`builder/config_sanitizer.py`) so machine-generated/local state never ships in an installer.
+- Download-manager payload-key variants and net-monitor import-path fixes.
+- Canonical version markers advanced to v3.5.0; full local state published to all remotes
 
 ---
 

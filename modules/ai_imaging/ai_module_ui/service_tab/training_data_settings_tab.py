@@ -10,6 +10,8 @@ Based on backend architectures:
 import os
 import json
 import logging
+import threading
+import time
 from collections import Counter
 from pathlib import Path
 from typing import Optional, Dict, Any
@@ -58,6 +60,106 @@ def _run_on_ui(fn):
             fn()
         except Exception:
             pass
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GUI-thread protection for the training-data folder scans (Eagle Eye freeze fix)
+#
+# The training settings widgets are constructed EAGERLY when the Eagle Eye / AI
+# module tab opens (AIMainWindow.__init__ -> ModelTrainingTab -> this file).
+# The MG image-size auto-detect used to os.walk + pydicom.dcmread the ENTIRE
+# local DICOM store (user_data/patients, 50k+ files / 30+ GB here) on the GUI
+# thread, and its 300-file cap only counted MG hits -> effectively unbounded.
+# Measured: one contiguous 54.8 s main-thread stall (the "app freeze" when
+# opening Eagle Eye).
+#
+# Fix (default ON):
+#   * the scans are BOUNDED (files examined + wall-clock deadline)
+#   * the scans run OFF the GUI thread; results are applied via _run_on_ui
+# Kill switch: AIPACS_AI_TRAINING_SCAN_ASYNC=0 restores the legacy synchronous,
+# unbounded behaviour byte-for-byte.
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _env_flag(name: str, default: bool = True) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(str(os.environ.get(name, default)).strip())
+    except Exception:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(str(os.environ.get(name, default)).strip())
+    except Exception:
+        return default
+
+
+_TRAINING_SCAN_ASYNC = _env_flag("AIPACS_AI_TRAINING_SCAN_ASYNC", True)
+# Max DICOM files actually OPENED by the MG size probe (0 = unlimited / legacy).
+_TRAINING_SCAN_MAX_EXAMINED = _env_int("AIPACS_AI_TRAINING_SCAN_MAX_FILES", 2000)
+# Wall-clock budget for a scan, seconds (0 = unlimited / legacy).
+_TRAINING_SCAN_DEADLINE_S = _env_float("AIPACS_AI_TRAINING_SCAN_DEADLINE_S", 3.0)
+
+
+def _scan_limits() -> tuple:
+    """(max_examined, deadline_s) — both 0 when the legacy path is selected."""
+    if not _TRAINING_SCAN_ASYNC:
+        return 0, 0.0
+    return _TRAINING_SCAN_MAX_EXAMINED, _TRAINING_SCAN_DEADLINE_S
+
+
+def _run_scan_off_thread(work, apply_result, label: str = "scan"):
+    """Run `work()` on a daemon thread; hand its result to `apply_result` on the UI thread.
+
+    When the async flag is off, both run inline (legacy behaviour).
+    """
+    if not _TRAINING_SCAN_ASYNC:
+        apply_result(work())
+        return
+
+    def _runner():
+        t0 = time.monotonic()
+        try:
+            result = work()
+        except Exception as exc:  # never let a background scan kill the module
+            logger.debug(f"[TrainingUI] background {label} failed: {exc}")
+            return
+        logger.info(
+            f"[TrainingUI] background {label} done in {(time.monotonic() - t0) * 1000:.0f} ms"
+        )
+
+        def _apply():
+            try:
+                apply_result(result)
+            except RuntimeError:
+                pass  # widget already deleted (tab closed while scanning)
+            except Exception as exc:
+                logger.debug(f"[TrainingUI] {label} apply failed: {exc}")
+
+        _run_on_ui(_apply)
+
+    threading.Thread(target=_runner, name=f"aipacs-training-{label}", daemon=True).start()
+
+
+def _count_image_files(folder: str, max_examined: int = 0) -> int:
+    """Count image-ish files under `folder` (bounded when max_examined > 0)."""
+    count = 0
+    seen = 0
+    for root, _, files in os.walk(folder):
+        for f in files:
+            seen += 1
+            if f.lower().endswith((".png", ".jpg", ".jpeg", ".dcm", ".dicom", ".tiff")):
+                count += 1
+        if max_examined and seen >= max_examined:
+            return count
+    return count
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Default settings per backend (from actual backend code)
@@ -207,10 +309,22 @@ def _normalize_mammo_img_size(raw_size: int) -> int:
     return max(512, min(2048, snapped))
 
 
-def _detect_mg_dicom_image_size(search_root: Path, max_scan_files: int = 300) -> Optional[int]:
+def _detect_mg_dicom_image_size(
+    search_root: Path,
+    max_scan_files: int = 300,
+    *,
+    max_examined_files: int = 0,
+    deadline_s: float = 0.0,
+) -> Optional[int]:
     """Detect dominant MG DICOM image size from a folder tree.
 
     Returns the most frequent max(rows, cols) among MG DICOM files.
+
+    BOUNDED: `max_scan_files` only counts MG *hits*, so on a store full of
+    CT/MR/DX studies it never trips and the walk degenerates into "read every
+    DICOM on disk". `max_examined_files` (files actually opened) and
+    `deadline_s` (wall clock) are the real stop conditions — 0 = unlimited
+    (legacy). NEVER call this on the GUI thread without both bounds set.
     """
     if not search_root or not search_root.exists() or not search_root.is_dir():
         return None
@@ -221,7 +335,16 @@ def _detect_mg_dicom_image_size(search_root: Path, max_scan_files: int = 300) ->
         return None
 
     size_counter: Counter[int] = Counter()
-    scanned = 0
+    scanned = 0        # MG files matched
+    examined = 0       # DICOM files actually opened
+    t0 = time.monotonic()
+
+    def _budget_exhausted() -> bool:
+        if max_examined_files and examined >= max_examined_files:
+            return True
+        if deadline_s and (time.monotonic() - t0) >= deadline_s:
+            return True
+        return False
 
     for root, _, files in os.walk(str(search_root)):
         for name in files:
@@ -237,8 +360,11 @@ def _detect_mg_dicom_image_size(search_root: Path, max_scan_files: int = 300) ->
                     force=True,
                     specific_tags=["Rows", "Columns", "Modality"],
                 )
+                examined += 1
                 modality = str(getattr(ds, "Modality", "") or "").upper()
                 if modality and modality != "MG":
+                    if _budget_exhausted():
+                        break
                     continue
 
                 rows = int(getattr(ds, "Rows", 0) or 0)
@@ -247,11 +373,14 @@ def _detect_mg_dicom_image_size(search_root: Path, max_scan_files: int = 300) ->
                     size_counter[max(rows, cols)] += 1
                     scanned += 1
             except Exception:
+                examined += 1
+                if _budget_exhausted():
+                    break
                 continue
 
-            if scanned >= max_scan_files:
+            if scanned >= max_scan_files or _budget_exhausted():
                 break
-        if scanned >= max_scan_files:
+        if scanned >= max_scan_files or _budget_exhausted():
             break
 
     if not size_counter:
@@ -564,12 +693,12 @@ class BoneAgeSettingsWidget(QWidget):
         if not folder or not os.path.isdir(folder):
             self.lbl_file_count.setText("Invalid folder")
             return
-        count = 0
-        for root, _, files in os.walk(folder):
-            for f in files:
-                if f.lower().endswith((".png", ".jpg", ".jpeg", ".dcm", ".dicom", ".tiff")):
-                    count += 1
-        self.lbl_file_count.setText(f"📁 {count} image files found")
+        self.lbl_file_count.setText("📁 counting image files…")
+        _run_scan_off_thread(
+            lambda: _count_image_files(folder),
+            lambda count: self.lbl_file_count.setText(f"📁 {count} image files found"),
+            label="boneage-file-count",
+        )
 
     def _on_boneage_backbone_changed(self, backbone: str):
         cur = self.txt_pretrained_model_url.text().strip()
@@ -911,12 +1040,12 @@ class MammographySettingsWidget(QWidget):
         if not folder or not os.path.isdir(folder):
             self.lbl_file_count.setText("Invalid folder")
             return
-        count = 0
-        for root, _, files in os.walk(folder):
-            for f in files:
-                if f.lower().endswith((".png", ".jpg", ".jpeg", ".dcm", ".dicom", ".tiff")):
-                    count += 1
-        self.lbl_file_count.setText(f"📁 {count} image files found")
+        self.lbl_file_count.setText("📁 counting image files…")
+        _run_scan_off_thread(
+            lambda: _count_image_files(folder),
+            lambda count: self.lbl_file_count.setText(f"📁 {count} image files found"),
+            label="mammo-file-count",
+        )
 
     def _on_detector_backbone_changed(self, backbone: str):
         cur = self.txt_detector_pretrained_url.text().strip()
@@ -931,38 +1060,51 @@ class MammographySettingsWidget(QWidget):
             self.txt_classifier_pretrained_url.setText(PUBLIC_CLASSIFIER_MODEL_URLS.get(cls_model, ""))
 
     def _auto_detect_and_apply_img_size(self, preferred_folder: str = ""):
-        """Auto-detect MG DICOM image size from user data and apply to det image size."""
+        """Auto-detect MG DICOM image size from user data and apply to det image size.
+
+        Runs OFF the GUI thread and under a bounded file/time budget — the scan
+        walks the whole local DICOM store and used to freeze the app for ~55 s
+        when the Eagle Eye tab was constructed. See the module header.
+        """
         search_roots = []
         if preferred_folder:
             search_roots.append(Path(preferred_folder))
         search_roots.append(_default_patients_root())
 
-        seen = set()
-        detected_raw = None
-        source_root = None
-        for root in search_roots:
-            key = str(root.resolve()) if root.exists() else str(root)
-            if key in seen:
-                continue
-            seen.add(key)
+        max_examined, deadline_s = _scan_limits()
 
-            found = _detect_mg_dicom_image_size(root)
-            if found:
-                detected_raw = found
-                source_root = root
-                break
+        def _scan():
+            seen = set()
+            for root in search_roots:
+                key = str(root.resolve()) if root.exists() else str(root)
+                if key in seen:
+                    continue
+                seen.add(key)
 
-        if detected_raw:
-            detected = _normalize_mammo_img_size(detected_raw)
-            self.spn_det_img_size.setValue(detected)
+                found = _detect_mg_dicom_image_size(
+                    root,
+                    max_examined_files=max_examined,
+                    deadline_s=deadline_s,
+                )
+                if found:
+                    return found, root
+            return None, None
+
+        def _apply(result):
+            detected_raw, source_root = result
+            if detected_raw:
+                detected = _normalize_mammo_img_size(detected_raw)
+                self.spn_det_img_size.setValue(detected)
+                self.lbl_detected_size.setText(
+                    f"Auto image size: {detected} (detected {detected_raw}px from {source_root})"
+                )
+                return
             self.lbl_detected_size.setText(
-                f"Auto image size: {detected} (detected {detected_raw}px from {source_root})"
+                "Auto image size: no MG DICOM found (keeping current value)"
             )
-            return
 
-        self.lbl_detected_size.setText(
-            "Auto image size: no MG DICOM found (keeping current value)"
-        )
+        self.lbl_detected_size.setText("Auto image size: scanning for MG DICOM…")
+        _run_scan_off_thread(_scan, _apply, label="mg-size-detect")
 
     def get_settings(self) -> Dict[str, Any]:
         """Return current Mammography settings as dict."""

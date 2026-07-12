@@ -1,3 +1,9 @@
 {
-    "servers": []
+    "servers": [
+        {
+            "name": "test ofline server",
+            "folder_path": "C:/Users/Dr.Alizadeh/Desktop/ofline server test",
+            "description": ""
+        }
+    ]
 }

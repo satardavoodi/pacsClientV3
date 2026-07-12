@@ -33,7 +33,9 @@ app_data_dirs = [
     ('PacsClient', 'PacsClient'),
     ('Fonts', 'Fonts'),
     ('Qss', 'Qss'),  # Includes all icons and images
-    ('config', 'config'),
+    # NOTE: 'config' is deliberately NOT listed here — see the sanitized
+    # config block below. Packaging config/ verbatim shipped the developer's
+    # centre configuration to every client.
     # EchoMind Secretary NON-PYTHON data (2026-06-11): the two-phase LLM
     # parser reads catalog.yaml + catalog/modules/*.md + prompts/*.txt via
     # Path(__file__). The frozen exe bundles modules.EchoMind code in the
@@ -53,6 +55,30 @@ if os.path.exists('modules/EchoMind/secretary/module_map.yaml'):
 for src, dst in app_data_dirs:
     if os.path.exists(src):
         datas.append((src, dst))
+
+# ── SECURITY: build-time sanitization of centre-specific config ──────────────
+# The repo's config/ holds the DEVELOPER centre's real values (PACS host IPs,
+# AE titles, reception API URL, EchoMind api_key, Google OAuth client_secret).
+# aipacs_runtime.seed_user_config_defaults() copies the BUNDLED config into every
+# client's roaming config on first run — so packaging config/ verbatim shipped
+# and seeded the dev centre's configuration (and secrets) to every client site.
+# We package a SANITIZED copy instead: application defaults are kept, every
+# centre-specific value is emptied. The developer's own config/ is only READ and
+# is never modified (source runs still use it — seeding is frozen-only).
+# The build ABORTS if any centre value would still ship.
+sys.path.insert(0, os.path.abspath('builder'))
+from config_sanitizer import build_clean_config_tree, scan_for_center_values
+
+_clean_config = os.path.abspath(os.path.join('generated-files', 'build', 'config_clean'))
+_cfg_report = build_clean_config_tree('config', _clean_config)
+_cfg_leaks = scan_for_center_values(_clean_config)
+if _cfg_leaks:
+    raise SystemExit(
+        "[spec] ABORT — centre-specific values would be packaged: %r" % (_cfg_leaks,)
+    )
+print("[spec] config sanitized: %d file(s) cleaned, %d passed through, excluded=%s"
+      % (len(_cfg_report['sanitized']), len(_cfg_report['copied']), _cfg_report['excluded']))
+datas.append((_clean_config, 'config'))
 
 # Optional files
 optional_items = [

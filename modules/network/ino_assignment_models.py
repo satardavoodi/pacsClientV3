@@ -95,6 +95,72 @@ def status_color(status: str) -> str:
     return STATUS_COLORS.get(str(status or "").strip().lower(), "#6b7280")
 
 
+# --- Eligible-user GROUPING (shared by every internal-assignment UI) ----------
+# INO returns two distinct populations that must be shown separately:
+#   ris_personnel → Personnel / Staff Management (primarily physicians)
+#   ris_user      → Center Users (physicians + secretaries / other)
+# This lives in CORE so both entry points (the Assign column and the Reporting
+# Physician column) group users identically. Pure — no Qt, no I/O.
+GROUP_PHYSICIANS = ASSIGNEE_SOURCE_RIS_PERSONNEL
+GROUP_USERS = ASSIGNEE_SOURCE_RIS_USER
+GROUP_OTHER = "other"
+
+GROUP_TITLES = {
+    GROUP_PHYSICIANS: "پزشکان (پرسنل مرکز) — Physicians",
+    GROUP_USERS: "کاربران مرکز (منشی/سایر) — Users / Secretaries",
+    GROUP_OTHER: "سایر — Other",
+}
+_GROUP_ORDER = (GROUP_PHYSICIANS, GROUP_USERS, GROUP_OTHER)
+
+
+def partition_user_groups(users: List[Any]) -> List[tuple]:
+    """Split eligible users into ordered, labelled groups.
+
+    Accepts either :class:`AssignableUser` objects or plain dicts carrying a
+    ``source`` / ``_ino_source`` key. Returns ``[(group_key, title, [users])]``
+    in stable order (physicians → users/secretaries → other), omitting empty
+    groups.
+    """
+    buckets: Dict[str, List[Any]] = {k: [] for k in _GROUP_ORDER}
+    for u in users or []:
+        src = getattr(u, "source", None)
+        if src is None and isinstance(u, dict):
+            src = u.get("source") or u.get("_ino_source")
+        src = str(src or "").strip()
+        key = src if src in (GROUP_PHYSICIANS, GROUP_USERS) else GROUP_OTHER
+        buckets[key].append(u)
+    return [(k, GROUP_TITLES[k], buckets[k]) for k in _GROUP_ORDER if buckets[k]]
+
+
+# --- Person-name comparison (assignee vs displayed reporting physician) -------
+_NAME_TITLES = ("دکتر", "دكتر", "پزشک", "dr.", "dr", "doctor", "prof.", "prof")
+
+
+def _normalize_person_name(name: str) -> str:
+    s = str(name or "").strip().lower()
+    # drop an "(ID: …)" suffix and collapse whitespace
+    if " (id:" in s:
+        s = s.split(" (id:", 1)[0]
+    s = " ".join(s.replace("‌", " ").split())
+    for t in _NAME_TITLES:
+        if s.startswith(t + " "):
+            s = s[len(t) + 1:]
+        s = s.replace(" " + t + " ", " ")
+    return " ".join(s.split())
+
+
+def same_person_name(a: str, b: str) -> bool:
+    """True when two person names refer to the same person.
+
+    Tolerates titles (دکتر / Dr.), zero-width joiners, extra whitespace and an
+    "(ID: …)" suffix. Used to decide whether the physician shown in the Report
+    column IS the internal assignee — red must never be shown for a *different*
+    physician.
+    """
+    na, nb = _normalize_person_name(a), _normalize_person_name(b)
+    return bool(na) and na == nb
+
+
 # --- Patient-list Assign-column icon, per lifecycle status --------------------
 # One pure mapping so the initial row render and the post-change refresh cannot
 # drift apart. Icons are qtawesome (fa5s) names.
@@ -197,28 +263,19 @@ COLOR_COMPLETED = "#10b981"          # green
 _COMPLETED_STATES = ("completed", "complete")
 
 
-def reporter_display(report_status: str, physician_name: str):
-    """Return ``(text, color_hex)`` for the patient-list reporter cell.
-
-    * completed → the name in GREEN (final reporting physician).
-    * a name present but not completed → the name in RED (assigned, pending).
-    * no usable name → ``("", "")`` so the caller falls back to the status icon.
-    Pure — no Qt. Lets the color logic be unit-tested and shared.
-    """
-    name = str(physician_name or "").strip()
-    # Drop obviously non-name values (ids / "ID:" markers).
-    if name.startswith("ID:"):
-        name = ""
-    if len(name) == 24 and all(c in "0123456789abcdefABCDEF" for c in name):
-        name = ""
-    if " (ID:" in name:
-        name = name.split(" (ID:", 1)[0].strip()
-    if not name:
-        return "", ""
-    status = str(report_status or "").strip().lower()
-    if status in _COMPLETED_STATES:
-        return name, COLOR_COMPLETED
-    return name, COLOR_ASSIGNED_PENDING
+# REMOVED 2026-07-10 — `reporter_display(report_status, physician_name)`.
+#
+# It returned RED for ANY non-completed report that merely had a reporting
+# physician set in the RIS workflow — it never looked at the internal-assignment
+# record. Once the feature became default-ON this painted unassigned patients red
+# (reported on 49868 / 49836) with a tooltip falsely claiming "Assigned to …".
+#
+# RED in the Report column must be derived ONLY from an ACTIVE internal
+# assignment whose assignee is the physician being displayed:
+#     ino_assignment_history.current_assignment_details(reception_id)
+#       → assignment_status == STATUS_ACTIVE
+#       → same_person_name(assignee_name, displayed_physician)
+# Do NOT reintroduce a colour helper keyed on the report's physician field.
 
 
 def is_valid_assign_type(value: str) -> bool:

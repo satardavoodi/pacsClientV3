@@ -202,6 +202,86 @@ corrupting the build artifact. It was detected by compiling on the host, and re-
 
 ---
 
+## 7b. FIELD RESULT (second log batch, 14:54) — the metadata fix WORKS; a SECOND, different defect is now exposed
+
+```
+[SERIES_NUMBER_NORMALIZE] endpoint=GetStudyThumbnails study=…4365246958 repaired=1
+📥 Downloading series 900001 (2 images)              ← metadata OK, download starts
+🐢 [POOR_CONN] … (series=900001, modality=PX, expected=2)
+⚠️ Empty DICOM data for instance 1
+⚠️ Empty DICOM data for instance 1
+✅ Series 900001 complete: 0 downloaded, 0 skipped
+[INCOMPLETE_SERIES] series=900001 STILL SHORT after gap-fill: on_disk=0 expected=2
+   — server may not hold all instances
+⚠️ No DICOM files found in …\1.2.246.512.1000.…\900001
+```
+
+The `int("None")` crash is **gone**; the study now reaches the image-download stage.
+But `GetSeriesImages` returns an instance **record** for each image with **no DICOM
+bytes**, so 0 files land on disk and the study still cannot be displayed. The device is
+a dental panoramic unit (`modality=PX`, Planmeca-range UID root `1.2.246.512`) — the
+same non-conformant source that omitted `SeriesNumber`.
+
+**Two possible causes, and the log cannot yet distinguish them:**
+
+| | Hypothesis | Consequence |
+|---|---|---|
+| **A (server)** | The server holds the instance rows but **not the pixel data** (it indexed the study but the file is missing/unreadable — plausibly the same non-conformant DICOM broke its ingestion) | No client fix can help. The server must be repaired / the study re-sent. |
+| **B (client)** | The server sends the bytes under a **different key name** than the one we read | Our bug. Fixed below. |
+
+**Why A is the stronger hypothesis:** only the studies from *this device* fail. A key-name
+mismatch would be a property of the server build and would break **every** study at the
+center, not just the ones with the missing `SeriesNumber`. The code's own conclusion —
+"server may not hold all instances" — points the same way.
+
+**Both are addressed:**
+
+1. **Tolerant payload key (B).** The service contract itself defines the raw bytes under
+   **two** names — `DicomInstanceResponse.dicom_data` *and* `DicomImageInfo.image_data`
+   ("Raw DICOM file bytes") — and the client read only the first. New
+   `_extract_instance_payload()` (`modules/download_manager/network/socket_client.py`)
+   accepts `dicom_data` / `image_data` / camelCase / `file_data` / `data` / `content`,
+   documented-name-first, and only ever accepts a **non-empty** value, so an empty variant
+   can never shadow a populated one. Healthy servers are byte-identical. Same tolerant-key
+   pattern as `_normalize_image_count`. Alternate LIST keys (`images`, `dicom_instances`,
+   `files`) are also accepted.
+2. **Decisive diagnostic (A vs B).** When no payload is found under any key, the client now
+   logs the entry's **shape** — key names and value sizes only, never pixel data:
+
+   ```
+   [EMPTY_INSTANCE_PAYLOAD] series=900001 instance=1 — the server response carried NO
+   DICOM bytes under any known key (tried: dicom_data, image_data, …).
+   Entry shape: {sop_instance_uid=str(64), instance_number=str(1), file_size=int(0)}
+   ```
+
+   If a payload key appears there with a **non-zero size**, it is our key list (add it).
+   If every candidate is **0/absent**, the **server does not hold the pixel data** and the
+   fix belongs server-side.
+
+**The one question that splits the hypotheses without waiting for a new build:** does any
+*other* patient at Roshana — from a different device, with a normal `SeriesNumber` —
+download and display correctly? If yes → hypothesis A (this device's data on the server).
+If nothing downloads at all → hypothesis B is back in play.
+
+Guard: `tests/code/download_manager/test_instance_payload_key_variants.py` (11).
+
+## 7c. Separate defect found in the same log: the DM network monitor never loaded
+
+The first line of `download_diagnostics.log` is a startup traceback:
+
+```
+File "modules\download_manager\ui\widget\widget.py", line 337, in __init__
+  from ..network.net_monitor import NetworkReachabilityMonitor
+ModuleNotFoundError: No module named 'modules.download_manager.ui.network'
+```
+
+`widget.py` is in `modules.download_manager.ui.widget`, so `..network` resolves to
+`modules.download_manager.ui.network` (nonexistent); `net_monitor` lives **three** levels
+up. The import raised on every startup and was swallowed by the surrounding `try/except`,
+so the OPT-24 **network auto-resume** feature has been silently dead in every shipped
+build. Fixed (`...network.net_monitor`); guard
+`tests/code/download_manager/test_net_monitor_import_path.py`.
+
 ## 8. Live verification at the center
 
 Open patient **MOHAMMAD ALI**, study `1.2.246.512.1000.959000462.1333101477.4464644671181596858`.

@@ -75,6 +75,55 @@ def _decode_socket_payload(data: bytes) -> str:
         return data.decode('utf-8', errors='replace')
 
 
+# ---------------------------------------------------------------------------
+# Per-instance DICOM payload key names (GetSeriesImages response)
+# ---------------------------------------------------------------------------
+# The service contract defines the raw DICOM bytes under MORE THAN ONE name:
+#   DicomInstanceResponse.dicom_data   ("Actual DICOM file content")
+#   DicomImageInfo.image_data          ("Raw DICOM file bytes")
+# and server builds differ in which they emit (and in snake_case vs camelCase).
+# Reading only `dicom_data` made a server that answers with `image_data` look
+# like it had returned an EMPTY image: every instance was skipped with "Empty
+# DICOM data", the series "completed" with 0 files on disk, and the study could
+# never be displayed (Roshana, 2026-07-12). Same tolerant-key pattern as
+# `_normalize_image_count` in grpc_client.py.
+#
+# Order matters: the documented names first. A key is only accepted when it
+# carries a NON-EMPTY str/bytes value, so an empty/absent variant can never
+# shadow a populated one.
+_INSTANCE_PAYLOAD_KEYS = (
+    "dicom_data",
+    "image_data",
+    "dicomData",
+    "imageData",
+    "file_data",
+    "fileData",
+    "data",
+    "content",
+)
+
+
+def _extract_instance_payload(instance_data):
+    """Return ``(payload, key_used)`` for one instance, or ``("", "")``.
+
+    Never raises. Only non-empty ``str``/``bytes`` values are accepted.
+    """
+    if not isinstance(instance_data, dict):
+        return "", ""
+    for key in _INSTANCE_PAYLOAD_KEYS:
+        value = instance_data.get(key)
+        if isinstance(value, (str, bytes, bytearray)) and len(value) > 0:
+            if key != "dicom_data":
+                logger.warning(
+                    "[INSTANCE_PAYLOAD_KEY] server sent the DICOM bytes under '%s' "
+                    "(not 'dicom_data') — accepting it; without this the image would "
+                    "have been dropped as empty.",
+                    key,
+                )
+            return value, key
+    return "", ""
+
+
 # Max server broadcast messages to skip while waiting for a request's own response.
 # On a busy PACS the server interleaves legitimate `type='broadcast'` events on the
 # shared socket; a low cap (was 10) made GetSeriesImages fail with "Too many broadcast
@@ -1561,10 +1610,22 @@ class SocketDicomClient:
             # Process instances in batch (using GetSeriesImages response format)
             data = response.get('data', {})
             instances = data.get('instances', [])
+            if not instances:
+                # Some server builds put the images under an alternate list key.
+                for _alt_list_key in ('images', 'dicom_instances', 'files'):
+                    _alt = data.get(_alt_list_key)
+                    if isinstance(_alt, list) and _alt:
+                        instances = _alt
+                        logger.warning(
+                            "[INSTANCE_LIST_KEY] server returned images under '%s' "
+                            "(not 'instances') — series=%s",
+                            _alt_list_key, series_number,
+                        )
+                        break
             # Payload estimate (base64 chars ≈ bytes) for the byte-budget
             # soft cap applied after this batch's advance.
             _batch_payload_bytes = sum(
-                len(inst.get('dicom_data') or '') for inst in instances
+                len(_extract_instance_payload(inst)[0] or '') for inst in instances
             )
             
             logger.debug(
@@ -1578,9 +1639,23 @@ class SocketDicomClient:
             batch_files_written = 0
 
             for _inst_idx, instance_data in enumerate(instances):
-                dicom_data_b64 = instance_data.get('dicom_data', '')
-                is_compressed = instance_data.get('is_compressed', False)
-                instance_number = instance_data.get('instance_number', downloaded_count + 1)
+                # The DICOM bytes may arrive under more than one key name: the
+                # service contract itself defines BOTH `dicom_data`
+                # (DicomInstanceResponse) and `image_data` (DicomImageInfo, "raw
+                # DICOM file bytes"), and server builds differ. Reading only
+                # `dicom_data` made a server that sends `image_data` look like it
+                # had returned an EMPTY image — the download "completed" with
+                # 0 files and the study never displayed (Roshana, 2026-07-12).
+                # Same tolerant-key pattern as _normalize_image_count.
+                dicom_data_b64, _payload_key = _extract_instance_payload(instance_data)
+                is_compressed = bool(
+                    instance_data.get('is_compressed',
+                                      instance_data.get('isCompressed', False))
+                )
+                instance_number = instance_data.get(
+                    'instance_number',
+                    instance_data.get('instanceNumber', downloaded_count + 1),
+                )
                 
                 # Generate file name from instance number
                 try:
@@ -1604,7 +1679,28 @@ class SocketDicomClient:
                     continue
                 
                 if not dicom_data_b64:
-                    logger.warning(f"⚠️ Empty DICOM data for instance {instance_number}")
+                    # DECISIVE DIAGNOSTIC. "Empty DICOM data" on its own could not
+                    # distinguish "our client looked under the wrong key" from
+                    # "the server really sent no bytes". Dump the entry's SHAPE —
+                    # key names and value sizes only, never the pixel data itself.
+                    try:
+                        _shape = ", ".join(
+                            f"{k}={type(v).__name__}"
+                            f"({len(v) if isinstance(v, (str, bytes, bytearray, list, dict)) else v})"
+                            for k, v in list(instance_data.items())[:20]
+                        )
+                    except Exception:
+                        _shape = "<unreadable>"
+                    logger.error(
+                        "[EMPTY_INSTANCE_PAYLOAD] series=%s instance=%s — the server "
+                        "response carried NO DICOM bytes under any known key "
+                        "(tried: %s). Entry shape: {%s}. If a payload key is listed "
+                        "above with a non-zero size, add it to _INSTANCE_PAYLOAD_KEYS; "
+                        "if every candidate is 0/absent, the SERVER does not hold the "
+                        "pixel data for this instance.",
+                        series_number, instance_number,
+                        ", ".join(_INSTANCE_PAYLOAD_KEYS), _shape,
+                    )
                     continue
                 
                 try:

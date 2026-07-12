@@ -299,11 +299,42 @@ NOFOLLOW_IMPORTS = list(EXCLUDES)
 # (source_relative_to_project_root, destination_relative_to_exe). Only entries
 # that actually exist on disk are emitted (build_nuitka.py guards with is_dir/
 # is_file), so absent optional files are skipped cleanly.
+# SECURITY — build-time sanitization of centre-specific config (2026-07-09).
+# The repo's config/ holds the DEVELOPER centre's real values (PACS host IPs, AE
+# titles, reception API URL, EchoMind api_key, Google OAuth client_secret), and
+# aipacs_runtime.seed_user_config_defaults() copies the BUNDLED config into every
+# client's roaming config on first run — so shipping config/ verbatim seeded the
+# dev centre's configuration (and secrets) into every client site. Package a
+# SANITIZED copy instead (application defaults kept, centre-specific values
+# emptied). The developer's own config/ is only READ, never modified. Mirrors the
+# PyInstaller path (AIPacs.spec) so both builders are safe.
+_CLEAN_CONFIG_REL = "generated-files/build/config_clean"
+
+
+def _sanitized_config_rel() -> str:
+    """Generate the clean config tree and return its project-root-relative path.
+    ABORTS the build if any centre-specific value would still be packaged."""
+    import sys as _sys
+
+    _sys.path.insert(0, str(PROJECT_ROOT / "builder"))
+    from config_sanitizer import build_clean_config_tree, scan_for_center_values
+
+    out = PROJECT_ROOT / _CLEAN_CONFIG_REL
+    build_clean_config_tree(PROJECT_ROOT / "config", out)
+    leaks = scan_for_center_values(out)
+    if leaks:
+        raise SystemExit(
+            "[nuitka-spec] ABORT — centre-specific values would be packaged: %r" % (leaks,)
+        )
+    return _CLEAN_CONFIG_REL
+
+
 DATA_DIRS = [
     ("PacsClient", "PacsClient"),
     ("Fonts", "Fonts"),
     ("Qss", "Qss"),          # icons + images live here
-    ("config", "config"),
+    # NOT ("config", "config") — see _sanitized_config_rel() above.
+    (_sanitized_config_rel(), "config"),
     # EchoMind Secretary non-python data (catalog + prompts); without these the
     # frozen Secretary finds an EMPTY catalog and LLM-fallback commands fail.
     ("modules/EchoMind/secretary/catalog", "modules/EchoMind/secretary/catalog"),

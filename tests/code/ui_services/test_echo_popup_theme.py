@@ -85,6 +85,29 @@ def test_edit_editor_and_context_menus_are_themed():
         assert "QMenu::item:selected" in rv and "QMenu::item {" in rv
 
 
+def test_voice_chip_and_typing_bubble_have_explicit_colors():
+    """EchoMind voice/attachment chip + the central 'Transcribing…' notification
+    must declare an explicit background+foreground pair, never inherit the OS
+    light/dark palette.
+
+    The chip used to be an almost-transparent white fill with NEAR-BLACK text
+    (#1e1e1e) sitting on the dark chat — contrast 1.06:1, i.e. invisible. The
+    TypingBubble set `color` only on QFrame#bubbleBot, which Qt does NOT cascade
+    to the child QLabel, so the message text fell back to the system palette.
+    """
+    src = _read(_WIDGETS)
+    # the light-theme leftovers must be gone
+    assert "color: #1e1e1e" not in src, "near-black chip text is back"
+    assert "rgba(255, 255, 255, 18)" not in src, "translucent chip fill is back"
+    # explicit pairs present
+    assert "msgBot" in src, "TypingBubble message label needs an explicit colour"
+    assert "QFrame#bubbleBot QLabel" in src
+    assert "QWidget#VoiceMessageBubble" in src
+    # the attachments panel must not be transparent+translucent by default
+    assert "_echo_voice_contrast" in src
+    assert "AIPACS_ECHO_VOICE_CONTRAST" in src
+
+
 def test_report_editor_context_menu_is_themed():
     """The ai_imaging Report Editor's right-click menu must have explicit
     colours (shared MENU_QSS) embedded in BOTH the dialog and the editor
