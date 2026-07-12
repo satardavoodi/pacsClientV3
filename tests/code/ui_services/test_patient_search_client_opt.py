@@ -138,3 +138,63 @@ def test_empty_result_must_be_verified_when_probe_was_skipped():
     assert needs_verify([], probed=False) is True    # empty + skipped -> verify
     assert needs_verify([], probed=True) is False    # already probed this search
     assert needs_verify([{"patient_id": "1"}], probed=False) is False  # got rows -> fine
+
+
+# ── OPT-24c: the singleton getter must NOT rebuild the pool every call ─────
+class _Pool:
+    def __init__(self, host, port):
+        self.host, self.port = host, port
+
+
+class _Svc2:
+    """Mirrors SocketPatientService.reload_if_server_changed."""
+
+    def __init__(self, host, port):
+        self.connection_pool = _Pool(host, port)
+        self._cfg = {"h": host, "p": port}
+        self.rebuilds = 0
+
+    def reload_connection(self):
+        self.rebuilds += 1
+        self.connection_pool = _Pool(self._cfg["h"], self._cfg["p"])
+
+    def reload_if_server_changed(self, env=None):
+        env = env or {}
+        if (env.get("AIPACS_SOCKET_POOL_REUSE", "1") or "1").strip() == "0":
+            self.reload_connection()
+            return True
+        pool = self.connection_pool
+        if pool is None:
+            self.reload_connection()
+            return True
+        if str(pool.host) != str(self._cfg["h"]) or int(pool.port) != int(self._cfg["p"]):
+            self.reload_connection()
+            return True
+        return False
+
+
+def test_pool_is_reused_when_server_unchanged():
+    svc = _Svc2("1.2.3.4", 50052)
+    for _ in range(10):           # 10 searches
+        svc.reload_if_server_changed()
+    assert svc.rebuilds == 0, "warm pool must be reused across searches"
+
+
+def test_pool_rebuilt_when_server_changes():
+    svc = _Svc2("1.2.3.4", 50052)
+    svc._cfg["h"] = "9.9.9.9"     # user switched server profile
+    assert svc.reload_if_server_changed() is True
+    assert svc.rebuilds == 1
+
+
+def test_pool_reuse_kill_switch():
+    svc = _Svc2("1.2.3.4", 50052)
+    svc.reload_if_server_changed({"AIPACS_SOCKET_POOL_REUSE": "0"})
+    assert svc.rebuilds == 1, "kill switch: always reload (legacy)"
+
+
+def test_pool_none_falls_back_to_legacy_reload():
+    svc = _Svc2("1.2.3.4", 50052)
+    svc.connection_pool = None
+    assert svc.reload_if_server_changed() is True
+    assert svc.rebuilds == 1

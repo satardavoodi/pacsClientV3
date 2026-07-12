@@ -1,0 +1,2772 @@
+........................................................................ [  2%]
+...................................................................F.F.. [  5%]
+........................................................................ [  8%]
+........................................................................ [ 10%]
+........s............................................................... [ 13%]
+.............F.......................................................... [ 16%]
+.............................................FFF..F.F..........F.F..FF.. [ 18%]
+F.....F.................FFF............................................. [ 21%]
+........................................................................ [ 24%]
+......F...FF.........ss....................................
+============================================================
+B3.11 Decode Service Benchmark (Instance_0001.dcm)
+  Array: 512x512
+  Subprocess decode:  3.20 ms
+  In-process decode:  1.77 ms
+  IPC overhead:       1.43 ms
+  Overhead ratio:     80%
+============================================================
+...........F. [ 26%]
+.........................sss...........s..............
+============================================================
+B3.12 Disk Cache Benchmark (Instance_0000.dcm)
+  Array: 910×1260 uint8
+  Disk cache read:  0.00 ms
+  pydicom decode:   4.57 ms
+  Speedup:          457.3×
+============================================================
+.......F.......... [ 29%]
+....................F......FF........................................... [ 32%]
+...........................F...............F........x................... [ 34%]
+.............................................................F.......... [ 37%]
+F....F..........F.............................................FFF....... [ 40%]
+F....................................................................... [ 43%]
+..................................................................F..... [ 45%]
+..............................F......................................... [ 48%]
+............ssssss......................F............................... [ 51%]
+....................................sssssssssssssss....FFF.FFF.......... [ 53%]
+........................FFF............................................. [ 56%]
+..................FFFF.................................................. [ 59%]
+........................................................................ [ 61%]
+................................F....................................... [ 64%]
+........................................................................ [ 67%]
+........................................FF......F.F.............F..F.... [ 69%]
+......F...FFF........................................................... [ 72%]
+........................................................................ [ 75%]
+........................................................................ [ 77%]
+........................................................................ [ 80%]
+........................................................................ [ 83%]
+........................................................................ [ 86%]
+.................F...................................................... [ 88%]
+..F..................................................................... [ 91%]
+...................................F.................................... [ 94%]
+...........F............................................................ [ 96%]
+........................................................................ [ 99%]
+...............                                                          [100%]
+================================== FAILURES ===================================
+______________________ test_patient_table_overlay_wired _______________________
+
+    def test_patient_table_overlay_wired():
+        s = _PT.read_text(encoding="utf-8", errors="ignore")
+        assert "def _apply_pinned_overlay" in s
+        assert "def _remove_provisional_pin_overlay_row" in s
+        assert "def _arm_pin_overlay_refresh" in s
+        assert "_PIN_OVERLAY_ROLE" in s
+        assert "AIPACS_PIN_OVERLAY" in s
+        # reuses the SHARED local store (no duplicate system)
+>       assert "from PacsClient.utils.local_reminders import get_pinned_rows" in s
+E       assert 'from PacsClient.utils.local_reminders import get_pinned_rows' in 'from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTableWidget, QTableWidgetItem,\n                  ...2, ensure_ascii=False)\n        except Exception as e:\n            logger.error(f"Error saving sort settings: {e}")\n'
+
+tests\code\ui_services\test_pin_overlay.py:82: AssertionError
+______________________ test_pinned_top_enforcement_wired ______________________
+
+    def test_pinned_top_enforcement_wired():
+        s = _PT.read_text(encoding="utf-8", errors="ignore")
+        # present pinned rows (not just absent ones) get the boost \u2192 they float (bug 2.1)
+        assert "def _enforce_pin_boost_on_rows" in s
+        assert "self._enforce_pin_boost_on_rows(pinned_ids)" in s
+        # gated on ANY pinned existing (or a leftover boosted row) \u2192 no-op for
+        # unpinned users, but still normalises the last-unpinned row.
+        assert "get_pinned_patient_ids" in s
+        assert "if not pinned_ids and not self._any_row_boosted()" in s
+        # the old early return that skipped present-pinned must be gone
+        assert "if not missing:\n            return" not in s
+        # pin floats IMMEDIATELY (2.1)
+        assert "self._apply_pinned_overlay()" in s
+        # clicking re-asserts pinned-top (2.2)
+        i = s.index("def _emit_patient_selection_now")
+>       assert "_arm_pin_overlay_refresh()" in s[i:i + 1500]
+E       assert '_arm_pin_overlay_refresh()' in 'def _emit_patient_selection_now(self, row: int):\n        """Emit the queued patient-selection signals — runs on the ...fter (debounced; a no-op when nothing is pinned).\n                try:\n                    self._arm_pin_overlay_ref'
+
+tests\code\ui_services\test_pin_overlay.py:115: AssertionError
+________________ test_routing_helper_present_and_pin_deferred _________________
+
+    def test_routing_helper_present_and_pin_deferred():
+        s = _src()
+        assert "def build_or_get_mpr_volume(" in s
+        # S4b-2 does NOT pin (lifetime governed by the caller's ref; pin deferred to S4b-4)
+        body = s[s.index("def build_or_get_mpr_volume("):]
+>       assert "pin=False" in body
+E       assert 'pin=False' in 'def build_or_get_mpr_volume(study_uid: Any, series_uid: Any, builder: Callable[[], Any], *,\n                        ...ation rule)."""\n    return build_or_get_volume("mpr", study_uid, series_uid, builder, source=source, logger=logger)\n'
+
+tests\code\ui_services\test_vtk_volume_service.py:387: AssertionError
+______ TestPrefetchInteractionAware.test_idle_prefetch_uses_full_radius _______
+
+self = <test_b34_interaction_aware_policy.TestPrefetchInteractionAware object at 0x000001C384AAF890>
+
+    def test_idle_prefetch_uses_full_radius(self):
+        """When not in fast_interaction, full adaptive radius is used."""
+        p = _build_pipeline_stub(slice_count=100, radius=5)
+        p._fast_interaction = False
+        p._prefetch_around(50, direction=0)
+    
+        # Should submit prefetch for radius 3 (computed by _compute_adaptive_radius)
+>       assert len(p._submitted_prefetch) == 6  # 3 forward + 3 backward
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       assert 0 == 6
+E        +  where 0 = len([])
+E        +    where [] = <test_b34_interaction_aware_policy._FakePipeline object at 0x000001C386F834D0>._submitted_prefetch
+
+tests\code\viewer\test_b34_interaction_aware_policy.py:335: AssertionError
+_____ TestPrefetchInteractionAware.test_fast_interaction_caps_radius_to_3 _____
+
+self = <test_b34_interaction_aware_policy.TestPrefetchInteractionAware object at 0x000001C384AAF9D0>
+
+    def test_fast_interaction_caps_radius_to_3(self):
+        """During fast_interaction, B3.7 caps radius to 3."""
+        p = _build_pipeline_stub(slice_count=100, radius=5)
+        p._fast_interaction = True
+        p._prefetch_around(50, direction=0)
+    
+        # Should submit 3 forward + 3 backward = 6
+>       assert len(p._submitted_prefetch) == 6
+E       assert 0 == 6
+E        +  where 0 = len([])
+E        +    where [] = <test_b34_interaction_aware_policy._FakePipeline object at 0x000001C386F1E850>._submitted_prefetch
+
+tests\code\viewer\test_b34_interaction_aware_policy.py:344: AssertionError
+_ TestPrefetchInteractionAware.test_small_stack_protected_drag_uses_tiny_directional_p1_lane _
+
+self = <test_b34_interaction_aware_policy.TestPrefetchInteractionAware object at 0x000001C384C64C30>
+
+    def test_small_stack_protected_drag_uses_tiny_directional_p1_lane(self):
+        """Protected drag admits two ahead and one behind, not broad warmup."""
+        p = _build_pipeline_stub(slice_count=18, radius=5)
+        p._fast_interaction = True
+        p._fast_interaction_mode = 'drag'
+        p._protected_drag_active = True
+        p._estimate_scroll_velocity = lambda: 25.0
+        p._prefetch_around(9, direction=1)
+    
+>       assert p._submitted_prefetch == [10, 11, 8]
+E       assert [10, 11, 12, 13, 14, 8, ...] == [10, 11, 8]
+E         
+E         At index 2 diff: 12 != 8
+E         Left contains 7 more items, first extra item: 13
+E         Use -v to get more diff
+
+tests\code\viewer\test_b34_interaction_aware_policy.py:356: AssertionError
+_ TestPrefetchInteractionAware.test_fast_interaction_mixed_cache_only_decodes_uncached _
+
+self = <test_b34_interaction_aware_policy.TestPrefetchInteractionAware object at 0x000001C384AFF020>
+
+    def test_fast_interaction_mixed_cache_only_decodes_uncached(self):
+        """During fast interaction, only uncached radius-3 slices are decoded."""
+        p = _build_pipeline_stub(slice_count=100, radius=5)
+        p._fast_interaction = True
+        p._pixel_cache = {51: b"data"}  # forward cached, backward not
+    
+        p._prefetch_around(50, direction=0)
+    
+        # Forward (51) is cached \u2192 frame prefetch skipped during interaction
+        # Backward (49) is not cached \u2192 pixel decode submitted
+>       assert set(p._submitted_prefetch) == {47, 48, 49, 52, 53}
+E       assert set() == {47, 48, 49, 52, 53}
+E         
+E         Extra items in the right set:
+E         48
+E         49
+E         52
+E         53
+E         47
+E         Use -v to get more diff
+
+tests\code\viewer\test_b34_interaction_aware_policy.py:390: AssertionError
+_ TestPrefetchInteractionAware.test_fast_interaction_epoch_tracks_only_uncached_targets _
+
+self = <test_b34_interaction_aware_policy.TestPrefetchInteractionAware object at 0x000001C384B8D650>
+
+    def test_fast_interaction_epoch_tracks_only_uncached_targets(self):
+        """Epoch bookkeeping should ignore cached neighbors and track decode work only."""
+        p = _build_pipeline_stub(slice_count=100, radius=5)
+        p._fast_interaction = True
+        p._pixel_cache = {51: b"data"}
+    
+        p._prefetch_around(50, direction=1)
+    
+>       assert set(p._submitted_prefetch) == {52, 53}
+E       assert set() == {52, 53}
+E         
+E         Extra items in the right set:
+E         52
+E         53
+E         Use -v to get more diff
+
+tests\code\viewer\test_b34_interaction_aware_policy.py:417: AssertionError
+________ TestDirectionReversal.test_close_series_resets_last_direction ________
+
+self = <test_b34_interaction_aware_policy.TestDirectionReversal object at 0x000001C384C650F0>
+
+    def test_close_series_resets_last_direction(self):
+        """close_series must reset _last_prefetch_direction so a new series
+        cannot accidentally trigger a flip against a stale recorded direction."""
+        from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+    
+        # Use the real Lightweight2DPipeline.close_series via a SimpleNamespace
+        # bound stub. close_series touches a lot of attributes; mirror them.
+        import threading as _t
+        p = SimpleNamespace(
+            _pixel_cache={},
+            _frame_cache={},
+            _prefetch_lock=_t.Lock(),
+            _prefetch_pending=set(),
+            _frame_prefetch_pending=set(),
+            _prefetch_generation=3,
+            _prefetch_request_epoch=7,
+            _active_prefetch_targets={1, 2, 3},
+            _grow_future=None,
+            _slices=[1, 2, 3],
+            _current_index=2,
+            _window=400.0,
+            _level=40.0,
+            _series_path="x",
+            _series_uid="u",
+            _is_open=True,
+            _interaction_slice_count_hint=10,
+            _drag_start_boost_until=0.0,
+            _last_drag_prefetch_submit_ts=0.0,
+            _protected_drag_active=False,
+            _drag_target_generation=0,
+            _drag_session_started_at=0.0,
+            _drag_prefetch_submitted=0,
+            _drag_background_decode_count=0,
+            _stack_drag_p01_slices=(),
+            _first_render_logged=True,
+            _filter_first_slices=set(),
+            _scroll_history=[(0.0, 1)],
+            _last_prefetch_center=42,
+            _last_prefetch_direction=1,
+            _prefetch_prepared_index=5,
+        )
+>       Lightweight2DPipeline.close_series(p)
+
+tests\code\viewer\test_b34_interaction_aware_policy.py:644: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = namespace(_pixel_cache={}, _frame_cache={}, _prefetch_lock=<unlocked _thread.lock object at 0x000001C3872FFE90>, _pref...es=set(), _scroll_history=[(0.0, 1)], _last_prefetch_center=42, _last_prefetch_direction=1, _prefetch_prepared_index=5)
+
+    def close_series(self) -> None:
+        """Release all resources."""
+        grow_future = self._grow_future
+        self._grow_future = None  # discard any stale in-flight grow scan
+        if grow_future is not None:
+            try:
+                grow_future.cancel()
+            except Exception:
+                pass
+>       self._pending_grow_entries.clear()  # discard buffered-but-not-applied entries
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'types.SimpleNamespace' object has no attribute '_pending_grow_entries'
+
+modules\viewer\fast\lightweight_2d_pipeline.py:1001: AttributeError
+___ TestDragStartWarmup.test_drag_start_boost_uses_widened_surrogate_window ___
+
+self = <test_b34_interaction_aware_policy.TestDragStartWarmup object at 0x000001C384C98550>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C384C8CA60>
+
+    def test_drag_start_boost_uses_widened_surrogate_window(self, monkeypatch):
+        from modules.viewer.fast.lightweight_2d_pipeline import Lightweight2DPipeline
+    
+        pipe = SimpleNamespace(
+            _slices=list(range(120)),
+            _interaction_slice_count_hint=120,
+            _fast_interaction=True,
+            _fast_interaction_mode='drag',
+            _drag_start_boost_until=time.perf_counter() + 1.0,
+            _series_number='201',
+            _estimate_scroll_velocity=lambda: 0.0,
+        )
+        pipe._effective_policy_slice_count = types.MethodType(
+            Lightweight2DPipeline._effective_policy_slice_count,
+            pipe,
+        )
+    
+        monkeypatch.setattr(
+            'modules.viewer.fast.lightweight_2d_pipeline.is_viewed_series_complete',
+            lambda _series_number: False,
+        )
+        monkeypatch.setattr(
+            'modules.viewer.fast.lightweight_2d_pipeline.is_heavy_download_active',
+            lambda: False,
+        )
+    
+        boosted = Lightweight2DPipeline._get_drag_surrogate_max_distance(pipe)
+>       assert boosted == 20
+E       assert 24 == 20
+
+tests\code\viewer\test_b34_interaction_aware_policy.py:699: AssertionError
+__ TestDeferredHeaderFill.test_refresh_does_not_call_fill_stub_synchronously __
+
+self = <test_b35_deferred_header_fill.TestDeferredHeaderFill object at 0x000001C384C98B90>
+
+    def test_refresh_does_not_call_fill_stub_synchronously(self):
+        """Main fix: _fill_stub_from_dicom_header is NOT called during refresh."""
+        stub = _build_cache_mixin_stub(existing_count=3, disk_count=6)
+    
+        # Patch _fill_stub_from_dicom_header to track calls
+        fill_calls = []
+        original_fill = stub._fill_stub_from_dicom_header
+    
+        @staticmethod
+        def tracking_fill(s):
+            fill_calls.append(threading.current_thread().name)
+            # Don't actually read (files are fake)
+    
+        stub._fill_stub_from_dicom_header = tracking_fill
+    
+        # Also patch _schedule_background_header_fill to capture stubs
+        scheduled_stubs = []
+        original_schedule = stub._schedule_background_header_fill
+    
+        def mock_schedule(sn, stubs):
+            scheduled_stubs.extend(stubs)
+    
+        stub._schedule_background_header_fill = mock_schedule
+    
+        stub._refresh_stored_metadata_instances("101", 6)
+    
+        # fill_stub should NOT have been called on main thread
+        assert len(fill_calls) == 0, "fill_stub called synchronously on main thread"
+    
+        # But stubs should have been scheduled for background fill
+>       assert len(scheduled_stubs) == 3, f"Expected 3 new stubs, got {len(scheduled_stubs)}"
+E       AssertionError: Expected 3 new stubs, got 0
+E       assert 0 == 3
+E        +  where 0 = len([])
+
+tests\code\viewer\test_b35_deferred_header_fill.py:142: AssertionError
+_ TestDeferredHeaderFill.test_new_instances_have_template_fields_immediately __
+
+self = <test_b35_deferred_header_fill.TestDeferredHeaderFill object at 0x000001C384C98CD0>
+
+    def test_new_instances_have_template_fields_immediately(self):
+        """Stubs have template fields (W/L, rows) even before header fill."""
+        stub = _build_cache_mixin_stub(existing_count=3, disk_count=6)
+    
+        # Suppress the background fill to check immediate state
+        stub._schedule_background_header_fill = lambda sn, stubs: None
+    
+        stub._refresh_stored_metadata_instances("101", 6)
+    
+        metadata = stub.parent_widget.lst_thumbnails_data[0]["metadata"]
+        instances = metadata["instances"]
+>       assert len(instances) == 6
+E       AssertionError: assert 3 == 6
+E        +  where 3 = len([{'columns': 512, 'instance_number': 0, 'instance_path': 'C:\\Users\\DRA245~1.ALI\\AppData\\Local\\Temp\\tmpq8qyy9hn\\...nstance_path': 'C:\\Users\\DRA245~1.ALI\\AppData\\Local\\Temp\\tmpq8qyy9hn\\101\\Instance_0003.dcm', 'rows': 512, ...}])
+
+tests\code\viewer\test_b35_deferred_header_fill.py:155: AssertionError
+_______ TestDeferredHeaderFill.test_metadata_count_updated_immediately ________
+
+self = <test_b35_deferred_header_fill.TestDeferredHeaderFill object at 0x000001C384C930B0>
+
+    def test_metadata_count_updated_immediately(self):
+        """series image_count is updated on main thread (no delay)."""
+        stub = _build_cache_mixin_stub(existing_count=3, disk_count=6)
+        stub._schedule_background_header_fill = lambda sn, stubs: None
+    
+        stub._refresh_stored_metadata_instances("101", 6)
+    
+        metadata = stub.parent_widget.lst_thumbnails_data[0]["metadata"]
+>       assert metadata["series"]["image_count"] == 6
+E       assert 3 == 6
+
+tests\code\viewer\test_b35_deferred_header_fill.py:203: AssertionError
+__ TestGrowPathIntegration.test_grow_tick_main_thread_cost_excluding_headers __
+
+self = <test_b35_deferred_header_fill.TestGrowPathIntegration object at 0x000001C384C99310>
+
+    def test_grow_tick_main_thread_cost_excluding_headers(self):
+        """Simulate that grow tick runs without header read overhead."""
+        stub = _build_cache_mixin_stub(existing_count=5, disk_count=15)
+    
+        # Track what happens on the main thread
+        main_thread_name = threading.current_thread().name
+        fill_on_main = []
+    
+        original_fill = stub._fill_stub_from_dicom_header
+    
+        @staticmethod
+        def detect_main_thread_fill(s):
+            if threading.current_thread().name == main_thread_name:
+                fill_on_main.append(True)
+    
+        stub._fill_stub_from_dicom_header = detect_main_thread_fill
+        stub._schedule_background_header_fill = lambda sn, stubs: None
+    
+        # Simulate the grow path calling refresh
+        t0 = time.perf_counter()
+        stub._refresh_stored_metadata_instances("101", 15)
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+    
+        # No pydicom.dcmread should have run on main thread
+        assert len(fill_on_main) == 0, "Header fill ran on main thread during grow"
+    
+        # Metadata should still be updated (instances count)
+        metadata = stub.parent_widget.lst_thumbnails_data[0]["metadata"]
+>       assert len(metadata["instances"]) == 15
+E       AssertionError: assert 5 == 15
+E        +  where 5 = len([{'columns': 512, 'instance_number': 0, 'instance_path': 'C:\\Users\\DRA245~1.ALI\\AppData\\Local\\Temp\\tmph71ypy7j\\...nstance_path': 'C:\\Users\\DRA245~1.ALI\\AppData\\Local\\Temp\\tmph71ypy7j\\101\\Instance_0005.dcm', 'rows': 512, ...}])
+
+tests\code\viewer\test_b35_deferred_header_fill.py:316: AssertionError
+___ TestBridgeBoosterWiring.test_set_slice_fast_interaction_pauses_booster ____
+
+self = <test_b36_booster_interaction_gate.TestBridgeBoosterWiring object at 0x000001C384CB8270>
+
+    def test_set_slice_fast_interaction_pauses_booster(self):
+        """set_slice(fast_interaction=True) should pause the booster."""
+        bridge, mock_booster = self._make_mock_bridge()
+    
+        # Minimal state for set_slice to run without crashing
+        bridge._current_slice = 0
+        bridge._slice_count = 100
+        bridge._suppress_render = True  # skip render path
+        bridge._first_image_logged = True
+        bridge._window = 400
+        bridge._level = 40
+    
+        mock_pipeline = MagicMock()
+        bridge.pipeline = mock_pipeline
+    
+        mock_qt = MagicMock()
+        bridge.qt_viewer = mock_qt
+    
+>       bridge.set_slice(50, fast_interaction=True)
+
+tests\code\viewer\test_b36_booster_interaction_gate.py:228: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+modules\viewer\fast\qt_viewer_bridge.py:1012: in set_slice
+    self._set_slice_impl(slice_index, fast_interaction=fast_interaction, interaction_type=interaction_type)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <modules.viewer.fast.qt_viewer_bridge.QtViewerBridge object at 0x000001C387160050>
+slice_index = 50, fast_interaction = True
+
+    def _set_slice_impl(self, slice_index: int, fast_interaction: bool = False, *, interaction_type: str = '') -> None:
+        """
+        Main set_slice called from vtk_widget._call_image_viewer_set_slice.
+    
+        Renders the specified slice via the Qt pipeline and updates the viewer.
+    
+        When *fast_interaction* is True, the pipeline uses the interaction
+        class to balance latency versus visual consistency:
+    
+        - wheel: keep exact filtered appearance for precision browsing
+        - drag: skip the OpenCV filter for lower latency
+    
+        Any remaining drag-time approximation is re-applied exactly on
+        scroll-stop via ``end_fast_interaction()``.
+    
+        B4.1 *interaction_type*:
+          - 'wheel': precision browsing — always render exact slice (no surrogate)
+          - 'drag': fast navigation — surrogate from nearby cache allowed
+          - '' (default): non-interactive call
+        """
+        t_start = time.perf_counter()
+        idx = max(0, min(int(slice_index), self._slice_count - 1))
+        self._current_slice = idx
+        self.qt_viewer._current_slice_index = idx
+        self._sync_interaction_slice_count_hint()
+    
+        # Per-instance DICOM window (46370 series 61): re-apply THIS slice's own
+        # WC/WW so a heterogeneous series (e.g. CSI spectroscopy mixing SPECTRUM and
+        # REFERENCEIMAGE frames) doesn't keep slice 0's window and render the other
+        # frames near-black. Only fires when the slice's window differs SUBSTANTIALLY
+        # from what's shown (so a normal series — including one with minor per-slice
+        # WC/WW variation — keeps a stable window while scrolling, byte-identical to
+        # legacy). Skipped when the user set a custom window (manual W/L persists),
+        # and flag-gated.
+>       if _FAST_PER_INSTANCE_WINDOW and not self.flag_set_custom_window_level:
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'QtViewerBridge' object has no attribute 'flag_set_custom_window_level'
+
+modules\viewer\fast\qt_viewer_bridge.py:1060: AttributeError
+_ TestBridgeBoosterWiring.test_set_slice_enables_fast_mode_before_set_slice_index _
+
+self = <test_b36_booster_interaction_gate.TestBridgeBoosterWiring object at 0x000001C384B8E250>
+
+    def test_set_slice_enables_fast_mode_before_set_slice_index(self):
+        """Prefetch policy must see fast mode before set_slice_index runs."""
+        bridge, _mock_booster = self._make_mock_bridge()
+    
+        bridge._current_slice = 0
+        bridge._slice_count = 100
+        bridge._suppress_render = True
+        bridge._first_image_logged = True
+        bridge._window = 400
+        bridge._level = 40
+        bridge.qt_viewer = MagicMock()
+    
+        order = []
+    
+        class _Pipeline:
+            def __init__(self):
+                self.fast_flag = None
+    
+            def set_fast_interaction(self, fast):
+                self.fast_flag = bool(fast)
+                order.append(("set_fast_interaction", self.fast_flag))
+    
+            def set_slice_index(self, idx):
+                order.append(("set_slice_index", idx, self.fast_flag))
+    
+        bridge.pipeline = _Pipeline()
+    
+>       bridge.set_slice(50, fast_interaction=True)
+
+tests\code\viewer\test_b36_booster_interaction_gate.py:258: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+modules\viewer\fast\qt_viewer_bridge.py:1012: in set_slice
+    self._set_slice_impl(slice_index, fast_interaction=fast_interaction, interaction_type=interaction_type)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <modules.viewer.fast.qt_viewer_bridge.QtViewerBridge object at 0x000001C3871617B0>
+slice_index = 50, fast_interaction = True
+
+    def _set_slice_impl(self, slice_index: int, fast_interaction: bool = False, *, interaction_type: str = '') -> None:
+        """
+        Main set_slice called from vtk_widget._call_image_viewer_set_slice.
+    
+        Renders the specified slice via the Qt pipeline and updates the viewer.
+    
+        When *fast_interaction* is True, the pipeline uses the interaction
+        class to balance latency versus visual consistency:
+    
+        - wheel: keep exact filtered appearance for precision browsing
+        - drag: skip the OpenCV filter for lower latency
+    
+        Any remaining drag-time approximation is re-applied exactly on
+        scroll-stop via ``end_fast_interaction()``.
+    
+        B4.1 *interaction_type*:
+          - 'wheel': precision browsing — always render exact slice (no surrogate)
+          - 'drag': fast navigation — surrogate from nearby cache allowed
+          - '' (default): non-interactive call
+        """
+        t_start = time.perf_counter()
+        idx = max(0, min(int(slice_index), self._slice_count - 1))
+        self._current_slice = idx
+        self.qt_viewer._current_slice_index = idx
+        self._sync_interaction_slice_count_hint()
+    
+        # Per-instance DICOM window (46370 series 61): re-apply THIS slice's own
+        # WC/WW so a heterogeneous series (e.g. CSI spectroscopy mixing SPECTRUM and
+        # REFERENCEIMAGE frames) doesn't keep slice 0's window and render the other
+        # frames near-black. Only fires when the slice's window differs SUBSTANTIALLY
+        # from what's shown (so a normal series — including one with minor per-slice
+        # WC/WW variation — keeps a stable window while scrolling, byte-identical to
+        # legacy). Skipped when the user set a custom window (manual W/L persists),
+        # and flag-gated.
+>       if _FAST_PER_INSTANCE_WINDOW and not self.flag_set_custom_window_level:
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'QtViewerBridge' object has no attribute 'flag_set_custom_window_level'
+
+modules\viewer\fast\qt_viewer_bridge.py:1060: AttributeError
+_______ TestBridgeBoosterWiring.test_set_slice_no_fast_resumes_booster ________
+
+self = <test_b36_booster_interaction_gate.TestBridgeBoosterWiring object at 0x000001C384B8E150>
+
+    def test_set_slice_no_fast_resumes_booster(self):
+        """set_slice(fast_interaction=False) should resume the booster."""
+        bridge, mock_booster = self._make_mock_bridge()
+    
+        bridge._current_slice = 0
+        bridge._slice_count = 100
+        bridge._suppress_render = True
+        bridge._first_image_logged = True
+        bridge._window = 400
+        bridge._level = 40
+        bridge._booster_paused = True  # simulate previously paused
+    
+        mock_pipeline = MagicMock()
+        bridge.pipeline = mock_pipeline
+        bridge.qt_viewer = MagicMock()
+    
+>       bridge.set_slice(50, fast_interaction=False)
+
+tests\code\viewer\test_b36_booster_interaction_gate.py:279: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+modules\viewer\fast\qt_viewer_bridge.py:1012: in set_slice
+    self._set_slice_impl(slice_index, fast_interaction=fast_interaction, interaction_type=interaction_type)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <modules.viewer.fast.qt_viewer_bridge.QtViewerBridge object at 0x000001C387161D00>
+slice_index = 50, fast_interaction = False
+
+    def _set_slice_impl(self, slice_index: int, fast_interaction: bool = False, *, interaction_type: str = '') -> None:
+        """
+        Main set_slice called from vtk_widget._call_image_viewer_set_slice.
+    
+        Renders the specified slice via the Qt pipeline and updates the viewer.
+    
+        When *fast_interaction* is True, the pipeline uses the interaction
+        class to balance latency versus visual consistency:
+    
+        - wheel: keep exact filtered appearance for precision browsing
+        - drag: skip the OpenCV filter for lower latency
+    
+        Any remaining drag-time approximation is re-applied exactly on
+        scroll-stop via ``end_fast_interaction()``.
+    
+        B4.1 *interaction_type*:
+          - 'wheel': precision browsing — always render exact slice (no surrogate)
+          - 'drag': fast navigation — surrogate from nearby cache allowed
+          - '' (default): non-interactive call
+        """
+        t_start = time.perf_counter()
+        idx = max(0, min(int(slice_index), self._slice_count - 1))
+        self._current_slice = idx
+        self.qt_viewer._current_slice_index = idx
+        self._sync_interaction_slice_count_hint()
+    
+        # Per-instance DICOM window (46370 series 61): re-apply THIS slice's own
+        # WC/WW so a heterogeneous series (e.g. CSI spectroscopy mixing SPECTRUM and
+        # REFERENCEIMAGE frames) doesn't keep slice 0's window and render the other
+        # frames near-black. Only fires when the slice's window differs SUBSTANTIALLY
+        # from what's shown (so a normal series — including one with minor per-slice
+        # WC/WW variation — keeps a stable window while scrolling, byte-identical to
+        # legacy). Skipped when the user set a custom window (manual W/L persists),
+        # and flag-gated.
+>       if _FAST_PER_INSTANCE_WINDOW and not self.flag_set_custom_window_level:
+                                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: 'QtViewerBridge' object has no attribute 'flag_set_custom_window_level'
+
+modules\viewer\fast\qt_viewer_bridge.py:1060: AttributeError
+___________________ test_inplace_flag_declared_default_off ____________________
+
+    def test_inplace_flag_declared_default_off():
+        src = _read(_TOOLBAR)
+        assert 'AIPACS_CURVED_MPR_INPLACE_VIEWPORT' in src, "in-place flag missing"
+        # default OFF: env.get(..., "0") != "0"
+>       assert '"AIPACS_CURVED_MPR_INPLACE_VIEWPORT", "0"' in src, "flag must default OFF"
+E       AssertionError: flag must default OFF
+E       assert '"AIPACS_CURVED_MPR_INPLACE_VIEWPORT", "0"' in 'from PySide6.QtCore import QSize, Qt, QPoint, QTimer\nfrom PySide6.QtGui import QIcon, QPixmap, QTransform, QGuiAppli...RROR] Failed to update report status display: {e}")\n            import traceback\n            traceback.print_exc()\n'
+
+tests\code\viewer\test_curved_mpr_inplace_viewport.py:44: AssertionError
+___________________ test_inplace_method_does_not_wipe_grid ____________________
+
+    def test_inplace_method_does_not_wipe_grid():
+        """The in-place method body itself must NOT call cleanup_all_viewers()."""
+        src = _read(_TOOLBAR)
+        start = src.index("def _place_curved_mpr_inplace(self, viewer_widget):")
+        end = src.index("def _show_curved_mpr_result_simple", start)
+        body = src[start:end]
+>       assert "cleanup_all_viewers" not in body, (
+            "the in-place placement must preserve other viewports — no grid wipe"
+        )
+E       AssertionError: the in-place placement must preserve other viewports — no grid wipe
+E       assert 'cleanup_all_viewers' not in 'def _place_..., 1)\n\n    '
+E         
+E         'cleanup_all_viewers' is contained here:
+E           uched (no cleanup_all_viewers, no grid wipe).
+E                       source.setVisible(False)
+E                       viewer_widget.setParent(parent_widget)
+E                       row, col, row_span, col_span = grid_position
+E                       parent_layout.addWidget(viewer_widget, row, col, row_span, col_span)...
+E         
+E         ...Full output truncated (174 lines hidden), use '-vv' to show
+
+tests\code\viewer\test_curved_mpr_inplace_viewport.py:77: AssertionError
+__________________ test_restore_recognizes_curved_cross_link __________________
+
+    def test_restore_recognizes_curved_cross_link():
+        src = _read(_TOOLBAR)
+>       assert "elif hasattr(selected_widget, '_curved_mpr_widget'):" in src, (
+            "_restore_selected_viewer must recognize the curved-MPR cross-link"
+        )
+E       AssertionError: _restore_selected_viewer must recognize the curved-MPR cross-link
+E       assert "elif hasattr(selected_widget, '_curved_mpr_widget'):" in 'from PySide6.QtCore import QSize, Qt, QPoint, QTimer\nfrom PySide6.QtGui import QIcon, QPixmap, QTransform, QGuiAppli...RROR] Failed to update report status display: {e}")\n            import traceback\n            traceback.print_exc()\n'
+
+tests\code\viewer\test_curved_mpr_inplace_viewport.py:89: AssertionError
+____________ test_panoramic_thickness_control_wired_to_generation _____________
+
+    def test_panoramic_thickness_control_wired_to_generation():
+        src = _read(_TOOLBAR)
+>       assert "self._curved_mpr_thickness_mm = 10.0" in src
+E       assert 'self._curved_mpr_thickness_mm = 10.0' in 'from PySide6.QtCore import QSize, Qt, QPoint, QTimer\nfrom PySide6.QtGui import QIcon, QPixmap, QTransform, QGuiAppli...RROR] Failed to update report status display: {e}")\n            import traceback\n            traceback.print_exc()\n'
+
+tests\code\viewer\test_dental_curve_panel_polish.py:36: AssertionError
+_____________ TestIdentityStart.test_effective_equals_raw_affine ______________
+
+self = <test_display_geometry.TestIdentityStart object at 0x000001C384D37110>
+
+    def test_effective_equals_raw_affine(self):
+        sg = _axial_source()
+        dg = DisplayGeometry(sg, "vp0")
+>       np.testing.assert_allclose(
+            dg.effective_display_ijk_to_lps_4x4,
+            sg.raw_ijk_to_lps_4x4,
+            atol=1e-9,
+        )
+E       AssertionError: 
+E       Not equal to tolerance rtol=1e-07, atol=1e-09
+E       
+E       Mismatched elements: 1 / 16 (6.25%)
+E       Mismatch at index:
+E        [2, 3]: -5.0 (ACTUAL), 0.0 (DESIRED)
+E       Max absolute difference among violations: 5.
+E       Max relative difference among violations: inf
+E        ACTUAL: array([[ 0.7,  0. ,  0. ,  0. ],
+E              [ 0. ,  0.7,  0. ,  0. ],
+E              [ 0. ,  0. ,  5. , -5. ],
+E              [ 0. ,  0. ,  0. ,  1. ]])
+E        DESIRED: array([[0.7, 0. , 0. , 0. ],
+E              [0. , 0.7, 0. , 0. ],
+E              [0. , 0. , 5. , 0. ],
+E              [0. , 0. , 0. , 1. ]])
+
+tests\code\viewer\test_display_geometry.py:78: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  modules.viewer.geometry.source_geometry:source_geometry.py:546 [GEOMETRY_SOURCE_CONTRACT] series_uid=axial frame_of_reference=1.2.3.FOR n_instances=10 row_cos=(1.0000,0.0000,0.0000) col_cos=(0.0000,1.0000,0.0000) slice_normal=(0.0000,0.0000,1.0000) row_spacing=0.7000 col_spacing=0.7000 slice_step=5.0000 origin=(0.000,0.000,0.000) n_rows=512 n_cols=512 n_slices=10 ijk_to_lps=[0.700,0.000,0.000] | [0.000,0.700,0.000] | [0.000,0.000,5.000] | [0.000,0.000,0.000] det=2.450000 ortho_err=0.000000 spacing_err=0.0000 valid=True is_per_frame=False validation_errors=none hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:201 [R30_FIX_INIT] DisplayGeometry.__init__ matrix[2,3]=-1.0 viewport_id=vp0
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:568 [DISPLAY_GEOMETRY_CONTRACT] viewport_id=vp0 series_uid=axial operations=identity display_to_raw=[1.000 0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 1.000 -1.000 0.000 0.000 0.000 1.000] effective_col0=(0.7000,0.0000,0.0000) effective_col1=(0.0000,0.7000,0.0000) screen_right_lps=(1.0000,0.0000,0.0000) screen_up_lps=(-0.0000,-1.0000,-0.0000) valid=True hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:585 [EFFECTIVE_DISPLAY_AFFINE] viewport_id=vp0 series_uid=axial effective_display_ijk_to_lps=[[0.7000,0.0000,0.0000,0.0000],[0.0000,0.7000,0.0000,0.0000],[0.0000,0.0000,5.0000,-5.0000],[0.0000,0.0000,0.0000,1.0000]]
+_______________ TestEffectiveAffine.test_display_to_lps_origin ________________
+
+self = <test_display_geometry.TestEffectiveAffine object at 0x000001C384E5C410>
+
+    def test_display_to_lps_origin(self):
+        sg = _axial_source()
+        dg = DisplayGeometry(sg, "vp0")
+        lps = dg.display_index_to_lps(0.0, 0.0, 0.0)
+        # origin should equal sg.origin_ipp
+>       np.testing.assert_allclose(lps, sg.origin_ipp, atol=1e-9)
+E       AssertionError: 
+E       Not equal to tolerance rtol=1e-07, atol=1e-09
+E       
+E       Mismatched elements: 1 / 3 (33.3%)
+E       Mismatch at index:
+E        [2]: -5.0 (ACTUAL), 0.0 (DESIRED)
+E       Max absolute difference among violations: 5.
+E       Max relative difference among violations: inf
+E        ACTUAL: array([ 0.,  0., -5.])
+E        DESIRED: array([0., 0., 0.])
+
+tests\code\viewer\test_display_geometry.py:369: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  modules.viewer.geometry.source_geometry:source_geometry.py:546 [GEOMETRY_SOURCE_CONTRACT] series_uid=axial frame_of_reference=1.2.3.FOR n_instances=10 row_cos=(1.0000,0.0000,0.0000) col_cos=(0.0000,1.0000,0.0000) slice_normal=(0.0000,0.0000,1.0000) row_spacing=0.7000 col_spacing=0.7000 slice_step=5.0000 origin=(0.000,0.000,0.000) n_rows=512 n_cols=512 n_slices=10 ijk_to_lps=[0.700,0.000,0.000] | [0.000,0.700,0.000] | [0.000,0.000,5.000] | [0.000,0.000,0.000] det=2.450000 ortho_err=0.000000 spacing_err=0.0000 valid=True is_per_frame=False validation_errors=none hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:201 [R30_FIX_INIT] DisplayGeometry.__init__ matrix[2,3]=-1.0 viewport_id=vp0
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:568 [DISPLAY_GEOMETRY_CONTRACT] viewport_id=vp0 series_uid=axial operations=identity display_to_raw=[1.000 0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 1.000 -1.000 0.000 0.000 0.000 1.000] effective_col0=(0.7000,0.0000,0.0000) effective_col1=(0.0000,0.7000,0.0000) screen_right_lps=(1.0000,0.0000,0.0000) screen_up_lps=(-0.0000,-1.0000,-0.0000) valid=True hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:585 [EFFECTIVE_DISPLAY_AFFINE] viewport_id=vp0 series_uid=axial effective_display_ijk_to_lps=[[0.7000,0.0000,0.0000,0.0000],[0.0000,0.7000,0.0000,0.0000],[0.0000,0.0000,5.0000,-5.0000],[0.0000,0.0000,0.0000,1.0000]]
+_____ TestDisplayKPolicy.test_apply_stack_policy_maps_display_1_to_raw_0 ______
+
+self = <test_display_geometry.TestDisplayKPolicy object at 0x000001C384E5C910>
+
+    def test_apply_stack_policy_maps_display_1_to_raw_0(self):
+        sg = _axial_source(n_slices=20)
+        dg = DisplayGeometry(sg, "vp0")
+        dg.apply_k_flip_for_stack_order(20, reason="policy_test")
+    
+>       assert dg.display_k_to_raw_k(1) == 0
+E       assert -1 == 0
+E        +  where -1 = display_k_to_raw_k(1)
+E        +    where display_k_to_raw_k = <modules.viewer.geometry.display_geometry.DisplayGeometry object at 0x000001C3888062C0>.display_k_to_raw_k
+
+tests\code\viewer\test_display_geometry.py:440: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  modules.viewer.geometry.source_geometry:source_geometry.py:546 [GEOMETRY_SOURCE_CONTRACT] series_uid=axial frame_of_reference=1.2.3.FOR n_instances=20 row_cos=(1.0000,0.0000,0.0000) col_cos=(0.0000,1.0000,0.0000) slice_normal=(0.0000,0.0000,1.0000) row_spacing=0.7000 col_spacing=0.7000 slice_step=5.0000 origin=(0.000,0.000,0.000) n_rows=512 n_cols=512 n_slices=20 ijk_to_lps=[0.700,0.000,0.000] | [0.000,0.700,0.000] | [0.000,0.000,5.000] | [0.000,0.000,0.000] det=2.450000 ortho_err=0.000000 spacing_err=0.0000 valid=True is_per_frame=False validation_errors=none hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:201 [R30_FIX_INIT] DisplayGeometry.__init__ matrix[2,3]=-1.0 viewport_id=vp0
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:568 [DISPLAY_GEOMETRY_CONTRACT] viewport_id=vp0 series_uid=axial operations=identity display_to_raw=[1.000 0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 1.000 -1.000 0.000 0.000 0.000 1.000] effective_col0=(0.7000,0.0000,0.0000) effective_col1=(0.0000,0.7000,0.0000) screen_right_lps=(1.0000,0.0000,0.0000) screen_up_lps=(-0.0000,-1.0000,-0.0000) valid=True hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:585 [EFFECTIVE_DISPLAY_AFFINE] viewport_id=vp0 series_uid=axial effective_display_ijk_to_lps=[[0.7000,0.0000,0.0000,0.0000],[0.0000,0.7000,0.0000,0.0000],[0.0000,0.0000,5.0000,-5.0000],[0.0000,0.0000,0.0000,1.0000]]
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:568 [DISPLAY_GEOMETRY_CONTRACT] viewport_id=vp0 series_uid=axial operations=k_flip(n_slices=20,reason=policy_test) display_to_raw=[1.000 0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 1.000 -2.000 0.000 0.000 0.000 1.000] effective_col0=(0.7000,0.0000,0.0000) effective_col1=(0.0000,0.7000,0.0000) screen_right_lps=(1.0000,0.0000,0.0000) screen_up_lps=(-0.0000,-1.0000,-0.0000) valid=True hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:585 [EFFECTIVE_DISPLAY_AFFINE] viewport_id=vp0 series_uid=axial effective_display_ijk_to_lps=[[0.7000,0.0000,0.0000,0.0000],[0.0000,0.7000,0.0000,0.0000],[0.0000,0.0000,5.0000,-10.0000],[0.0000,0.0000,0.0000,1.0000]]
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:305 [DISPLAY_K_RUNTIME_BIND] viewport_id=vp0 n_slices=20 k_flip_active=False display_1_raw_k=-1 display_n_raw_k=18 reason=policy_test
+_ TestDisplayKPolicy.test_apply_stack_policy_inverse_maps_raw_0_to_display_1 __
+
+self = <test_display_geometry.TestDisplayKPolicy object at 0x000001C384E5CA50>
+
+    def test_apply_stack_policy_inverse_maps_raw_0_to_display_1(self):
+        sg = _axial_source(n_slices=20)
+        dg = DisplayGeometry(sg, "vp0")
+        dg.apply_k_flip_for_stack_order(20, reason="policy_test")
+    
+>       assert dg.raw_k_to_display_k(0) == 1
+E       assert 2 == 1
+E        +  where 2 = raw_k_to_display_k(0)
+E        +    where raw_k_to_display_k = <modules.viewer.geometry.display_geometry.DisplayGeometry object at 0x000001C388806FE0>.raw_k_to_display_k
+
+tests\code\viewer\test_display_geometry.py:448: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  modules.viewer.geometry.source_geometry:source_geometry.py:546 [GEOMETRY_SOURCE_CONTRACT] series_uid=axial frame_of_reference=1.2.3.FOR n_instances=20 row_cos=(1.0000,0.0000,0.0000) col_cos=(0.0000,1.0000,0.0000) slice_normal=(0.0000,0.0000,1.0000) row_spacing=0.7000 col_spacing=0.7000 slice_step=5.0000 origin=(0.000,0.000,0.000) n_rows=512 n_cols=512 n_slices=20 ijk_to_lps=[0.700,0.000,0.000] | [0.000,0.700,0.000] | [0.000,0.000,5.000] | [0.000,0.000,0.000] det=2.450000 ortho_err=0.000000 spacing_err=0.0000 valid=True is_per_frame=False validation_errors=none hash=6a22ec\nWARNING  modules.viewer.geometry.display_geometry:display_geometry.py:201 [R30_FIX_INIT] DisplayGeometry.__init__ matrix[2,3]=-1.0 viewport_id=vp0\nWARNING  modules.viewer.geometry.display_geometry:display_geometry.py:568 [DISPLAY_GEOMETRY_CONTRACT] viewport_id=vp0 series_uid=axial operations=identity display_to_raw=[1.000 0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 1.000 -1.000 0.000 0.000 0.000 1.000] effective_col0=(0.7000,0.0000,0.0000) effective_col1=(0.0000,0.7000,0.0000) screen_right_lps=(1.0000,0.0000,0.0000) screen_up_lps=(-0.0000,-1.0000,-0.0000) valid=True hash=6a22ec\nWARNING  modules.viewer.geometry.display_geometry:display_geometry.py:585 [EFFECTIVE_DISPLAY_AFFINE] viewport_id=vp0 series_uid=axial effective_display_ijk_to_lps=[[0.7000,0.0000,0.0000,0.0000],[0.0000,0.7000,0.0000,0.0000],[0.0000,0.0000,5.0000,-5.0000],[0.0000,0.0000,0.0000,1.0000]]\nWARNING  modules.viewer.geometry.display_geometry:display_geometry.py:568 [DISPLAY_GEOMETRY_CONTRACT] viewport_id=vp0 series_uid=axial operations=k_flip(n_slices=20,reason=policy_test) display_to_raw=[1.000 0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 1.000 -2.000 0.000 0.000 0.000 1.000] effective_col0=(0.7000,0.0000,0.0000) effective_col1=(0.0000,0.7000,0.0000) screen_right_lps=(1.0000,0.0000,0.0000) screen_up_lps=(-0.0000,-1.0000,-0.0000) valid=True hash=6a22ec\nWARNING  modules.viewer.geometry.display_geometry:display_geometry.py:585 [EFFECTIVE_DISPLAY_AFFINE] viewport_id=vp0 series_uid=axial effective_display_ijk_to_lps=[[0.7000,0.0000,0.0000,0.0000],[0.0000,0.7000,0.0000,0.0000],[0.0000,0.0000,5.0000,-10.0000],[0.0000,0.0000,0.0000,1.0000]]\nWARNING  modules.viewer.geometry.display_geometry:display_geometry.py:305 [DISPLAY_K_RUNTIME_BIND] viewport_id=vp0 n_slices=20 k_flip_active=False display_1_raw_k=-1 display_n_raw_k=18 reason=policy_test\nWARNING  modules.viewer.geometry.display_geometry:display_geometry.py:358 [R30_TRANSFORM] raw_k=0 \u2192 display_k=2 (k22=1.0, k23=2.0, m[2,3]=-2.0)
+___ test_completion_signal_triggers_one_shot_grow_on_non_progressive_viewer ___
+
+    def test_completion_signal_triggers_one_shot_grow_on_non_progressive_viewer():
+        """
+        S17: Live-connection final grow (from log 2026-04-03).
+    
+        Scenario:
+          - Series 6 drag-dropped when 20 of 25 images are on disk.
+          - change_series_on_viewer loads those 20 files normally — NOT progressive.
+          - The remaining 5 images download in one batch.  Only a single completion
+            signal fires: on_series_images_progress("6", 25, 25).
+          - No intermediate signal ever arrived so the retroactive activation
+            (downloaded < total path) never ran.
+          - Bug: the old `if downloaded < total:` guard skipped the retroactive scan
+            entirely, leaving the viewer stuck at slice 19 (image 20).
+          - Fix: the scan is now unconditional.  When downloaded >= total a one-shot
+            _grow_progressive_fast call is made immediately.
+    
+        Asserts:
+          - _grow_progressive_fast called exactly once with series_number="6".
+          - _start_progressive_display NOT called (no full reload needed).
+        """
+        scenario = "S17: one-shot final grow when last batch arrives all at once"
+    
+        c = _build_controller()
+    
+        # Track calls
+        grow_calls: list = []
+        start_calls: list = []
+    
+        def _fake_grow(sn, pending, viewers):
+            grow_calls.append((sn, pending, len(viewers)))
+    
+        c._grow_progressive_fast = _fake_grow
+        c._start_progressive_display = lambda *a, **kw: start_calls.append(a)
+    
+        # Viewer shows series 6 normally — NOT in progressive mode, 20 slices
+        node, vtk_w = _make_node(progressive_mode=False, progressive_sn=None, available_slices=20)
+        vtk_w.image_viewer = SimpleNamespace(
+            metadata={"series": {"series_number": "6"}},
+            get_count_of_slices=lambda: 20,
+        )
+        c.lst_nodes_viewer = [node]
+    
+        # Fire completion signal: 25/25 arrived (was 20 before drag-drop)
+        c.on_series_images_progress("6", 25, 25)
+    
+        grow_ok = len(grow_calls) == 1 and grow_calls[0][0] == "6" and grow_calls[0][1] == 25
+        start_ok = len(start_calls) == 0  # no full reload should be triggered
+    
+        _kpi.record(scenario, "_grow_progressive_fast called once", len(grow_calls),
+                    passed=(len(grow_calls) == 1))
+        _kpi.record(scenario, "_grow_progressive_fast series_number='6'",
+                    grow_calls[0][0] if grow_calls else "—", passed=(bool(grow_calls) and grow_calls[0][0] == "6"))
+        _kpi.record(scenario, "_grow_progressive_fast pending=25",
+                    grow_calls[0][1] if grow_calls else -1, passed=(bool(grow_calls) and grow_calls[0][1] == 25))
+        _kpi.record(scenario, "_start_progressive_display NOT called", len(start_calls),
+                    passed=start_ok)
+    
+>       assert grow_ok, f"_grow_progressive_fast expected once with sn='6', got: {grow_calls}"
+E       AssertionError: _grow_progressive_fast expected once with sn='6', got: []
+E       assert False
+
+tests\code\viewer\test_dragdrop_progressive.py:1257: AssertionError
+___________________________ test_session_start_stop ___________________________
+
+    def test_session_start_stop():
+        """Test start/stop session lifecycle."""
+        start_session("test-session-1")
+    
+        # Record some events
+        record_event("MouseMove", "app_filter", x=100, y=200)
+        time.sleep(0.01)  # 10ms gap
+        record_event("MouseMove", "app_filter", x=101, y=201)
+    
+        result = stop_session()
+        assert result is not None
+>       assert result.get("session_id") == "test-session-1"
+E       AssertionError: assert None == 'test-session-1'
+E        +  where None = <built-in method get of dict object at 0x000001C387505980>('session_id')
+E        +    where <built-in method get of dict object at 0x000001C387505980> = {}.get
+
+tests\code\viewer\test_event_loop_diagnostics.py:60: AssertionError
+_______ test_change_container_border_applies_active_and_inactive_styles _______
+
+    def test_change_container_border_applies_active_and_inactive_styles():
+        active_container = _ContainerStub()
+        inactive_container = _ContainerStub()
+        selected_nodes = []
+        refline_calls = []
+    
+        selected_node = SimpleNamespace(widget=active_container)
+        inactive_node = SimpleNamespace(widget=inactive_container)
+        controller = SimpleNamespace(
+            lst_nodes_viewer=[selected_node, inactive_node],
+            set_viewer_to_main_viewer=lambda node: selected_nodes.append(node),
+            parent_widget=SimpleNamespace(manage_reference_line=lambda: refline_calls.append(True)),
+            _viewport_container_styles=_VCLayoutMixin._viewport_container_styles,
+        )
+    
+>       _VCLayoutMixin.change_container_border(controller, 0)
+
+tests\code\viewer\test_fast_viewer_empty_state_ui.py:340: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = namespace(lst_nodes_viewer=[namespace(widget=<test_fast_viewer_empty_state_ui._ContainerStub object at 0x000001C38727C...001C3874A4860>), _viewport_container_styles=<function _VCLayoutMixin._viewport_container_styles at 0x000001C382090F40>)
+id_vtk_widget = 0
+
+    def change_container_border(self, id_vtk_widget):
+        node_viewer_selected = self.lst_nodes_viewer[id_vtk_widget]
+        for node_viewer in self.lst_nodes_viewer:
+            node_viewer: NodeViewer
+    
+            is_active = (node_viewer_selected.widget == node_viewer.widget)
+            # Origin: a viewport showing a PREVIOUS exam gets a red border; the
+            # current/main exam keeps the default blue accent. Pass the NODE — the
+            # origin stamp / series metadata live on node.vtk_widget (the FAST
+            # container), while node.widget is the bordered frame we style.
+>           is_prev = self._node_is_previous_exam(node_viewer)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E           AttributeError: 'types.SimpleNamespace' object has no attribute '_node_is_previous_exam'
+
+PacsClient\pacs\patient_tab\ui\patient_ui\_vc_layout.py:915: AttributeError
+_______________ test_grow_uses_qt_bridge_when_qt_bridge_active ________________
+
+    def test_grow_uses_qt_bridge_when_qt_bridge_active():
+        """
+        L9: When _qt_bridge_active=True the viewer uses a Lightweight2DPipeline
+        via QtViewerBridge.  _grow_progressive_fast must call bridge.grow() (which
+        calls pipeline.refresh_file_list and updates _slice_count) instead of
+        loader.grow().
+    
+        Without this the bridge's internal _slice_count would stay at the original
+        batch count, causing set_slice(n) to clamp at the old limit.
+        """
+        scenario = "L9: Qt-bridge path calls bridge.grow() not loader.grow()"
+    
+        c = _build_controller()
+        c._progressive_series = {"2": {"total": 30, "last_grow_count": 10, "last_signal_ms": 0}}
+    
+        bridge_grow_calls: List[int] = []
+    
+        mock_bridge = SimpleNamespace(
+            grow=lambda: (bridge_grow_calls.append(20), 20)[1],
+            metadata={"series": {"series_number": "2"}},
+            get_count_of_slices=lambda: 20,
+            image_reslice=None,
+        )
+    
+        vtk_w = SimpleNamespace(
+            _progressive_mode=True,
+            _progressive_series_number="2",
+            _lazy_loader=None,          # no lazy loader — Qt bridge path
+            _qt_bridge_active=True,
+            _active_backend="BACKEND_PYDICOM_QT",
+            image_viewer=mock_bridge,
+            _avail_calls=[],
+            _exit_pm_calls=[],
+            exit_progressive_mode=lambda: None,
+            update_available_slice_count=lambda n: vtk_w._avail_calls.append(n),
+            get_count_of_slices=lambda: 20,
+        )
+        node = _make_node(vtk_w)
+    
+        c._grow_progressive_fast("2", 20, [(vtk_w, node)])
+    
+        bridge_ok = len(bridge_grow_calls) >= 1
+        avail_ok = len(vtk_w._avail_calls) >= 1
+    
+        _kpi.record(scenario, "bridge.grow() called", len(bridge_grow_calls), passed=bridge_ok)
+        _kpi.record(scenario, "update_available_slice_count called",
+                    len(vtk_w._avail_calls), passed=avail_ok)
+    
+>       assert bridge_ok, (
+            f"bridge.grow() must be called on the Qt-bridge path, got {bridge_grow_calls}"
+        )
+E       AssertionError: bridge.grow() must be called on the Qt-bridge path, got []
+E       assert False
+
+tests\code\viewer\test_fast_viewer_live_sync.py:725: AssertionError
+________________ test_refresh_stored_metadata_called_each_grow ________________
+
+    def test_refresh_stored_metadata_called_each_grow():
+        """
+        L14: _refresh_stored_metadata_instances must be called after every grow —
+        partial and final — so that re-dropping the series into another viewer
+        always reflects the actual downloaded file count rather than the stale
+        pre-download metadata.
+    
+        Without this, a user who drag-drops Series 5 to a second viewer while 60/100
+        images are downloaded would see only the first-display count (e.g. 10) even
+        though 60 images are actually available.
+        """
+        scenario = "L14: _refresh_stored_metadata_instances called at partial and final grow"
+    
+        c = _build_controller()
+        sn = "14"
+        c._progressive_series = {sn: {"total": 30, "last_grow_count": 10, "last_signal_ms": 0}}
+    
+        refresh_calls: List[Any] = []
+        c._refresh_stored_metadata_instances = lambda s, count, **kw: refresh_calls.append((s, count))
+    
+        loader = _make_mock_loader(initial_count=10, grow_to=20)
+        reslice, _ = _make_mock_reslice(vtk_image_data=loader.vtk_image_data)
+        vtk_w = _make_vtk_widget(series_number=sn, loader=loader, reslice=reslice)
+        node = _make_node(vtk_w)
+    
+        # Partial grow (20/30)
+        c._grow_progressive_fast(sn, 20, [(vtk_w, node)])
+        partial_refresh_ok = len(refresh_calls) >= 1 and refresh_calls[0] == (sn, 20)
+    
+        # Final grow (30/30) — re-init loader grow to return 30
+        c._progressive_series[sn]["last_grow_count"] = 20
+        loader.grow = lambda: (loader._grow_calls.append(30), setattr(loader, "slice_count", 30), 30)[2]
+        c._grow_progressive_fast(sn, 30, [(vtk_w, node)])
+        final_refresh_ok = any(call == (sn, 30) for call in refresh_calls)
+    
+        _kpi.record(scenario, "refresh after partial grow (20)",
+                    str(partial_refresh_ok), passed=partial_refresh_ok)
+        _kpi.record(scenario, "refresh after final grow (30)",
+                    str(final_refresh_ok), passed=final_refresh_ok)
+    
+>       assert partial_refresh_ok, (
+            f"_refresh_stored_metadata_instances must be called at partial grow, "
+            f"got {refresh_calls}"
+        )
+E       AssertionError: _refresh_stored_metadata_instances must be called at partial grow, got [('14', 30)]
+E       assert False
+
+tests\code\viewer\test_fast_viewer_live_sync.py:1062: AssertionError
+______________ test_stale_grow_exhaustion_exits_progressive_mode ______________
+
+    def test_stale_grow_exhaustion_exits_progressive_mode():
+        """
+        L25: When _stale_retry_count has reached _STALE_RETRY_MAX (5) and
+        loader.grow() still returns a stale count, _grow_progressive_fast must:
+          1. Log STALE-EXHAUSTED error
+          2. Pop the series from _progressive_series (stops safety-net loop)
+          3. Call exit_progressive_mode() on each viewer
+          4. Update slider to (stale_count - 1) so no empty positions are accessible
+          5. NOT restart the timer (prevents infinite safety-net loop)
+          6. Return early — step 6 (exit) does NOT run again
+    
+        Root cause of infinite loop bug: without exhaustion handling, the safety-net
+        _flush_progressive_grow endlessly calls _grow_progressive_fast when
+        pending_downloaded(40) > last_grow_count(30), even after max retries.
+        """
+        scenario = "L25: stale exhaustion exits progressive mode and stops safety-net"
+    
+        c = _build_controller()
+        sn = "25"
+        # Already at max retries
+        c._progressive_series = {
+            sn: {
+                "total": 40,
+                "last_grow_count": 30,
+                "last_signal_ms": 0,
+                "_stale_retry_count": 5,  # already exhausted
+                "pending_downloaded": 40,
+            }
+        }
+    
+        stale_count = 30
+        loader = SimpleNamespace(
+            slice_count=stale_count,
+            vtk_image_data=object(),
+            grow=lambda: stale_count,  # still stale
+            backend=SimpleNamespace(
+                get_file_paths=lambda: [f"f{i}.dcm" for i in range(stale_count)],
+            ),
+        )
+        reslice, _ = _make_mock_reslice(vtk_image_data=loader.vtk_image_data)
+        vtk_w = _make_vtk_widget(
+            series_number=sn, loader=loader, reslice=reslice, progressive_mode=True,
+        )
+        slider = _make_slider()
+        node = _make_node(vtk_w, slider)
+    
+        timer_starts: List[int] = []
+        c._progressive_grow_timer = SimpleNamespace(
+            start=lambda: timer_starts.append(1),
+            isActive=lambda: False,
+            interval=lambda: 150,
+        )
+        error_logs: List[str] = []
+        c.logger = SimpleNamespace(
+            info=lambda *a, **kw: None,
+            debug=lambda *a, **kw: None,
+            warning=lambda *a, **kw: None,
+            error=lambda fmt, *a, **kw: error_logs.append(fmt % a if a else fmt),
+        )
+    
+        c._grow_progressive_fast(sn, 40, [(vtk_w, node)])
+    
+        popped         = sn not in c._progressive_series
+        exited         = len(vtk_w._exit_pm_calls) >= 1
+        slider_updated = slider._set_max_calls and slider._set_max_calls[-1] == stale_count - 1
+        no_timer       = len(timer_starts) == 0
+        errored        = any("STALE-EXHAUSTED" in e for e in error_logs)
+    
+        _kpi.record(scenario, "series popped from _progressive_series", popped, passed=popped)
+        _kpi.record(scenario, "exit_progressive_mode called",
+                    len(vtk_w._exit_pm_calls), passed=exited)
+        _kpi.record(scenario, "slider set to stale_count - 1",
+                    slider._set_max_calls[-1] if slider._set_max_calls else -1, passed=slider_updated)
+        _kpi.record(scenario, "timer NOT restarted on exhaustion",
+                    len(timer_starts), passed=no_timer)
+        _kpi.record(scenario, "STALE-EXHAUSTED error logged", str(errored), passed=errored)
+    
+>       assert popped, f"series must be popped on exhaustion; _progressive_series={c._progressive_series}"
+E       AssertionError: series must be popped on exhaustion; _progressive_series={'25': {'total': 40, 'last_grow_count': 30, 'last_signal_ms': 0, '_stale_retry_count': 1, 'pending_downloaded': 40, '_stale_last_count': 30}}
+E       assert False
+
+tests\code\viewer\test_fast_viewer_live_sync.py:1927: AssertionError
+_____ test_perform_series_switch_optimized_refits_qt_target_after_switch ______
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C3867647C0>
+
+    def test_perform_series_switch_optimized_refits_qt_target_after_switch(monkeypatch):
+        controller = _build_controller()
+        controller._perform_series_switch_optimized = controller_mod.ViewerController._perform_series_switch_optimized.__get__(
+            controller,
+            controller_mod.ViewerController,
+        )
+        refit_calls = []
+        queued = []
+        hidden = []
+    
+        def _switch_series(*args, **kwargs):
+            vtk_widget._qt_switch_refit_applied = True
+            return True
+    
+        vtk_widget = SimpleNamespace(
+            _qt_bridge_active=True,
+            _qt_switch_refit_applied=False,
+            _awaiting_series_number="201",
+            _sync_qt_viewer_presentation=lambda **kwargs: refit_calls.append(kwargs),
+            switch_series=_switch_series,
+            get_count_of_slices=lambda: 24,
+            image_viewer=SimpleNamespace(update_corners_actors=lambda: None),
+        )
+    
+        controller.parent_widget = SimpleNamespace(
+            metadata_fixed={"patient_pk": 10, "study_pk": 20},
+            reset_slider=lambda *args, **kwargs: None,
+            toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+            manage_reference_line=lambda: None,
+        )
+        controller._paired_series_map = {}
+        controller._progressive_series = {}
+        controller._image_slice_booster = SimpleNamespace(
+            is_active=False,
+            clear=lambda: None,
+            set_active=lambda *args, **kwargs: None,
+        )
+        controller._get_requested_viewer_backend = lambda: controller_mod.BACKEND_PYDICOM_QT
+        controller._is_fast_viewer_mode = lambda: False
+        controller._refresh_zeta_protected_series = lambda: None
+        controller._is_full_volume_cache_candidate = lambda *args, **kwargs: False
+        controller._enqueue_lookahead_warmup = lambda *args, **kwargs: None
+        controller._sync_progressive_available_after_switch = lambda: None
+        controller.save_status_camera = lambda *args, **kwargs: None
+        controller._hide_spinner_for_widget = lambda widget: hidden.append(widget)
+    
+        monkeypatch.setattr(_vc_switch_mod.QTimer, "singleShot", lambda delay, fn: queued.append(delay))
+    
+        controller._perform_series_switch_optimized(
+            vtk_widget,
+            {"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+            _DummyVtkImage(),
+            0,
+            "slider-1",
+        )
+    
+        assert refit_calls == []
+>       assert queued == [0, 100]
+E       assert [] == [0, 100]
+E         
+E         Right contains 2 more items, first extra item: 0
+E         Use -v to get more diff
+
+tests\code\viewer\test_fast_viewer_pipeline.py:1747: AssertionError
+________ test_perform_series_switch_optimized_defers_followup_ui_work _________
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C3885D80C0>
+
+    def test_perform_series_switch_optimized_defers_followup_ui_work(monkeypatch):
+        controller = _build_controller()
+        controller._perform_series_switch_optimized = controller_mod.ViewerController._perform_series_switch_optimized.__get__(
+            controller,
+            controller_mod.ViewerController,
+        )
+    
+        refit_calls = []
+        queued = []
+        hidden = []
+        corner_updates = []
+        refline_calls = []
+        zeta_refresh_calls = []
+        lookahead_calls = []
+    
+        image_viewer = SimpleNamespace(
+            update_corners_actors=lambda: corner_updates.append("corners"),
+            GetSlice=lambda: 0,
+        )
+    
+        def _switch_series(*args, **kwargs):
+            vtk_widget._qt_switch_refit_applied = True
+            return True
+    
+        vtk_widget = SimpleNamespace(
+            _qt_bridge_active=True,
+            _qt_switch_refit_applied=False,
+            _awaiting_series_number="201",
+            _sync_qt_viewer_presentation=lambda **kwargs: refit_calls.append(kwargs),
+            switch_series=_switch_series,
+            get_count_of_slices=lambda: 24,
+            image_viewer=image_viewer,
+        )
+    
+        controller.parent_widget = SimpleNamespace(
+            metadata_fixed={"patient_pk": 10, "study_pk": 20},
+            reset_slider=lambda *args, **kwargs: None,
+            toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+            manage_reference_line=lambda: refline_calls.append("refline"),
+        )
+        controller._paired_series_map = {}
+        controller._progressive_series = {}
+        controller._image_slice_booster = SimpleNamespace(
+            is_active=False,
+            clear=lambda: None,
+            set_active=lambda *args, **kwargs: None,
+        )
+        controller._get_requested_viewer_backend = lambda: controller_mod.BACKEND_PYDICOM_QT
+        controller._is_fast_viewer_mode = lambda: False
+        controller._refresh_zeta_protected_series = lambda: zeta_refresh_calls.append("zeta")
+        controller._is_full_volume_cache_candidate = lambda *args, **kwargs: False
+        controller._enqueue_lookahead_warmup = lambda sn: lookahead_calls.append(sn)
+        controller._sync_progressive_available_after_switch = lambda: None
+        controller.save_status_camera = lambda *args, **kwargs: None
+        controller._hide_spinner_for_widget = lambda widget: hidden.append(widget)
+    
+        monkeypatch.setattr(
+            _vc_switch_mod.QTimer,
+            "singleShot",
+            lambda delay, fn: queued.append((delay, fn)),
+        )
+    
+        controller._perform_series_switch_optimized(
+            vtk_widget,
+            {"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+            _DummyVtkImage(),
+            0,
+            "slider-1",
+        )
+    
+        assert refit_calls == []
+>       assert hidden == [vtk_widget]
+E       AssertionError: assert [] == [namespace(_q...1-322757112')]
+E         
+E         Right contains one more item: namespace(_qt_bridge_active=True, _qt_switch_refit_applied=True, _awaiting_series_number=None, _sync_qt_viewer_present...ch_optimized_defers_followup_ui_work.<locals>.<lambda> at 0x000001C3874A98A0>), _corr_switch_id='switch-201-322757112')
+E         Use -v to get more diff
+
+tests\code\viewer\test_fast_viewer_pipeline.py:1823: AssertionError
+__ test_perform_series_switch_optimized_queues_qt_refit_for_inplace_refresh ___
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x000001C3885D8360>
+
+    def test_perform_series_switch_optimized_queues_qt_refit_for_inplace_refresh(monkeypatch):
+        controller = _build_controller()
+        controller._perform_series_switch_optimized = controller_mod.ViewerController._perform_series_switch_optimized.__get__(
+            controller,
+            controller_mod.ViewerController,
+        )
+    
+        refit_calls = []
+        queued = []
+    
+        def _switch_series(*args, **kwargs):
+            vtk_widget._qt_switch_refit_applied = False
+            return True
+    
+        vtk_widget = SimpleNamespace(
+            _qt_bridge_active=True,
+            _qt_switch_refit_applied=False,
+            _awaiting_series_number="201",
+            _sync_qt_viewer_presentation=lambda **kwargs: refit_calls.append(kwargs),
+            switch_series=_switch_series,
+            get_count_of_slices=lambda: 24,
+            image_viewer=SimpleNamespace(update_corners_actors=lambda: None),
+        )
+    
+        controller.parent_widget = SimpleNamespace(
+            metadata_fixed={"patient_pk": 10, "study_pk": 20},
+            reset_slider=lambda *args, **kwargs: None,
+            toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+            manage_reference_line=lambda: None,
+        )
+        controller._paired_series_map = {}
+        controller._progressive_series = {}
+        controller._image_slice_booster = SimpleNamespace(
+            is_active=False,
+            clear=lambda: None,
+            set_active=lambda *args, **kwargs: None,
+        )
+        controller._get_requested_viewer_backend = lambda: controller_mod.BACKEND_PYDICOM_QT
+        controller._is_fast_viewer_mode = lambda: False
+        controller._refresh_zeta_protected_series = lambda: None
+        controller._is_full_volume_cache_candidate = lambda *args, **kwargs: False
+        controller._enqueue_lookahead_warmup = lambda *args, **kwargs: None
+        controller._sync_progressive_available_after_switch = lambda: None
+        controller.save_status_camera = lambda *args, **kwargs: None
+        controller._hide_spinner_for_widget = lambda widget: None
+    
+        monkeypatch.setattr(
+            _vc_switch_mod.QTimer,
+            "singleShot",
+            lambda delay, fn: queued.append((delay, fn)),
+        )
+    
+        controller._perform_series_switch_optimized(
+            vtk_widget,
+            {"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+            _DummyVtkImage(),
+            0,
+            "slider-1",
+        )
+    
+>       assert [delay for delay, _ in queued] == [0, 0, 100]
+E       assert [] == [0, 0, 100]
+E         
+E         Right contains 3 more items, first extra item: 0
+E         Use -v to get more diff
+
+tests\code\viewer\test_fast_viewer_pipeline.py:1905: AssertionError
+_____ test_display_loaded_series_hides_spinner_immediately_after_success ______
+
+    def test_display_loaded_series_hides_spinner_immediately_after_success():
+        controller = _build_controller()
+        hide_calls = []
+        controller._paired_series_map = {}
+    
+        target_widget = SimpleNamespace(
+            switch_series=lambda *args, **kwargs: True,
+            _qt_bridge_active=False,
+            image_viewer=SimpleNamespace(update_corners_actors=lambda: None),
+        )
+        controller.selected_widget = target_widget
+        controller.parent_widget = SimpleNamespace(
+            metadata_fixed={},
+            reset_slider=lambda *args, **kwargs: None,
+            toolbar_manager=SimpleNamespace(turn_off_all_tools=lambda: None),
+            manage_reference_line=lambda: None,
+        )
+        controller._hide_spinner_for_widget = lambda widget: hide_calls.append(widget)
+    
+        controller._display_loaded_series(
+            series_number="201",
+            series_idx=0,
+            vtk_image_data=_DummyVtkImage(),
+            metadata={"series": {"series_number": "201", "series_name": "CT 1", "modality": "CT"}},
+            flag_change_selected_widget=False,
+            vtk_widget=target_widget,
+            slider="slider-1",
+            progressive_total=0,
+        )
+    
+>       assert hide_calls == [target_widget]
+E       assert [] == [namespace(sw...C38861C0E0>))]
+E         
+E         Right contains one more item: namespace(switch_series=<function test_display_loaded_series_hides_spinner_immediately_after_success.<locals>.<lambda>...<function test_display_loaded_series_hides_spinner_immediately_after_success.<locals>.<lambda> at 0x000001C38861C0E0>))
+E         Use -v to get more diff
+
+tests\code\viewer\test_fast_viewer_pipeline.py:2336: AssertionError
+_________________ TestDisplayedIndexToLps.test_origin_at_zero _________________
+
+self = <test_geometry_api.TestDisplayedIndexToLps object at 0x000001C386738690>
+
+    def test_origin_at_zero(self):
+        dg = _axial_dg()
+        lps = GeometryAPI.displayed_index_to_lps(dg, 0, 0, 0)
+>       np.testing.assert_allclose(lps, dg.source.origin_ipp, atol=1e-9)
+E       AssertionError: 
+E       Not equal to tolerance rtol=1e-07, atol=1e-09
+E       
+E       Mismatched elements: 1 / 3 (33.3%)
+E       Mismatch at index:
+E        [2]: -5.0 (ACTUAL), 0.0 (DESIRED)
+E       Max absolute difference among violations: 5.
+E       Max relative difference among violations: inf
+E        ACTUAL: array([ 0.,  0., -5.])
+E        DESIRED: array([0., 0., 0.])
+
+tests\code\viewer\test_geometry_api.py:83: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  modules.viewer.geometry.source_geometry:source_geometry.py:546 [GEOMETRY_SOURCE_CONTRACT] series_uid=axial frame_of_reference=1.2.3.FOR n_instances=10 row_cos=(1.0000,0.0000,0.0000) col_cos=(0.0000,1.0000,0.0000) slice_normal=(0.0000,0.0000,1.0000) row_spacing=0.7000 col_spacing=0.7000 slice_step=5.0000 origin=(0.000,0.000,0.000) n_rows=512 n_cols=512 n_slices=10 ijk_to_lps=[0.700,0.000,0.000] | [0.000,0.700,0.000] | [0.000,0.000,5.000] | [0.000,0.000,0.000] det=2.450000 ortho_err=0.000000 spacing_err=0.0000 valid=True is_per_frame=False validation_errors=none hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:201 [R30_FIX_INIT] DisplayGeometry.__init__ matrix[2,3]=-1.0 viewport_id=axial
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:568 [DISPLAY_GEOMETRY_CONTRACT] viewport_id=axial series_uid=axial operations=identity display_to_raw=[1.000 0.000 0.000 0.000 0.000 1.000 0.000 0.000 0.000 0.000 1.000 -1.000 0.000 0.000 0.000 1.000] effective_col0=(0.7000,0.0000,0.0000) effective_col1=(0.0000,0.7000,0.0000) screen_right_lps=(1.0000,0.0000,0.0000) screen_up_lps=(-0.0000,-1.0000,-0.0000) valid=True hash=6a22ec
+WARNING  modules.viewer.geometry.display_geometry:display_geometry.py:585 [EFFECTIVE_DISPLAY_AFFINE] viewport_id=axial series_uid=axial effective_display_ijk_to_lps=[[0.7000,0.0000,0.0000,0.0000],[0.0000,0.7000,0.0000,0.0000],[0.0000,0.0000,5.0000,-5.0000],[0.0000,0.0000,0.0000,1.0000]]
+__________ test_fallback_syncs_canonical_metadata_and_forces_reload ___________
+
+    def test_fallback_syncs_canonical_metadata_and_forces_reload():
+        src = _src()
+        idx = src.find("AIPACS_GROW_FALLBACK_FORCE_RELOAD")
+        assert idx != -1
+        block = src[idx: idx + 1600]
+        # Busts the 1 s disk-count cache so the refresh sees the true file count.
+        assert "_invalidate_disk_count_cache(series_number)" in block
+        # COMPLETE FIX: brings the canonical lst_thumbnails_data metadata up to the
+        # true on-disk file count BEFORE the rebuild, so _get_series_by_number_fast
+        # serves the full instance list instead of the stale 1-8 instance stub.
+        assert "_refresh_and_sync_metadata(series_number, _fresh_disk)" in block
+        # ALWAYS re-sync when disk has files — the refresh's own internal guard reads
+        # the REAL canonical count and no-ops cheaply; gating on displayed_count (the
+        # viewer's metadata) skipped the re-sync when a separate writer clobbered the
+        # canonical back to a stub (47855 series 203).
+        assert re.search(r"if\s+_fresh_disk\s*>\s*0\s*:", block)
+        # Flips force_reload so the container same-series no-op is bypassed.
+>       assert re.search(r"\bforce_reload\s*=\s*True\b", block)
+E       assert None
+E        +  where None = <function search at 0x000001C3CCFE0AE0>('\\bforce_reload\\s*=\\s*True\\b', 'AIPACS_GROW_FALLBACK_FORCE_RELOAD", "1") or "1").strip() != "0":\n                            try:\n                 ...on:\n                                pass\n                            # Only REBUILD when the viewport is genuinely B')
+E        +    where <function search at 0x000001C3CCFE0AE0> = re.search
+
+tests\code\viewer\test_grow_fallback_force_reload.py:86: AssertionError
+_____ test_non_mg_or_non_monochrome1_not_rejected_by_mg_placeholder_rule ______
+
+    def test_non_mg_or_non_monochrome1_not_rejected_by_mg_placeholder_rule():
+        ww_ct, wc_ct = normalize_window_level(
+            32768,
+            32768,
+            treat_mg_full_range_placeholder_as_missing=True,
+            modality="CT",
+            photometric="MONOCHROME2",
+        )
+        ww_mg_mono2, wc_mg_mono2 = normalize_window_level(
+            32768,
+            32768,
+            treat_mg_full_range_placeholder_as_missing=True,
+            modality="MG",
+            photometric="MONOCHROME2",
+            presentation_intent_type="FOR PRESENTATION",
+        )
+        assert ww_ct == 32768.0 and wc_ct == 32768.0
+>       assert ww_mg_mono2 == 32768.0 and wc_mg_mono2 == 32768.0
+E       assert (None == 32768.0)
+
+tests\code\viewer\test_mg_window_placeholder.py:49: AssertionError
+_____________ test_overlap_pixel_quality_settled[filter_on_mono2] _____________
+
+case = Case(case_id='filter_on_mono2', filter_enabled=True, photometric='MONOCHROME2')
+tmp_path = WindowsPath('C:/Users/Dr.Alizadeh/AppData/Local/Temp/pytest-of-Dr.Alizadeh/pytest-923/test_overlap_pixel_quality_set1')
+capture_golden = False
+
+    @pytest.mark.parametrize(
+        "case",
+        CASES,
+        ids=[c.case_id for c in CASES],
+    )
+    def test_overlap_pixel_quality_settled(case: Case, tmp_path: Path, capture_golden: bool):
+        """Settled-frame pixel hashes must match the golden file 100%.
+    
+        F1.1 contract:
+          * In ``--capture-golden`` mode, write the golden JSON and pass.
+          * Otherwise, load the golden JSON and require an EXACT match.
+          * Missing golden file is a hard failure (with capture instructions).
+        """
+        series_dir = tmp_path / "series"
+        _make_series(series_dir, case.photometric)
+    
+        hashes, meta = _capture_settled_hashes(series_dir, case)
+    
+        payload = {
+            "schema_version": 1,
+            "case_id": case.case_id,
+            "filter_enabled": case.filter_enabled,
+            "photometric": case.photometric,
+            "n_slices": N_SLICES,
+            "rows": ROWS,
+            "cols": COLS,
+            "rendered_meta_first": meta,
+            "hashes": hashes,
+        }
+    
+        if capture_golden:
+            case.golden_path.parent.mkdir(parents=True, exist_ok=True)
+            case.golden_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return
+    
+        if not case.golden_path.exists():
+            pytest.fail(
+                f"Golden file missing for case '{case.case_id}'.\n"
+                f"Capture it with:\n"
+                f"  .venv\\Scripts\\python.exe -m pytest "
+                f"tests/viewer/test_overlap_pixel_quality.py "
+                f"--capture-golden -v\n"
+                f"Expected path: {case.golden_path}"
+            )
+    
+        golden = json.loads(case.golden_path.read_text(encoding="utf-8"))
+        assert golden["case_id"] == case.case_id
+        assert golden["filter_enabled"] == case.filter_enabled
+        assert golden["photometric"] == case.photometric
+        assert golden["n_slices"] == N_SLICES
+        assert golden["rows"] == ROWS
+        assert golden["cols"] == COLS
+    
+        expected = list(golden["hashes"])
+        actual = list(hashes)
+        if expected != actual:
+            diff_idx = [i for i, (a, b) in enumerate(zip(expected, actual)) if a != b]
+>           pytest.fail(
+                f"Pixel-hash mismatch for case '{case.case_id}': "
+                f"{len(diff_idx)} / {N_SLICES} slices differ "
+                f"(indices {diff_idx[:5]}{'...' if len(diff_idx) > 5 else ''}).\n"
+                f"Image quality has changed. Either:\n"
+                f"  (a) the change was unintended — REVERT IT, or\n"
+                f"  (b) the change was intentional — re-capture goldens with "
+                f"--capture-golden and document the reason."
+            )
+E           Failed: Pixel-hash mismatch for case 'filter_on_mono2': 10 / 10 slices differ (indices [0, 1, 2, 3, 4]...).
+E           Image quality has changed. Either:
+E             (a) the change was unintended — REVERT IT, or
+E             (b) the change was intentional — re-capture goldens with --capture-golden and document the reason.
+
+tests\code\viewer\test_overlap_pixel_quality.py:275: Failed
+____________ test_overlap_pixel_quality_settled[filter_off_mono1] _____________
+
+case = Case(case_id='filter_off_mono1', filter_enabled=False, photometric='MONOCHROME1')
+tmp_path = WindowsPath('C:/Users/Dr.Alizadeh/AppData/Local/Temp/pytest-of-Dr.Alizadeh/pytest-923/test_overlap_pixel_quality_set2')
+capture_golden = False
+
+    @pytest.mark.parametrize(
+        "case",
+        CASES,
+        ids=[c.case_id for c in CASES],
+    )
+    def test_overlap_pixel_quality_settled(case: Case, tmp_path: Path, capture_golden: bool):
+        """Settled-frame pixel hashes must match the golden file 100%.
+    
+        F1.1 contract:
+          * In ``--capture-golden`` mode, write the golden JSON and pass.
+          * Otherwise, load the golden JSON and require an EXACT match.
+          * Missing golden file is a hard failure (with capture instructions).
+        """
+        series_dir = tmp_path / "series"
+        _make_series(series_dir, case.photometric)
+    
+        hashes, meta = _capture_settled_hashes(series_dir, case)
+    
+        payload = {
+            "schema_version": 1,
+            "case_id": case.case_id,
+            "filter_enabled": case.filter_enabled,
+            "photometric": case.photometric,
+            "n_slices": N_SLICES,
+            "rows": ROWS,
+            "cols": COLS,
+            "rendered_meta_first": meta,
+            "hashes": hashes,
+        }
+    
+        if capture_golden:
+            case.golden_path.parent.mkdir(parents=True, exist_ok=True)
+            case.golden_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return
+    
+        if not case.golden_path.exists():
+            pytest.fail(
+                f"Golden file missing for case '{case.case_id}'.\n"
+                f"Capture it with:\n"
+                f"  .venv\\Scripts\\python.exe -m pytest "
+                f"tests/viewer/test_overlap_pixel_quality.py "
+                f"--capture-golden -v\n"
+                f"Expected path: {case.golden_path}"
+            )
+    
+        golden = json.loads(case.golden_path.read_text(encoding="utf-8"))
+        assert golden["case_id"] == case.case_id
+        assert golden["filter_enabled"] == case.filter_enabled
+        assert golden["photometric"] == case.photometric
+        assert golden["n_slices"] == N_SLICES
+        assert golden["rows"] == ROWS
+        assert golden["cols"] == COLS
+    
+        expected = list(golden["hashes"])
+        actual = list(hashes)
+        if expected != actual:
+            diff_idx = [i for i, (a, b) in enumerate(zip(expected, actual)) if a != b]
+>           pytest.fail(
+                f"Pixel-hash mismatch for case '{case.case_id}': "
+                f"{len(diff_idx)} / {N_SLICES} slices differ "
+                f"(indices {diff_idx[:5]}{'...' if len(diff_idx) > 5 else ''}).\n"
+                f"Image quality has changed. Either:\n"
+                f"  (a) the change was unintended — REVERT IT, or\n"
+                f"  (b) the change was intentional — re-capture goldens with "
+                f"--capture-golden and document the reason."
+            )
+E           Failed: Pixel-hash mismatch for case 'filter_off_mono1': 10 / 10 slices differ (indices [0, 1, 2, 3, 4]...).
+E           Image quality has changed. Either:
+E             (a) the change was unintended — REVERT IT, or
+E             (b) the change was intentional — re-capture goldens with --capture-golden and document the reason.
+
+tests\code\viewer\test_overlap_pixel_quality.py:275: Failed
+_____________ test_overlap_pixel_quality_settled[filter_on_mono1] _____________
+
+case = Case(case_id='filter_on_mono1', filter_enabled=True, photometric='MONOCHROME1')
+tmp_path = WindowsPath('C:/Users/Dr.Alizadeh/AppData/Local/Temp/pytest-of-Dr.Alizadeh/pytest-923/test_overlap_pixel_quality_set3')
+capture_golden = False
+
+    @pytest.mark.parametrize(
+        "case",
+        CASES,
+        ids=[c.case_id for c in CASES],
+    )
+    def test_overlap_pixel_quality_settled(case: Case, tmp_path: Path, capture_golden: bool):
+        """Settled-frame pixel hashes must match the golden file 100%.
+    
+        F1.1 contract:
+          * In ``--capture-golden`` mode, write the golden JSON and pass.
+          * Otherwise, load the golden JSON and require an EXACT match.
+          * Missing golden file is a hard failure (with capture instructions).
+        """
+        series_dir = tmp_path / "series"
+        _make_series(series_dir, case.photometric)
+    
+        hashes, meta = _capture_settled_hashes(series_dir, case)
+    
+        payload = {
+            "schema_version": 1,
+            "case_id": case.case_id,
+            "filter_enabled": case.filter_enabled,
+            "photometric": case.photometric,
+            "n_slices": N_SLICES,
+            "rows": ROWS,
+            "cols": COLS,
+            "rendered_meta_first": meta,
+            "hashes": hashes,
+        }
+    
+        if capture_golden:
+            case.golden_path.parent.mkdir(parents=True, exist_ok=True)
+            case.golden_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            return
+    
+        if not case.golden_path.exists():
+            pytest.fail(
+                f"Golden file missing for case '{case.case_id}'.\n"
+                f"Capture it with:\n"
+                f"  .venv\\Scripts\\python.exe -m pytest "
+                f"tests/viewer/test_overlap_pixel_quality.py "
+                f"--capture-golden -v\n"
+                f"Expected path: {case.golden_path}"
+            )
+    
+        golden = json.loads(case.golden_path.read_text(encoding="utf-8"))
+        assert golden["case_id"] == case.case_id
+        assert golden["filter_enabled"] == case.filter_enabled
+        assert golden["photometric"] == case.photometric
+        assert golden["n_slices"] == N_SLICES
+        assert golden["rows"] == ROWS
+        assert golden["cols"] == COLS
+    
+        expected = list(golden["hashes"])
+        actual = list(hashes)
+        if expected != actual:
+            diff_idx = [i for i, (a, b) in enumerate(zip(expected, actual)) if a != b]
+>           pytest.fail(
+                f"Pixel-hash mismatch for case '{case.case_id}': "
+                f"{len(diff_idx)} / {N_SLICES} slices differ "
+                f"(indices {diff_idx[:5]}{'...' if len(diff_idx) > 5 else ''}).\n"
+                f"Image quality has changed. Either:\n"
+                f"  (a) the change was unintended — REVERT IT, or\n"
+                f"  (b) the change was intentional — re-capture goldens with "
+                f"--capture-golden and document the reason."
+            )
+E           Failed: Pixel-hash mismatch for case 'filter_on_mono1': 10 / 10 slices differ (indices [0, 1, 2, 3, 4]...).
+E           Image quality has changed. Either:
+E             (a) the change was unintended — REVERT IT, or
+E             (b) the change was intentional — re-capture goldens with --capture-golden and document the reason.
+
+tests\code\viewer\test_overlap_pixel_quality.py:275: Failed
+______________ test_overlap_pixel_quality_drag[filter_on_mono2] _______________
+
+case = Case(case_id='filter_on_mono2', filter_enabled=True, photometric='MONOCHROME2')
+tmp_path = WindowsPath('C:/Users/Dr.Alizadeh/AppData/Local/Temp/pytest-of-Dr.Alizadeh/pytest-923/test_overlap_pixel_quality_dra1')
+
+    @pytest.mark.parametrize(
+        "case",
+        CASES,
+        ids=[c.case_id for c in CASES],
+    )
+    def test_overlap_pixel_quality_drag(case: Case, tmp_path: Path):
+        """Drag-mode rendering must serve only valid neighbor frames; settle exact."""
+        drag_ref = _load_drag_reference(case)
+        drag_ref_set = set(drag_ref)
+        drag_ref_index: Dict[str, List[int]] = {}
+        for j, h in enumerate(drag_ref):
+            drag_ref_index.setdefault(h, []).append(j)
+    
+        settled_ref = _load_settled_reference(case)
+        assert len(drag_ref) == N_SLICES
+        assert len(settled_ref) == N_SLICES
+    
+        series_dir = tmp_path / "series"
+        _make_series(series_dir, case.photometric)
+    
+        pipeline = _open_pipeline(series_dir, case)
+        try:
+            # \u2500\u2500 Drag through every slice in scan order \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            # The pipeline serves a mix of exact decodes and surrogates. The
+            # contracts below validate both kinds without depending on which
+            # specific indices end up as which.
+            pipeline.set_fast_interaction(True, "drag")
+            drag_hashes: List[str] = []
+            for i in range(N_SLICES):
+                f = pipeline.get_rendered_frame(i, interaction_type="drag")
+                assert f is not None and f.qimage is not None
+                assert f.width == COLS and f.height == ROWS, (
+                    f"{case.case_id}: drag QImage geometry wrong at idx={i}: "
+                    f"{f.width}x{f.height} (expected {COLS}x{ROWS})"
+                )
+                drag_hashes.append(_qimage_sha256(f.qimage))
+    
+            # \u2500\u2500 Validity: every served frame is the rendering of *some* slice \u2500
+            invalid = [
+                (i, h[:12])
+                for i, h in enumerate(drag_hashes)
+                if h not in drag_ref_set
+            ]
+>           assert not invalid, (
+                f"{case.case_id}: {len(invalid)} drag frames are NOT a known slice "
+                f"rendering - corruption or dim/zero QImage. First few: "
+                f"{invalid[:5]}"
+            )
+E           AssertionError: filter_on_mono2: 10 drag frames are NOT a known slice rendering - corruption or dim/zero QImage. First few: [(0, '1983d46b1b80'), (1, '964e4e1380e7'), (2, '68203b8d2312'), (3, '600d6b95cb1c'), (4, '6f56fac36e77')]
+E           assert not [(0, '1983d46b1b80'), (1, '964e4e1380e7'), (2, '68203b8d2312'), (3, '600d6b95cb1c'), (4, '6f56fac36e77'), (5, '63903f27da30'), ...]
+
+tests\code\viewer\test_overlap_pixel_quality_drag.py:159: AssertionError
+______________ test_overlap_pixel_quality_drag[filter_off_mono1] ______________
+
+case = Case(case_id='filter_off_mono1', filter_enabled=False, photometric='MONOCHROME1')
+tmp_path = WindowsPath('C:/Users/Dr.Alizadeh/AppData/Local/Temp/pytest-of-Dr.Alizadeh/pytest-923/test_overlap_pixel_quality_dra2')
+
+    @pytest.mark.parametrize(
+        "case",
+        CASES,
+        ids=[c.case_id for c in CASES],
+    )
+    def test_overlap_pixel_quality_drag(case: Case, tmp_path: Path):
+        """Drag-mode rendering must serve only valid neighbor frames; settle exact."""
+        drag_ref = _load_drag_reference(case)
+        drag_ref_set = set(drag_ref)
+        drag_ref_index: Dict[str, List[int]] = {}
+        for j, h in enumerate(drag_ref):
+            drag_ref_index.setdefault(h, []).append(j)
+    
+        settled_ref = _load_settled_reference(case)
+        assert len(drag_ref) == N_SLICES
+        assert len(settled_ref) == N_SLICES
+    
+        series_dir = tmp_path / "series"
+        _make_series(series_dir, case.photometric)
+    
+        pipeline = _open_pipeline(series_dir, case)
+        try:
+            # \u2500\u2500 Drag through every slice in scan order \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            # The pipeline serves a mix of exact decodes and surrogates. The
+            # contracts below validate both kinds without depending on which
+            # specific indices end up as which.
+            pipeline.set_fast_interaction(True, "drag")
+            drag_hashes: List[str] = []
+            for i in range(N_SLICES):
+                f = pipeline.get_rendered_frame(i, interaction_type="drag")
+                assert f is not None and f.qimage is not None
+                assert f.width == COLS and f.height == ROWS, (
+                    f"{case.case_id}: drag QImage geometry wrong at idx={i}: "
+                    f"{f.width}x{f.height} (expected {COLS}x{ROWS})"
+                )
+                drag_hashes.append(_qimage_sha256(f.qimage))
+    
+            # \u2500\u2500 Validity: every served frame is the rendering of *some* slice \u2500
+            invalid = [
+                (i, h[:12])
+                for i, h in enumerate(drag_hashes)
+                if h not in drag_ref_set
+            ]
+>           assert not invalid, (
+                f"{case.case_id}: {len(invalid)} drag frames are NOT a known slice "
+                f"rendering - corruption or dim/zero QImage. First few: "
+                f"{invalid[:5]}"
+            )
+E           AssertionError: filter_off_mono1: 10 drag frames are NOT a known slice rendering - corruption or dim/zero QImage. First few: [(0, 'f47a8ec3e9af'), (1, 'f47a8ec3e9af'), (2, 'f47a8ec3e9af'), (3, 'f47a8ec3e9af'), (4, 'f47a8ec3e9af')]
+E           assert not [(0, 'f47a8ec3e9af'), (1, 'f47a8ec3e9af'), (2, 'f47a8ec3e9af'), (3, 'f47a8ec3e9af'), (4, 'f47a8ec3e9af'), (5, 'f47a8ec3e9af'), ...]
+
+tests\code\viewer\test_overlap_pixel_quality_drag.py:159: AssertionError
+______________ test_overlap_pixel_quality_drag[filter_on_mono1] _______________
+
+case = Case(case_id='filter_on_mono1', filter_enabled=True, photometric='MONOCHROME1')
+tmp_path = WindowsPath('C:/Users/Dr.Alizadeh/AppData/Local/Temp/pytest-of-Dr.Alizadeh/pytest-923/test_overlap_pixel_quality_dra3')
+
+    @pytest.mark.parametrize(
+        "case",
+        CASES,
+        ids=[c.case_id for c in CASES],
+    )
+    def test_overlap_pixel_quality_drag(case: Case, tmp_path: Path):
+        """Drag-mode rendering must serve only valid neighbor frames; settle exact."""
+        drag_ref = _load_drag_reference(case)
+        drag_ref_set = set(drag_ref)
+        drag_ref_index: Dict[str, List[int]] = {}
+        for j, h in enumerate(drag_ref):
+            drag_ref_index.setdefault(h, []).append(j)
+    
+        settled_ref = _load_settled_reference(case)
+        assert len(drag_ref) == N_SLICES
+        assert len(settled_ref) == N_SLICES
+    
+        series_dir = tmp_path / "series"
+        _make_series(series_dir, case.photometric)
+    
+        pipeline = _open_pipeline(series_dir, case)
+        try:
+            # \u2500\u2500 Drag through every slice in scan order \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+            # The pipeline serves a mix of exact decodes and surrogates. The
+            # contracts below validate both kinds without depending on which
+            # specific indices end up as which.
+            pipeline.set_fast_interaction(True, "drag")
+            drag_hashes: List[str] = []
+            for i in range(N_SLICES):
+                f = pipeline.get_rendered_frame(i, interaction_type="drag")
+                assert f is not None and f.qimage is not None
+                assert f.width == COLS and f.height == ROWS, (
+                    f"{case.case_id}: drag QImage geometry wrong at idx={i}: "
+                    f"{f.width}x{f.height} (expected {COLS}x{ROWS})"
+                )
+                drag_hashes.append(_qimage_sha256(f.qimage))
+    
+            # \u2500\u2500 Validity: every served frame is the rendering of *some* slice \u2500
+            invalid = [
+                (i, h[:12])
+                for i, h in enumerate(drag_hashes)
+                if h not in drag_ref_set
+            ]
+>           assert not invalid, (
+                f"{case.case_id}: {len(invalid)} drag frames are NOT a known slice "
+                f"rendering - corruption or dim/zero QImage. First few: "
+                f"{invalid[:5]}"
+            )
+E           AssertionError: filter_on_mono1: 10 drag frames are NOT a known slice rendering - corruption or dim/zero QImage. First few: [(0, '170bbd73f695'), (1, '170bbd73f695'), (2, '170bbd73f695'), (3, '170bbd73f695'), (4, '170bbd73f695')]
+E           assert not [(0, '170bbd73f695'), (1, '170bbd73f695'), (2, '170bbd73f695'), (3, '170bbd73f695'), (4, '170bbd73f695'), (5, '170bbd73f695'), ...]
+
+tests\code\viewer\test_overlap_pixel_quality_drag.py:159: AssertionError
+__________________ test_added_rows_are_present_and_rendered ___________________
+
+_qapp = <PySide6.QtWidgets.QApplication(0x1c380e2ed90) at 0x000001C386A02100>
+
+    def test_added_rows_are_present_and_rendered(_qapp):
+        """After add_patient_data, rows exist AND are visibly rendered (the P0 contract)."""
+>       w = _make_table(_qapp)
+            ^^^^^^^^^^^^^^^^^^
+
+tests\code\viewer\test_patient_table_population_visibility.py:71: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\code\viewer\test_patient_table_population_visibility.py:40: in _make_table
+    w = PatientTableWidget()
+        ^^^^^^^^^^^^^^^^^^^^
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:761: in __init__
+    self.setup_ui()
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:1056: in setup_ui
+    self._setup_layout()
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:1265: in _setup_layout
+    self.results_count_label.setPixmap(qta.icon('fa5s.chart-bar', color='#a0aec0').pixmap(12, 12))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\__init__.py:268: in icon
+    return _instance().icon(*names, **kwargs)
+           ^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\__init__.py:162: in _instance
+    _resource["iconic"] = IconicFont(*_BUNDLED_FONTS)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:368: in __init__
+    self.load_font(*fargs)
+.venv\Lib\site-packages\qtawesome\iconic_font.py:405: in load_font
+    directory = self._get_fonts_directory()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:677: in _get_fonts_directory
+    return self._install_fonts(fonts_directory)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:704: in _install_fonts
+    system_fonts_dir = os.path.join(windows_dir, "Fonts")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = None, paths = ('Fonts',)
+
+>   ???
+E   TypeError: expected str, bytes or os.PathLike object, not NoneType
+
+<frozen ntpath>:100: TypeError
+__________________ test_bulk_insert_population_path_renders ___________________
+
+_qapp = <PySide6.QtWidgets.QApplication(0x1c380e2ed90) at 0x000001C386A02100>
+
+    def test_bulk_insert_population_path_renders(_qapp):
+        """The exact search_server() sequence (clear \u2192 begin_bulk \u2192 add\xd7N \u2192 end_bulk)
+        must leave the table populated and visible — not blanked by the bulk wrapper."""
+>       w = _make_table(_qapp)
+            ^^^^^^^^^^^^^^^^^^
+
+tests\code\viewer\test_patient_table_population_visibility.py:91: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\code\viewer\test_patient_table_population_visibility.py:40: in _make_table
+    w = PatientTableWidget()
+        ^^^^^^^^^^^^^^^^^^^^
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:761: in __init__
+    self.setup_ui()
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:1056: in setup_ui
+    self._setup_layout()
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:1265: in _setup_layout
+    self.results_count_label.setPixmap(qta.icon('fa5s.chart-bar', color='#a0aec0').pixmap(12, 12))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\__init__.py:268: in icon
+    return _instance().icon(*names, **kwargs)
+           ^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\__init__.py:162: in _instance
+    _resource["iconic"] = IconicFont(*_BUNDLED_FONTS)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:368: in __init__
+    self.load_font(*fargs)
+.venv\Lib\site-packages\qtawesome\iconic_font.py:405: in load_font
+    directory = self._get_fonts_directory()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:677: in _get_fonts_directory
+    return self._install_fonts(fonts_directory)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:704: in _install_fonts
+    system_fonts_dir = os.path.join(windows_dir, "Fonts")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = None, paths = ('Fonts',)
+
+>   ???
+E   TypeError: expected str, bytes or os.PathLike object, not NoneType
+
+<frozen ntpath>:100: TypeError
+__________________________ test_clear_table_empties ___________________________
+
+_qapp = <PySide6.QtWidgets.QApplication(0x1c380e2ed90) at 0x000001C386A02100>
+
+    def test_clear_table_empties(_qapp):
+        """clear_table() removes all rows (no stale rows linger)."""
+>       w = _make_table(_qapp)
+            ^^^^^^^^^^^^^^^^^^
+
+tests\code\viewer\test_patient_table_population_visibility.py:112: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+tests\code\viewer\test_patient_table_population_visibility.py:40: in _make_table
+    w = PatientTableWidget()
+        ^^^^^^^^^^^^^^^^^^^^
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:761: in __init__
+    self.setup_ui()
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:1056: in setup_ui
+    self._setup_layout()
+PacsClient\pacs\workstation_ui\home_ui\patient_table_widget.py:1265: in _setup_layout
+    self.results_count_label.setPixmap(qta.icon('fa5s.chart-bar', color='#a0aec0').pixmap(12, 12))
+                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\__init__.py:268: in icon
+    return _instance().icon(*names, **kwargs)
+           ^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\__init__.py:162: in _instance
+    _resource["iconic"] = IconicFont(*_BUNDLED_FONTS)
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:368: in __init__
+    self.load_font(*fargs)
+.venv\Lib\site-packages\qtawesome\iconic_font.py:405: in load_font
+    directory = self._get_fonts_directory()
+                ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:677: in _get_fonts_directory
+    return self._install_fonts(fonts_directory)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\qtawesome\iconic_font.py:704: in _install_fonts
+    system_fonts_dir = os.path.join(windows_dir, "Fonts")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+path = None, paths = ('Fonts',)
+
+>   ???
+E   TypeError: expected str, bytes or os.PathLike object, not NoneType
+
+<frozen ntpath>:100: TypeError
+_______________ test_storm_gate_reduces_nonterminal_burst_shock _______________
+
+    def test_storm_gate_reduces_nonterminal_burst_shock():
+        """A gated burst should lower peak per-tick exposure vs the old ungated path.
+    
+        This is the core test that answers the user's concern: are we actually
+        helping under a storm, or just adding control logic? We compare the same
+        burst with and without gating using deterministic pressure proxies.
+        """
+        initial_visible = 20
+        pending = 80
+    
+        ungated_ctrl, ungated_sn, _ungated_timer, _u_seq_ref, _u_kwargs = _build_storm_controller(
+            admit_batch=10_000,
+            last_grow=initial_visible,
+            pending=pending,
+            total=120,
+        )
+        gated_ctrl, gated_sn, _gated_timer, _g_seq_ref, _g_kwargs = _build_storm_controller(
+            admit_batch=10,
+            last_grow=initial_visible,
+            pending=pending,
+            total=120,
+        )
+    
+>       ungated_seq = _drain_nonterminal_burst(ungated_ctrl, ungated_sn)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\code\viewer\test_progressive_admission_storm.py:202: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+ctrl = namespace(logger=namespace(info=<function _build_storm_controller.<locals>.<lambda> at 0x000001C38D211D00>, debug=<fun...n._flush_progressive_grow_impl of namespace(...)>, _progressive_grow_coalesced={}, _terminal_grow_defer_retry_count={})
+sn = 'storm-201'
+
+    def _drain_nonterminal_burst(ctrl, sn: str, *, max_ticks: int = 100) -> list[int]:
+        """Run grow ticks until the non-terminal burst is fully admitted."""
+        seq: list[int] = []
+        for _ in range(max_ticks):
+            info = ctrl._progressive_series[sn]
+            if info["last_grow_count"] >= info["pending_downloaded"]:
+                break
+            before = info["last_grow_count"]
+            ctrl._flush_progressive_grow_impl()
+            after = ctrl._progressive_series[sn]["last_grow_count"]
+            seq.append(after)
+>           assert after > before, (
+                "Storm simulation made no forward progress; this would indicate a "
+                f"stuck gate (before={before}, after={after})."
+            )
+E           AssertionError: Storm simulation made no forward progress; this would indicate a stuck gate (before=20, after=20).
+E           assert 20 > 20
+
+tests\code\viewer\test_progressive_admission_storm.py:141: AssertionError
+_____________ test_storm_gate_adds_only_bounded_background_ticks ______________
+
+    def test_storm_gate_adds_only_bounded_background_ticks():
+        """The gate may add grow ticks, but the count must stay mathematically bounded."""
+        initial_visible = 20
+        pending = 120
+        admit_batch = 10
+    
+        ctrl, sn, timer, _seq_ref, _kwargs = _build_storm_controller(
+            admit_batch=admit_batch,
+            last_grow=initial_visible,
+            pending=pending,
+            total=200,  # non-terminal storm; completion not involved here
+        )
+    
+>       admitted_seq = _drain_nonterminal_burst(ctrl, sn)
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\code\viewer\test_progressive_admission_storm.py:235: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+ctrl = namespace(logger=namespace(info=<function _build_storm_controller.<locals>.<lambda> at 0x000001C38D2119E0>, debug=<fun...n._flush_progressive_grow_impl of namespace(...)>, _progressive_grow_coalesced={}, _terminal_grow_defer_retry_count={})
+sn = 'storm-201'
+
+    def _drain_nonterminal_burst(ctrl, sn: str, *, max_ticks: int = 100) -> list[int]:
+        """Run grow ticks until the non-terminal burst is fully admitted."""
+        seq: list[int] = []
+        for _ in range(max_ticks):
+            info = ctrl._progressive_series[sn]
+            if info["last_grow_count"] >= info["pending_downloaded"]:
+                break
+            before = info["last_grow_count"]
+            ctrl._flush_progressive_grow_impl()
+            after = ctrl._progressive_series[sn]["last_grow_count"]
+            seq.append(after)
+>           assert after > before, (
+                "Storm simulation made no forward progress; this would indicate a "
+                f"stuck gate (before={before}, after={after})."
+            )
+E           AssertionError: Storm simulation made no forward progress; this would indicate a stuck gate (before=20, after=20).
+E           assert 20 > 20
+
+tests\code\viewer\test_progressive_admission_storm.py:141: AssertionError
+_____________ test_storm_gate_keeps_terminal_completion_uncapped ______________
+
+    def test_storm_gate_keeps_terminal_completion_uncapped():
+        """Completion remains terminal-authoritative: no slow-drip after total is reached."""
+        ctrl, sn, _timer, admitted_seq, visible_kwargs = _build_storm_controller(
+            admit_batch=10,
+            last_grow=80,
+            pending=120,
+            total=120,
+        )
+    
+        ctrl._flush_progressive_grow_impl()
+    
+>       assert admitted_seq == [120], (
+            "Terminal completion must expose the full completed count immediately, "
+            f"got {admitted_seq}"
+        )
+E       AssertionError: Terminal completion must expose the full completed count immediately, got []
+E       assert [] == [120]
+E         
+E         Right contains one more item: 120
+E         Use -v to get more diff
+
+tests\code\viewer\test_progressive_admission_storm.py:259: AssertionError
+_____________ test_storm_harness_reaches_high_cpu_pressure_proxy ______________
+
+    def test_storm_harness_reaches_high_cpu_pressure_proxy():
+        """The storm harness should be CPU-hot, not just rich in callback count.
+    
+        We estimate a single-process CPU pressure proxy using:
+    
+            cpu_pct ~= process_time / wall_time * 100
+    
+        A local developer machine will usually land near 90–100%. The lower bound
+        here is intentionally relaxed so the test stays stable on shared CI agents.
+        """
+        ctrl, sn, _timer, admitted_seq, _kwargs = _build_storm_controller(
+            admit_batch=10,
+            last_grow=20,
+            pending=120,
+            total=180,
+        )
+    
+        cpu_tokens: list[int] = []
+    
+        def _hot_grow(series_number, pending_count, viewers, *, visible_count=None):
+            visible = int(pending_count if visible_count is None else visible_count)
+            cpu_tokens.append(_burn_cpu())
+            admitted_seq.append(visible)
+            ctrl._progressive_series[series_number]["last_grow_count"] = visible
+    
+        ctrl._grow_progressive_fast = _hot_grow
+    
+        wall_t0 = time.perf_counter()
+        cpu_t0 = time.process_time()
+>       drained = _drain_nonterminal_burst(ctrl, sn)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+tests\code\viewer\test_progressive_admission_storm.py:298: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+ctrl = namespace(logger=namespace(info=<function _build_storm_controller.<locals>.<lambda> at 0x000001C38D213560>, debug=<fun...n._flush_progressive_grow_impl of namespace(...)>, _progressive_grow_coalesced={}, _terminal_grow_defer_retry_count={})
+sn = 'storm-201'
+
+    def _drain_nonterminal_burst(ctrl, sn: str, *, max_ticks: int = 100) -> list[int]:
+        """Run grow ticks until the non-terminal burst is fully admitted."""
+        seq: list[int] = []
+        for _ in range(max_ticks):
+            info = ctrl._progressive_series[sn]
+            if info["last_grow_count"] >= info["pending_downloaded"]:
+                break
+            before = info["last_grow_count"]
+            ctrl._flush_progressive_grow_impl()
+            after = ctrl._progressive_series[sn]["last_grow_count"]
+            seq.append(after)
+>           assert after > before, (
+                "Storm simulation made no forward progress; this would indicate a "
+                f"stuck gate (before={before}, after={after})."
+            )
+E           AssertionError: Storm simulation made no forward progress; this would indicate a stuck gate (before=20, after=20).
+E           assert 20 > 20
+
+tests\code\viewer\test_progressive_admission_storm.py:141: AssertionError
+________________ test_manual_qt_window_level_marks_custom_flag ________________
+
+    def test_manual_qt_window_level_marks_custom_flag():
+        bridge = _build_wl_bridge_stub()
+    
+>       bridge.set_window_level(1500.0, -600.0, flag_default=False)
+
+tests\code\viewer\test_roi_wl_regressions.py:174: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = namespace(metadata={}, _current_slice=3, _slice_count=12, flag_set_custom_window_level=True, _wl_scroll_cache_ww=None,...s>.<lambda> at 0x000001C38E2D5080>), set_window_level=<bound method QtViewerBridge.set_window_level of namespace(...)>)
+window_width = 1500.0, window_center = -600.0, flag_default = False
+
+    def set_window_level(self, window_width: float, window_center: float, flag_default: bool = False) -> None:
+        """Set window/level and re-render."""
+        # Check if RGB
+        if self.metadata and self.metadata.get("instances"):
+            instances = self.metadata["instances"]
+            idx = min(self._current_slice, len(instances) - 1) if instances else 0
+            if idx >= 0 and idx < len(instances) and instances[idx].get("is_rgb", False):
+                return
+    
+        if not flag_default:
+            self.flag_set_custom_window_level = True
+            self._wl_scroll_cache_ww = None
+            self._wl_scroll_cache_wc = None
+    
+        requested_ww = float(window_width)
+        requested_wc = float(window_center)
+>       if _wl_unchanged(self._current_window_level(), (requested_ww, requested_wc)):
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: 'NoneType' object is not callable
+
+modules\viewer\fast\qt_viewer_bridge.py:1497: TypeError
+_________ TestFastBackendResolution.test_config_file_reads_pydicom_qt _________
+
+self = <test_stage1_migration_validation.TestFastBackendResolution object at 0x000001C386B45BD0>
+
+    def test_config_file_reads_pydicom_qt(self):
+        """The on-disk config now says pydicom_qt."""
+        cfg = _config_path()
+        with open(cfg, "r", encoding="utf-8") as f:
+            data = json.load(f)
+>       assert data["viewer_2d_backend"] == "pydicom_qt", (
+            f"Config file should say pydicom_qt, got {data['viewer_2d_backend']}"
+        )
+E       AssertionError: Config file should say pydicom_qt, got pydicom_2d
+E       assert 'pydicom_2d' == 'pydicom_qt'
+E         
+E         - pydicom_qt
+E         ?         ^^
+E         + pydicom_2d
+E         ?         ^^
+
+tests\code\viewer\test_stage1_migration_validation.py:66: AssertionError
+____ TestFastBackendResolution.test_load_viewer_backend_returns_pydicom_qt ____
+
+self = <test_stage1_migration_validation.TestFastBackendResolution object at 0x000001C386B45D10>
+
+    def test_load_viewer_backend_returns_pydicom_qt(self):
+        """load_viewer_backend() reads the updated config."""
+        result = load_viewer_backend()
+>       assert result == BACKEND_PYDICOM_QT, (
+            f"load_viewer_backend() should return {BACKEND_PYDICOM_QT}, got {result}"
+        )
+E       AssertionError: load_viewer_backend() should return pydicom_qt, got pydicom_2d
+E       assert 'pydicom_2d' == 'pydicom_qt'
+E         
+E         - pydicom_qt
+E         ?         ^^
+E         + pydicom_2d
+E         ?         ^^
+
+tests\code\viewer\test_stage1_migration_validation.py:73: AssertionError
+________ TestAdvancedModeUnchanged.test_force_vtk_fallback_in_metadata ________
+
+self = <test_stage1_migration_validation.TestAdvancedModeUnchanged object at 0x000001C386B460D0>
+
+    def test_force_vtk_fallback_in_metadata(self):
+        """Series with force_vtk_fallback=True resolves to VTK."""
+        metadata = _make_metadata(instances_count=50, force_vtk=True)
+        result = resolve_viewer_backend(metadata=metadata, settings=BACKEND_PYDICOM_QT)
+>       assert result["backend"] == BACKEND_VTK
+E       AssertionError: assert 'pydicom_qt' == 'vtk_simpleitk'
+E         
+E         - vtk_simpleitk
+E         + pydicom_qt
+
+tests\code\viewer\test_stage1_migration_validation.py:149: AssertionError
+__________ TestAdvancedModeUnchanged.test_force_vtk_overrides_alias ___________
+
+self = <test_stage1_migration_validation.TestAdvancedModeUnchanged object at 0x000001C386ADE8B0>
+
+    def test_force_vtk_overrides_alias(self):
+        """Even with PYDICOM alias active, force_vtk_fallback wins."""
+        metadata = _make_metadata(instances_count=50, force_vtk=True)
+        result = resolve_viewer_backend(metadata=metadata, settings=BACKEND_PYDICOM)
+>       assert result["backend"] == BACKEND_VTK
+E       AssertionError: assert 'pydicom_qt' == 'vtk_simpleitk'
+E         
+E         - vtk_simpleitk
+E         + pydicom_qt
+
+tests\code\viewer\test_stage1_migration_validation.py:161: AssertionError
+_ TestExhaustiveResolutionMatrix.test_resolution_truth_table[pydicom_qt-True-True-vtk_simpleitk] _
+
+self = <test_stage1_migration_validation.TestExhaustiveResolutionMatrix object at 0x000001C386ADED70>
+settings = 'pydicom_qt', has_instances = True, force_vtk = True
+expected_backend = 'vtk_simpleitk'
+
+    @pytest.mark.parametrize("settings,has_instances,force_vtk,expected_backend", [
+        # FAST paths — all resolve to PYDICOM_QT (never PYDICOM)
+        (BACKEND_PYDICOM_QT, True, False, BACKEND_PYDICOM_QT),
+        (BACKEND_PYDICOM_QT, False, False, BACKEND_VTK),        # no instances \u2192 VTK fallback
+        (BACKEND_PYDICOM_QT, True, True, BACKEND_VTK),          # force_vtk wins
+        # Aliased PYDICOM paths — remap to PYDICOM_QT then same rules
+        (BACKEND_PYDICOM, True, False, BACKEND_PYDICOM_QT),     # alias active
+        (BACKEND_PYDICOM, False, False, BACKEND_VTK),            # alias + no instances
+        (BACKEND_PYDICOM, True, True, BACKEND_VTK),              # alias + force_vtk
+        # Advanced paths — always VTK
+        (BACKEND_VTK, True, False, BACKEND_VTK),
+        (BACKEND_VTK, False, False, BACKEND_VTK),
+        (BACKEND_VTK, True, True, BACKEND_VTK),
+    ])
+    def test_resolution_truth_table(self, settings, has_instances, force_vtk, expected_backend):
+        metadata = _make_metadata(
+            instances_count=50 if has_instances else 0,
+            force_vtk=force_vtk,
+        )
+        result = resolve_viewer_backend(metadata=metadata, settings=settings)
+>       assert result["backend"] == expected_backend, (
+            f"settings={settings}, instances={has_instances}, force_vtk={force_vtk}: "
+            f"expected {expected_backend}, got {result['backend']}"
+        )
+E       AssertionError: settings=pydicom_qt, instances=True, force_vtk=True: expected vtk_simpleitk, got pydicom_qt
+E       assert 'pydicom_qt' == 'vtk_simpleitk'
+E         
+E         - vtk_simpleitk
+E         + pydicom_qt
+
+tests\code\viewer\test_stage1_migration_validation.py:364: AssertionError
+_ TestExhaustiveResolutionMatrix.test_resolution_truth_table[pydicom_2d-True-True-vtk_simpleitk] _
+
+self = <test_stage1_migration_validation.TestExhaustiveResolutionMatrix object at 0x000001C386A579B0>
+settings = 'pydicom_2d', has_instances = True, force_vtk = True
+expected_backend = 'vtk_simpleitk'
+
+    @pytest.mark.parametrize("settings,has_instances,force_vtk,expected_backend", [
+        # FAST paths — all resolve to PYDICOM_QT (never PYDICOM)
+        (BACKEND_PYDICOM_QT, True, False, BACKEND_PYDICOM_QT),
+        (BACKEND_PYDICOM_QT, False, False, BACKEND_VTK),        # no instances \u2192 VTK fallback
+        (BACKEND_PYDICOM_QT, True, True, BACKEND_VTK),          # force_vtk wins
+        # Aliased PYDICOM paths — remap to PYDICOM_QT then same rules
+        (BACKEND_PYDICOM, True, False, BACKEND_PYDICOM_QT),     # alias active
+        (BACKEND_PYDICOM, False, False, BACKEND_VTK),            # alias + no instances
+        (BACKEND_PYDICOM, True, True, BACKEND_VTK),              # alias + force_vtk
+        # Advanced paths — always VTK
+        (BACKEND_VTK, True, False, BACKEND_VTK),
+        (BACKEND_VTK, False, False, BACKEND_VTK),
+        (BACKEND_VTK, True, True, BACKEND_VTK),
+    ])
+    def test_resolution_truth_table(self, settings, has_instances, force_vtk, expected_backend):
+        metadata = _make_metadata(
+            instances_count=50 if has_instances else 0,
+            force_vtk=force_vtk,
+        )
+        result = resolve_viewer_backend(metadata=metadata, settings=settings)
+>       assert result["backend"] == expected_backend, (
+            f"settings={settings}, instances={has_instances}, force_vtk={force_vtk}: "
+            f"expected {expected_backend}, got {result['backend']}"
+        )
+E       AssertionError: settings=pydicom_2d, instances=True, force_vtk=True: expected vtk_simpleitk, got pydicom_qt
+E       assert 'pydicom_qt' == 'vtk_simpleitk'
+E         
+E         - vtk_simpleitk
+E         + pydicom_qt
+
+tests\code\viewer\test_stage1_migration_validation.py:364: AssertionError
+__________ TestEscapeHatch.test_escape_hatch_overridden_by_force_vtk __________
+
+self = <test_stage2_hardening_validation.TestEscapeHatch object at 0x000001C386BB0050>
+
+    def test_escape_hatch_overridden_by_force_vtk(self):
+        """force_vtk_fallback in metadata overrides even escape hatch."""
+        meta = _make_metadata(instances_count=50, force_vtk=True)
+        meta["series"]["lazy_loader_key"] = "key123"
+        meta["series"]["viewer_backend"] = BACKEND_PYDICOM
+        with patch.dict(os.environ, {"AIPACS_FORCE_PYDICOM_2D": "1"}):
+            result = resolve_viewer_backend(metadata=meta, settings=BACKEND_PYDICOM)
+>       assert result["backend"] == BACKEND_VTK
+E       AssertionError: assert 'pydicom_2d' == 'vtk_simpleitk'
+E         
+E         - vtk_simpleitk
+E         + pydicom_2d
+
+tests\code\viewer\test_stage2_hardening_validation.py:99: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  modules.viewer.viewer_backend_config:viewer_backend_config.py:90 [BACKEND_SWITCH_V2.3.3] AIPACS_FORCE_PYDICOM_2D=1 — overriding pydicom_2d -> pydicom_2d (emergency escape hatch)
+__________ TestForceVtkAlwaysWins.test_force_vtk_with_any_escape[0] ___________
+
+self = <test_stage2_hardening_validation.TestForceVtkAlwaysWins object at 0x000001C386B479D0>
+escape = '0'
+
+    @pytest.mark.parametrize("escape", ["0", "1", ""])
+    def test_force_vtk_with_any_escape(self, escape):
+        meta = _make_metadata(instances_count=50, force_vtk=True)
+        env = {"AIPACS_FORCE_PYDICOM_2D": escape} if escape else {}
+        with patch.dict(os.environ, env, clear=False):
+            if not escape:
+                os.environ.pop("AIPACS_FORCE_PYDICOM_2D", None)
+            result = resolve_viewer_backend(metadata=meta, settings=BACKEND_PYDICOM)
+>       assert result["backend"] == BACKEND_VTK
+E       AssertionError: assert 'pydicom_qt' == 'vtk_simpleitk'
+E         
+E         - vtk_simpleitk
+E         + pydicom_qt
+
+tests\code\viewer\test_stage2_hardening_validation.py:147: AssertionError
+__________ TestForceVtkAlwaysWins.test_force_vtk_with_any_escape[1] ___________
+
+self = <test_stage2_hardening_validation.TestForceVtkAlwaysWins object at 0x000001C386B47B10>
+escape = '1'
+
+    @pytest.mark.parametrize("escape", ["0", "1", ""])
+    def test_force_vtk_with_any_escape(self, escape):
+        meta = _make_metadata(instances_count=50, force_vtk=True)
+        env = {"AIPACS_FORCE_PYDICOM_2D": escape} if escape else {}
+        with patch.dict(os.environ, env, clear=False):
+            if not escape:
+                os.environ.pop("AIPACS_FORCE_PYDICOM_2D", None)
+            result = resolve_viewer_backend(metadata=meta, settings=BACKEND_PYDICOM)
+>       assert result["backend"] == BACKEND_VTK
+E       AssertionError: assert 'pydicom_2d' == 'vtk_simpleitk'
+E         
+E         - vtk_simpleitk
+E         + pydicom_2d
+
+tests\code\viewer\test_stage2_hardening_validation.py:147: AssertionError
+------------------------------ Captured log call ------------------------------
+WARNING  modules.viewer.viewer_backend_config:viewer_backend_config.py:90 [BACKEND_SWITCH_V2.3.3] AIPACS_FORCE_PYDICOM_2D=1 — overriding pydicom_2d -> pydicom_2d (emergency escape hatch)
+___________ TestForceVtkAlwaysWins.test_force_vtk_with_any_escape[] ___________
+
+self = <test_stage2_hardening_validation.TestForceVtkAlwaysWins object at 0x000001C386ADF490>
+escape = ''
+
+    @pytest.mark.parametrize("escape", ["0", "1", ""])
+    def test_force_vtk_with_any_escape(self, escape):
+        meta = _make_metadata(instances_count=50, force_vtk=True)
+        env = {"AIPACS_FORCE_PYDICOM_2D": escape} if escape else {}
+        with patch.dict(os.environ, env, clear=False):
+            if not escape:
+                os.environ.pop("AIPACS_FORCE_PYDICOM_2D", None)
+            result = resolve_viewer_backend(metadata=meta, settings=BACKEND_PYDICOM)
+>       assert result["backend"] == BACKEND_VTK
+E       AssertionError: assert 'pydicom_qt' == 'vtk_simpleitk'
+E         
+E         - vtk_simpleitk
+E         + pydicom_qt
+
+tests\code\viewer\test_stage2_hardening_validation.py:147: AssertionError
+______________ test_offset_key_falls_back_to_canonical_identity _______________
+
+    def test_offset_key_falls_back_to_canonical_identity():
+        src = _src()
+        fn = src.find("def _count_series_files_on_disk")
+        assert fn != -1
+        body = src[fn:fn + 3800]
+        # the bare primary-study join is still tried FIRST (single-study unchanged)
+        assert "_cand = os.path.join(study_path, str(series_number))" in body
+        assert "if os.path.isdir(_cand):" in body
+        # offset-key gate: only secondary DISPLAY keys reach the canonical fallback
+        assert "int(str(series_number)) >= 1_000_000" in body
+        # canonical resolution + the series' OWN per-study folder under SOURCE_PATH
+        assert "self._resolve_canonical_series_identity(series_number)" in body
+        assert "from PacsClient.utils.config import SOURCE_PATH as _SRC" in body
+        assert "os.path.join(str(_SRC), str(_cu_study), str(_cu_orig))" in body
+        # kill switch, default-on
+>       assert 'os.getenv("AIPACS_DISK_COUNT_CANONICAL", "1")' in body
+E       assert 'os.getenv("AIPACS_DISK_COUNT_CANONICAL", "1")' in 'def _count_series_files_on_disk(self, series_number: str) -> int:\n        """Return the number of .dcm files on disk...           return 0\n\n    # â”€â”€ Look-ahead warmup: pre-cache adjacent series after drag-drop â”€â”€\n    _LOOKAHEA'
+
+tests\code\viewer\test_zzcopy.py:51: AssertionError
+_________ test_release_gate_stage_config_parity_against_current_stage _________
+
+    @pytest.mark.skipif(not _STAGE_EXE.exists(), reason="no staged build at builder/output/stage/core — run builder/build_release.py first")
+    def test_release_gate_stage_config_parity_against_current_stage():
+        check = release_gate.check_stage_config_parity()
+>       assert check.ok, "\n".join([check.status] + check.details)
+E       AssertionError: FAIL
+E         templates whose staged bytes differ from repo config/: ['patient_table_sort.json'] — the stage is stale relative to the source tree; rebuild.
+E       assert False
+E        +  where False = GateCheck(name='stage_config_parity', status='FAIL', details=["templates whose staged bytes differ from repo config/: ['patient_table_sort.json'] — the stage is stale relative to the source tree; rebuild."]).ok
+
+tests\code\builder\test_release_parity_guards.py:255: AssertionError
+_______________ test_table_has_progressive_api_and_clear_resets _______________
+
+    def test_table_has_progressive_api_and_clear_resets():
+        body = _no_comments(_TABLE.read_text(encoding="utf-8", errors="ignore"))
+        assert "def load_progressive" in body
+        assert "def _progressive_render_next" in body
+        assert "def _on_progressive_scroll" in body
+        # clear_table resets the buffer so a stale scroll can't render old rows
+        ct = body[body.index("def clear_table"):body.index("def clear_table") + 700]
+>       assert "_prog_items = []" in ct and "_prog_total = 0" in ct
+E       assert ('_prog_items = []' in 'def clear_table(self):\n        """Clear the table for a new search.\n\n        Pinned patients are a STABLE top sect...et_pinned_patient_ids\n                pinned_ids = get_pinned_patient_ids()\n                if pinned_ids:\n        ')
+
+tests\code\system\test_local_search_progressive.py:193: AssertionError
+____ test_auto_exit_cleans_empty_views_keeps_completed_and_fires_callback _____
+
+meas_tools = <modules.mpr.zeta_mpr.mpr_measurement_tools.MPRMeasurementTools object at 0x000001C389742F90>
+
+    def test_auto_exit_cleans_empty_views_keeps_completed_and_fires_callback(meas_tools):
+        mt = meas_tools
+    
+        class _FakeWidget:
+            def __init__(self):
+                self.off = False
+    
+            def Off(self):
+                self.off = True
+    
+        # Simulate ruler armed on all three views; user completes on 'axial'.
+        axial_w, sag_w, cor_w = _FakeWidget(), _FakeWidget(), _FakeWidget()
+        mt.active_tools['axial']['ruler'] = [axial_w]
+        mt.active_tools['sagittal']['ruler'] = [sag_w]
+        mt.active_tools['coronal']['ruler'] = [cor_w]
+        mt.current_tool = 'ruler'
+    
+        fired = []
+        mt.on_auto_exit = lambda: fired.append(True)
+    
+        mt._do_single_use_auto_exit('axial', 'ruler')
+    
+        # Completed view keeps its measurement; empty views are turned off + dropped.
+        assert mt.active_tools['axial']['ruler'] == [axial_w]
+        assert axial_w.off is False
+>       assert sag_w.off is True and cor_w.off is True
+E       assert (False is True)
+E        +  where False = <test_mpr_tool_autoexit.test_auto_exit_cleans_empty_views_keeps_completed_and_fires_callback.<locals>._FakeWidget object at 0x000001C38A1EA710>.off
+
+tests\code\system\test_mpr_tool_autoexit.py:110: AssertionError
+============================== warnings summary ===============================
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+<frozen importlib._bootstrap>:488
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type swigvarlink has no __module__ attribute
+
+tests/code/viewer/test_overlap_pixel_quality.py: 40 warnings
+tests/code/viewer/test_overlap_pixel_quality_drag.py: 40 warnings
+tests/code/viewer/test_stacking_and_dragdrop_no_mouse.py: 140 warnings
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\pydicom\dataset.py:2249: DeprecationWarning: Starting in pydicom 3.0, Dataset.file_meta must be a FileMetaDataset class instance
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_default_params_match_csharp
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_default_params_match_csharp returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_config_loader_enables_negative_mode
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_config_loader_enables_negative_mode returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_filter_pipeline_algorithm
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_filter_pipeline_algorithm returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_small_image_path
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_small_image_path returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_determinism
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_determinism returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_int16_roundtrip
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_int16_roundtrip returned <class 'numpy.bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_performance
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_performance returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_histogram_similarity
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_histogram_similarity returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_inversion
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_inversion returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_fusion_colormaps
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_fusion_colormaps returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_disabled_passthrough
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_disabled_passthrough returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_pooyan_opencv_filter.py::test_volume_slice_consistency
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\.venv\Lib\site-packages\_pytest\python.py:170: PytestReturnNotNoneWarning: Test functions should return None, but tests/code/viewer/test_pooyan_opencv_filter.py::test_volume_slice_consistency returned <class 'bool'>.
+  Did you mean to use `assert` instead of `return`?
+  See https://docs.pytest.org/en/stable/how-to/assert.html#return-not-none for more information.
+    warnings.warn(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_default_left_drag_uses_scroll_suppression_window
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:53: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    press = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_default_left_drag_uses_scroll_suppression_window
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:64: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    release = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_stack_drag_stays_active_inside_layout_even_outside_image
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:270: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    press = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_stack_drag_stays_active_inside_layout_even_outside_image
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:279: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    move = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_stack_drag_allows_small_leave_from_image_edge
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:435: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    press = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_stack_drag_allows_small_leave_from_image_edge
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:444: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    move = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_default_left_drag_starts_with_single_bounded_step
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:470: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    press = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_default_left_drag_starts_with_single_bounded_step
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:479: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    move = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_default_left_drag_starts_with_single_bounded_step
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:488: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    release = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_adaptive_stack_drag_uses_bounded_incremental_targets
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:512: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    press = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestQtSliceViewerStackDrag::test_adaptive_stack_drag_uses_bounded_incremental_targets
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:521: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    first_move = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestV2BandParams::test_adaptive_stack_drag_caps_large_followup_move_to_profile_limit
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:785: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    press = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestV2BandParams::test_adaptive_stack_drag_caps_large_followup_move_to_profile_limit
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:794: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    first_move = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestV2BandParams::test_adaptive_stack_drag_caps_large_followup_move_to_profile_limit
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:803: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    laggy_followup_move = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestV2BandParams::test_absolute_stack_drag_clamps_target_to_valid_range
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:826: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    press = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestV2BandParams::test_absolute_stack_drag_clamps_target_to_valid_range
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:835: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    move = QMouseEvent(
+
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestV2BandParams::test_radiography_window_level_drag_is_more_controlled_than_generic
+tests/code/viewer/test_qt_slice_viewer_stack_drag.py::TestV2BandParams::test_radiography_window_level_drag_is_more_controlled_than_generic
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_slice_viewer_stack_drag.py:912: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    move = QMouseEvent(
+
+tests/code/viewer/test_qt_stack_drag_bridge.py::TestQtSelectionForwarding::test_mouse_press_notifies_parent_view_selection
+  E:\ai-pacs\ai-pacs codes\ai-pacs beta version\tests\code\viewer\test_qt_stack_drag_bridge.py:403: DeprecationWarning: Function: 'QMouseEvent.QMouseEvent(QEvent.Type type, const QPointF &localPos, Qt.MouseButton button, QFlags<Qt.MouseButton> buttons, QFlags<Qt.KeyboardModifier> modifiers, const QPointingDevice *device)' is marked as deprecated, please check the documentation for more information.
+    press_event = QMouseEvent(
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+SKIPPED [1] tests\code\viewer\test_mainwindow_drag_gate.py:26: stale spec: the Fix-G mainwindow drag gate was removed from mainwindow_ui (superseded by the FAST-bridge protected-drag policy).
+SKIPPED [1] tests\code\ui_services\test_ui_services.py:582: GUI-tier KPI walkthrough — hangs indefinitely under headless pytest (observed 2026-06-04, RELIABILITY_STABILITY_REVIEW §13: the suite never completes and masks subsequent results). The scenarios create real service/widget stacks; run with AIPACS_GUI_TESTS=1 in a display session, or via `python test_ui_services.py` (main()).
+SKIPPED [1] tests\code\viewer\test_curved_mpr_panoramic_sharpen.py:69: could not import 'scipy.ndimage': No module named 'scipy'
+SKIPPED [1] tests\code\viewer\test_curved_mpr_panoramic_sharpen.py:90: could not import 'scipy.ndimage': No module named 'scipy'
+SKIPPED [2] tests\code\viewer\test_dicom_color_decode.py:154: 46382 study not present on this machine
+SKIPPED [1] tests\code\viewer\test_dicom_color_decode.py:167: 46382 study not present on this machine
+SKIPPED [1] tests\code\viewer\test_dicom_overlay.py:92: 46382 study not present
+SKIPPED [6] tests\code\viewer\test_lightweight_pipeline_overlay.py:182: 46630 study not present on this machine
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:407: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:433: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:455: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:516: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:552: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:581: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:618: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:677: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:736: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:795: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:826: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:851: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:884: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:947: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+SKIPPED [1] tests\code\viewer\test_multi_series_drag_drop.py:1001: GUI-tier VTK stress test (native AV under headless pytest) — set AIPACS_GUI_TESTS=1 to run
+XFAIL tests/code/viewer/test_fast_download_scroll_cpu_repro.py::test_fast_download_scroll_callback_storm_signature - Known FAST-view risk signature from log 17: under download+scroll overlap, callback churn should stay bounded; currently drop/render storm can grow unbounded before fatal interpreter crash.
+FAILED tests/code/ui_services/test_pin_overlay.py::test_patient_table_overlay_wired
+FAILED tests/code/ui_services/test_pin_overlay.py::test_pinned_top_enforcement_wired
+FAILED tests/code/ui_services/test_vtk_volume_service.py::test_routing_helper_present_and_pin_deferred
+FAILED tests/code/viewer/test_b34_interaction_aware_policy.py::TestPrefetchInteractionAware::test_idle_prefetch_uses_full_radius
+FAILED tests/code/viewer/test_b34_interaction_aware_policy.py::TestPrefetchInteractionAware::test_fast_interaction_caps_radius_to_3
+FAILED tests/code/viewer/test_b34_interaction_aware_policy.py::TestPrefetchInteractionAware::test_small_stack_protected_drag_uses_tiny_directional_p1_lane
+FAILED tests/code/viewer/test_b34_interaction_aware_policy.py::TestPrefetchInteractionAware::test_fast_interaction_mixed_cache_only_decodes_uncached
+FAILED tests/code/viewer/test_b34_interaction_aware_policy.py::TestPrefetchInteractionAware::test_fast_interaction_epoch_tracks_only_uncached_targets
+FAILED tests/code/viewer/test_b34_interaction_aware_policy.py::TestDirectionReversal::test_close_series_resets_last_direction
+FAILED tests/code/viewer/test_b34_interaction_aware_policy.py::TestDragStartWarmup::test_drag_start_boost_uses_widened_surrogate_window
+FAILED tests/code/viewer/test_b35_deferred_header_fill.py::TestDeferredHeaderFill::test_refresh_does_not_call_fill_stub_synchronously
+FAILED tests/code/viewer/test_b35_deferred_header_fill.py::TestDeferredHeaderFill::test_new_instances_have_template_fields_immediately
+FAILED tests/code/viewer/test_b35_deferred_header_fill.py::TestDeferredHeaderFill::test_metadata_count_updated_immediately
+FAILED tests/code/viewer/test_b35_deferred_header_fill.py::TestGrowPathIntegration::test_grow_tick_main_thread_cost_excluding_headers
+FAILED tests/code/viewer/test_b36_booster_interaction_gate.py::TestBridgeBoosterWiring::test_set_slice_fast_interaction_pauses_booster
+FAILED tests/code/viewer/test_b36_booster_interaction_gate.py::TestBridgeBoosterWiring::test_set_slice_enables_fast_mode_before_set_slice_index
+FAILED tests/code/viewer/test_b36_booster_interaction_gate.py::TestBridgeBoosterWiring::test_set_slice_no_fast_resumes_booster
+FAILED tests/code/viewer/test_curved_mpr_inplace_viewport.py::test_inplace_flag_declared_default_off
+FAILED tests/code/viewer/test_curved_mpr_inplace_viewport.py::test_inplace_method_does_not_wipe_grid
+FAILED tests/code/viewer/test_curved_mpr_inplace_viewport.py::test_restore_recognizes_curved_cross_link
+FAILED tests/code/viewer/test_dental_curve_panel_polish.py::test_panoramic_thickness_control_wired_to_generation
+FAILED tests/code/viewer/test_display_geometry.py::TestIdentityStart::test_effective_equals_raw_affine
+FAILED tests/code/viewer/test_display_geometry.py::TestEffectiveAffine::test_display_to_lps_origin
+FAILED tests/code/viewer/test_display_geometry.py::TestDisplayKPolicy::test_apply_stack_policy_maps_display_1_to_raw_0
+FAILED tests/code/viewer/test_display_geometry.py::TestDisplayKPolicy::test_apply_stack_policy_inverse_maps_raw_0_to_display_1
+FAILED tests/code/viewer/test_dragdrop_progressive.py::test_completion_signal_triggers_one_shot_grow_on_non_progressive_viewer
+FAILED tests/code/viewer/test_event_loop_diagnostics.py::test_session_start_stop
+FAILED tests/code/viewer/test_fast_viewer_empty_state_ui.py::test_change_container_border_applies_active_and_inactive_styles
+FAILED tests/code/viewer/test_fast_viewer_live_sync.py::test_grow_uses_qt_bridge_when_qt_bridge_active
+FAILED tests/code/viewer/test_fast_viewer_live_sync.py::test_refresh_stored_metadata_called_each_grow
+FAILED tests/code/viewer/test_fast_viewer_live_sync.py::test_stale_grow_exhaustion_exits_progressive_mode
+FAILED tests/code/viewer/test_fast_viewer_pipeline.py::test_perform_series_switch_optimized_refits_qt_target_after_switch
+FAILED tests/code/viewer/test_fast_viewer_pipeline.py::test_perform_series_switch_optimized_defers_followup_ui_work
+FAILED tests/code/viewer/test_fast_viewer_pipeline.py::test_perform_series_switch_optimized_queues_qt_refit_for_inplace_refresh
+FAILED tests/code/viewer/test_fast_viewer_pipeline.py::test_display_loaded_series_hides_spinner_immediately_after_success
+FAILED tests/code/viewer/test_geometry_api.py::TestDisplayedIndexToLps::test_origin_at_zero
+FAILED tests/code/viewer/test_grow_fallback_force_reload.py::test_fallback_syncs_canonical_metadata_and_forces_reload
+FAILED tests/code/viewer/test_mg_window_placeholder.py::test_non_mg_or_non_monochrome1_not_rejected_by_mg_placeholder_rule
+FAILED tests/code/viewer/test_overlap_pixel_quality.py::test_overlap_pixel_quality_settled[filter_on_mono2]
+FAILED tests/code/viewer/test_overlap_pixel_quality.py::test_overlap_pixel_quality_settled[filter_off_mono1]
+FAILED tests/code/viewer/test_overlap_pixel_quality.py::test_overlap_pixel_quality_settled[filter_on_mono1]
+FAILED tests/code/viewer/test_overlap_pixel_quality_drag.py::test_overlap_pixel_quality_drag[filter_on_mono2]
+FAILED tests/code/viewer/test_overlap_pixel_quality_drag.py::test_overlap_pixel_quality_drag[filter_off_mono1]
+FAILED tests/code/viewer/test_overlap_pixel_quality_drag.py::test_overlap_pixel_quality_drag[filter_on_mono1]
+FAILED tests/code/viewer/test_patient_table_population_visibility.py::test_added_rows_are_present_and_rendered
+FAILED tests/code/viewer/test_patient_table_population_visibility.py::test_bulk_insert_population_path_renders
+FAILED tests/code/viewer/test_patient_table_population_visibility.py::test_clear_table_empties
+FAILED tests/code/viewer/test_progressive_admission_storm.py::test_storm_gate_reduces_nonterminal_burst_shock
+FAILED tests/code/viewer/test_progressive_admission_storm.py::test_storm_gate_adds_only_bounded_background_ticks
+FAILED tests/code/viewer/test_progressive_admission_storm.py::test_storm_gate_keeps_terminal_completion_uncapped
+FAILED tests/code/viewer/test_progressive_admission_storm.py::test_storm_harness_reaches_high_cpu_pressure_proxy
+FAILED tests/code/viewer/test_roi_wl_regressions.py::test_manual_qt_window_level_marks_custom_flag
+FAILED tests/code/viewer/test_stage1_migration_validation.py::TestFastBackendResolution::test_config_file_reads_pydicom_qt
+FAILED tests/code/viewer/test_stage1_migration_validation.py::TestFastBackendResolution::test_load_viewer_backend_returns_pydicom_qt
+FAILED tests/code/viewer/test_stage1_migration_validation.py::TestAdvancedModeUnchanged::test_force_vtk_fallback_in_metadata
+FAILED tests/code/viewer/test_stage1_migration_validation.py::TestAdvancedModeUnchanged::test_force_vtk_overrides_alias
+FAILED tests/code/viewer/test_stage1_migration_validation.py::TestExhaustiveResolutionMatrix::test_resolution_truth_table[pydicom_qt-True-True-vtk_simpleitk]
+FAILED tests/code/viewer/test_stage1_migration_validation.py::TestExhaustiveResolutionMatrix::test_resolution_truth_table[pydicom_2d-True-True-vtk_simpleitk]
+FAILED tests/code/viewer/test_stage2_hardening_validation.py::TestEscapeHatch::test_escape_hatch_overridden_by_force_vtk
+FAILED tests/code/viewer/test_stage2_hardening_validation.py::TestForceVtkAlwaysWins::test_force_vtk_with_any_escape[0]
+FAILED tests/code/viewer/test_stage2_hardening_validation.py::TestForceVtkAlwaysWins::test_force_vtk_with_any_escape[1]
+FAILED tests/code/viewer/test_stage2_hardening_validation.py::TestForceVtkAlwaysWins::test_force_vtk_with_any_escape[]
+FAILED tests/code/viewer/test_zzcopy.py::test_offset_key_falls_back_to_canonical_identity
+FAILED tests/code/builder/test_release_parity_guards.py::test_release_gate_stage_config_parity_against_current_stage
+FAILED tests/code/system/test_local_search_progressive.py::test_table_has_progressive_api_and_clear_resets
+FAILED tests/code/system/test_mpr_tool_autoexit.py::test_auto_exit_cleans_empty_views_keeps_completed_and_fires_callback
+66 failed, 2584 passed, 29 skipped, 1 xfailed, 254 warnings in 300.20s (0:05:00)
+[ImageBoost] CLEARED
+[ImageBoost] CLEARED
+[ImageBoost] CLEARED
+[ImageBoost] CLEARED
+[ImageBoost] CLEARED
+[ImageBoost] CLEARED
+[ImageBoost] CLEARED
+[ImageBoost] CLEARED
+[ImageBoost] CLEARED

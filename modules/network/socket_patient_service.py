@@ -54,6 +54,47 @@ class SocketPatientService(QObject):
     def reload_connection(self):
         self._setup_connection_pool()
 
+    def reload_if_server_changed(self) -> bool:
+        """OPT-24c (2026-07-11): rebuild the pool ONLY when the server actually changed.
+
+        `get_socket_patient_service()` is called on every patient search and used to
+        call `reload_connection()` unconditionally — which constructs a BRAND-NEW
+        `SocketConnectionPool` each time and throws away the warm one, so the pool
+        never pooled anything (22 rebuilds for 8 searches observed 2026-07-11, even
+        after the per-search `cleanup()` was removed).
+
+        Returns True when the pool was rebuilt. Safe: a real host/port change still
+        rebuilds, and `SocketConnectionPool.get_connection()` already validates each
+        pooled client and transparently replaces a stale one.
+
+        Kill switch: AIPACS_SOCKET_POOL_REUSE=0 -> always reload (legacy behaviour).
+        """
+        import os as _os
+        if (_os.environ.get("AIPACS_SOCKET_POOL_REUSE", "1") or "1").strip() == "0":
+            self.reload_connection()
+            return True
+
+        pool = self.connection_pool
+        if pool is None:
+            # No pool yet (or pooling disabled) -> legacy path, unchanged.
+            self.reload_connection()
+            return True
+
+        try:
+            host = str(self.config.get_socket_host())
+            port = int(self.config.get_socket_port())
+        except Exception:
+            self.reload_connection()
+            return True
+
+        if str(getattr(pool, "host", "")) != host or int(getattr(pool, "port", -1)) != port:
+            logger.info("🔄 Socket server changed -> rebuilding connection pool (%s:%s)", host, port)
+            self.reload_connection()
+            return True
+
+        # Unchanged server -> KEEP the warm pool (this is the win).
+        return False
+
     def _setup_connection_pool(self):
         """Setup connection pool for better performance"""
         try:
@@ -568,7 +609,11 @@ def get_socket_patient_service() -> SocketPatientService:
         _socket_patient_service = SocketPatientService()
 
     else:
-        _socket_patient_service.reload_connection()
+        # OPT-24c: was `reload_connection()` — an UNCONDITIONAL pool rebuild on every
+        # call to this getter (i.e. on every patient search), which discarded the warm
+        # SocketConnectionPool and re-did 5 TCP handshakes. Now only rebuilds when the
+        # configured host/port actually changed.
+        _socket_patient_service.reload_if_server_changed()
     return _socket_patient_service
 
 
