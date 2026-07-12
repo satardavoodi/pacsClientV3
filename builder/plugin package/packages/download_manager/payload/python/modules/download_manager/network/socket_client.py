@@ -144,6 +144,14 @@ _SERIES_FORCE_BATCH_ONE_MODALITIES = {
     "XRAY",
 }
 
+# Large-frame modality extended timeout (2026-07-11, PX download failure fix).
+# PX (Panoramic X-Ray), MG, XA, RF images are often 20-100+ MB. On remote/slow
+# servers the default 30s socket timeout is insufficient for the server to read,
+# base64-encode, and transmit the large frame. This causes "Socket connection lost"
+# → retry → same timeout → fail. The extended timeout is applied ONLY during
+# download_batch for these modalities. Default 120s; env override available.
+_LARGE_FRAME_TIMEOUT = float(os.getenv("AIPACS_LARGE_FRAME_TIMEOUT", "120") or "120")
+
 # Soft byte budget per batch response (2026-06-05, large-radiology stalls):
 # when a successful batch's payload exceeds this, the NEXT batches of the
 # same series halve their instance count. Catches huge-frame series that the
@@ -379,6 +387,9 @@ class SocketDicomClient:
         self._inter_batch_pause_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_INTER_BATCH_PAUSE_MS", "3") or "3") / 1000.0)
         self._post_request_yield_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_POST_REQUEST_YIELD_MS", "5") or "5") / 1000.0)
         self._last_resource_probe_ts = 0.0
+        # Current series modality (set by download_series, used by download_batch
+        # to apply extended timeout for large-frame modalities like PX/MG/XA/RF).
+        self._current_series_modality: Optional[str] = None
         
         logger.debug(
             f"🔌 SocketDicomClient initialized ({self.host}:{self.port})",
@@ -1169,12 +1180,34 @@ class SocketDicomClient:
         )
         
         # Use correct endpoint: GetSeriesImages (not DownloadDicomBatch)
+        # Apply extended timeout for large-frame modalities (PX, MG, XA, RF etc.)
+        # These single-frame images can be 20-100+ MB; on remote/slow servers the
+        # default 30s timeout is insufficient for the server to read + encode + send.
+        _original_timeout = None
+        if (self._current_series_modality
+                and self._current_series_modality in _SERIES_FORCE_BATCH_ONE_MODALITIES
+                and self.socket is not None
+                and _LARGE_FRAME_TIMEOUT > self.timeout):
+            _original_timeout = self.timeout
+            try:
+                self.socket.settimeout(_LARGE_FRAME_TIMEOUT)
+            except Exception:
+                pass  # socket may be closed; will reconnect on failure
+
         response = self.send_request('GetSeriesImages', {
             'series_uid': series_uid,
             'batch_size': batch_size,
             'batch_index': batch_index,
             'metadata_only': False
         })
+
+        # Restore original timeout
+        if _original_timeout is not None:
+            try:
+                if self.socket is not None:
+                    self.socket.settimeout(_original_timeout)
+            except Exception:
+                pass
         
         if response:
             status = response.get('status', 'unknown')
@@ -1245,6 +1278,8 @@ class SocketDicomClient:
         series_uid = series_info.series_uid
         series_number = series_info.series_number
         expected_count = series_info.image_count
+        # Track modality for extended timeout in download_batch (PX fix)
+        self._current_series_modality = (getattr(series_info, 'modality', None) or '').upper().strip()
         
         set_log_context(study_uid=study_uid, series_uid=series_uid)
         logger.warning(

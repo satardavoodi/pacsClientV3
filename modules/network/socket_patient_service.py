@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import sys
 from typing import Dict, List, Any, Optional, Callable
 from PySide6.QtCore import QObject, Signal, QTimer
 from PySide6.QtWidgets import QMessageBox
@@ -95,6 +96,32 @@ class SocketPatientService(QObject):
         # Unchanged server -> KEEP the warm pool (this is the win).
         return False
 
+    @staticmethod
+    def _is_python_shutting_down() -> bool:
+        """Return True when interpreter teardown has begun."""
+        return getattr(sys, "meta_path", None) is None
+
+    def _safe_log(self, level: int, message: str):
+        """Best-effort logger that stays silent during interpreter shutdown."""
+        if self._is_python_shutting_down():
+            return
+        try:
+            logger.log(level, message)
+        except Exception:
+            pass
+
+    def _emit_connection_status(self, status: bool):
+        """Emit connection status only when the Qt signal source is still valid."""
+        if self._is_python_shutting_down():
+            return
+        try:
+            self.connectionStatusChanged.emit(status)
+        except RuntimeError:
+            # Common during QObject teardown: "Signal source has been deleted".
+            pass
+        except Exception:
+            pass
+
     def _setup_connection_pool(self):
         """Setup connection pool for better performance"""
         try:
@@ -160,11 +187,11 @@ class SocketPatientService(QObject):
             client = self._get_client()
             if client:
                 if client.connect():
-                    self.connectionStatusChanged.emit(True)
+                    self._emit_connection_status(True)
                     logger.info("✅ Connected to Socket server")
                     return True
                 else:
-                    self.connectionStatusChanged.emit(False)
+                    self._emit_connection_status(False)
                     logger.error("❌ Failed to connect to Socket server")
                     return False
             else:
@@ -172,7 +199,7 @@ class SocketPatientService(QObject):
                 return False
         except Exception as e:
             logger.error(f"❌ Connection error: {e}")
-            self.connectionStatusChanged.emit(False)
+            self._emit_connection_status(False)
             return False
     
     def disconnect_from_server(self):
@@ -183,10 +210,10 @@ class SocketPatientService(QObject):
             elif self.client:
                 self.client.disconnect()
             
-            self.connectionStatusChanged.emit(False)
-            logger.info("🔌 Disconnected from Socket server")
+            self._emit_connection_status(False)
+            self._safe_log(logging.INFO, "🔌 Disconnected from Socket server")
         except Exception as e:
-            logger.error(f"❌ Disconnect error: {e}")
+            self._safe_log(logging.ERROR, f"❌ Disconnect error: {e}")
     
     def search_patients_async(self, search_params: Dict[str, Any], callback: Optional[Callable] = None):
         """
@@ -570,7 +597,7 @@ class SocketPatientService(QObject):
             if client:
                 self._return_client(client)
     
-    def cleanup(self):
+    def cleanup(self, suppress_log: bool = False):
         """Cleanup resources"""
         try:
             self.disconnect_from_server()
@@ -581,14 +608,16 @@ class SocketPatientService(QObject):
                 except:
                     pass
                 self.client = None
-            logger.info("🧹 Socket Patient Service cleaned up")
+            if not suppress_log:
+                self._safe_log(logging.INFO, "🧹 Socket Patient Service cleaned up")
         except Exception as e:
-            logger.error(f"❌ Cleanup error: {e}")
+            if not suppress_log:
+                self._safe_log(logging.ERROR, f"❌ Cleanup error: {e}")
     
     def __del__(self):
         """Destructor to ensure cleanup"""
         try:
-            self.cleanup()
+            self.cleanup(suppress_log=True)
         except:
             pass
 

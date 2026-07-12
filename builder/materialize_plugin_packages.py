@@ -288,20 +288,32 @@ def _ensure_lite_viewer_built() -> None:
     import subprocess
     import sys
 
+    _allow_missing = os.environ.get(_ALLOW_MISSING_LITE_VIEWER_ENV, "").strip() in (
+        "1", "true", "yes"
+    )
+
     if os.environ.get(_SKIP_LITE_VIEWER_BUILD_ENV, "").strip() in ("1", "true", "yes"):
         print(f"[materialize] lite viewer build skipped via {_SKIP_LITE_VIEWER_BUILD_ENV}")
         return
     script = PROJECT_ROOT / "tools" / "build" / "build_lite_viewer.py"
     if not script.is_file():
-        raise RuntimeError(f"Lite viewer build script not found: {script}")
+        msg = f"Lite viewer build script not found: {script}"
+        if _allow_missing:
+            print(f"[materialize] WARNING: {msg} (continuing via {_ALLOW_MISSING_LITE_VIEWER_ENV})")
+            return
+        raise RuntimeError(msg)
     print(f"[materialize] building AI-PACS Lite Viewer ({script.name})…")
     result = subprocess.run([sys.executable, str(script)], cwd=str(PROJECT_ROOT))
     if result.returncode != 0:
-        raise RuntimeError(
+        msg = (
             f"Lite viewer build failed (exit {result.returncode}). The run_cd "
             "module cannot ship without its viewer. Fix the build or set "
             f"{_ALLOW_MISSING_LITE_VIEWER_ENV}=1 to ship without it."
         )
+        if _allow_missing:
+            print(f"[materialize] WARNING: {msg}")
+            return
+        raise RuntimeError(msg)
 
 
 def materialize_plugin_packages(
