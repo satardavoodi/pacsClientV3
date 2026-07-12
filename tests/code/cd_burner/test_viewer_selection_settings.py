@@ -51,14 +51,45 @@ def test_legacy_config_with_path_means_custom(config_root, tmp_path):
     assert selection["path"] == str(exe)
 
 
-def test_custom_mode_with_missing_path_resolves_none(config_root):
+def test_custom_mode_with_missing_path_falls_back_to_the_recommended_viewer(
+    config_root, tmp_path, monkeypatch
+):
+    """CONTRACT CHANGE (2026-07-12).
+
+    This used to assert ``path is None`` — i.e. a stale/missing custom-viewer
+    setting burned a patient CD with **NO VIEWER AT ALL**, giving the patient a
+    disc they cannot open. A missing or uninitialized setting must never disable
+    the working default: fall back to the recommended AI-PACS portable viewer.
+    """
+    exe = tmp_path / "AIPacsLiteViewer.exe"
+    exe.write_bytes(b"MZ lite")
+    monkeypatch.setenv(viewer_locator.ENV_OVERRIDE, str(exe))
     _write_config(
         config_root,
         viewer_mode="custom",
         light_viewer_path=r"C:\does\not\exist.exe",
     )
     selection = LightViewerSettingsWidget.get_viewer_selection()
-    assert selection["mode"] == VIEWER_MODE_CUSTOM
+    assert selection["path"] == str(exe), "must not leave the disc viewer-less"
+    assert selection["mode"] == VIEWER_MODE_DEFAULT
+    assert selection["fell_back_from_custom"] is True
+
+
+def test_custom_mode_missing_path_and_no_bundled_viewer_still_reports_none(
+    config_root, monkeypatch
+):
+    """Only when there is genuinely no viewer to fall back to."""
+    monkeypatch.delenv(viewer_locator.ENV_OVERRIDE, raising=False)
+    monkeypatch.setattr(
+        "PacsClient.pacs.workstation_ui.settings_ui.lightviewer_settings.resolve_default_viewer",
+        lambda: None,
+    )
+    _write_config(
+        config_root,
+        viewer_mode="custom",
+        light_viewer_path=r"C:\does\not\exist.exe",
+    )
+    selection = LightViewerSettingsWidget.get_viewer_selection()
     assert selection["path"] is None
     assert selection["kind"] == "none"
 

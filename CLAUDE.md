@@ -178,6 +178,44 @@ Key invariants that must not be broken:
   numeric series-number order (`_rebuild_multistudy_series_index` sorts before
   building the offset-key groups).
 
+### Server series metadata — NEVER `int()` a server field (missing SeriesNumber, OPT-25, 2026-07-12)
+A radiography device at a new center (Roshana) omitted `SeriesNumber` (0020,0011) — **legal, it is
+type 2 / optional in DICOM** — and the server serialized the absent value as the **literal string
+`"None"`**. `grpc_client._build_metadata_from_socket:147` did
+`series_number=int(str(series.get("series_number") or 0))`; `"None"` is a **truthy non-empty string**
+so the `or 0` guard never fired, `int("None")` raised, and the exception aborted the **WHOLE study's**
+metadata build → `Failed to fetch metadata` → **the study never downloaded → the images could never be
+displayed** (plus an infinite DM health-check respawn loop). The socket was healthy (`server_wait_ms=38`);
+this was never a network/decode/cache/render problem. Before editing `modules/network/series_identity.py`,
+the two series endpoints in `modules/network/socket_client.py`, or the series loop in
+`modules/download_manager/network/grpc_client.py`, **read
+`docs/reports/RADIOGRAPHY_NOT_DISPLAYING_MISSING_SERIES_NUMBER_ROSHANA_2026-07-12.md`**.
+- **THE RULE: normalize ONCE at the single socket ingestion boundary.** Every consumer (DM, home panel,
+  patient-tab thumbnails, previous-exams, DB writer) reaches the server through
+  `PatientListSocketClient.get_study_thumbnails` / `.query_series_thumbnails` — both call
+  `_normalize_series_identity`, so **no downstream code can ever see a non-numeric series number**.
+  Do **NOT** add a bespoke `int(...)`/`or 0` on a server-provided series field anywhere else; use the
+  pure `series_identity.parse_series_number()` (the ONE tolerant predicate — never raises).
+- **Byte-identical for healthy data (why no center regressed):** a series whose number already parses is
+  **not touched at all** — same value, SAME TYPE (`"02"` stays `"02"`, so folder/thumbnail naming is
+  unchanged). Only unusable entries are rewritten. Never "clean up" valid numbers into ints.
+- **Synthetic numbers are RESERVED-BAND + non-colliding + deterministic:** missing numbers get
+  **900001–999999** — above any real SeriesNumber and **strictly below the `1_000_000` multi-study
+  offset-key threshold** (`study_slot*1_000_000 + series_number`, `_vc_cache.py`), excluding numbers the
+  study already uses, assigned in **`series_uid` order** so the UI process and the download subprocess
+  (which fetch independently) always agree — that is what keeps the disk folder / thumbnail PNG / DB row
+  consistent. Do not switch to list-order or a low base like 1/2/3 (a later-arriving real series would
+  collide → wrong-series display).
+- **Safe because images are fetched by `series_uid`** (`GetSeriesImages`), never by series number — the
+  number is local naming/ordering only.
+- The DM per-series loop is try/except'd on purpose: **one malformed series must never abort a study.**
+  Keep it. Flag `AIPACS_SERIES_NUMBER_NORMALIZE` (default on; `=0` = byte-identical legacy).
+  `grpc_client.py` IS plugin-mirrored — sync after editing, **on the Windows host** (the sandbox FUSE
+  mount served a truncated copy and the in-sandbox mirror sync silently wrote a corrupt payload).
+  Guard: `tests/code/network/test_series_number_normalization.py` (15). NEEDS live verify at the center.
+  Staged: DM should not auto-retry a *deterministic* parse failure forever; server should send `null`;
+  rename `grpc_client.py` → `socket_metadata_client.py` (it is socket-backed — gRPC is retired).
+
 ### Thumbnail pipeline (cache / disk / store consistency)
 Before editing any thumbnail producer or consumer, **read
 `docs/pipelines/thumbnail-pipeline.md`** — the as-built audit record
@@ -396,7 +434,63 @@ Key invariants that must not be broken:
   assertion, and the frozen `--selftest` release gate (exit 0 required). The staging
   verification's `VIEWER/_internal` completeness check must stay. NEVER judge viewer
   health by "process stayed alive" — windowed PyInstaller errors keep the process up.
-- Run `tests/code/cd_burner/` (offscreen) after any change — 51 green as of 2026-06-07.
+- **External drag-and-drop import from the disc (2026-07-12):** a user dropping DICOM files /
+  folders from **File Explorer** (the CD itself) onto the Lite Viewer used to do nothing —
+  `ImageCanvas.dragEnterEvent` accepted ONLY the internal `_SERIES_MIME` (a series dragged from the
+  viewer's own list), so a `text/uri-list` payload hit `event.ignore()` (the "no entry" cursor), and
+  `LiteViewerWindow` never called `setAcceptDrops`. **External DnD was simply not implemented.** It
+  was NOT elevation (manifest is `asInvoker`), NOT read-only media, NOT path resolution, NOT an
+  extension filter — all of those were already correct (verified against a real burned disc). Before
+  editing the drop handlers or `media_scan`, **read
+  `docs/reports/LITE_VIEWER_CD_DRAG_DROP_IMPORT_2026-07-12.md`**.
+  - `media_scan.scan_paths()` is the ONE import entry point for any dropped shape (single file,
+    several files, series/study/patient folder, disc root with `DICOMDIR`, the `DICOMDIR` file
+    itself). It shares `_group_files_into_series()` with the recursive media scan — **do not fork a
+    second discovery implementation.**
+  - **Discovery is by CONTENT, never by extension.** A patient CD stores instances as
+    extension-less `IM000000`; an extension filter finds nothing. Keep suffix-less files in
+    `_iter_candidate_files`.
+  - **Never write to the source media** (it is read-only): no sidecars, no thumbnails, no renames.
+    `optical_io.read_bytes` reads into RAM with retries. A guard test asserts the source tree is
+    byte-for-byte unchanged after an import.
+  - The import runs OFF the GUI thread (`_ImportTask`) — optical I/O must never freeze the viewer.
+    `_on_import_done` merges by `series_uid` (re-dropping must not duplicate). The internal
+    series-list drag (`_SERIES_MIME` → `on_series_dropped`) is unchanged and must keep working.
+  - Diagnostics: `[LITE-DROP] drop_received / dicomdir_import / filescan_import / import_done /
+    import_failed`. Guard: `tests/code/cd_burner/test_lite_viewer_external_drop.py` (16).
+  - **The fix only reaches patients after a re-burn** with a rebuilt `lightViewer_dist`
+    (`tools/build/build_lite_viewer.py`). `portable_viewer/*.py` is mirrored into the run_cd payload
+    — sync after editing.
+- **Defaults are ON for a clean install (2026-07-12)** — read
+  `docs/reports/CD_WORKFLOW_DEFAULTS_ON_BY_DEFAULT_2026-07-12.md`. Four defects fixed:
+  - **CLINICAL SAFETY — the viewer must NEVER scan its own program folder.** The PyInstaller
+    bundle ships pydicom, whose package data holds **25 sample `.dcm` files**. `RUN_VIEWER.cmd`
+    runs the viewer from `%TEMP%\AIPacsLiteViewer`, so the exe dir is a media-root candidate; when
+    `--import-folder` was lost the fallback probe found those samples and showed **another
+    patient's test images** as the study (reproduced live: `series=13 images=15 modality=OT`).
+    `media_scan._is_viewer_bundle_dir()` (dir holds the viewer exe or a PyInstaller `_internal`
+    payload ⇒ it is the PROGRAM, never the MEDIA) rejects it in BOTH passes of
+    `discover_media_root`, and `_internal` is in `_SKIP_DIR_NAMES`. **Never remove either guard.**
+  - **The viewer logs to a FILE** (`portable_viewer/viewer_log.py` → `%LOCALAPPDATA%\AIPacsLiteViewer\
+    logs\lite_viewer.log`, then `%TEMP%`, then none). The old `basicConfig` wrote to **stderr**,
+    which a `--windowed` frozen build discards — every diagnostic was lost. Never log to the media
+    (read-only); never raise. Stages: `[LITE-START]` (incl. an **elevated=True warning** — an
+    elevated viewer cannot receive Explorer drops), `[LITE-SCAN]`, `[LITE-DROP]`, `[LITE-DECODE]`.
+  - **A missing/stale custom viewer must fall back to the recommended one**
+    (`get_viewer_selection` → `fell_back_from_custom`). It used to return `path=None` and burn a
+    disc with **NO VIEWER AT ALL**. Priority: no preference → recommended; explicit valid choice →
+    preserved; missing/uninitialized → recommended (never "disabled").
+  - A NEW portable_viewer module must be added to the run_cd mirror with
+    `sync_plugin_mirrors.py --add <path>` (plain sync only updates EXISTING pairs) **and** to the
+    `--hidden-import` list in `tools/build/build_lite_viewer.py`.
+  - Build hygiene: the build's warm-up self-test can leave an `AIPacsLiteViewer.exe` alive which
+    **locks** `generated-files/build/lite_viewer/` → the next build (and the
+    `test_plugin_package_builder` tests) fail with `PermissionError [WinError 5/32]`. Kill stray
+    viewer processes + delete `pyi_dist`/`pyi_work`.
+  - KNOWN/OPEN: `config/lightviewer_settings.json` ships **one center's identity**
+    (`center_name: "alizadeh imaging center"`), seeded on every fresh install — a new center that
+    burns before editing it stamps the WRONG center on patient media. Product decision, not changed.
+- Run `tests/code/cd_burner/` (offscreen) after any change — 169 green as of 2026-07-12.
 
 ### Online Consultation — Identity + Drive + Education submodule (implemented 2026-06-06)
 Before editing `modules/Identity/`, `modules/cloud_consultation/`, or

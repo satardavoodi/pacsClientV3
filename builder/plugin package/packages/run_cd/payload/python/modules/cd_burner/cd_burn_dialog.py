@@ -358,10 +358,18 @@ class CDBurnDialog(QDialog):
         viewer_path = self.viewer_selection.get('path')
         viewer_name = self.viewer_selection.get('display_name') or "DICOM Viewer"
         if viewer_path:
-            self.include_viewer_cb = QCheckBox(f"Include viewer: {viewer_name}")
+            # The bundled AI-PACS portable viewer is the recommended choice and
+            # is included by DEFAULT — no setup required on a fresh install.
+            suffix = " (Recommended)" if self.viewer_selection.get('kind') == 'lite' else ""
+            self.include_viewer_cb = QCheckBox(f"Include viewer: {viewer_name}{suffix}")
             self.include_viewer_cb.setChecked(True)
             analysis = self.burn_manager.inspect_viewer_portability(viewer_path)
             tooltip_lines = [f"Will include: {os.path.basename(viewer_path)}"]
+            if self.viewer_selection.get('fell_back_from_custom'):
+                tooltip_lines.append(
+                    "Your configured custom viewer was not found — using the "
+                    "recommended AI-PACS portable viewer so the disc is still usable."
+                )
             tooltip_lines.extend(analysis.get("details", []))
             if analysis.get("warnings"):
                 tooltip_lines.append("Warnings:")

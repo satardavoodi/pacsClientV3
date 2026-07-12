@@ -143,7 +143,20 @@ class HomeDbService:
     def get_series_info_from_database(study_uid: str, series_number: str) -> dict:
         try:
             from PacsClient.utils.db_manager import get_series_by_study_and_number
-            info = get_series_by_study_and_number(study_uid, int(series_number))
+            from modules.network.series_identity import parse_series_number
+
+            # A device may omit SeriesNumber (0020,0011) entirely; some servers
+            # then send the literal string "None". Never let that raise here —
+            # `int("None")` used to throw a ValueError and this lookup silently
+            # lost the series info. Unusable => no DB row to find, return {}.
+            parsed_number = parse_series_number(series_number)
+            if parsed_number is None:
+                logger.debug(
+                    "Series info lookup skipped: unusable series_number %r (study=%s)",
+                    series_number, str(study_uid or "")[:48],
+                )
+                return {}
+            info = get_series_by_study_and_number(study_uid, parsed_number)
             if info:
                 return {
                     "series_uid": info.get("series_uid", ""),

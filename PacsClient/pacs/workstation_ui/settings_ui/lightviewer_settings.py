@@ -585,11 +585,36 @@ class LightViewerSettingsWidget(QWidget):
         if mode == VIEWER_MODE_CUSTOM:
             path = LightViewerSettingsWidget.get_light_viewer_path()
             if path and os.path.isfile(path):
+                # An explicit, still-valid user choice — preserved.
                 return {
                     'mode': mode,
                     'path': path,
                     'display_name': Path(path).stem,
                     'kind': 'custom',
+                }
+            # The configured custom viewer is GONE (uninstalled, moved, or a
+            # stale path carried over from an old install). Falling through with
+            # path=None used to burn a patient CD with NO VIEWER AT ALL — the
+            # patient gets a disc they cannot open. A missing/uninitialized
+            # setting must never disable the working default: fall back to the
+            # recommended AI-PACS portable viewer instead.
+            try:
+                fallback = resolve_default_viewer()
+            except Exception as e:
+                print(f"Error resolving default viewer: {e}")
+                fallback = None
+            if fallback is not None:
+                print(
+                    "⚠ Configured custom viewer is missing "
+                    f"({path or 'no path'}); falling back to the recommended "
+                    f"{fallback['display_name']}."
+                )
+                return {
+                    'mode': VIEWER_MODE_DEFAULT,
+                    'path': fallback['path'],
+                    'display_name': fallback['display_name'],
+                    'kind': fallback['kind'],
+                    'fell_back_from_custom': True,
                 }
             return {'mode': mode, 'path': None, 'display_name': 'Custom viewer (missing)', 'kind': 'none'}
 

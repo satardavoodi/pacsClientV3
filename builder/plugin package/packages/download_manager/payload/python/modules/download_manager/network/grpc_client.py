@@ -14,6 +14,7 @@ from typing import Dict, Any, Optional
 from ..core.models import StudyMetadata, SeriesInfo, PatientInfo
 from ..core.constants import DEFAULT_SOCKET_HOST, DEFAULT_GRPC_PORT, CONNECTION_TIMEOUT
 from modules.network.socket_client import PatientListSocketClient
+from modules.network.series_identity import parse_series_number
 
 logger = logging.getLogger(__name__)
 
@@ -132,28 +133,56 @@ class GrpcMetadataClient:
         for series in data.get("series_thumbnails") or []:
             if not isinstance(series, dict):
                 continue
-            thumb_raw = series.get("thumbnail_data") or series.get("thumbnail_base64") or ""
-            thumb_bytes = b""
-            if isinstance(thumb_raw, str) and thumb_raw:
-                try:
-                    thumb_bytes = base64.b64decode(thumb_raw)
-                except Exception:
-                    thumb_bytes = b""
-            elif isinstance(thumb_raw, (bytes, bytearray)):
-                thumb_bytes = bytes(thumb_raw)
+            # DEFENSE IN DEPTH. The socket ingestion boundary
+            # (modules/network/socket_client._normalize_series_identity) has
+            # already replaced any unusable series_number, so the parse below
+            # normally succeeds. This per-series guard exists so that a single
+            # malformed series can NEVER take down the whole study's metadata —
+            # which is exactly what happened when `int("None")` raised here and
+            # the download never started (Roshana, 2026-07-12).
+            try:
+                thumb_raw = series.get("thumbnail_data") or series.get("thumbnail_base64") or ""
+                thumb_bytes = b""
+                if isinstance(thumb_raw, str) and thumb_raw:
+                    try:
+                        thumb_bytes = base64.b64decode(thumb_raw)
+                    except Exception:
+                        thumb_bytes = b""
+                elif isinstance(thumb_raw, (bytes, bytearray)):
+                    thumb_bytes = bytes(thumb_raw)
 
-            series_info = SeriesInfo(
-                series_uid=str(series.get("series_uid") or ""),
-                series_number=int(str(series.get("series_number") or 0)),
-                series_description=str(series.get("series_description") or ""),
-                modality=str(series.get("modality") or ""),
-                image_count=_normalize_image_count(series),
-                protocol_name=series.get("protocol_name"),
-                body_part_examined=series.get("body_part_examined"),
-                manufacturer=series.get("manufacturer"),
-                institution_name=series.get("institution_name"),
-                thumbnail_data=thumb_bytes or None,
-            )
+                parsed_number = parse_series_number(series.get("series_number"))
+                if parsed_number is None:
+                    # Unreachable once normalization is on; keep the legacy
+                    # default (0) rather than raising, so the study still loads.
+                    logger.warning(
+                        "⚠️ series_number unusable (%r) for series %s — using 0; "
+                        "images are fetched by series_uid so the download proceeds",
+                        series.get("series_number"),
+                        str(series.get("series_uid") or "")[:48],
+                    )
+                    parsed_number = 0
+
+                series_info = SeriesInfo(
+                    series_uid=str(series.get("series_uid") or ""),
+                    series_number=parsed_number,
+                    series_description=str(series.get("series_description") or ""),
+                    modality=str(series.get("modality") or ""),
+                    image_count=_normalize_image_count(series),
+                    protocol_name=series.get("protocol_name"),
+                    body_part_examined=series.get("body_part_examined"),
+                    manufacturer=series.get("manufacturer"),
+                    institution_name=series.get("institution_name"),
+                    thumbnail_data=thumb_bytes or None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "⚠️ Skipping malformed series in study metadata (%s): %s",
+                    str(series.get("series_uid") or "?")[:48],
+                    exc,
+                )
+                continue
+
             series_list.append(series_info)
             if thumb_bytes:
                 thumbnails[str(series.get("series_number") or "")] = thumb_bytes

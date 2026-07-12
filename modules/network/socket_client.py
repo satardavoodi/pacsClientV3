@@ -9,6 +9,7 @@ import time
 
 from modules.network.socket_config import get_socket_config
 from modules.network.socket_token_manager import get_socket_token_manager
+from modules.network.series_identity import normalize_series_entries
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +18,36 @@ _LARGE_PAYLOAD_ENDPOINTS = {
     "GetStudyInfo",
     "QuerySeriesThumbnails",
 }
+
+
+def _normalize_series_identity(data: Any, *, endpoint: str, study_uid: str) -> None:
+    """Series-number normalization at the SINGLE socket ingestion boundary.
+
+    Every consumer of server series metadata — the download manager
+    (``GrpcMetadataClient``, socket-backed), the home panel, the patient-tab
+    thumbnails, previous-exams, the database writer — reaches the server through
+    ``get_study_thumbnails`` / ``query_series_thumbnails``. Normalizing here (and
+    ONLY here) means no downstream code can ever see a non-numeric
+    ``series_number`` such as the literal string ``"None"`` that a device with a
+    missing SeriesNumber (0020,0011) produces — the defect that made an entire
+    radiography study fail to download (see modules/network/series_identity.py).
+
+    Healthy payloads are left byte-identical and this is a no-op. Never raises.
+    """
+    try:
+        repaired = normalize_series_entries(data)
+        if repaired:
+            logger.warning(
+                "[SERIES_NUMBER_NORMALIZE] endpoint=%s study=%s repaired=%d "
+                "reason=server_sent_unusable_series_number "
+                "(missing/empty SeriesNumber on the source device) — assigned "
+                "deterministic synthetic numbers so the study stays usable",
+                endpoint,
+                str(study_uid or "")[:48],
+                repaired,
+            )
+    except Exception as exc:  # pragma: no cover - must never break a good fetch
+        logger.debug("series-number normalization skipped: %s", exc)
 
 # ── MongoDB $sortArray compatibility fallback (incident 2026-06-15) ───────────
 # The backend's GetPatientList aggregation uses $sortArray, which is unsupported
@@ -452,6 +483,8 @@ class PatientListSocketClient:
                         cv = data.get("contentVersion")
                     if cv is not None:
                         data["content_version"] = cv
+                _normalize_series_identity(data, endpoint="GetStudyThumbnails",
+                                           study_uid=params["study_instance_uid"])
                 return data
             return None
         except Exception as e:
@@ -624,14 +657,19 @@ class PatientListSocketClient:
 
             data = response.get("data")
             if isinstance(data, dict):
+                _normalize_series_identity(data, endpoint="QuerySeriesThumbnails",
+                                           study_uid=uid)
                 return data
             if isinstance(data, list):
-                return {
+                normalized = {
                     "study_instance_uid": uid,
                     "patient_id": pid,
                     "series_thumbnails": data,
                     "count_of_series": len(data),
                 }
+                _normalize_series_identity(normalized, endpoint="QuerySeriesThumbnails",
+                                           study_uid=uid)
+                return normalized
             return None
         except Exception as e:
             logger.error(f"❌ Error querying series thumbnails via socket: {e}")

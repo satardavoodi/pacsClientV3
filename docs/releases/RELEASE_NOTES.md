@@ -1,9 +1,30 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.4.8 (2026-07-11)
-**Previous Stable:** v3.4.7 (2026-07-08)
-**Release Date:** 2026-07-11
+**Current Stable Version:** v3.4.9 (2026-07-12)
+**Previous Stable:** v3.4.8 (2026-07-11)
+**Release Date:** 2026-07-12
 **Branch:** beta-version
+
+---
+
+## v3.4.9 (2026-07-12) - Patch release: radiography series-number fix, Lite Viewer CD drag-drop, CD defaults
+
+### Summary
+
+Patch release on the 3.4 line, publishing the full current beta-version working
+state. Headline fix: radiography studies from devices that omit `SeriesNumber`
+(legal, DICOM type 2) no longer fail to download or display. Also adds
+drag-and-drop DICOM import to the patient-CD Lite Viewer, fixes CD workflow
+defaults on a fresh install, and carries the large-frame download timeout fix.
+
+### Included
+
+- **Radiography display fix (OPT-25):** a device omitting `SeriesNumber` caused the server to send the string `"None"`, which aborted the whole study's metadata build and prevented download. Series identity is now normalized once at the socket ingestion boundary; healthy data is byte-identical, and images are fetched by `series_uid` so no server change is needed.
+- **Lite Viewer (patient CD): external drag-and-drop import** — dropping DICOM files/folders (or a disc root / `DICOMDIR`) from Explorer now imports them. Content-based discovery (extension-less `IM000000` supported), off the GUI thread, never writes to the read-only media.
+- **CD workflow defaults on a fresh install:** the viewer never scans its own program folder (previously it could surface pydicom's bundled sample DICOMs as a patient study), a missing/stale custom viewer falls back to the recommended one, and the Lite Viewer now logs to a file for diagnostics.
+- Large-frame (PX/MG/XA/RF) download timeout fix and shutdown-safe socket logging
+- Warm socket connection-pool reuse across patient searches (OPT-24c)
+- Canonical version markers advanced to v3.4.9; full local state published to all remotes
 
 ---
 
