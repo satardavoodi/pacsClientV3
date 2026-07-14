@@ -1450,24 +1450,53 @@ class ImagingToolsTab(AbstractTab):
         self.set_processing_status("Idle", active=False)
 
     def _on_nipples_picked(self, nipple1, nipple2):
-        """Called when user has selected both nipple points."""
+        """Called when user has selected both nipple points. Next: pectoral line."""
         print(f"[3D-Cursor] Nipples picked: "
               f"{nipple1.view_key}=({nipple1.x_px:.1f},{nipple1.y_px:.1f}), "
               f"{nipple2.view_key}=({nipple2.x_px:.1f},{nipple2.y_px:.1f})")
+
+        # Store nipples and proceed to pectoral line picking
+        self._stored_nipple1 = nipple1
+        self._stored_nipple2 = nipple2
+
+        self.set_processing_status("Now select Pectoral Line...", active=True)
+        QApplication.processEvents()
+
+        from modules.ai_imaging.ai_module_ui.cursor_3d.pectoral_picker import PectoralLinePickerController
+
+        self._pectoral_picker = PectoralLinePickerController(self)
+        self._pectoral_picker.start(callback=self._on_pectoral_lines_picked)
+
+    def _on_pectoral_lines_picked(self, pec_line1, pec_line2):
+        """Called when user has drawn pectoral lines on both views."""
+        print(f"[3D-Cursor] Pectoral lines picked: "
+              f"{pec_line1.view_key} angle={pec_line1.angle_deg:.1f}°, "
+              f"{pec_line2.view_key} angle={pec_line2.angle_deg:.1f}°")
+
+        nipple1 = getattr(self, '_stored_nipple1', None)
+        nipple2 = getattr(self, '_stored_nipple2', None)
+        if not nipple1 or not nipple2:
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message("Nipple points were lost. Please start again.")
+            return
 
         self.set_processing_status("Running 3D Cursor Analysis...", active=True)
         QApplication.processEvents()
 
         try:
-            self._run_3d_cursor_analysis_with_nipples(nipple1, nipple2)
+            self._run_3d_cursor_analysis_with_nipples(
+                nipple1, nipple2,
+                pectoral_line1=pec_line1,
+                pectoral_line2=pec_line2,
+            )
         except Exception as e:
             import traceback
             traceback.print_exc()
             self.set_processing_status("3D Cursor Failed", active=False)
             show_message(f"3D Cursor failed: {e}")
 
-    def _run_3d_cursor_analysis_with_nipples(self, nipple1, nipple2):
-        """Execute 3D cursor correlation with user-provided nipple positions."""
+    def _run_3d_cursor_analysis_with_nipples(self, nipple1, nipple2, pectoral_line1=None, pectoral_line2=None):
+        """Execute 3D cursor correlation with user-provided nipple positions and pectoral lines."""
         from modules.ai_imaging.ai_module_ui.cursor_3d import CursorCorrelator3D
         from modules.ai_imaging.ai_module_ui.cursor_3d.visualization import (
             draw_3d_cursor_results,
@@ -1541,6 +1570,18 @@ class ImagingToolsTab(AbstractTab):
             show_message(f"نقطه nipple برای ویوهای زیر ثبت نشده: {', '.join(missing_manual)}")
             return
 
+        # Inject manual pectoral angle if the user drew pectoral lines
+        if pectoral_line1 or pectoral_line2:
+            pec_by_widget = {}
+            if pectoral_line1 and pectoral_line1.vtk_widget:
+                pec_by_widget[id(pectoral_line1.vtk_widget)] = pectoral_line1.angle_deg
+            if pectoral_line2 and pectoral_line2.vtk_widget:
+                pec_by_widget[id(pectoral_line2.vtk_widget)] = pectoral_line2.angle_deg
+            for vd in valid_views:
+                wid = id(vd.vtk_widget) if vd.vtk_widget else None
+                if wid and wid in pec_by_widget:
+                    vd.manual_pectoral_angle_deg = pec_by_widget[wid]
+
         # Run correlator
         correlator = CursorCorrelator3D()
         result = correlator.correlate(valid_views)
@@ -1564,8 +1605,66 @@ class ImagingToolsTab(AbstractTab):
         except Exception as e:
             print(f"[3D-Cursor] Drawing failed (non-critical): {e}")
 
+        # Draw probability heatmap overlay on the arc
+        try:
+            self._draw_probability_heatmap_on_arcs(result, views_by_key, valid_views)
+        except Exception as e:
+            print(f"[3D-Cursor] Probability heatmap failed (non-critical): {e}")
+
         self.set_processing_status("3D Cursor Complete", active=False)
         QMessageBox.information(self, "3D Cursor - CC/MLO Correlation", summary_text)
+
+    def _draw_probability_heatmap_on_arcs(self, result, views_by_key, valid_views):
+        """Compute and render probability heatmaps on the correspondence arcs."""
+        from modules.ai_imaging.ai_module_ui.cursor_3d.coord_utils import get_pixel_array_from_viewer
+        from modules.ai_imaging.ai_module_ui.cursor_3d.arc_probability import compute_arc_probability
+        from modules.ai_imaging.ai_module_ui.cursor_3d.visualization import draw_arc_probability_heatmap
+
+        import math
+
+        for laterality, lat_result in result.lateralities.items():
+            for match in lat_result.cursor_matches:
+                if match.match_type == 'out_of_field':
+                    continue
+
+                arc = match.correspondence_arc
+                if arc is None:
+                    continue
+
+                # Find the target view for this match
+                target_key = f"{laterality}_{match.target_view}"
+                target_vd = views_by_key.get(target_key)
+                if target_vd is None or target_vd.vtk_widget is None:
+                    continue
+
+                # Get pixel array from the target viewer
+                pixel_array = get_pixel_array_from_viewer(target_vd.vtk_widget)
+                if pixel_array is None:
+                    continue
+
+                # Use the arc's own angles (already in radians)
+                pectoral_angle = getattr(target_vd, 'manual_pectoral_angle_deg', None) or 0.0
+
+                try:
+                    prob_result = compute_arc_probability(
+                        pixel_array=pixel_array,
+                        nipple_x_px=arc.center_x_px,
+                        nipple_y_px=arc.center_y_px,
+                        radius_px=arc.radius_px,
+                        start_angle_rad=arc.start_angle_rad,
+                        end_angle_rad=arc.end_angle_rad,
+                        pectoral_angle_deg=pectoral_angle,
+                        n_samples=64,
+                    )
+
+                    if prob_result is not None:
+                        draw_arc_probability_heatmap(target_vd.vtk_widget, prob_result)
+                        peak = prob_result.probabilities.max()
+                        print(f"[3D-Cursor][HEATMAP] {target_key}: "
+                              f"peak={peak:.2f}, "
+                              f"mean={prob_result.probabilities.mean():.2f}")
+                except Exception as e:
+                    print(f"[3D-Cursor][HEATMAP] Error on {target_key}: {e}")
 
     def _run_3d_cursor_analysis(self):
         """Execute the 3D cursor correlation using mm-based geometry."""

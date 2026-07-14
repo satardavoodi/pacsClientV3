@@ -123,6 +123,62 @@ class AIVTKWidget(VTKWidget):
     def _on_apply_boxes_requested(self, series_uid, boxes_scores, delay_ms):
         self._schedule_apply_boxes(series_uid, boxes_scores, delay_ms=delay_ms)
 
+    def _clear_3d_cursor_actors(self):
+        """Remove 3D cursor arc/marker actors, nipple markers, and pectoral line actors from this viewer on series switch."""
+        try:
+            actors = getattr(self, '_projected_actors', None)
+            region_actors = getattr(self, '_3d_cursor_region_actors', None)
+            nipple_actors = getattr(self, '_nipple_marker_actors', None)
+            pectoral_actors = getattr(self, '_pectoral_line_actors', None)
+            all_actors = list(actors or []) + list(region_actors or []) + list(nipple_actors or []) + list(pectoral_actors or [])
+            if not all_actors:
+                return
+
+            image_viewer = getattr(self, 'image_viewer', None)
+            if image_viewer is not None:
+                renderer = getattr(image_viewer, 'renderer', None)
+                if renderer:
+                    for a in all_actors:
+                        try:
+                            renderer.RemoveActor(a)
+                        except Exception:
+                            pass
+
+            self._projected_actors = []
+            self._3d_cursor_region_actors = []
+            self._nipple_marker_actors = []
+            self._pectoral_line_actors = []
+
+            # Also clear any NipplePickerController markers referencing this widget
+            try:
+                pw = getattr(self, 'patient_widget', None)
+                if pw is None:
+                    pw = getattr(self, '_patient_widget', None)
+                if pw:
+                    ai_tab = getattr(pw, '_ai_imaging_tab', None) or getattr(pw, 'ai_imaging_tab', None)
+                    if ai_tab:
+                        picker = getattr(ai_tab, '_nipple_picker', None)
+                        if picker and hasattr(picker, '_manual_nipple_actors'):
+                            actor = picker._manual_nipple_actors.pop(id(self), None)
+                            if actor and image_viewer:
+                                renderer = getattr(image_viewer, 'renderer', None)
+                                if renderer:
+                                    try:
+                                        renderer.RemoveActor(actor)
+                                    except Exception:
+                                        pass
+            except Exception:
+                pass
+
+            # Render to visually remove the actors
+            if image_viewer is not None:
+                rw = getattr(image_viewer, 'image_render_window', None) or \
+                     getattr(image_viewer, 'GetRenderWindow', lambda: None)()
+                if rw:
+                    rw.Render()
+        except Exception:
+            pass
+
     def _schedule_manager_ai_safe(self, delay_ms=200, reason=None):
         try:
             from PySide6.QtCore import QThread
@@ -872,6 +928,10 @@ class AIVTKWidget(VTKWidget):
         series_meta = metadata.get('series', {}) if isinstance(metadata, dict) else {}
         modality = str(series_meta.get('modality', '') or '').upper()
         print(f"[MG][VTK] start_process_series called for series={series_index} modality={modality or 'N/A'}")
+
+        # Clear 3D cursor actors from the previous series
+        self._clear_3d_cursor_actors()
+
         super().start_process_series(vtk_image_data, metadata, series_index, id_vtk_widget, metadata_fixed)
 
         # ---- MG: load CSV paths from manifest (via utils)
@@ -925,6 +985,9 @@ class AIVTKWidget(VTKWidget):
         # with the shared switch pipeline. Without this kwarg every series load
         # into the AI viewport raised TypeError and the image never appeared.
         print(f"[MG][VTK] switch_series called for series={series_index} modality={metadata.get('series', {}).get('modality', 'N/A')}")
+
+        # Clear 3D cursor actors from the previous series so they don't persist
+        self._clear_3d_cursor_actors()
         
         # Load CSV paths if not already loaded (happens when viewer is created as placeholder)
         if self.csv_details_path is None and metadata.get('series', {}).get('modality', '').upper() == 'MG':

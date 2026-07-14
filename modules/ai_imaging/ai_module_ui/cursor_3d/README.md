@@ -30,6 +30,26 @@
 ✓ **Clipping به محدوده بافت سینه**: حذف نقاط خارج از contour  
 ✓ **جستجوی هوشمند**: استفاده از Density Correlation برای یافتن بهترین نقطه  
 
+### به روزرسانی وضعیت پیاده سازی (July 2026)
+
+نسخه فعلی در مسیر Runtime علاوه بر کمان هندسی، از **Probability Heatmap** روی کمان استفاده می کند
+و رفتار نمایش را برای خروج از میدان دید (FOV) اصلاح کرده است.
+
+موارد فعال در نسخه فعلی:
+
+1. **تبدیل دقیق مختصات کلیک**
+- ماژول جدید `coord_utils.py` مسیر استاندارد تبدیل را فراهم می کند:
+    `Widget -> Display (VTK) -> World -> IJK`.
+- روش اصلی: `DisplayToWorld` (دقیق تر برای Viewer دوبعدی).
+
+2. **Probability Heatmap واقعی روی کمان**
+- ماژول `arc_probability.py` احتمال هر نقطه روی کمان را از ترکیب چند Feature محاسبه می کند.
+- نمایش Heatmap در `visualization.py::draw_arc_probability_heatmap` انجام می شود.
+
+3. **FOV Clipping برای کمان**
+- اگر کل کمان خارج تصویر باشد، کمان رسم نمی شود و پیام `Outside FOV` نمایش داده می شود.
+- اگر فقط بخشی از کمان داخل تصویر باشد، زاویه کمان به بازه قابل مشاهده clip می شود.
+
 ---
 
 ## اصول فیزیکی
@@ -155,22 +175,58 @@ radius_mm = arc.radius_mm
 - رسم کمان روی تصویر
 - نمایش زاویه‌ها با annotation
 - باکس اطلاعات با فرمول‌ها و محاسبات
+- Heatmap احتمالات روی کمان
+- کنترل FOV (skip/clip) برای جلوگیری از رسم خارج از تصویر
 
-**توابع اصلی:**
+**توابع مهم نسخه فعلی:**
 ```python
-from visualization import draw_correspondence_arc_with_annotations
-
-draw_correspondence_arc_with_annotations(
-    match=cursor_match,
-    view_data=target_view,
-    laterality='R',
-    show_angle_annotations=True,
-    show_info_box=True,
-    show_formula=True,
+from modules.ai_imaging.ai_module_ui.cursor_3d.visualization import (
+    draw_arc_probability_heatmap,
 )
 ```
 
-### 7. `test_demo.py`
+### 7. `coord_utils.py`
+**تبدیل دقیق مختصات بین Qt/VTK/Image**:
+- `widget_to_image_coords(...)`
+- `get_pixel_array_from_viewer(...)`
+
+این ماژول توسط pickerها استفاده می شود تا مختصات ذخیره شده با کلیک کاربر همخوانی بالاتری داشته باشد.
+
+### 8. `arc_probability.py`
+**محاسبه احتمال روی کمان**:
+- خروجی اصلی: `ArcProbabilityResult`
+- تابع اصلی: `compute_arc_probability(...)`
+
+Featureهای فعلی:
+- Density
+- Texture (gradient)
+- Geometric prior
+- Histogram divergence
+- Entropy
+- Local contrast
+
+**توابع اصلی:**
+```python
+from modules.ai_imaging.ai_module_ui.cursor_3d.arc_probability import compute_arc_probability
+from modules.ai_imaging.ai_module_ui.cursor_3d.visualization import draw_arc_probability_heatmap
+
+prob_result = compute_arc_probability(
+    pixel_array=img,
+    nipple_x_px=nx,
+    nipple_y_px=ny,
+    radius_px=r,
+    start_angle_rad=a0,
+    end_angle_rad=a1,
+    pectoral_angle_deg=pect_angle,
+)
+
+draw_arc_probability_heatmap(
+    vtk_widget=target_vtk_widget,
+    prob_result=prob_result,
+)
+```
+
+### 9. `test_demo.py`
 **تست و Validation**:
 - داده‌های synthetic برای آزمایش
 - محاسبه خطای دقت
@@ -319,6 +375,14 @@ else:
 
 ## Visualization
 
+### وضعیت فعلی Visualization در Runtime
+
+- کمان هندسی (inner/nominal/outer) رسم می شود.
+- Heatmap احتمال به صورت segment-based روی کمان رسم می شود.
+- peak marker برای بیشترین احتمال نمایش داده می شود (در احتمال بالا).
+- اگر کمان کاملا خارج تصویر باشد: کمان رسم نمی شود و پیام `Outside FOV` نمایش می یابد.
+- اگر کمان بخشی خارج تصویر باشد: بازه زاویه ای قابل رسم clip می شود.
+
 ### رسم کمان با annotation های کامل:
 
 الگوریتم visualization شامل چهار بخش اصلی است:
@@ -376,6 +440,17 @@ draw_correspondence_arc_with_annotations(
 ---
 
 ## مثال‌های کاربردی
+
+## عیب یابی سریع (Runtime)
+
+### 1) کمان بیرون تصویر رسم می شود
+- انتظار فعلی: اگر کل کمان بیرون باشد، باید skip شود و `Outside FOV` ببینید.
+- اگر این اتفاق نیفتاد، بررسی کنید ابعاد تصویر از metadata قابل خواندن باشد (`rows/columns`).
+
+### 2) Heatmap دیده نمی شود
+- مسیر اجرا باید `compute_arc_probability(...)` را با `start_angle_rad/end_angle_rad` صحیح فراخوانی کند.
+- سپس `draw_arc_probability_heatmap(...)` روی همان target viewer صدا زده شود.
+- وجود logهای `[3D-Cursor][HEATMAP]` در خروجی کمک می کند مسیر اجرا را تایید کنید.
 
 ### مثال 1: یافتن تطابق برای یک ضایعه در CC
 

@@ -105,6 +105,33 @@ def test_correspondence_arc_best_point_is_on_valid_arc_samples():
 
 
 def test_visualization_uses_validated_target_center_for_region_strip():
+    """The target-view overlay must be driven by the VALIDATED target lesion.
+
+    Guard intent: when the correlator produced a validated ``target_lesion``,
+    the target-view rendering must derive its geometry from that lesion's
+    ``center_px`` — never from a blind/unvalidated projection.
+
+    This is pinned BEHAVIOURALLY (not by variable name) on purpose: the July-13
+    3D-cursor rewrite (upstream ``1c01b3e4``) renamed the locals
+    (``target_center_px`` -> ``lesion_center_px``) while keeping the guarantee.
+    A name-only pin failed on a rewrite that was in fact correct, so assert the
+    invariant instead of the spelling.
+    """
     text = (ROOT / "modules/ai_imaging/ai_module_ui/cursor_3d/visualization.py").read_text(encoding="utf-8")
-    assert "target_center_px = match.target_lesion.center_px" in text
-    assert "target_center_px=target_center_px" in text
+
+    # The validated target lesion's centre must be read at all.
+    assert "match.target_lesion.center_px" in text, (
+        "visualization.py no longer reads match.target_lesion.center_px — the "
+        "target-view overlay may be using an unvalidated projection."
+    )
+
+    # It must be guarded by a presence check, so an unmatched lesion cannot
+    # silently fall through to a raw projection.
+    assert "if match.target_lesion" in text or "elif match.target_lesion" in text, (
+        "the validated-target-lesion branch guard is missing from visualization.py"
+    )
+
+    # And it must actually feed the drawing call (whatever the kwarg is named).
+    assert "lesion_center_px=match.target_lesion.center_px" in text or (
+        "target_center_px=target_center_px" in text
+    ), "the validated target centre is read but never passed to the draw call"

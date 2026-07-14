@@ -130,6 +130,7 @@ class ViewData:
     pixel_spacing_y: Optional[float] = None
     vtk_widget: object = None  # Reference to viewer widget for visualization
     manual_nipple_px: Optional[Tuple[float, float]] = None  # User-selected nipple (x_px, y_px)
+    manual_pectoral_angle_deg: Optional[float] = None  # User-drawn pectoral line angle
 
 
 # ─── Main Correlator Class ───────────────────────────────────────────────────
@@ -199,7 +200,14 @@ class CursorCorrelator3D:
 
         # Extract pectoral angle from MLO view
         pectoral_angle_deg = None
-        if mlo_view and mlo_view.dicom_path:
+        # Prefer user-drawn pectoral line angle (from either view, MLO preferred)
+        if mlo_view and mlo_view.manual_pectoral_angle_deg is not None:
+            pectoral_angle_deg = mlo_view.manual_pectoral_angle_deg
+            print(f"[3D-Cursor] Using MANUAL pectoral angle from MLO: {pectoral_angle_deg:.1f}°")
+        elif cc_view and cc_view.manual_pectoral_angle_deg is not None:
+            pectoral_angle_deg = cc_view.manual_pectoral_angle_deg
+            print(f"[3D-Cursor] Using MANUAL pectoral angle from CC: {pectoral_angle_deg:.1f}°")
+        elif mlo_view and mlo_view.dicom_path:
             pectoral_angle_deg = self._extract_pectoral_angle(mlo_view, laterality)
 
         # Build geometry for available views
@@ -366,6 +374,24 @@ class CursorCorrelator3D:
                 # Case 1: Paired — same lesion seen in both views
                 used_mlo_indices.add(best_j)
                 confidence = max(0.5, 1.0 - (best_diff / threshold))
+
+                # Also compute the correspondence arc for visual feedback
+                paired_arc = None
+                try:
+                    paired_arc = compute_correspondence_arc(
+                        source_lesion=cc_lesion,
+                        source_geom=cc_geom,
+                        target_geom=mlo_geom,
+                        source_view='CC',
+                        target_view='MLO',
+                        pectoral_angle_deg=pectoral_angle_deg,
+                        breast_contour=mlo_contour,
+                        angular_resolution_deg=1.0,
+                        angle_margin_deg=30.0,
+                    )
+                except Exception:
+                    pass
+
                 matches.append(CursorMatch(
                     source_view='CC',
                     source_lesion=cc_lesion,
@@ -375,6 +401,7 @@ class CursorCorrelator3D:
                     depth_mm=cc_depth,
                     depth_difference_mm=best_diff,
                     confidence=round(confidence, 2),
+                    correspondence_arc=paired_arc,
                 ))
             else:
                 # Case 2: CC only → project to MLO using arc
@@ -430,6 +457,7 @@ class CursorCorrelator3D:
                 depth_mm=depth_mm,
                 confidence=0.0,
                 message=(
+                    f"⚠ خارج از ناحیه تصویر | "
                     f"Projected location is outside the breast area. "
                     f"Depth {depth_mm:.1f}mm exceeds available "
                     f"{target_geom.max_available_depth_mm():.1f}mm in {target_view} view."

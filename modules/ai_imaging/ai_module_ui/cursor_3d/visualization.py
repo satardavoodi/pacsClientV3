@@ -1,32 +1,132 @@
 """
-3D Cursor Visualization — Drawing projected cursors on viewer widgets.
+3D Cursor Visualization — Arc-based projected cursor rendering.
 
-This module handles the display of 3D cursor results on mammogram viewers:
-    - Paired lesions: highlighted with a confirmation box (cyan).
-    - Projected lesions: drawn as a blue bounding box at the estimated location.
-    - Out-of-field: no box drawn; the text summary reports the issue.
-    - Ruler lines: dashed lines from nipple to lesion with mm distance labels.
+This module renders the correspondence ARC on mammogram viewers for
+lesion localization between CC and MLO views.
 
-Pixel coordinates are used only here (the final visualization step).
-All geometric computation is done in the correlator using millimeters.
+NO rectangles are drawn. The visualization is exclusively arc-based:
+    - Three concentric arcs (inner/nominal/outer) representing ±10% uncertainty.
+    - A shaded uncertainty band between inner and outer arcs.
+    - Ruler lines from nipple to lesion with mm distance labels.
+    - Nipple and pectoral line markers.
+
+The arc represents the geometric locus of all physically plausible
+positions at the preserved nipple-to-lesion distance (Kopans' Rule).
+
+All geometric computation is done in millimeters.
+Pixel coordinates are used only at the final rendering step.
 """
 
 from __future__ import annotations
 
+import math
 from typing import Dict, Optional, Tuple
 
+import numpy as np
+
 from .correlator import Cursor3DResult, CursorMatch, LateralityResult, ViewData
+from .arc_probability import ArcProbabilityResult
+
+
+# ─── Text Summary ────────────────────────────────────────────────────────────
+
+
+def format_3d_cursor_summary(result: Cursor3DResult) -> str:
+    """
+    Format a Cursor3DResult into a human-readable text summary.
+
+    Returns a multi-line string describing each laterality's matches,
+    distances, and confidence.
+    """
+    lines = ["═══ 3D Cursor — CC/MLO Correlation ═══", ""]
+
+    if not result.lateralities:
+        lines.append("No correlations found.")
+        return "\n".join(lines)
+
+    for laterality, lat_result in result.lateralities.items():
+        lines.append(f"── {laterality} Breast ──")
+
+        if not lat_result.cursor_matches:
+            lines.append("  No lesion matches.")
+            lines.append("")
+            continue
+
+        for i, match in enumerate(lat_result.cursor_matches, 1):
+            mtype = match.match_type
+            src = match.source_view
+            tgt = match.target_view
+            depth = match.depth_mm
+
+            if mtype == 'paired':
+                lines.append(
+                    f"  [{i}] PAIRED — Lesion found in both {src} and {tgt}"
+                )
+                lines.append(f"       Distance from nipple: {depth:.1f} mm")
+            elif mtype in ('projected', 'arc_projected'):
+                lines.append(
+                    f"  [{i}] PROJECTED — Lesion in {src} → arc on {tgt}"
+                )
+                lines.append(f"       Distance from nipple: {depth:.1f} mm")
+                if match.correspondence_arc:
+                    arc = match.correspondence_arc
+                    lower = arc.radius_mm * 0.90
+                    upper = arc.radius_mm * 1.10
+                    lines.append(
+                        f"       Uncertainty band: {lower:.1f}–{upper:.1f} mm (±10%)"
+                    )
+                    lines.append(
+                        f"       Arc confidence: {arc.confidence:.0%}"
+                    )
+            elif mtype == 'out_of_field':
+                lines.append(
+                    f"  [{i}] ⚠ خارج از ناحیه تصویر — Lesion in {src} projects outside {tgt}"
+                )
+                lines.append(f"       Distance from nipple: {depth:.1f} mm")
+                lines.append(f"       (فاصله از نوک پستان خارج از محدوده تصویر است)")
+            else:
+                lines.append(f"  [{i}] {mtype.upper()} — {src} → {tgt}")
+                lines.append(f"       Distance: {depth:.1f} mm")
+
+            lines.append("")
+
+    lines.append("═══════════════════════════════════════")
+    return "\n".join(lines)
 
 
 # ─── Colors ──────────────────────────────────────────────────────────────────
 
 COLOR_PAIRED = (0.1, 0.4, 1.0)       # Blue — confirmed match in both views
-COLOR_PROJECTED = (0.0, 0.5, 1.0)    # Blue — projected 3D cursor location
+COLOR_PROJECTED = (0.0, 0.5, 1.0)    # Blue — projected arc location
 COLOR_OUT_OF_FIELD = (0.8, 0.2, 0.2) # Red — invalid projection (out of field)
 COLOR_RULER = (0.0, 0.6, 1.0)        # Blue — ruler line (nipple to lesion)
 COLOR_RULER_TEXT = (0.8, 0.95, 1.0)  # Light blue — distance label
 COLOR_LESION_RULER = (1.0, 0.6, 0.0) # Orange — lesion-to-lesion ruler
 COLOR_LESION_RULER_TEXT = (1.0, 0.9, 0.6)  # Light orange — distance label
+
+# Arc visualization colors
+ARC_NOMINAL_COLOR = (0.0, 0.7, 1.0)   # Cyan — nominal arc
+ARC_INNER_COLOR = (0.0, 0.5, 0.9)     # Darker cyan — inner bound
+ARC_OUTER_COLOR = (0.0, 0.5, 0.9)     # Darker cyan — outer bound
+ARC_BAND_COLOR = (0.0, 0.6, 1.0)      # Cyan — uncertainty band fill
+ARC_NOMINAL_OPACITY = 0.85
+ARC_BOUND_OPACITY = 0.50
+ARC_BAND_OPACITY = 0.12
+ARC_NOMINAL_WIDTH = 3.0               # Line width for nominal arc
+ARC_BOUND_WIDTH = 1.5                 # Line width for bound arcs
+
+# Nipple / pectoral line marker colors
+NIPPLE_MARKER_COLOR = (1.0, 0.3, 0.3)   # Red
+PECTORAL_LINE_COLOR = (0.3, 1.0, 0.5)   # Green
+
+# Angular parameters
+ARC_ANGULAR_EXTENT_DEG = 140.0  # Angular span of the arc (centered on lesion)
+ARC_NUM_SEGMENTS = 64            # Number of line segments per arc (smoothness)
+
+# Arc offset / spacing parameters
+ARC_RADIUS_OFFSET_PX = 25.0     # Extra pixels added to arc radius (clears lesion box)
+ARC_BAND_SPACING_PX = 50.0      # Pixel spacing between inner/nominal/outer arcs
+ARC_LABEL_OFFSET_PX = 22.0      # Label offset outside the outer arc
 
 
 def draw_3d_cursor_results(
@@ -40,14 +140,12 @@ def draw_3d_cursor_results(
 
     Args:
         result: The computed Cursor3DResult.
-        views_by_key: Dict mapping "{laterality}_{view}" (e.g. "R_CC") to ViewData,
-                      which contains the vtk_widget reference for drawing.
+        views_by_key: Dict mapping "{laterality}_{view}" (e.g. "R_CC") to ViewData.
         draw_rulers: If True (default), also draw ruler lines with mm distance labels.
     """
     for laterality, lat_result in result.lateralities.items():
         _draw_laterality_results(laterality, lat_result, views_by_key)
 
-    # Draw ruler annotations showing nipple-to-lesion distance on each view
     if draw_rulers:
         draw_rulers_for_results(result, views_by_key)
 
@@ -59,9 +157,8 @@ def _draw_laterality_results(
 ):
     """Draw results for one laterality.
 
-    RULE: If BOTH CC and MLO have detected lesions (i.e. all matches are 'paired'),
-    do NOT draw any 3D cursor visualization — the AI boxes already show the lesions
-    in both views and no projection is needed.
+    Draws correspondence arcs for ALL matches to provide visual feedback,
+    including paired matches where both views have detected lesions.
     """
     cc_key = f"{laterality}_CC"
     mlo_key = f"{laterality}_MLO"
@@ -75,66 +172,39 @@ def _draw_laterality_results(
     if mlo_view and mlo_view.vtk_widget:
         _clear_projected_actors(mlo_view.vtk_widget)
 
-    # If ALL matches are paired (lesion found in both CC and MLO), skip 3D cursor entirely
-    if lat_result.cursor_matches and all(
-        m.match_type == 'paired' for m in lat_result.cursor_matches
-    ):
-        print(f"[3D-Cursor] Skipping visualization for {laterality}: "
-              f"lesions found in BOTH CC and MLO — no projection needed.")
-        return
-
+    # If ALL matches are paired, still draw arcs to visually indicate
+    # the correspondence (user expects visual feedback on the clicked region)
     for match in lat_result.cursor_matches:
         if match.match_type == 'paired':
-            # Draw confirmation highlight on both views
-            _draw_paired_match(match, cc_view, mlo_view)
+            # Both views have AI boxes — draw a confirmation arc to highlight
+            # the correspondence between the views.
+            _draw_correspondence_arc(match, views_by_key, laterality)
         elif match.match_type in ('projected', 'arc_projected'):
-            # Draw blue semi-transparent REGION overlay on the target view
-            _draw_projected_region(match, views_by_key, laterality)
-        # 'out_of_field' — no box drawn (reported in text summary only)
+            # Draw correspondence ARC on the target view
+            _draw_correspondence_arc(match, views_by_key, laterality)
+        # 'out_of_field' — no visualization (reported in text summary only)
 
 
-def _draw_paired_match(match: CursorMatch, cc_view: Optional[ViewData], mlo_view: Optional[ViewData]):
-    """Paired match: both views already have AI boxes — do NOT draw anything new.
+# ─── Correspondence Arc Drawing ──────────────────────────────────────────────
 
-    When both CC and MLO have detected lesions, the green AI boxes are already
-    rendered by the normal AI pipeline. Adding extra boxes just clutters the view.
-    The summary text reports the pairing; no visual change needed on the viewers.
+
+def _draw_correspondence_arc(
+    match: CursorMatch,
+    views_by_key: Dict[str, ViewData],
+    laterality: str,
+):
     """
-    pass  # Intentionally empty — both views already show their AI detection boxes.
+    Draw the correspondence arc on the target view.
 
+    The arc is centered at the nipple in the target view, with radius equal
+    to the nipple-to-lesion distance from the source view. Three concentric
+    arcs (inner/nominal/outer) represent the ±10% clinical uncertainty band.
 
-def _draw_projected_cursor(match: CursorMatch, views_by_key: Dict[str, ViewData], laterality: str):
-    """Legacy: Draw a projected 3D cursor box on the target view."""
-    if match.target_lesion is None:
-        return
+    FOV clipping: if the entire arc lies outside the image boundaries,
+    nothing is drawn and a warning is printed. If only part of the arc
+    is outside, the arc is clipped to the image bounds.
 
-    target_key = f"{laterality}_{match.target_view}"
-    target_view = views_by_key.get(target_key)
-
-    if target_view and target_view.vtk_widget:
-        # Use red color if validation clamped the point (warning in message)
-        has_warning = "VALIDATION" in match.message or "clamped" in match.message.lower()
-        color = COLOR_OUT_OF_FIELD if has_warning else COLOR_PROJECTED
-
-        _draw_box_on_widget(
-            target_view.vtk_widget,
-            match.target_lesion.to_pixel_box(),
-            color=color,
-            confidence=match.confidence,
-        )
-
-        # Draw warning text overlay if point was clamped
-        if has_warning:
-            _draw_validation_warning(target_view.vtk_widget, match.message)
-
-
-def _draw_projected_region(match: CursorMatch, views_by_key: Dict[str, ViewData], laterality: str):
-    """
-    Draw a semi-transparent blue VERTICAL RECTANGLE overlay showing the probable
-    lesion zone at the nipple-distance from the nipple point.
-
-    The rectangle spans the full height of the image (top to bottom) and is centered
-    horizontally at the distance from the nipple where the lesion is projected.
+    No rectangles are drawn.
     """
     if match.target_lesion is None and match.correspondence_arc is None:
         return
@@ -146,771 +216,729 @@ def _draw_projected_region(match: CursorMatch, views_by_key: Dict[str, ViewData]
         return
 
     arc = match.correspondence_arc
-    target_center_px = match.target_lesion.center_px if match.target_lesion is not None else None
-    if arc and arc.arc_points_px and len(arc.arc_points_px) >= 2:
-        # Draw full-height rectangle at the nipple distance
-        _draw_distance_rectangle_on_widget(
-            vtk_widget=target_view.vtk_widget,
-            arc=arc,
-            band_width_mm=None,  # Use module default (wider clinical strip)
-            view_type=match.target_view,  # 'CC' or 'MLO' — controls tilt angle
-            target_center_px=target_center_px,
-        )
-    elif match.target_lesion is not None:
-        # Fallback: draw a full-height rectangle at the target lesion x-position
-        _draw_distance_rectangle_fallback(
-            vtk_widget=target_view.vtk_widget,
-            center_px=match.target_lesion.center_px,
-            radius_mm=match.depth_mm,
-            nipple_px=(arc.center_x_px, arc.center_y_px) if arc else match.target_lesion.center_px,
-            pixel_spacing_x=target_view.pixel_spacing_x or 0.1,
-            pixel_spacing_y=target_view.pixel_spacing_y or 0.1,
-        )
+    if arc is None:
+        return
+
+    # Arc must have a valid radius
+    if arc.radius_mm <= 0 or arc.radius_px < 5.0:
+        return
+
+    # ── FOV clipping: get image dimensions ──
+    img_rows, img_cols = _get_image_dimensions(target_view.vtk_widget)
+
+    if img_rows > 0 and img_cols > 0:
+        # Check how many arc sample points fall inside the image
+        outer_radius_px = arc.radius_px + ARC_RADIUS_OFFSET_PX + 2 * ARC_BAND_SPACING_PX
+        start_a = arc.start_angle_rad
+        end_a = arc.end_angle_rad
+
+        # Sample the OUTER arc (largest radius) to check FOV
+        n_check = 32
+        inside_count = 0
+        clipped_start = None
+        clipped_end = None
+
+        for i in range(n_check + 1):
+            t = i / float(n_check)
+            angle = start_a + t * (end_a - start_a)
+            px = arc.center_x_px + outer_radius_px * math.cos(angle)
+            py = arc.center_y_px + outer_radius_px * math.sin(angle)
+
+            if 0 <= px < img_cols and 0 <= py < img_rows:
+                inside_count += 1
+                if clipped_start is None:
+                    clipped_start = angle
+                clipped_end = angle
+
+        if inside_count == 0:
+            # Entire arc is outside the image → do NOT draw
+            print(f"[3D-Cursor][ARC] SKIPPED: entire arc outside FOV "
+                  f"(center=({arc.center_x_px:.0f},{arc.center_y_px:.0f}) "
+                  f"r={arc.radius_px:.0f}px, image={img_cols}x{img_rows})")
+
+            # Draw "Outside FOV" text label at nipple position instead
+            _draw_outside_fov_label(target_view.vtk_widget, arc.center_x_px, arc.center_y_px,
+                                    arc.radius_mm)
+            return
+
+        # If only a partial arc is inside, clip the angles
+        if inside_count < n_check + 1 and clipped_start is not None:
+            # Add a small margin to avoid cutting right at the edge
+            margin = (end_a - start_a) / n_check * 0.5
+            start_a = clipped_start - margin
+            end_a = clipped_end + margin
+            print(f"[3D-Cursor][ARC] Clipped arc to FOV: "
+                  f"{math.degrees(start_a):.0f}°–{math.degrees(end_a):.0f}° "
+                  f"({inside_count}/{n_check + 1} samples inside)")
+    else:
+        start_a = arc.start_angle_rad
+        end_a = arc.end_angle_rad
+
+    _draw_arc_with_uncertainty_band(
+        vtk_widget=target_view.vtk_widget,
+        nipple_x_px=arc.center_x_px,
+        nipple_y_px=arc.center_y_px,
+        radius_px=arc.radius_px,
+        radius_mm=arc.radius_mm,
+        start_angle_rad=start_a,
+        end_angle_rad=end_a,
+        tolerance=0.10,
+        img_rows=img_rows,
+        img_cols=img_cols,
+    )
 
 
-def _draw_box_on_widget(vtk_widget, box: list, color: tuple, confidence: float):
-    """Draw a single bounding box on a viewer widget."""
+def _draw_arc_with_uncertainty_band(
+    vtk_widget,
+    nipple_x_px: float,
+    nipple_y_px: float,
+    radius_px: float,
+    radius_mm: float,
+    start_angle_rad: float,
+    end_angle_rad: float,
+    tolerance: float = 0.10,
+    img_rows: int = 0,
+    img_cols: int = 0,
+):
+    """
+    Render three concentric arcs + uncertainty band on the VTK viewer.
+
+    Draws:
+        1. Filled uncertainty band (annular sector between inner and outer radii).
+        2. Inner arc — dashed.
+        3. Nominal arc — solid.
+        4. Outer arc — dashed.
+        5. Nipple crosshair marker.
+        6. Distance label OUTSIDE the outer arc.
+
+    Layout (from center outward):
+        inner_radius  = radius + ARC_RADIUS_OFFSET_PX
+        nominal_radius = inner_radius + ARC_BAND_SPACING_PX
+        outer_radius   = nominal_radius + ARC_BAND_SPACING_PX
+
+    The arcs are spaced with fixed pixel gaps so they remain visually
+    distinct regardless of the actual nipple-to-lesion distance.
+    """
+    try:
+        import vtk as _vtk
+    except ImportError:
+        return
+
     try:
         image_viewer = getattr(vtk_widget, 'image_viewer', None)
         if image_viewer is None:
             return
 
-        x1, y1, x2, y2 = box
-        boxes_scores = [{'box': [x1, y1, x2, y2], 'score': float(confidence)}]
+        renderer = getattr(image_viewer, 'renderer', None)
+        if renderer is None:
+            return
 
-        if hasattr(image_viewer, 'draw_boxes_ijk'):
-            lst_actors = image_viewer.draw_boxes_ijk(
-                boxes_scores, color=color, line_width=2.5
+        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
+        if ijk_to_world is None:
+            return
+
+        # ── Compute arc radii with fixed pixel spacing ──
+        inner_radius_px = radius_px + ARC_RADIUS_OFFSET_PX
+        nominal_radius_px = inner_radius_px + ARC_BAND_SPACING_PX
+        outer_radius_px = nominal_radius_px + ARC_BAND_SPACING_PX
+
+        all_actors = []
+
+        # ── 1. Filled uncertainty band (annular sector) ──
+        band_actor = _create_annular_sector_actor(
+            _vtk, ijk_to_world,
+            cx=nipple_x_px, cy=nipple_y_px,
+            inner_r=inner_radius_px, outer_r=outer_radius_px,
+            start_angle=start_angle_rad, end_angle=end_angle_rad,
+            num_segments=ARC_NUM_SEGMENTS,
+            color=ARC_BAND_COLOR, opacity=ARC_BAND_OPACITY,
+        )
+        if band_actor:
+            renderer.AddActor(band_actor)
+            all_actors.append(band_actor)
+
+        # ── 2. Inner bound arc (dashed) ──
+        inner_actor = _create_arc_line_actor(
+            _vtk, ijk_to_world,
+            cx=nipple_x_px, cy=nipple_y_px,
+            radius=inner_radius_px,
+            start_angle=start_angle_rad, end_angle=end_angle_rad,
+            num_segments=ARC_NUM_SEGMENTS,
+            color=ARC_INNER_COLOR, opacity=ARC_BOUND_OPACITY,
+            line_width=ARC_BOUND_WIDTH, dashed=True,
+        )
+        if inner_actor:
+            renderer.AddActor(inner_actor)
+            all_actors.append(inner_actor)
+
+        # ── 3. Nominal arc (solid) ──
+        nominal_actor = _create_arc_line_actor(
+            _vtk, ijk_to_world,
+            cx=nipple_x_px, cy=nipple_y_px,
+            radius=nominal_radius_px,
+            start_angle=start_angle_rad, end_angle=end_angle_rad,
+            num_segments=ARC_NUM_SEGMENTS,
+            color=ARC_NOMINAL_COLOR, opacity=ARC_NOMINAL_OPACITY,
+            line_width=ARC_NOMINAL_WIDTH, dashed=False,
+        )
+        if nominal_actor:
+            renderer.AddActor(nominal_actor)
+            all_actors.append(nominal_actor)
+
+        # ── 4. Outer bound arc (dashed) ──
+        outer_actor = _create_arc_line_actor(
+            _vtk, ijk_to_world,
+            cx=nipple_x_px, cy=nipple_y_px,
+            radius=outer_radius_px,
+            start_angle=start_angle_rad, end_angle=end_angle_rad,
+            num_segments=ARC_NUM_SEGMENTS,
+            color=ARC_OUTER_COLOR, opacity=ARC_BOUND_OPACITY,
+            line_width=ARC_BOUND_WIDTH, dashed=True,
+        )
+        if outer_actor:
+            renderer.AddActor(outer_actor)
+            all_actors.append(outer_actor)
+
+        # ── 5. Nipple marker (small crosshair) ──
+        nipple_actor = _create_nipple_marker_actor(
+            _vtk, ijk_to_world,
+            cx=nipple_x_px, cy=nipple_y_px,
+        )
+        if nipple_actor:
+            renderer.AddActor(nipple_actor)
+            all_actors.append(nipple_actor)
+
+        # ── 6. Distance label OUTSIDE the outer arc ──
+        mid_angle = (start_angle_rad + end_angle_rad) / 2.0
+        label_radius = outer_radius_px + ARC_LABEL_OFFSET_PX
+        label_x_px = nipple_x_px + label_radius * math.cos(mid_angle)
+        label_y_px = nipple_y_px + label_radius * math.sin(mid_angle)
+        lower_mm = radius_mm * (1.0 - tolerance)
+        upper_mm = radius_mm * (1.0 + tolerance)
+        label_text = (
+            f"{radius_mm:.1f} mm\n"
+            f"\u00b1{tolerance * 100:.0f}%\n"
+            f"{lower_mm:.1f}\u2013{upper_mm:.1f} mm"
+        )
+        label_actor = _create_text_label_actor(
+            _vtk, ijk_to_world,
+            x_px=label_x_px, y_px=label_y_px,
+            text=label_text,
+        )
+        if label_actor:
+            renderer.AddActor(label_actor)
+            all_actors.append(label_actor)
+
+        # ── Track actors for cleanup ──
+        if not hasattr(vtk_widget, '_projected_actors'):
+            vtk_widget._projected_actors = []
+        vtk_widget._projected_actors.extend(all_actors)
+
+        if not hasattr(vtk_widget, '_3d_cursor_region_actors'):
+            vtk_widget._3d_cursor_region_actors = []
+        vtk_widget._3d_cursor_region_actors.extend(all_actors)
+
+        # ── Render ──
+        renderer.ResetCameraClippingRange()
+        rw = getattr(image_viewer, 'image_render_window', None) or \
+             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
+        if rw:
+            rw.Render()
+
+        print(f"[3D-Cursor][ARC] Drew correspondence arc: "
+              f"center=({nipple_x_px:.0f},{nipple_y_px:.0f}) "
+              f"radius={radius_mm:.1f}mm ({radius_px:.0f}px) "
+              f"span={math.degrees(end_angle_rad - start_angle_rad):.1f}deg "
+              f"inner/nom/outer={inner_radius_px:.0f}/{nominal_radius_px:.0f}/{outer_radius_px:.0f}px")
+
+    except Exception as e:
+        print(f"[3D-Cursor] Failed to draw correspondence arc: {e}")
+
+
+def draw_arc_probability_heatmap(
+    vtk_widget,
+    prob_result: ArcProbabilityResult,
+    arc_radius_offset_px: float = ARC_RADIUS_OFFSET_PX,
+    arc_band_spacing_px: float = ARC_BAND_SPACING_PX,
+):
+    """
+    Render a probability heatmap overlay on the correspondence arc.
+
+    The heatmap uses color-coded segments along the arc where:
+    - Red/hot = high probability of lesion
+    - Blue/cool = low probability of lesion
+
+    The heatmap is drawn on the nominal arc (middle band) with varying
+    color intensity per segment.
+
+    Args:
+        vtk_widget: The VTK widget to render on.
+        prob_result: ArcProbabilityResult with per-sample probabilities.
+        arc_radius_offset_px: Offset from the base radius.
+        arc_band_spacing_px: Spacing between arc bands.
+    """
+    try:
+        import vtk as _vtk
+    except ImportError:
+        return
+
+    if prob_result is None or len(prob_result.probabilities) < 2:
+        return
+
+    try:
+        image_viewer = getattr(vtk_widget, 'image_viewer', None)
+        if image_viewer is None:
+            return
+
+        renderer = getattr(image_viewer, 'renderer', None)
+        if renderer is None:
+            return
+
+        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
+        if ijk_to_world is None:
+            return
+
+        n_samples = len(prob_result.probabilities)
+        probs = prob_result.probabilities
+
+        cx = prob_result.center_x_px
+        cy = prob_result.center_y_px
+        radius = prob_result.radius_px
+
+        # The heatmap is drawn on the nominal arc radius
+        nominal_radius = radius + arc_radius_offset_px + arc_band_spacing_px
+        # Band width for the heatmap segments
+        band_half_width = arc_band_spacing_px * 0.6
+
+        start_angle = prob_result.start_angle_rad
+        end_angle = prob_result.end_angle_rad
+
+        all_actors = []
+
+        # Draw each segment with color mapped to probability
+        for i in range(n_samples - 1):
+            prob_val = (probs[i] + probs[i + 1]) / 2.0  # Average of neighbors
+
+            # Color mapping: blue (cold/low) → yellow → red (hot/high)
+            r, g, b = _probability_to_color(prob_val)
+
+            # Opacity proportional to probability (min 0.15, max 0.75)
+            opacity = 0.15 + prob_val * 0.60
+
+            # Segment angles
+            t0 = i / float(n_samples - 1)
+            t1 = (i + 1) / float(n_samples - 1)
+            seg_start = start_angle + t0 * (end_angle - start_angle)
+            seg_end = start_angle + t1 * (end_angle - start_angle)
+
+            # Create a small annular segment for this probability value
+            seg_actor = _create_annular_sector_actor(
+                _vtk, ijk_to_world,
+                cx=cx, cy=cy,
+                inner_r=nominal_radius - band_half_width,
+                outer_r=nominal_radius + band_half_width,
+                start_angle=seg_start,
+                end_angle=seg_end,
+                num_segments=3,  # Small segment, few subdivisions needed
+                color=(r, g, b),
+                opacity=opacity,
             )
+            if seg_actor:
+                renderer.AddActor(seg_actor)
+                all_actors.append(seg_actor)
+
+        # Draw probability peak indicator (brightest point on arc)
+        peak_idx = int(np.argmax(probs))
+        if probs[peak_idx] > 0.6:  # Only show peak marker if significant
+            t_peak = peak_idx / float(n_samples - 1)
+            peak_angle = start_angle + t_peak * (end_angle - start_angle)
+            peak_x = cx + nominal_radius * math.cos(peak_angle)
+            peak_y = cy + nominal_radius * math.sin(peak_angle)
+
+            peak_actor = _create_peak_probability_marker(
+                _vtk, ijk_to_world,
+                x_px=peak_x, y_px=peak_y,
+                probability=float(probs[peak_idx]),
+            )
+            if peak_actor:
+                renderer.AddActor(peak_actor)
+                all_actors.append(peak_actor)
+
+        # Track actors for cleanup
+        if not hasattr(vtk_widget, '_projected_actors'):
+            vtk_widget._projected_actors = []
+        vtk_widget._projected_actors.extend(all_actors)
+
+        if not hasattr(vtk_widget, '_3d_cursor_region_actors'):
+            vtk_widget._3d_cursor_region_actors = []
+        vtk_widget._3d_cursor_region_actors.extend(all_actors)
+
+        # Render
+        rw = getattr(image_viewer, 'image_render_window', None) or \
+             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
+        if rw:
+            rw.Render()
+
+        print(f"[3D-Cursor][HEATMAP] Drew probability heatmap: "
+              f"{n_samples} segments, peak={float(probs.max()):.2f} "
+              f"at idx={peak_idx}")
+
+    except Exception as e:
+        print(f"[3D-Cursor] Failed to draw probability heatmap: {e}")
+
+
+def _get_image_dimensions(vtk_widget) -> Tuple[int, int]:
+    """Get image dimensions (rows, cols) from a VTK viewer widget."""
+    try:
+        iv = getattr(vtk_widget, 'image_viewer', None)
+        if iv is None:
+            return (0, 0)
+        meta = getattr(iv, 'metadata', {}) or {}
+        instances = meta.get('instances', [])
+        if isinstance(instances, list) and instances:
+            inst = instances[0]
+            rows = int(inst.get('rows', 0) or 0)
+            cols = int(inst.get('columns', 0) or 0)
+            if rows > 0 and cols > 0:
+                return (rows, cols)
+        # Fallback: try VTK image data dimensions
+        vtk_data = getattr(iv, 'vtk_image_data', None) or \
+                   getattr(iv, 'GetInput', lambda: None)()
+        if vtk_data is not None:
+            dims = vtk_data.GetDimensions()
+            if dims and len(dims) >= 2 and dims[0] > 0 and dims[1] > 0:
+                return (dims[1], dims[0])  # rows=Y, cols=X
+    except Exception:
+        pass
+    return (0, 0)
+
+
+def _draw_outside_fov_label(vtk_widget, nipple_x_px: float, nipple_y_px: float,
+                            radius_mm: float):
+    """Draw an 'Outside FOV' warning label at the nipple position."""
+    try:
+        import vtk as _vtk
+        iv = getattr(vtk_widget, 'image_viewer', None)
+        if iv is None:
+            return
+        renderer = getattr(iv, 'renderer', None)
+        ijk_to_world = getattr(iv, 'ijk_to_world', None)
+        if renderer is None or ijk_to_world is None:
+            return
+
+        label_text = (
+            f"Outside FOV\n"
+            f"({radius_mm:.1f} mm from nipple)\n"
+            f"Predicted location is outside image"
+        )
+        actor = _create_text_label_actor(
+            _vtk, ijk_to_world,
+            x_px=nipple_x_px, y_px=nipple_y_px,
+            text=label_text, font_size=14,
+        )
+        if actor:
+            # Use red-ish color for warning
+            actor.GetTextProperty().SetColor(1.0, 0.4, 0.3)
+            renderer.AddActor(actor)
             if not hasattr(vtk_widget, '_projected_actors'):
                 vtk_widget._projected_actors = []
-            if lst_actors:
-                vtk_widget._projected_actors.extend(lst_actors)
+            vtk_widget._projected_actors.append(actor)
+
+            rw = getattr(iv, 'image_render_window', None) or \
+                 getattr(iv, 'GetRenderWindow', lambda: None)()
+            if rw:
+                rw.Render()
     except Exception as e:
-        print(f"[3D-Cursor] Failed to draw box: {e}")
+        print(f"[3D-Cursor] Failed to draw Outside FOV label: {e}")
 
 
-def _draw_validation_warning(vtk_widget, warning_message: str):
+def _probability_to_color(prob: float) -> Tuple[float, float, float]:
     """
-    Draw a red warning text overlay on the viewer when a projection was clamped.
+    Map a probability value [0, 1] to a color (R, G, B).
 
-    This alerts the radiologist that the projected cursor location was adjusted
-    because it fell outside the breast tissue or image boundaries.
+    Color ramp: Blue (0.0) → Cyan (0.25) → Green (0.5) → Yellow (0.75) → Red (1.0)
     """
+    prob = max(0.0, min(1.0, prob))
+
+    if prob < 0.25:
+        # Blue → Cyan
+        t = prob / 0.25
+        return (0.0, t, 1.0)
+    elif prob < 0.5:
+        # Cyan → Green
+        t = (prob - 0.25) / 0.25
+        return (0.0, 1.0, 1.0 - t)
+    elif prob < 0.75:
+        # Green → Yellow
+        t = (prob - 0.5) / 0.25
+        return (t, 1.0, 0.0)
+    else:
+        # Yellow → Red
+        t = (prob - 0.75) / 0.25
+        return (1.0, 1.0 - t, 0.0)
+
+
+def _create_peak_probability_marker(
+    _vtk, ijk_to_world,
+    x_px: float, y_px: float,
+    probability: float,
+):
+    """Create a diamond-shaped marker at the peak probability location."""
     try:
-        image_viewer = getattr(vtk_widget, 'image_viewer', None)
-        if image_viewer is None:
-            return
+        world_pt = ijk_to_world(x_px, y_px, None, y_flip=True)
 
-        # Extract short warning text
-        if "VALIDATION:" in warning_message:
-            short_msg = warning_message.split("VALIDATION:")[-1].strip()
-        else:
-            short_msg = "⚠ Projection adjusted"
+        marker = _vtk.vtkSphereSource()
+        marker.SetCenter(world_pt)
+        marker.SetRadius(4.0)
+        marker.SetPhiResolution(12)
+        marker.SetThetaResolution(12)
+        marker.Update()
 
-        # Truncate for display
-        if len(short_msg) > 60:
-            short_msg = short_msg[:57] + "..."
+        mapper = _vtk.vtkPolyDataMapper()
+        mapper.SetInputConnection(marker.GetOutputPort())
 
-        # Use VTK text actor if available
-        add_text_fn = getattr(image_viewer, 'add_text_overlay', None)
-        if add_text_fn:
-            actor = add_text_fn(
-                short_msg,
-                position='bottom_center',
-                color=COLOR_OUT_OF_FIELD,
-                font_size=12,
-            )
-            if actor:
-                if not hasattr(vtk_widget, '_projected_actors'):
-                    vtk_widget._projected_actors = []
-                vtk_widget._projected_actors.append(actor)
-        else:
-            # Fallback: just log the warning
-            print(f"[3D-Cursor][VISUAL-WARN] {short_msg}")
-    except Exception as e:
-        print(f"[3D-Cursor] Failed to draw validation warning: {e}")
+        actor = _vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(1.0, 0.2, 0.0)  # Bright red-orange
+        actor.GetProperty().SetOpacity(0.9)
+
+        return actor
+    except Exception:
+        return None
 
 
-# ─── Region Overlay Drawing (Radial Sector from Nipple) ──────────────────────
-
-# Colors for the radial sector — inner (near nipple) lighter, outer (lesion) deeper
-COLOR_SECTOR_INNER = (0.4, 0.7, 1.0)     # Light blue (near nipple)
-COLOR_SECTOR_OUTER = (0.15, 0.45, 1.0)   # Deep blue (at lesion depth)
-SECTOR_INNER_OPACITY = 0.08              # Nearly transparent near nipple
-SECTOR_OUTER_OPACITY = 0.45              # More opaque at lesion depth
-NUM_RADIAL_BANDS = 8                     # Number of radial bands for gradient
-SECTOR_ANGULAR_SPREAD_DEG = 30.0         # Angular spread of the sector (degrees)
+# ─── VTK Actor Builders ──────────────────────────────────────────────────────
 
 
-def _draw_arc_region_on_widget(vtk_widget, arc, band_width_mm: float = 15.0):
-    """
-    Draw a radial sector (wedge) from the nipple outward to the projected lesion depth.
-
-    The sector starts at the nipple position and extends outward to `arc.radius_px`,
-    spanning an angular range centered on the direction toward the best_point.
-    Color/opacity gradient goes from transparent near nipple to opaque at lesion depth.
-
-    Args:
-        vtk_widget: The VTK widget to draw on.
-        arc: CorrespondenceArc with arc geometry.
-        band_width_mm: Total width of the band in mm (unused, kept for API compat).
-    """
-    try:
-        import vtk as _vtk
-    except ImportError:
-        return
-
-    try:
-        image_viewer = getattr(vtk_widget, 'image_viewer', None)
-        if image_viewer is None:
-            return
-
-        renderer = getattr(image_viewer, 'renderer', None)
-        if renderer is None:
-            return
-
-        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
-        if ijk_to_world is None:
-            return
-
-        import math
-
-        # Nipple position (origin of the sector)
-        nipple_x = arc.center_x_px
-        nipple_y = arc.center_y_px
-
-        # Target point (projected lesion location)
-        if arc.best_point_px:
-            target_x, target_y = arc.best_point_px
-        elif arc.arc_points_px and len(arc.arc_points_px) >= 2:
-            mid_idx = len(arc.arc_points_px) // 2
-            target_x, target_y = arc.arc_points_px[mid_idx]
-        else:
-            # Fallback: use arc radius in the arc's angular center direction
-            mid_angle = (arc.start_angle_rad + arc.end_angle_rad) / 2.0
-            target_x = nipple_x + arc.radius_px * math.cos(mid_angle)
-            target_y = nipple_y + arc.radius_px * math.sin(mid_angle)
-
-        # Compute direction from nipple to target
-        dx = target_x - nipple_x
-        dy = target_y - nipple_y
-        sector_radius = math.sqrt(dx * dx + dy * dy)
-        if sector_radius < 5.0:
-            return  # Too close, nothing to draw
-
-        # Central angle of the sector (direction from nipple to lesion)
-        center_angle = math.atan2(dy, dx)
-
-        # Angular spread: use arc's own angular extent if available, else default
-        arc_span = abs(arc.end_angle_rad - arc.start_angle_rad)
-        if arc_span > 0.01:
-            half_spread = arc_span / 2.0
-        else:
-            half_spread = math.radians(SECTOR_ANGULAR_SPREAD_DEG) / 2.0
-
-        # Clamp spread to reasonable range
-        half_spread = max(math.radians(10.0), min(half_spread, math.radians(60.0)))
-
-        num_angular_steps = 32  # Smooth arc edges
-        all_actors = []
-
-        # Draw radial bands from nipple outward
-        for band_idx in range(NUM_RADIAL_BANDS):
-            t_inner = band_idx / float(NUM_RADIAL_BANDS)
-            t_outer = (band_idx + 1) / float(NUM_RADIAL_BANDS)
-
-            inner_r = sector_radius * t_inner
-            outer_r = sector_radius * t_outer
-
-            # Interpolate color and opacity (transparent near nipple, opaque at depth)
-            r = COLOR_SECTOR_INNER[0] + (COLOR_SECTOR_OUTER[0] - COLOR_SECTOR_INNER[0]) * t_outer
-            g = COLOR_SECTOR_INNER[1] + (COLOR_SECTOR_OUTER[1] - COLOR_SECTOR_INNER[1]) * t_outer
-            b = COLOR_SECTOR_INNER[2] + (COLOR_SECTOR_OUTER[2] - COLOR_SECTOR_INNER[2]) * t_outer
-            opacity = SECTOR_INNER_OPACITY + (SECTOR_OUTER_OPACITY - SECTOR_INNER_OPACITY) * t_outer
-
-            # Build annular sector polygon (arc between inner_r and outer_r)
-            outer_pts = []
-            inner_pts = []
-
-            for i in range(num_angular_steps + 1):
-                t_angle = i / float(num_angular_steps)
-                angle = center_angle - half_spread + t_angle * (2.0 * half_spread)
-
-                ox = nipple_x + outer_r * math.cos(angle)
-                oy = nipple_y + outer_r * math.sin(angle)
-                outer_pts.append((ox, oy))
-
-                ix_pt = nipple_x + inner_r * math.cos(angle)
-                iy_pt = nipple_y + inner_r * math.sin(angle)
-                inner_pts.append((ix_pt, iy_pt))
-
-            # Polygon: outer arc forward + inner arc reversed
-            polygon_pts_px = outer_pts + list(reversed(inner_pts))
-            if len(polygon_pts_px) < 4:
-                continue
-
-            vtk_points = _vtk.vtkPoints()
-            for px, py in polygon_pts_px:
-                world_pt = ijk_to_world(px, py, None, y_flip=True)
-                vtk_points.InsertNextPoint(world_pt)
-
-            polygon = _vtk.vtkPolygon()
-            polygon.GetPointIds().SetNumberOfIds(len(polygon_pts_px))
-            for i in range(len(polygon_pts_px)):
-                polygon.GetPointIds().SetId(i, i)
-
-            cells = _vtk.vtkCellArray()
-            cells.InsertNextCell(polygon)
-
-            poly_data = _vtk.vtkPolyData()
-            poly_data.SetPoints(vtk_points)
-            poly_data.SetPolys(cells)
-
-            mapper = _vtk.vtkPolyDataMapper()
-            mapper.SetInputData(poly_data)
-
-            band_actor = _vtk.vtkActor()
-            band_actor.SetMapper(mapper)
-            band_actor.GetProperty().SetColor(r, g, b)
-            band_actor.GetProperty().SetOpacity(opacity)
-            band_actor.GetProperty().LightingOff()
-
-            renderer.AddActor(band_actor)
-            all_actors.append(band_actor)
-
-        # Track actors for cleanup and Hide Boxes toggle
-        if not hasattr(vtk_widget, '_projected_actors'):
-            vtk_widget._projected_actors = []
-        vtk_widget._projected_actors.extend(all_actors)
-
-        if not hasattr(vtk_widget, '_3d_cursor_region_actors'):
-            vtk_widget._3d_cursor_region_actors = []
-        vtk_widget._3d_cursor_region_actors.extend(all_actors)
-
-        # Render
-        renderer.ResetCameraClippingRange()
-        rw = getattr(image_viewer, 'image_render_window', None) or \
-             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
-        if rw:
-            rw.Render()
-
-        print(f"[3D-Cursor][REGION] Drew radial sector from nipple: "
-              f"radius={sector_radius:.0f}px angle={math.degrees(center_angle):.1f}deg "
-              f"spread={math.degrees(2*half_spread):.1f}deg bands={NUM_RADIAL_BANDS}")
-
-    except Exception as e:
-        print(f"[3D-Cursor] Failed to draw arc region: {e}")
-
-
-# ─── Full-Height Rectangle at Nipple Distance ───────────────────────────────
-
-RECT_COLOR = (0.1, 0.4, 1.0)         # Deep blue fill
-RECT_OPACITY = 0.18                   # Semi-transparent fill
-RECT_BORDER_COLOR = (0.3, 0.65, 1.0) # Bright blue border
-RECT_BORDER_OPACITY = 0.9
-RECT_HALO_COLOR = (0.4, 0.75, 1.0)   # Outer halo glow color
-RECT_HALO_OPACITY = 0.08             # Very subtle outer glow
-RECT_HALO_LAYERS = 3                  # Number of halo expansion layers
-RECT_HALO_EXPAND_PX = 12.0           # Pixels expansion per halo layer
-RECT_BAND_WIDTH_MM = 140.0           # Default rectangle width in mm (wider clinical strip)
-RECT_LONG_AXIS_ANGLE_DEG = 90.0      # Fixed rectangle long-axis angle (vertical)
-
-
-def _draw_distance_rectangle_on_widget(
-    vtk_widget,
-    arc,
-    band_width_mm: Optional[float] = None,
-    view_type: str = 'CC',
-    target_center_px: Optional[Tuple[float, float]] = None,
+def _create_annular_sector_actor(
+    _vtk, ijk_to_world,
+    cx: float, cy: float,
+    inner_r: float, outer_r: float,
+    start_angle: float, end_angle: float,
+    num_segments: int,
+    color: tuple, opacity: float,
 ):
     """
-    Draw a full-span rectangle with halo glow at the nipple-distance.
+    Create a filled annular sector (the shaded uncertainty band between
+    inner and outer arcs).
 
-    The long axis of the rectangle is perpendicular to the nipple→target line
-    and the strip passes through the target point.
-
-    Args:
-        vtk_widget: The VTK widget to draw on.
-        arc: CorrespondenceArc with nipple center and radius info.
-        band_width_mm: Total width of the rectangle band in mm (default RECT_BAND_WIDTH_MM).
-        view_type: 'CC' or 'MLO' — MLO gets a tilted rectangle.
+    The sector is built as a triangle strip between inner and outer arc points.
     """
-    if band_width_mm is None:
-        band_width_mm = RECT_BAND_WIDTH_MM
-    try:
-        import vtk as _vtk
-    except ImportError:
-        return
+    if inner_r <= 0 or outer_r <= inner_r:
+        return None
 
     try:
-        image_viewer = getattr(vtk_widget, 'image_viewer', None)
-        if image_viewer is None:
-            return
-
-        renderer = getattr(image_viewer, 'renderer', None)
-        if renderer is None:
-            return
-
-        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
-        if ijk_to_world is None:
-            return
-
-        import math
-
-        # Nipple position (center of distance measurement)
-        nipple_x = arc.center_x_px
-        nipple_y = arc.center_y_px
-
-        # Target point (projected lesion location).
-        # Prefer validated lesion center so the strip follows in-breast clamped output.
-        if target_center_px is not None:
-            target_x, target_y = target_center_px
-        elif arc.best_point_px:
-            target_x, target_y = arc.best_point_px
-        elif arc.arc_points_px and len(arc.arc_points_px) >= 2:
-            mid_idx = len(arc.arc_points_px) // 2
-            target_x, target_y = arc.arc_points_px[mid_idx]
-        else:
-            mid_angle = (arc.start_angle_rad + arc.end_angle_rad) / 2.0
-            target_x = nipple_x + arc.radius_px * math.cos(mid_angle)
-            target_y = nipple_y + arc.radius_px * math.sin(mid_angle)
-
-        # Get image dimensions
-        metadata = getattr(image_viewer, 'metadata', None)
-        img_height = 0
-        img_width = 0
-        if metadata:
-            instances = metadata.get('instances', [])
-            if instances:
-                first_inst = instances[0] if isinstance(instances, list) else {}
-                img_height = first_inst.get('rows', 0) or 0
-                img_width = first_inst.get('columns', 0) or 0
-            if not img_height:
-                series_meta = metadata.get('series', {})
-                img_height = series_meta.get('rows', 0) or 0
-                img_width = series_meta.get('columns', 0) or 0
-
-        # Fallback: try from VTK image data dimensions
-        if not img_height:
-            try:
-                vtk_data = image_viewer.GetInput()
-                if vtk_data:
-                    dims = vtk_data.GetDimensions()
-                    img_width = dims[0]
-                    img_height = dims[1]
-            except Exception:
-                pass
-
-        if img_height <= 0:
-            img_height = 4000  # Fallback for mammography
-
-        # Band half-width in pixels (from mm)
-        avg_spacing = arc.radius_px / max(arc.radius_mm, 1.0) if arc.radius_mm > 0 else 1.0
-        half_width_px = (band_width_mm / 2.0) * avg_spacing if avg_spacing > 0 else 30.0
-        half_width_px = max(30.0, half_width_px)  # Minimum visible width
-
-        # Use fixed vertical orientation (90°) for the long axis.
-        perp_angle = math.radians(RECT_LONG_AXIS_ANGLE_DEG)
-
-        # Build a strip centered on target, sized to approximate breast extent.
-        # Use image height (breast length in MLO) as the maximum span — not the
-        # full diagonal, which makes the rectangle unreasonably long.
-        breast_extent_px = float(img_height) if img_height > 0 else 3584.0
-        band_half_height = breast_extent_px / 2.0
-
-        cos_perp = math.cos(perp_angle)
-        sin_perp = math.sin(perp_angle)
-
-        # Center the strip at projected target
-        cx = target_x
-        cy = target_y
-
-        # Unit vectors
-        perp_ux = cos_perp
-        perp_uy = sin_perp
-        along_angle = perp_angle - math.pi / 2.0
-        along_ux = math.cos(along_angle)
-        along_uy = math.sin(along_angle)
-
-        corners_px = [
-            (cx - half_width_px * along_ux - band_half_height * perp_ux,
-             cy - half_width_px * along_uy - band_half_height * perp_uy),
-            (cx + half_width_px * along_ux - band_half_height * perp_ux,
-             cy + half_width_px * along_uy - band_half_height * perp_uy),
-            (cx + half_width_px * along_ux + band_half_height * perp_ux,
-             cy + half_width_px * along_uy + band_half_height * perp_uy),
-            (cx - half_width_px * along_ux + band_half_height * perp_ux,
-             cy - half_width_px * along_uy + band_half_height * perp_uy),
-        ]
-
         vtk_points = _vtk.vtkPoints()
-        for px, py in corners_px:
-            world_pt = ijk_to_world(px, py, None, y_flip=True)
-            vtk_points.InsertNextPoint(world_pt)
-
-        polygon = _vtk.vtkPolygon()
-        polygon.GetPointIds().SetNumberOfIds(4)
-        for i in range(4):
-            polygon.GetPointIds().SetId(i, i)
-
         cells = _vtk.vtkCellArray()
-        cells.InsertNextCell(polygon)
+
+        # Build triangle strip: alternating outer/inner points
+        n = num_segments + 1
+        num_pts = 2 * n
+
+        for i in range(n):
+            t = i / float(num_segments)
+            angle = start_angle + t * (end_angle - start_angle)
+            cos_a = math.cos(angle)
+            sin_a = math.sin(angle)
+
+            # Outer point
+            ox = cx + outer_r * cos_a
+            oy = cy + outer_r * sin_a
+            outer_world = ijk_to_world(ox, oy, None, y_flip=True)
+            vtk_points.InsertNextPoint(outer_world)
+
+            # Inner point
+            ix = cx + inner_r * cos_a
+            iy = cy + inner_r * sin_a
+            inner_world = ijk_to_world(ix, iy, None, y_flip=True)
+            vtk_points.InsertNextPoint(inner_world)
+
+        # Triangle strip connectivity
+        strip = _vtk.vtkTriangleStrip()
+        strip.GetPointIds().SetNumberOfIds(num_pts)
+        for i in range(num_pts):
+            strip.GetPointIds().SetId(i, i)
+
+        cells.InsertNextCell(strip)
 
         poly_data = _vtk.vtkPolyData()
         poly_data.SetPoints(vtk_points)
-        poly_data.SetPolys(cells)
+        poly_data.SetStrips(cells)
 
         mapper = _vtk.vtkPolyDataMapper()
         mapper.SetInputData(poly_data)
 
-        # Filled rectangle actor
-        rect_actor = _vtk.vtkActor()
-        rect_actor.SetMapper(mapper)
-        rect_actor.GetProperty().SetColor(*RECT_COLOR)
-        rect_actor.GetProperty().SetOpacity(RECT_OPACITY)
-        rect_actor.GetProperty().LightingOff()
-        renderer.AddActor(rect_actor)
+        actor = _vtk.vtkActor()
+        actor.SetMapper(mapper)
+        actor.GetProperty().SetColor(*color)
+        actor.GetProperty().SetOpacity(opacity)
+        actor.GetProperty().LightingOff()
 
-        all_actors = [rect_actor]
-
-        # ─── Halo glow layers (expanding outward) ───
-        for halo_idx in range(1, RECT_HALO_LAYERS + 1):
-            expand = RECT_HALO_EXPAND_PX * halo_idx
-            hw_px = half_width_px + expand
-            halo_corners = [
-                (cx - hw_px * along_ux - band_half_height * perp_ux,
-                 cy - hw_px * along_uy - band_half_height * perp_uy),
-                (cx + hw_px * along_ux - band_half_height * perp_ux,
-                 cy + hw_px * along_uy - band_half_height * perp_uy),
-                (cx + hw_px * along_ux + band_half_height * perp_ux,
-                 cy + hw_px * along_uy + band_half_height * perp_uy),
-                (cx - hw_px * along_ux + band_half_height * perp_ux,
-                 cy - hw_px * along_uy + band_half_height * perp_uy),
-            ]
-            halo_pts = _vtk.vtkPoints()
-            for hpx, hpy in halo_corners:
-                hw = ijk_to_world(hpx, hpy, None, y_flip=True)
-                halo_pts.InsertNextPoint(hw)
-
-            halo_polygon = _vtk.vtkPolygon()
-            halo_polygon.GetPointIds().SetNumberOfIds(4)
-            for i in range(4):
-                halo_polygon.GetPointIds().SetId(i, i)
-
-            halo_cells = _vtk.vtkCellArray()
-            halo_cells.InsertNextCell(halo_polygon)
-
-            halo_pd = _vtk.vtkPolyData()
-            halo_pd.SetPoints(halo_pts)
-            halo_pd.SetPolys(halo_cells)
-
-            halo_mapper = _vtk.vtkPolyDataMapper()
-            halo_mapper.SetInputData(halo_pd)
-
-            halo_actor = _vtk.vtkActor()
-            halo_actor.SetMapper(halo_mapper)
-            halo_actor.GetProperty().SetColor(*RECT_HALO_COLOR)
-            # Opacity decreases with each layer outward
-            layer_opacity = RECT_HALO_OPACITY / halo_idx
-            halo_actor.GetProperty().SetOpacity(layer_opacity)
-            halo_actor.GetProperty().LightingOff()
-            renderer.AddActor(halo_actor)
-            all_actors.append(halo_actor)
-
-        # Border rectangle (outline) with glow-style wider line
-        border_points = _vtk.vtkPoints()
-        for px, py in corners_px:
-            world_pt = ijk_to_world(px, py, None, y_flip=True)
-            border_points.InsertNextPoint(world_pt)
-        # Close the loop
-        world_pt = ijk_to_world(corners_px[0][0], corners_px[0][1], None, y_flip=True)
-        border_points.InsertNextPoint(world_pt)
-
-        border_line = _vtk.vtkPolyLine()
-        border_line.GetPointIds().SetNumberOfIds(5)
-        for i in range(5):
-            border_line.GetPointIds().SetId(i, i)
-
-        border_cells = _vtk.vtkCellArray()
-        border_cells.InsertNextCell(border_line)
-
-        border_poly = _vtk.vtkPolyData()
-        border_poly.SetPoints(border_points)
-        border_poly.SetLines(border_cells)
-
-        border_mapper = _vtk.vtkPolyDataMapper()
-        border_mapper.SetInputData(border_poly)
-
-        border_actor = _vtk.vtkActor()
-        border_actor.SetMapper(border_mapper)
-        border_actor.GetProperty().SetColor(*RECT_BORDER_COLOR)
-        border_actor.GetProperty().SetOpacity(RECT_BORDER_OPACITY)
-        border_actor.GetProperty().SetLineWidth(3.0)
-        border_actor.GetProperty().LightingOff()
-        renderer.AddActor(border_actor)
-        all_actors.append(border_actor)
-
-        # Track actors for cleanup and Show/Hide toggle
-        if not hasattr(vtk_widget, '_projected_actors'):
-            vtk_widget._projected_actors = []
-        vtk_widget._projected_actors.extend(all_actors)
-
-        if not hasattr(vtk_widget, '_3d_cursor_region_actors'):
-            vtk_widget._3d_cursor_region_actors = []
-        vtk_widget._3d_cursor_region_actors.extend(all_actors)
-
-        # Render
-        renderer.ResetCameraClippingRange()
-        rw = getattr(image_viewer, 'image_render_window', None) or \
-             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
-        if rw:
-            rw.Render()
-
-        print(f"[3D-Cursor][REGION] Drew perpendicular strip through target: "
-              f"target=({target_x:.0f},{target_y:.0f})px width={2*half_width_px:.0f}px "
-              f"span={2*band_half_height:.0f}px depth={arc.radius_mm:.1f}mm halo_layers={RECT_HALO_LAYERS}")
-
-    except Exception as e:
-        print(f"[3D-Cursor] Failed to draw distance rectangle: {e}")
+        return actor
+    except Exception:
+        return None
 
 
-def _draw_distance_rectangle_fallback(
-    vtk_widget,
-    center_px: tuple,
-    radius_mm: float,
-    nipple_px: tuple,
-    pixel_spacing_x: float,
-    pixel_spacing_y: float,
+def _create_arc_line_actor(
+    _vtk, ijk_to_world,
+    cx: float, cy: float,
+    radius: float,
+    start_angle: float, end_angle: float,
+    num_segments: int,
+    color: tuple, opacity: float,
+    line_width: float, dashed: bool,
 ):
     """
-    Fallback: Draw a full-height rectangle when no arc data is available.
-    Uses center_px as the target x-position for the rectangle.
+    Create a polyline arc actor (a single smooth curve).
+
+    Mathematical basis:
+        For each segment i in [0, num_segments]:
+            t = i / num_segments
+            angle = start_angle + t * (end_angle - start_angle)
+            x = cx + radius * cos(angle)
+            y = cy + radius * sin(angle)
     """
-    try:
-        import vtk as _vtk
-    except ImportError:
-        return
+    if radius < 2.0:
+        return None
 
     try:
-        image_viewer = getattr(vtk_widget, 'image_viewer', None)
-        if image_viewer is None:
-            return
-
-        renderer = getattr(image_viewer, 'renderer', None)
-        if renderer is None:
-            return
-
-        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
-        if ijk_to_world is None:
-            return
-
-        # Get image height
-        img_height = 0
-        metadata = getattr(image_viewer, 'metadata', None)
-        if metadata:
-            instances = metadata.get('instances', [])
-            if instances:
-                first_inst = instances[0] if isinstance(instances, list) else {}
-                img_height = first_inst.get('rows', 0) or 0
-        if not img_height:
-            try:
-                vtk_data = image_viewer.GetInput()
-                if vtk_data:
-                    dims = vtk_data.GetDimensions()
-                    img_height = dims[1]
-            except Exception:
-                pass
-        if img_height <= 0:
-            img_height = 4000
-
-        cx, cy = center_px
-        avg_spacing = (pixel_spacing_x + pixel_spacing_y) / 2.0
-        half_width_px = (
-            max(30.0, (RECT_BAND_WIDTH_MM / 2.0) / avg_spacing)
-            if avg_spacing > 0 else 30.0
-        )
-
-        # Rectangle at the target x-position, full image height
-        x_left = cx - half_width_px
-        x_right = cx + half_width_px
-        y_top = 0.0
-        y_bottom = float(img_height)
-
-        corners_px = [
-            (x_left, y_top),
-            (x_right, y_top),
-            (x_right, y_bottom),
-            (x_left, y_bottom),
-        ]
-
         vtk_points = _vtk.vtkPoints()
-        for px, py in corners_px:
+        n = num_segments + 1
+
+        for i in range(n):
+            t = i / float(num_segments)
+            angle = start_angle + t * (end_angle - start_angle)
+            px = cx + radius * math.cos(angle)
+            py = cy + radius * math.sin(angle)
             world_pt = ijk_to_world(px, py, None, y_flip=True)
             vtk_points.InsertNextPoint(world_pt)
 
-        polygon = _vtk.vtkPolygon()
-        polygon.GetPointIds().SetNumberOfIds(4)
-        for i in range(4):
-            polygon.GetPointIds().SetId(i, i)
+        # Polyline
+        polyline = _vtk.vtkPolyLine()
+        polyline.GetPointIds().SetNumberOfIds(n)
+        for i in range(n):
+            polyline.GetPointIds().SetId(i, i)
 
         cells = _vtk.vtkCellArray()
-        cells.InsertNextCell(polygon)
+        cells.InsertNextCell(polyline)
 
         poly_data = _vtk.vtkPolyData()
         poly_data.SetPoints(vtk_points)
-        poly_data.SetPolys(cells)
+        poly_data.SetLines(cells)
 
         mapper = _vtk.vtkPolyDataMapper()
         mapper.SetInputData(poly_data)
 
-        rect_actor = _vtk.vtkActor()
-        rect_actor.SetMapper(mapper)
-        rect_actor.GetProperty().SetColor(*RECT_COLOR)
-        rect_actor.GetProperty().SetOpacity(RECT_OPACITY)
-        rect_actor.GetProperty().LightingOff()
-        renderer.AddActor(rect_actor)
+        actor = _vtk.vtkActor()
+        actor.SetMapper(mapper)
+        prop = actor.GetProperty()
+        prop.SetColor(*color)
+        prop.SetOpacity(opacity)
+        prop.SetLineWidth(line_width)
+        prop.LightingOff()
 
-        # Track actors
-        if not hasattr(vtk_widget, '_projected_actors'):
-            vtk_widget._projected_actors = []
-        vtk_widget._projected_actors.append(rect_actor)
+        if dashed:
+            prop.SetLineStipplePattern(0xF0F0)
+            prop.SetLineStippleRepeatFactor(1)
 
-        if not hasattr(vtk_widget, '_3d_cursor_region_actors'):
-            vtk_widget._3d_cursor_region_actors = []
-        vtk_widget._3d_cursor_region_actors.append(rect_actor)
-
-        # Render
-        renderer.ResetCameraClippingRange()
-        rw = getattr(image_viewer, 'image_render_window', None) or \
-             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
-        if rw:
-            rw.Render()
-
-        print(f"[3D-Cursor][REGION] Drew full-height rectangle (fallback): "
-              f"center=({cx:.0f},{cy:.0f}) width={2*half_width_px:.0f}px height={img_height}px")
-
-    except Exception as e:
-        print(f"[3D-Cursor] Failed to draw distance rectangle (fallback): {e}")
+        return actor
+    except Exception:
+        return None
 
 
-def _draw_region_box_on_widget(
-    vtk_widget,
-    center_px: tuple,
-    radius_mm: float,
-    pixel_spacing_x: float,
-    pixel_spacing_y: float,
+def _create_nipple_marker_actor(
+    _vtk, ijk_to_world,
+    cx: float, cy: float,
+    size_px: float = 8.0,
 ):
     """
-    Fallback: Draw a radial sector region when no arc data is available.
+    Create a small crosshair marker at the nipple position.
 
-    Uses the center_px as both nipple and target (draws a small sector outward).
+    Draws two perpendicular lines crossing at (cx, cy).
     """
     try:
-        import vtk as _vtk
-    except ImportError:
-        return
+        vtk_points = _vtk.vtkPoints()
+        # Horizontal line
+        p0 = ijk_to_world(cx - size_px, cy, None, y_flip=True)
+        p1 = ijk_to_world(cx + size_px, cy, None, y_flip=True)
+        # Vertical line
+        p2 = ijk_to_world(cx, cy - size_px, None, y_flip=True)
+        p3 = ijk_to_world(cx, cy + size_px, None, y_flip=True)
 
+        vtk_points.InsertNextPoint(p0)  # 0
+        vtk_points.InsertNextPoint(p1)  # 1
+        vtk_points.InsertNextPoint(p2)  # 2
+        vtk_points.InsertNextPoint(p3)  # 3
+
+        cells = _vtk.vtkCellArray()
+        # Line 1: horizontal
+        line1 = _vtk.vtkLine()
+        line1.GetPointIds().SetId(0, 0)
+        line1.GetPointIds().SetId(1, 1)
+        cells.InsertNextCell(line1)
+        # Line 2: vertical
+        line2 = _vtk.vtkLine()
+        line2.GetPointIds().SetId(0, 2)
+        line2.GetPointIds().SetId(1, 3)
+        cells.InsertNextCell(line2)
+
+        poly_data = _vtk.vtkPolyData()
+        poly_data.SetPoints(vtk_points)
+        poly_data.SetLines(cells)
+
+        mapper = _vtk.vtkPolyDataMapper()
+        mapper.SetInputData(poly_data)
+
+        actor = _vtk.vtkActor()
+        actor.SetMapper(mapper)
+        prop = actor.GetProperty()
+        prop.SetColor(*NIPPLE_MARKER_COLOR)
+        prop.SetOpacity(0.9)
+        prop.SetLineWidth(2.5)
+        prop.LightingOff()
+
+        return actor
+    except Exception:
+        return None
+
+
+def _create_text_label_actor(
+    _vtk, ijk_to_world,
+    x_px: float, y_px: float,
+    text: str,
+    font_size: int = 12,
+):
+    """
+    Create a VTK text follower (billboard) label at the given pixel position.
+    """
     try:
-        image_viewer = getattr(vtk_widget, 'image_viewer', None)
-        if image_viewer is None:
-            return
+        world_pt = ijk_to_world(x_px, y_px, None, y_flip=True)
 
-        renderer = getattr(image_viewer, 'renderer', None)
-        if renderer is None:
-            return
+        text_actor = _vtk.vtkBillboardTextActor3D()
+        text_actor.SetInput(text)
+        text_actor.SetPosition(world_pt)
+        text_actor.GetTextProperty().SetFontSize(font_size)
+        text_actor.GetTextProperty().SetColor(0.9, 0.95, 1.0)
+        text_actor.GetTextProperty().SetJustificationToCentered()
+        text_actor.GetTextProperty().SetVerticalJustificationToCentered()
+        text_actor.GetTextProperty().SetBackgroundColor(0.0, 0.0, 0.0)
+        text_actor.GetTextProperty().SetBackgroundOpacity(0.6)
 
-        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
-        if ijk_to_world is None:
-            return
+        return text_actor
+    except Exception:
+        # Fallback: try vtkTextActor3D if billboard is unavailable
+        try:
+            text_actor = _vtk.vtkTextActor3D()
+            text_actor.SetInput(text)
+            text_actor.SetPosition(world_pt)
+            text_actor.GetTextProperty().SetFontSize(font_size)
+            text_actor.GetTextProperty().SetColor(0.9, 0.95, 1.0)
+            return text_actor
+        except Exception:
+            return None
 
-        import math
 
-        cx, cy = center_px
-        avg_spacing = (pixel_spacing_x + pixel_spacing_y) / 2.0
-        sector_radius = max(40.0, radius_mm * 0.5) / avg_spacing
-
-        # Default: sector pointing downward (toward chest wall)
-        center_angle = math.pi / 2.0
-        half_spread = math.radians(SECTOR_ANGULAR_SPREAD_DEG) / 2.0
-
-        num_angular_steps = 32
-        all_actors = []
-
-        for band_idx in range(NUM_RADIAL_BANDS):
-            t_inner = band_idx / float(NUM_RADIAL_BANDS)
-            t_outer = (band_idx + 1) / float(NUM_RADIAL_BANDS)
-
-            inner_r = sector_radius * t_inner
-            outer_r = sector_radius * t_outer
-
-            r = COLOR_SECTOR_INNER[0] + (COLOR_SECTOR_OUTER[0] - COLOR_SECTOR_INNER[0]) * t_outer
-            g = COLOR_SECTOR_INNER[1] + (COLOR_SECTOR_OUTER[1] - COLOR_SECTOR_INNER[1]) * t_outer
-            b = COLOR_SECTOR_INNER[2] + (COLOR_SECTOR_OUTER[2] - COLOR_SECTOR_INNER[2]) * t_outer
-            opacity = SECTOR_INNER_OPACITY + (SECTOR_OUTER_OPACITY - SECTOR_INNER_OPACITY) * t_outer
-
-            outer_pts = []
-            inner_pts = []
-            for i in range(num_angular_steps + 1):
-                t_angle = i / float(num_angular_steps)
-                angle = center_angle - half_spread + t_angle * (2.0 * half_spread)
-                outer_pts.append((cx + outer_r * math.cos(angle), cy + outer_r * math.sin(angle)))
-                inner_pts.append((cx + inner_r * math.cos(angle), cy + inner_r * math.sin(angle)))
-
-            polygon_pts_px = outer_pts + list(reversed(inner_pts))
-            if len(polygon_pts_px) < 4:
-                continue
-
-            vtk_points = _vtk.vtkPoints()
-            for px, py in polygon_pts_px:
-                world_pt = ijk_to_world(px, py, None, y_flip=True)
-                vtk_points.InsertNextPoint(world_pt)
-
-            polygon = _vtk.vtkPolygon()
-            polygon.GetPointIds().SetNumberOfIds(len(polygon_pts_px))
-            for i in range(len(polygon_pts_px)):
-                polygon.GetPointIds().SetId(i, i)
-
-            cells = _vtk.vtkCellArray()
-            cells.InsertNextCell(polygon)
-
-            poly_data = _vtk.vtkPolyData()
-            poly_data.SetPoints(vtk_points)
-            poly_data.SetPolys(cells)
-
-            mapper = _vtk.vtkPolyDataMapper()
-            mapper.SetInputData(poly_data)
-
-            band_actor = _vtk.vtkActor()
-            band_actor.SetMapper(mapper)
-            band_actor.GetProperty().SetColor(r, g, b)
-            band_actor.GetProperty().SetOpacity(opacity)
-            band_actor.GetProperty().LightingOff()
-
-            renderer.AddActor(band_actor)
-            all_actors.append(band_actor)
-
-        # Track actors
-        if not hasattr(vtk_widget, '_projected_actors'):
-            vtk_widget._projected_actors = []
-        vtk_widget._projected_actors.extend(all_actors)
-
-        if not hasattr(vtk_widget, '_3d_cursor_region_actors'):
-            vtk_widget._3d_cursor_region_actors = []
-        vtk_widget._3d_cursor_region_actors.extend(all_actors)
-
-        # Render
-        renderer.ResetCameraClippingRange()
-        rw = getattr(image_viewer, 'image_render_window', None) or \
-             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
-        if rw:
-            rw.Render()
-
-        print(f"[3D-Cursor][REGION] Drew radial sector (fallback): "
-              f"center=({cx:.0f},{cy:.0f}) radius={sector_radius:.0f}px")
-
-    except Exception as e:
-        print(f"[3D-Cursor] Failed to draw region box: {e}")
+# ─── Cleanup ─────────────────────────────────────────────────────────────────
 
 
 def _clear_projected_actors(vtk_widget):
@@ -923,21 +951,25 @@ def _clear_projected_actors(vtk_widget):
 
         image_viewer = getattr(vtk_widget, 'image_viewer', None)
         if image_viewer is not None:
-            remove_fn = getattr(image_viewer, 'remove_actors', None) or \
-                        getattr(image_viewer, 'remove_actor', None)
-            if remove_fn:
+            renderer = getattr(image_viewer, 'renderer', None)
+            if renderer:
                 for a in actors:
                     try:
-                        remove_fn(a)
+                        renderer.RemoveActor(a)
                     except Exception:
                         pass
 
         vtk_widget._projected_actors = []
+
+        # Also clear the region-specific list
+        if hasattr(vtk_widget, '_3d_cursor_region_actors'):
+            vtk_widget._3d_cursor_region_actors = []
     except Exception:
         pass
 
 
 # ─── Ruler / Distance Measurement Visualization ─────────────────────────────
+
 
 def draw_rulers_for_results(
     result: Cursor3DResult,
@@ -947,10 +979,8 @@ def draw_rulers_for_results(
     Draw ruler lines from nipple to each lesion center on all relevant viewers.
 
     For each cursor match, draws:
-        - Source view: ruler from nipple → lesion center, labeled with depth_mm
-        - Target view: ruler from nipple → projected lesion, labeled with depth_mm
-
-    This allows visual verification that the computed mm distances are correct.
+        - Source view: ruler from nipple -> lesion center, labeled with depth_mm
+        - Target view: ruler from nipple -> projected lesion, labeled with depth_mm
     """
     for laterality, lat_result in result.lateralities.items():
         _draw_laterality_rulers(laterality, lat_result, views_by_key)
@@ -974,7 +1004,6 @@ def _draw_laterality_rulers(
         if match.match_type == 'out_of_field':
             continue
 
-        # Determine source and target views/geometries
         if match.source_view == 'CC':
             src_view_data = cc_view
             src_geom = cc_geom
@@ -986,10 +1015,7 @@ def _draw_laterality_rulers(
             tgt_view_data = cc_view
             tgt_geom = cc_geom
 
-        # For 'paired' matches: both views already have AI boxes → no new BOXES,
-        # but still draw rulers on both views so user can verify depth measurement.
-
-        # Draw ruler on source view (nipple → source lesion center)
+        # Draw ruler on source view (nipple -> source lesion center)
         if src_view_data and src_view_data.vtk_widget and src_geom:
             _draw_ruler_on_widget(
                 vtk_widget=src_view_data.vtk_widget,
@@ -999,15 +1025,43 @@ def _draw_laterality_rulers(
                 label_prefix=f"{match.source_view}",
             )
 
-        # Draw ruler on target view (nipple → projected/paired lesion)
-        if match.target_lesion and tgt_view_data and tgt_view_data.vtk_widget and tgt_geom:
-            _draw_ruler_on_widget(
-                vtk_widget=tgt_view_data.vtk_widget,
-                nipple_px=(tgt_geom.nipple.x_px, tgt_geom.nipple.y_px),
-                lesion_center_px=match.target_lesion.center_px,
-                distance_mm=match.depth_mm,
-                label_prefix=f"{match.target_view}",
-            )
+        # Draw ruler on target view (nipple -> arc intersection on nominal arc)
+        if tgt_view_data and tgt_view_data.vtk_widget and tgt_geom:
+            arc = match.correspondence_arc
+            if arc and arc.radius_px > 5.0:
+                # Compute endpoint on the nominal arc (inner + spacing)
+                arc_endpoint_radius = arc.radius_px + ARC_RADIUS_OFFSET_PX + ARC_BAND_SPACING_PX
+                # Direction from nipple toward the lesion (or arc midpoint)
+                if match.target_lesion:
+                    dx = match.target_lesion.center_px[0] - tgt_geom.nipple.x_px
+                    dy = match.target_lesion.center_px[1] - tgt_geom.nipple.y_px
+                else:
+                    mid_angle = (arc.start_angle_rad + arc.end_angle_rad) / 2.0
+                    dx = math.cos(mid_angle)
+                    dy = math.sin(mid_angle)
+                dist = math.sqrt(dx * dx + dy * dy)
+                if dist > 0:
+                    arc_end_x = tgt_geom.nipple.x_px + (dx / dist) * arc_endpoint_radius
+                    arc_end_y = tgt_geom.nipple.y_px + (dy / dist) * arc_endpoint_radius
+                else:
+                    arc_end_x = tgt_geom.nipple.x_px + arc_endpoint_radius
+                    arc_end_y = tgt_geom.nipple.y_px
+
+                _draw_ruler_on_widget(
+                    vtk_widget=tgt_view_data.vtk_widget,
+                    nipple_px=(tgt_geom.nipple.x_px, tgt_geom.nipple.y_px),
+                    lesion_center_px=(arc_end_x, arc_end_y),
+                    distance_mm=match.depth_mm,
+                    label_prefix=f"{match.target_view}",
+                )
+            elif match.target_lesion:
+                _draw_ruler_on_widget(
+                    vtk_widget=tgt_view_data.vtk_widget,
+                    nipple_px=(tgt_geom.nipple.x_px, tgt_geom.nipple.y_px),
+                    lesion_center_px=match.target_lesion.center_px,
+                    distance_mm=match.depth_mm,
+                    label_prefix=f"{match.target_view}",
+                )
 
 
 def _draw_ruler_on_widget(
@@ -1020,8 +1074,6 @@ def _draw_ruler_on_widget(
     """
     Draw a ruler line from nipple to lesion center on one viewer widget,
     with a text label showing the distance in mm.
-
-    Uses VTK actors (line + follower text) in the image_viewer's renderer.
     """
     try:
         import vtk as _vtk
@@ -1037,21 +1089,18 @@ def _draw_ruler_on_widget(
         if renderer is None:
             return
 
-        # Convert pixel coords to world coords using image_viewer.ijk_to_world
         ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
         if ijk_to_world is None:
             return
 
-        # Nipple world position
         p_nipple = ijk_to_world(nipple_px[0], nipple_px[1], None, y_flip=True)
-        # Lesion center world position
         p_lesion = ijk_to_world(lesion_center_px[0], lesion_center_px[1], None, y_flip=True)
 
-        # ── Create dashed ruler line ──
+        # ── Dashed ruler line ──
         line_source = _vtk.vtkLineSource()
         line_source.SetPoint1(p_nipple)
         line_source.SetPoint2(p_lesion)
-        line_source.SetResolution(20)  # segments for dash effect
+        line_source.SetResolution(20)
         line_source.Update()
 
         line_mapper = _vtk.vtkPolyDataMapper()
@@ -1062,13 +1111,13 @@ def _draw_ruler_on_widget(
         line_prop = line_actor.GetProperty()
         line_prop.SetColor(COLOR_RULER[0], COLOR_RULER[1], COLOR_RULER[2])
         line_prop.SetLineWidth(2.0)
-        line_prop.SetLineStipplePattern(0xF0F0)  # dashed pattern
+        line_prop.SetLineStipplePattern(0xF0F0)
         line_prop.SetLineStippleRepeatFactor(1)
         line_prop.SetOpacity(0.85)
 
         renderer.AddActor(line_actor)
 
-        # ── Create small circle markers at endpoints ──
+        # ── Endpoint markers ──
         for p_world in [p_nipple, p_lesion]:
             marker = _vtk.vtkSphereSource()
             marker.SetCenter(p_world)
@@ -1086,893 +1135,42 @@ def _draw_ruler_on_widget(
             marker_actor.GetProperty().SetOpacity(0.9)
             renderer.AddActor(marker_actor)
 
-            # Track for cleanup
             if not hasattr(vtk_widget, '_projected_actors'):
                 vtk_widget._projected_actors = []
             vtk_widget._projected_actors.append(marker_actor)
 
-        # ── Create text label at midpoint ──
+        # ── Text label at midpoint ──
         mid_x = (p_nipple[0] + p_lesion[0]) / 2.0
         mid_y = (p_nipple[1] + p_lesion[1]) / 2.0
         mid_z = (p_nipple[2] + p_lesion[2]) / 2.0
 
         label_text = f"{distance_mm:.1f} mm"
         if label_prefix:
-            label_text = f"{label_prefix}: {distance_mm:.1f} mm"
+            label_text = f"{label_prefix}: {label_text}"
 
-        text_source = _vtk.vtkVectorText()
-        text_source.SetText(label_text)
+        try:
+            text_actor = _vtk.vtkBillboardTextActor3D()
+            text_actor.SetInput(label_text)
+            text_actor.SetPosition(mid_x, mid_y, mid_z)
+            text_actor.GetTextProperty().SetFontSize(12)
+            text_actor.GetTextProperty().SetColor(
+                COLOR_RULER_TEXT[0], COLOR_RULER_TEXT[1], COLOR_RULER_TEXT[2]
+            )
+            text_actor.GetTextProperty().SetJustificationToCentered()
+            text_actor.GetTextProperty().SetBackgroundColor(0.0, 0.0, 0.0)
+            text_actor.GetTextProperty().SetBackgroundOpacity(0.5)
+            renderer.AddActor(text_actor)
 
-        text_extrude = _vtk.vtkLinearExtrusionFilter()
-        text_extrude.SetInputConnection(text_source.GetOutputPort())
-        text_extrude.SetExtrusionTypeToNormalExtrusion()
-        text_extrude.SetVector(0, 0, 1)
-        text_extrude.SetScaleFactor(0.5)
+            if not hasattr(vtk_widget, '_projected_actors'):
+                vtk_widget._projected_actors = []
+            vtk_widget._projected_actors.append(text_actor)
+        except Exception:
+            pass
 
-        text_mapper = _vtk.vtkPolyDataMapper()
-        text_mapper.SetInputConnection(text_extrude.GetOutputPort())
-
-        text_actor = _vtk.vtkFollower()
-        text_actor.SetMapper(text_mapper)
-        text_actor.SetScale(4.0, 4.0, 4.0)
-        # Position slightly above midpoint of the line
-        text_actor.SetPosition(mid_x, mid_y + 4.0, mid_z)
-        text_actor.GetProperty().SetColor(
-            COLOR_RULER_TEXT[0], COLOR_RULER_TEXT[1], COLOR_RULER_TEXT[2]
-        )
-
-        camera = renderer.GetActiveCamera()
-        if camera:
-            text_actor.SetCamera(camera)
-
-        renderer.AddActor(text_actor)
-
-        # Track all actors for cleanup
+        # Track line actor
         if not hasattr(vtk_widget, '_projected_actors'):
             vtk_widget._projected_actors = []
         vtk_widget._projected_actors.append(line_actor)
-        vtk_widget._projected_actors.append(text_actor)
-
-        # Render update
-        renderer.ResetCameraClippingRange()
-        rw = getattr(image_viewer, 'image_render_window', None) or \
-             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
-        if rw:
-            rw.Render()
 
     except Exception as e:
         print(f"[3D-Cursor] Failed to draw ruler: {e}")
-
-
-def format_3d_cursor_summary(result: Cursor3DResult) -> str:
-    """
-    Format a human-readable text summary of the 3D cursor results.
-
-    Returns multiline text suitable for display in the feature panel.
-    """
-    lines = ["═══ 3D Cursor — CC/MLO Correlation Results ═══", ""]
-
-    if not result.lateralities:
-        lines.append("No valid CC/MLO pairs found for 3D cursor analysis.")
-        lines.append("")
-        lines.append("Ensure:")
-        lines.append("  • AI detection has been run for this study.")
-        lines.append("  • Both CC and MLO views are available.")
-        lines.append("  • DICOM Pixel Spacing metadata is present.")
-        return "\n".join(lines)
-
-    for laterality, lat_result in result.lateralities.items():
-        lines.append(f"▶ Breast: {laterality} ({'Right' if laterality == 'R' else 'Left'})")
-        lines.append(f"  Total 3D Cursors: {lat_result.total_cursors}")
-        lines.append(f"  Paired (both views): {lat_result.paired_count}")
-        lines.append(f"  Projected (single view): {lat_result.projected_count}")
-        if lat_result.out_of_field_count > 0:
-            lines.append(f"  Out of Field: {lat_result.out_of_field_count}")
-
-        # Show nipple positions used for measurements
-        if lat_result.cc_geometry:
-            n = lat_result.cc_geometry.nipple
-            lines.append(f"  CC  nipple: pixel ({n.x_px:.0f}, {n.y_px:.0f})"
-                         f" = ({n.x_mm:.1f}, {n.y_mm:.1f}) mm"
-                         f" [{'detected' if n.detected else 'estimated'}]")
-        if lat_result.mlo_geometry:
-            n = lat_result.mlo_geometry.nipple
-            lines.append(f"  MLO nipple: pixel ({n.x_px:.0f}, {n.y_px:.0f})"
-                         f" = ({n.x_mm:.1f}, {n.y_mm:.1f}) mm"
-                         f" [{'detected' if n.detected else 'estimated'}]")
-        lines.append("")
-
-        for i, match in enumerate(lat_result.cursor_matches, 1):
-            lines.append(f"  Cursor #{i} [{match.match_type}]:")
-            lines.append(f"    Depth from nipple: {match.depth_mm:.1f} mm")
-
-            if match.match_type == 'paired':
-                lines.append(f"    Depth difference between views: {match.depth_difference_mm:.1f} mm")
-                lines.append(f"    Confidence: {match.confidence:.0%}")
-                src_box = match.source_lesion.to_pixel_box()
-                tgt_box = match.target_lesion.to_pixel_box() if match.target_lesion else None
-                lines.append(f"    {match.source_view}: [{src_box[0]:.0f}, {src_box[1]:.0f}, "
-                             f"{src_box[2]:.0f}, {src_box[3]:.0f}]")
-                if tgt_box:
-                    lines.append(f"    {match.target_view}: [{tgt_box[0]:.0f}, {tgt_box[1]:.0f}, "
-                                 f"{tgt_box[2]:.0f}, {tgt_box[3]:.0f}]")
-
-            elif match.match_type in ('projected', 'arc_projected'):
-                src_box = match.source_lesion.to_pixel_box()
-                lines.append(f"    Detected in: {match.source_view} "
-                             f"[{src_box[0]:.0f}, {src_box[1]:.0f}, "
-                             f"{src_box[2]:.0f}, {src_box[3]:.0f}]")
-                if match.correspondence_arc and match.correspondence_arc.arc_points_px:
-                    arc = match.correspondence_arc
-                    lines.append(f"    ➜ Region highlighted in {match.target_view}:")
-                    lines.append(f"      Radius: {arc.radius_mm:.1f} mm from nipple")
-                    lines.append(f"      Arc span: {len(arc.arc_points_px)} points")
-                    lines.append(f"      Probable lesion zone shown as blue gradient circle")
-                elif match.target_lesion:
-                    tgt_box = match.target_lesion.to_pixel_box()
-                    lines.append(f"    ➜ Region in {match.target_view}: "
-                                 f"[{tgt_box[0]:.0f}, {tgt_box[1]:.0f}, "
-                                 f"{tgt_box[2]:.0f}, {tgt_box[3]:.0f}]")
-                lines.append(f"    Confidence: {match.confidence:.0%}")
-                lines.append(f"    💡 Use 'Hide Boxes' to show/hide the region")
-
-            elif match.match_type == 'out_of_field':
-                lines.append(f"    ⚠ {match.message}")
-
-            lines.append("")
-
-    return "\n".join(lines)
-
-
-# ─── Correspondence Arc Visualization with Annotations ──────────────────────
-
-def draw_correspondence_arc_with_annotations(
-    match: CursorMatch,
-    view_data: ViewData,
-    laterality: str,
-    *,
-    show_angle_annotations: bool = True,
-    show_info_box: bool = True,
-    show_formula: bool = True,
-):
-    """
-    Draw the correspondence arc on the target view with complete annotations.
-
-    This function provides a comprehensive visualization of the arc-based
-    projection algorithm, showing:
-        1. The correspondence arc itself (curve of possible lesion locations)
-        2. Angular annotations (start angle, end angle, center angle)
-        3. Radial lines showing the angular bounds
-        4. An information box with formulas and calculated values
-
-    Args:
-        match: CursorMatch containing the correspondence_arc field.
-        view_data: ViewData for the target view where arc is drawn.
-        laterality: 'R' or 'L'
-        show_angle_annotations: If True, draw angle markers and labels.
-        show_info_box: If True, draw a text box with calculations.
-        show_formula: If True, include mathematical formulas in the info box.
-
-    Physical Interpretation:
-        The arc represents the locus of points in the target view that are
-        equidistant (in 3D breast space) from the nipple. For CC→MLO projection:
-            - Arc center: nipple position in MLO
-            - Arc radius: distance from nipple in CC (preserved by Kopans' Rule)
-            - Angular range: constrained by pectoral muscle angle and anatomy
-
-    Example Usage:
-        ```python
-        # After computing correspondence arc
-        for match in cursor_matches:
-            if match.match_type == 'arc_projected' and match.correspondence_arc:
-                target_key = f"{laterality}_{match.target_view}"
-                target_view = views_by_key.get(target_key)
-                if target_view:
-                    draw_correspondence_arc_with_annotations(
-                        match, target_view, laterality
-                    )
-        ```
-    """
-    if match.correspondence_arc is None:
-        return
-
-    arc = match.correspondence_arc
-    vtk_widget = view_data.vtk_widget
-    if vtk_widget is None:
-        return
-
-    try:
-        # Get VTK components
-        image_viewer = getattr(vtk_widget, 'image_viewer', None)
-        if image_viewer is None:
-            return
-
-        renderer = getattr(image_viewer, 'renderer', None)
-        if renderer is None:
-            return
-
-        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
-        if ijk_to_world is None:
-            return
-
-        # ── 1. Draw the Correspondence Arc ──
-        _draw_arc_curve(arc, ijk_to_world, renderer)
-
-        # ── 2. Draw Angular Annotations ──
-        if show_angle_annotations:
-            _draw_arc_angle_annotations(arc, ijk_to_world, renderer)
-
-        # ── 3. Draw Information Box ──
-        if show_info_box:
-            _draw_arc_info_box(
-                arc, match, view_data, renderer,
-                show_formula=show_formula
-            )
-
-        # ── 4. Highlight Best Point ──
-        if arc.best_point_px is not None:
-            _draw_best_point_marker(arc.best_point_px, ijk_to_world, renderer)
-
-        # Render update
-        renderer.ResetCameraClippingRange()
-        rw = getattr(image_viewer, 'image_render_window', None) or \
-             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
-        if rw:
-            rw.Render()
-
-    except Exception as e:
-        print(f"[3D-Cursor] Failed to draw correspondence arc: {e}")
-
-
-def _draw_arc_curve(arc, ijk_to_world, renderer):
-    """Draw the correspondence arc as a smooth curve on the image."""
-    import vtk as _vtk
-
-    if not arc.arc_points_px:
-        return
-
-    # Create polyline for the arc
-    points = _vtk.vtkPoints()
-    lines = _vtk.vtkCellArray()
-
-    # Convert pixel points to world coordinates
-    world_points = []
-    for px, py in arc.arc_points_px:
-        pw = ijk_to_world(px, py, None, y_flip=True)
-        world_points.append(pw)
-        points.InsertNextPoint(pw)
-
-    # Create line segments
-    n_points = len(world_points)
-    for i in range(n_points - 1):
-        line = _vtk.vtkLine()
-        line.GetPointIds().SetId(0, i)
-        line.GetPointIds().SetId(1, i + 1)
-        lines.InsertNextCell(line)
-
-    # Build polydata
-    polydata = _vtk.vtkPolyData()
-    polydata.SetPoints(points)
-    polydata.SetLines(lines)
-
-    # Create tube filter for thick arc
-    tube = _vtk.vtkTubeFilter()
-    tube.SetInputData(polydata)
-    tube.SetRadius(1.5)
-    tube.SetNumberOfSides(8)
-    tube.Update()
-
-    # Mapper and actor
-    mapper = _vtk.vtkPolyDataMapper()
-    mapper.SetInputConnection(tube.GetOutputPort())
-
-    actor = _vtk.vtkActor()
-    actor.SetMapper(mapper)
-    actor.GetProperty().SetColor(0.0, 0.8, 1.0)  # Cyan
-    actor.GetProperty().SetOpacity(0.8)
-
-    renderer.AddActor(actor)
-
-
-def _draw_arc_angle_annotations(arc, ijk_to_world, renderer):
-    """Draw angular annotations showing the arc bounds and center."""
-    import vtk as _vtk
-    import math
-
-    if not arc.arc_points_px:
-        return
-
-    # Arc center in world coordinates
-    center_world = ijk_to_world(arc.center_x_px, arc.center_y_px, None, y_flip=True)
-
-    # ── Draw radial lines for start, center, and end angles ──
-    angles_to_draw = [
-        (arc.start_angle_rad, 'Start', (0.2, 1.0, 0.2)),  # Green
-        ((arc.start_angle_rad + arc.end_angle_rad) / 2, 'Center', (1.0, 1.0, 0.2)),  # Yellow
-        (arc.end_angle_rad, 'End', (1.0, 0.2, 0.2)),  # Red
-    ]
-
-    for angle_rad, label, color in angles_to_draw:
-        # Calculate endpoint of radial line
-        # Note: VTK world coordinates may have different orientation
-        radius_world = arc.radius_px * 0.8  # Slightly shorter than arc radius
-        dx = radius_world * math.cos(angle_rad)
-        dy = radius_world * math.sin(angle_rad)
-        
-        # Need to convert this displacement correctly using ijk_to_world
-        # For simplicity, we approximate using the first arc point direction
-        end_px = (
-            arc.center_x_px + dx,
-            arc.center_y_px + dy
-        )
-        end_world = ijk_to_world(end_px[0], end_px[1], None, y_flip=True)
-
-        # Create line
-        line_source = _vtk.vtkLineSource()
-        line_source.SetPoint1(center_world)
-        line_source.SetPoint2(end_world)
-        line_source.Update()
-
-        line_mapper = _vtk.vtkPolyDataMapper()
-        line_mapper.SetInputConnection(line_source.GetOutputPort())
-
-        line_actor = _vtk.vtkActor()
-        line_actor.SetMapper(line_mapper)
-        line_actor.GetProperty().SetColor(color[0], color[1], color[2])
-        line_actor.GetProperty().SetLineWidth(2.0)
-        line_actor.GetProperty().SetOpacity(0.7)
-
-        renderer.AddActor(line_actor)
-
-        # Add text label
-        angle_deg = math.degrees(angle_rad)
-        text = f"{label}\n{angle_deg:.1f}°"
-        _add_text_label(text, end_world, renderer, color)
-
-
-def _draw_arc_info_box(arc, match, view_data, renderer, show_formula=True):
-    """Draw an information box with formulas and calculated values."""
-    import vtk as _vtk
-    import math
-
-    # Build text content
-    lines = []
-    lines.append("══ Correspondence Arc ══")
-    lines.append("")
-    
-    if show_formula:
-        lines.append("Physical Principle:")
-        lines.append("d_CC = d_MLO  (Kopans' Rule)")
-        lines.append("where d = √(X² + Y²)")
-        lines.append("")
-
-    lines.append(f"Radius: {arc.radius_mm:.1f} mm")
-    lines.append(f"        ({arc.radius_px:.1f} px)")
-    lines.append("")
-    
-    # Angular information
-    start_deg = math.degrees(arc.start_angle_rad)
-    end_deg = math.degrees(arc.end_angle_rad)
-    span_deg = abs(end_deg - start_deg)
-    
-    lines.append(f"Angular Range:")
-    lines.append(f"  Start:  {start_deg:.1f}°")
-    lines.append(f"  End:    {end_deg:.1f}°")
-    lines.append(f"  Span:   {span_deg:.1f}°")
-    lines.append("")
-
-    # Arc statistics
-    total_points = len(arc.arc_points_px)
-    valid_points = len(arc.arc_points_px)  # Already clipped
-    
-    lines.append(f"Arc Points: {valid_points}")
-    lines.append(f"Confidence: {arc.confidence:.1%}")
-    lines.append("")
-
-    # View information
-    lines.append(f"Source: {match.source_view}")
-    lines.append(f"Target: {match.target_view}")
-
-    if show_formula and match.target_view == 'MLO':
-        lines.append("")
-        lines.append("MLO Projection:")
-        lines.append("H = Y·sin(θ) + Z·cos(θ)")
-        lines.append(f"  θ_pec ≈ {arc.message.split('pectoral')[1].split('°')[0] if 'pectoral' in arc.message else 'N/A'}°")
-
-    # Create text actor
-    text_content = "\n".join(lines)
-    text_actor = _vtk.vtkTextActor()
-    text_actor.SetInput(text_content)
-    
-    # Position in upper-left corner
-    text_actor.SetDisplayPosition(20, 20)
-    
-    # Style the text
-    text_prop = text_actor.GetTextProperty()
-    text_prop.SetFontFamilyToArial()
-    text_prop.SetFontSize(12)
-    text_prop.SetColor(1.0, 1.0, 1.0)  # White text
-    text_prop.SetBold(False)
-    text_prop.SetShadow(True)
-    text_prop.SetShadowOffset(1, -1)
-    
-    # Background rectangle
-    text_actor.GetPositionCoordinate().SetCoordinateSystemToDisplay()
-    text_actor.GetPosition2Coordinate().SetCoordinateSystemToDisplay()
-    
-    # Enable background
-    if hasattr(text_prop, 'SetBackgroundColor'):
-        text_prop.SetBackgroundColor(0.1, 0.1, 0.1)  # Dark gray
-        text_prop.SetBackgroundOpacity(0.85)
-    
-    renderer.AddActor2D(text_actor)
-
-
-def _draw_best_point_marker(best_point_px, ijk_to_world, renderer):
-    """Draw a highlighted marker at the best projection point."""
-    import vtk as _vtk
-
-    px, py = best_point_px
-    world_pos = ijk_to_world(px, py, None, y_flip=True)
-
-    # Create sphere marker
-    sphere = _vtk.vtkSphereSource()
-    sphere.SetCenter(world_pos)
-    sphere.SetRadius(4.0)
-    sphere.SetPhiResolution(16)
-    sphere.SetThetaResolution(16)
-    sphere.Update()
-
-    mapper = _vtk.vtkPolyDataMapper()
-    mapper.SetInputConnection(sphere.GetOutputPort())
-
-    actor = _vtk.vtkActor()
-    actor.SetMapper(mapper)
-    actor.GetProperty().SetColor(1.0, 0.8, 0.0)  # Gold
-    actor.GetProperty().SetOpacity(1.0)
-
-    renderer.AddActor(actor)
-
-
-def _add_text_label(text, world_pos, renderer, color=(1.0, 1.0, 1.0)):
-    """Add a 3D text label at a world position."""
-    import vtk as _vtk
-
-    # Create follower text (always faces camera)
-    text_actor = _vtk.vtkFollower()
-    
-    # Create vectorText
-    text_source = _vtk.vtkVectorText()
-    text_source.SetText(text)
-    text_source.Update()
-
-    mapper = _vtk.vtkPolyDataMapper()
-    mapper.SetInputConnection(text_source.GetOutputPort())
-
-    text_actor.SetMapper(mapper)
-    text_actor.SetPosition(world_pos)
-    text_actor.SetScale(8.0, 8.0, 8.0)
-    text_actor.GetProperty().SetColor(color[0], color[1], color[2])
-    
-    # Make text follow camera
-    camera = renderer.GetActiveCamera()
-    if camera:
-        text_actor.SetCamera(camera)
-
-    renderer.AddActor(text_actor)
-
-
-# ─── Lesion-to-Lesion Ruler Visualization ───────────────────────────────────
-
-def draw_lesion_to_lesion_rulers(
-    result: Cursor3DResult,
-    views_by_key: Dict[str, ViewData],
-    *,
-    draw_on_paired: bool = True,
-    draw_on_projected: bool = False,
-):
-    """
-    Draw ruler lines between lesions on the same view, showing inter-lesion distances.
-
-    This function draws orange rulers between lesions detected on the same mammogram view,
-    allowing clinicians to measure distances between multiple findings.
-
-    Args:
-        result: The computed Cursor3DResult containing all cursor matches.
-        views_by_key: Dict mapping "{laterality}_{view}" to ViewData.
-        draw_on_paired: If True, draw rulers between paired lesions on each view.
-        draw_on_projected: If True, also draw rulers involving projected lesions.
-
-    Note:
-        Rulers are drawn between lesion centers (not nipple), using pixel-to-mm
-        conversion from the image geometry.
-    """
-    for laterality, lat_result in result.lateralities.items():
-        _draw_laterality_lesion_rulers(
-            laterality,
-            lat_result,
-            views_by_key,
-            draw_on_paired=draw_on_paired,
-            draw_on_projected=draw_on_projected,
-        )
-
-
-def _draw_laterality_lesion_rulers(
-    laterality: str,
-    lat_result: LateralityResult,
-    views_by_key: Dict[str, ViewData],
-    draw_on_paired: bool = True,
-    draw_on_projected: bool = False,
-):
-    """Draw lesion-to-lesion rulers for one laterality."""
-    cc_key = f"{laterality}_CC"
-    mlo_key = f"{laterality}_MLO"
-
-    cc_view = views_by_key.get(cc_key)
-    mlo_view = views_by_key.get(mlo_key)
-    cc_geom = lat_result.cc_geometry
-    mlo_geom = lat_result.mlo_geometry
-
-    # Collect lesions on each view
-    cc_lesions = []
-    mlo_lesions = []
-
-    for match in lat_result.cursor_matches:
-        # Skip out-of-field matches
-        if match.match_type == 'out_of_field':
-            continue
-
-        # Skip projected matches if not requested
-        if match.match_type == 'projected' and not draw_on_projected:
-            continue
-
-        # Collect lesions by view
-        if match.source_view == 'CC':
-            cc_lesions.append(match.source_lesion)
-            if match.target_lesion and (draw_on_paired or match.match_type == 'projected'):
-                mlo_lesions.append(match.target_lesion)
-        else:  # source_view == 'MLO'
-            mlo_lesions.append(match.source_lesion)
-            if match.target_lesion and (draw_on_paired or match.match_type == 'projected'):
-                cc_lesions.append(match.target_lesion)
-
-    # Draw rulers between lesions on CC view
-    if cc_view and cc_view.vtk_widget and cc_geom and len(cc_lesions) >= 2:
-        for i in range(len(cc_lesions)):
-            for j in range(i + 1, len(cc_lesions)):
-                _draw_lesion_ruler(
-                    vtk_widget=cc_view.vtk_widget,
-                    lesion1_center_px=cc_lesions[i].center_px,
-                    lesion2_center_px=cc_lesions[j].center_px,
-                    pixel_spacing=cc_geom.image.pixel_spacing,
-                    label_prefix="CC",
-                )
-
-    # Draw rulers between lesions on MLO view
-    if mlo_view and mlo_view.vtk_widget and mlo_geom and len(mlo_lesions) >= 2:
-        for i in range(len(mlo_lesions)):
-            for j in range(i + 1, len(mlo_lesions)):
-                _draw_lesion_ruler(
-                    vtk_widget=mlo_view.vtk_widget,
-                    lesion1_center_px=mlo_lesions[i].center_px,
-                    lesion2_center_px=mlo_lesions[j].center_px,
-                    pixel_spacing=mlo_geom.image.pixel_spacing,
-                    label_prefix="MLO",
-                )
-
-
-def _draw_lesion_ruler(
-    vtk_widget,
-    lesion1_center_px: tuple,
-    lesion2_center_px: tuple,
-    pixel_spacing,
-    label_prefix: str = "",
-):
-    """
-    Draw a ruler line between two lesion centers on one viewer widget.
-
-    Args:
-        vtk_widget: The VTK widget to draw on.
-        lesion1_center_px: (x, y) pixel coordinates of first lesion center.
-        lesion2_center_px: (x, y) pixel coordinates of second lesion center.
-        pixel_spacing: PixelSpacing object for px→mm conversion.
-        label_prefix: Optional prefix for the distance label (e.g., "CC", "MLO").
-    """
-    try:
-        import vtk as _vtk
-    except ImportError:
-        return
-
-    try:
-        image_viewer = getattr(vtk_widget, 'image_viewer', None)
-        if image_viewer is None:
-            return
-
-        renderer = getattr(image_viewer, 'renderer', None)
-        if renderer is None:
-            return
-
-        # Convert pixel coords to world coords
-        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
-        if ijk_to_world is None:
-            return
-
-        # Lesion world positions
-        p1 = ijk_to_world(lesion1_center_px[0], lesion1_center_px[1], None, y_flip=True)
-        p2 = ijk_to_world(lesion2_center_px[0], lesion2_center_px[1], None, y_flip=True)
-
-        # Calculate distance in mm
-        dx_px = lesion2_center_px[0] - lesion1_center_px[0]
-        dy_px = lesion2_center_px[1] - lesion1_center_px[1]
-        distance_px = (dx_px**2 + dy_px**2)**0.5
-        distance_mm = distance_px * ((pixel_spacing.col_mm + pixel_spacing.row_mm) / 2.0)
-
-        # ── Create solid ruler line (not dashed) ──
-        line_source = _vtk.vtkLineSource()
-        line_source.SetPoint1(p1)
-        line_source.SetPoint2(p2)
-        line_source.Update()
-
-        line_mapper = _vtk.vtkPolyDataMapper()
-        line_mapper.SetInputConnection(line_source.GetOutputPort())
-
-        line_actor = _vtk.vtkActor()
-        line_actor.SetMapper(line_mapper)
-        line_prop = line_actor.GetProperty()
-        line_prop.SetColor(COLOR_LESION_RULER[0], COLOR_LESION_RULER[1], COLOR_LESION_RULER[2])
-        line_prop.SetLineWidth(3.0)  # Thicker than nipple ruler
-        line_prop.SetOpacity(0.9)
-
-        renderer.AddActor(line_actor)
-
-        # ── Create diamond markers at endpoints ──
-        for p_world in [p1, p2]:
-            # Use cone for diamond-like appearance
-            marker = _vtk.vtkConeSource()
-            marker.SetCenter(p_world)
-            marker.SetRadius(2.5)
-            marker.SetHeight(5.0)
-            marker.SetResolution(4)  # 4 sides = diamond shape
-            marker.SetDirection(0, 0, 1)
-            marker.Update()
-
-            marker_mapper = _vtk.vtkPolyDataMapper()
-            marker_mapper.SetInputConnection(marker.GetOutputPort())
-
-            marker_actor = _vtk.vtkActor()
-            marker_actor.SetMapper(marker_mapper)
-            marker_actor.GetProperty().SetColor(
-                COLOR_LESION_RULER[0], COLOR_LESION_RULER[1], COLOR_LESION_RULER[2]
-            )
-            marker_actor.GetProperty().SetOpacity(1.0)
-            renderer.AddActor(marker_actor)
-
-            # Track for cleanup
-            if not hasattr(vtk_widget, '_projected_actors'):
-                vtk_widget._projected_actors = []
-            vtk_widget._projected_actors.append(marker_actor)
-
-        # ── Create text label at midpoint ──
-        mid_x = (p1[0] + p2[0]) / 2.0
-        mid_y = (p1[1] + p2[1]) / 2.0
-        mid_z = (p1[2] + p2[2]) / 2.0
-
-        label_text = f"↔ {distance_mm:.1f} mm"
-        if label_prefix:
-            label_text = f"{label_prefix} {label_text}"
-
-        text_source = _vtk.vtkVectorText()
-        text_source.SetText(label_text)
-
-        text_extrude = _vtk.vtkLinearExtrusionFilter()
-        text_extrude.SetInputConnection(text_source.GetOutputPort())
-        text_extrude.SetExtrusionTypeToNormalExtrusion()
-        text_extrude.SetVector(0, 0, 1)
-        text_extrude.SetScaleFactor(0.5)
-
-        text_mapper = _vtk.vtkPolyDataMapper()
-        text_mapper.SetInputConnection(text_extrude.GetOutputPort())
-
-        text_actor = _vtk.vtkFollower()
-        text_actor.SetMapper(text_mapper)
-        text_actor.SetScale(4.5, 4.5, 4.5)
-        # Position slightly above midpoint of the line
-        text_actor.SetPosition(mid_x, mid_y + 5.0, mid_z)
-        text_actor.GetProperty().SetColor(
-            COLOR_LESION_RULER_TEXT[0], COLOR_LESION_RULER_TEXT[1], COLOR_LESION_RULER_TEXT[2]
-        )
-
-        camera = renderer.GetActiveCamera()
-        if camera:
-            text_actor.SetCamera(camera)
-
-        renderer.AddActor(text_actor)
-
-        # Track all actors for cleanup
-        if not hasattr(vtk_widget, '_projected_actors'):
-            vtk_widget._projected_actors = []
-        vtk_widget._projected_actors.append(line_actor)
-        vtk_widget._projected_actors.append(text_actor)
-
-        # Render update
-        renderer.ResetCameraClippingRange()
-        rw = getattr(image_viewer, 'image_render_window', None) or \
-             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
-        if rw:
-            rw.Render()
-
-    except Exception as e:
-        print(f"[3D-Cursor] Failed to draw lesion-to-lesion ruler: {e}")
-
-
-def draw_custom_ruler(
-    vtk_widget,
-    point1_px: tuple,
-    point2_px: tuple,
-    pixel_spacing,
-    *,
-    label: str = None,
-    color: tuple = None,
-    line_width: float = 3.0,
-):
-    """
-    Draw a custom ruler between any two points on a viewer widget.
-
-    This is a general-purpose ruler function that can be used to measure
-    distance between any two arbitrary points on a mammogram view.
-
-    Args:
-        vtk_widget: The VTK widget to draw on.
-        point1_px: (x, y) pixel coordinates of first point.
-        point2_px: (x, y) pixel coordinates of second point.
-        pixel_spacing: PixelSpacing object for px→mm conversion.
-        label: Optional custom label text. If None, shows distance only.
-        color: Optional (R, G, B) color tuple (0-1 range). If None, uses orange.
-        line_width: Line thickness in pixels (default: 3.0).
-
-    Returns:
-        float: The measured distance in millimeters.
-
-    Example:
-        >>> # Draw ruler from point A (100, 200) to point B (300, 400)
-        >>> distance = draw_custom_ruler(
-        ...     vtk_widget=viewer.vtk_widget,
-        ...     point1_px=(100, 200),
-        ...     point2_px=(300, 400),
-        ...     pixel_spacing=geometry.image.pixel_spacing,
-        ...     label="Custom Measurement",
-        ...     color=(0.0, 1.0, 0.0),  # Green
-        ... )
-        >>> print(f"Measured: {distance:.1f} mm")
-    """
-    if color is None:
-        color = COLOR_LESION_RULER
-
-    try:
-        import vtk as _vtk
-    except ImportError:
-        return 0.0
-
-    try:
-        image_viewer = getattr(vtk_widget, 'image_viewer', None)
-        if image_viewer is None:
-            return 0.0
-
-        renderer = getattr(image_viewer, 'renderer', None)
-        if renderer is None:
-            return 0.0
-
-        # Convert pixel coords to world coords
-        ijk_to_world = getattr(image_viewer, 'ijk_to_world', None)
-        if ijk_to_world is None:
-            return 0.0
-
-        p1 = ijk_to_world(point1_px[0], point1_px[1], None, y_flip=True)
-        p2 = ijk_to_world(point2_px[0], point2_px[1], None, y_flip=True)
-
-        # Calculate distance in mm
-        dx_px = point2_px[0] - point1_px[0]
-        dy_px = point2_px[1] - point1_px[1]
-        distance_px = (dx_px**2 + dy_px**2)**0.5
-        distance_mm = distance_px * ((pixel_spacing.col_mm + pixel_spacing.row_mm) / 2.0)
-
-        # ── Create ruler line ──
-        line_source = _vtk.vtkLineSource()
-        line_source.SetPoint1(p1)
-        line_source.SetPoint2(p2)
-        line_source.Update()
-
-        line_mapper = _vtk.vtkPolyDataMapper()
-        line_mapper.SetInputConnection(line_source.GetOutputPort())
-
-        line_actor = _vtk.vtkActor()
-        line_actor.SetMapper(line_mapper)
-        line_prop = line_actor.GetProperty()
-        line_prop.SetColor(color[0], color[1], color[2])
-        line_prop.SetLineWidth(line_width)
-        line_prop.SetOpacity(0.9)
-
-        renderer.AddActor(line_actor)
-
-        # ── Create sphere markers at endpoints ──
-        for p_world in [p1, p2]:
-            marker = _vtk.vtkSphereSource()
-            marker.SetCenter(p_world)
-            marker.SetRadius(3.0)
-            marker.SetPhiResolution(12)
-            marker.SetThetaResolution(12)
-            marker.Update()
-
-            marker_mapper = _vtk.vtkPolyDataMapper()
-            marker_mapper.SetInputConnection(marker.GetOutputPort())
-
-            marker_actor = _vtk.vtkActor()
-            marker_actor.SetMapper(marker_mapper)
-            marker_actor.GetProperty().SetColor(color[0], color[1], color[2])
-            marker_actor.GetProperty().SetOpacity(1.0)
-            renderer.AddActor(marker_actor)
-
-            # Track for cleanup
-            if not hasattr(vtk_widget, '_projected_actors'):
-                vtk_widget._projected_actors = []
-            vtk_widget._projected_actors.append(marker_actor)
-
-        # ── Create text label ──
-        mid_x = (p1[0] + p2[0]) / 2.0
-        mid_y = (p1[1] + p2[1]) / 2.0
-        mid_z = (p1[2] + p2[2]) / 2.0
-
-        if label:
-            label_text = f"{label}: {distance_mm:.1f} mm"
-        else:
-            label_text = f"{distance_mm:.1f} mm"
-
-        text_source = _vtk.vtkVectorText()
-        text_source.SetText(label_text)
-
-        text_extrude = _vtk.vtkLinearExtrusionFilter()
-        text_extrude.SetInputConnection(text_source.GetOutputPort())
-        text_extrude.SetExtrusionTypeToNormalExtrusion()
-        text_extrude.SetVector(0, 0, 1)
-        text_extrude.SetScaleFactor(0.5)
-
-        text_mapper = _vtk.vtkPolyDataMapper()
-        text_mapper.SetInputConnection(text_extrude.GetOutputPort())
-
-        text_actor = _vtk.vtkFollower()
-        text_actor.SetMapper(text_mapper)
-        text_actor.SetScale(4.5, 4.5, 4.5)
-        text_actor.SetPosition(mid_x, mid_y + 5.0, mid_z)
-        # Use slightly lighter version of ruler color for text
-        text_color = (
-            min(1.0, color[0] + 0.3),
-            min(1.0, color[1] + 0.3),
-            min(1.0, color[2] + 0.3),
-        )
-        text_actor.GetProperty().SetColor(text_color[0], text_color[1], text_color[2])
-
-        camera = renderer.GetActiveCamera()
-        if camera:
-            text_actor.SetCamera(camera)
-
-        renderer.AddActor(text_actor)
-
-        # Track all actors for cleanup
-        if not hasattr(vtk_widget, '_projected_actors'):
-            vtk_widget._projected_actors = []
-        vtk_widget._projected_actors.append(line_actor)
-        vtk_widget._projected_actors.append(text_actor)
-
-        # Render update
-        renderer.ResetCameraClippingRange()
-        rw = getattr(image_viewer, 'image_render_window', None) or \
-             getattr(image_viewer, 'GetRenderWindow', lambda: None)()
-        if rw:
-            rw.Render()
-
-        return distance_mm
-
-    except Exception as e:
-        print(f"[3D-Cursor] Failed to draw custom ruler: {e}")
-        return 0.0
-

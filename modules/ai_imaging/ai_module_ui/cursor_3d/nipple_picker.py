@@ -252,69 +252,12 @@ class NipplePickerController(QObject):
         """
         Convert widget (screen) coordinates to DICOM image pixel coordinates.
 
-        For VTK viewers, uses the renderer coordinate system.
-        Falls back to proportional mapping if VTK conversion fails.
+        Uses the shared high-accuracy coordinate conversion utility that
+        employs renderer DisplayToWorld (camera focal-plane projection)
+        instead of vtkWorldPointPicker (which can have Z-depth offset issues).
         """
-        try:
-            import vtk as _vtk
-
-            iv = getattr(vtk_widget, 'image_viewer', None)
-            if iv is None:
-                raise ValueError("No image_viewer")
-
-            renderer = getattr(iv, 'renderer', None)
-            world_to_ijk = getattr(iv, 'world_to_ijk', None)
-            if renderer is not None and callable(world_to_ijk):
-                widget_h = float(max(1, vtk_widget.height()))
-
-                # Reliable VTK picking path used by other tools: display -> world -> ijk.
-                picker = _vtk.vtkWorldPointPicker()
-                ok = picker.Pick(float(wx), float(widget_h - wy), 0.0, renderer)
-                if ok:
-                    w_pt = picker.GetPickPosition()
-                    i, j, _k = world_to_ijk(
-                        xw=w_pt[0],
-                        yw=w_pt[1],
-                        zw=w_pt[2],
-                        y_flip=True,
-                    )
-
-                    meta = getattr(iv, 'metadata', {}) or {}
-                    instances = meta.get('instances', [])
-                    inst = instances[0] if isinstance(instances, list) and instances else {}
-                    rows = int(inst.get('rows', 0) or 0)
-                    cols = int(inst.get('columns', 0) or 0)
-
-                    img_x = float(i)
-                    img_y = float(j)
-                    if cols > 0 and rows > 0:
-                        img_x = max(0.0, min(img_x, float(cols - 1)))
-                        img_y = max(0.0, min(img_y, float(rows - 1)))
-
-                    return (img_x, img_y)
-        except Exception as e:
-            print(f"[3D-Cursor][NIPPLE-PICK] VTK coord conversion failed: {e}")
-
-        # Fallback: proportional mapping
-        try:
-            iv = getattr(vtk_widget, 'image_viewer', None)
-            meta = getattr(iv, 'metadata', {}) or {}
-            instances = meta.get('instances', [])
-            inst = instances[0] if instances else {}
-            img_w = inst.get('columns', 0) or 0
-            img_h = inst.get('rows', 0) or 0
-
-            if img_w > 0 and img_h > 0:
-                widget_w = vtk_widget.width()
-                widget_h = vtk_widget.height()
-                img_x = (wx / widget_w) * img_w
-                img_y = (wy / widget_h) * img_h
-                return (img_x, img_y)
-        except Exception:
-            pass
-
-        # Last resort: raw widget coords
-        return (float(wx), float(wy))
+        from .coord_utils import widget_to_image_coords
+        return widget_to_image_coords(vtk_widget, wx, wy)
 
     def _draw_manual_nipple_marker(self, vtk_widget, img_x: float, img_y: float):
         """Draw a red marker at the user-selected nipple point."""
@@ -359,6 +302,11 @@ class NipplePickerController(QObject):
             renderer.AddActor(actor)
 
             self._manual_nipple_actors[id(vtk_widget)] = actor
+
+            # Also store on the widget for cleanup on series switch
+            if not hasattr(vtk_widget, '_nipple_marker_actors'):
+                vtk_widget._nipple_marker_actors = []
+            vtk_widget._nipple_marker_actors.append(actor)
 
             rw = getattr(image_viewer, 'image_render_window', None) or \
                  getattr(image_viewer, 'GetRenderWindow', lambda: None)()

@@ -285,8 +285,8 @@ def _compute_cc_to_mlo_arc_range(
     # Subtract theta so arc sweeps through upper quadrant (negative y).
     center_angle_rad = chest_wall_angle_rad - theta_pec_rad
 
-    # Angular span: allow ±(30° + margin) from the center
-    span_rad = math.radians(30.0 + angle_margin_deg)
+    # Angular span: allow ±70° from the center (140° total arc)
+    span_rad = math.radians(70.0)
 
     start_angle_rad = center_angle_rad - span_rad
     end_angle_rad = center_angle_rad + span_rad
@@ -341,8 +341,8 @@ def _compute_mlo_to_cc_arc_range(
     # The arc should be centered toward the chest wall direction
     center_angle_rad = chest_wall_angle_rad
 
-    # Allow a broader range for MLO→CC (more uncertainty in vertical mapping)
-    span_rad = math.radians(45.0 + angle_margin_deg)
+    # Allow ±70° from the center (140° total arc, same as CC→MLO)
+    span_rad = math.radians(70.0)
 
     start_angle_rad = center_angle_rad - span_rad
     end_angle_rad = center_angle_rad + span_rad
