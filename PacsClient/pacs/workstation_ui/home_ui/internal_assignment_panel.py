@@ -148,11 +148,13 @@ class InternalAssignmentPanel(QWidget):
 
         acts = QHBoxLayout()
         acts.setSpacing(8)
+        # THREE states (2026-07-14). Deactivate / Cancel / Unassign all meant the
+        # same thing — the assignment comes off the user and the patient — so they
+        # collapse into ONE action: Remove.
         self._buttons: Dict[str, QPushButton] = {}
-        for key, text in (("active", "Mark Active"),
+        for key, text in (("active", "Reactivate"),
                           ("completed", "Mark Completed"),
-                          ("deactivated", "Deactivate"),
-                          ("cancelled", "Cancel / Unassign")):
+                          ("removed", "Remove Assignment")):
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet("font-size:11px;padding:5px 10px;")
@@ -163,9 +165,10 @@ class InternalAssignmentPanel(QWidget):
         cl.addLayout(acts)
 
         self._hint = QLabel(
-            "Cancel / Unassign is sent to the INO server and applied only after "
-            "confirmation. Mark Active / Completed / Deactivate are local workflow "
-            "states (INO exposes no endpoint for them).")
+            "Remove Assignment (deactivate / cancel / unassign are the same thing) is "
+            "sent to the server and applied only after confirmation. Reactivate and "
+            "Mark Completed are LOCAL workflow states — the server's assign model has "
+            "no status field, so it cannot store them.")
         self._hint.setWordWrap(True)
         self._hint.setStyleSheet(f"color:{_MUTED};font-size:10px;")
         cl.addWidget(self._hint)
@@ -421,21 +424,28 @@ class InternalAssignmentPanel(QWidget):
 
     # ── current assignment + lifecycle ────────────────────────────────────
     def _load_details(self):
+        """Show WHO the patient is assigned to — from the SERVER.
+
+        2026-07-14: this used to read ``ino_assignment_history`` (the LOCAL action
+        log) only, so a reception assigned on ANOTHER workstation (50210) had no
+        local record and the card simply stayed hidden — the UI could say "assigned"
+        but never who. It now reads the merged accessor
+        (``ino_assignment_details.get_assignment_details``): the SERVER owns the
+        assignee / assigner / timestamp, the local log still supplies the comment
+        and the completed/deactivated lifecycle states.
+        """
         rec = None
         try:
-            from modules.network import ino_assignment_history as _h
-            rec = _h.current_assignment_details(self._reception_id)
+            from modules.network import ino_assignment_details as _d
+            rec = _d.get_assignment_details(self._reception_id)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("assignment details load failed: %s", exc)
-        if not rec:
+        if not rec or not str(rec.get("status") or "").strip():
             self._card.setVisible(False)
             return
-        status = str(rec.get("assignment_status") or "").strip().lower()
-        try:
-            from modules.network import ino_assignment_models as m
-            s_label, s_color = m.status_label(status) or "—", m.status_color(status)
-        except Exception:
-            s_label, s_color = (status.capitalize() or "—"), "#6b7280"
+        status = str(rec.get("status") or "").strip().lower()
+        s_label = str(rec.get("status_label") or status.capitalize() or "—")
+        s_color = str(rec.get("status_color") or "#6b7280")
         self._badge.setText(s_label)
         self._badge.setStyleSheet(
             "background:%s22;color:%s;border:1px solid %s66;border-radius:10px;"
@@ -447,21 +457,25 @@ class InternalAssignmentPanel(QWidget):
             val.setText(str(text) if has else "—")
             return has
 
-        _set("assigned_to", rec.get("assignee_name"))
-        _set("assigned_by", rec.get("assigned_by"))
-        _set("type", "Internal — ارجاع داخلی مرکز")
-        _set("assigned_at", str(rec.get("timestamp") or "")[:19].replace("T", " "))
+        _who = str(rec.get("assignee_name") or "")
+        if _who and rec.get("mine"):
+            _who += "  (you)"
+        _set("assigned_to", _who)
+        # The server returns the assigner as a raw user id; resolve it to a name.
+        _set("assigned_by", rec.get("assigned_by_name") or rec.get("assigned_by_id"))
+        _role = str(rec.get("assign_type") or "")
+        _set("type", f"Internal — ارجاع داخلی مرکز" + (f" ({_role})" if _role else ""))
+        _set("assigned_at", rec.get("assigned_at"))
         has_c = _set("comment", rec.get("comment"))
         cap, val = self._fields["comment"]
         cap.setVisible(has_c)
         val.setVisible(has_c)
 
-        allowed = {
-            "active": ("completed", "deactivated", "cancelled"),
-            "completed": ("active", "deactivated"),
-            "deactivated": ("active", "cancelled"),
-            "cancelled": (),
-        }.get(status, ("completed", "deactivated", "cancelled"))
+        # THREE states (2026-07-14): active / completed / removed.
+        # "Deactivate", "Cancel" and "Unassign" all meant the same thing — the
+        # assignment comes off the user and the patient — so they are ONE action.
+        from modules.network.ino_assignment_models import ASSIGN_TRANSITIONS
+        allowed = ASSIGN_TRANSITIONS.get(status, ASSIGN_TRANSITIONS[""])
         for k, b in self._buttons.items():
             b.setEnabled(k in allowed)
         self._card.setVisible(True)
@@ -502,7 +516,11 @@ class InternalAssignmentPanel(QWidget):
             except RuntimeError:
                 pass
         else:
-            if data.get("permission_denied"):
+            if data.get("unsupported_by_server"):
+                # The server cannot clear an assignment (assignee_id minLength=1,
+                # no DELETE verb). Say exactly that — and do NOT fake a removal.
+                msg = str(data.get("message") or "the server refused the removal")
+            elif data.get("permission_denied"):
                 msg = "not permitted"
             elif data.get("disabled"):
                 msg = "internal assignment is disabled"

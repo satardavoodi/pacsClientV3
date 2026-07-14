@@ -1,8 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.5.1 (2026-07-13) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.5.1_RELEASE.md`.
+**Current Stable Version:** v3.5.2 (2026-07-14) - Patch release: viewport load reliability (OPT-36 drop-never-abandoned, OPT-37 thumbnail resync TTL), Eagle Eye Mammography 3D Cursor, and the DICOM VM-collapse (ImageType) diagnosis. See `docs/releases/VERSION_3.5.2_RELEASE.md`.
 
-**Previous Stable:** v3.5.0 (2026-07-12) - Patch release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.5.0_RELEASE.md`.
+**Previous Stable:** v3.5.1 (2026-07-13) - Minor release: series-identity authority (OPT-35), shared voice-to-text service, INO assignment refresh. See `docs/releases/VERSION_3.5.1_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 

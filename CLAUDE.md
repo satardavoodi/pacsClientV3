@@ -1865,6 +1865,85 @@ study 1's series 2/3 were BLANK (a reopen "fixed" it — it only rebuilt the poi
   `_vc_load.py` is NOT plugin-mirrored. NEEDS live verify on 50238.
 - **⚠ THIS GUARD IS NOW A DETECTOR, NOT THE FIX** — see the SeriesRef authority below.
 
+### Thumbnails must refresh when the SERVER gains images — the resync TTL (OPT-37, 50264, 2026-07-14)
+"I clicked a study with 3 series; ~5 min later the rest arrived (24 series / 1148 images) but the
+thumbnails never refreshed — until I cleared the patient-code filter and switched to Yesterday."
+Before editing `_study_due_for_resync` / `_resync_ttl_for` / `_study_confirmed_complete`
+(`_hp_series.py`) or the grouped render (`_hp_modules.py::_show_grouped_patient_studies`), know
+**there are three separate mechanisms here and only one was broken**:
+- **ROOT CAUSE — `_RESYNC_TTL_S = 300.0`, a flat 5-minute per-study throttle on the CHANGE
+  DETECTOR.** The auto-resync (`_resync_patient_studies_from_server`, which runs on every
+  single-click) queries the server, detects growth, and — when it finds any — already re-renders
+  with **`_show_grouped_patient_studies(..., force_server_merge=True)`**, which DOES refetch the
+  thumbnails. **The refresh machinery was never broken.** But the TTL was applied to EVERY study,
+  including one the previous check had just found **INCOMPLETE** (`result=grew` / `disk_missing`) —
+  which is exactly the study that WILL change, and 5 minutes is exactly the window in which it
+  does. Live (50264): `17:21:21 study_resync_check result=grew server_series=2` (detected), then
+  every click for the next 5 minutes → `resync_complete changed=0` **in 0.2 ms with no server query
+  at all**. FIX: the TTL is now **per-study and completeness-aware** — full 300 s once a study is
+  CONFIRMED complete (preserves the 44113 "not every click hits the network" contract), short TTL
+  (10 s, still throttles click-spam) while it is still growing. The completeness signal is
+  `content_version_store.get_synced_version(uid) is not None`, which is reliable **because
+  `set_synced_version` is stamped ONLY on the not-needs-sync (disk-confirmed-complete) branch** —
+  do not swap that source. Flags `AIPACS_RESYNC_TTL_INCOMPLETE` (default on) /
+  `AIPACS_RESYNC_TTL_INCOMPLETE_S`.
+- **WHY THE FILTER CHANGE "FIXED" IT (not a cache invalidation — a different CODE PATH).** A
+  patient-code search returns the patient's studies as ONE aggregated row (`study_uids_count=2`) ⇒
+  `_hp_modules.py:579` routes to **`_show_grouped_patient_studies`**, which at `:687` fetches from
+  the server **only** when `(not study_thumbs) or force_server_merge` — so with 2 thumbnails already
+  on disk it renders local-only and **never contacts the server**. The "Yesterday" list produced a
+  **single-study row** (`study_uids_count=1`) ⇒ `show_patient_studies` ⇒ the single-study
+  **cache gate**, which DOES check the server (`grew=1 local_thumbs=2 server_series=24` → fetched
+  24). So the two list filters route the same click down two different render paths, and only one
+  has staleness detection. **Known residual:** the grouped path still has no independent staleness
+  check — it depends entirely on the resync firing `force_server_merge=True`. That is now restored,
+  but if you touch the grouped path, do not fork a second refresh mechanism; extend the resync.
+- Guard: `tests/code/ui_services/test_resync_ttl_incomplete_study.py` (19). The two
+  `test_resync_on_reopen.py` throttle stubs were REPAIRED (they bind only a subset of the mixin's
+  methods; the new per-study TTL needs `_resync_ttl_for` + `_study_confirmed_complete` bound) —
+  assertions unchanged. `_hp_series.py` is NOT plugin-mirrored. NEEDS live verify on 50264.
+
+### A DROP IS NEVER ABANDONED BACK TO THE PREVIOUS IMAGE (OPT-36, 50336, 2026-07-14)
+Drag-and-drop during download. If the files are not on disk yet, the viewport **stays in the
+loading state until the image is available** (or until the user drops another series). It must
+**NEVER** silently fall back to the previous image. Before editing `_disk_ready_complete` or the
+settle block in `_maybe_resume_awaiting_from_disk` (`_vc_progressive.py`, NOT plugin-mirrored),
+know that the awaiting/spinner machinery was already CORRECT — the **resume watchdog** was
+abandoning the drop, via two compounding bugs:
+- **BUG A — `_disk_ready_complete` never saw `.part`.** The call site already computed `_has_part`
+  (the DM writes `<name>.part` → `os.replace` → `.dcm`, so ANY `.part` means more data is coming)
+  and passed it to `_disk_series_settled` — but **not** to `_disk_ready_complete`. A PREVIOUS EXAM
+  is not in the DB yet ⇒ **no server `expected` count** ⇒ the weak stable-count fallback ran ⇒ a
+  download that had written its FIRST file and not yet landed the second was "stable at 1" across
+  two ticks ⇒ **a 1-of-N series was declared COMPLETE**. FIX: `has_part` gates ONLY the
+  unknown-expected fallback (when the server count is known and MET, a stray `.part` must not
+  block). `has_part=False` default ⇒ the legacy 3-arg call is byte-identical.
+- **BUG B — the settle stop-condition bypassed `_shows_awaited`.** `_settled_visible` honoured it
+  (the 48101 fix), but `_authority_settled` and `_exhausted` were **OR'd in** and did not. Live
+  (50336 series 1000002): `settled_visible=False exhausted=False authority=True` → the watchdog
+  cleared `_awaiting_series_number`, hid the spinner and logged a **FAKE `ViewportLoadSucceeded`**
+  while the viewport was **not showing the awaited series** → previous image stayed; only a manual
+  re-drag recovered it. **THE RULE: a viewport may only be declared SETTLED when it is ACTUALLY
+  SHOWING THE AWAITED SERIES.** The state authority's `is_settled` is a monotonic high-water mark
+  of *displayed slices* — a livelock brake that says nothing about WHICH series is displayed, so it
+  must never settle a viewport that never showed the awaited one. The 47084/47801 livelock it
+  exists to break has `_shows_awaited=True`, so gating on it **preserves that fix exactly**.
+- **BUG C — the retry budget was consumed while the download was healthy.** The resume attempt cap
+  exists to stop a CHURNING loop on a stalled/settled series, not to give up on one that is
+  actively downloading. Now the budget is **refunded whenever the on-disk count GROWS**, so the cap
+  trips only on a genuinely stuck download; on true exhaustion with the series still not displayed
+  the viewport shows an explicit "still loading" state (`_enter_viewport_load_error`,
+  `reason=download_not_caught_up`) and **keeps the awaiting flag** — never a silent revert.
+- A not-yet-created study folder (`FileNotFoundError` / `WinError 3`) in `_load_single_series_on_demand`
+  is an **expected transient**, now logged at INFO ("not on disk yet — awaiting download"), not as a
+  false ERROR. The `if not ok:` branch in `_vc_switch.change_series_on_viewer` already handles it
+  correctly (awaiting + spinner + `_begin_download_wait`) — do not "fix" that path.
+- Flags (default-ON, `=0` = legacy): `AIPACS_SETTLE_REQUIRES_DISPLAYED`,
+  `AIPACS_RESUME_BUDGET_ON_PROGRESS`. Guard:
+  `tests/code/viewer/test_drop_never_abandoned_to_previous_image.py` (19). NEEDS live verify: drag a
+  previous-exam series the instant its study starts downloading → the loading GIF must persist until
+  the images appear, with **no** intermediate revert to the previous image.
+
 ### SERIES IDENTITY IS RESOLVED ONCE — `SeriesRef` is the ONE authority (OPT-35, 2026-07-14)
 48912 (disk path) + 49836 (tab path) + 50238 (DB pk) were the SAME defect in three dimensions:
 identity was **re-derived at 4 stages from MUTABLE TAB STATE** (`import_folder_path`,

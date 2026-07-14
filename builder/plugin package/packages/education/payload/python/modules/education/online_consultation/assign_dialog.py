@@ -336,12 +336,15 @@ class ConsultationAssignDialog(QDialog):
         self._ad_hint = QLabel("")
         self._ad_hint.setWordWrap(True)
         self._ad_hint.setStyleSheet(f"color:{p['text_muted']};font-size:10px;")
+        # THREE states (2026-07-14): active / completed / removed. Deactivate,
+        # Cancel and Unassign all meant the same thing, so they are ONE action.
+        # Keep this list in step with ino_assignment_models.ASSIGN_TRANSITIONS —
+        # the Assign column menu and the Report popup read from that same table.
         self._ad_buttons = {}
         for _key, _text in (
-            ("active", "Mark Active"),
+            ("active", "Reactivate"),
             ("completed", "Mark Completed"),
-            ("deactivated", "Deactivate"),
-            ("cancelled", "Cancel / Unassign"),
+            ("removed", "Remove Assignment"),
         ):
             b = QPushButton(_text)
             b.setCursor(Qt.PointingHandCursor)
@@ -920,24 +923,24 @@ class ConsultationAssignDialog(QDialog):
         panel = getattr(self, "_assign_details", None)
         if panel is None:
             return
+        # The SERVER-merged view (2026-07-14) — same accessor the Assign column and
+        # the Report popup use, so all three show identical assignment information.
+        # This used to read ino_assignment_history (the LOCAL action log) only, so a
+        # reception assigned on ANOTHER workstation showed nothing here.
         rec = None
         try:
-            from modules.network import ino_assignment_history as _hist
-            rec = _hist.current_assignment_details(self.patient_id)
+            from modules.network import ino_assignment_details as _d
+            rec = _d.get_assignment_details(self.patient_id)
         except Exception as exc:  # pragma: no cover - defensive
             logger.debug("assignment details load failed: %s", exc)
             rec = None
-        if not rec:
+        if not rec or not str(rec.get("status") or "").strip():
             panel.setVisible(False)
             return
 
-        status = str(rec.get("assignment_status") or "").strip().lower()
-        try:
-            from modules.network import ino_assignment_models as _m
-            s_label = _m.status_label(status) or "—"
-            s_color = _m.status_color(status)
-        except Exception:
-            s_label, s_color = (status.capitalize() or "—"), "#6b7280"
+        status = str(rec.get("status") or "").strip().lower()
+        s_label = str(rec.get("status_label") or "—")
+        s_color = str(rec.get("status_color") or "#6b7280")
 
         # status badge
         self._ad_status_badge.setText(s_label)
@@ -955,10 +958,15 @@ class ConsultationAssignDialog(QDialog):
             val.setVisible(True)
             return has
 
-        _set("assigned_to", str(rec.get("assignee_name") or "").strip())
-        _set("assigned_by", self._resolve_assigner_name(str(rec.get("assigned_by") or "")))
-        _set("type", "Internal — ارجاع داخلی مرکز")
-        _set("assigned_at", str(rec.get("timestamp") or "")[:19].replace("T", " "))
+        _who = str(rec.get("assignee_name") or "").strip()
+        if _who and rec.get("mine"):
+            _who += "  (you)"
+        _set("assigned_to", _who)
+        _set("assigned_by", str(rec.get("assigned_by_name") or "").strip()
+             or self._resolve_assigner_name(str(rec.get("assigned_by_id") or "")))
+        _role = str(rec.get("assign_type") or "")
+        _set("type", "Internal — ارجاع داخلی مرکز" + (f" ({_role})" if _role else ""))
+        _set("assigned_at", str(rec.get("assigned_at") or ""))
         has_comment = _set("comment", str(rec.get("comment") or "").strip())
         # hide the comment row entirely when there is none
         cap, val = self._ad_fields["comment"]
@@ -971,13 +979,14 @@ class ConsultationAssignDialog(QDialog):
     def _update_assignment_actions(self, status: str):
         """Enable only the transitions that make sense for the current status, and
         say plainly which ones are server-backed."""
-        st = str(status or "").strip().lower()
-        allowed = {
-            "active": ("completed", "deactivated", "cancelled"),
-            "completed": ("active", "deactivated"),
-            "deactivated": ("active", "cancelled"),
-            "cancelled": (),
-        }.get(st, ("completed", "deactivated", "cancelled"))
+        # ONE shared transition table (ino_assignment_models.ASSIGN_TRANSITIONS) —
+        # the Assign column menu, this popup and the Report popup all read it, so
+        # they can never offer different actions for the same state.
+        from modules.network.ino_assignment_models import (
+            ASSIGN_TRANSITIONS, normalize_status,
+        )
+        st = normalize_status(status)
+        allowed = ASSIGN_TRANSITIONS.get(st, ASSIGN_TRANSITIONS[""])
         for key, btn in self._ad_buttons.items():
             btn.setEnabled(key in allowed)
         self._ad_hint.setText(

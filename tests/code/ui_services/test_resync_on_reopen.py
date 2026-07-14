@@ -92,6 +92,11 @@ def _throttle_stub():
     obj = types.SimpleNamespace()
     obj._study_due_for_resync = _Mixin._study_due_for_resync.__get__(obj)
     obj._mark_study_resync_checked = _Mixin._mark_study_resync_checked.__get__(obj)
+    # OPT-37: the throttle now asks for a PER-STUDY TTL (full 300 s once a study is
+    # confirmed complete, short while it is still growing). Bind the two collaborators
+    # the real mixin provides — assertions below are unchanged.
+    obj._resync_ttl_for = _Mixin._resync_ttl_for.__get__(obj)
+    obj._study_confirmed_complete = _Mixin._study_confirmed_complete.__get__(obj)
     return obj
 
 
@@ -118,6 +123,9 @@ def _panel_stub(server_by_uid, local_by_uid, *, owner_by_uid=None, active=True):
     obj._rec = rec
     obj._study_due_for_resync = _Mixin._study_due_for_resync.__get__(obj)
     obj._mark_study_resync_checked = _Mixin._mark_study_resync_checked.__get__(obj)
+    # OPT-37: per-study, completeness-aware TTL (see _throttle_stub).
+    obj._resync_ttl_for = _Mixin._resync_ttl_for.__get__(obj)
+    obj._study_confirmed_complete = _Mixin._study_confirmed_complete.__get__(obj)
     obj._resync_patient_studies_from_server = _Mixin._resync_patient_studies_from_server.__get__(obj)
     obj._detect_study_growth = _Mixin._detect_study_growth  # staticmethod
     obj._local_series_counts = lambda uid: dict(local_by_uid.get(uid, {}))

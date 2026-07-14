@@ -85,5 +85,20 @@ def assign_via_socket(token: str, params: Dict[str, Any], timeout: int = 8) -> D
     out: Dict[str, Any] = {"ok": ok, "status": 200 if ok else 0, "raw": resp,
                            "modified_count": data.get("modified_count")}
     if not ok:
-        out["message"] = str((resp or {}).get("message") or data.get("message") or "socket assign rejected")
+        # THE SERVER'S REASON IS IN ``error``, NOT ``message`` (2026-07-14).
+        # A rejected AssignStudy comes back as:
+        #     {"status":"error","error":"assignee_id is required", ...}
+        # We only read ``message``, so every rejection collapsed into the useless
+        # "socket assign rejected" — which is exactly what the Remove-Assignment
+        # popup showed instead of telling the user WHY. Read ``error`` first.
+        reason = (
+            (resp or {}).get("error")
+            or (resp or {}).get("message")
+            or data.get("error")
+            or data.get("message")
+        )
+        out["message"] = str(reason or "socket assign rejected")
+        # The server ANSWERED (it validated and refused) — this is not a transport
+        # failure. The caller needs that distinction to pick the informative error.
+        out["server_answered"] = bool(reason)
     return out

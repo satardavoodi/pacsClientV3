@@ -121,6 +121,27 @@ class AiMainWindow(QMainWindow):
         print("[AiMainWindow] AiMainWindow initialized successfully!")
         print("=" * 80 + "\n")
 
+    def refresh_ai_results(self) -> bool:
+        """Re-read the MG AI manifest and refresh the left-panel "AI Results" dropdown.
+
+        Called when an ALREADY-OPEN Eagle Eye tab is reused after a new analysis run
+        (see `_hp_modules.add_new_tab_widget`), so every execution shows up as its own
+        entry. Never raises into the caller.
+        """
+        try:
+            imaging_tab = getattr(self, 'imaging_tab', None)
+            if imaging_tab is None:
+                return False
+            refresh = getattr(imaging_tab, 'refresh_mg_ai_results', None)
+            if refresh is None:
+                return False
+            return bool(refresh())
+        except RuntimeError:
+            return False  # tab deleted
+        except Exception as e:
+            print(f"[AiMainWindow] refresh_ai_results failed: {e}")
+            return False
+
     def _on_imaging_tab_ready(self):
         """Called when ImagingToolsTab is fully loaded and rendered."""
         self._sync_reception_patient_context()

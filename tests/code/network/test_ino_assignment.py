@@ -113,10 +113,11 @@ def test_report_red_requires_active_assignment_of_that_physician(tmp_path, monke
         ([{"action": "assigned", "server_ok": True}], "active"),               # server-confirmed → active
         ([{"action": "assigned", "server_ok": True},
           {"action": "status_changed", "assignment_status": "completed"}], "completed"),
+        # THREE states (2026-07-14): deactivate == cancel == unassign == REMOVED.
         ([{"action": "assigned", "server_ok": True},
-          {"action": "status_changed", "assignment_status": "deactivated"}], "deactivated"),
+          {"action": "status_changed", "assignment_status": "deactivated"}], "removed"),
         ([{"action": "assigned", "server_ok": True},
-          {"action": "unassigned", "server_ok": True}], "cancelled"),          # server unassign
+          {"action": "unassigned", "server_ok": True}], "removed"),            # server unassign
     ],
 )
 def test_resolve_assignment_status(rows, expected):
@@ -128,8 +129,10 @@ def test_resolve_assignment_status(rows, expected):
     [
         ("active",      "fa5s.user-check",   "#ef4444"),  # red   — assigned/pending
         ("completed",   "fa5s.check-circle", "#10b981"),  # green — done
-        ("deactivated", "fa5s.user-minus",   "#6b7280"),  # gray  — inactive
-        ("cancelled",   "fa5s.user-slash",   "#9ca3af"),  # gray  — crossed out
+        ("removed",     "fa5s.user-slash",   "#9ca3af"),  # gray  — taken off the user
+        # legacy aliases all normalize onto REMOVED
+        ("deactivated", "fa5s.user-slash",   "#9ca3af"),
+        ("cancelled",   "fa5s.user-slash",   "#9ca3af"),
         ("",            "fa5s.user-times",   "#6b7280"),  # never assigned
         ("bogus",       "fa5s.user-times",   "#6b7280"),  # unknown → neutral
     ],
@@ -138,7 +141,9 @@ def test_assign_icon_for_status(status, icon, color):
     out = m.assign_icon_for_status(status, "Dr. Vahid Alizadeh")
     assert out["icon"] == icon
     assert out["color"] == color
-    assert out["status"] == status.lower()
+    # the reported status is the NORMALIZED one: a legacy "cancelled"/"deactivated"
+    # row is the same state as "removed"; an unknown status is "" (not assigned).
+    assert out["status"] == m.normalize_status(status)
     assert out["tooltip"]                      # always has a tooltip
     # every state is visually distinct from the active red assignment
     if status != "active":
@@ -173,7 +178,7 @@ def test_assign_icon_end_to_end_from_history(tmp_path, monkeypatch):
     h.record(m.AssignmentRecord(reception_id="49628", assign_type="radiologist",
                                 assignee_id="", assignee_name="", assignee_source="",
                                 action=m.ACTION_UNASSIGNED, server_ok=True))
-    assert (icon()["icon"], icon()["color"]) == ("fa5s.user-slash", "#9ca3af")    # cancelled
+    assert (icon()["icon"], icon()["color"]) == ("fa5s.user-slash", "#9ca3af")    # removed
 
 
 def test_partition_user_groups_is_in_core(tmp_path):
@@ -219,9 +224,11 @@ def test_reporting_physician_path_has_no_own_assignment_logic():
 def test_status_labels_and_colors():
     assert m.status_label("active") == "Active"
     assert m.status_color("completed") == "#10b981"
-    assert m.status_color("cancelled") == "#ef4444"
-    # only assign/cancel are reachable through the server
-    assert m.SERVER_BACKED_STATUSES == (m.STATUS_ACTIVE, m.STATUS_CANCELLED)
+    # deactivate / cancel / unassign are ONE state: removed
+    assert m.status_label("cancelled") == "Removed"
+    assert m.status_color("cancelled") == m.STATUS_COLORS[m.STATUS_REMOVED]
+    # only assign and remove are reachable through the server (it has no status field)
+    assert m.SERVER_BACKED_STATUSES == (m.STATUS_ACTIVE, m.STATUS_REMOVED)
 
 
 def test_unassign_sends_empty_assignee_and_records(ia, monkeypatch, tmp_path):
@@ -237,8 +244,8 @@ def test_unassign_sends_empty_assignee_and_records(ia, monkeypatch, tmp_path):
     assert out["ok"]
     assert cap["body"]["assignee_id"] == ""          # empty = clear
     assert cap["url"].endswith("/api/patients/49628/assign")
-    # a confirmed clear → cancelled, and the row is no longer "assigned"
-    assert m.resolve_assignment_status(h.read_for_reception("49628")) == "cancelled"
+    # a confirmed clear → REMOVED, and the row is no longer "assigned"
+    assert m.resolve_assignment_status(h.read_for_reception("49628")) == "removed"
     assert h.current_assignee("49628") is None
 
 
@@ -399,12 +406,19 @@ def test_assign_auth_error(ia, monkeypatch):
 
 
 def test_get_assignment_reads_pacs_assignment(ia, monkeypatch):
-    """get_assignment = GET /api/patients/{rid}/assign → body.assignment."""
-    def fake_get(url, headers=None, timeout=None, params=None):
+    """get_assignment = GET /api/patients/{rid}/assign → body.assignment.
+
+    The read now goes through the POOLED keep-alive session
+    (modules/network/http_session) — the patient list issues one of these per
+    visible reception, so a fresh TCP connection per call was pure overhead.
+    """
+    import modules.network.http_session as hs
+
+    def fake_get(url, base_url="", headers=None, timeout=None, params=None):
         assert url.endswith("/api/patients/49476/assign")
         return _Resp(200, {"success": True,
                            "assignment": {"radiologist": {"id": "64abc", "name": "Dr A"}}})
-    monkeypatch.setattr(ia.requests, "get", fake_get)
+    monkeypatch.setattr(hs, "http_get", fake_get)
     out = ia.InoAssignmentClient().get_assignment("49476")
     assert out["ok"] and out["assignment"]["radiologist"]["name"] == "Dr A"
 

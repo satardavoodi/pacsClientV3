@@ -70,31 +70,46 @@ class InternalAssignRow(QWidget):
         row.addWidget(self.manage_btn)
         root.addLayout(row)
 
-    # -- current assignment summary (read from the ONE persisted record) ----
+    # -- current assignment summary (the SAME merged view the Assign column uses) --
     def _refresh_summary(self) -> None:
-        name, status = "", ""
+        """Show the assignment from the SERVER, exactly like the Assign column.
+
+        2026-07-14 — this used to read ``ino_assignment_history`` (the LOCAL action
+        log), so the Report popup showed nothing for a reception assigned on ANOTHER
+        workstation while the Assign popup (which already reads the merged view)
+        showed it correctly. That is precisely the "the Assign popup works, the
+        Report popup does not" report. Both entry points now call the ONE accessor,
+        ``ino_assignment_details.get_assignment_details``, so they cannot diverge
+        again.
+        """
+        rec = None
         try:
-            from modules.network import ino_assignment_history as _h
-            rec = _h.current_assignment_details(self._reception_id)
-            if rec:
-                name = str(rec.get("assignee_name") or "").strip()
-                status = str(rec.get("assignment_status") or "").strip().lower()
+            from modules.network import ino_assignment_details as _d
+            rec = _d.get_assignment_details(self._reception_id)
         except Exception:  # pragma: no cover - defensive
-            pass
-        if not name:
+            rec = None
+
+        name = str((rec or {}).get("assignee_name") or "").strip()
+        status = str((rec or {}).get("status") or "").strip().lower()
+        if not name or not status:
             self.current_label.setText("ارجاع فعلی: —")
             self.current_label.setStyleSheet("color:#9cb6d6; font-size:11px;")
+            self.current_label.setToolTip("")
             return
-        try:
-            from modules.network import ino_assignment_models as m
-            label = m.status_label(status)
-            color = m.status_color(status)
-        except Exception:
-            label, color = status.capitalize(), "#ef4444"
+
+        label = str(rec.get("status_label") or "")
+        color = str(rec.get("status_color") or "#ef4444")
         suffix = f" ({label})" if label else ""
-        self.current_label.setText(f"ارجاع فعلی: {name}{suffix}")
+        who = name + ("  (شما)" if rec.get("mine") else "")
+        self.current_label.setText(f"ارجاع فعلی: {who}{suffix}")
         self.current_label.setStyleSheet(
             f"color:{color}; font-size:11px; font-weight:600;")
+        # Same detail block the Assign column's tooltip shows: by whom, when, comment.
+        try:
+            from modules.network import ino_assignment_details as _d
+            self.current_label.setToolTip(_d.format_tooltip(rec))
+        except Exception:
+            pass
 
     # -- open THE shared internal-assignment component -----------------------
     def _open_shared_component(self) -> None:

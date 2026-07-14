@@ -62,12 +62,13 @@ from modules.network.ino_assignment_models import (
     ASSIGN_TYPE_RADIOLOGIST,
     ASSIGN_TYPE_TYPIST,
     ASSIGNMENT_STATUSES,
-    STATUS_CANCELLED,
+    STATUS_REMOVED,
     AssignableUser,
     AssignmentRecord,
     default_source_for_type,
     is_valid_assign_type,
     is_valid_source,
+    normalize_status,
 )
 from modules.network import ino_assignment_history as _history
 
@@ -408,7 +409,12 @@ class InoAssignmentClient:
             return self._fail("no active session token", 401)
         url = self._base_url + _ASSIGN_PATH.format(rid=reception_id)  # PACS :8000
         try:
-            r = requests.get(url, headers=headers, timeout=self._timeout)
+            # Pooled keep-alive session — this is called once per visible reception
+            # when the patient list refreshes, so the per-call TCP handshake was
+            # pure overhead. See modules/network/http_session.py.
+            from modules.network.http_session import http_get
+            r = http_get(url, base_url=self._base_url, headers=headers,
+                         timeout=self._timeout)
             if r.status_code != 200:
                 return self._fail(_message_of(r), r.status_code)
             body = r.json() if _is_json(r) else {}
@@ -486,7 +492,20 @@ class InoAssignmentClient:
             logger.info("[ino-assignment] socket assign failed (%s); trying REST :8000",
                         res.get("message"))
             rest = _do_rest()
-            return rest if rest.get("ok") else res
+            if rest.get("ok"):
+                return rest
+            # BOTH failed. Return the answer that carries a REAL REASON.
+            # The socket used to win unconditionally here, so a server that had
+            # actually VALIDATED and refused the request (e.g. "assignee_id is
+            # required" / HTTP 422) was reported to the user as the meaningless
+            # "socket assign rejected". Prefer whichever side the SERVER answered:
+            # a truthy REST status is a 4xx/5xx (it answered); `server_answered`
+            # marks the same thing on the socket side.
+            if res.get("server_answered"):
+                return res
+            if rest.get("status"):
+                return rest
+            return res
         # transport == rest → PACS :8000, socket fallback on a CONNECTION failure only
         res = _do_rest()
         if res.get("ok") or res.get("status"):  # truthy status = the server answered (4xx/5xx)
@@ -505,6 +524,27 @@ class InoAssignmentClient:
         except Exception as exc:  # pragma: no cover - defensive
             return self._fail(f"socket transport unavailable: {exc}")
         return assign_via_socket(tok or "", params, timeout=self._timeout)
+
+
+#: The server refuses an empty assignee on BOTH transports (verified 2026-07-14):
+#:   socket AssignStudy → {"status":"error","error":"assignee_id is required"}
+#:   REST  PUT /assign  → HTTP 422 {"type":"string_too_short","loc":["body","assignee_id"]}
+#: Either one means "this server cannot remove an assignment", NOT a network fault.
+_MISSING_ASSIGNEE_PHRASES = (
+    "assignee_id is required",
+    "assignee_id",
+    "string_too_short",
+    "at least 1 character",
+    "field required",
+)
+
+
+def _is_missing_assignee_refusal(result: Dict[str, Any]) -> bool:
+    """True when the server VALIDATED the request and rejected the empty assignee."""
+    if int(result.get("status") or 0) in (400, 422):
+        return True
+    msg = str(result.get("message") or "").lower()
+    return any(p in msg for p in _MISSING_ASSIGNEE_PHRASES)
 
 
 def _is_json(resp) -> bool:
@@ -604,14 +644,32 @@ class InternalAssignmentService:
             )
         return result
 
-    def unassign(self, reception_id, assign_type: str = ASSIGN_TYPE_RADIOLOGIST) -> Dict[str, Any]:
-        """Cancel / unassign on the SERVER (assign with an empty assignee).
+    def unassign(self, reception_id, assign_type: str = ASSIGN_TYPE_RADIOLOGIST,
+                 *, comment: str = "") -> Dict[str, Any]:
+        """REMOVE the assignment on the SERVER (deactivate == cancel == unassign).
 
-        The contract has no dedicated unassign endpoint, so this reuses
-        ``PUT /api/patients/{id}/assign`` with an empty ``assignee_id``. The
-        server's real answer is returned — if it rejects the clear, the caller
-        sees the error and the history records a FAILED row (the UI must not show
-        it as cancelled). Only a confirmed clear records ``unassigned``."""
+        ⚠ SERVER LIMITATION (verified 2026-07-14 against the live OpenAPI schema,
+        not guessed). The assign API exposes exactly three routes:
+
+            GET  /api/patients/{id}/assign
+            PUT  /api/patients/{id}/assign   AssignPayload{assign_type,
+                                             assignee_id (**minLength = 1**), ...}
+            PUT  /api/patients/{id}/radiologist   (legacy)
+
+        There is **no DELETE verb** (405) and ``assignee_id`` may not be empty, so
+        an empty-assignee PUT — the only way the contract could express a clear —
+        is rejected with **HTTP 422 string_too_short**. The server therefore has NO
+        way to remove an assignment today.
+
+        We still issue the correct request (so this starts working the moment the
+        server drops ``minLength``), and we return the server's REAL answer. We do
+        NOT record a local "removed" on failure: that would make this workstation
+        show the patient as unassigned while the server — and every other
+        workstation — still shows the assignment. The caller surfaces the error.
+
+        The one-line server fix: allow ``assignee_id: ""`` on PUT /assign (clear
+        ``radiologistId`` / ``radiologistName``), or add ``DELETE /assign``.
+        """
         if not is_enabled():
             return {"ok": False, "disabled": True, "message": "internal assignment feature disabled"}
         if not can_assign(assign_type):
@@ -621,6 +679,20 @@ class InternalAssignmentService:
             study_uid="", allow_empty=True,
         )
         ok = bool(result.get("ok"))
+        if not ok and _is_missing_assignee_refusal(result):
+            # Make the cause unmistakable instead of a raw validation dump / a
+            # meaningless "socket assign rejected".
+            result["unsupported_by_server"] = True
+            result["message"] = (
+                "This server cannot remove an assignment.\n\n"
+                "Both transports reject an empty assignee:\n"
+                "  • socket AssignStudy → \"assignee_id is required\"\n"
+                "  • REST PUT /assign   → HTTP 422 (assignee_id minLength=1)\n"
+                "and there is no DELETE endpoint (405).\n\n"
+                "The assignment was NOT changed. Ask the PACS server to accept an "
+                "empty assignee_id on assign (clearing radiologistId/Name), or to "
+                "add DELETE /api/patients/{id}/assign."
+            )
         try:
             _history.record(AssignmentRecord(
                 reception_id=str(reception_id),
@@ -640,20 +712,21 @@ class InternalAssignmentService:
         return result
 
     def set_assignment_status(self, reception_id, status: str, *, comment: str = "") -> Dict[str, Any]:
-        """Set the assignment LIFECYCLE status.
+        """Set the assignment LIFECYCLE status — THREE canonical states.
 
-        ``cancelled`` is routed to :meth:`unassign` (a real SERVER call).
-        ``active`` / ``completed`` / ``deactivated`` have **no INO endpoint** —
-        they are recorded LOCALLY in the internal history (``server_ok=False``)
-        and the result carries ``local: True`` so the UI can label them honestly
-        rather than implying server confirmation."""
+        ``removed`` (== the old deactivate / cancel / unassign, which all meant the
+        same thing) is routed to :meth:`unassign`, a real SERVER call.
+        ``active`` / ``completed`` have **no server endpoint** — the server's assign
+        model has no status field at all — so they are recorded LOCALLY in the
+        internal history (``server_ok=False``) and the result carries ``local: True``
+        so the UI labels them honestly instead of implying server confirmation."""
         if not is_enabled():
             return {"ok": False, "disabled": True, "message": "internal assignment feature disabled"}
-        st = str(status or "").strip().lower()
+        st = normalize_status(status)
         if st not in ASSIGNMENT_STATUSES:
             return {"ok": False, "message": f"invalid assignment status: {status}"}
-        if st == STATUS_CANCELLED:
-            return self.unassign(reception_id)
+        if st == STATUS_REMOVED:
+            return self.unassign(reception_id, comment=comment)
         try:
             _history.record(AssignmentRecord(
                 reception_id=str(reception_id),

@@ -120,16 +120,15 @@ class NipplePickerController(QObject):
         return widgets
 
     def _get_view_info(self, vtk_widget) -> str:
-        """Get a display string like 'R-CC' for a viewer widget."""
+        """Get a display string like 'R-CC' for a viewer widget.
+
+        Uses the shared resolver (metadata → DICOM header → description); reading only
+        the series metadata returned the bare fallback "View" on real studies, which is
+        what the instruction dialog then showed ("click the Nipple point in viewer View").
+        """
         try:
-            iv = getattr(vtk_widget, 'image_viewer', None)
-            if iv:
-                meta = getattr(iv, 'metadata', {}) or {}
-                series_meta = meta.get('series', {})
-                lat = str(series_meta.get('laterality', '') or '').upper()
-                vp = str(series_meta.get('view_position', '') or '').upper()
-                if lat and vp:
-                    return f"{lat}-{vp}"
+            from .view_identity import view_label
+            return view_label(vtk_widget, fallback="View")
         except Exception:
             pass
         return "View"

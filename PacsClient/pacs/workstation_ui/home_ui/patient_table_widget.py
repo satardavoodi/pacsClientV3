@@ -716,6 +716,9 @@ class PatientTableWidget(QWidget):
     # The SERVER's assignment answer for the visible receptions came back
     # (worker thread → GUI thread). Payload: the refresh_assignments summary.
     assignmentsRefreshed = Signal(dict)
+    # An assignment lifecycle action (complete / deactivate / reactivate / cancel)
+    # finished on a worker thread. Payload: the service's real result.
+    assignStatusChanged = Signal(dict)
 
     def __init__(self, parent=None):
         super(PatientTableWidget, self).__init__(parent)
@@ -736,6 +739,7 @@ class PatientTableWidget(QWidget):
         # Server assignment refresh runs on a daemon thread; the queued connection
         # marshals the column repaint onto the GUI thread.
         self.assignmentsRefreshed.connect(self._on_assignments_refreshed)
+        self.assignStatusChanged.connect(self._on_assign_status_changed)
         self._active_report_dialogs = {}
         self._comment_cache_lock = threading.Lock()
         self._report_fetch_lock = threading.Lock()
@@ -3149,7 +3153,8 @@ class PatientTableWidget(QWidget):
             # Re-reads GET /api/patients/{id}/assign for every visible reception so
             # an assignment made on ANOTHER workstation finally appears in the
             # Assign column and as the red assignee name in the Report column.
-            self._start_assignment_refresh()
+            # force=True: an explicit refresh must never serve a cached snapshot.
+            self._start_assignment_refresh(force=True)
 
         except Exception as e:
             print(f"Error refreshing download statuses: {e}")
@@ -3517,6 +3522,23 @@ class PatientTableWidget(QWidget):
                 assign_label.setToolTip(f"Assigned to: {assign_to}")
         assign_label.setAlignment(Qt.AlignCenter)
         assign_label.setStyleSheet("background: transparent; border: none;")
+
+        # RIGHT-CLICK → internal-assignment details + lifecycle actions (2026-07-14).
+        # Shows WHO the patient is assigned to, WHO assigned it and WHEN (all from the
+        # server), and lets the assignee manage the assignment: complete / resolve,
+        # deactivate, reactivate, cancel-remove. Deliberately on the RIGHT button so
+        # the existing LEFT-click consultation popup (ADR-0006) is untouched — the two
+        # workflows stay separate.
+        if _ino_icon is not None:
+            assign_label.setContextMenuPolicy(Qt.CustomContextMenu)
+
+            def make_assign_menu_handler(lbl, rid, pname):
+                def handler(pos):
+                    self._show_assign_menu(lbl.mapToGlobal(pos), rid, pname)
+                return handler
+
+            assign_label.customContextMenuRequested.connect(
+                make_assign_menu_handler(assign_label, patient_id, patient_name))
 
         # Assign-consultation popup (ADR-0006): cell-click → dialog, wired
         # EXACTLY like the Report column popup (cell-widget mousePressEvent;
@@ -3920,33 +3942,183 @@ class PatientTableWidget(QWidget):
             from modules.network import ino_assignment_history as _hist
             from modules.network import ino_assignment_models as _m
 
-            rec = _hist.current_assignment_details(reception_id) or {}
-            local_status = str(rec.get("assignment_status") or "")
-            local_name = str(rec.get("assignee_name") or "")
-
-            server_assigned = None
-            server_name = ""
+            merged = self.assignment_display_for(reception_id)
+            if merged is None:
+                return None
+            # An assignment whose REPORT IS DONE is a COMPLETED assignment, not an
+            # "active, needs action" one. Without this, every reception that has a
+            # reporting radiologist (which the RIS sets for most of them) rendered
+            # the same red active icon — the whole Assign column went red.
+            status = _m.effective_assign_status(
+                merged.get("status", ""),
+                self.report_status_for_reception(reception_id),
+            )
+            state = _m.assign_icon_for_status(status, merged.get("assignee_name", ""))
+            # Replace the terse tooltip ("Assigned (active) — X") with the FULL server
+            # record: who it is assigned to, who assigned it, when, and any comment.
             try:
-                from modules.network import ino_assignment_server_state as _srv
-                snap = _srv.get_state(reception_id)
-                if snap:
-                    server_assigned = bool(snap.get("assigned"))
-                    server_name = str(snap.get("assignee_name") or "")
+                from modules.network import ino_assignment_details as _d
+                details = _d.get_assignment_details(
+                    reception_id,
+                    report_status=self.report_status_for_reception(reception_id),
+                    resolve_names=False,   # never block the paint on a REST call
+                )
+                state['tooltip'] = _d.format_tooltip(details)
+            except Exception:
+                pass
+            return state
+        except Exception:
+            return None
+
+    # ── Assign-column lifecycle menu (right-click) ───────────────────────────
+    def _show_assign_menu(self, global_pos, reception_id: str, patient_name: str = ""):
+        """Manage the assignment straight from the Assign column.
+
+        THREE states (2026-07-14): active / completed / removed. "Deactivate",
+        "Cancel" and "Unassign" all meant the same thing, so they are ONE action.
+        The transition table and the labels come from ``ino_assignment_models``, the
+        SAME source the Assign popup and the Report popup use — the three entry
+        points can never offer different actions.
+
+        Honesty rule: only ``removed`` hits the server. ``completed`` has no server
+        endpoint (the server's assign model has no status field at all), so it is a
+        LOCAL workflow state and the menu says so.
+        """
+        rid = str(reception_id or '').strip()
+        if not rid:
+            return
+        try:
+            from modules.network.ino_assignment import is_enabled as _ino_on
+            if not _ino_on():
+                return
+            from modules.network import ino_assignment_details as _d
+        except Exception:
+            return
+
+        details = _d.get_assignment_details(
+            rid, report_status=self.report_status_for_reception(rid)) or {}
+        status = str(details.get('status') or '')
+
+        menu = QMenu(self)
+        header = details.get('assignee_name') or 'Not assigned'
+        if details.get('mine'):
+            header += '  (you)'
+        act_header = menu.addAction(f"Assigned to: {header}")
+        act_header.setEnabled(False)
+        if details.get('assigned_by_name') or details.get('assigned_by_id'):
+            by = details.get('assigned_by_name') or details['assigned_by_id']
+            a = menu.addAction(f"Assigned by: {by}")
+            a.setEnabled(False)
+        if details.get('assigned_at'):
+            a = menu.addAction(f"At: {details['assigned_at']}")
+            a.setEnabled(False)
+        if status:
+            a = menu.addAction(f"Status: {details.get('status_label')}")
+            a.setEnabled(False)
+        menu.addSeparator()
+
+        from modules.network import ino_assignment_models as _m
+        actions = {}
+        for key in _m.ASSIGN_TRANSITIONS.get(status, ()):
+            label = _m.ASSIGN_ACTION_LABELS_EN.get(key, key)
+            if not _m.action_is_server_backed(key):
+                label += '  (local)'
+            actions[menu.addAction(label)] = key
+
+        menu.addSeparator()
+        act_open = menu.addAction('Open internal assignment…')
+
+        chosen = menu.exec(global_pos)
+        if chosen is None:
+            return
+        if chosen is act_open:
+            try:
+                from PacsClient.pacs.workstation_ui.home_ui.internal_assignment_panel import (
+                    open_internal_assignment_dialog,
+                )
+                open_internal_assignment_dialog(rid, patient_name, parent=self)
+            except Exception as exc:
+                QMessageBox.warning(self, 'Internal Assignment', str(exc))
+            self.refresh_assign_icon_for_patient(rid)
+            return
+        key = actions.get(chosen)
+        if key:
+            self._apply_assign_status(rid, key)
+
+    def _apply_assign_status(self, reception_id: str, status_key: str):
+        """Run a lifecycle action through the ONE shared service, off-thread."""
+        rid = str(reception_id or '').strip()
+
+        def _work():
+            out = {'ok': False, 'message': 'unknown'}
+            try:
+                from modules.network.ino_assignment import get_internal_assignment_service
+                out = get_internal_assignment_service().set_assignment_status(
+                    rid, status_key) or out
+            except Exception as exc:  # pragma: no cover - defensive
+                out = {'ok': False, 'message': str(exc)[:160]}
+            out['reception_id'] = rid
+            try:
+                self.assignStatusChanged.emit(out)
             except Exception:
                 pass
 
-            merged = _m.merge_assignment_status(
-                server_assigned, server_name, local_status, local_name)
-            return _m.assign_icon_for_status(
-                merged["status"], merged["assignee_name"])
+        import threading
+        threading.Thread(target=_work, name='INOAssignStatus', daemon=True).start()
+
+    def _on_assign_status_changed(self, result: dict):
+        """GUI thread: repaint from the REAL outcome — never a fake success."""
+        data = result if isinstance(result, dict) else {}
+        rid = str(data.get('reception_id') or '')
+        if not data.get('ok'):
+            if data.get('unsupported_by_server'):
+                # The server has no way to clear an assignment (assignee_id has
+                # minLength=1 and there is no DELETE). Say so precisely — and do NOT
+                # mark it removed locally: this workstation would then show the
+                # patient as unassigned while every other one still shows the
+                # assignment.
+                QMessageBox.warning(
+                    self, 'Remove Assignment',
+                    str(data.get('message') or 'The server refused the removal.'))
+            else:
+                msg = ('not permitted' if data.get('permission_denied')
+                       else str(data.get('message') or 'failed')[:200])
+                QMessageBox.warning(self, 'Internal Assignment',
+                                    f"Could not update the assignment — {msg}")
+        elif data.get('status_set') == 'removed' or data.get('removed'):
+            # A real server clear → re-read the server so the row cannot lie.
+            self._start_assignment_refresh(force=True)
+        if rid:
+            self.refresh_assign_icon_for_patient(rid)
+            self.refresh_report_cell_for_patient(rid)
+
+    def report_status_for_reception(self, reception_id) -> str:
+        """The report-workflow status currently shown for a reception ("" if none)."""
+        rid = str(reception_id or '').strip()
+        if not rid:
+            return ""
+        try:
+            for row in range(self.results_table.rowCount()):
+                pid_item = self.results_table.item(row, COL['patient_id'])
+                if not pid_item or pid_item.text().strip() != rid:
+                    continue
+                w = self.results_table.cellWidget(row, COL['report'])
+                return str(getattr(w, 'report_status', '') or '')
         except Exception:
-            return None
+            pass
+        return ""
 
     def assignment_display_for(self, reception_id):
         """Merged (server + local) assignment for a reception, or None.
 
         The ONE accessor both the Assign column and the Report column use, so they
-        can never disagree. ``{"status", "assignee_name"}``.
+        can never disagree. ``{"status", "assignee_name", "mine"}``.
+
+        ``mine`` is the ID match against the LOGGED-IN user (never a name compare).
+        It matters because the server's ``assignment.radiologist`` is populated by
+        the RIS report workflow for most receptions — "there is an assignee" and
+        "it is assigned to ME" are different questions, and the Report column must
+        only go red for the second one.
         """
         try:
             from modules.network.ino_assignment import is_enabled as _ino_on
@@ -3958,19 +4130,23 @@ class PatientTableWidget(QWidget):
             rec = _hist.current_assignment_details(reception_id) or {}
             server_assigned = None
             server_name = ""
+            mine = False
             try:
                 from modules.network import ino_assignment_server_state as _srv
                 snap = _srv.get_state(reception_id)
                 if snap:
                     server_assigned = bool(snap.get("assigned"))
                     server_name = str(snap.get("assignee_name") or "")
+                    mine = bool(snap.get("mine"))
             except Exception:
                 pass
-            return _m.merge_assignment_status(
+            out = _m.merge_assignment_status(
                 server_assigned, server_name,
                 str(rec.get("assignment_status") or ""),
                 str(rec.get("assignee_name") or ""),
             )
+            out["mine"] = mine
+            return out
         except Exception:
             return None
 
@@ -5111,6 +5287,16 @@ class PatientTableWidget(QWidget):
                             patient_id = patient_id_item.text() if patient_id_item else ""
                             reporting_physician = self._resolve_reporting_physician_for_row(row)
                             self._apply_report_status_display(report_label, new_status, reporting_physician)
+                            # The Assign icon's lifecycle state depends on whether the
+                            # REPORT is done (an assignment with a finished report is
+                            # "completed", not "active"), so it must be repainted when
+                            # a new report status arrives — otherwise it would keep the
+                            # stale red active icon.
+                            try:
+                                if patient_id:
+                                    self.refresh_assign_icon_for_patient(patient_id)
+                            except Exception:
+                                pass
 
                             def make_click_handler(uid, status, pname, pid, physician):
                                 def handler(event):
@@ -5193,25 +5379,42 @@ class PatientTableWidget(QWidget):
         #
         # Anything that is not an active assignment falls through to the ORIGINAL
         # (pre-feature) status-icon colour scheme below.
-        # 2026-07-14: the assignment now comes from `assignment_display_for` — the
-        # ONE accessor that merges the SERVER snapshot with the local lifecycle log,
-        # so the Report column and the Assign column can never disagree, and an
-        # assignment created on ANOTHER workstation finally shows up here (50210).
+        #
+        # ── THE RULE (2026-07-14) ────────────────────────────────────────────────
+        # RED name in Report  ⇔  the Assign column's icon is RED (an ACTIVE internal
+        # assignment). Same reception, same source, same predicate — the two columns
+        # are two views of ONE state and can never disagree. The name shown is the
+        # ASSIGNED PERSON's, from the server.
+        #
+        # "Active" is the EFFECTIVE status (`effective_assign_status`), so an
+        # assignment whose report is already finished is *completed* — it renders
+        # green above/below, never red. That is what stopped the "everything is red"
+        # regression, and it is enforced here rather than by extra local guards.
+        #
+        # TWO GATES DELIBERATELY REMOVED — each silently suppressed the red name:
+        #   1. `mine` (an ID match against the logged-in user). The socket Login
+        #      response does not reliably carry the user's id / personnel_id (see
+        #      socket_client.py: the fallback user dict is only full_name/username/
+        #      role), while the server's assignee_id is a Mongo ObjectId — so `mine`
+        #      was effectively ALWAYS False and the red name never appeared at all.
+        #      It is also not what is wanted: the column must show the ASSIGNED
+        #      PERSON, whoever that is. `mine` now only decorates the tooltip.
+        #   2. `same_person_name(assignee, physician_text)`. When the reception's
+        #      reporting physician differed from the assignee, the assignment was
+        #      hidden — exactly the case an assignment exists to make visible.
         try:
             from modules.network.ino_assignment import is_enabled as _ino_assign_enabled
             _rid = str(getattr(report_label, 'reception_id', '') or '').strip()
             if _ino_assign_enabled() and _rid:
                 from modules.network import ino_assignment_models as _ino_m
                 _merged = self.assignment_display_for(_rid) or {}
-                _status = str(_merged.get('status') or '').strip().lower()
+                # The SAME effective status the Assign icon paints.
+                _status = _ino_m.effective_assign_status(
+                    str(_merged.get('status') or ''), report_status)
                 if _status == _ino_m.STATUS_ACTIVE:
                     _assignee = str(_merged.get('assignee_name') or '').strip()
-                    # Only red when the displayed physician IS the assignee (or the
-                    # cell has no physician yet, in which case we show the assignee).
-                    if _assignee and (
-                        not physician_text
-                        or _ino_m.same_person_name(_assignee, physician_text)
-                    ):
+                    if _assignee:
+                        _mine = bool(_merged.get('mine'))
                         report_label.clear()
                         report_label.setText(_assignee)
                         report_label.setAlignment(Qt.AlignCenter)
@@ -5219,10 +5422,17 @@ class PatientTableWidget(QWidget):
                             "background: transparent; border: none; color: #ef4444; "
                             "font-size: 11px; font-weight: 600;"
                         )
+                        try:
+                            from modules.network import ino_assignment_details as _ino_d
+                            _tip = _ino_d.format_tooltip(_ino_d.get_assignment_details(
+                                _rid, report_status=report_status, resolve_names=False))
+                        except Exception:
+                            _tip = f"Assigned to: {_assignee}"
                         report_label.setToolTip(
                             f"Report Status: {REPORT_STATUSES.get(report_status, report_status)}\n"
-                            f"Assigned to: {_assignee}\n"
-                            "(Active internal assignment — reporting pending)\n(Click to change)"
+                            + _tip
+                            + ("\n(Assigned to you)" if _mine else "")
+                            + "\n(Click to change)"
                         )
                         return
         except Exception:
@@ -5932,8 +6142,13 @@ class PatientTableWidget(QWidget):
                         pass
             break
 
-    def _start_assignment_refresh(self):
+    def _start_assignment_refresh(self, force: bool = False):
         """Re-read the SERVER assignment for every visible reception, off-thread.
+
+        ``force=True`` (the Refresh button) re-reads every row. A search leaves it
+        False, so receptions whose snapshot is still fresh are skipped instead of
+        being re-fetched — the search, the refresh and the auto-refresh used to each
+        pull the whole visible list.
 
         THE MISSING READ PATH (2026-07-14, patient 50210). Nothing in the app ever
         called ``GET /api/patients/{id}/assign`` — the Assign/Report columns were
@@ -5963,6 +6178,7 @@ class PatientTableWidget(QWidget):
                 summary = refresh_assignments(
                     rids,
                     should_stop=lambda: getattr(self, '_assign_refresh_token', 0) != token,
+                    force=force,
                 )
             except Exception as exc:  # pragma: no cover - defensive
                 summary = {"ok": False, "checked": len(rids), "updated": 0,

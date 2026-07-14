@@ -262,6 +262,19 @@ class _HPModulesMixin:
                         continue
 
                     self.tab_widget.setCurrentWidget(existing_tab)
+                    # A RE-RUN of Eagle Eye on the same study lands here (the tab is
+                    # reused, not rebuilt), so nothing would otherwise re-read
+                    # mg_ai_manifest.json and the newly returned CSV would never appear
+                    # in the left-panel "AI Results" dropdown — while a *different*
+                    # computer, building the tab fresh, listed every run. Refresh the
+                    # dropdown here: this is the one choke point every re-run passes
+                    # through. Never let it break the (working) tab activation.
+                    try:
+                        refresh = getattr(existing_tab, 'refresh_ai_results', None)
+                        if refresh is not None:
+                            refresh()
+                    except Exception as e:
+                        print(f"[AI] Eagle Eye result refresh skipped: {e}")
                     return existing_tab
 
                 ai_client = _ensure_ai_main_window()(study_uid=study_uid, eagle_eye_mode=eagle_eye_mode)

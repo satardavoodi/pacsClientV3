@@ -67,6 +67,54 @@ logs/KPIs show *runtime behavior*. All three are reconciled here.
 
 ---
 
+> **UPDATE 2026-07-14 — REASSESSMENT. Both of the plan's founding diagnoses are now known to be
+> WRONG or incomplete, and the real defect classes have names.** This supersedes §2's TL;DR.
+>
+> **(1) The #1 reliability defect is NOT "completion-by-notification-not-convergence" (OPT-04).**
+> That was the 07-02 hypothesis and it was never confirmed. Every "series won't display" bug since
+> has been **deterministic and structural**, not a dropped notification: OPT-20 (an async-apply gate
+> comparing a series NUMBER to a list INDEX), OPT-20/slot-3 (a study-blind name+count dedup that
+> never appended the series), OPT-26/49836 (a secondary load repointing the TAB's `import_folder_path`),
+> 50238 (a primary load inheriting the SECONDARY study's `study_pk` from mutable tab state).
+> **The real class: series identity was RE-DERIVED at four stages from MUTABLE TAB STATE**, so any
+> multi-study patient whose studies share series NUMBERS found a stage where the derivations
+> disagreed — and each time we added a guard, until **nine flags were answering one question**.
+> **OPT-35** is the structural answer (resolve an immutable `SeriesRef` ONCE, thread it, retire the
+> guards). P0/P1/P2 shipped default-on 2026-07-14; the shadow oracle came back **clean on two live
+> patients** (0 mismatches), which is the green light for P3–P5. OPT-04 is **not dead but
+> DOWNGRADED**: its remaining real scope is DM completion convergence (the 216× `not in
+> download_rows` re-download loop), not the display family.
+>
+> **(2) The #1 performance defect ("main-thread blocking") was correctly identified but is a
+> RECURRING CLASS, not a fixed list of hotspots.** The 07-03 hotspots (OPT-01/09/12) are resolved and
+> live-verified — and then **three NEW multi-second GUI-thread freezes appeared from unrelated
+> subsystems**: OPT-22 (web-browser Chromium prewarm, **21 s**), OPT-23 (EchoMind inline dispatch),
+> OPT-27 (Eagle Eye training-settings scan walking 53 k DICOM files, **55 s → 1.4 s**). None came from
+> the pipeline this plan was written about. ⇒ **"No blocking I/O, folder walk, DICOM read, network
+> call, or engine construction on the GUI thread" is now a STANDING RULE for every new feature**
+> (§12.3), not a backlog item to be closed.
+>
+> **(3) The most useful new diagnostic heuristic — "the mechanism exists but a coarse guard is
+> suppressing it."** THREE of this session's four defects were NOT missing machinery; the machinery
+> existed, was correct, and was **suppressed**: OPT-36 (the awaiting/loading-spinner machinery worked;
+> the resume watchdog's settle condition declared a viewport "settled" that had never shown the
+> awaited series, and hid the spinner with a FAKE `ViewportLoadSucceeded`); OPT-37 (thumbnail refresh
+> worked — a detected change already re-renders with `force_server_merge=True`; a flat **5-minute**
+> per-study TTL throttled the *change detector* for exactly the window in which a study grows);
+> OPT-35 (the canonical identity resolver existed — its result was simply discarded). **Before adding
+> a mechanism, check whether the existing one is being gated off.** Corollary, from OPT-36: **a "stop
+> the loop" signal must never double as "the operation succeeded."**
+>
+> **(4) Flag debt is now a first-class risk.** Nine flags for one question (OPT-35) was the symptom
+> that forced this reassessment. §10/N-4 makes flag retirement a scheduled workstream with an
+> evidence gate, not a someday.
+>
+> **Shipped this window (all default-on, all with kill switches, all NEEDING live verify):** OPT-24
+> (DM outage re-arm), OPT-25 (missing `SeriesNumber` killed a whole study), OPT-26, OPT-27, OPT-28
+> (stale pooled socket — the connectivity root cause), OPT-29 (patient-table `clear_table` native
+> crash), OPT-30 (Sync Status reporting a false success), OPT-31, OPT-33, OPT-35 P0/P1/P2, OPT-36,
+> OPT-37. Evidence per item in §15; states in §9; the next phase is **§10, rewritten**.
+
 ## 1. Purpose & the one non-negotiable rule
 
 Over the last month the same three themes — **reliability, stability, performance** — were worked
@@ -90,7 +138,15 @@ that item. If it is genuinely new, add a new backlog ID here. Never fork a paral
 
 ---
 
-## 2. TL;DR — where we are on 2026-07-03
+## 2. TL;DR — where we were on 2026-07-03 *(HISTORICAL — superseded by the 2026-07-14 reassessment above)*
+
+> ⚠️ **Read the 2026-07-14 UPDATE block first.** Point 2 below ("the reliability failures are ONE
+> architectural defect: completion-by-notification") is the founding hypothesis of this plan and it
+> did **not** survive contact with the evidence — every display failure since has been a distinct,
+> deterministic, structural bug (see OPT-20/26/35/36). Point 1 (main-thread blocking) was right about
+> the *hotspots* but wrong about the *shape*: it is a recurring class that new features keep
+> re-introducing, not a finite list. Kept verbatim below as the historical record of what we believed
+> and why — deleting it would hide the two most instructive wrong calls in this project.
 
 1. **The performance bottleneck was mis-identified for months and is now correctly known.** Decode and
    render are **healthy** (decode p50 ≈ 4.5 ms, TTFI p50 ≈ 19 ms). The real #1 issue is **main-thread
@@ -394,7 +450,65 @@ States: VERIFIED-COMPLETE · COMPLETE-MONITOR · PARTIAL · READY-SAFE · IMPL-U
 easily-validated work that cannot damage working systems. The next phase is **verification + low-risk
 hygiene**, which also *earns the evidence* required to safely attempt OPT-04.
 
-### Phase N (next) — three parallel, low-blast-radius workstreams
+---
+
+### ▶ PHASE N+1 (2026-07-14) — THE CURRENT PLAN. *(The "Phase N" block below is the 07-03 plan, kept
+### for history; N-1's Seam A/B verification is folded into V-1 here.)*
+
+**The situation has changed shape.** A large amount of code shipped default-on in the last ten days
+and **almost none of it is live-verified**. The single biggest risk to this project is no longer an
+unfixed bug — it is **an unverified fix pile**. Writing more code before draining it is how a
+regression gets buried.
+
+**V — VERIFICATION DEBT (do this FIRST; no new code).** Every item below is shipped, default-on,
+guard-tested, and unproven on a real build. Each has an exact acceptance signal.
+
+| # | Item | Live acceptance signal |
+|---|---|---|
+| **V-1** | **OPT-35** SeriesRef authority (P0/P1/P2) | Open **50238**, **49836**, **48912** + a **single-study** patient. Require: `[SERIESREF-SHADOW] mismatch` = **0**, `[IDENTITY-GATE] SKIP` = **0**, every guard firing = 0, single-study shows **zero** `[SERIESREF]` redirects. *(Partially done: two live patients already returned a clean oracle.)* |
+| **V-2** | **OPT-36** drop-never-abandoned | Drag a previous-exam series the instant its study starts downloading → the loading GIF **persists**, images appear **without a re-drag**, no intermediate revert to the previous image. And the 47084 livelock must still settle once the series IS displayed. |
+| **V-3** | **OPT-37** thumbnail refresh | Click **50264**'s study while it is still receiving images → within ~10 s the resync re-checks (`study_resync_check result=grew`) and the thumbnails refresh **without changing the search filter**. |
+| **V-4** | **OPT-28/29/30/31** (the laptop/field cluster) | Pull the network → search → restore → recovers silently. 45+ rows + active download + two back-to-back searches → **no crash**. Sync with the network down → tab **stays open** with Retry and the study is **NOT** marked approved. |
+| **V-5** | **OPT-25** (Roshana) / **OPT-21** (PC2 WoA) / **OPT-24** (DM outage re-arm) | Roshana: the radiography study downloads + displays. PC2: MPR opens (hardware D3D12, not llvmpipe). DM: >5 min outage → studies re-arm on reconnect. |
+
+**Rule: no new optimization work starts until V-1…V-4 have run at least once.** A clean V-1 is
+*also* the gate that unlocks OPT-35 P3–P5.
+
+**S — STRUCTURAL (only after V).** In priority order:
+- **S-1 · OPT-35 P3 — cache/switch re-key by `series_uid`.** This is **no longer theoretical**: the
+  50264 live run showed 3 × `[IDENTITY-GATE] SKIP`, and the trace pins them on the **switch path's
+  bare-series-number metadata lookup** (a secondary series' metadata carries its RAW number, so `"3"`
+  can return the sibling study's entry; the incoming study_uid is empty, so OPT-17's cache check
+  **fails open** and only the fail-closed `series_uid` gate catches it). The gate is currently the
+  ONLY thing standing between that and a wrong image. ⚠ **ZetaBoost warmup hard-requires a digit key**
+  (`isdigit()`/`int(sn)`) ⇒ `display_key` stays the public handle; `series_uid` is the *internal* key.
+- **S-2 · OPT-35 P4/P5** — DM/grow-lane onto the ref, then **retire the 9 identity flags → 1**, one at
+  a time, each only after logging zero firings. This is the flag-debt payment.
+- **S-3 · OPT-37 residual** — the GROUPED (multi-study) render path still has **no independent
+  staleness check**; it depends entirely on the resync firing `force_server_merge=True`. **Extend the
+  resync — do NOT fork a second refresh mechanism.**
+- **S-4 · OPT-04, re-scoped** — DM **completion convergence** only (216× `not in download_rows` →
+  re-download loop). It is *not* the display-bug cause; that theory is retired.
+- **S-5 · OPT-07** — DICOMized-document handling (`1100000`, `[APPLY-ENTER]=0` — the apply never runs).
+
+**G — STANDING GUARDS (not tasks; enforce on every new feature).**
+- **No blocking work on the GUI thread** — no folder walk, DICOM read, network call, or engine
+  construction. This class has now produced OPT-22 (21 s), OPT-23, OPT-27 (55 s) *after* the plan
+  declared main-thread blocking "resolved". Known remaining offenders: the Advanced/VTK
+  `ImageViewer2D`+`Render()` per switch (GUI-thread-inherent → spinner only), the AI-seg
+  `on_contour_closed → requests.post` sync POST (**should move off-thread**), and Eagle Eye's eager
+  `ModelTrainingTab` construction (**lazy-build it**).
+- **A stop-condition must never double as a success signal** (OPT-36).
+- **Throttle what is settled; re-check what is not** (OPT-37).
+- **Route decisions through the ONE authority, not bespoke checks + flags** (OPT-35).
+
+**External / not ours:** OPT-32 (server-side `(study_date)` index; the client A/B probe already proved
+the cost is a server scan), OPT-34 (reception REST 404 = server config), and the `limit: 100` patient-
+list truncation.
+
+---
+
+### Phase N (2026-07-03, HISTORICAL) — three parallel, low-blast-radius workstreams
 
 **N-1 — Live-verify what already shipped (OPT-02, OPT-03, OPT-13).** No new code.
 - *Exact problem:* Seam A/B cutovers and cine are default-on but unverified on a live source build.
@@ -495,6 +609,28 @@ From the lifecycle log, any run must satisfy:
 3. Every `SERIES_LOADING` reaches `FIRST_IMAGE` then `DISPLAYED_COMPLETE` — **zero permanent `awaiting`**.
 4. `DISPLAYED_COMPLETE` viewport slice count == canonical on-disk count — **no partial grow**.
 5. No state entered twice for one identity — no duplicate execution.
+
+**Added 2026-07-14 — the invariants the last ten days actually broke.** These are *standing rules for
+every new feature*, not backlog items; each is written from a defect that shipped past the five above.
+
+6. **No blocking work on the GUI thread.** No folder walk, DICOM read, network call, or engine
+   construction. Violations *after* main-thread blocking was declared "resolved": OPT-22 (Chromium
+   prewarm, **21 s**), OPT-23 (EchoMind inline dispatch), OPT-27 (Eagle Eye scanning 53 k DICOM,
+   **55 s**). None came from the pipeline this plan was written about — the class travels with new
+   features.
+7. **A stop-condition must never double as a success signal.** OPT-36: the resume watchdog's
+   "settled" test cleared the awaiting flag, hid the spinner and emitted `ViewportLoadSucceeded` for
+   a viewport that had **never displayed the awaited series** — silently abandoning the user's drop
+   back to the previous image. A viewport may be declared settled **only when it is actually showing
+   the awaited series**.
+8. **Throttle what is settled; re-check what is not.** OPT-37: a flat 5-minute TTL on the *change
+   detector* was applied to a study the previous check had just found INCOMPLETE — exactly the study
+   that will change, throttled for exactly the window in which it changes.
+9. **Identity is resolved ONCE and threaded, never re-derived from mutable state.** OPT-35: it was
+   re-derived at four stages from `import_folder_path` / `metadata_fixed['study_pk']`, producing
+   48912 / 49836 / 50238 and **nine flags answering one question**.
+10. **Before adding a mechanism, check whether the existing one is being suppressed.** Three of the
+    four defects fixed on 2026-07-14 were correct machinery gated off by a too-coarse guard.
 
 ---
 
@@ -635,6 +771,10 @@ source build — the only lane that proves GUI/render/clinical behavior; human-a
 
 | 2026-07-14 | **OPT-35 P0+P1+P2 — SERIES IDENTITY IS NOW RESOLVED ONCE AND THREADED, not re-derived 4× from mutable tab state. SHIPPED default-on** (`AIPACS_SERIESREF_SHADOW` / `_DISK` / `_DB`) | Not a new bug report — the STRUCTURAL root of the whole recurring class. 48912 (disk path), 49836 (tab repoint), 50238 (DB pk) are **one defect in three dimensions**: to show a series the code independently re-answered *"which study does this display key belong to?"* at four stages, each reading **tab-level** state (`import_folder_path` ~35 refs, `metadata_fixed['study_pk']` ~10 refs) as if it were **per-series** identity. Any multi-study patient whose studies share series NUMBERS found a stage where the derivations disagreed ⇒ **9 flags answering ONE question**, with guard #10 already predictable. User directive: *"the pipeline should be straightforward for showing the series and optimizing performance and speed."* | NEW pure `PacsClient/utils/series_ref.py` — frozen `SeriesRef(display_key, study_uid, study_pk, series_uid, series_number, series_path, study_slot, source)` + `build_series_ref_table` + `resolve_series_ref` (table → live entry → offset-key **slot fallback** → `derived`) + `shadow_compare`. Stdlib ONLY (no Qt/VTK/pydicom/**DB**) ⇒ fully unit-testable offscreen; `study_pk` is left None by the builder and filled by the consumer via the one rule. Consumed in `_vc_load._load_single_series_on_demand`: the disk location comes from the ref (**authoritative refs only** — a `derived` ref infers `SOURCE_PATH/<primary>/<key>` and would BREAK an externally-imported study, so it is never acted on), and **`study_pk = pk_of(ref.study_uid)`** replaces both opposing pk guards at once. The ref reads NO tab state, so it cannot be poisoned by a sibling load. Table cached on the identity of `_server_series_info` ⇒ **O(1) lookup per load** instead of `exists()` probes + a DB round-trip + guard scans (the "speed" half). Traces routed via `_identity_log` to the **viewer channel** — app.log did not reliably capture viewer INFO, which is precisely why the 49836 resolution trace was invisible and the bug had to be proven by reading SeriesInstanceUIDs off the DICOM | **40/40 new guard tests** (`tests/code/viewer/test_series_ref_authority.py`) — the three live bugs (50238 plain-key→primary + offset-key→own study, 49836 same-number-never-shares-a-folder, 48912 plain-key-never-into-a-previous-exam), the 50238 SEQUENCE (a secondary load cannot poison the next primary), **and a pin for every prior correction**: C1 (`parse_series_number` never raises on the literal `"None"`; an AST sweep FAILS if a bare `int()` on a series field reappears — the OPT-25/Roshana killer), C2 (synthetic 900001–999999 stays a PLAIN key; 999_999/1_000_000 boundary), C3 (`"02"` stays `"02"`), C8 (both pk polarities), C10 (display key is always a DIGIT string — ZetaBoost warmup), C11 (offset scheme intact), single-study `derived` refs are NOT authoritative, slot-fallback resolves a dropped entry, an out-of-range slot **refuses to guess** (never falls back to the primary), frozen-dataclass immutability, and the shadow oracle. **Regression proof:** `tests/code/{viewer,network,ui_services}` = **65 failed / 2493 passed** vs the SAME command with `_vc_load.py` `git stash`ed = **65 failed / 2453 passed** → `Compare-Object` on the FAILED sets = **IDENTICAL (65 = 65) ⇒ ZERO new failures**; the +40 are exactly the new tests. py_compile green on the Windows host; plugin mirrors **414/414** (neither edited file is mirrored) | ⚠️ **shipped default-on, each with a kill switch** (`=0` → the byte-identical legacy derivation). The **9 legacy guards stay ON as DETECTORS** — if the authority is right they are no-ops; **a guard or `[SERIESREF-SHADOW]`/`[SERIESREF-DB]` firing after this ships means the AUTHORITY is wrong and the phase must be reverted.** NEEDS LIVE VERIFY: open **50238** (fresh → load a study-2 series → then study 1's series 2/3/4 must show study 1's images), **49836**, **48912**, a **single-study** patient (must be byte-identical: zero `[SERIESREF]` redirects, zero shadow mismatches), and a **previous-exam** patient. Success signals: `[IDENTITY-GATE] SKIP` = **0**, `[SERIESREF-SHADOW] mismatch` = **0**, every guard firing = **0**, every dragged series renders. STAGED (gated on that output): P3 cache re-key by `series_uid` (⚠ ZetaBoost hard-requires a digit key), P4 DM/grow-lane, P5 retire the guards one at a time → **9 flags → 1**. Plan: `docs/plans/architecture/SERIES_IDENTITY_PIPELINE_UNIFICATION_2026-07-14.md` |
 
+| 2026-07-14 | **OPT-36 — DRAG-AND-DROP DURING DOWNLOAD: the drop was silently ABANDONED back to the previous image. FIXED default-on** (`AIPACS_SETTLE_REQUIRES_DISPLAYED`, `AIPACS_RESUME_BUDGET_ON_PROGRESS`) | User report: *"the viewer wins the race, so the drag-and-drop is not completed and the viewer displays the previous image; dragging the same series again later works because the files are on disk by then — poor reliability."* Live trace (50336, previous-exam series **1000002** dragged mid-download): `14:35:03.083 [LOAD] Error … WinError 3` (study folder not created yet) → `14:35:03.129 "not resident yet — awaiting download"` + `RemoteSeriesDownloadAttached` (**the awaiting/spinner machinery worked correctly**) → **`14:35:05.126 disk-ready resume: series=1000002 settled (visible=1 disk=1 settled_visible=False exhausted=False authority=True) — cleared`** → `ViewportLoadingStateCleared` + a **FAKE `ViewportLoadSucceeded`**. Only a manual re-drag recovered it | **NOT the exception path** (that was correct) — the **resume watchdog** abandoned the drop, via TWO compounding bugs. **(A) `_disk_ready_complete` never saw `.part`.** The call site already computed `_has_part` and passed it to the sibling `_disk_series_settled`, but **not** to `_disk_ready_complete`. A previous exam is not in the DB yet ⇒ **no server `expected` count** ⇒ the weak stable-count fallback ran ⇒ a download that had written its FIRST file and not yet landed the second was *"stable at 1"* across two ticks ⇒ **a 1-of-N series was declared COMPLETE**. FIX: pass `has_part`; it gates ONLY the unknown-expected fallback (a stray `.part` must not block a known-and-met count). `has_part=False` default ⇒ legacy 3-arg call byte-identical. **(B) the settle stop-condition bypassed `_shows_awaited`.** `_settled_visible` honoured it (the 48101 fix) but `_authority_settled` / `_exhausted` were **OR'd in** and did not — so the state authority (a monotonic high-water mark of *displayed slices*, which says nothing about WHICH series is displayed) **overrode the live check that had CORRECTLY decided the viewport was not showing the awaited series**, cleared `_awaiting_series_number`, hid the spinner and faked success. FIX = **THE RULE: a viewport may only be declared SETTLED when it is ACTUALLY SHOWING THE AWAITED SERIES.** The 47084/47801 livelock this brake exists for has `_shows_awaited=True`, so gating on it **preserves that fix exactly** while closing the abandonment hole. **(C) the retry budget was consumed while the download was healthy** → now **refunded whenever the on-disk count GROWS**, so the cap trips only on a genuinely stuck download; on true exhaustion with the series still undisplayed the viewport shows an explicit "still loading" state and KEEPS the awaiting flag — never a silent revert. Also: a not-yet-created study folder (`WinError 3`) is an EXPECTED transient, now logged INFO instead of a false ERROR | **19/19 new guard tests** (`tests/code/viewer/test_drop_never_abandoned_to_previous_image.py`): the exact 50336 case (disk=1, expected unknown, `.part` in flight, `shows_awaited=False` → must NOT settle), `.part` gates ONLY the unknown-expected fallback, legacy 3-arg byte-identity, **the 47084 livelock stop is PRESERVED**, exhaustion cannot silently abandon, progress refunds the budget, kill switches, + wiring pins. **Regression proof:** `tests/code/viewer` with the fix and my 2 new files EXCLUDED = **60 failed / 1868 passed** vs the SAME command with both edited files `git stash`ed = **60 failed / 1868 passed** → newly-failing = **(none)**, newly-passing = (none) ⇒ **ZERO regressions**; the 59 new tests all pass. py_compile green on the host; plugin mirrors **414/414** (neither file is mirrored) | ⚠️ **shipped default-on with kill switches.** Delivers the requested contract: if the files are not on disk yet the viewport **STAYS in the loading state until the image is available**, or until the user drops another series (the replacement clear in `_vc_switch` is unchanged); it **NEVER** falls back to the previous image, and never reports a fake success. NEEDS LIVE VERIFY: drag a previous-exam series the instant its study starts downloading → the loading GIF persists, no intermediate revert, the images appear on their own **without a re-drag**; and confirm no resume livelock returns (`disk-ready resume … settled` must still fire once the series IS displayed). Files: `_vc_progressive.py`, `_vc_load.py` |
+
+| 2026-07-14 | **OPT-37 — THUMBNAILS NEVER REFRESH WHEN THE SERVER GAINS IMAGES: the change detector is throttled for 5 minutes, which is exactly the window in which the study grows. FIXED default-on** (`AIPACS_RESYNC_TTL_INCOMPLETE`) | Patient **50264**: clicked the study when 3 series were on the server; ~5 min later the rest arrived (24 series / **1148 images**) and the count updated — but the thumbnails were **never re-requested**. Clicking again (patient-code filter) did nothing; clearing the code and switching the filter to **Yesterday** refreshed them instantly. Live trace: `17:21:21 [CT-072] study_resync_check result=grew server_series=2 new_series=2` (**detected**) → then EVERY click 17:22:43 → 17:25:52 logged `resync_start → resync_complete changed=0` **in 0.2 ms with NO `study_resync_check` at all** (no server query) | **The refresh machinery was NEVER broken.** The auto-resync (`_resync_patient_studies_from_server`, runs on every single-click) already detects growth and re-renders with **`_show_grouped_patient_studies(..., force_server_merge=True)`** — which refetches the thumbnails. **ROOT CAUSE = `_RESYNC_TTL_S = 300.0`**, a FLAT per-study throttle on the DETECTOR, applied to every study **including one the previous check had just found INCOMPLETE** (`result=grew`) — precisely the study that WILL change, and 5 minutes is precisely the window. So the first click detected `server_series=2`, marked the study checked, and every click for the next 5 min was throttled out before any server query. FIX: the TTL is now **per-study and completeness-aware** — full 300 s once CONFIRMED complete (preserves the 44113 "not every click hits the network" contract), **short TTL (10 s, still absorbs click-spam) while still growing**. Completeness = `content_version_store.get_synced_version(uid) is not None`, reliable **because `set_synced_version` is stamped ONLY on the not-needs-sync / disk-confirmed-complete branch**. **WHY THE FILTER CHANGE "FIXED" IT — a different CODE PATH, not a cache invalidation:** a patient-code search returns the patient's 2 studies as ONE aggregated row (`study_uids_count=2`) → `_hp_modules.py:579` routes to `_show_grouped_patient_studies`, which at `:687` contacts the server ONLY when `(not study_thumbs) or force_server_merge` — with 2 thumbnails on disk it renders **local-only, forever**. The "Yesterday" list produced a **single-study row** (`study_uids_count=1`) → `show_patient_studies` → the single-study **cache gate**, which DOES check the server (`grew=1 local_thumbs=2 server_series=24` → fetched 24). Two list filters, two render paths, only one with staleness detection | **19/19 new guard tests** (`tests/code/ui_services/test_resync_ttl_incomplete_study.py`): the 7 real click times from the 50264 trace must all re-check; a pin of the OLD flat-TTL behaviour showing it skipped every one of them; a CONFIRMED-COMPLETE study still honours the full 300 s TTL (44113 contract); a growing study is still throttled against click-spam (<10 s); never-checked/force/feature-off/kill-switch invariants; wiring pins incl. "the existing `force_server_merge=True` refresh path must not be forked". **Regression proof:** `tests/code/ui_services` = **3 failed / 468 passed** vs baseline **3 failed / 449 passed** → the SAME 3 pre-existing failures (`test_pin_overlay` ×2, `test_vtk_volume_service`); **zero regressions**, +19 new. Two `test_resync_on_reopen.py` throttle stubs were **REPAIRED, not weakened** (they bind only a subset of the mixin's methods via `SimpleNamespace`; the new per-study TTL needs `_resync_ttl_for` + `_study_confirmed_complete` bound — assertions unchanged) | ⚠️ **shipped default-on with kill switch** (`AIPACS_RESYNC_TTL_INCOMPLETE=0` → the flat 300 s TTL). NEEDS LIVE VERIFY on **50264**: click the study while it is still receiving images; within ~10 s of each click the resync must re-check (`study_resync_check result=grew`) and the thumbnails must refresh **without changing the search filter**. **KNOWN RESIDUAL (staged):** the GROUPED (multi-study) render path still has NO independent staleness check — it depends entirely on the resync firing `force_server_merge=True`. That is now restored, but a multi-study patient's grouped preview has no gate of its own; unifying it with the single-study cache gate is the follow-up (do NOT fork a second refresh mechanism — extend the resync). File: `_hp_series.py` (not plugin-mirrored) |
+
 **Known pre-existing (unrelated) test failures:** `test_pin_overlay` (×2), `test_vtk_volume_service`,
 `test_ino_assignment`, `test_ino_report_workflow`, `test_mpr_tool_autoexit` — confirmed pre-existing
 via `git stash` comparison; not caused by this work.
@@ -651,25 +791,42 @@ the current source of truth.
 
 ---
 
-## 17. Final decision — the safest highest-value remaining work
+## 17. Final decision — the safest highest-value remaining work *(rewritten 2026-07-14)*
 
-> **Given everything already attempted and implemented, the safest changes with the greatest
-> reliability/stability/performance gain and the least regression risk are, in order:**
+> **The highest-value work right now is not writing code. It is DRAINING THE VERIFICATION DEBT.**
 >
-> 1. **Live-verify the already-shipped Seam A/B cutovers + cine (N-1).** Zero new code, highest
->    reliability payoff — it either confirms the "blank thumbnail / no-grow / 80-20" family is fixed
->    (then collapse the flags) or produces the fresh-log evidence to correct course. Nothing is safer
->    than verifying code that already shipped.
-> 2. **Log hygiene + `CLAUDE.md` reconciliation (N-2, OPT-09/OPT-14)** and **subprocess-spawn hardening
->    (N-3, OPT-05)** — low blast radius, immediately improve fault visibility and session stability.
-> 3. **Broaden the off-GUI-thread move (OPT-01)** — the manifest scan / DM rebuild / GC. This is the
->    highest-value *performance* item and the prerequisite that makes the reliability cutover meaningful;
->    it is medium-risk, well-scoped, and reuses existing worker/deferred patterns.
-> 4. **Only then, the decomposed lifecycle cutover (OPT-04)** — high value, high risk, done as three
->    independently reversible sub-steps behind shadow-agreement gates.
+> Between 2026-07-08 and 2026-07-14, thirteen fixes shipped **default-on** — including three that
+> touch the most clinically sensitive path in the app (series identity) and three that were only
+> discovered because a *previous* fix's logging made them visible. Almost none is live-verified. The
+> dominant risk has flipped: it is no longer an unfixed bug, it is **a regression hiding inside an
+> unverified pile**. Every additional fix layered on top makes attribution harder.
 >
-> Deliberately **not** next: decode/render optimization (healthy — wasted effort), geometry T2/T3 and the
-> dental VTK-MPR flip (high-risk, clinical-lane golden-compare gated), and any large single-shot rewrite.
+> **In order:**
+>
+> 1. **Run V-1 … V-4 (§10).** Zero new code. Each has an exact acceptance signal and a kill switch if
+>    it fails. A clean **V-1** (`[SERIESREF-SHADOW] mismatch = 0`) is *also* the evidence gate that
+>    unlocks the rest of OPT-35 — it is the cheapest high-leverage action available.
+> 2. **OPT-35 P3 (S-1)** — re-key the cache/switch path by `series_uid`. This is the last stage still
+>    deriving identity from a bare series number, it is **evidence-backed** (3 live `IDENTITY-GATE
+>    SKIP`s trace to it), and the fail-closed gate is currently the only thing preventing a wrong
+>    image there. Mind the ZetaBoost digit-key constraint.
+> 3. **OPT-35 P4/P5 — pay the flag debt.** Nine identity flags → one. Retire one at a time, each only
+>    after it logs zero firings. Flag debt is now a named risk, not housekeeping.
+> 4. **The three known GUI-thread offenders (G)** — AI-seg sync POST off-thread, Eagle Eye lazy
+>    `ModelTrainingTab`, Advanced/VTK spinner. Cheap, contained, and they close the class that has
+>    produced three multi-second freezes *since* main-thread blocking was declared "resolved".
+> 5. **Only then OPT-04, re-scoped to DM completion convergence** — high value, high risk, and no
+>    longer urgent, because it is *not* the cause of the display-failure family (that theory is
+>    retired; see the 07-14 reassessment).
+>
+> Deliberately **not** next: decode/render optimization (healthy — wasted effort), geometry T2/T3 and
+> the dental VTK-MPR flip (high-risk, clinical-lane golden-compare gated), and any large single-shot
+> rewrite.
+>
+> **The discipline that actually produced results this month:** read the logs before theorising
+> (three wrong root-cause calls on OPT-20 were only settled by per-hop instrumentation); prefer
+> *removing a suppressor* over *adding a mechanism* (OPT-35/36/37 were all existing machinery being
+> gated off); and never let a fix ship without an acceptance signal you can grep for.
 >
 > The goal is not continuous refactoring. It is measurable, monotonic progress toward a **faster, more
 > deterministic, more maintainable** application — verified by fresh logs against the §13 baseline after

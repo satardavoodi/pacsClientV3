@@ -1332,9 +1332,27 @@ class _VCLoadMixin:
             return True
 
         except Exception as e:
-            logger.error(f"â‌Œ [LOAD] Error loading series {series_number}: {e}")
-            import traceback
-            traceback.print_exc()
+            # NOT-YET-DOWNLOADED is an EXPECTED transient, not a failure (50336 series
+            # 1000002): dropping a series whose study folder the DM has not created yet
+            # raises FileNotFoundError / WinError 3 here. The caller
+            # (`_vc_switch.change_series_on_viewer`, the `if not ok:` branch) already treats
+            # a False return as "not resident yet" and correctly keeps the viewport in the
+            # awaiting/loading state, so this is a normal step of the drag-during-download
+            # flow — logging it as an ERROR made a healthy path look broken and buried the
+            # real errors. Log it as INFO with the awaiting hand-off spelled out; every
+            # OTHER exception stays a genuine ERROR with its traceback.
+            _pending = isinstance(e, (FileNotFoundError, NotADirectoryError)) or \
+                getattr(e, "winerror", None) in (2, 3)
+            if _pending:
+                logger.info(
+                    "[LOAD] series %s not on disk yet (%s) — awaiting download; the viewport "
+                    "keeps its loading state and the resume watchdog will load it when the "
+                    "files land", series_number, e,
+                )
+            else:
+                logger.error(f"â‌Œ [LOAD] Error loading series {series_number}: {e}")
+                import traceback
+                traceback.print_exc()
             with self._series_load_lock:
                 evt = self._series_load_events.pop(str(series_number), None)
                 self._loading_series_numbers.discard(str(series_number))

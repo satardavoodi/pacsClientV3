@@ -1,9 +1,96 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.1 (2026-07-13)
-**Previous Stable:** v3.5.0 (2026-07-12)
-**Release Date:** 2026-07-13
+**Current Stable Version:** v3.5.2 (2026-07-14)
+**Previous Stable:** v3.5.1 (2026-07-13)
+**Release Date:** 2026-07-14
 **Branch:** beta-version
+
+---
+
+## v3.5.2 (2026-07-14) - Patch release: viewport load reliability, Mammography 3D Cursor, DICOM VM-collapse diagnosis
+
+### Summary
+
+Patch release focused on **viewport load reliability** — the class of bug where a
+series you dragged simply never appeared. Two independent causes are fixed, both
+default-on. Also lands the Eagle Eye **Mammography 3D Cursor** (anchor/nipple +
+pectoral line + arc probability heatmap) and the root-cause diagnosis of the
+DICOM multi-valued-element collapse that made exported studies render as black
+images in a third-party RT planning system.
+
+### Included
+
+- **A drop is never abandoned back to the previous image (OPT-36).** Dragging a
+  series while it is still downloading could silently revert the viewport to the
+  previously-displayed image. The awaiting/spinner machinery was correct; the
+  *resume watchdog* was at fault — it settled a viewport that had never actually
+  shown the awaited series, and it declared a 1-of-N mid-download series
+  "complete" because the in-flight `.part` marker was never passed to the
+  completeness check. A viewport may now only be declared settled when it is
+  **actually showing the awaited series**, and the retry budget is refunded while
+  the download is still making progress. If the images genuinely are not there
+  yet, the loading state persists — it never falls back to the previous image.
+- **Thumbnails refresh when the server gains images (OPT-37).** Clicking a study
+  that later grew from 3 to 24 series left the thumbnails stale for minutes. The
+  refresh machinery was fine — a flat 5-minute per-study throttle was suppressing
+  the *change detector* for exactly the window in which a study grows. The TTL is
+  now completeness-aware: full throttle once a study is confirmed complete
+  (preserving the "not every click hits the network" contract), short while it is
+  still growing.
+- **Eagle Eye — Mammography 3D Cursor.** Adds anchor/nipple placement with
+  validation, a pectoral-line picking step, correspondence-arc probability
+  heatmaps, Hungarian lesion matching, and quadrant-consistency checks. 3D-cursor
+  actors are now cleared on series switch so they no longer persist across
+  studies. Bone Age and the rest of Eagle Eye are unchanged.
+- **DICOM multi-valued-element collapse (ImageType) — root cause identified.**
+  Every downloaded/exported DICOM carries `ImageType` collapsed into a Python
+  list *repr* (`"['ORIGINAL', 'PRIMARY', ...]"`), which is illegal for a `CS`
+  Type-1 element. Tolerant readers (our viewer, Limbus) accept it; a strict RT
+  planning system rendered **black images**. This is a server-side defect, not an
+  export-code defect. Ships a diagnosis report and a repair tool
+  (`tools/diagnostics/repair_dicom_vm_collapse.py`).
+- Reception/INO: assignment details, status model, error reporting, and a shared
+  HTTP session layer.
+- Canonical version markers advanced to v3.5.2; full local state published to all
+  remotes.
+
+### Notes
+
+- The 3D Cursor's Hungarian matching falls back to a greedy (non-optimal)
+  assignment because `scipy` is not currently a project dependency; the import is
+  guarded, so nothing fails.
+- OPT-36 / OPT-37 are flag-gated default-on (`AIPACS_SETTLE_REQUIRES_DISPLAYED`,
+  `AIPACS_RESUME_BUDGET_ON_PROGRESS`, `AIPACS_RESYNC_TTL_INCOMPLETE`); `=0`
+  restores the legacy behaviour.
+- Both still need live source-build verification on the reporting patients.
+
+---
+
+## v3.5.1 (2026-07-13) - Minor release: series-identity authority (OPT-35), shared voice-to-text, INO assignment refresh
+
+### Summary
+
+Minor release that stops treating the recurring "a series won't display" bug as a
+series of one-off patches and fixes it structurally.
+
+### Included
+
+- **Series identity is resolved once (OPT-35).** Three separate bugs (48912 disk
+  path, 49836 tab path, 50238 DB study_pk) turned out to be the *same* defect in
+  three dimensions: identity was being re-derived at four stages from mutable tab
+  state, so nine feature flags were all answering one question. Introduces
+  `PacsClient/utils/series_ref.py` — an immutable `SeriesRef` resolved **once** and
+  consumed everywhere. The nine legacy guards remain enabled as *detectors*: if one
+  fires, the authority is wrong.
+- **Shared voice-to-text service.** One component
+  (`modules/EchoMind/voice_transcription.py`) for all Persian speech-to-text, with
+  the endpoint resolved per call from Settings (never frozen at import), so a
+  settings change takes effect without a restart.
+- **Server list single authority.** Deleting a server no longer leaves it on the
+  Welcome page — the whole list is now reconciled from one choke point.
+- **Build hygiene:** `config/hardware_check.json` is machine-generated and was
+  shipping the development machine's GPU probe results to end users. It is now
+  excluded from the build and from version control.
 
 ---
 

@@ -42,6 +42,30 @@ _RESYNC_ON_REOPEN_ENABLED = str(
     _os.environ.get('AIPACS_RESYNC_ON_REOPEN', '1')
 ).strip().lower() not in ('0', 'false', 'no', 'off')
 _RESYNC_TTL_S = 300.0  # re-check a given study at most once per 5 min (auto path)
+# OPT-37 (50264, 2026-07-14) — the TTL must NOT blind us to a study that is still GROWING.
+# A flat 300 s throttle was applied to EVERY study, including one the previous check had
+# just found INCOMPLETE (`result=grew` / `disk_missing`). That is exactly the study whose
+# content WILL change, and 5 minutes is exactly the window in which it does: 50264's CT
+# study was checked once at 17:21:21 (server_series=2, result=grew), the remaining images
+# landed on the server ~5 min later (24 series / 1148 images), and EVERY click in between
+# was throttled out (`resync_complete changed=0` in 0.2 ms, no server query at all) — so
+# the growth was never detected and the thumbnails never refreshed. The refresh machinery
+# itself was fine: a detected change already re-renders with `force_server_merge=True`.
+#
+# A study is "confirmed complete" only when `content_version_store.set_synced_version` has
+# stamped it — and that is stamped ONLY on the not-needs-sync branch (disk confirmed
+# complete at the server's contentVersion). So: keep the full 300 s TTL for a study we have
+# confirmed complete (preserves the 44113 "not every click hits the network" contract), and
+# use a SHORT TTL for one we have not (it is actively growing; re-checking it is the whole
+# point). Kill switch AIPACS_RESYNC_TTL_INCOMPLETE=0 restores the flat 300 s TTL.
+_RESYNC_TTL_INCOMPLETE_ENABLED = str(
+    _os.environ.get('AIPACS_RESYNC_TTL_INCOMPLETE', '1')
+).strip().lower() not in ('0', 'false', 'no', 'off')
+try:
+    _RESYNC_TTL_INCOMPLETE_S = max(
+        0.0, float(_os.environ.get('AIPACS_RESYNC_TTL_INCOMPLETE_S', '10') or '10'))
+except (TypeError, ValueError):
+    _RESYNC_TTL_INCOMPLETE_S = 10.0
 # Same stale-COMPLETED unblock as the open path (FIX-010, 46640): when the resync
 # detects a study GREW on the server but its Download-Manager state is terminal
 # (COMPLETED/CANCELLED from an earlier full download), the new series' enqueue is
@@ -266,11 +290,46 @@ class _HPSeriesMixin:
             self.hide_loading()
 
     # ── Resync-on-reopen: server-vs-local study completeness ──────────────────
+    def _study_confirmed_complete(self, study_uid) -> bool:
+        """True when a prior resync CONFIRMED this study complete on disk at the
+        server's contentVersion.
+
+        `content_version_store.set_synced_version` is stamped ONLY on the
+        not-needs-sync branch of `_resync_patient_studies_from_server` (see its
+        "Stamped ONLY on this confirmed-complete branch" comment), so the presence
+        of a synced version means: we hold everything the server had at that point.
+        Its ABSENCE means the last check found the study incomplete (grew /
+        disk_missing) — i.e. the study is still growing. Never raises; on any
+        uncertainty returns False (→ the shorter TTL → we re-check, which is the
+        safe direction: at worst one extra cheap server query)."""
+        try:
+            from modules.storage.content_version_store import get_synced_version as _get_cv
+            return _get_cv(str(study_uid or '').strip()) is not None
+        except Exception:
+            return False
+
+    def _resync_ttl_for(self, study_uid) -> float:
+        """The re-check throttle for ONE study: the full TTL once we have confirmed it
+        complete, a SHORT one while it is still growing (OPT-37 / 50264)."""
+        if not _RESYNC_TTL_INCOMPLETE_ENABLED:
+            return _RESYNC_TTL_S
+        return (_RESYNC_TTL_S if self._study_confirmed_complete(study_uid)
+                else _RESYNC_TTL_INCOMPLETE_S)
+
     def _study_due_for_resync(self, study_uid, force=False):
         """Smart-check throttle: True when this study should be re-verified
         against the server now. force=True (manual refresh) always returns True;
-        otherwise re-check at most once per _RESYNC_TTL_S, and only when the
-        feature is enabled."""
+        otherwise re-check at most once per the study's TTL, and only when the
+        feature is enabled.
+
+        The TTL is per-study and depends on completeness (OPT-37): a study we have
+        CONFIRMED complete is re-checked at most once per `_RESYNC_TTL_S` (5 min —
+        the "not every click hits the network" contract); a study we have NOT
+        confirmed complete is still growing on the server, so it is re-checked on a
+        short TTL. Throttling a growing study for 5 minutes is precisely what made
+        50264's new series (2 → 24) invisible until the user changed the search
+        filter (which routed the click down the OTHER, single-study path, whose
+        cache gate does check the server)."""
         if force:
             return True
         if not _RESYNC_ON_REOPEN_ENABLED:
@@ -282,7 +341,7 @@ class _HPSeriesMixin:
             last = ts_map.get(str(study_uid or '').strip())
             if last is None:
                 return True
-            return (time.monotonic() - float(last)) >= _RESYNC_TTL_S
+            return (time.monotonic() - float(last)) >= self._resync_ttl_for(study_uid)
         except Exception:
             return True
 

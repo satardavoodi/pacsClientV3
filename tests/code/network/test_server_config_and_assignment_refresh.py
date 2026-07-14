@@ -173,16 +173,22 @@ def test_unknown_server_state_never_wipes_a_known_assignment():
     assert out["status"] == m.STATUS_ACTIVE and out["assignee_name"] == "Dr X"
 
 
-def test_local_terminal_states_survive_a_server_refresh():
-    for st in (m.STATUS_COMPLETED, m.STATUS_DEACTIVATED):
-        out = m.merge_assignment_status(True, "Dr S", local_status=st, local_name="Dr S")
-        assert out["status"] == st, "a server refresh must not clobber a local state"
+def test_local_completed_survives_a_server_refresh():
+    """`completed` is the ONE local lifecycle state (the server's assign model has no
+    status field), so a refresh must not clobber it. A local `removed`, by contrast,
+    must NOT win over a server that still reports the assignment."""
+    out = m.merge_assignment_status(True, "Dr S", local_status=m.STATUS_COMPLETED,
+                                    local_name="Dr S")
+    assert out["status"] == m.STATUS_COMPLETED
+
+    stale = m.merge_assignment_status(True, "Dr S", local_status="cancelled")
+    assert stale["status"] == m.STATUS_ACTIVE, "the server owns 'is this assigned'"
 
 
 def test_server_unassign_is_reflected():
     out = m.merge_assignment_status(False, "", local_status=m.STATUS_ACTIVE,
                                     local_name="Dr X")
-    assert out["status"] == m.STATUS_CANCELLED
+    assert out["status"] == m.STATUS_REMOVED
 
 
 def test_never_assigned_stays_blank():
@@ -238,7 +244,8 @@ def test_refresh_button_also_refreshes_the_assignment():
     # the body of refresh_download_statuses, up to the next method definition
     body = src.split("def refresh_download_statuses", 1)[1]
     body = body.split("\n    def ", 1)[0]
-    assert "_start_assignment_refresh()" in body, (
+    # force=True: an explicit refresh must never serve a cached snapshot.
+    assert "_start_assignment_refresh(force=True)" in body, (
         "Refresh Status must re-read the server assignment — that is the whole "
         "reason a cross-machine assignment (50210) never appeared")
     assert "reportRefreshRequested.emit()" in body     # existing behaviour kept

@@ -721,7 +721,23 @@ class SocketDicomClient:
                         user['role'] = response.get('roles', {}).get('Name', 'user')
                     if not user:
                         user = None
-                
+
+                # IDENTITY (2026-07-14). The internal-assignment UI must know WHICH
+                # user is logged in, to tell "assigned to me" from "assigned to
+                # someone else" — and the server identifies an assignee by id
+                # (a PACS user _id, a RIS Personnel _id or a RIS AdminUser _id), never
+                # by name. The dict built above carried only full_name/username/role,
+                # so that comparison could never match. Carry the ids through when the
+                # server sends them (ASSIGN_CLIENT_GUIDE_FA §4.1). Purely additive —
+                # absent fields are simply not set.
+                if user is not None:
+                    _data = response.get('data') if isinstance(response.get('data'), dict) else {}
+                    for _key in ('user_id', 'id', '_id', 'personnel_id', 'ris_user_id'):
+                        if not user.get(_key):
+                            _val = response.get(_key) or _data.get(_key)
+                            if _val:
+                                user[_key] = _val
+
                 if token:
                     # Store token in token manager
                     self.token_manager.set_token(token, user)

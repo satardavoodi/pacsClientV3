@@ -483,7 +483,12 @@ class _HPSearchMixin:
             headers = {}
 
         try:
-            response = requests.get(url, timeout=timeout, headers=headers)
+            # Pooled keep-alive session (2026-07-14): the patient list issues one of
+            # these per visible reception, and a bare requests.get() opened — and
+            # discarded — a TCP connection every time. Reusing the connection cuts
+            # ~30% off each call on the WAN link. AIPACS_HTTP_KEEPALIVE=0 = legacy.
+            from modules.network.http_session import http_get
+            response = http_get(url, base_url=base_url, timeout=timeout, headers=headers)
             status_code = response.status_code
             response.raise_for_status()
             # The endpoint answered (2xx) → it is reachable; close the breaker (self-heal).
@@ -764,7 +769,14 @@ class _HPSearchMixin:
         if inflight is None:
             inflight = set()
             self._reporting_physician_inflight = inflight
-        max_inflight = 4
+        # Reception hydration fan-out. Was hard-coded to 4; each worker is one
+        # independent REST GET, so on a 24-row list this serialised into 6 waves.
+        # Tunable via AIPACS_RECEPTION_WORKERS (same knob the assignment fetch uses).
+        try:
+            from modules.network.http_session import parallel_workers
+            max_inflight = parallel_workers()
+        except Exception:
+            max_inflight = 4
         if len(inflight) >= max_inflight:
             QTimer.singleShot(
                 120,

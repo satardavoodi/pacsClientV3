@@ -50,49 +50,112 @@ ACTIONS = (ACTION_ASSIGNED, ACTION_REASSIGNED, ACTION_UNASSIGNED, ACTION_FAILED,
            ACTION_STATUS_CHANGED)
 
 # --- Assignment LIFECYCLE STATUS (state of an existing assignment) ------------
-# IMPORTANT — which transitions the backend actually backs:
-#   * assign / reassign  → SERVER (PUT /api/patients/{id}/assign) ⇒ becomes ACTIVE
-#   * cancel / unassign  → SERVER (assign with an empty assignee)  ⇒ CANCELLED
-#   * completed / deactivated → NO INO endpoint exists for these; they are LOCAL
-#     workflow states recorded in the internal history (server_ok=False) and are
-#     labelled as local in the UI. Never present them as server-confirmed.
+#
+# THREE states (2026-07-14). "Deactivate", "Cancel" and "Unassign" all meant the
+# same thing in practice — the assignment is taken off the user and the patient —
+# so they are ONE terminal state: REMOVED. Keeping three names for one state was
+# the source of the confusing menus and of the "Cancel does nothing" report.
+#
+# WHAT THE SERVER ACTUALLY MODELS (verified against its OpenAPI schema, not guessed):
+#   PUT /api/patients/{id}/assign   AssignPayload{assign_type, assignee_id(minLength=1),
+#                                   assignee_name, assignee_source, study_uid}
+#   GET /api/patients/{id}/assign   → {radiologist:{id,name,source}, typist:{...}}
+#   * There is **NO status field anywhere in the server's assign model.** ACTIVE /
+#     COMPLETED / REMOVED are entirely CLIENT-side lifecycle states.
+#   * The server's only notion of "assigned" is a non-empty ``radiologistId`` —
+#     which is exactly how we read it back (empty id ⇒ not assigned).
+#   * `assignee_id` has **minLength=1**, and there is **no DELETE verb** (405), so
+#     the server currently offers NO way to clear an assignment. See
+#     InternalAssignmentService.remove_assignment() — it calls the correct endpoint
+#     and surfaces the server's real refusal rather than faking a removal.
 STATUS_ACTIVE = "active"
 STATUS_COMPLETED = "completed"
+STATUS_REMOVED = "removed"        # deactivate == cancel == unassign
+ASSIGNMENT_STATUSES = (STATUS_ACTIVE, STATUS_COMPLETED, STATUS_REMOVED)
+
+# Legacy aliases — old history rows on disk still carry these; they all normalize
+# to REMOVED. Kept so an existing record never renders as an unknown status.
 STATUS_DEACTIVATED = "deactivated"
 STATUS_CANCELLED = "cancelled"
-ASSIGNMENT_STATUSES = (STATUS_ACTIVE, STATUS_COMPLETED, STATUS_DEACTIVATED,
-                       STATUS_CANCELLED)
-# Statuses that require a real server call to reach.
-SERVER_BACKED_STATUSES = (STATUS_ACTIVE, STATUS_CANCELLED)
+STATUS_UNASSIGNED = "unassigned"
+_REMOVED_ALIASES = (STATUS_REMOVED, STATUS_DEACTIVATED, STATUS_CANCELLED,
+                    STATUS_UNASSIGNED, "deactive", "cancel", "unassign")
+
+#: Statuses that require a real server call. REMOVED does (it must clear the
+#: assignment on the server); COMPLETED is a local workflow state only.
+SERVER_BACKED_STATUSES = (STATUS_ACTIVE, STATUS_REMOVED)
+
+
+def normalize_status(status: str) -> str:
+    """Map any legacy/loose status onto one of the THREE canonical states.
+
+    ``deactivated`` / ``cancelled`` / ``unassigned`` (and their loose spellings) all
+    mean the assignment is gone ⇒ :data:`STATUS_REMOVED`. Unknown ⇒ "".
+    """
+    s = str(status or "").strip().lower()
+    if not s:
+        return ""
+    if s in _REMOVED_ALIASES:
+        return STATUS_REMOVED
+    if s in (STATUS_ACTIVE, STATUS_COMPLETED):
+        return s
+    return ""
+
 
 STATUS_LABELS_EN = {
     STATUS_ACTIVE: "Active",
     STATUS_COMPLETED: "Completed",
-    STATUS_DEACTIVATED: "Deactivated",
-    STATUS_CANCELLED: "Cancelled",
+    STATUS_REMOVED: "Removed",
 }
 STATUS_LABELS_FA = {
     STATUS_ACTIVE: "فعال",
     STATUS_COMPLETED: "تکمیل‌شده",
-    STATUS_DEACTIVATED: "غیرفعال",
-    STATUS_CANCELLED: "لغو شده",
+    STATUS_REMOVED: "حذف‌شده",
 }
 STATUS_COLORS = {
     STATUS_ACTIVE: "#f59e0b",       # amber — assigned, work in progress
-    STATUS_COMPLETED: "#10b981",    # green
-    STATUS_DEACTIVATED: "#6b7280",  # gray
-    STATUS_CANCELLED: "#ef4444",    # red
+    STATUS_COMPLETED: "#10b981",    # green — done
+    STATUS_REMOVED: "#6b7280",      # gray  — no longer assigned
 }
 
 
+#: THE lifecycle transition table — ONE definition, shared by every entry point
+#: (the Assign column menu, the Assign popup and the Report popup), so they can
+#: never offer different actions for the same state.
+ASSIGN_TRANSITIONS = {
+    STATUS_ACTIVE:    (STATUS_COMPLETED, STATUS_REMOVED),
+    STATUS_COMPLETED: (STATUS_ACTIVE, STATUS_REMOVED),
+    STATUS_REMOVED:   (STATUS_ACTIVE,),           # re-assign brings it back
+    "":               (),                          # never assigned → nothing to manage
+}
+
+#: What each action is called in the UI, and whether the SERVER backs it.
+ASSIGN_ACTION_LABELS_EN = {
+    STATUS_COMPLETED: "Mark as completed",
+    STATUS_REMOVED:   "Remove assignment (deactivate / cancel / unassign)",
+    STATUS_ACTIVE:    "Reactivate assignment",
+}
+
+
+def action_is_server_backed(status: str) -> bool:
+    """True when the action hits the server (REMOVED does; COMPLETED does not).
+
+    The server's assign model has NO status field — ``completed`` exists only in
+    our local history, so the UI must label it as a local workflow state and must
+    never imply the server confirmed it.
+    """
+    return normalize_status(status) in SERVER_BACKED_STATUSES
+
+
 def status_label(status: str, lang: str = "en") -> str:
-    s = str(status or "").strip().lower()
+    # Normalize first: a legacy "cancelled"/"deactivated" row must read "Removed".
+    s = normalize_status(status)
     table = STATUS_LABELS_FA if lang == "fa" else STATUS_LABELS_EN
     return table.get(s, s.capitalize() if s else "")
 
 
 def status_color(status: str) -> str:
-    return STATUS_COLORS.get(str(status or "").strip().lower(), "#6b7280")
+    return STATUS_COLORS.get(normalize_status(status), "#6b7280")
 
 
 # --- Eligible-user GROUPING (shared by every internal-assignment UI) ----------
@@ -167,10 +230,9 @@ def same_person_name(a: str, b: str) -> bool:
 STATUS_ICON_UNASSIGNED = "fa5s.user-times"
 
 ASSIGN_ICONS = {
-    STATUS_ACTIVE:      ("fa5s.user-check",   "#ef4444"),  # red   — assigned, action needed
-    STATUS_COMPLETED:   ("fa5s.check-circle", "#10b981"),  # green — done (shape + colour differ)
-    STATUS_DEACTIVATED: ("fa5s.user-minus",   "#6b7280"),  # gray  — inactive
-    STATUS_CANCELLED:   ("fa5s.user-slash",   "#9ca3af"),  # gray  — crossed-out
+    STATUS_ACTIVE:    ("fa5s.user-check",   "#ef4444"),  # red   — assigned, action needed
+    STATUS_COMPLETED: ("fa5s.check-circle", "#10b981"),  # green — done
+    STATUS_REMOVED:   ("fa5s.user-slash",   "#9ca3af"),  # gray  — taken off the user
 }
 _ASSIGN_ICON_NONE = (STATUS_ICON_UNASSIGNED, "#6b7280")    # never assigned
 
@@ -182,17 +244,15 @@ def assign_icon_for_status(status: str, assignee_name: str = "") -> Dict[str, st
     from the persisted, ``server_ok``-gated record — never from transient UI
     state). An empty/unknown status renders the neutral "not assigned" icon.
     """
-    st = str(status or "").strip().lower()
+    st = normalize_status(status)
     icon, color = ASSIGN_ICONS.get(st, _ASSIGN_ICON_NONE)
     who = str(assignee_name or "").strip()
     if st == STATUS_ACTIVE:
         tip = f"Assigned (active) — {who}" if who else "Assigned (active)"
     elif st == STATUS_COMPLETED:
         tip = f"Assignment completed — {who}" if who else "Assignment completed"
-    elif st == STATUS_DEACTIVATED:
-        tip = f"Assignment deactivated — {who}" if who else "Assignment deactivated"
-    elif st == STATUS_CANCELLED:
-        tip = "Assignment cancelled"
+    elif st == STATUS_REMOVED:
+        tip = "Assignment removed"
     else:
         tip = "Not assigned"
     return {"icon": icon, "color": color, "tooltip": tip, "status": st}
@@ -210,8 +270,8 @@ def resolve_assignment_status(rows: List[Dict[str, Any]]) -> str:
     for r in rows or []:
         act = str(r.get("action") or "").strip().lower()
         if act == ACTION_STATUS_CHANGED:
-            s = str(r.get("assignment_status") or "").strip().lower()
-            if s in ASSIGNMENT_STATUSES:
+            s = normalize_status(r.get("assignment_status"))
+            if s:
                 status = s
             continue
         if not r.get("server_ok"):
@@ -219,8 +279,35 @@ def resolve_assignment_status(rows: List[Dict[str, Any]]) -> str:
         if act in (ACTION_ASSIGNED, ACTION_REASSIGNED):
             status = STATUS_ACTIVE
         elif act == ACTION_UNASSIGNED:
-            status = STATUS_CANCELLED
+            status = STATUS_REMOVED
     return status
+
+
+#: Report-workflow statuses that mean the reporting work is DONE. When the report
+#: is finished, an assignment is no longer "active" — it is COMPLETED. Without this
+#: every reception that has a reporting radiologist rendered the same red "active"
+#: icon forever, which is what made the whole Assign column red.
+REPORT_DONE_STATUSES = frozenset({
+    "completed", "complete", "archived",
+    "physician_approved", "secretary_approved",
+})
+
+
+def report_is_done(report_status: str) -> bool:
+    return str(report_status or "").strip().lower() in REPORT_DONE_STATUSES
+
+
+def effective_assign_status(assign_status: str, report_status: str) -> str:
+    """PURE. The Assign column's lifecycle state (2026-07-14).
+
+    An ACTIVE assignment whose report is finished is a **completed** assignment —
+    it must not keep showing the red "needs action" icon. Terminal local states
+    (cancelled / deactivated / completed) are never overridden by the report.
+    """
+    st = str(assign_status or "").strip().lower()
+    if st == STATUS_ACTIVE and report_is_done(report_status):
+        return STATUS_COMPLETED
+    return st
 
 
 def merge_assignment_status(
@@ -237,17 +324,18 @@ def merge_assignment_status(
       dimension it stores (``active`` / ``cancelled``), and it is the dimension that
       was previously invisible — an assignment made on ANOTHER workstation lives
       only on the server, so the local log can never see it (patient 50210).
-    * **The local log owns ``completed`` / ``deactivated``** — lifecycle states with
-      no INO endpoint, layered on top of a server assignment. The server refresh
-      must not clobber them.
+    * **The local log owns ``completed``** — the one lifecycle state with no server
+      endpoint, layered on top of a server assignment. The server refresh must not
+      clobber it.
 
     ``server_assigned=None`` means "not fetched / the call failed" — NOT
     "unassigned". In that case the local status stands, so an unreachable server
     never wipes a known assignment.
 
-    Returns ``{"status": ..., "assignee_name": ...}``.
+    Returns ``{"status": ..., "assignee_name": ...}`` — the status is always one of
+    the THREE canonical states (or "" for never assigned).
     """
-    local = str(local_status or "").strip().lower()
+    local = normalize_status(local_status)
     lname = str(local_name or "").strip()
     sname = str(server_name or "").strip()
 
@@ -258,17 +346,20 @@ def merge_assignment_status(
     name = sname or lname
 
     if server_assigned:
-        if local in (STATUS_COMPLETED, STATUS_DEACTIVATED):
-            return {"status": local, "assignee_name": name}
+        # A local COMPLETED sits on top of a still-present server assignment.
+        # A local REMOVED, however, is stale: the server says the assignment is
+        # still there, and the server is the authority on that dimension.
+        if local == STATUS_COMPLETED:
+            return {"status": STATUS_COMPLETED, "assignee_name": name}
         return {"status": STATUS_ACTIVE, "assignee_name": name}
 
     # Server says there is no assignment.
     if local == STATUS_COMPLETED:
-        # The work was finished here and the server then cleared the assignment;
-        # keep the terminal local state rather than showing it as cancelled.
+        # The work was finished here and the assignment was then cleared; keep the
+        # terminal local state rather than showing it as removed.
         return {"status": STATUS_COMPLETED, "assignee_name": lname}
     if local:
-        return {"status": STATUS_CANCELLED, "assignee_name": lname}
+        return {"status": STATUS_REMOVED, "assignee_name": lname}
     return {"status": "", "assignee_name": ""}
 
 # --- Labels (Persian + English) — internal-assignment terminology ------------

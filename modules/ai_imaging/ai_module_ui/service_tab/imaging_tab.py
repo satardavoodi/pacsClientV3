@@ -864,6 +864,50 @@ class ImagingToolsTab(AbstractTab):
         self.reject_finding_btn.clicked.connect(lambda: self._open_mg_finding_editor("rejected"))
         self.edit_finding_btn.clicked.connect(lambda: self._open_mg_finding_editor("corrected"))
 
+    @staticmethod
+    def _ai_result_refresh_enabled() -> bool:
+        """Flag AIPACS_EAGLE_EYE_RESULT_REFRESH (default ON; =0 = legacy no-refresh)."""
+        import os as _os
+        raw = _os.environ.get("AIPACS_EAGLE_EYE_RESULT_REFRESH")
+        if raw is None:
+            return True
+        return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+    def refresh_mg_ai_results(self) -> bool:
+        """PUBLIC: re-read `mg_ai_manifest.json` and repopulate the AI Results dropdown.
+
+        WHY THIS EXISTS (re-run on the SAME workstation showed no new AI result):
+        the dropdown used to be filled exactly ONCE — `_finalize_loading` (tab
+        construction) and `left_sidebar_layout_ui` behind the `mg_runs_loaded`
+        run-once latch. A second Eagle Eye run on the same study REUSES the already
+        open `AiMainWindow` tab (`_hp_modules.add_new_tab_widget` → `setCurrentWidget`
+        + return), so nothing ever re-read the manifest and the new run was invisible
+        — while a *different* computer built the tab fresh and therefore listed every
+        run. The manifest/CSV layer was always correct (`_save_mg_manifest` appends
+        each run and points `active` at the newest).
+
+        Repopulating selects the manifest's `active` run (the one just produced) and
+        `_load_mg_runs_into_dropdown` applies it to the viewer, so the boxes on screen
+        follow the threshold/sensitivity of that run.
+        """
+        if not self._ai_result_refresh_enabled():
+            return False
+        try:
+            if self.detect_modality() != "MG":
+                return False
+            if getattr(self, 'mg_runs_combo', None) is None:
+                return False
+            # clear the run-once latch so the manifest is re-read
+            self.mg_runs_loaded = False
+            self._load_mg_runs_into_dropdown()
+            print("[MG] AI Results dropdown refreshed after Eagle Eye run")
+            return True
+        except RuntimeError:
+            return False  # widget already deleted (tab closed)
+        except Exception as e:
+            print(f"[MG] AI Results refresh failed: {e}")
+            return False
+
     def _load_mg_runs_into_dropdown(self):
         """Ø¨Ø§Ø±Ú¯Ø°Ø§Ø±ÛŒ Ø¯Ø§Ø¯Ù‡â€ŒÙ‡Ø§ÛŒ MG Ø¨Ù‡ ØµÙˆØ±Øª Ø§Ù…Ù†"""
         if not self.mg_runs_combo:
@@ -1391,23 +1435,68 @@ class ImagingToolsTab(AbstractTab):
         """
         Run 3D Cursor correlation between CC and MLO views.
 
-        New flow (v2):
-            1. User clicks "3D Cursor" button.
-            2. An instruction dialog appears asking user to click nipple on view 1.
-            3. User clicks nipple on view 1.
-            4. Dialog asks for nipple on view 2.
-            5. User clicks nipple on view 2.
-            6. Correlation runs with user-selected nipple positions.
+        GUIDED flow (v3, `AIPACS_CURSOR3D_GUIDED`, default ON) — ONE panel that always
+        shows the current step, the view to click, the active tool, what is already
+        done and what comes next:
+
+            1. Nipple — MLO   (1 click)
+            2. Nipple — CC    (1 click)
+            3. Pectoral line — MLO (2 clicks: superior → inferior)
+
+        The steps match the CALCULATION: `correlator` only ever consumes the **MLO**
+        pectoral angle (`_build_geometry` passes it only when view_position == 'MLO'),
+        so the old "draw a pectoral line on the CC view too" step collected a value
+        that was discarded — and the pectoral muscle is not imaged in a CC view at all.
+
+        Legacy flow (v2, flag=0, or whenever the two views cannot be identified as
+        CC + MLO): nipple picker dialog → pectoral picker dialog (both views).
         """
         if self.detect_modality() != "MG":
             show_message("3D Cursor is only available for Mammography (MG) modality.")
             return
 
-        # Start the manual nipple picking flow
+        from modules.ai_imaging.ai_module_ui.cursor_3d.guided_workflow import guided_flow_enabled
+
+        if guided_flow_enabled():
+            from modules.ai_imaging.ai_module_ui.cursor_3d.guided_picker import Cursor3DGuidedPicker
+
+            self._guided_cursor_picker = Cursor3DGuidedPicker(self)
+            if self._guided_cursor_picker.start(callback=self._on_guided_cursor3d_done):
+                self.set_processing_status("3D Cursor — guided setup", active=True)
+                return
+            # Views could not be identified as CC + MLO → fall through to legacy.
+            print("[3D-Cursor] guided flow unavailable (views not identifiable) — using legacy flow")
+            self._guided_cursor_picker = None
+
+        # Legacy: manual nipple picking, then pectoral lines on both views
         from modules.ai_imaging.ai_module_ui.cursor_3d.nipple_picker import NipplePickerController
 
         self._nipple_picker = NipplePickerController(self)
         self._nipple_picker.start(callback=self._on_nipples_picked)
+
+    def _on_guided_cursor3d_done(self, nipple_mlo, nipple_cc, pectoral_mlo):
+        """Guided flow finished — run the correlation with exactly what the math uses."""
+        if nipple_mlo is None or nipple_cc is None:
+            self.set_processing_status("3D Cursor Cancelled", active=False)
+            return
+
+        print(f"[3D-Cursor][GUIDED] nipples: {nipple_mlo.view_key}, {nipple_cc.view_key}; "
+              f"pectoral: {pectoral_mlo.view_key if pectoral_mlo else 'auto-detect'}")
+
+        self.set_processing_status("Running 3D Cursor Analysis...", active=True)
+        QApplication.processEvents()
+
+        try:
+            self._run_3d_cursor_analysis_with_nipples(
+                nipple_mlo, nipple_cc,
+                pectoral_line1=pectoral_mlo,   # MLO line only — the CC angle is never used
+                pectoral_line2=None,
+            )
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            self.set_processing_status("3D Cursor Failed", active=False)
+            show_message(f"3D Cursor failed: {e}")
 
     def _on_mg_ruler_clicked(self):
         """Toggle ruler measurement tool on the selected viewer in MG mode."""

@@ -230,6 +230,32 @@ _RESUME_SKIP_INACTIVE_TAB = (_os.getenv("AIPACS_RESUME_SKIP_INACTIVE_TAB", "1") 
 # risk. Kill switch: AIPACS_VIEWER_STATE_AUTHORITY=0 restores the legacy live-only settled-stop.
 _STATE_AUTHORITY_ENABLED = (_os.getenv("AIPACS_VIEWER_STATE_AUTHORITY", "1") or "1").strip() != "0"
 
+# ── OPT-36: a drop is NEVER abandoned back to the previous image (50336, 2026-07-14) ──
+# The drag-during-download race. When a series is dropped BEFORE its files are on disk the
+# viewer correctly enters the awaiting/loading state — but the resume watchdog could then
+# declare the viewport "settled" and clear that state WITHOUT the awaited series ever being
+# displayed, silently leaving the PREVIOUS image on screen (a manual re-drag then "worked",
+# because by that point the files had landed — the reported unreliability).
+#
+#   AIPACS_SETTLE_REQUIRES_DISPLAYED  the settle/exhaustion stop-conditions may only fire when
+#                                     the viewport is ACTUALLY SHOWING the awaited series. This
+#                                     extends the 48101 `_shows_awaited` rule to the
+#                                     `_authority_settled` and `_exhausted` branches, which
+#                                     bypassed it (live: settled_visible=False authority=True →
+#                                     cleared → fake ViewportLoadSucceeded).
+#   AIPACS_RESUME_BUDGET_ON_PROGRESS  the resume retry budget is consumed only when the download
+#                                     is NOT progressing: whenever the on-disk count GROWS the
+#                                     budget is refunded, so the cap trips only on a genuinely
+#                                     stuck download instead of timing out a healthy slow one.
+#
+# Both default-ON with kill switches (`=0` = the legacy behaviour). Neither can create a
+# livelock: in the 47084/47801 livelock the viewport IS showing the awaited series, so the
+# settled-stop still fires exactly as before.
+_SETTLE_REQUIRES_DISPLAYED = (
+    _os.getenv("AIPACS_SETTLE_REQUIRES_DISPLAYED", "1") or "1").strip() != "0"
+_RESUME_BUDGET_ON_PROGRESS = (
+    _os.getenv("AIPACS_RESUME_BUDGET_ON_PROGRESS", "1") or "1").strip() != "0"
+
 # S3b — ensure_series_displayed CHOKEPOINT, shadow-first (2026-06-26). The pure chokepoint
 # `plan_series_display` (S3a, viewer_request_pipeline.py) decides what a viewport must DO to show a
 # series; S3b begins routing the live entry points through it. Per the staged plan's STRICT ORDER
@@ -459,15 +485,32 @@ def _resolve_series_identity_text(modality, series_number, description) -> str:
     return " · ".join(parts)
 
 
-def _disk_ready_complete(count, expected, prev_count) -> bool:
+def _disk_ready_complete(count, expected, prev_count, has_part=False) -> bool:
     """Pure completeness decision for the disk-readiness resume (testable).
 
-    The awaited series' on-disk files are considered ready to load when the server's
-    expected count is known and met (``count >= expected``), or — when the expected
-    count is unknown — when the on-disk count is STABLE across two watchdog ticks
-    (``prev_count == count``, i.e. the download has stopped adding files), so a
-    partial mid-download series is never loaded prematurely. ``count <= 0`` is never
-    complete.
+    The awaited series' on-disk files are ready to load when the server's expected
+    count is known and met (``count >= expected``), or — when the expected count is
+    UNKNOWN — when the on-disk count is STABLE across two watchdog ticks
+    (``prev_count == count``) **and the Download Manager is not still writing the
+    folder** (no in-flight ``*.part``). ``count <= 0`` is never complete.
+
+    ``has_part`` (2026-07-14, patient 50336 series 1000002 — the drag-during-download
+    race) closes a hole that ABANDONED a drop. A PREVIOUS EXAM that is not yet in the
+    DB has NO server ``expected`` count, so the decision fell through to the
+    stable-count fallback — and a download that had written its FIRST file and had not
+    yet landed the second was "stable at 1" across two ticks, so a 1-of-N series was
+    declared COMPLETE. The watchdog then settled the viewport (see the settle block in
+    ``_maybe_resume_awaiting_from_disk``), cleared the awaiting flag, hid the loading
+    spinner and logged a FAKE ``ViewportLoadSucceeded`` — leaving the PREVIOUS image on
+    screen. Re-dragging later "worked" only because by then the files were on disk.
+
+    The ``.part`` signal is decisive and was already being computed at the call site
+    (the DM writes ``<name>.part`` then ``os.replace``-s it to ``.dcm``, so ANY ``.part``
+    means more data is coming) — it was simply never passed in. It gates ONLY the
+    unknown-expected fallback: when the server count is known and MET, every expected
+    file is present and a stray ``.part`` must not block the load.
+
+    Keep ``has_part`` defaulted to ``False`` — the legacy 3-arg call is byte-identical.
     """
     try:
         c = int(count)
@@ -481,6 +524,10 @@ def _disk_ready_complete(count, expected, prev_count) -> bool:
         exp = 0
     if exp > 0:
         return c >= exp
+    # Expected count UNKNOWN → the weak stable-count fallback. NEVER settle a folder the
+    # DM is still writing: a momentarily-stable partial download is not a complete series.
+    if has_part:
+        return False
     return prev_count is not None and int(prev_count) == c
 
 
@@ -1909,7 +1956,26 @@ class _VCProgressiveMixin:
                 self._disk_ready_counts = counts
             prev = counts.get(str(display_key))
             counts[str(display_key)] = count
-            _complete = _disk_ready_complete(count, expected, prev)
+            # `_has_part` (already scanned above) is decisive: an in-flight *.part means the
+            # DM is STILL WRITING this folder, so a momentarily-stable partial count is NOT a
+            # complete series (50336 series 1000002: 1 file, expected unknown → the old 3-arg
+            # call declared it complete mid-download and the drop was abandoned).
+            _complete = _disk_ready_complete(count, expected, prev, _has_part)
+            # Progress-aware retry budget (50336): the resume attempt cap exists to stop a
+            # CHURNING resume loop on a stalled/settled series — not to give up on a series
+            # that is actively downloading. Whenever the on-disk count GROWS, the download is
+            # demonstrably making progress, so refund the budget; the cap can then only trip
+            # on a genuinely stuck download.
+            try:
+                if _RESUME_BUDGET_ON_PROGRESS and prev is not None and count > int(prev):
+                    if int(getattr(vtk_w, "_disk_ready_resume_attempts", 0) or 0) > 0:
+                        vtk_w._disk_ready_resume_attempts = 0
+                        self.logger.debug(
+                            "disk-ready resume: series=%s download progressing (disk %s→%d) "
+                            "— retry budget refunded", display_key, prev, count,
+                        )
+            except Exception:
+                pass
             # Canonical-identity completeness override (48296, multi-study colliding
             # series): a secondary series whose number/uid collides across studies can
             # carry a WRONG server ``expected`` (here it does not match the TRUE on-disk
@@ -1979,6 +2045,30 @@ class _VCProgressiveMixin:
                     vtk_w, display_key, study_uid, _series_uid, count, expected, _vis_settled)
                 _authority_settled = bool(
                     _STATE_AUTHORITY_ENABLED and _auth_rec is not None and _auth_rec.is_settled)
+
+                # THE SETTLE RULE (50336, 2026-07-14): a viewport may only be declared SETTLED
+                # when it is ACTUALLY SHOWING THE AWAITED SERIES.
+                #
+                # `_settled_visible` already honoured this (the 48101 fix, `_shows_awaited`), but
+                # `_authority_settled` and `_exhausted` were OR'd in and BYPASSED it. Live proof
+                # (50336 series 1000002, a previous exam dragged mid-download):
+                #     settled_visible=False  exhausted=False  authority=True   → cleared
+                # The live check had CORRECTLY decided the viewport was not showing the awaited
+                # series — and the authority overrode it, clearing `_awaiting_series_number`,
+                # hiding the loading spinner and logging a FAKE `ViewportLoadSucceeded`. The drop
+                # was silently abandoned and the PREVIOUS image stayed on screen; only a manual
+                # re-drag recovered it. The state authority's `is_settled` is a monotonic
+                # high-water mark of *displayed* slices — it is a livelock brake, and it says
+                # nothing about WHICH series is displayed, so it must never be allowed to settle
+                # a viewport that has not shown the awaited series.
+                #
+                # In the livelock it exists to break (47084/47801), the viewport IS showing the
+                # awaited series (`_shows_awaited=True`), so gating on it preserves that fix
+                # exactly while closing the abandonment hole.
+                if _SETTLE_REQUIRES_DISPLAYED and not _shows_awaited:
+                    _authority_settled = False
+                    _exhausted = False
+
                 if _settled_visible or _exhausted or _authority_settled:
                     vtk_w._awaiting_series_number = None
                     vtk_w._disk_ready_resume_done = True
@@ -1997,6 +2087,27 @@ class _VCProgressiveMixin:
                         "flag, stopping resume loop", display_key, _vis_settled, count,
                         _attempts_now, _settled_visible, _exhausted, _authority_settled,
                     )
+                    return False
+
+                # Still awaiting, and the viewport is NOT showing the awaited series. NEVER fall
+                # back to the previous image: keep the loading state up and let the resume below
+                # (or the download-progress path) bind it when the data actually lands. When the
+                # retry budget is genuinely exhausted AND the download is not progressing, show an
+                # explicit "still loading" state rather than a silent revert — the awaiting flag
+                # is kept so a late completion can still bind, and it is cleared only by a real
+                # display or by the user dropping another series.
+                if (_SETTLE_REQUIRES_DISPLAYED and not _shows_awaited
+                        and _attempts_now >= _DISK_READY_RESUME_MAX_ATTEMPTS):
+                    try:
+                        self._log_viewport_lifecycle(
+                            "ViewportLoadWaitingForDownload", vtk_w, display_key,
+                            files=count, expected=expected, attempts=_attempts_now,
+                            reason="resume_budget_exhausted_series_not_displayed",
+                        )
+                        self._enter_viewport_load_error(
+                            vtk_w, display_key, reason="download_not_caught_up")
+                    except Exception:
+                        pass
                     return False
             # Progressive first-image start: if the series is NOT complete yet but at
             # least one image is on disk, START the display now (once) so the user

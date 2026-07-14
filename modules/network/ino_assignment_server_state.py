@@ -91,8 +91,26 @@ def _save(data: Dict[str, Any]) -> bool:
         return False
 
 
-def set_state(reception_id, *, assigned: bool, assignee_name: str = "") -> bool:
-    """Record the server's answer for one reception. Best-effort, never raises."""
+def set_state(
+    reception_id,
+    *,
+    assigned: bool,
+    assignee_name: str = "",
+    assignee_id: str = "",
+    mine: bool = False,
+    assign_type: str = "",
+    assignee_source: str = "",
+    assigned_by: str = "",
+    assigned_at: str = "",
+) -> bool:
+    """Record the server's answer for one reception. Best-effort, never raises.
+
+    ``assignee_id`` / ``mine`` (2026-07-14) exist because the PACS ``/assign``
+    radiologist field is set by the RIS report workflow for *most* receptions — it
+    is the reporting radiologist, not only an explicit hand-assignment. So "there
+    is an assignee" is NOT the same question as "it is assigned to ME", and the UI
+    needs the second one (matched by ID, never by display name).
+    """
     rid = str(reception_id or "").strip()
     if not rid:
         return False
@@ -102,6 +120,14 @@ def set_state(reception_id, *, assigned: bool, assignee_name: str = "") -> bool:
             data[rid] = {
                 "assigned": bool(assigned),
                 "assignee_name": str(assignee_name or "").strip(),
+                "assignee_id": str(assignee_id or "").strip(),
+                "mine": bool(mine),
+                # The FULL server record — so the UI can show WHO it is assigned to,
+                # WHO assigned it and WHEN, without inferring any of it locally.
+                "assign_type": str(assign_type or "").strip(),
+                "assignee_source": str(assignee_source or "").strip(),
+                "assigned_by": str(assigned_by or "").strip(),     # a user id
+                "assigned_at": str(assigned_at or "").strip(),
                 "ts": time.time(),
             }
             return _save(data)
