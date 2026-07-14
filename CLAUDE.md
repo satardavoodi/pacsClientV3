@@ -122,6 +122,43 @@ Human-assisted bootstrap mode is the **default** workflow for all AI-PACS sessio
 - **Never** click the black AI-PACS icon.
 - The only correct running app is the **source-build `python.exe` instance**.
 
+## SHARED COMPONENT — Voice-to-Text (Persian transcription) — use it, never fork it
+
+**Every** feature that needs speech-to-text MUST go through the ONE shared component
+`modules/EchoMind/voice_transcription.py::VoiceTranscriptionService`. Before writing any voice /
+transcription code, **read `docs/pipelines/voice-to-text.md`** (as-built, 2026-07-13).
+
+- **What it does:** takes an ALREADY-SAVED `.wav` path, resolves the endpoint from
+  **Settings ▸ EchoMind ▸ Voice to Text**, uploads it (multipart `audio_files` + `quality_mode`,
+  `Authorization: Bearer <token>`), a server-side **Whisper** model transcribes it to **Persian**, and
+  the JSON comes back as `{ok, transcript, quality_report, session_id, error, …}`.
+  Call it as `VoiceTranscriptionService().transcribe([path], quality_mode="clear")` — **off the GUI
+  thread** (the upload can take minutes; existing callers wrap it in an `ApiWorker(QThread)`).
+- **It never records and never saves.** Recording, the WAV location, and attachment handling belong to
+  the calling module. Do not move them into the service.
+- **Providers** (Settings, 5-way): `aipacs_1` = AI-PACS Server 1 (A100), `aipacs_2` = AI-PACS Server 2
+  (Windows, the DEFAULT), `custom`, `v2t` (Google Speech, local), `openai`. The two AI-PACS servers are
+  shown **by name only** — their addresses live in `voice_transcription.py` and must never surface in
+  the UI. `SttRouter` stays 3-way; every HTTP provider maps to `native`.
+- **THE RULE THAT MAKES IT WORK: resolve the endpoint INSIDE a function, per call**
+  (`resolve_endpoint()`). The original defect was `URL_GEN_TRANSCRIPT = f"{AI_BASE}/generate_transcript"`
+  — built at **import** time and imported *by value*, so reassigning `AI_BASE` changed nothing and the
+  EchoMind chat ignored the setting entirely while Secretary hit the same frozen constant (with no auth
+  header). **Never cache the resolved URL in a module-level constant, and never hard-code a
+  transcription URL again.** This is what lets a Settings change take effect with no restart.
+- **`quality_report` must survive any wrapper.** A low-quality voice returns **HTTP 200 with
+  `accepted: false`** (not an HTTP error) — that drives the "Voice Rejected" message and the automatic
+  one-shot `clear`→`noisy` retry. An earlier provider discarded it and silently disabled that handling.
+- **Upgrade safety:** legacy `secretary_stt_provider: "native"` meant the hard-coded `AI_BASE` = the
+  **Windows** server ⇒ it maps to `aipacs_2`. Do not remap it.
+- **Auth:** the configured token wins; empty ⇒ falls back to the GapGPT key. Never raise into the audio
+  path. **Build:** `stt_custom_base_url` + `stt_auth_token` are blanked by `builder/config_sanitizer.py`.
+- Consumers today: **EchoMind Chat** (`viewer_chat/ai_chat_pages.py`) and **Secretary EchoMind**
+  (`home_ui/secretary_button_widget.py` → `SttRouter` → `NativeIrannobatProvider`, which delegates).
+  `modules/EchoMind/*` is **plugin-mirrored** — sync after editing (a NEW module needs `--add`).
+  Flag `AIPACS_ECHOMIND_STT_ENDPOINT` (default on; `=0` = legacy hard-coded endpoint). Guard:
+  `tests/code/echomind/test_voice_transcription_service.py` (17). NEEDS live verify on both servers.
+
 ## Subsystem regression guards
 
 ### External import opens the FAST Patient Tab, not the legacy VTK viewer (2026-06-28)
@@ -1803,6 +1840,70 @@ Before editing the `series_path` → `import_folder_path` adoption in
   proven by reading SeriesInstanceUIDs off the DICOM. Consider raising its level / routing it to
   `viewer_diagnostics.log`. **Also: read logs HOST-side (Read/Grep tools), not via the sandbox mount —
   the mount served a TRUNCATED `viewer_diagnostics.log` and made a healthy log look "stalled".**
+
+### A PRIMARY series must read the PRIMARY study's DB rows — study_pk poisoning (50238, 2026-07-14)
+The **DB-dimension twin** of the OPT-26 tab-path poisoning above, and the THIRD instance of one
+structural defect. Patient **50238**: study 1 and study 2 BOTH have series **2/3/4**. On first open,
+study 1's series 2/3 were BLANK (a reopen "fixed" it — it only rebuilt the poisoned tab state).
+- **ROOT:** `_effective_study_pk` (`_vc_load._load_single_series_on_demand`) defaults to
+  `parent_widget.metadata_fixed['study_pk']` — **mutable TAB state**. A secondary-study load
+  legitimately sets it to study 2's pk and **leaves the tab carrying it**; the next PRIMARY
+  (plain-key) load then asks the DB for "series 3 of **study 2**" and, because the studies share
+  series NUMBERS, gets the wrong study's same-numbered series. The disk path was CORRECT
+  (`[MULTI-STUDY LOAD] key=3 -> study_path=<study1>/3`) — only the DB lookup was poisoned
+  (`FAST:meta_cache key=series_15208_n30` = study 2's 30-image series). The viewport identity gate
+  then **correctly refused to paint** (`[IDENTITY-GATE] SKIP … uid=…0005302607 != …3882107555`).
+  **The blank viewport was the symptom; the gate prevented a wrong-image-on-screen event.**
+- **THE RULE: a plain (< 1 000 000) key ALWAYS belongs to the tab's PRIMARY study.** Pin its
+  `study_pk` to the primary `study_uid`'s own pk (`find_study_pk_with_study_uid`, cached). Flag
+  `AIPACS_PRIMARY_STUDY_PK_GUARD` (default on; `=0` = legacy inherit). Multi-study **and**
+  plain-key gated + fail-open ⇒ single-study tabs and every secondary (offset-key) load are
+  **byte-identical** (the 48101 per-series-pk fix is untouched). Refusals log `[STUDY-PK-GUARD]`.
+- **Do NOT** let a secondary load's `study_pk` (or `study_path` — see OPT-26 above) leak into the
+  next primary load. Tab-level state is NOT per-series identity.
+- Guard: `tests/code/viewer/test_primary_study_pk_guard.py` (incl. the concrete 50238 sequence).
+  `_vc_load.py` is NOT plugin-mirrored. NEEDS live verify on 50238.
+- **⚠ THIS GUARD IS NOW A DETECTOR, NOT THE FIX** — see the SeriesRef authority below.
+
+### SERIES IDENTITY IS RESOLVED ONCE — `SeriesRef` is the ONE authority (OPT-35, 2026-07-14)
+48912 (disk path) + 49836 (tab path) + 50238 (DB pk) were the SAME defect in three dimensions:
+identity was **re-derived at 4 stages from MUTABLE TAB STATE** (`import_folder_path`,
+`metadata_fixed['study_pk']`) instead of decided once — so 9 flags ended up answering ONE question.
+Before touching the show-a-series path, **read
+`docs/plans/architecture/SERIES_IDENTITY_PIPELINE_UNIFICATION_2026-07-14.md`** (master plan OPT-35).
+- **THE RULE: resolve `PacsClient/utils/series_ref.py::SeriesRef` ONCE, then CONSUME it — derive
+  nothing.** `_vc_load._load_single_series_on_demand` resolves it (`self._resolve_series_ref(key)`)
+  and takes the disk `study_path`/series number and the DB pk from it. **Never** re-derive identity
+  from `import_folder_path` or `metadata_fixed['study_pk']` — those are TAB-level values, not
+  per-series identity. **Do not add guard #10; extend the authority.**
+- **The pk rule is one line and it is the whole point:** `study_pk = pk_of(ref.study_uid)`. A PLAIN
+  key's entry carries `study_uid == primary` (⇒ 50238: a primary series reads the PRIMARY study's
+  rows); an OFFSET key's carries its own study (⇒ 48101: a secondary reads ITS OWN). One rule, both
+  polarities, and it reads no tab state so it cannot be poisoned.
+- **Only an AUTHORITATIVE ref may redirect the disk path** (`ref.is_authoritative`, i.e. `source` ∈
+  {`entry`, `slot_fallback`}). A `derived` ref (the ordinary SINGLE-study case) merely INFERS
+  `SOURCE_PATH/<primary>/<key>`, which is **WRONG for an externally-imported study** whose folder
+  lives outside SOURCE_PATH — acting on it would break import. This is also what keeps single-study
+  tabs byte-identical.
+- `series_ref.py` is **PURE stdlib** — no Qt/VTK/pydicom and **no DB** (the pk is filled by the
+  consumer). Keep it that way: it is the only reason the whole identity layer is unit-testable
+  offscreen. It must honour **C1** (`parse_series_number` — NEVER `int()` a server field; the
+  literal `"None"` once killed a whole study, OPT-25), **C2** (synthetic 900001–999999 stays a PLAIN
+  key, below the 1e6 offset threshold), **C3** (`"02"` stays `"02"` — naming depends on it), **C10**
+  (`display_key` stays a DIGIT string — the ZetaBoost warmup callback hard-requires `isdigit()`, so
+  do NOT make it a composite cache key) and **C11** (the offset-key scheme is the UI handle, not the
+  identity).
+- **The 9 legacy guards stay ON as DETECTORS.** If the authority is right they are no-ops. **A guard
+  — or `[SERIESREF-SHADOW]` / `[SERIESREF-DB]` — firing means the AUTHORITY is wrong**; revert the
+  phase flag, do not paper over it. They are retired one at a time only after logging zero firings.
+- Identity traces go through `_identity_log` → the **viewer channel** (`viewer_diagnostics.log`).
+  app.log has NOT reliably captured viewer-module INFO — that is exactly why the 49836 resolution
+  trace was invisible and the bug had to be proven by reading SeriesInstanceUIDs off the DICOM.
+- Flags (all default-ON, `=0` = byte-identical legacy): `AIPACS_SERIESREF_SHADOW` (build + compare,
+  consumes nothing), `AIPACS_SERIESREF_DISK`, `AIPACS_SERIESREF_DB`. Guard:
+  `tests/code/viewer/test_series_ref_authority.py` (40). `_vc_load.py` / `series_ref.py` are NOT
+  plugin-mirrored. STAGED: P3 cache re-key by `series_uid`, P4 DM/grow-lane, P5 retire the guards
+  (9 flags → 1). NEEDS live verify on 50238 / 49836 / 48912 / a single-study patient.
 
 ### Two main-thread freezes: web-browser prewarm (OPT-22) + EchoMind import (OPT-23) (2026-07-08)
 Regression review of two reported UI-thread freezes (report

@@ -713,6 +713,9 @@ class PatientTableWidget(QWidget):
     # Right-click "Refresh / Sync from server": force a server completeness check
     # for the patient's studies and pull any newly-added series (45611).
     resyncFromServerRequested = Signal(str, str, list)  # patient_id, patient_name, study_uids
+    # The SERVER's assignment answer for the visible receptions came back
+    # (worker thread → GUI thread). Payload: the refresh_assignments summary.
+    assignmentsRefreshed = Signal(dict)
 
     def __init__(self, parent=None):
         super(PatientTableWidget, self).__init__(parent)
@@ -730,6 +733,9 @@ class PatientTableWidget(QWidget):
         # thread. (QTimer.singleShot does not fire from a worker thread.)
         self.reportingPhysicianResolved.connect(self.update_reporting_physician_for_patient)
         self.reportStatusResolved.connect(self._update_report_status_in_table)
+        # Server assignment refresh runs on a daemon thread; the queued connection
+        # marshals the column repaint onto the GUI thread.
+        self.assignmentsRefreshed.connect(self._on_assignments_refreshed)
         self._active_report_dialogs = {}
         self._comment_cache_lock = threading.Lock()
         self._report_fetch_lock = threading.Lock()
@@ -810,6 +816,10 @@ class PatientTableWidget(QWidget):
         if not study_uid and not patient_id:
             return
         if not hasattr(self, 'results_table') or self.results_table is None:
+            return
+        # FIX-3: a download-manager status event must not rebuild cell widgets
+        # while clear_table() is destroying the rows they live in.
+        if self.table_rebuild_in_progress():
             return
         try:
             status_col = COL.get('status', 4) if isinstance(COL, dict) else 4
@@ -2986,6 +2996,12 @@ class PatientTableWidget(QWidget):
             status: 'complete', 'partial', or 'not_downloaded'
             is_downloaded: Legacy bool parameter (for backwards compatibility)
         """
+        # FIX-3: this replaces a row's Status cell widget. It is reached from the
+        # chunked refresh chain AND from download-manager events, so it can land
+        # in the middle of clear_table()'s teardown. Back off — the rows it would
+        # touch are being destroyed, and the fresh search rebuilds them anyway.
+        if self.table_rebuild_in_progress():
+            return
         try:
             # Handle legacy bool parameter
             if status is None and is_downloaded is not None:
@@ -3072,7 +3088,11 @@ class PatientTableWidget(QWidget):
             self.refresh_btn.setEnabled(False)
             original_icon = self.refresh_btn.icon()
             
-            # Create a simple "refreshing" animation by rotating icon
+            # Spinner ONLY — it must not decide the outcome. It used to end on a
+            # green tick unconditionally, so a refresh that silently did nothing
+            # (e.g. the Reception/API breaker was open) looked exactly like one that
+            # worked. The real result is painted by _set_refresh_result() when the
+            # server actually answers.
             def animate_refresh(step=0):
                 if step < 8:  # 8 steps animation
                     # Alternate between two icons for animation effect
@@ -3080,14 +3100,12 @@ class PatientTableWidget(QWidget):
                         self.refresh_btn.setIcon(qta.icon('fa5s.sync-alt', color='#3b82f6'))
                     else:
                         self.refresh_btn.setIcon(qta.icon('fa5s.sync-alt', color='#60a5fa'))
-                    
+
                     QTimer.singleShot(100, lambda: animate_refresh(step + 1))
                 else:
-                    # Animation done
-                    self.refresh_btn.setIcon(qta.icon('fa5s.sync-alt', color='#10b981'))
-                    QTimer.singleShot(300, lambda: self.refresh_btn.setIcon(original_icon))
+                    self.refresh_btn.setIcon(original_icon)
                     self.refresh_btn.setEnabled(True)
-            
+
             # Start animation
             animate_refresh()
             
@@ -3127,11 +3145,29 @@ class PatientTableWidget(QWidget):
                 self._report_status_cache.clear()
             self.reportRefreshRequested.emit()
 
+            # 2026-07-14: and the ASSIGNMENT — the piece that was missing entirely.
+            # Re-reads GET /api/patients/{id}/assign for every visible reception so
+            # an assignment made on ANOTHER workstation finally appears in the
+            # Assign column and as the red assignee name in the Report column.
+            self._start_assignment_refresh()
+
         except Exception as e:
             print(f"Error refreshing download statuses: {e}")
             self.refresh_btn.setEnabled(True)
+            self._set_refresh_result(ok=False, detail=str(e))
 
-    def _refresh_statuses_chunked(self, study_uids, index, token):
+    def _refresh_statuses_chunked(self, study_uids, index, token):  # noqa: D401
+        # FIX-3: this singleShot(0) chain calls setCellWidget row-by-row. It must
+        # never run against a table that clear_table() is tearing down (the rows
+        # it captured no longer exist, and mutating cell widgets mid-teardown is
+        # the re-entrancy the access violation lived in). clear_table() also bumps
+        # _status_refresh_token, so an in-flight chain stops at the token check
+        # below — this guard is the belt to that braces.
+        if self.table_rebuild_in_progress():
+            return
+        return self._refresh_statuses_chunked_impl(study_uids, index, token)
+
+    def _refresh_statuses_chunked_impl(self, study_uids, index, token):
         """Refresh download-status badges a few studies at a time, yielding to the Qt
         event loop between chunks so the per-study disk check
         (``check_study_complete`` -> ``build_local_manifest``) never freezes the GUI
@@ -3855,11 +3891,20 @@ class PatientTableWidget(QWidget):
     def _assign_icon_state(self, reception_id):
         """THE single source for the Assign-column icon.
 
-        Derived from the PERSISTED assignment record (``ino_assignment_history``),
-        whose assign/unassign rows are ``server_ok``-gated — so the icon reflects
-        the confirmed server-side state, never a transient local UI flag, and it
-        survives refresh / reopening the patient list. Returns None when the INO
-        assignment feature is off (caller then keeps the legacy behaviour).
+        2026-07-14 — this used to read the LOCAL action log
+        (``ino_assignment_history``) ONLY, so an assignment made on ANOTHER
+        workstation was invisible here forever (patient 50210: the server had the
+        radiologist all along; this client simply never asked). It now merges:
+
+          * the SERVER snapshot (``ino_assignment_server_state``, refreshed by the
+            Refresh-Status button / search) — authoritative for *is this patient
+            assigned, and to whom*;
+          * the LOCAL log — authoritative for ``completed`` / ``deactivated``,
+            lifecycle states that have no INO endpoint.
+
+        ``merge_assignment_status`` treats "never fetched" as UNKNOWN (not
+        "unassigned"), so a server we couldn't reach never wipes a known
+        assignment. Returns None when the INO feature is off (legacy behaviour).
 
         Mapping (see ino_assignment_models.assign_icon_for_status):
             active      → red   user-check    (assigned, needs action)
@@ -3874,11 +3919,58 @@ class PatientTableWidget(QWidget):
                 return None
             from modules.network import ino_assignment_history as _hist
             from modules.network import ino_assignment_models as _m
-            rec = _hist.current_assignment_details(reception_id)
-            if not rec:
-                return _m.assign_icon_for_status("", "")
+
+            rec = _hist.current_assignment_details(reception_id) or {}
+            local_status = str(rec.get("assignment_status") or "")
+            local_name = str(rec.get("assignee_name") or "")
+
+            server_assigned = None
+            server_name = ""
+            try:
+                from modules.network import ino_assignment_server_state as _srv
+                snap = _srv.get_state(reception_id)
+                if snap:
+                    server_assigned = bool(snap.get("assigned"))
+                    server_name = str(snap.get("assignee_name") or "")
+            except Exception:
+                pass
+
+            merged = _m.merge_assignment_status(
+                server_assigned, server_name, local_status, local_name)
             return _m.assign_icon_for_status(
-                rec.get("assignment_status"), rec.get("assignee_name", ""))
+                merged["status"], merged["assignee_name"])
+        except Exception:
+            return None
+
+    def assignment_display_for(self, reception_id):
+        """Merged (server + local) assignment for a reception, or None.
+
+        The ONE accessor both the Assign column and the Report column use, so they
+        can never disagree. ``{"status", "assignee_name"}``.
+        """
+        try:
+            from modules.network.ino_assignment import is_enabled as _ino_on
+            if not _ino_on():
+                return None
+            from modules.network import ino_assignment_history as _hist
+            from modules.network import ino_assignment_models as _m
+
+            rec = _hist.current_assignment_details(reception_id) or {}
+            server_assigned = None
+            server_name = ""
+            try:
+                from modules.network import ino_assignment_server_state as _srv
+                snap = _srv.get_state(reception_id)
+                if snap:
+                    server_assigned = bool(snap.get("assigned"))
+                    server_name = str(snap.get("assignee_name") or "")
+            except Exception:
+                pass
+            return _m.merge_assignment_status(
+                server_assigned, server_name,
+                str(rec.get("assignment_status") or ""),
+                str(rec.get("assignee_name") or ""),
+            )
         except Exception:
             return None
 
@@ -4848,6 +4940,11 @@ class PatientTableWidget(QWidget):
         existing pin sort-boost. Idempotent and reentrancy-guarded."""
         if getattr(self, '_applying_pin_overlay', False):
             return
+        # FIX-3: this timer ADDS rows and re-sorts. It must never fire into a
+        # table that clear_table() is tearing down. clear_table() stops the timer,
+        # and re-arms it afterwards, so nothing is lost.
+        if self.table_rebuild_in_progress():
+            return
         if not self._pin_overlay_enabled():
             logger.info("[PIN-OVERLAY] apply skipped: disabled (AIPACS_PIN_OVERLAY=0)")
             return
@@ -5096,16 +5193,19 @@ class PatientTableWidget(QWidget):
         #
         # Anything that is not an active assignment falls through to the ORIGINAL
         # (pre-feature) status-icon colour scheme below.
+        # 2026-07-14: the assignment now comes from `assignment_display_for` — the
+        # ONE accessor that merges the SERVER snapshot with the local lifecycle log,
+        # so the Report column and the Assign column can never disagree, and an
+        # assignment created on ANOTHER workstation finally shows up here (50210).
         try:
             from modules.network.ino_assignment import is_enabled as _ino_assign_enabled
             _rid = str(getattr(report_label, 'reception_id', '') or '').strip()
             if _ino_assign_enabled() and _rid:
-                from modules.network import ino_assignment_history as _ino_hist
                 from modules.network import ino_assignment_models as _ino_m
-                _rec = _ino_hist.current_assignment_details(_rid)
-                _status = str((_rec or {}).get('assignment_status') or '').strip().lower()
-                if _rec and _status == _ino_m.STATUS_ACTIVE:
-                    _assignee = str(_rec.get('assignee_name') or '').strip()
+                _merged = self.assignment_display_for(_rid) or {}
+                _status = str(_merged.get('status') or '').strip().lower()
+                if _status == _ino_m.STATUS_ACTIVE:
+                    _assignee = str(_merged.get('assignee_name') or '').strip()
                     # Only red when the displayed physician IS the assignee (or the
                     # cell has no physician yet, in which case we show the assignee).
                     if _assignee and (
@@ -5141,8 +5241,68 @@ class PatientTableWidget(QWidget):
         self._update_report_status_in_table(study_uid, new_status)
     
     def _on_report_status_error(self, study_uid: str, error_msg: str):
-        """Handle report status error signal from service"""
-        QMessageBox.warning(self, "Status Change Error", f"Error: {error_msg}")
+        """Handle report status error signal from service.
+
+        FIX-2/FIX-4 (2026-07-13). Two changes, both flag-gated default-on:
+
+        1. **Do not steal an error that the patient-tab sync owns.** A "Sync
+           Status" whose ``UpdateReportStatus`` gets no response ALSO reaches
+           here, and this modal used to appear AFTER the patient tab had already
+           closed ("Error: Update failed - no response from server" with no
+           context). The sync's own progress/Retry dialog is the single owner of
+           that error, so stay silent while a sync is in flight (or just ended —
+           these are queued cross-thread signals).
+           Kill switch: ``AIPACS_SUPPRESS_SYNC_OWNED_STATUS_ERROR=0``.
+
+        2. **Never spin a modal from a queued network-failure signal.** A modal
+           message box runs a NESTED Qt event loop on the GUI thread: the app
+           looks frozen, and timers/coroutines keep firing behind it (the search
+           coroutine, the status-refresh chain, the pin-overlay timer), which is
+           exactly the re-entrancy the table-clear crash lives in. On a flaky
+           link these arrive in bursts. Route to the non-modal connection
+           indicator / log instead, and keep at most one modal per burst.
+           Kill switch: ``AIPACS_MODAL_STATUS_ERROR=1`` restores the modal.
+        """
+        try:
+            if (os.getenv("AIPACS_SUPPRESS_SYNC_OWNED_STATUS_ERROR", "1") or "1").strip() != "0":
+                from PacsClient.pacs.patient_tab.utils.patient_sync_service import (
+                    sync_in_progress,
+                )
+                if sync_in_progress():
+                    logger.warning(
+                        "[STATUS-ERROR] suppressed (owned by the in-flight patient sync) "
+                        "study=%s error=%s", study_uid, error_msg,
+                    )
+                    return
+        except Exception:
+            pass
+
+        logger.error("[STATUS-ERROR] study=%s error=%s", study_uid, error_msg)
+
+        if (os.getenv("AIPACS_MODAL_STATUS_ERROR", "0") or "0").strip() != "0":
+            QMessageBox.warning(self, "Status Change Error", f"Error: {error_msg}")
+            return
+
+        # Non-modal: surface it WITHOUT running a nested event loop, and show at
+        # most one box at a time (a flaky link produces bursts).
+        try:
+            existing = getattr(self, '_status_error_box', None)
+            if existing is not None and existing.isVisible():
+                existing.setInformativeText(f"Error: {error_msg}")
+                return
+            box = QMessageBox(self)
+            box.setIcon(QMessageBox.Icon.Warning)
+            box.setWindowTitle("Status Change Error")
+            box.setText("The report status could not be updated on the server.")
+            box.setInformativeText(f"Error: {error_msg}")
+            box.setStandardButtons(QMessageBox.StandardButton.Ok)
+            box.setWindowModality(Qt.NonModal)
+            box.setAttribute(Qt.WA_DeleteOnClose, True)
+            box.finished.connect(lambda _=0: setattr(self, '_status_error_box', None))
+            self._status_error_box = box
+            box.show()  # NOT exec() — no nested event loop, no GUI freeze
+        except Exception:
+            pass
 
     def _on_header_section_resized(self, _index, _old, _new):
         """Mark that the USER changed a column width (manual drag).
@@ -5283,6 +5443,59 @@ class PatientTableWidget(QWidget):
         except Exception as e:
             print(f"auto_resize_columns error: {e}")
 
+    def table_rebuild_in_progress(self) -> bool:
+        """FIX-3: True while ``clear_table`` is tearing the table down.
+
+        Every OTHER producer that mutates ``results_table`` from the Qt event
+        loop must check this and back off — see ``clear_table`` for why.
+        """
+        return bool(getattr(self, '_table_rebuilding', False))
+
+    def _detach_all_cell_widgets(self) -> int:
+        """FIX-3: detach every cell widget and hand it to Qt's DEFERRED delete.
+
+        ``setRowCount(0)`` destroys the row's cell widgets **synchronously**,
+        inside the model reset. With ~45 rows × 4 widgets (select / status /
+        report / assign) that is ~180 C++ destructors running while the model is
+        already half-torn-down; each destructor delivers events (QChildEvent,
+        hide, focus transfer) back through ``QApplication.notify``, i.e. back
+        into Python, where another producer can re-enter the table. That is the
+        window the 2026-07-13 access violation lived in (the field log carries
+        the tell-tale ``notify() skipped malformed dispatch: receiver=QEvent
+        event=QChildEvent`` — an event delivered to a partially-destroyed
+        QObject).
+
+        Removing the widgets FIRST and deleting them with ``deleteLater()``
+        means the destructors run later, from the event loop, when the table is
+        no longer mid-mutation. This is the standard cure for this crash class
+        and changes nothing the user can see.
+
+        Returns the number of widgets detached. Never raises.
+        """
+        detached = 0
+        try:
+            table = self.results_table
+            rows = table.rowCount()
+            cols = table.columnCount()
+            for row in range(rows):
+                for col in range(cols):
+                    try:
+                        w = table.cellWidget(row, col)
+                    except Exception:
+                        continue
+                    if w is None:
+                        continue
+                    try:
+                        table.removeCellWidget(row, col)  # detach (Qt deletes it otherwise)
+                        w.setParent(None)
+                        w.deleteLater()                   # destroy from the event loop
+                        detached += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return detached
+
     def clear_table(self):
         """Clear the table for a new search.
 
@@ -5291,7 +5504,151 @@ class PatientTableWidget(QWidget):
         removed — the pinned rows stay physically in place, so they never blink
         out and re-appear during a refresh (the jump/flicker). A full clear runs
         only when nothing is pinned.
+
+        ── FIX-3 (2026-07-13): this method CRASHED the application ────────────
+        Field crash (frozen build, `native_fault.log`): a Windows **access
+        violation** on the Qt main thread, exactly here —
+
+            patient_table_widget.py:clear_table   ->  self.results_table.setRowCount(0)
+            home_search_service.py:search_server  ->  home.patient_table_widget.clear_table()
+            _hp_search.py:search_patients_from_server_async
+
+        The table is mutated by FOUR independent producers, all driven by the
+        same Qt event loop, with NO shared "rebuild in progress" interlock:
+
+          1. this clear + the search's chunked row insert (a qasync coroutine
+             that ``await``s — i.e. it RUNS the event loop mid-rebuild);
+          2. ``_refresh_statuses_chunked`` — a self-rescheduling
+             ``QTimer.singleShot(0, ...)`` chain that calls ``setCellWidget``
+             row by row (its token only guards against a NEWER refresh, not
+             against the table being cleared underneath it);
+          3. ``_rebuild_status_cells_for`` — download-manager-driven
+             ``setCellWidget`` on matching rows;
+          4. ``_apply_pinned_overlay`` — a debounced timer that ADDS rows and
+             re-sorts.
+
+        So the fix is threefold and purely defensive:
+          * raise a ``_table_rebuilding`` flag that every other producer honours;
+          * CANCEL the two timer-driven producers before touching the table
+            (bump the status token, stop the pin-overlay timer);
+          * destroy the cell widgets DEFERRED rather than synchronously inside
+            the model reset (see ``_detach_all_cell_widgets``).
+
+        Nothing about the visible result changes — the table still ends up empty
+        (or pinned-rows-only). Kill switch: ``AIPACS_SAFE_CLEAR_TABLE=0``
+        restores the byte-identical legacy clear.
         """
+        if (os.getenv("AIPACS_SAFE_CLEAR_TABLE", "1") or "1").strip() == "0":
+            return self._clear_table_legacy()
+
+        # Re-entrancy: a clear must never run inside a clear.
+        if getattr(self, '_table_rebuilding', False):
+            logger.warning("[CLEAR-TABLE] re-entrant clear_table() ignored")
+            return
+
+        self._table_rebuilding = True
+        try:
+            # 1. Cancel the timer-driven producers BEFORE the table is touched.
+            #    Bumping the token makes any already-queued singleShot link of the
+            #    chunked status-refresh chain a no-op (it compares the token).
+            try:
+                self._status_refresh_token = getattr(self, '_status_refresh_token', 0) + 1
+            except Exception:
+                pass
+            try:
+                t = getattr(self, '_pin_overlay_timer', None)
+                if t is not None:
+                    t.stop()
+            except Exception:
+                pass
+
+            table = self.results_table
+            # 2. Freeze painting + signals for the teardown. A cleared table emits
+            #    selection/current-cell changes that Python slots react to; none of
+            #    them is meaningful for rows that are being destroyed.
+            try:
+                table.setUpdatesEnabled(False)
+            except Exception:
+                pass
+            _blocked = False
+            try:
+                table.blockSignals(True)
+                _blocked = True
+            except Exception:
+                pass
+
+            try:
+                pinned_rows_kept = False
+                try:
+                    if self._pin_overlay_enabled():
+                        from PacsClient.utils.local_reminders import get_pinned_patient_ids
+                        pinned_ids = get_pinned_patient_ids()
+                        if pinned_ids:
+                            for row in range(table.rowCount() - 1, -1, -1):
+                                pid_item = table.item(row, COL['patient_id'])
+                                pid = str(pid_item.text()).strip() if pid_item is not None else ''
+                                if pid not in pinned_ids:
+                                    # Detach this row's widgets first, then remove
+                                    # the row — same reasoning as the full clear.
+                                    for col in range(table.columnCount()):
+                                        try:
+                                            w = table.cellWidget(row, col)
+                                            if w is not None:
+                                                table.removeCellWidget(row, col)
+                                                w.setParent(None)
+                                                w.deleteLater()
+                                        except Exception:
+                                            pass
+                                    table.removeRow(row)
+                            pinned_rows_kept = True
+                except Exception:
+                    pinned_rows_kept = False
+
+                if not pinned_rows_kept:
+                    # 3. Deferred widget destruction, THEN the model reset.
+                    self._detach_all_cell_widgets()
+                    table.setRowCount(0)
+            finally:
+                if _blocked:
+                    try:
+                        table.blockSignals(False)
+                    except Exception:
+                        pass
+                try:
+                    table.setUpdatesEnabled(True)
+                except Exception:
+                    pass
+
+            self._last_checked_checkbox = None  # anchor widget no longer exists after clear
+            # Drop any progressive-loading buffer so a stale scroll can never render
+            # the previous search's rows into the freshly cleared table.
+            self._prog_items = []
+            self._prog_cursor = 0
+            self._prog_total = 0
+            self._prog_loading = False
+            self.select_all_state = False
+            # Bound the per-search report-status cache so it does not grow
+            # unbounded across a long session of repeated searches.
+            if hasattr(self, '_report_status_cache'):
+                self._report_status_cache.clear()
+            select_header = self.results_table.horizontalHeaderItem(COL['select'])
+            if select_header:
+                select_header.setText("⬜")
+            self._update_results_count()
+        finally:
+            self._table_rebuilding = False
+
+        # Re-assert the pinned overlay after the stream settles (the table was
+        # just cleared for a new search). Debounced; no-op when disabled.
+        # Armed OUTSIDE the guard so the debounce timer can actually start.
+        try:
+            self._arm_pin_overlay_refresh()
+        except Exception:
+            pass
+
+    def _clear_table_legacy(self):
+        """Byte-identical pre-FIX-3 clear (AIPACS_SAFE_CLEAR_TABLE=0). Kept as a
+        kill switch only — it is the code path that crashed."""
         pinned_rows_kept = False
         try:
             if self._pin_overlay_enabled():
@@ -5309,23 +5666,17 @@ class PatientTableWidget(QWidget):
         if not pinned_rows_kept:
             self.results_table.setRowCount(0)
         self._last_checked_checkbox = None  # anchor widget no longer exists after clear
-        # Drop any progressive-loading buffer so a stale scroll can never render
-        # the previous search's rows into the freshly cleared table.
         self._prog_items = []
         self._prog_cursor = 0
         self._prog_total = 0
         self._prog_loading = False
         self.select_all_state = False
-        # Bound the per-search report-status cache so it does not grow
-        # unbounded across a long session of repeated searches.
         if hasattr(self, '_report_status_cache'):
             self._report_status_cache.clear()
         select_header = self.results_table.horizontalHeaderItem(COL['select'])
         if select_header:
             select_header.setText("⬜")
         self._update_results_count()
-        # Re-assert the pinned overlay after the stream settles (the table was
-        # just cleared for a new search). Debounced; no-op when disabled.
         try:
             self._arm_pin_overlay_refresh()
         except Exception:
@@ -5539,6 +5890,151 @@ class PatientTableWidget(QWidget):
             # Defensive: never crash the search/refresh flow on a state-
             # refresh failure. The next refresh cycle will retry.
             print(f"[ROW_REFRESH] Error refreshing study row {row}: {exc}")
+
+    # ── Assignment refresh (server truth) ────────────────────────────────────
+    def visible_reception_ids(self) -> list:
+        """Every reception/patient id currently on screen (de-duplicated)."""
+        pid_col = COL.get('patient_id', 1)
+        out, seen = [], set()
+        for row in range(self.results_table.rowCount()):
+            item = self.results_table.item(row, pid_col)
+            rid = str(item.text()).strip() if item else ''
+            if rid and rid not in seen:
+                seen.add(rid)
+                out.append(rid)
+        return out
+
+    def refresh_report_cell_for_patient(self, reception_id: str):
+        """Re-apply the Report cell display for one reception (O(1) per row).
+
+        Re-runs `_apply_report_status_display`, which now reads the MERGED
+        (server + local) assignment — so a newly-discovered assignment repaints the
+        red assignee name without a full table rebuild."""
+        rid = str(reception_id or '').strip()
+        if not rid:
+            return
+        for row in range(self.results_table.rowCount()):
+            pid_item = self.results_table.item(row, COL['patient_id'])
+            if not pid_item or pid_item.text().strip() != rid:
+                continue
+            report_widget = self.results_table.cellWidget(row, COL['report'])
+            if report_widget and report_widget.layout() and report_widget.layout().count() > 0:
+                report_label = report_widget.layout().itemAt(0).widget()
+                if report_label:
+                    status_value = getattr(report_widget, 'report_status', 'pending')
+                    name_item = self.results_table.item(row, COL['patient_name'])
+                    physician = ''
+                    if name_item is not None:
+                        physician = str(name_item.data(Qt.UserRole + 2) or '').strip()
+                    try:
+                        self._apply_report_status_display(report_label, status_value, physician)
+                    except Exception:
+                        pass
+            break
+
+    def _start_assignment_refresh(self):
+        """Re-read the SERVER assignment for every visible reception, off-thread.
+
+        THE MISSING READ PATH (2026-07-14, patient 50210). Nothing in the app ever
+        called ``GET /api/patients/{id}/assign`` — the Assign/Report columns were
+        painted from a LOCAL log written only by the workstation that performed the
+        assign, so an assignment made on another PC was invisible forever.
+
+        Runs on a daemon thread (the per-reception REST calls must never block the
+        GUI) and marshals the result back through ``assignmentsRefreshed``.
+        """
+        try:
+            from modules.network.ino_assignment import is_enabled as _ino_on
+            if not _ino_on():
+                return
+        except Exception:
+            return
+
+        rids = self.visible_reception_ids()
+        if not rids:
+            return
+
+        token = getattr(self, '_assign_refresh_token', 0) + 1
+        self._assign_refresh_token = token
+
+        def _work():
+            try:
+                from modules.network.ino_assignment_refresh import refresh_assignments
+                summary = refresh_assignments(
+                    rids,
+                    should_stop=lambda: getattr(self, '_assign_refresh_token', 0) != token,
+                )
+            except Exception as exc:  # pragma: no cover - defensive
+                summary = {"ok": False, "checked": len(rids), "updated": 0,
+                           "failed": len(rids), "rows": {}, "error": str(exc)}
+            try:
+                if getattr(self, '_assign_refresh_token', 0) == token:
+                    self.assignmentsRefreshed.emit(summary)
+            except Exception:
+                pass
+
+        import threading
+        threading.Thread(target=_work, name="AssignRefresh", daemon=True).start()
+
+    def _on_assignments_refreshed(self, summary: dict):
+        """GUI thread: repaint Assign + Report for every reception the server answered."""
+        rows = (summary or {}).get('rows') or {}
+        for rid in list(rows.keys()):
+            try:
+                self.refresh_assign_icon_for_patient(rid)
+            except Exception:
+                pass
+            try:
+                self.refresh_report_cell_for_patient(rid)
+            except Exception:
+                pass
+        try:
+            self.results_table.viewport().update()
+        except Exception:
+            pass
+
+        failed = int((summary or {}).get('failed') or 0)
+        updated = int((summary or {}).get('updated') or 0)
+        self._set_refresh_result(
+            ok=(failed == 0),
+            detail=(f"Assignments: {updated} refreshed"
+                    + (f", {failed} failed" if failed else "")),
+        )
+
+    def _set_refresh_result(self, ok: bool, detail: str = ""):
+        """Give the Refresh button an HONEST outcome.
+
+        It used to always finish on a green tick — even when the Reception/API
+        circuit breaker had silently swallowed every call — so a refresh that did
+        nothing looked identical to one that worked.
+        """
+        try:
+            from modules.network.reception_api_config import reception_api_breaker_open
+            breaker = reception_api_breaker_open()
+        except Exception:
+            breaker = False
+
+        try:
+            self.refresh_btn.setEnabled(True)
+            if breaker:
+                self.refresh_btn.setIcon(qta.icon('fa5s.exclamation-triangle', color='#f59e0b'))
+                self.refresh_btn.setToolTip(
+                    "Refresh Statuses\n"
+                    "⚠ The Reception/Workflow API is unreachable — report, physician "
+                    "and assignment data could NOT be refreshed.\n"
+                    "Check the server in Settings ▸ Server Settings."
+                )
+                return
+            if ok:
+                self.refresh_btn.setIcon(qta.icon('fa5s.sync-alt', color='#10b981'))
+                self.refresh_btn.setToolTip(f"Refresh Statuses\n✓ {detail}" if detail
+                                            else "Refresh Statuses")
+            else:
+                self.refresh_btn.setIcon(qta.icon('fa5s.exclamation-circle', color='#ef4444'))
+                self.refresh_btn.setToolTip(
+                    f"Refresh Statuses\n⚠ Some data could not be refreshed. {detail}")
+        except Exception:
+            pass
 
     def update_reporting_physician_for_patient(self, patient_id: str, patient_name: str, reporting_physician: str):
         """Update stored/displayed physician text for existing patient rows."""

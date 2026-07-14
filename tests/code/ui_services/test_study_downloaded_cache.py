@@ -57,9 +57,21 @@ def test_cheaper_check_uses_scandir_not_iterdir():
 
 
 def test_invalidation_wired_into_status_update():
+    # 2026-07-13: extract the REAL method body via ast instead of a fixed
+    # 1600-char window. update_study_download_status gained the FIX-3
+    # table-rebuild back-off comment, which pushed the invalidation call past the
+    # window — a byte-window pin silently starts testing the wrong text as soon
+    # as the function is documented. Same assertion, exact scope.
+    import ast
+
     s = _src()
-    start = s.index("def update_study_download_status")
-    body = s[start:start + 1600]
+    tree = ast.parse(s)
+    body = ""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "update_study_download_status":
+            body = ast.get_source_segment(s, node) or ""
+            break
+    assert body, "update_study_download_status not found"
     assert "self._invalidate_study_downloaded_cache(study_uid)" in body
 
 

@@ -222,6 +222,55 @@ def resolve_assignment_status(rows: List[Dict[str, Any]]) -> str:
             status = STATUS_CANCELLED
     return status
 
+
+def merge_assignment_status(
+    server_assigned: Optional[bool],
+    server_name: str,
+    local_status: str,
+    local_name: str = "",
+) -> Dict[str, str]:
+    """PURE. Reconcile the SERVER's answer with the LOCAL lifecycle log (2026-07-14).
+
+    Division of authority:
+
+    * **The server owns "is this patient assigned, and to whom".** That is the only
+      dimension it stores (``active`` / ``cancelled``), and it is the dimension that
+      was previously invisible — an assignment made on ANOTHER workstation lives
+      only on the server, so the local log can never see it (patient 50210).
+    * **The local log owns ``completed`` / ``deactivated``** — lifecycle states with
+      no INO endpoint, layered on top of a server assignment. The server refresh
+      must not clobber them.
+
+    ``server_assigned=None`` means "not fetched / the call failed" — NOT
+    "unassigned". In that case the local status stands, so an unreachable server
+    never wipes a known assignment.
+
+    Returns ``{"status": ..., "assignee_name": ...}``.
+    """
+    local = str(local_status or "").strip().lower()
+    lname = str(local_name or "").strip()
+    sname = str(server_name or "").strip()
+
+    if server_assigned is None:
+        return {"status": local, "assignee_name": lname}
+
+    # The server always has the authoritative NAME when it has an assignment.
+    name = sname or lname
+
+    if server_assigned:
+        if local in (STATUS_COMPLETED, STATUS_DEACTIVATED):
+            return {"status": local, "assignee_name": name}
+        return {"status": STATUS_ACTIVE, "assignee_name": name}
+
+    # Server says there is no assignment.
+    if local == STATUS_COMPLETED:
+        # The work was finished here and the server then cleared the assignment;
+        # keep the terminal local state rather than showing it as cancelled.
+        return {"status": STATUS_COMPLETED, "assignee_name": lname}
+    if local:
+        return {"status": STATUS_CANCELLED, "assignee_name": lname}
+    return {"status": "", "assignee_name": ""}
+
 # --- Labels (Persian + English) — internal-assignment terminology ------------
 # Deliberately NOT "consultation": these read as an internal operational action.
 FEATURE_LABEL_FA = "ارجاع داخلی مرکز"

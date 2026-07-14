@@ -770,3 +770,45 @@ is plugin-mirrored. **Re-burn required.** NOTE: Windows aggressively caches
 drive icons — a fresh disc on a PC that hasn't seen it shows the new icon/name;
 an already-cached drive letter may need a reinsert/icon-cache refresh. Non-ASCII
 (e.g. Persian) names fall back to the ASCII-normalized form in the label.
+
+---
+
+## §29 Burn-image capacity — the IMAPI "configured limit" failure (2026-07-14)
+
+**Symptom.** The burn dies partway through (55%) on an arbitrary file:
+
+> `Error adding files: (-1062555360, None, ("Adding '_libjpeg.cp313-win_amd64.pyd'
+> would result in a result image having a size larger than the current configured
+> limit.", ...))`
+
+The named file is a red herring — it is simply whichever file crossed the line.
+
+**Root cause.** `MsftFileSystemImage` was created with **no media context**. IMAPI
+then applies its built-in default size limit — **CD-sized, ~650 MB** — regardless
+of what disc is loaded. Neither `ChooseImageDefaults(recorder)` nor
+`FreeMediaBlocks` was ever set, so a 4.7 GB DVD was still capped at ~650 MB. It
+only started biting once the payload (study + the ~100 MB Lite Viewer bundle)
+crossed that threshold; every earlier burn happened to fit underneath it.
+
+**Fix** (`cd_writer.CDBurner.burn`, plugin-mirrored — sync after editing):
+
+1. `file_system.ChooseImageDefaults(self.recorder)` immediately after creating the
+   image. This reads the loaded media and sets `FreeMediaBlocks` + ISO/UDF
+   revisions from it.
+2. `file_system.FreeMediaBlocks = disc_format.FreeSectorsOnMedia` as a belt-and-
+   braces pin to the media's real free space.
+3. **`ChooseImageDefaults` overwrites `FileSystemsToCreate`** — so our
+   ISO9660+Joliet value (`filesystems_for_media()`, non-negotiable, see §10) MUST
+   be assigned **after** it. Reversing the order silently re-breaks the bundled
+   viewer via 8.3 name mangling. A guard test pins the ordering.
+4. Pre-flight `check_content_fits(source_path, free_sectors)` **before** `AddTree`,
+   so an over-capacity payload fails immediately with actionable numbers
+   ("Needed: 1,240 MB / Available: 703 MB — use a DVD, or the viewer alone is
+   ~100 MB, and 'Uncompressed' is much larger than 'Original'") instead of an
+   opaque COM tuple mid-burn. `content_blocks()` rounds every file up to a whole
+   2048-byte sector — a folder of many small DICOM files costs materially more
+   than the sum of its bytes.
+5. Unknown capacity (`free_sectors == 0`) must **never** block a burn — fall
+   through and let IMAPI decide.
+
+Guard: `tests/code/cd_burner/test_burn_capacity_limit.py` (6).

@@ -74,6 +74,39 @@ _DL_SKIP_COMPLETE_VIEW_INTENT = (
     os.getenv("AIPACS_DL_SKIP_COMPLETE_VIEW_INTENT", "1") or "1"
 ).strip() != "0"
 
+# ── OPT-35: SeriesRef — the ONE series-identity authority (2026-07-14) ────────
+# Series identity used to be RE-DERIVED at four stages (disk path, DB study_pk,
+# cache key, render gate), each from MUTABLE TAB STATE (`import_folder_path`,
+# `metadata_fixed['study_pk']`). Every multi-study patient whose studies share
+# series NUMBERS found a stage where the derivations disagreed — 48912 (disk
+# path), 49836 (tab repoint), 50238 (DB pk) — and each got its own guard, until
+# NINE flags were answering ONE question. `PacsClient/utils/series_ref.py`
+# answers it once: a display key resolves to a frozen SeriesRef, and the stages
+# CONSUME it instead of deriving.
+#
+#   AIPACS_SERIESREF_SHADOW  P0 — build + compare against the legacy derivation and
+#                            log `[SERIESREF-SHADOW]` on disagreement. Consumes
+#                            nothing, so it CANNOT change what is displayed; it is the
+#                            regression oracle for every later phase (and, once the
+#                            phases are on, a permanent production record of how often
+#                            the OLD derivation would have been wrong).
+#   AIPACS_SERIESREF_DISK    P1 — the disk study_path / series number come from the ref.
+#   AIPACS_SERIESREF_DB      P2 — the DB study_pk comes from the ref: study_pk =
+#                            pk_of(ref.study_uid). That ONE rule satisfies BOTH polarities
+#                            that previously needed two opposing guards — a PLAIN key's
+#                            entry carries study_uid == primary (so it reads the PRIMARY
+#                            study's rows: the 50238 fix), an OFFSET key's carries its own
+#                            study (so a secondary reads ITS OWN rows: the 48101 fix) —
+#                            and it never consults tab state, so it cannot be poisoned.
+#
+# All default-ON with kill switches (=0 -> the legacy derivation, byte-identical).
+# The existing guards stay ON as DETECTORS: if the ref is right they are no-ops, and a
+# guard that fires after this ships means the ref is wrong. See
+# docs/plans/architecture/SERIES_IDENTITY_PIPELINE_UNIFICATION_2026-07-14.md
+_SERIESREF_SHADOW = (os.getenv("AIPACS_SERIESREF_SHADOW", "1") or "1").strip() != "0"
+_SERIESREF_DISK = (os.getenv("AIPACS_SERIESREF_DISK", "1") or "1").strip() != "0"
+_SERIESREF_DB = (os.getenv("AIPACS_SERIESREF_DB", "1") or "1").strip() != "0"
+
 
 def _merge_drag_view_intent(prev, series, want_notify, want_trigger):
     """Pure last-write-wins merge for drag view-intent coalescing (testable).
@@ -568,6 +601,44 @@ class _VCLoadMixin:
             except Exception:
                 ms_disk_series_number = series_number
 
+            # ── OPT-35 P0/P1: the ONE identity authority ──────────────────────
+            # Everything above is the LEGACY derivation (kept intact as the detector).
+            # Now resolve the SAME key through the single authority and (a) log any
+            # disagreement — the regression oracle — and (b) consume it for the disk
+            # location.
+            #
+            # SAFETY — only an AUTHORITATIVE ref may redirect the disk path. An 'entry'
+            # ref comes from the series' own _server_series_info entry (the same fields
+            # the legacy entry-authority reads, so this is behaviour-preserving where
+            # legacy already resolved, and it ADDS resolution where legacy fell through);
+            # a 'slot_fallback' ref recomputes an offset key from the STABLE slot order.
+            # A 'derived' ref (the ordinary SINGLE-study case) merely INFERS
+            # SOURCE_PATH/<primary>/<key>, which is WRONG for an externally-imported study
+            # whose folder lives outside SOURCE_PATH — so it is never acted on, and
+            # single-study tabs stay byte-identical.
+            _series_ref = self._resolve_series_ref(series_key)
+            self._log_seriesref_shadow(
+                _series_ref,
+                legacy_study_path=study_path,
+                legacy_series_number=ms_disk_series_number,
+                stage="disk",
+            )
+            if _SERIESREF_DISK and _series_ref is not None and _series_ref.is_authoritative:
+                if (str(study_path or '') != _series_ref.study_path
+                        or str(ms_disk_series_number) != str(_series_ref.series_number)):
+                    self._identity_log(
+                        "info",
+                        "[SERIESREF] key=%s -> study_path=%s disk_series=%s "
+                        "(authority source=%s slot=%s study_uid=%s) — was study_path=%s disk_series=%s",
+                        series_key, _series_ref.study_path, _series_ref.series_number,
+                        _series_ref.source, _series_ref.study_slot, _series_ref.study_uid,
+                        study_path, ms_disk_series_number,
+                    )
+                study_path = _series_ref.study_path
+                ms_disk_series_number = _series_ref.series_number
+                _ms_resolved = True
+                _ms_study_uid = _series_ref.study_uid or _ms_study_uid
+
             # Drag-drop / series-load resolution trace. OPT-IN (default OFF) —
             # enable with AIPACS_VIEWPORT_LOAD_TRACE=1 when investigating a
             # wrong-series load. The concise "[MULTI-STUDY LOAD] ... (entry-authority
@@ -840,6 +911,103 @@ class _VCLoadMixin:
                         "secondary study, NOT the primary, so DB metadata is the correct study",
                         series_key, _sec_pk, _ms_study_uid,
                     )
+            except Exception:
+                pass
+
+            # PRIMARY STUDY_PK GUARD (50238, 2026-07-14) — the DB-dimension twin of the
+            # tab study_path poison guard (49836). `_effective_study_pk` defaults to
+            # `metadata_fixed['study_pk']`, which is MUTABLE TAB STATE: it is (re)populated
+            # from whichever series' first instance happened to fill `metadata_fixed`, so a
+            # SECONDARY-study load can leave the tab carrying the SECONDARY study's pk. A
+            # later PRIMARY (plain-key) load then asks the DB for "series N of study
+            # <SECONDARY>" and, when the two studies share series NUMBERS, gets back the
+            # WRONG study's same-numbered series.
+            #
+            # Live proof (50238, both studies have series 2/3/4): bare key 3 fetched
+            # study 2's series 3 — `series_pk=15208 n30`, series_uid …302607 — while study
+            # 1's series 3 is 90 images, uid …107555. The disk path was resolved CORRECTLY
+            # (`[MULTI-STUDY LOAD] key=3 -> <study1>/3 slot=0`); only the DB study_pk was
+            # wrong. The viewport identity gate (fail-closed on series_uid) correctly refused
+            # to paint it -> series 3 and 4 blank on FIRST open. Reopening "fixed" it only
+            # because the tab state was rebuilt — not because the load was right.
+            #
+            # A plain (< 1_000_000) key ALWAYS belongs to the tab's PRIMARY study, so pin its
+            # study_pk to the PRIMARY study_uid's own pk instead of inheriting contaminated
+            # tab state. Fires only on a multi-study tab and only for plain keys, so
+            # single-study tabs and every secondary (offset-key) load are byte-identical.
+            # Fail-open: if the primary pk cannot be resolved, leave the value untouched.
+            # Kill switch: AIPACS_PRIMARY_STUDY_PK_GUARD=0 -> legacy (inherit tab state).
+            try:
+                if (os.getenv("AIPACS_PRIMARY_STUDY_PK_GUARD", "1") or "1").strip() != "0":
+                    _pk_guard_primary_uid = str(getattr(self.parent_widget, 'study_uid', '') or '').strip()
+                    _is_plain_key = False
+                    try:
+                        _is_plain_key = int(str(series_key)) < 1_000_000
+                    except Exception:
+                        _is_plain_key = False
+                    _pw_pk = self.parent_widget
+                    _multistudy_pk = (
+                        bool(getattr(_pw_pk, '_is_multistudy_hint', False))
+                        or len(getattr(_pw_pk, '_studies_series', {}) or {}) > 1
+                    )
+                    if _is_plain_key and _multistudy_pk and _pk_guard_primary_uid:
+                        _pri_pk = None
+                        try:
+                            _pk_cache3 = getattr(self, '_ms_study_pk_cache', None)
+                            if _pk_cache3 is None:
+                                _pk_cache3 = {}
+                                self._ms_study_pk_cache = _pk_cache3
+                            if _pk_guard_primary_uid in _pk_cache3:
+                                _pri_pk = _pk_cache3[_pk_guard_primary_uid]
+                            else:
+                                from PacsClient.utils import find_study_pk_with_study_uid
+                                _pri_pk = find_study_pk_with_study_uid(_pk_guard_primary_uid)
+                                _pk_cache3[_pk_guard_primary_uid] = _pri_pk
+                        except Exception:
+                            _pri_pk = None
+                        if _pri_pk and str(_pri_pk) != str(_effective_study_pk):
+                            logger.info(
+                                "[STUDY-PK-GUARD] key=%s primary study_pk=%s (was %s — tab state "
+                                "carried a NON-primary pk; would have read the wrong study's "
+                                "same-numbered series from the DB)",
+                                series_key, _pri_pk, _effective_study_pk,
+                            )
+                            _effective_study_pk = _pri_pk
+            except Exception:
+                pass
+
+            # ── OPT-35 P2: the DB study_pk comes from the AUTHORITY, not tab state ──
+            # THE RULE, and the whole point of the refactor:
+            #
+            #     study_pk = pk_of(ref.study_uid)
+            #
+            # `ref.study_uid` is the series' OWN study — a PLAIN key's entry carries
+            # study_uid == the primary (slot 0, offset 0), an OFFSET key's carries its own
+            # study — so this ONE rule satisfies BOTH polarities that previously needed two
+            # opposing guards (50238: a primary series must read the PRIMARY study's rows;
+            # 48101: a secondary series must read ITS OWN). It never reads
+            # `metadata_fixed['study_pk']`, so it cannot inherit a sibling load's pk.
+            #
+            # Runs AFTER the two legacy guards on purpose: they stay ON as DETECTORS, and
+            # if the authority is right they are no-ops. Any disagreement is logged loudly
+            # — that is the signal that retires them (plan §5). Multi-study gated +
+            # only overrides on a DEFINITE pk, so single-study is byte-identical and an
+            # unresolvable pk leaves the legacy decision (which already falls back to
+            # reading headers from the correctly-resolved disk path) untouched.
+            try:
+                if _SERIESREF_DB and _series_ref is not None and self._is_multistudy_tab():
+                    _ref_pk = self._study_pk_for_uid(_series_ref.study_uid)
+                    _series_ref = _series_ref.with_study_pk(_ref_pk)
+                    self._log_seriesref_shadow(
+                        _series_ref, legacy_study_pk=_effective_study_pk, stage="db",
+                    )
+                    if _ref_pk is not None and str(_ref_pk) != str(_effective_study_pk):
+                        logger.warning(
+                            "[SERIESREF-DB] key=%s study_pk=%s (was %s) study_uid=%s — the "
+                            "authority disagreed with the legacy derivation; the ref wins",
+                            series_key, _ref_pk, _effective_study_pk, _series_ref.study_uid,
+                        )
+                        _effective_study_pk = _ref_pk
             except Exception:
                 pass
 
@@ -2139,6 +2307,149 @@ class _VCLoadMixin:
             orig = str(ent_orig).strip() if ent_orig not in (None, '') else sn
             return study_uid, orig, ent_uid
         return primary_study, sn, None
+
+    # ── OPT-35: the ONE series-identity authority ─────────────────────────────
+    def _series_ref_table(self):
+        """The display_key -> SeriesRef table, rebuilt only when the series info changes.
+
+        Keyed on the identity of ``_server_series_info`` plus its size, so a merge (a
+        previous exam arriving, a study back-filled) rebuilds it while an ordinary load
+        pays only a dict lookup. This is what turns per-load identity resolution from a
+        re-computation (with ``exists()`` probes and a DB round-trip) into an O(1) lookup —
+        the "speed" half of the directive.
+        """
+        pw = getattr(self, 'parent_widget', None)
+        info = getattr(pw, '_server_series_info', None) or {}
+        stamp = (id(info), len(info), str(getattr(pw, 'study_uid', '') or ''))
+        cached = getattr(self, '_seriesref_table_cache', None)
+        if cached is not None and cached[0] == stamp:
+            return cached[1]
+        try:
+            from PacsClient.utils.series_ref import build_series_ref_table
+            from PacsClient.utils.config import SOURCE_PATH as _SRC
+            table = build_series_ref_table(
+                info, str(getattr(pw, 'study_uid', '') or ''), str(_SRC),
+            )
+        except Exception:
+            table = {}
+        self._seriesref_table_cache = (stamp, table)
+        return table
+
+    def _resolve_series_ref(self, series_key):
+        """Resolve a display key to its immutable :class:`SeriesRef`. Never raises.
+
+        Falls through the same tiers the legacy code learned to need (prebuilt table ->
+        live entry -> offset-key slot fallback -> derived), so nothing that used to resolve
+        stops resolving. A ``derived`` ref (the ordinary single-study case) infers its path
+        and is therefore NOT authoritative — callers must not act on its path.
+        """
+        pw = getattr(self, 'parent_widget', None)
+        try:
+            from PacsClient.utils.series_ref import resolve_series_ref
+            from PacsClient.utils.config import SOURCE_PATH as _SRC
+            return resolve_series_ref(
+                series_key,
+                self._series_ref_table(),
+                server_series_info=getattr(pw, '_server_series_info', {}) or {},
+                primary_study_uid=str(getattr(pw, 'study_uid', '') or ''),
+                source_root=str(_SRC),
+                studies_index=getattr(pw, '_studies_series', {}) or {},
+                slot_order=getattr(pw, '_multistudy_slot_order', None),
+            )
+        except Exception:
+            return None
+
+    def _study_pk_for_uid(self, study_uid):
+        """``pk_of(study_uid)`` with the existing per-widget cache. None when unresolvable.
+
+        THE rule that replaces both pk guards. It takes the series' OWN study uid — never
+        the tab's mutable ``metadata_fixed['study_pk']`` — so it cannot be poisoned by a
+        previous load of a sibling study.
+        """
+        uid = str(study_uid or '').strip()
+        if not uid:
+            return None
+        cache = getattr(self, '_ms_study_pk_cache', None)
+        if cache is None:
+            cache = {}
+            self._ms_study_pk_cache = cache
+        if uid in cache:
+            return cache[uid]
+        pk = None
+        try:
+            from PacsClient.utils import find_study_pk_with_study_uid
+            pk = find_study_pk_with_study_uid(uid)
+        except Exception:
+            pk = None
+        cache[uid] = pk
+        return pk
+
+    def _is_multistudy_tab(self) -> bool:
+        pw = getattr(self, 'parent_widget', None)
+        try:
+            return (
+                bool(getattr(pw, '_is_multistudy_hint', False))
+                or len(getattr(pw, '_studies_series', {}) or {}) > 1
+            )
+        except Exception:
+            return False
+
+    def _log_seriesref_shadow(self, ref, *, legacy_study_path=None,
+                              legacy_series_number=None, legacy_study_pk=None, stage=""):
+        """Compare the ref against the LEGACY derivation and log any disagreement.
+
+        THE REGRESSION ORACLE (plan §5). During P0 nothing consumes the ref, so a mismatch
+        means the TABLE is wrong — fix it before migrating a consumer. Once the phases are
+        on, the same line is a permanent record of how often the OLD derivation would have
+        been wrong. Never raises: a diagnostic must not be able to break a clinical load.
+        """
+        if not _SERIESREF_SHADOW or ref is None:
+            return
+        try:
+            from PacsClient.utils.series_ref import shadow_compare
+            result = shadow_compare(
+                ref,
+                legacy_study_path=legacy_study_path,
+                legacy_series_number=legacy_series_number,
+                legacy_study_pk=legacy_study_pk,
+            )
+            if result.get("mismatch"):
+                # WARNING + the viewer channel on purpose. `[MULTI-STUDY LOAD]` is a
+                # module-logger INFO and app.log has NOT reliably captured viewer-module
+                # INFO — which is exactly why the 49836 resolution trace was invisible and
+                # the bug had to be proven by reading SeriesInstanceUIDs off the DICOM.
+                # The oracle must never be the thing that is missing from the log.
+                self._identity_log(
+                    "warning",
+                    "[SERIESREF-SHADOW] mismatch stage=%s key=%s fields=%s source=%s "
+                    "study_uid=%s detail=%s",
+                    stage, ref.display_key, ",".join(result.get("fields") or []),
+                    ref.source, ref.study_uid, result.get("detail"),
+                )
+        except Exception:
+            pass
+
+    def _identity_log(self, level: str, msg: str, *args) -> None:
+        """Emit a series-identity trace on the VIEWER channel (viewer_diagnostics.log).
+
+        Identity traces that only reach the module logger have been lost before; every
+        OPT-35 signal the migration is verified by goes through here. Never raises.
+        """
+        try:
+            _log = getattr(self, 'logger', None) or logger
+            getattr(_log, level, _log.info)(
+                msg, *args,
+                extra={
+                    "component": "viewer",
+                    "function": "ViewerController.series_identity",
+                    "stage": "series_identity",
+                },
+            )
+        except Exception:
+            try:
+                getattr(logger, level, logger.info)(msg, *args)
+            except Exception:
+                pass
 
     def _view_intent_series_complete_on_disk(self, series_number) -> bool:
         """True when *series_number* already has ALL its expected images on disk, so a

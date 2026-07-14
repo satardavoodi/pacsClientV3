@@ -83,6 +83,11 @@ def _build_reporter():
         "requests": types.SimpleNamespace(post=_fake_post),
         "_to_str": lambda x: "" if x is None else str(x),
         "_get_requests_proxies": lambda: {},
+        # OPT-33 (2026-07-13): reporter() now passes timeout=_request_timeout() to
+        # requests.post — every outbound AI call must have one, or a half-open link
+        # hangs the ApiWorker thread forever. This stub namespace is a WHITELIST of
+        # the module globals reporter() really uses, so it has to track that.
+        "_request_timeout": lambda: (10.0, 180.0),
         "_log_usage_safe": lambda *a, **k: None,
         "_validate_report_json": lambda raw, mod: raw,
         "_VALIDATED_MODALITIES": {"mri", "ct", "mammography"},

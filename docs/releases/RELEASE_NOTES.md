@@ -1,8 +1,8 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.0 (2026-07-12)
-**Previous Stable:** v3.4.9 (2026-07-12)
-**Release Date:** 2026-07-12
+**Current Stable Version:** v3.5.1 (2026-07-13)
+**Previous Stable:** v3.5.0 (2026-07-12)
+**Release Date:** 2026-07-13
 **Branch:** beta-version
 
 ---

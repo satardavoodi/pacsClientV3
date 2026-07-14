@@ -131,13 +131,29 @@ def is_enabled() -> bool:
 
 
 def _derive_pacs_http_base() -> str:
-    """The PACS HTTP base ``http://{host}:8000`` derived from the reception host.
+    """The PACS HTTP base (``http://{host}:8000``) for the ACTIVE server profile.
 
-    Per ASSIGN_CLIENT_GUIDE_FA the assign REST API runs on the **PACS** host,
-    port **8000** — a different service from the RIS reception REST (:8080). This
-    is the same PACS server AI-PACS already reaches over the socket (:50052), so
-    we reuse its host and swap the port to 8000.
+    Per ASSIGN_CLIENT_GUIDE_FA the assign REST API runs on the **PACS** host, port
+    **8000** — a different service from the RIS reception REST (:8080).
+
+    2026-07-14: this used to derive the host from the **reception** base URL and
+    swap the port to 8000. That is wrong: reception and PACS are different
+    services and, at some centers, different machines (here the profile host is
+    ``192.168.2.222`` while reception is the port-forwarded ``81.16.117.196`` —
+    both answered, so the defect was latent). The PACS HTTP service lives on the
+    SAME host the imaging socket talks to, i.e. the ACTIVE SERVER PROFILE's host,
+    which is what Server Settings configures. Per-profile ``pacs_http`` slot wins.
+    Never returns a hard-coded address.
     """
+    try:
+        from PacsClient.utils.server_profiles import active_pacs_http_base
+
+        base = active_pacs_http_base()
+        if base:
+            return base.rstrip("/")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("[ino-assignment] profile PACS base unavailable: %s", exc)
+    # Legacy fallback ONLY (no profile configured at all): the reception host.
     try:
         from urllib.parse import urlparse
 

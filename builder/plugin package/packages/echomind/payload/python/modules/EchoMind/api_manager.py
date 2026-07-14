@@ -102,6 +102,15 @@ CENTERS: List[CenterRecord] = [
             "Ai-Pacs/Fazel20260522*#",
         ],
     ),    
+    # ---------- TEST ----------
+    CenterRecord(
+        center_code="TEST",
+        center_display="Test Center",
+        gapgpt_key="sk-Bhs8WJthiuEtybwnRuuXoeG4ZjqsBtP7HSTFvhH2Orf3uumI",
+        irannobat_keys=[
+            "Ai-Pacs/TestKey123",
+        ],
+    ),   
 ]
 
 def _normalize_key(k: str) -> str:

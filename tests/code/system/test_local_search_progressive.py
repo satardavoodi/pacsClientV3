@@ -188,8 +188,21 @@ def test_table_has_progressive_api_and_clear_resets():
     assert "def load_progressive" in body
     assert "def _progressive_render_next" in body
     assert "def _on_progressive_scroll" in body
-    # clear_table resets the buffer so a stale scroll can't render old rows
-    ct = body[body.index("def clear_table"):body.index("def clear_table") + 700]
+    # clear_table resets the buffer so a stale scroll can't render old rows.
+    # (2026-07-13: extract the REAL function body via ast rather than a fixed
+    # 700-char window — clear_table gained the FIX-3 crash-guard docstring, and a
+    # byte-window pin silently starts testing the wrong text once the function is
+    # documented. Same assertions, exact scope.)
+    import ast
+
+    _src_full = _TABLE.read_text(encoding="utf-8", errors="ignore")
+    _tree = ast.parse(_src_full)
+    ct = ""
+    for _node in ast.walk(_tree):
+        if isinstance(_node, ast.FunctionDef) and _node.name == "clear_table":
+            ct = _no_comments(ast.get_source_segment(_src_full, _node) or "")
+            break
+    assert ct, "clear_table not found"
     assert "_prog_items = []" in ct and "_prog_total = 0" in ct
 
 

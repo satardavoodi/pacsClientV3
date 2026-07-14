@@ -37,8 +37,20 @@ def _defaults() -> Dict[str, Any]:
         "prompt_secretary_action": "",
         "prompt_transcript_cleanup": "",
         "prompt_image_artifact": "",
-        "secretary_stt_provider": "native",  # native | v2t
+        "secretary_stt_provider": "native",  # LEGACY route: native | v2t | openai
         "secretary_stt_fallback": True,
+        # ── Voice-to-Text (SHARED by EchoMind chat + Secretary EchoMind) ──────
+        # Single source of truth for where a recorded voice file is sent.
+        #   stt_provider : aipacs_1 | aipacs_2 | v2t | openai | custom
+        #                  "" (default) = derive from the legacy
+        #                  secretary_stt_provider, so an existing install keeps
+        #                  its exact current behaviour.
+        "stt_provider": "",
+        "stt_custom_base_url": "",      # custom only, e.g. http://10.0.0.5
+        "stt_custom_port": 0,           # custom only, 0 = port is part of the URL
+        "stt_endpoint_path": "/generate_transcript",
+        "stt_timeout_seconds": 360,
+        "stt_auth_token": "",           # optional; falls back to the GapGPT key
         "connection_type": "direct",  # direct | socks5
         "proxy_port": 2080,
     }
@@ -191,13 +203,123 @@ def save_prompt_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     return save_settings(normalized)
 
 
-def get_secretary_stt_route() -> str:
-    route = str(load_settings().get("secretary_stt_provider") or "native").strip().lower()
-    if route == "v2t":
+# ── Voice-to-Text: the ONE provider selection, shared by both modules ────────
+#
+# Settings ▸ EchoMind ▸ Voice to Text is the single source of truth for where a
+# recorded voice file is sent. Before this, the EchoMind chat POSTed to a
+# hard-coded ``{AI_BASE}/generate_transcript`` and ignored this setting entirely,
+# while Secretary read it but only as a 3-way provider route with no endpoint.
+STT_PROVIDER_AIPACS_1 = "aipacs_1"   # AI-PACS Server 1 (A100 GPU)
+STT_PROVIDER_AIPACS_2 = "aipacs_2"   # AI-PACS Server 2 (Windows)
+STT_PROVIDER_GOOGLE = "v2t"          # Google Speech (local library, no endpoint)
+STT_PROVIDER_OPENAI = "openai"       # OpenAI transcription (own base_url)
+STT_PROVIDER_CUSTOM = "custom"       # user-entered server
+
+STT_PROVIDERS = (
+    STT_PROVIDER_AIPACS_1,
+    STT_PROVIDER_AIPACS_2,
+    STT_PROVIDER_GOOGLE,
+    STT_PROVIDER_OPENAI,
+    STT_PROVIDER_CUSTOM,
+)
+
+#: Providers whose voice file is uploaded to an AI-PACS/Whisper HTTP endpoint.
+STT_HTTP_PROVIDERS = (STT_PROVIDER_AIPACS_1, STT_PROVIDER_AIPACS_2, STT_PROVIDER_CUSTOM)
+
+#: Legacy ``secretary_stt_provider`` -> unified ``stt_provider``.
+#: "native" meant the hard-coded ``AI_BASE`` = the WINDOWS server, i.e. Server 2 —
+#: so an install that never touches the new setting behaves EXACTLY as before.
+_LEGACY_ROUTE_TO_PROVIDER = {
+    "native": STT_PROVIDER_AIPACS_2,
+    "v2t": STT_PROVIDER_GOOGLE,
+    "openai": STT_PROVIDER_OPENAI,
+}
+
+
+def normalize_stt_provider(value: Any) -> str:
+    v = str(value or "").strip().lower()
+    if v in STT_PROVIDERS:
+        return v
+    return _LEGACY_ROUTE_TO_PROVIDER.get(v, STT_PROVIDER_AIPACS_2)
+
+
+def get_stt_provider() -> str:
+    """The selected Voice-to-Text provider (unified, 5-way)."""
+    settings = load_settings()
+    explicit = str(settings.get("stt_provider") or "").strip().lower()
+    if explicit:
+        return normalize_stt_provider(explicit)
+    # Not configured yet -> derive from the legacy route (back-compat).
+    return normalize_stt_provider(settings.get("secretary_stt_provider"))
+
+
+def get_stt_settings() -> Dict[str, Any]:
+    """Everything the shared VoiceTranscriptionService needs. Never raises."""
+    settings = load_settings()
+
+    def _as_int(name: str, default: int) -> int:
+        try:
+            return int(settings.get(name, default) or default)
+        except Exception:
+            return default
+
+    return {
+        "provider": get_stt_provider(),
+        "custom_base_url": str(settings.get("stt_custom_base_url") or "").strip(),
+        "custom_port": max(0, _as_int("stt_custom_port", 0)),
+        "endpoint_path": (
+            str(settings.get("stt_endpoint_path") or "").strip() or "/generate_transcript"
+        ),
+        "timeout_seconds": max(5, _as_int("stt_timeout_seconds", 360)),
+        "auth_token": str(settings.get("stt_auth_token") or "").strip(),
+    }
+
+
+def save_stt_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
+    patch = patch or {}
+    provider = normalize_stt_provider(patch.get("provider"))
+    try:
+        port = max(0, int(patch.get("custom_port", 0) or 0))
+    except Exception:
+        port = 0
+    try:
+        timeout = max(5, int(patch.get("timeout_seconds", 360) or 360))
+    except Exception:
+        timeout = 360
+    normalized = {
+        "stt_provider": provider,
+        "stt_custom_base_url": str(patch.get("custom_base_url") or "").strip(),
+        "stt_custom_port": port,
+        "stt_endpoint_path": (
+            str(patch.get("endpoint_path") or "").strip() or "/generate_transcript"
+        ),
+        "stt_timeout_seconds": timeout,
+        "stt_auth_token": str(patch.get("auth_token") or "").strip(),
+        # Keep the LEGACY key in lock-step so any code still reading
+        # secretary_stt_provider (and SttRouter, which is 3-way) stays correct.
+        "secretary_stt_provider": stt_provider_to_legacy_route(provider),
+    }
+    return save_settings(normalized)
+
+
+def stt_provider_to_legacy_route(provider: str) -> str:
+    """Map the 5-way provider onto the 3-way ``SttRouter`` route.
+
+    Every HTTP provider (both AI-PACS servers and a custom server) is the
+    "native" route — the router picks NativeIrannobatProvider, which now resolves
+    its endpoint from these settings instead of a hard-coded URL.
+    """
+    p = normalize_stt_provider(provider)
+    if p == STT_PROVIDER_GOOGLE:
         return "v2t"
-    if route == "openai":
+    if p == STT_PROVIDER_OPENAI:
         return "openai"
     return "native"
+
+
+def get_secretary_stt_route() -> str:
+    """The 3-way route for ``SttRouter`` — derived from the unified provider."""
+    return stt_provider_to_legacy_route(get_stt_provider())
 
 
 def set_secretary_stt_route(route: str) -> Dict[str, Any]:

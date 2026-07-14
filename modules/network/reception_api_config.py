@@ -17,11 +17,16 @@ Resolution precedence for the Reception/API base URL:
 
 1. Environment override ``AIPACS_RECEPTION_BASE_URL`` / ``RECEPTION_API_BASE_URL``
    (kept for backwards compatibility with existing deployments / CI).
-2. Configured value from ``config/reception_api_config.json``
+2. The ACTIVE SERVER PROFILE's ``reception_api`` slot (Settings > Server Settings).
+3. Configured value from ``config/reception_api_config.json``
    (explicit ``reception_api_base_url`` field, else composed
    ``scheme://host:port``).
-3. Hard-coded default ``http://81.16.117.196:8080`` (so existing
-   installations with no config file keep working unchanged).
+4. **Derived from the active server profile's host** + the configured port.
+
+There is deliberately NO hard-coded default (2026-07-14). It used to be the
+developer center's address, which shipped in every build — so a center that had
+not configured reception silently queried OUR server. An unconfigured install now
+resolves to "" and the caller surfaces that.
 
 Authentication note: the Reception/API uses the SAME logged-in user
 credentials/token as the PACS socket channel. Callers that need auth should
@@ -46,9 +51,18 @@ except Exception:  # pragma: no cover - extremely defensive
 # Defaults
 # ---------------------------------------------------------------------------
 _DEFAULT_SCHEME = "http"
-_DEFAULT_HOST = "81.16.117.196"
-_DEFAULT_PORT = 8080
-_DEFAULT_BASE_URL = f"{_DEFAULT_SCHEME}://{_DEFAULT_HOST}:{_DEFAULT_PORT}"
+# NO hard-coded host (2026-07-14). This used to be the DEVELOPER center's address
+# ("81.16.117.196"), baked into source — so it shipped to every customer as the
+# fallback and, at a center that had not filled in the reception config, the
+# workstation quietly queried OUR center's reception API. The build sanitizer only
+# cleans ``config/``, never source, so it could not catch this.
+#
+# The host now comes from the ACTIVE SERVER PROFILE (Server Settings) — the one
+# place a center configures its server. An unconfigured install resolves to "" and
+# callers surface that, instead of silently talking to someone else's server.
+_DEFAULT_HOST = ""
+_DEFAULT_PORT = 8080          # product default port, not center-specific
+_DEFAULT_BASE_URL = ""        # never a hard-coded address
 _DEFAULT_TIMEOUT = 8
 
 # Environment override keys (highest precedence). These already existed in the
@@ -133,11 +147,14 @@ class ReceptionApiConfig:
         self.config[key] = value
 
     def get_base_url(self) -> str:
-        """Return the configured Reception/API base URL (no trailing slash).
+        """Return the CONFIGURED Reception/API base URL, or "" when unset.
 
-        The explicit ``reception_api_base_url`` field wins. When it is blank
-        the URL is composed from ``scheme``/``host``/``port``. If the host
-        field itself contains a scheme it is accepted as a full URL.
+        The explicit ``reception_api_base_url`` field wins. When it is blank the
+        URL is composed from ``scheme``/``host``/``port``. If the host field itself
+        contains a scheme it is accepted as a full URL.
+
+        Returns "" when no host is configured — the caller then resolves the host
+        from the active server profile. It must NEVER invent an address.
         """
         explicit = str(self.get("reception_api_base_url", "") or "").strip()
         if explicit:
@@ -145,8 +162,9 @@ class ReceptionApiConfig:
 
         scheme = str(self.get("reception_api_scheme", _DEFAULT_SCHEME) or _DEFAULT_SCHEME).strip()
         scheme = scheme or _DEFAULT_SCHEME
-        host = str(self.get("reception_api_host", _DEFAULT_HOST) or _DEFAULT_HOST).strip()
-        host = host or _DEFAULT_HOST
+        host = str(self.get("reception_api_host", "") or "").strip()
+        if not host:
+            return ""   # unconfigured → the profile decides, not a baked-in IP
 
         port_raw = self.get("reception_api_port", _DEFAULT_PORT)
         try:
@@ -158,6 +176,14 @@ class ReceptionApiConfig:
             # User pasted a full URL into the host field - accept gracefully.
             return host.rstrip("/")
         return f"{scheme}://{host}:{port}".rstrip("/")
+
+    def get_port(self) -> int:
+        """The configured reception port (used when deriving from the profile host)."""
+        try:
+            port = int(self.get("reception_api_port", _DEFAULT_PORT))
+            return port if 1 <= port <= 65535 else _DEFAULT_PORT
+        except Exception:
+            return _DEFAULT_PORT
 
     def get_request_timeout(self) -> int:
         timeout = self.get("request_timeout", _DEFAULT_TIMEOUT)
@@ -215,10 +241,17 @@ def reload_reception_api_config() -> ReceptionApiConfig:
 
 
 def get_reception_api_base_url() -> str:
-    """Resolve the Reception/Workflow API base URL for REST callers.
+    """Resolve the Reception/Workflow API base URL for the CURRENT center.
 
-    Precedence: environment override -> config file -> hard-coded default.
-    Always returns a non-empty string with no trailing slash.
+    Precedence:
+      1. environment override (existing deployments / CI),
+      2. the active server profile's ``reception_api`` slot,
+      3. the explicit ``config/reception_api_config.json`` value,
+      4. **derived from the active server profile's host** + the configured port.
+
+    Returns "" when nothing is configured. It NEVER falls back to a hard-coded
+    address — that fallback used to be the developer center's IP, which shipped in
+    every build and made an unconfigured center query OUR reception API.
     """
     # 1) Environment override (existing deployments / CI).
     for key in _ENV_OVERRIDE_KEYS:
@@ -227,8 +260,7 @@ def get_reception_api_base_url() -> str:
             return value.rstrip("/")
 
     # 2) Active server profile (multi-server): the Reception / Workflow API
-    #    follows the active center when profiles are enabled and the slot is
-    #    configured. Falls through to the shared config file when off / unset.
+    #    follows the active center when the slot is configured.
     try:
         from PacsClient.utils.server_profiles import active_module_endpoint
 
@@ -242,16 +274,33 @@ def get_reception_api_base_url() -> str:
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("Per-profile reception endpoint unavailable: %s", exc)
 
-    # 3) Configured value.
+    # 3) Explicitly configured value.
+    port = _DEFAULT_PORT
     try:
-        configured = get_reception_api_config().get_base_url()
+        cfg = get_reception_api_config()
+        configured = cfg.get_base_url()
         if configured:
             return configured
+        port = cfg.get_port()
     except Exception as exc:  # pragma: no cover - defensive
-        logger.warning("Reception API config unavailable, using default: %s", exc)
+        logger.warning("Reception API config unavailable: %s", exc)
 
-    # 4) Hard-coded default.
-    return _DEFAULT_BASE_URL
+    # 4) Derive from the ACTIVE SERVER PROFILE's host (Server Settings). This is
+    #    what a freshly-installed center gets: its own server, never ours.
+    try:
+        from PacsClient.utils.server_profiles import active_reception_base
+
+        derived = active_reception_base(port)
+        if derived:
+            return derived.rstrip("/")
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("Profile-derived reception base unavailable: %s", exc)
+
+    logger.warning(
+        "No Reception/Workflow API configured for this center — set the server in "
+        "Settings > Server Settings (Reception API endpoint)."
+    )
+    return ""
 
 
 def get_reception_api_timeout() -> int:

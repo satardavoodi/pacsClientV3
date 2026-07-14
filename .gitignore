@@ -101,3 +101,14 @@ builder/plugin package/packages/run_cd/payload/python/modules/cd_burner/lightVie
 .tmp_diff*
 .tmp_backup_extract/
 _recovery/
+
+# -- Machine-generated hardware probe (must NEVER ship - would copy the dev box's GPU results) --
+config/hardware_check.json
+
+# -- Agent/test scratch output --
+.playwright-mcp/
+pytest_out.txt
+generated-files/*.txt
+generated-files/*.log
+generated-files/*.err
+tools/testing/aipacs_control_mcp/clinical_validation_runs/

@@ -111,6 +111,44 @@ def test_dev_leftovers_and_secrets_are_excluded_from_the_package():
         assert not [p for p in staged if p.endswith(".gitignore")]
         assert not [p for p in staged if "secrets/" in p], "secrets must never ship"
         assert not [p for p in staged if p.endswith(".local.json")], "dev overrides must not ship"
+        # OPT-21: machine-generated state, not a template. A persisted PASS is
+        # trusted with ZERO probing, so shipping the dev box's result would make a
+        # client with a weak OpenGL driver SKIP its own pre-flight and walk into
+        # the native MPR crash the probe exists to prevent.
+        assert "hardware_check.json" not in staged, (
+            "hardware_check.json is per-INSTALL machine state and must never ship"
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_production_build_ships_an_EMPTY_server_configuration():
+    """Every client centre must configure its own servers after installation —
+    the build carries no server list, no host, no AI/reception endpoint."""
+    tmp = tempfile.mkdtemp(prefix="cfgsrv_")
+    try:
+        build_clean_config_tree(_CONFIG, tmp)
+
+        def _load(rel):
+            p = os.path.join(tmp, rel)
+            return json.loads(open(p, encoding="utf-8").read()) if os.path.exists(p) else None
+
+        assert _load("servers.json") == [], "the DICOM server list must ship empty"
+
+        profiles = _load("server_profiles.json") or {}
+        assert profiles.get("profiles") == [], "no server profile may ship"
+        assert not profiles.get("active_profile_id")
+        assert not profiles.get("primary_profile_id")
+
+        assert not (_load("socket_config.json") or {}).get("socket_host")
+        assert not any((_load("servers_address.json") or {}).get("services", {}).values())
+
+        reception = _load("reception_api_config.json") or {}
+        assert not reception.get("reception_api_base_url")
+        assert not reception.get("reception_api_host")
+
+        assert (_load("external_pacs_servers.json") or {}).get("servers") == []
+        assert (_load("offline_cloud_servers.json") or {}).get("servers") == []
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

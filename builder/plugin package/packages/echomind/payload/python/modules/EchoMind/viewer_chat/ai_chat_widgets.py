@@ -1363,19 +1363,14 @@ class UnifiedComposer(QWidget):
         self._echo_voice_contrast = str(
             os.environ.get("AIPACS_ECHO_VOICE_CONTRAST", "1")
         ).strip().lower() not in ("0", "false", "no", "off")
-        if self._echo_voice_contrast:
-            self.attach_frame.setStyleSheet(f"""
-                QFrame#chip {{
-                    background: {CLR_BG_PANEL};
-                    border: 1px solid {CLR_BORDER};
-                    border-radius: 12px;
-                    margin-bottom: 6px;
-                }}
-            """)
-        else:
-            self.attach_frame.setStyleSheet("""
-                QFrame#chip { background: transparent; border: none; margin-bottom: 6px; }
-            """)
+        # The OUTER container is deliberately chrome-less (2026-07-09, per design):
+        # no "Attachments" title and no outer frame — ONLY the inner voice chip
+        # draws a box. It must still be fully OPAQUE though (see the opacity effect
+        # below): the old 0.60 opacity + WA_TranslucentBackground made the chip's
+        # colours depend on the backdrop and the OS light/dark theme.
+        self.attach_frame.setStyleSheet("""
+            QFrame#chip { background: transparent; border: none; margin-bottom: 6px; }
+        """)
         # سازگاری با ارجاعات قدیمی
         self.lbl_file = QLabel("")
         self.btn_chip_x = QPushButton("✕", self.attach_frame)
@@ -3681,12 +3676,11 @@ class UnifiedComposer(QWidget):
         from PySide6.QtCore import Qt
 
         col = QVBoxLayout(self.attach_frame)
-        col.setContentsMargins(8, 0, 8, 0)
-        col.setSpacing(6)
+        col.setContentsMargins(0, 0, 0, 0)
+        col.setSpacing(0)
 
-        title = QLabel("Attachments")
-        title.setStyleSheet("color:#cfcfcf; font-weight:700; letter-spacing:.2px;")
-        col.addWidget(title, 0, Qt.AlignLeft | Qt.AlignVCenter)
+        # No "Attachments" title and no outer frame — the compact voice chip is the
+        # only chrome (see the attach_frame stylesheet). Removed 2026-07-09.
 
         self._chips_scroll = QScrollArea(self.attach_frame)
         self._chips_scroll.setWidgetResizable(True)
@@ -4326,15 +4320,28 @@ class UnifiedComposer(QWidget):
         self._apply_mic_mode("confirm")  # shows pause/confirm/cancel, hides mic
         self._apply_pause_icon(False)     # ✅ set to Pause icon
         self._rec_timer.start(100)
+        # Keep a REFERENCE to the stream (2026-07-12). Previously the stream only
+        # existed inside the worker's `with` block, so the ONLY way to close it was
+        # to wait for that loop to exit. cleanup() can now abort/close it directly
+        # and deterministically, which is what unregisters the PortAudio callback.
+        self._rec_stream = None
+
         def worker():
             try:
-                with sd.InputStream(samplerate=self._rec_fs, channels=1, dtype='int16', callback=self._rec_callback):
+                stream = sd.InputStream(
+                    samplerate=self._rec_fs, channels=1, dtype='int16',
+                    callback=self._rec_callback,
+                )
+                self._rec_stream = stream
+                with stream:
                     while self._rec_running:
                         sd.sleep(100)
             except Exception:
                 self._rec_running = False
                 self._apply_mic_mode("record")
                 self._restore_mic_after_record()
+            finally:
+                self._rec_stream = None
         self._rec_thread = threading.Thread(target=worker, daemon=True)
         self._rec_thread.start()
 
@@ -4416,6 +4423,104 @@ class UnifiedComposer(QWidget):
         self.btn_pause.setVisible(False)
         self.btn_confirm_rec.setVisible(False)
         self.btn_cancel.setVisible(False)
+
+    # ------------------------------------------------------------------
+    # Deterministic teardown (CRASH FIX 2026-07-12)
+    # ------------------------------------------------------------------
+    def cleanup(self):
+        """Stop every NATIVE audio/media resource BEFORE this widget is destroyed.
+
+        Closing the EchoMind window while a recording / transcription was in flight
+        crashed the whole app:
+
+            native_fault.log 2026-07-12T18:17 —
+            "Windows fatal exception: access violation"
+            Current thread ... <no Python frame>      (a pure NATIVE thread)
+            Thread ... in threading._shutdown / _python_exit
+
+        Root cause: ``AIChatViewer`` is a top-level window with
+        ``WA_DeleteOnClose``, so closing it destroys this widget tree IMMEDIATELY —
+        but ``sd.InputStream(..., callback=self._rec_callback)`` had handed
+        PortAudio a BOUND METHOD of this widget. PortAudio kept invoking it from
+        its own native audio thread after Qt had freed the C++ object → write to
+        freed memory. Same hazard for QMediaPlayer (Qt Multimedia native threads).
+
+        This must be idempotent and must never raise — it runs on the close path.
+        """
+        import logging as _log
+        _lg = _log.getLogger("echomind.teardown")
+        if getattr(self, "_cleaned_up", False):
+            _lg.info("[ECHO-TEARDOWN] composer.cleanup already done — skip")
+            return
+        self._cleaned_up = True
+        _lg.info(
+            "[ECHO-TEARDOWN] composer.cleanup START rec_running=%s stream=%s thread_alive=%s",
+            getattr(self, "_rec_running", None),
+            getattr(self, "_rec_stream", None) is not None,
+            bool(getattr(self, "_rec_thread", None) and self._rec_thread.is_alive()),
+        )
+
+        # 1) Signal the loop to stop and stop the UI tick.
+        self._rec_running = False
+        self._rec_paused = False
+        try:
+            self._rec_timer.stop()
+        except Exception:
+            pass
+
+        # 2) ABORT the PortAudio stream DIRECTLY. This is what unregisters the
+        #    callback; do it here rather than waiting for the worker to exit its
+        #    `with` block (that could out-live this widget).
+        st = getattr(self, "_rec_stream", None)
+        if st is not None:
+            try:
+                st.abort(ignore_errors=True)
+            except Exception:
+                pass
+            try:
+                st.close(ignore_errors=True)
+            except Exception:
+                pass
+            self._rec_stream = None
+            _lg.info("[ECHO-TEARDOWN] portaudio stream aborted+closed")
+
+        # 3) Join the worker briefly (it should now fall out immediately).
+        th = getattr(self, "_rec_thread", None)
+        if th is not None:
+            try:
+                if th.is_alive():
+                    th.join(timeout=2.0)
+                    _lg.info("[ECHO-TEARDOWN] rec thread joined alive=%s", th.is_alive())
+            except Exception:
+                pass
+        self._rec_thread = None
+
+        try:
+            sd.stop()  # belt-and-braces: release the device
+        except Exception:
+            pass
+
+        # 4) Release Qt Multimedia. A QMediaPlayer/QAudioOutput destroyed while
+        #    still active tears down on its NATIVE backend thread -> access
+        #    violation. Stop, detach the source AND drop the audio output.
+        for _p in ("_chip_player", "player"):
+            pl = getattr(self, _p, None)
+            if pl is None:
+                continue
+            try:
+                pl.stop()
+                pl.setSource(QUrl())
+                pl.setAudioOutput(None)
+            except Exception:
+                pass
+        _lg.info("[ECHO-TEARDOWN] composer.cleanup DONE")
+
+    def closeEvent(self, e):
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+        super().closeEvent(e)
 
     # ---------- payload ----------
     def _payload_from_path(self, path: str) -> t.Optional[dict]:

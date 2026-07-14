@@ -121,7 +121,12 @@ def test_every_config_template_is_seed_reachable(tmp_path):
     for rel in _repo_config_files():
         rel_posix = rel.as_posix()
         skipped = (
-            any(part in release_gate.CONFIG_SEED_SKIP_DIRNAMES for part in rel.parts[:-1])
+            # Mirror iter_seedable_config_templates' own backup/editor-artifact
+            # rule (e.g. identity/aipacs_web.json.bak-20260613) — otherwise a
+            # stray .bak in config/ fails this guard for no real reason.
+            rel.name.endswith((".bak", ".orig", ".tmp"))
+            or ".bak-" in rel.name
+            or any(part in release_gate.CONFIG_SEED_SKIP_DIRNAMES for part in rel.parts[:-1])
             or rel.name in release_gate.CONFIG_SEED_SKIP_FILENAMES
             or (len(rel.parts) == 1 and rel.name in release_gate.CONFIG_TEMPLATE_EXCLUDES)
         )

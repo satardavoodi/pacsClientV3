@@ -110,9 +110,18 @@ CONFIG_SEED_SKIP_FILENAMES = frozenset(
 #       WriteInstallationProfile() writes the real one to
 #       %PROGRAMDATA%\AIPacs\config; the repo copy is only the dev-mode default
 #       and seed_user_config_defaults() skips it by name.
+#   hardware_check.json — per-INSTALL machine state (OPT-21), not a template.
+#       It records THIS machine's OpenGL/GPU/CPU/RAM probe. A persisted PASS is
+#       trusted with ZERO re-probing, so seeding the developer's result would make
+#       a client with a weak driver skip its own MPR pre-flight. The pre-flight
+#       writes it on first run; the build must never carry one
+#       (builder/config_sanitizer.py EXCLUDE_NAMES).
 # Everything else under config/ (including identity/google_oauth.json — the
 # OAuth client template MUST ship) is expected to seed.
-CONFIG_TEMPLATE_EXCLUDES = frozenset({"installation_profile.json"})
+CONFIG_TEMPLATE_EXCLUDES = frozenset({
+    "installation_profile.json",
+    "hardware_check.json",
+})
 
 
 def iter_seedable_config_templates(repo_root: Path | None = None) -> list[Path]:
@@ -127,6 +136,9 @@ def iter_seedable_config_templates(repo_root: Path | None = None) -> list[Path]:
         if not path.is_file():
             continue
         rel = path.relative_to(root)
+        # Backup/editor artifacts are not part of the shipped config template set.
+        if rel.name.endswith((".bak", ".orig", ".tmp")) or ".bak-" in rel.name:
+            continue
         if any(part in CONFIG_SEED_SKIP_DIRNAMES for part in rel.parts[:-1]):
             continue
         if rel.name in CONFIG_SEED_SKIP_FILENAMES:

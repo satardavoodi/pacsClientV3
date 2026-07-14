@@ -96,33 +96,50 @@ def _log_usage_for_ui(api_key: str | None, usage: dict | None) -> None:
 
 
 def _transcribe_with_active_backend(paths: list[str], quality_mode: str = "clear") -> dict:
-    if get_llm_backend() == "openai":
-        return SttRouter().transcribe_files(paths, route="openai", fallback=False, quality_mode=quality_mode)
+    """Transcribe via the provider configured in Settings ▸ EchoMind ▸ Voice to Text.
 
-    files = []
+    (Historically this hard-coded a POST to ``{AI_BASE}/generate_transcript`` for the
+    "company" backend. The endpoint now lives in Settings — see
+    ``modules/EchoMind/voice_transcription.py``.)
+    """
+    from modules.EchoMind.voice_transcription import VoiceTranscriptionService
+
+    return VoiceTranscriptionService().transcribe(paths, quality_mode=quality_mode)
+
+
+# ── In-flight ApiWorker QThreads that must OUTLIVE their page ────────────────
+# THE close-while-transcribing CRASH (2026-07-12).
+#
+# ApiWorker is a **QThread** (ai_chat_api.py:64) and is created with
+# ``parent=<the page>``. The EchoMind window is ``WA_DeleteOnClose``, so closing it
+# deletes the page — and Qt deletes the page's children with it, including that
+# QThread. If a request (transcription!) is still running, Qt aborts the WHOLE
+# process:
+#
+#     QThread: Destroyed while thread is still running   ->  qFatal -> abort()
+#
+# abort() gives NO Python traceback and NO faulthandler entry — app.log simply
+# STOPS. That is exactly what the logs show: at 2026-07-12 23:47:01 the teardown
+# logged "page teardown DONE" and the log ends on the very next line. It only ever
+# happens while a request is in flight, i.e. while transcribing.
+#
+# We cannot just wait for the worker (the HTTP call can take minutes and would
+# freeze the GUI). Instead we DETACH it on teardown: disconnect its signals so its
+# result can never reach the dying page, reparent it to None so Qt will NOT delete
+# it, and hold a reference here until it finishes and deletes itself.
+_ORPHANED_WORKERS: list = []
+
+
+def _release_orphan_worker(w) -> None:
+    """A detached worker finished on its own — drop our ref and let Qt free it."""
     try:
-        for p in paths:
-            if not (p and os.path.exists(p)):
-                continue
-            files.append(("audio_files", open(p, "rb")))
-        if not files:
-            raise Exception("No valid audio files to upload.")
-        m = Manage.instance()
-        if not m.is_validated():
-            raise RuntimeError("❌ API key is not set. Please enter it on the login page.")
-        info = m.ensure_detected()
-        gapgpt_key = (info.gapgpt_key or "").strip()
-        headers = {"Authorization": f"Bearer {gapgpt_key}"} if gapgpt_key else {}
-        data = {"quality_mode": quality_mode}
-        r = requests.post(URL_GEN_TRANSCRIPT, files=files, data=data, headers=headers, timeout=360)
-        r.raise_for_status()
-        return r.json()
-    finally:
-        for _, fh in files:
-            try:
-                fh.close()
-            except Exception:
-                pass
+        _ORPHANED_WORKERS.remove(w)
+    except Exception:
+        pass
+    try:
+        w.deleteLater()
+    except Exception:
+        pass
 
 
 class _ReceptionIdDialog(QDialog):
@@ -2554,30 +2571,22 @@ class OneChatPage(QWidget):
                 pass
 
         def work():
-            files = []
-            try:
-                for p in file_paths:
-                    if not (p and os.path.exists(p)):
-                        continue
-                    files.append(("audio_files", open(p, "rb")))
-                if not files:
-                    raise Exception("No valid audio files to upload.")
-                m = Manage.instance()
-                if not m.is_validated():
-                    raise RuntimeError("❌ API key is not set. Please enter it on the login page.")
-                info = m.ensure_detected()
-                gapgpt_key = (info.gapgpt_key or "").strip()
-                headers = {"Authorization": f"Bearer {gapgpt_key}"} if gapgpt_key else {}
-                data = {"quality_mode": getattr(self.composer, "_transcribe_quality_mode", "clear")}
-                r = requests.post(URL_GEN_TRANSCRIPT, files=files, data=data, headers=headers, timeout=360)
-                r.raise_for_status()
-                return r.json()
-            finally:
-                for _, fh in files:
-                    try:
-                        fh.close()
-                    except Exception:
-                        pass
+            # Queued/multi-file voice upload. Same change as _transcribe_now: the
+            # destination comes from Settings ▸ EchoMind ▸ Voice to Text via the
+            # shared service, never from the hard-coded URL_GEN_TRANSCRIPT constant.
+            from modules.EchoMind.voice_transcription import VoiceTranscriptionService
+
+            valid = [p for p in (file_paths or []) if p and os.path.exists(p)]
+            if not valid:
+                raise Exception("No valid audio files to upload.")
+            resp = VoiceTranscriptionService().transcribe(
+                valid,
+                quality_mode=getattr(self.composer, "_transcribe_quality_mode", "clear"),
+            )
+            if not resp.get("ok", True) and not str(resp.get("transcript") or "").strip():
+                raise Exception(str(resp.get("error") or "Transcription failed."))
+            return resp
+
         worker = ApiWorker(work, parent=self)
         if not hasattr(self, "_workers"):
             self._workers = []
@@ -4586,6 +4595,52 @@ class OneChatPage(QWidget):
                 except Exception:
                     pass
 
+    def cleanup(self):
+        """Detach in-flight ApiWorker QThreads BEFORE this page is destroyed.
+
+        THE close-while-transcribing crash: ApiWorker is a QThread parented to this
+        page, so WA_DeleteOnClose destroys it mid-run and Qt aborts the process with
+        "QThread: Destroyed while thread is still running" (no traceback, app.log
+        just stops). See _ORPHANED_WORKERS above. Called by
+        AIChatViewer._teardown_page. Idempotent; never raises.
+        """
+        import logging
+        lg = logging.getLogger("echomind.teardown")
+
+        workers = list(getattr(self, "_workers", []) or [])
+        try:
+            from PySide6.QtCore import QThread
+            for w in self.findChildren(QThread):   # catch any we did not track
+                if w not in workers:
+                    workers.append(w)
+        except Exception:
+            pass
+
+        detached = 0
+        for w in workers:
+            try:
+                if not w.isRunning():
+                    continue
+                # Its result must NEVER be delivered to this dying page.
+                for _sig in ("done", "failed", "finished"):
+                    try:
+                        getattr(w, _sig).disconnect()
+                    except Exception:
+                        pass
+                w.setParent(None)              # Qt must NOT delete it with the page
+                _ORPHANED_WORKERS.append(w)    # keep a Python ref so it is not GC'd
+                try:
+                    w.finished.connect(lambda _w=w: _release_orphan_worker(_w))
+                except Exception:
+                    pass
+                detached += 1
+            except Exception as exc:
+                lg.warning("[ECHO-TEARDOWN] worker detach failed: %s", exc)
+
+        self._workers = []
+        lg.info("[ECHO-TEARDOWN] page.cleanup detached %d running ApiWorker(s)",
+                detached)
+
     def _run_async(self, work: t.Callable, ok: t.Callable[[dict], None],
                    err: t.Callable[[str], None] | None = None,
                    lock_btn: QPushButton | None = None, typing="Thinking"):
@@ -5280,34 +5335,35 @@ class OneChatPage(QWidget):
         # Worker: network request
         # -----------------------------
         def work():
-            import os, requests
+            """Upload the ALREADY-SAVED voice file for transcription.
+
+            2026-07-13 — the destination is no longer hard-coded here. This used to
+            POST directly to ``URL_GEN_TRANSCRIPT`` (``{AI_BASE}/generate_transcript``,
+            a constant frozen at import time), which meant the chat ignored the
+            Voice-to-Text provider in Settings entirely and could disagree with
+            Secretary EchoMind. It now goes through the shared
+            ``VoiceTranscriptionService``, which resolves the endpoint from
+            **Settings ▸ EchoMind ▸ Voice to Text** ON EVERY CALL — so switching
+            servers takes effect immediately, with no restart.
+
+            Recording, the WAV location and attachment handling are unchanged; the
+            service is handed the same file path as before. The returned dict is the
+            server's RAW body merged with normalized keys, so the ``transcript`` /
+            ``quality_report`` parsing below (and the usage logging) is untouched.
+            """
+            import os
+            from modules.EchoMind.voice_transcription import VoiceTranscriptionService
+
             file_path = _extract_file_path(payload)
             if not file_path or not os.path.exists(file_path):
                 raise Exception("Audio file not found for transcription.")
-            files = [("audio_files", open(file_path, "rb"))]
-            m = Manage.instance()
-            if not m.is_validated():
-                raise RuntimeError("❌ API key is not set. Please enter it on the login page.")
-            info = m.ensure_detected()
-            gapgpt_key = (info.gapgpt_key or "").strip()
-            headers = {"Authorization": f"Bearer {gapgpt_key}"} if gapgpt_key else {}
-            data = {"quality_mode": quality_mode}
-            try:
-                r = requests.post(
-                    URL_GEN_TRANSCRIPT,
-                    files=files,
-                    data=data,
-                    headers=headers,
-                    timeout=360,
-                )
-                r.raise_for_status()
-                return r.json()
-            finally:
-                for _, fh in files:
-                    try:
-                        fh.close()
-                    except Exception:
-                        pass
+
+            resp = VoiceTranscriptionService().transcribe(
+                [file_path], quality_mode=quality_mode
+            )
+            if not resp.get("ok", True) and not str(resp.get("transcript") or "").strip():
+                raise Exception(str(resp.get("error") or "Transcription failed."))
+            return resp
 
         # -----------------------------
         # Worker OK callback

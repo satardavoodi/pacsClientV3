@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 
+import os
 import socket
 import json
 import logging
@@ -18,6 +19,22 @@ _LARGE_PAYLOAD_ENDPOINTS = {
     "GetStudyInfo",
     "QuerySeriesThumbnails",
 }
+
+# ── FIX-1 (2026-07-13) ────────────────────────────────────────────────────────
+# How long a pooled connection may sit idle before we recycle it proactively.
+# A public-internet path (remote server, NAT, firewall) silently drops idle TCP
+# connections; the client cannot see that, so the next request into that socket
+# fails hard. 30 s is comfortably below every common NAT idle timeout while
+# still letting a burst of searches reuse the same connection.
+# ``AIPACS_SOCKET_POOL_IDLE_S=0`` disables idle recycling (probe only).
+_DEFAULT_POOL_MAX_IDLE_S = 30.0
+
+
+def _pool_max_idle_seconds() -> float:
+    try:
+        return float(os.getenv("AIPACS_SOCKET_POOL_IDLE_S", str(_DEFAULT_POOL_MAX_IDLE_S)))
+    except (TypeError, ValueError):
+        return _DEFAULT_POOL_MAX_IDLE_S
 
 
 def _normalize_series_identity(data: Any, *, endpoint: str, study_uid: str) -> None:
@@ -122,7 +139,16 @@ class PatientListSocketClient:
         self.socket = None
         self.connected = False
         self.lock = threading.RLock()
-        
+        # ── FIX-1 (2026-07-13) connection-health bookkeeping ──────────────────
+        # `connected` is a FLAG, not a fact: it stays True after the peer (or a
+        # NAT / firewall on a public-internet path) closes an idle connection.
+        # These two fields let the pool tell a genuinely reusable connection from
+        # a half-open corpse, and let send_request decide whether a failure is
+        # safely retryable.
+        self.healthy = True            # False once a request failed on this socket
+        self.last_used_mono = 0.0      # monotonic stamp of the last completed request
+        self._last_error_zero_byte = False  # last failure happened BEFORE any response byte
+
     def connect(self) -> bool:
         """Connect to the Socket server"""
         logger.info(f"🔌 [Socket] connect() called - Host: {self.host}, Port: {self.port}")
@@ -140,6 +166,10 @@ class PatientListSocketClient:
                 
                 self.socket.connect((self.host, self.port))
                 self.connected = True
+                # FIX-1: a fresh connection is healthy again.
+                self.healthy = True
+                self.last_used_mono = time.monotonic()
+                self._last_error_zero_byte = False
                 logger.info(f"✅ Connected to Socket server at {self.host}:{self.port}")
                 return True
             except Exception as e:
@@ -171,9 +201,85 @@ class PatientListSocketClient:
                 logger.info("🔌 Disconnected from Socket server")
     
     def is_connected(self) -> bool:
-        """Check if connected"""
+        """Check if connected.
+
+        NOTE: this is the historical FLAG check and is deliberately unchanged —
+        callers everywhere rely on its cheapness. It answers "did we believe we
+        were connected", NOT "is the TCP connection actually alive". For pooling
+        decisions use ``is_socket_alive()`` / ``is_reusable()`` (FIX-1).
+        """
         return self.connected and self.socket is not None
-    
+
+    def is_socket_alive(self) -> bool:
+        """FIX-1: TRUE liveness probe — is the peer still there?
+
+        ``is_connected()`` only reads a flag, so a connection the server (or a
+        NAT / firewall on a public-internet path) closed while it sat idle in the
+        pool still reports "connected". The pool then hands out that corpse,
+        ``send_request`` skips its reconnect branch, ``sendall`` succeeds into the
+        dead socket (the bytes just go into the kernel buffer) and the following
+        ``recv`` returns EOF → "Invalid response length header" → a hard,
+        no-retry failure. That single defect produced every socket error in the
+        2026-07-13 field logs: ``Search returned None``,
+        ``Update failed - no response from server`` and the reception-history
+        failures.
+
+        A closed TCP connection becomes **readable** with **zero bytes** (EOF).
+        We poll with a zero timeout: readable + a zero-byte peek ⇒ dead. Not
+        readable ⇒ alive and idle (the normal case) ⇒ cheap, no syscall storm.
+        Readable WITH bytes pending ⇒ unread data from a previous request is
+        still in the buffer ⇒ the stream is desynchronized ⇒ also unusable.
+        Never raises; returns False on any doubt (fail-safe: a false negative
+        only costs one fresh connect).
+        """
+        with self.lock:
+            sock = self.socket
+            if not self.connected or sock is None:
+                return False
+            try:
+                import select
+                readable, _, in_error = select.select([sock], [], [sock], 0)
+                if in_error:
+                    return False
+                if not readable:
+                    return True  # idle and alive — the normal, cheap path
+                # Readable: either EOF (peer closed) or leftover bytes (desync).
+                # Both make the connection unusable for a new request.
+                peeked = sock.recv(1, socket.MSG_PEEK)
+                if not peeked:
+                    logger.info("🔌 [Socket] pooled connection is at EOF (peer closed) — discarding")
+                else:
+                    logger.warning(
+                        "🔌 [Socket] pooled connection has %d+ unread byte(s) "
+                        "(stream desync) — discarding", len(peeked)
+                    )
+                return False
+            except Exception as exc:
+                logger.info(f"🔌 [Socket] liveness probe failed ({exc}) — treating as dead")
+                return False
+
+    def is_reusable(self, max_idle_s: float) -> bool:
+        """FIX-1: may this pooled client serve a NEW request?
+
+        Three gates, cheapest first:
+          1. it must believe it is connected, and its last request must not have
+             failed (``healthy``);
+          2. it must not have been idle longer than ``max_idle_s`` — a
+             public-internet path silently drops idle connections (NAT / server
+             idle timeout), and that is precisely the case the flag cannot see;
+          3. the socket must pass the real liveness probe.
+        """
+        if not self.is_connected() or not self.healthy:
+            return False
+        if max_idle_s > 0 and self.last_used_mono:
+            if (time.monotonic() - self.last_used_mono) > max_idle_s:
+                logger.info(
+                    "🔌 [Socket] pooled connection idle > %.0fs — recycling proactively",
+                    max_idle_s,
+                )
+                return False
+        return self.is_socket_alive()
+
     def _recv_exact(self, size: int) -> bytes:
         """Receive exactly *size* bytes from the socket, accumulating partial reads."""
         if size <= 0:
@@ -191,9 +297,85 @@ class PatientListSocketClient:
         return bytes(buf)
     
     def send_request(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Send request and receive response"""
+        """Send a request, transparently recovering from a DEAD pooled socket.
+
+        ── FIX-1 (2026-07-13) ────────────────────────────────────────────────
+        This method used to be a single attempt with no retry: if the socket had
+        been closed underneath us (idle NAT/server drop, or a brief internet
+        loss), the request failed hard with "Invalid response length header" and
+        the user saw "Search returned None" / "Update failed - no response from
+        server" — even though ONE reconnect would have succeeded. Worse, the
+        failure did not self-heal, because the pool kept handing out more dead
+        connections. That is the root cause of the 2026-07-13 field report
+        ("when the internet drops, the app never really recovers").
+
+        Note the asymmetry this closes: the DOWNLOAD client
+        (``modules/download_manager/network/socket_client.py``) already has
+        ``REQUEST_MAX_RETRIES``/``connect_with_retry`` and rode out the same
+        fault — only the UI-facing client (patient list, report status, previous
+        exams) was unprotected.
+
+        Recovery is deliberately narrow and side-effect-safe:
+
+        * We retry **only** when the failure happened **before a single response
+          byte arrived** (``_last_error_zero_byte``). A half-open socket means
+          the server process had already dropped the connection, so it cannot
+          have seen — let alone applied — our request. That makes the retry safe
+          even for a WRITE endpoint such as ``UpdateReportStatus`` (no double
+          apply is possible).
+        * A failure **mid-response** (header read, body truncated) is NOT
+          retried: the server may have applied the request, so a blind resend
+          could duplicate a side effect.
+        * A clean "no response in time" (broadcast storm / server too slow) is
+          NOT retried either: the server was reachable and answering.
+
+        Kill switch: ``AIPACS_SOCKET_RECONNECT_RETRY=0`` restores the legacy
+        single-attempt behaviour byte-for-byte.
+        """
+        if (os.getenv("AIPACS_SOCKET_RECONNECT_RETRY", "1") or "1").strip() == "0":
+            return self._send_request_once(endpoint, params)
+
+        with self.lock:
+            # Proactive: never send into a connection we can already tell is dead
+            # or stale. This turns the common case (idle pooled socket dropped by
+            # the network path) into a silent reconnect instead of a user-visible
+            # failure + retry round-trip.
+            if self.is_connected() and not self.is_reusable(_pool_max_idle_seconds()):
+                logger.info(
+                    f"🔌 [Socket] pre-flight: connection unusable for endpoint={endpoint} "
+                    f"— reconnecting before sending"
+                )
+                self.disconnect()
+
+            response = self._send_request_once(endpoint, params)
+            if response is not None:
+                return response
+
+            if not self._last_error_zero_byte:
+                # Either the server answered and something went wrong afterwards,
+                # or we timed out waiting on a live connection. Not our case.
+                return None
+
+            logger.warning(
+                f"🔁 [Socket] endpoint={endpoint} failed before any response byte "
+                f"(dead/stale connection) — reconnecting and retrying ONCE"
+            )
+            self.disconnect()
+            retried = self._send_request_once(endpoint, params)
+            if retried is None:
+                logger.error(f"❌ [Socket] endpoint={endpoint} still failing after reconnect+retry")
+            else:
+                logger.info(f"✅ [Socket] endpoint={endpoint} recovered on retry after reconnect")
+            return retried
+
+    def _send_request_once(self, endpoint: str, params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Single attempt. Body unchanged from the historical ``send_request``
+        apart from the FIX-1 health bookkeeping."""
         logger.info(f"🔌 [Socket] send_request called for endpoint: {endpoint}")
         with self.lock:
+            # FIX-1: a new attempt starts with a clean failure classification.
+            self._last_error_zero_byte = False
+            _response_started = False
             # Check if socket exists and is connected, if not try to connect
             if not self.connected or self.socket is None:
                 logger.info(f"🔌 [Socket] Not connected, attempting to connect...")
@@ -201,7 +383,7 @@ class PatientListSocketClient:
                     logger.error(f"❌ [Socket] Connection failed")
                     return None
                 logger.info(f"✅ [Socket] Connected successfully")
-            
+
             try:
                 # Create request
                 request = {
@@ -242,8 +424,17 @@ class PatientListSocketClient:
                     # Receive response length (exactly 4 bytes)
                     response_length_bytes = self._recv_exact(4)
                     if not response_length_bytes or len(response_length_bytes) != 4:
+                        # FIX-1: this is EOF on a dead/half-open socket (the server
+                        # never answered). `_response_started` stays False, so the
+                        # caller may safely reconnect and resend — no side effect
+                        # can have been applied server-side.
                         raise Exception("Invalid response length header")
-                    
+
+                    # FIX-1: the server HAS begun answering. From here on a failure
+                    # is NOT safely retryable (the request may already have been
+                    # applied), so freeze the classification.
+                    _response_started = True
+
                     response_length = int.from_bytes(response_length_bytes, byteorder='big')
                     
                     # Validate response size to prevent excessive allocation.
@@ -314,17 +505,31 @@ class PatientListSocketClient:
                     except Exception:
                         pass
                     logger.debug(f"📥 [Socket] Parsed response successfully")
+                    # FIX-1: a completed request proves the connection is alive and
+                    # its stream is in sync — it may go back into the pool.
+                    self.healthy = True
+                    self.last_used_mono = time.monotonic()
                     return response
-                
+
                 # If we exit the loop, we timed out or saw excessive broadcasts without a response.
                 logger.error(
                     f"❌ [Socket] Did not receive endpoint response in time "
                     f"(broadcasts={broadcast_count}, timeout={self.timeout}s)"
                 )
+                # FIX-1: the server WAS reachable (it was talking to us), but the
+                # stream may now hold an unconsumed response — do not re-pool this
+                # connection, and do not blindly resend (the request may have been
+                # applied).
+                self.healthy = False
+                self._last_error_zero_byte = False
                 return None
-                
+
             except Exception as e:
                 logger.error(f"❌ [Socket] Error in send_request endpoint={endpoint}: {e}")
+                # FIX-1: classify the failure for the retry decision, and mark this
+                # client unfit for the pool.
+                self._last_error_zero_byte = not _response_started
+                self.healthy = False
                 self.connected = False
                 if self.socket:
                     try:
@@ -864,24 +1069,63 @@ class SocketConnectionPool:
         self.lock = threading.Lock()
 
     def get_connection(self) -> Optional[PatientListSocketClient]:
-        """Get a connection from the pool, or create a new one."""
+        """Get a connection from the pool, or create a new one.
+
+        ── FIX-1 (2026-07-13) ────────────────────────────────────────────────
+        This used to accept any pooled client whose ``is_connected()`` FLAG was
+        True. That flag is set at connect() and cleared only after a request has
+        already failed — so a connection the server / NAT closed while it sat
+        idle passed the check, was handed out, and the request died with
+        "Invalid response length header". Worse, ``return_connection`` put it
+        straight back, so the failure repeated (the field logs show two dead
+        GetPatientList calls two seconds apart).
+
+        Reuse now requires ``is_reusable()``: healthy (its last request did not
+        fail) + not idle past the recycle window + a REAL liveness probe. A
+        connection that fails any gate is closed and discarded, and we fall
+        through to a fresh connect — which is exactly what the user would have
+        gotten anyway, minus the visible error.
+        """
+        max_idle = _pool_max_idle_seconds()
         with self.lock:
-            # Try to return an existing connected client
             while self.connections:
                 client = self.connections.pop()
-                if client.is_connected():
+                try:
+                    reusable = client.is_reusable(max_idle)
+                except Exception:
+                    reusable = False
+                if reusable:
                     return client
-                # Stale — close and discard
+                # Dead / stale / desynchronized — close and discard.
                 try:
                     client.disconnect()
                 except Exception:
                     pass
 
-        # No pooled connection available — create fresh
+        # No usable pooled connection — create fresh (connect() happens lazily
+        # inside send_request).
         return PatientListSocketClient(self.host, self.port)
-    
+
     def return_connection(self, client: PatientListSocketClient):
-        """Return a connection to the pool"""
+        """Return a connection to the pool.
+
+        FIX-1: a client whose last request FAILED (``healthy`` False) or that is
+        no longer connected must NEVER go back into the pool — re-pooling a
+        poisoned connection is what made a single network blip keep failing long
+        after the network had recovered.
+        """
+        if client is None:
+            return
+        try:
+            fit = bool(getattr(client, 'healthy', True)) and client.is_connected()
+        except Exception:
+            fit = False
+        if not fit:
+            try:
+                client.disconnect()
+            except Exception:
+                pass
+            return
         with self.lock:
             if len(self.connections) < self.pool_size:
                 self.connections.append(client)

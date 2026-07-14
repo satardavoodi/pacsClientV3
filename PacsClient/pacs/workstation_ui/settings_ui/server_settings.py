@@ -1116,6 +1116,29 @@ class ServerSettingsWidget(QWidget):
         self.json_file.parent.mkdir(parents=True, exist_ok=True)
         with open(self.json_file, 'w', encoding='utf-8') as f:
             json.dump(servers, f, indent=4)
+        self._sync_server_profiles(servers)
+
+    def _sync_server_profiles(self, servers):
+        """Keep the profile store an EXACT mirror of the server list.
+
+        SINGLE AUTHORITY (2026-07-13). ``servers.json`` is the server LIST; the
+        login/Welcome page picker reads ``server_profiles.json``. Every mutation
+        in this screen — add, edit, rename, DELETE — funnels through
+        ``save_to_json``, so reconciling here (and ONLY here) keeps the two views
+        in sync with one rule instead of a hook per operation.
+
+        Before this, ``save_server`` upserted a profile but ``delete_server``
+        never removed one, so a deleted server kept showing on the Welcome page;
+        and a rename orphaned the old profile as a duplicate (the profile id is
+        derived from the name). ``reconcile_profiles`` carries a profile over by
+        id then by host, so a rename KEEPS its id — and therefore its data
+        namespace and its per-module endpoints.
+        """
+        try:
+            from PacsClient.utils import server_profiles as _sp
+            _sp.sync_profiles_with_servers(servers)
+        except Exception as exc:
+            print(f"[settings] server-profile list sync failed: {exc}")
 
     def _validate_ai_service_url(self, raw: str) -> bool:
         value = (raw or "").strip()

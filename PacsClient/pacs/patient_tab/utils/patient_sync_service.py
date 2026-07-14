@@ -6,6 +6,7 @@ Patient Data Synchronization Service
 """
 
 import os
+import time
 import logging
 from pathlib import Path
 from typing import Dict, Any, Optional, List
@@ -16,6 +17,60 @@ from modules.network.upload_download_attchments import upload_attachments_for_st
 from PacsClient.utils.db_manager import get_attachments_uploaded
 
 logger = logging.getLogger(__name__)
+
+
+def _sync_strict_result_enabled() -> bool:
+    """FIX-2 kill switch. Default ON: a sync whose server-side effects did not
+    land is reported as a FAILURE. ``AIPACS_SYNC_STRICT_RESULT=0`` restores the
+    byte-identical legacy behaviour (always emit ``sync_completed``)."""
+    return (os.getenv("AIPACS_SYNC_STRICT_RESULT", "1") or "1").strip() != "0"
+
+
+def _sync_result_failed(result: Dict[str, Any]) -> bool:
+    """PURE. True when the sync did NOT fully reach the server.
+
+    A sync is successful only when every recorded step succeeded:
+      * no error was appended by any step (`errors` empty),
+      * the report-status update was ACCEPTED by the server
+        (`status_updated` True — this is what the tab-close + green
+        "Physician Approved" state actually asserts), and
+      * no attachment upload failed (`attachments_failed` == 0).
+
+    A study with zero attachments is still a success as long as the status
+    update landed (uploaded == 0, failed == 0, errors empty).
+    """
+    if not isinstance(result, dict):
+        return True
+    if result.get('errors'):
+        return True
+    if not result.get('status_updated'):
+        return True
+    try:
+        if int(result.get('attachments_failed') or 0) > 0:
+            return True
+    except (TypeError, ValueError):
+        return True
+    return False
+
+
+def _sync_failure_message(result: Dict[str, Any]) -> str:
+    """PURE. Human-readable reason for a failed sync, for the Retry dialog."""
+    if not isinstance(result, dict):
+        return "Sync did not complete."
+    parts: List[str] = []
+    errors = result.get('errors') or []
+    if errors:
+        parts.extend(str(e) for e in errors)
+    elif not result.get('status_updated'):
+        parts.append("The report status was not accepted by the server.")
+    try:
+        failed = int(result.get('attachments_failed') or 0)
+    except (TypeError, ValueError):
+        failed = 0
+    if failed:
+        parts.append(f"{failed} attachment(s) failed to upload.")
+    parts.append("Your files are still saved locally and were NOT deleted.")
+    return "\n".join(parts)
 
 
 def _list_attachment_files(study_uid: str):
@@ -74,21 +129,51 @@ def reconcile_attachments_from_server(study_uid: str, *, verbose: bool = False) 
         return {}
 
 
+_SYNC_INFLIGHT_LOCK = threading.Lock()
+_SYNC_INFLIGHT = 0
+_SYNC_LAST_END_MONO = 0.0
+# Grace window (seconds) after a sync worker exits during which the sync still
+# OWNS any error it produced. Both `statusError` and `sync_failed` are emitted
+# from the worker thread as QUEUED signals, so the UI thread may not deliver
+# them until after the worker's `finally` has already run. Without the grace the
+# suppression would race and the duplicate popup could still slip through.
+_SYNC_OWNERSHIP_GRACE_S = 8.0
+
+
+def sync_in_progress() -> bool:
+    """FIX-2: True while a patient sync is running (plus a short grace window).
+
+    The sync's own progress/Retry dialog is the single owner of any error the
+    sync produces. The report-status service ALSO emits ``statusError`` on the
+    same failure, which the home patient table turns into a message box — that
+    is the popup the user saw AFTER the tab had already closed. Consumers of
+    ``statusError`` check this predicate and stay silent while a sync owns the
+    error, so exactly one dialog is shown, at the right time.
+    """
+    with _SYNC_INFLIGHT_LOCK:
+        if _SYNC_INFLIGHT > 0:
+            return True
+        last_end = _SYNC_LAST_END_MONO
+    if not last_end:
+        return False
+    return (time.monotonic() - last_end) < _SYNC_OWNERSHIP_GRACE_S
+
+
 class PatientSyncService(QObject):
     """
     سرویس همگام‌سازی داده‌های بیمار با سرور
     """
-    
+
     # Signals
     sync_started = Signal(str)  # study_uid
     sync_progress = Signal(str, int, int)  # study_uid, current, total
     sync_completed = Signal(str, dict)  # study_uid, result
     sync_failed = Signal(str, str)  # study_uid, error_message
-    
+
     def __init__(self):
         super().__init__()
         self._sync_threads = {}  # Keep track of running sync threads
-    
+
     def sync_patient_data(
         self, 
         study_uid: str,
@@ -105,7 +190,13 @@ class PatientSyncService(QObject):
         """
         # Emit sync started
         self.sync_started.emit(study_uid)
-        
+
+        # FIX-2: mark the sync in-flight BEFORE the worker starts, so a
+        # statusError emitted very early is already attributed to this sync.
+        global _SYNC_INFLIGHT
+        with _SYNC_INFLIGHT_LOCK:
+            _SYNC_INFLIGHT += 1
+
         # Run sync in background thread to avoid blocking UI
         thread = threading.Thread(
             target=self._sync_worker,
@@ -218,12 +309,58 @@ class PatientSyncService(QObject):
             logger.info("[ATTACH-TRACE] sync_end study=%s files=%s",
                         study_uid, _list_attachment_files(study_uid))
 
+            # ── FIX-2 (2026-07-13): a sync that did NOT reach the server is a
+            # FAILURE, not a success. ───────────────────────────────────────────
+            # Historically this method emitted `sync_completed` unconditionally and
+            # `sync_failed` ONLY when an exception escaped. A failed attachment
+            # upload or a failed `update_report_status` (very common on a flaky
+            # internet link — the server returns no response) merely appended to
+            # `result['errors']`, and the toolbar's `on_sync_completed` — which
+            # never inspected `errors` / `status_updated` — then marked the study
+            # "physician_approved", painted the home row green and CLOSED the
+            # patient tab as a success. The queued `statusError` message box from
+            # the report-status service then appeared AFTER the tab was gone.
+            #
+            # Net effect: the workstation claimed a server state that the server
+            # never received. That is the clinically dangerous half of this bug;
+            # the orphan error dialog was only its visible symptom.
+            #
+            # A sync is SUCCESSFUL only when: no errors were recorded, the report
+            # status update was accepted by the server, and no attachment failed.
+            # Anything else routes to `sync_failed`, which keeps the tab open and
+            # offers Retry (the local files are already safe on disk — the
+            # local-first persistence guard is untouched).
+            #
+            # Kill switch: AIPACS_SYNC_STRICT_RESULT=0 restores the byte-identical
+            # legacy behaviour (always emit sync_completed).
+            if _sync_strict_result_enabled() and _sync_result_failed(result):
+                message = _sync_failure_message(result)
+                logger.warning(
+                    "[SYNC] study=%s reported FAILED (strict): uploaded=%s failed=%s "
+                    "status_updated=%s errors=%s",
+                    study_uid, result.get('attachments_uploaded'),
+                    result.get('attachments_failed'), result.get('status_updated'),
+                    result.get('errors'),
+                )
+                self.sync_failed.emit(study_uid, message)
+                return
+
             self.sync_completed.emit(study_uid, result)
 
         except Exception as e:
             self.sync_failed.emit(study_uid, f"Sync failed: {str(e)}")
-        
+
         finally:
+            # FIX-2: the sync is no longer in flight. The grace window (see
+            # `sync_in_progress`) keeps ownership of the error for a few more
+            # seconds, because the `statusError` and `sync_failed` signals were
+            # emitted from THIS worker thread and are still queued for delivery
+            # on the UI thread — the suppression must outlive the worker.
+            global _SYNC_INFLIGHT
+            with _SYNC_INFLIGHT_LOCK:
+                _SYNC_INFLIGHT = max(0, _SYNC_INFLIGHT - 1)
+                globals()['_SYNC_LAST_END_MONO'] = time.monotonic()
+
             # Clean up thread reference
             if study_uid in self._sync_threads:
                 del self._sync_threads[study_uid]

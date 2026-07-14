@@ -7,6 +7,7 @@ overlay reuses the local_reminders store (a `row` snapshot per pinned patient),
 is local-only, and dedups by patient_id. These guards cover the storage/dedup
 logic (pure) + the Main-Page wiring (source pins).
 """
+import ast
 from pathlib import Path
 
 import PacsClient.utils.local_reminders as lr
@@ -14,6 +15,16 @@ import PacsClient.utils.local_reminders as lr
 _ROOT = Path(__file__).resolve().parents[3]
 _PT = (_ROOT / "PacsClient" / "pacs" / "workstation_ui" / "home_ui"
        / "patient_table_widget.py")
+
+
+def _func_src(src: str, name: str) -> str:
+    """Exact source of one function/method — robust to it gaining documentation
+    (a fixed byte-window pin is not)."""
+    tree = ast.parse(src)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == name:
+            return ast.get_source_segment(src, node) or ""
+    raise AssertionError(f"{name} not found")
 
 
 def _patch_store(tmp_path, monkeypatch):
@@ -120,9 +131,12 @@ def test_stable_pinned_section_wired():
     keeps them, results dedup in place (no jump/flicker), and a subtle tint
     marks the section."""
     s = _PT.read_text(encoding="utf-8", errors="ignore")
-    # clear_table preserves pinned rows instead of wiping the whole table
-    ci = s.index("def clear_table")
-    seg = s[ci:ci + 1400]
+    # clear_table preserves pinned rows instead of wiping the whole table.
+    # (2026-07-13: extract the REAL function body via ast instead of a fixed
+    # 1400-char window — clear_table grew a long rationale docstring with the
+    # FIX-3 crash guard, and a byte-window pin silently starts testing the wrong
+    # text as soon as the function is documented. Same assertions, exact scope.)
+    seg = _func_src(s, "clear_table")
     assert "get_pinned_patient_ids" in seg
     assert "removeRow(row)" in seg            # only non-pinned rows removed
     assert "pinned_rows_kept" in seg

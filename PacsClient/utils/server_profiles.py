@@ -69,9 +69,18 @@ MODULE_ENDPOINT_KEYS = (
     "ai_boneage",
     "ai_segmentation",
     "reception_api",
+    # The PACS HTTP/REST service (assign read+write, port 8000 by default). It is
+    # a DIFFERENT service from the reception REST API and, at some centers, a
+    # different machine — so it must be its own slot rather than being guessed by
+    # swapping the reception port. Unset (None) ⇒ derived from this profile's
+    # own ``host`` (the same machine the imaging socket talks to).
+    "pacs_http",
     "mammography",
     "bonj",
 )
+
+#: Default port of the PACS HTTP/REST service (assign endpoints).
+DEFAULT_PACS_HTTP_PORT = 8000
 
 _lock = threading.RLock()
 
@@ -497,6 +506,178 @@ def delete_profile(profile_id: str) -> dict[str, Any]:
         return save_profiles_document(doc)
 
 
+# ── ONE AUTHORITY: the server LIST is servers.json; profiles MIRROR it ───────
+#
+# Settings ▸ Server Settings edits ``servers.json``; the login/Welcome page reads
+# the profile store. Before this, only ADD/EDIT was mirrored (via an upsert), so a
+# DELETE left the profile behind (deleted server still shown on the Welcome page)
+# and a RENAME orphaned the old profile as a duplicate (the id is derived from the
+# name). Rather than bolt a delete-hook and a rename-hook onto each operation, the
+# whole list is RECONCILED from one choke point — one rule, no per-operation
+# exceptions.
+_ENV_LIST_SYNC = "AIPACS_SERVER_LIST_SYNC"
+_SERVERS_FILENAME = "servers.json"
+
+
+def reconcile_profiles(
+    doc: dict[str, Any], servers: list[dict[str, Any]] | None
+) -> dict[str, Any]:
+    """PURE. Return *doc* with its profile list rebuilt to EXACTLY mirror *servers*.
+
+    * a record with no profile  → a profile is created,
+    * a record with a profile   → the profile is UPDATED in place (its ``id``,
+      ``socket_port``, module endpoints and status are PRESERVED),
+    * a profile with no record  → it is DROPPED (this is what makes a delete in
+      Server Settings disappear from the login page).
+
+    An existing profile is carried over by id first, then by host — so RENAMING a
+    server keeps its id, and therefore keeps its data namespace
+    (``profile_segment``) and its per-module endpoints. Never raises.
+    """
+    doc = _normalize_document(doc)
+    records = [s for s in (servers or []) if isinstance(s, dict)]
+
+    existing: dict[str, dict[str, Any]] = {
+        str(p.get("id")): dict(p) for p in doc.get("profiles", [])
+    }
+    by_host: dict[str, str] = {}
+    for pid, rec in existing.items():
+        host = str(rec.get("host") or "").strip()
+        if host and host not in by_host:
+            by_host[host] = pid
+
+    consumed: set[str] = set()
+    out: list[dict[str, Any]] = []
+
+    for rec in records:
+        name = str(rec.get("name") or "").strip()
+        host = str(rec.get("host") or "").strip()
+
+        # Carry an existing profile over (id-first, then host) so an edit/rename
+        # UPDATES rather than duplicates.
+        want = data_segment(name or host or "server")
+        carry = None
+        if want in existing and want not in consumed:
+            carry = want
+        else:
+            cand = by_host.get(host)
+            if cand and cand not in consumed:
+                carry = cand
+
+        if carry is not None:
+            consumed.add(carry)
+            base = existing[carry]
+            pid = carry
+        else:
+            base = {}
+            pid, n = want, 2
+            taken = set(existing) | {str(p["id"]) for p in out}
+            while pid in taken:
+                pid = f"{want}-{n}"
+                n += 1
+
+        merged = dict(base)
+        merged.update(
+            {
+                "id": pid,
+                "display_name": name or base.get("display_name") or host or pid,
+                "host": host,
+                # servers.json owns the DICOM port / AE title / poor-connectivity.
+                # The SOCKET port lives ONLY on the profile — never reset it here.
+                "socket_port": base.get("socket_port", DEFAULT_SOCKET_PORT),
+                "dicom_port": rec.get("port", base.get("dicom_port", DEFAULT_DICOM_PORT)),
+                "ae_title": (
+                    str(rec.get("ae_title") or "").strip()
+                    or base.get("ae_title")
+                    or DEFAULT_AE_TITLE
+                ),
+                "poor_connectivity": bool(
+                    rec.get("poor_connectivity", base.get("poor_connectivity", False))
+                ),
+                "enabled": True,
+            }
+        )
+        out.append(ServerProfile.from_dict(merged).to_dict())
+
+    doc["profiles"] = out
+    # _normalize_document re-points active/primary when the one they named is gone.
+    return _normalize_document(doc)
+
+
+def sync_profiles_with_servers(
+    servers: list[dict[str, Any]] | None,
+) -> Optional[dict[str, Any]]:
+    """Persist :func:`reconcile_profiles` against the live profile document.
+
+    Called from the ONE place every server-list mutation funnels through
+    (``SettingsServer.save_to_json``), so add / edit / rename / delete all stay in
+    sync with the login-page picker automatically.
+
+    Skipped (returns ``None``) when the kill switch ``AIPACS_SERVER_LIST_SYNC=0``
+    is set, or when the profile store does not exist AND the feature is off — a
+    pure-legacy install is then byte-identical (no file is created).
+    """
+    if not _env_truthy(_ENV_LIST_SYNC, True):
+        return None
+    with _lock:
+        try:
+            if not profiles_config_path().exists() and not server_profiles_enabled():
+                return None
+            doc = load_profiles_document()
+            return save_profiles_document(reconcile_profiles(doc, servers))
+        except Exception:
+            return None
+
+
+def write_profile_to_servers_json(profile: ServerProfile) -> bool:
+    """REVERSE mirror: push a profile's host / AE title / DICOM port back into
+    ``servers.json`` so the Server Settings table shows an edit made on the
+    login (Welcome) page. Matched by display name, else by id, else by host; a
+    profile with no record is appended. Never raises."""
+    if not _env_truthy(_ENV_LIST_SYNC, True):
+        return False
+    with _lock:
+        try:
+            path = _config_dir() / _SERVERS_FILENAME
+            records = _read_json(path)
+            if not isinstance(records, list):
+                records = []
+
+            def _matches(rec: dict[str, Any]) -> bool:
+                name = str(rec.get("name") or "").strip()
+                return (
+                    name.lower() == profile.display_name.strip().lower()
+                    or data_segment(name) == profile.id
+                    or str(rec.get("host") or "").strip() == profile.host
+                )
+
+            hit = None
+            for rec in records:
+                if isinstance(rec, dict) and _matches(rec):
+                    hit = rec
+                    break
+            if hit is None:
+                hit = {}
+                records.append(hit)
+
+            hit["name"] = profile.display_name
+            hit["host"] = profile.host
+            # servers.json historically stores the DICOM port as a STRING.
+            hit["port"] = str(profile.dicom_port)
+            hit["ae_title"] = profile.ae_title
+            hit["poor_connectivity"] = bool(profile.poor_connectivity)
+
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(path.suffix + ".part")
+            tmp.write_text(
+                json.dumps(records, indent=4, ensure_ascii=False), encoding="utf-8"
+            )
+            os.replace(str(tmp), str(path))
+            return True
+        except Exception:
+            return False
+
+
 def set_feature_enabled(enabled: bool) -> dict[str, Any]:
     """Persist the top-level multi-server ``enabled`` flag (config-based opt-in).
 
@@ -558,6 +739,80 @@ def socket_port_for_server(server: dict[str, Any] | None) -> int:
     """
     prof = find_profile_for_server(server)
     return int(prof.socket_port) if prof else DEFAULT_SOCKET_PORT
+
+
+def active_host() -> str:
+    """The ACTIVE center's host/IP — the one machine every service lives on.
+
+    This is the single answer to "which server is this installation talking to".
+    It works even when the multi-server feature is off (the migrated profile still
+    carries the host), so callers must never fall back to a hard-coded address.
+    Returns "" only when nothing is configured at all.
+    """
+    try:
+        prof = get_active_profile()
+        if prof and str(prof.host or "").strip():
+            return str(prof.host).strip()
+    except Exception:
+        pass
+    # Last resort: the socket layer's own configured host (same server).
+    try:
+        import json as _json
+
+        path = _config_dir() / "socket_config.json"
+        if path.exists():
+            data = _json.loads(path.read_text(encoding="utf-8"))
+            return str((data or {}).get("socket_host") or "").strip()
+    except Exception:
+        pass
+    return ""
+
+
+def _service_base(endpoint: Optional[str], default_port: int, scheme: str = "http") -> str:
+    """``endpoint`` (a per-profile slot) if set, else ``scheme://<active host>:<port>``.
+
+    Never returns a hard-coded address — an unconfigured install yields "" and the
+    caller must surface that rather than silently hitting the developer's center.
+    """
+    ep = str(endpoint or "").strip().rstrip("/")
+    if ep:
+        return ep if "://" in ep else f"{scheme}://{ep}"
+    host = active_host()
+    if not host:
+        return ""
+    return f"{scheme}://{host}:{int(default_port)}"
+
+
+def active_pacs_http_base(default_port: int = DEFAULT_PACS_HTTP_PORT) -> str:
+    """Base URL of the PACS HTTP/REST service for the ACTIVE center (assign API).
+
+    Per-profile ``pacs_http`` slot wins; otherwise it is derived from the profile's
+    OWN host — the same machine the imaging socket connects to. It must NOT be
+    derived from the reception host: reception and PACS can be different services
+    on different machines, and at a center where they differ the assign calls would
+    silently go to the wrong box.
+    """
+    try:
+        prof = get_active_profile()
+        ep = prof.module_endpoint("pacs_http") if prof else None
+    except Exception:
+        ep = None
+    return _service_base(ep, default_port)
+
+
+def active_reception_base(default_port: int = 8080) -> str:
+    """Base URL of the Reception/Workflow REST API for the ACTIVE center.
+
+    Per-profile ``reception_api`` slot wins; otherwise derived from the profile's
+    own host. Callers keep their existing config-file override — this is only the
+    center-correct answer that replaces the old hard-coded developer address.
+    """
+    try:
+        prof = get_active_profile()
+        ep = prof.module_endpoint("reception_api") if prof else None
+    except Exception:
+        ep = None
+    return _service_base(ep, default_port)
 
 
 def active_module_endpoint(name: str) -> Optional[str]:

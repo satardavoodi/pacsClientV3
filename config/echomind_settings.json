@@ -22,6 +22,12 @@
   "prompt_image_artifact": "",
   "secretary_stt_provider": "native",
   "secretary_stt_fallback": true,
+  "stt_provider": "aipacs_1",
+  "stt_custom_base_url": "",
+  "stt_custom_port": 0,
+  "stt_endpoint_path": "/generate_transcript",
+  "stt_timeout_seconds": 360,
+  "stt_auth_token": "",
   "connection_type": "direct",
   "proxy_port": 2082
 }

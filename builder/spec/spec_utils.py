@@ -105,6 +105,7 @@ def collect_tree_datas(
     src_rel: str,
     dest_rel: str | None = None,
     extra_excludes: Iterable[str] | None = None,
+    allow_excluded: bool = False,
 ) -> list[tuple[str, str]]:
     src_rel = norm_rel(src_rel)
     src_dir = project_path(src_rel)
@@ -112,7 +113,7 @@ def collect_tree_datas(
         return []
     datas: list[tuple[str, str]] = []
     if src_dir.is_file():
-        if not is_excluded(src_rel, extra_excludes):
+        if allow_excluded or not is_excluded(src_rel, extra_excludes):
             dest = norm_rel(dest_rel or str(Path(src_rel).parent))
             datas.append((str(src_dir), dest))
         return datas
@@ -120,7 +121,7 @@ def collect_tree_datas(
     dest_root = norm_rel(dest_rel or src_rel)
     for p in _iter_files_under(src_dir):
         rel = norm_rel(p.relative_to(PROJECT_ROOT))
-        if is_excluded(rel, extra_excludes):
+        if not allow_excluded and is_excluded(rel, extra_excludes):
             continue
         subdir = Path(rel).parent
         try:
@@ -243,7 +244,7 @@ def common_app_datas() -> list[tuple[str, str]]:
     for rel in curated:
         datas.extend(collect_tree_datas(rel))
     # Ship the SANITIZED config tree at "config/" (never the developer's config/).
-    datas.extend(collect_tree_datas(sanitized_config_rel(), "config"))
+    datas.extend(collect_tree_datas(sanitized_config_rel(), "config", allow_excluded=True))
     return dedupe_datas(datas)
 
 
@@ -266,7 +267,7 @@ def app_b_datas() -> list[tuple[str, str]]:
     for rel in curated:
         datas.extend(collect_tree_datas(rel))
     # Sanitized config (for the optional slicer_config.json lookup) — never raw.
-    datas.extend(collect_tree_datas(sanitized_config_rel(), "config"))
+    datas.extend(collect_tree_datas(sanitized_config_rel(), "config", allow_excluded=True))
     # App B does not need full Qss/Fonts from App A unless launcher UI grows later.
     return dedupe_datas(datas)
 

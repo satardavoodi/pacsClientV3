@@ -644,6 +644,12 @@ class _HPSearchMixin:
             cache = getattr(self, '_reporting_physician_cache', None)
             if cache:
                 cache.clear()
+            # Drop the TTL clocks too — an explicit refresh means "trust nothing
+            # cached"; leaving stale timestamps would let a re-populated entry look
+            # fresh and skip its revalidation.
+            stamps = getattr(self, '_reporting_physician_cache_ts', None)
+            if stamps:
+                stamps.clear()
         except Exception:
             pass
         try:
@@ -655,6 +661,64 @@ class _HPSearchMixin:
         )
         for patient_id, patient_name, study_uid in rows:
             self._queue_reporting_physician_hydration(patient_id, patient_name, study_uid)
+
+    def _queue_assignment_hydration(self):
+        """Pull the SERVER assignment for the visible receptions after a search.
+
+        The assignment is server-owned state that another workstation can change at
+        any time, so — like report status and the reporting physician — it must be
+        re-read, not served from a local file forever. Off-thread and bounded; the
+        patient_table_widget repaints the Assign + Report columns when it answers.
+        `AIPACS_ASSIGN_HYDRATE_ON_SEARCH=0` limits assignment refresh to the button.
+        """
+        if (os.getenv('AIPACS_ASSIGN_HYDRATE_ON_SEARCH', '1') or '1').strip() == '0':
+            return
+        try:
+            self.patient_table_widget._start_assignment_refresh()
+        except Exception:
+            pass
+
+    # ── Cache freshness ──────────────────────────────────────────────────────
+    # The caches exist to make search fast. They must NEVER become the authority
+    # for data the server can change underneath us (report status, reporting
+    # physician, assignment). TTL + revalidation keeps the speed while letting an
+    # updated value through. `AIPACS_CACHE_REVALIDATE=0` restores the legacy
+    # "a cache hit is final" behaviour.
+    _REPORTER_CACHE_TTL_S = 60.0
+
+    def _reporter_cache_ttl(self) -> float:
+        try:
+            return max(0.0, float(os.getenv('AIPACS_REPORTER_CACHE_TTL_S', '') or
+                                  self._REPORTER_CACHE_TTL_S))
+        except Exception:
+            return self._REPORTER_CACHE_TTL_S
+
+    def _reporter_cache_is_fresh(self, pid: str) -> bool:
+        """True when the cached physician for *pid* is young enough to trust.
+
+        Legacy mode (`AIPACS_CACHE_REVALIDATE=0`) always says fresh — i.e. a cache
+        hit is final, exactly as before.
+        """
+        if (os.getenv('AIPACS_CACHE_REVALIDATE', '1') or '1').strip() == '0':
+            return True
+        stamps = getattr(self, '_reporting_physician_cache_ts', None)
+        if not stamps:
+            return False   # unknown age → revalidate once
+        try:
+            age = time.time() - float(stamps.get(pid) or 0.0)
+        except Exception:
+            return False
+        return age < self._reporter_cache_ttl()
+
+    def _mark_reporter_cached(self, pid: str) -> None:
+        stamps = getattr(self, '_reporting_physician_cache_ts', None)
+        if stamps is None:
+            stamps = {}
+            self._reporting_physician_cache_ts = stamps
+        try:
+            stamps[pid] = time.time()
+        except Exception:
+            pass
 
     def _queue_reporting_physician_hydration(self, patient_id: str, patient_name: str, study_uid: str = ""):
         pid = str(patient_id or '').strip()
@@ -669,6 +733,16 @@ class _HPSearchMixin:
 
         cached_physician = str(cache.get(pid) or '').strip()
         if cached_physician and self._has_displayable_reporting_name(cached_physician):
+            # STALE-WHILE-REVALIDATE (2026-07-14). This used to `return` here — a
+            # cache hit was FINAL, and the entry was only ever dropped by the
+            # Refresh button. So once a patient's physician/report was cached, a
+            # plain SEARCH would keep re-displaying the stale value for the rest of
+            # the session, and the cache had quietly become the source of truth for
+            # data that changes on the server.
+            #
+            # Now: paint the cached value INSTANTLY (the search stays as fast as it
+            # was), and if the entry is older than the TTL fall through to a
+            # background re-fetch that corrects the row when the server answers.
             emit_download_event(
                 _logger, 'reporter-hydration', phase='cache_hit',
                 pid=pid, physician=cached_physician,
@@ -677,7 +751,12 @@ class _HPSearchMixin:
                 self.patient_table_widget.update_reporting_physician_for_patient(pid, patient_name, cached_physician)
             except Exception:
                 pass
-            return
+            if self._reporter_cache_is_fresh(pid):
+                return
+            emit_download_event(
+                _logger, 'reporter-hydration', phase='revalidate', pid=pid,
+            )
+            # fall through → re-fetch from the server and update if it disagrees
         if cached_physician and not self._has_displayable_reporting_name(cached_physician):
             cache.pop(pid, None)
 
@@ -737,6 +816,7 @@ class _HPSearchMixin:
                 # the server simply keep the completed checkmarks.
                 if self._has_displayable_reporting_name(physician_name):
                     cache[pid] = physician_name
+                    self._mark_reporter_cached(pid)   # TTL clock for revalidation
                     emit_download_event(
                         _logger, 'reporter-hydration', phase='resolved',
                         pid=pid, physician=physician_name,
@@ -1270,6 +1350,10 @@ class _HPSearchMixin:
             emit_download_event(
                 _logger, 'reporter-hydration', phase='queued', queued=queued,
             )
+            # The ASSIGNMENT is server-owned too — another workstation can change it
+            # at any moment — so a search must re-read it rather than trust the local
+            # file. Off-thread; repaints the Assign + Report columns when it answers.
+            self._queue_assignment_hydration()
         except Exception as exc:
             emit_download_event(
                 _logger, 'reporter-hydration', phase='trigger_error',

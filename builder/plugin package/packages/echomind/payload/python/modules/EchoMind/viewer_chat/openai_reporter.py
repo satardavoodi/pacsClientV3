@@ -11,6 +11,44 @@ from modules.EchoMind.llm_client import chat_completion
 from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings, get_prompt_settings, get_proxy_settings
 
 
+# ── OPT-33 (2026-07-13): EchoMind AI calls MUST have a timeout ───────────────
+# Every `requests.post` in this module used to be issued with NO `timeout=`, i.e.
+# requests waits FOREVER. That is not a crash (each call runs on an `ApiWorker`
+# QThread wrapped in try/except, so the app survives and shows "check your
+# internet"), but on a HALF-OPEN connection — a link that dies mid-request, which
+# is exactly what the 2026-07-13 laptop network did (see OPT-28) — the worker
+# thread NEVER returns:
+#   * the "typing…" bubble spins forever,
+#   * the Send button stays locked (`lock_btn`),
+#   * the QThread leaks, and every retry leaks another one.
+# That is the "EchoMind hangs when the internet drops" symptom. A clean refusal
+# is far better than an infinite wait: with a timeout the worker raises, the
+# except path fires, and the user gets the existing "Connection error — check
+# your internet connection" bubble and can retry.
+#
+# (connect, read): a connect must fail fast; a long LLM completion legitimately
+# needs a generous READ budget, so the read timeout is deliberately large. Both
+# are tunable; `AIPACS_ECHOMIND_HTTP_TIMEOUT=0` restores the legacy no-timeout
+# behaviour (emergencies only — it can hang the AI panel indefinitely).
+_DEFAULT_CONNECT_TIMEOUT_S = 10.0
+_DEFAULT_READ_TIMEOUT_S = 180.0
+
+
+def _request_timeout():
+    """(connect, read) timeout for every outbound AI call. None = legacy hang."""
+    raw = (os.getenv("AIPACS_ECHOMIND_HTTP_TIMEOUT", "") or "").strip()
+    if raw == "0":
+        return None  # kill switch: byte-identical legacy (wait forever)
+    connect = _DEFAULT_CONNECT_TIMEOUT_S
+    read = _DEFAULT_READ_TIMEOUT_S
+    if raw:
+        try:
+            read = float(raw)
+        except ValueError:
+            read = _DEFAULT_READ_TIMEOUT_S
+    return (connect, read)
+
+
 def _get_requests_proxies() -> "dict[str, str]":
     """Return a requests-compatible proxies dict.
 
@@ -2072,7 +2110,7 @@ def reporter(
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -2167,7 +2205,7 @@ Return ONLY the final corrected report text. No analysis, no preface.
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -2233,7 +2271,7 @@ def chat_with_api_key(
     }
     url = "https://api.gapgpt.app/v1/chat/completions"
 
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -2307,7 +2345,7 @@ def ImageQualityAnalyzer(
 
     url = "https://api.gapgpt.app/v1/chat/completions"
 
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
 
     if response.status_code != 200:
@@ -2512,7 +2550,7 @@ def BreastExpertAssistant(
 
     url = "https://api.gapgpt.app/v1/chat/completions"
 
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
 
     if response.status_code != 200:
@@ -2575,7 +2613,7 @@ STRICT RULES:
     }
 
     url = "https://api.gapgpt.app/v1/chat/completions"
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
 
     if response.status_code != 200:
@@ -2770,7 +2808,7 @@ def translate_report(
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -2871,7 +2909,7 @@ def standard_assist_search(
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -3083,7 +3121,7 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")
@@ -3249,7 +3287,7 @@ def correction(
     # ------------------------------------------------------
     #  API CALL
     # ------------------------------------------------------
-    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies())
+    response = requests.post(url, headers=headers, json=payload, proxies=_get_requests_proxies(), timeout=_request_timeout())
     result = response.json()
     if response.status_code != 200:
         raise Exception(f"GapGPT API Error {response.status_code}: {result}")

@@ -409,9 +409,33 @@ def test_get_assignment_reads_pacs_assignment(ia, monkeypatch):
     assert out["ok"] and out["assignment"]["radiologist"]["name"] == "Dr A"
 
 
-def test_derive_pacs_http_base_swaps_port_to_8000(ia, monkeypatch):
-    """The assign base derives the PACS host :8000 from the reception host."""
+def test_derive_pacs_http_base_uses_the_active_profile_host(ia, monkeypatch):
+    """The assign base is the ACTIVE SERVER PROFILE's host :8000 — NOT the reception
+    host (corrected 2026-07-14).
+
+    The assign REST API runs on the PACS service; reception is a different service
+    and can be a different machine. Deriving it from the reception host sent assign
+    calls to the wrong box at any center where the two differ (here the profile host
+    is 192.168.2.222 while reception is the port-forwarded 81.16.117.196 — both
+    answered, so the defect was latent).
+    """
+    import PacsClient.utils.server_profiles as sp
+
+    monkeypatch.setattr(sp, "get_active_profile", lambda: None)
+    monkeypatch.setattr(sp, "active_host", lambda: "192.168.2.222")
     monkeypatch.setattr(ia, "get_reception_api_base_url", lambda: "http://81.16.117.196:8080")
+
+    assert ia._derive_pacs_http_base() == "http://192.168.2.222:8000"
+
+
+def test_derive_pacs_http_falls_back_to_reception_when_no_profile(ia, monkeypatch):
+    """No profile configured at all → the legacy reception-derived base still works."""
+    import PacsClient.utils.server_profiles as sp
+
+    monkeypatch.setattr(sp, "get_active_profile", lambda: None)
+    monkeypatch.setattr(sp, "active_host", lambda: "")
+    monkeypatch.setattr(ia, "get_reception_api_base_url", lambda: "http://81.16.117.196:8080")
+
     assert ia._derive_pacs_http_base() == "http://81.16.117.196:8000"
 
 

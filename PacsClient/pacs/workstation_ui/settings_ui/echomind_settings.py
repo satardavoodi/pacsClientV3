@@ -28,18 +28,27 @@ from modules.EchoMind.llm_client import (
     test_openai_connection,
 )
 from modules.EchoMind.settings_store import (
+    STT_HTTP_PROVIDERS,
+    STT_PROVIDER_CUSTOM,
+    STT_PROVIDER_GOOGLE,
+    STT_PROVIDER_OPENAI,
     get_echomind_api_key,
     get_llm_backend,
     get_openai_settings,
     get_prompt_settings,
     get_proxy_settings,
-    get_secretary_stt_route,
+    get_stt_settings,
     save_openai_settings,
     save_prompt_settings,
     save_proxy_settings,
+    save_stt_settings,
     set_echomind_api_key,
     set_llm_backend,
-    set_secretary_stt_route,
+)
+from modules.EchoMind.voice_transcription import (
+    DEFAULT_ENDPOINT_PATH,
+    STT_PROVIDER_CHOICES,
+    VoiceTranscriptionService,
 )
 from PacsClient.utils.database import get_api_usage_rows_for_key, load_api_transcript_usage_for_key
 
@@ -666,13 +675,24 @@ class EchoMindSettingsWidget(QWidget):
         self._root.addWidget(group)
 
     def _build_stt_group(self):
-        self.stt_group = QGroupBox("Secretary Voice-to-Text")
+        """Settings ▸ EchoMind ▸ Voice to Text — the SINGLE source of truth.
+
+        Both EchoMind chat and Secretary EchoMind send their recorded voice files to
+        whatever is selected here. Before 2026-07-13 the chat POSTed to a hard-coded
+        ``{AI_BASE}/generate_transcript`` and ignored this section completely.
+
+        The two built-in AI-PACS servers are shown BY NAME ONLY — their addresses
+        live in ``modules/EchoMind/voice_transcription.py`` and are never surfaced.
+        """
+        self.stt_group = QGroupBox("Voice to Text")
         group = self.stt_group
         layout = QVBoxLayout(group)
         layout.setSpacing(12)
         layout.addWidget(
             self._note_label(
-                "Shared Secretary speech-to-text settings. OpenAI transcription uses the OpenAI configuration from this page."
+                "Shared by EchoMind Chat and Secretary EchoMind. The selected server "
+                "receives every recorded voice file for transcription. Changes apply "
+                "immediately — no restart needed."
             )
         )
         grid = QGridLayout()
@@ -681,20 +701,67 @@ class EchoMindSettingsWidget(QWidget):
         grid.setContentsMargins(8, 8, 8, 8)
 
         self.provider_combo = QComboBox()
-        self.provider_combo.addItem("Server model (IranNevis)", userData="native")
-        self.provider_combo.addItem("V2T model (Google Speech)", userData="v2t")
-        self.provider_combo.addItem("OpenAI Transcription", userData="openai")
+        for pid, label in STT_PROVIDER_CHOICES:
+            self.provider_combo.addItem(label, userData=pid)
         self.provider_combo.currentIndexChanged.connect(self._on_provider_changed)
         self.provider_combo.setMaximumWidth(320)
 
-        self.provider_help = self._note_label("")
+        self.stt_url_input = QLineEdit()
+        self.stt_url_input.setPlaceholderText("http://192.168.1.50")
 
-        grid.addWidget(QLabel("Model:"), 0, 0)
+        self.stt_port_input = QSpinBox()
+        self.stt_port_input.setRange(0, 65535)
+        self.stt_port_input.setSpecialValueText("(in URL)")
+        self.stt_port_input.setMaximumWidth(140)
+
+        self.stt_path_input = QLineEdit()
+        self.stt_path_input.setPlaceholderText(DEFAULT_ENDPOINT_PATH)
+
+        self.stt_timeout_input = QSpinBox()
+        self.stt_timeout_input.setRange(5, 3600)
+        self.stt_timeout_input.setSuffix(" s")
+        self.stt_timeout_input.setMaximumWidth(140)
+
+        self.stt_token_input = QLineEdit()
+        self.stt_token_input.setEchoMode(QLineEdit.Password)
+        self.stt_token_input.setPlaceholderText("optional — leave empty to use the EchoMind key")
+
+        self.stt_save_btn = QPushButton("Save Voice to Text")
+        self.stt_save_btn.setProperty("role", "primary")
+        self.stt_save_btn.clicked.connect(self._on_save_stt_clicked)
+        self.stt_test_btn = QPushButton("Test Connection")
+        self.stt_test_btn.clicked.connect(self._on_test_stt_clicked)
+
+        self.provider_help = self._note_label("")
+        self.stt_status = self._note_label("")
+
+        self.stt_url_label = QLabel("Server URL:")
+        self.stt_port_label = QLabel("Port:")
+        self.stt_path_label = QLabel("Endpoint:")
+
+        grid.addWidget(QLabel("Provider:"), 0, 0)
         grid.addWidget(self.provider_combo, 0, 1)
-        grid.addWidget(self.provider_help, 1, 0, 1, 2)
+        grid.addWidget(self.stt_url_label, 1, 0)
+        grid.addWidget(self.stt_url_input, 1, 1)
+        grid.addWidget(self.stt_port_label, 2, 0)
+        grid.addWidget(self.stt_port_input, 2, 1)
+        grid.addWidget(self.stt_path_label, 3, 0)
+        grid.addWidget(self.stt_path_input, 3, 1)
+        grid.addWidget(QLabel("Request Timeout:"), 4, 0)
+        grid.addWidget(self.stt_timeout_input, 4, 1)
+        grid.addWidget(QLabel("Auth Token:"), 5, 0)
+        grid.addWidget(self.stt_token_input, 5, 1)
         grid.setColumnStretch(1, 1)
 
+        buttons = QHBoxLayout()
+        buttons.addWidget(self.stt_save_btn)
+        buttons.addWidget(self.stt_test_btn)
+        buttons.addStretch()
+
         layout.addLayout(grid)
+        layout.addLayout(buttons)
+        layout.addWidget(self.provider_help)
+        layout.addWidget(self.stt_status)
         self._root.addWidget(group)
 
     def _update_backend_visibility(self):
@@ -715,10 +782,18 @@ class EchoMindSettingsWidget(QWidget):
         if idx >= 0:
             self.backend_combo.setCurrentIndex(idx)
 
-        route = get_secretary_stt_route()
-        idx = self.provider_combo.findData(route)
+        # Voice to Text — the unified 5-way provider (an install that never touched
+        # this setting derives it from the legacy route, so nothing changes for it).
+        stt = get_stt_settings()
+        idx = self.provider_combo.findData(stt.get("provider"))
         if idx >= 0:
             self.provider_combo.setCurrentIndex(idx)
+        self.stt_url_input.setText(str(stt.get("custom_base_url") or ""))
+        self.stt_port_input.setValue(int(stt.get("custom_port") or 0))
+        self.stt_path_input.setText(str(stt.get("endpoint_path") or DEFAULT_ENDPOINT_PATH))
+        self.stt_timeout_input.setValue(int(stt.get("timeout_seconds") or 360))
+        self.stt_token_input.setText(str(stt.get("auth_token") or ""))
+        self._update_stt_field_visibility()
 
         self._load_openai_state()
         self._load_prompt_state()
@@ -892,19 +967,88 @@ class EchoMindSettingsWidget(QWidget):
         self.backend_saved_label.setText(f"{name} backend saved and active.")
         self.backend_saved_label.setVisible(True)
 
+    # ── Voice to Text ────────────────────────────────────────────────────────
+    def _current_stt_provider(self) -> str:
+        return str(self.provider_combo.currentData() or "aipacs_2")
+
     def _on_provider_changed(self, _index: int):
-        set_secretary_stt_route(str(self.provider_combo.currentData() or "native"))
+        # Selecting a provider only updates the FORM. It is persisted by
+        # "Save Voice to Text" — so a half-typed custom URL can never become the
+        # live endpoint for both modules mid-edit.
         self._update_provider_help()
+        self._update_stt_field_visibility()
+        self.stt_status.setText("")
+
+    def _update_stt_field_visibility(self):
+        """Custom Server exposes URL + Port; the built-in servers are name-only.
+
+        Their addresses are deliberately never shown (they live in
+        modules/EchoMind/voice_transcription.py).
+        """
+        provider = self._current_stt_provider()
+        is_http = provider in STT_HTTP_PROVIDERS
+        is_custom = provider == STT_PROVIDER_CUSTOM
+
+        for w in (self.stt_url_label, self.stt_url_input,
+                  self.stt_port_label, self.stt_port_input):
+            w.setVisible(is_custom)
+        for w in (self.stt_path_label, self.stt_path_input):
+            w.setVisible(is_http)
+        self.stt_token_input.setEnabled(is_http)
+        self.stt_timeout_input.setEnabled(is_http)
 
     def _update_provider_help(self):
-        route = str(self.provider_combo.currentData() or "native").lower()
-        if route == "v2t":
-            text = "V2T runs locally with Google Speech (requires speech_recognition and internet)."
-        elif route == "openai":
-            text = "OpenAI Transcription uses the saved OpenAI API key and transcription model from this page."
+        provider = self._current_stt_provider()
+        if provider == STT_PROVIDER_GOOGLE:
+            text = "Runs locally with Google Speech (requires speech_recognition and internet). No server endpoint."
+        elif provider == STT_PROVIDER_OPENAI:
+            text = "Uses the OpenAI API key and transcription model configured on this page."
+        elif provider == STT_PROVIDER_CUSTOM:
+            text = "Send voice files to your own Whisper-compatible server."
         else:
-            text = "Server model uses the EchoMind IranNevis transcription service."
+            text = ("Voice files are uploaded to this AI-PACS transcription server. "
+                    "Used by both EchoMind Chat and Secretary EchoMind.")
         self.provider_help.setText(text)
+
+    def _stt_form_patch(self) -> dict:
+        return {
+            "provider": self._current_stt_provider(),
+            "custom_base_url": (self.stt_url_input.text() or "").strip(),
+            "custom_port": int(self.stt_port_input.value()),
+            "endpoint_path": (self.stt_path_input.text() or "").strip() or DEFAULT_ENDPOINT_PATH,
+            "timeout_seconds": int(self.stt_timeout_input.value()),
+            "auth_token": (self.stt_token_input.text() or "").strip(),
+        }
+
+    def _on_save_stt_clicked(self):
+        patch = self._stt_form_patch()
+        if patch["provider"] == STT_PROVIDER_CUSTOM and not patch["custom_base_url"]:
+            QMessageBox.warning(self, "Voice to Text",
+                                "Please enter the server URL for the custom server.")
+            return
+        save_stt_settings(patch)
+        # Both modules resolve the endpoint per call, so this is live immediately.
+        info = VoiceTranscriptionService().describe()
+        self.stt_status.setProperty("state", "success")
+        self.stt_status.setText(
+            f"Saved — EchoMind Chat and Secretary now use: {info.get('label')}"
+        )
+        self.style().unpolish(self.stt_status)
+        self.style().polish(self.stt_status)
+
+    def _on_test_stt_clicked(self):
+        # Test what is IN THE FORM, without persisting it.
+        patch = self._stt_form_patch()
+        result = VoiceTranscriptionService(settings=patch).test_connection()
+        ok = bool(result.get("ok"))
+        self.stt_status.setProperty("state", "success" if ok else "error")
+        self.stt_status.setText(str(result.get("detail") or ""))
+        self.style().unpolish(self.stt_status)
+        self.style().polish(self.stt_status)
+        if ok:
+            QMessageBox.information(self, "Voice to Text", str(result.get("detail") or "Reachable."))
+        else:
+            QMessageBox.warning(self, "Voice to Text", str(result.get("detail") or "Not reachable."))
 
     def _on_authenticate_clicked(self):
         key = (self.key_input.text() or "").strip()

@@ -65,6 +65,60 @@ def filesystems_for_media(media_type: Optional[int]) -> int:
     return 3
 
 
+SECTOR_SIZE = 2048
+# Directory records, ISO9660 + Joliet path tables, UDF structures and per-file
+# padding to the 2048-byte sector all cost blocks on top of the raw file bytes.
+# 5% + 1 MB is comfortably above the real overhead for our payloads.
+_FS_OVERHEAD_RATIO = 1.05
+_FS_OVERHEAD_BLOCKS = 512  # ~1 MB
+
+
+def content_blocks(source_path) -> int:
+    """Blocks the staged folder will occupy, including file-system overhead.
+
+    Each file rounds UP to a whole 2048-byte sector — a folder of many small
+    DICOM files costs noticeably more than the sum of its bytes.
+    """
+    from pathlib import Path as _Path
+
+    total_blocks = 0
+    for path in _Path(source_path).rglob("*"):
+        try:
+            if path.is_file():
+                size = path.stat().st_size
+                total_blocks += (size + SECTOR_SIZE - 1) // SECTOR_SIZE
+        except OSError:
+            continue
+    return int(total_blocks * _FS_OVERHEAD_RATIO) + _FS_OVERHEAD_BLOCKS
+
+
+def check_content_fits(source_path, free_sectors: int) -> tuple:
+    """(fits, message) — pre-flight capacity check before AddTree.
+
+    Without this, exceeding the media's capacity surfaces as an opaque IMAPI
+    failure on whichever file happened to cross the line ("Adding
+    '_libjpeg.cp313-win_amd64.pyd' would result in a result image having a size
+    larger than the current configured limit"), 55% into the burn.
+    """
+    if not free_sectors or free_sectors <= 0:
+        return True, ""  # capacity unknown — let IMAPI decide, don't block a valid burn
+
+    needed = content_blocks(source_path)
+    if needed <= free_sectors:
+        return True, ""
+
+    needed_mb = needed * SECTOR_SIZE / (1024 * 1024)
+    free_mb = free_sectors * SECTOR_SIZE / (1024 * 1024)
+    return False, (
+        f"The content does not fit on this disc.\n\n"
+        f"Needed: {needed_mb:,.0f} MB\n"
+        f"Available on media: {free_mb:,.0f} MB\n\n"
+        f"Use a higher-capacity disc (a DVD holds ~4,700 MB), or reduce the "
+        f"content — the bundled AI-PACS Lite Viewer alone is about 100 MB, and "
+        f"'Uncompressed' DICOM format is much larger than 'Original'."
+    )
+
+
 def get_available_drives() -> List[Dict[str, str]]:
     """
     Get list of available CD/DVD drives
@@ -333,10 +387,41 @@ class CDBurner:
                 return False, "Current media not supported. Please insert a blank CD/DVD."
             
             self._report_progress(5, "Creating file system image...")
-            
+
             # Create file system image
             file_system = comtypes.client.CreateObject("IMAPI2FS.MsftFileSystemImage")
-            
+
+            # ---------------------------------------------------------------
+            # CRITICAL: teach the image about the media that is actually loaded.
+            #
+            # A freshly-created MsftFileSystemImage has NO media context, so
+            # IMAPI applies its built-in default size limit (CD-sized, ~650 MB).
+            # AddTree then aborts partway through with
+            #     "Adding '<file>' would result in a result image having a size
+            #      larger than the current configured limit."
+            # ...even on a 4.7 GB DVD. ChooseImageDefaults(recorder) reads the
+            # loaded media and sets FreeMediaBlocks (and ISO/UDF revisions)
+            # accordingly. It also overwrites FileSystemsToCreate, so it MUST be
+            # called BEFORE we set our own value below (ISO9660+Joliet is
+            # non-negotiable — see filesystems_for_media()).
+            # ---------------------------------------------------------------
+            try:
+                file_system.ChooseImageDefaults(self.recorder)
+            except Exception as e:
+                logger.warning(f"ChooseImageDefaults failed ({e}); falling back to FreeSectorsOnMedia")
+
+            free_sectors = 0
+            try:
+                free_sectors = int(disc_format.FreeSectorsOnMedia or 0)
+            except Exception:
+                free_sectors = 0
+            if free_sectors > 0:
+                # Belt and braces: pin the limit to the media's real free space.
+                try:
+                    file_system.FreeMediaBlocks = free_sectors
+                except Exception as e:
+                    logger.warning(f"Could not set FreeMediaBlocks ({e})")
+
             # Set file system properties
             file_system.VolumeName = volume_label
 
@@ -351,6 +436,12 @@ class CDBurner:
                 disc_format.ForceMediaToBeClosed = bool(finalize)
             except Exception:
                 pass
+
+            # Pre-flight capacity check: fail EARLY with a number the user can
+            # act on, instead of dying 55% into the burn on an arbitrary file.
+            fits, capacity_message = check_content_fits(source_path, free_sectors)
+            if not fits:
+                return False, capacity_message
 
             # Requested write speed (None → drive default / Auto)
             if write_speed_sectors:
@@ -376,6 +467,19 @@ class CDBurner:
             try:
                 root.AddTree(str(source_path), False)
             except Exception as e:
+                # The pre-flight check above should already have caught an
+                # over-capacity payload; if IMAPI still reports the size limit,
+                # translate it rather than leaking the raw COM tuple.
+                if "larger than the current configured limit" in str(e):
+                    logger.error(f"IMAPI size limit hit during AddTree: {e}")
+                    message = ""
+                    if free_sectors > 0:
+                        _, message = check_content_fits(source_path, free_sectors)
+                    return False, message or (
+                        "The content does not fit on this disc. Use a "
+                        "higher-capacity disc (a DVD holds ~4,700 MB) or reduce "
+                        "the content."
+                    )
                 return False, f"Error adding files: {e}"
             
             if self._cancelled:

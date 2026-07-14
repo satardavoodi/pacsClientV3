@@ -14,6 +14,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QMessageBox
 import qtawesome as qta
 
@@ -606,11 +607,54 @@ class HomeSearchService:
             socket_service = get_socket_patient_service()
 
             def _show_conn_failed() -> None:
+                """Report a failed connection WITHOUT freezing the GUI.
+
+                FIX-4 (2026-07-13): this used ``QMessageBox.critical``, a MODAL
+                dialog — which runs a NESTED Qt event loop on the GUI thread. On a
+                flaky link the searches fail in bursts, so the user got a stack of
+                modals and an app that "froze". Worse, the nested loop keeps
+                pumping timers and coroutines (the status-refresh chain, the
+                pin-overlay timer, another search) *behind* the dialog — the exact
+                re-entrancy the table-clear crash lives in.
+
+                The connection indicator already shows the failure prominently and
+                permanently; that is the right channel for a transient network
+                error. A non-modal box (``show()``, not ``exec()``) is raised at
+                most once per burst so the user still gets an explicit message the
+                first time, without any nested event loop.
+
+                Kill switch: ``AIPACS_MODAL_CONN_FAILED=1`` restores the modal.
+                """
                 cfg = socket_service.config
                 config_info = f"{cfg.get_socket_host()}:{cfg.get_socket_port()}"
                 home._update_connection_indicator_by_status('offline', 'Socket Connection Failed', config_info)
-                QMessageBox.critical(home, "Connection Failed",
-                                     f"Failed to connect to Socket server at {config_info}")
+
+                if (_os.getenv("AIPACS_MODAL_CONN_FAILED", "0") or "0").strip() != "0":
+                    QMessageBox.critical(home, "Connection Failed",
+                                         f"Failed to connect to Socket server at {config_info}")
+                    return
+
+                try:
+                    existing = getattr(home, '_conn_failed_box', None)
+                    if existing is not None and existing.isVisible():
+                        return  # one box per burst — the indicator carries the rest
+                    box = QMessageBox(home)
+                    box.setIcon(QMessageBox.Icon.Critical)
+                    box.setWindowTitle("Connection Failed")
+                    box.setText(f"Failed to connect to the server at {config_info}.")
+                    box.setInformativeText(
+                        "The patient list could not be refreshed. Check the network "
+                        "connection — the workstation will keep working with the "
+                        "studies already downloaded."
+                    )
+                    box.setStandardButtons(QMessageBox.StandardButton.Ok)
+                    box.setWindowModality(Qt.NonModal)
+                    box.setAttribute(Qt.WA_DeleteOnClose, True)
+                    box.finished.connect(lambda _=0: setattr(home, '_conn_failed_box', None))
+                    home._conn_failed_box = box
+                    box.show()  # NOT exec() — no nested event loop, no GUI freeze
+                except Exception:
+                    _logger.warning("[CONN-FAILED] could not show the non-modal notice", exc_info=True)
 
             # OPT-24b: the pre-flight probe is NOT a cheap ping — test_connection()
             # does client.connect() + get_patient_list_safe(limit=1), i.e. a FULL extra
@@ -686,6 +730,16 @@ class HomeSearchService:
             #    no client change can help. Either way we get a definitive answer.
             # Kill switch: AIPACS_SEARCH_ENRICH_PROBE=0.
             self._maybe_probe_enrich_cost(loop, socket_service, socket_params, _search_ms)
+
+            # FIX-3 (2026-07-13): the generation guard was checked ONLY inside the
+            # row-insert loop below — NOT before the clear_table() that follows.
+            # Two overlapping searches (trivial to produce on a flaky link, where
+            # the first one sits on a dead socket) could therefore BOTH reach the
+            # clear, so one coroutine tore the table down while the other was
+            # mid-rebuild. Bail here instead: a superseded search must not touch
+            # the table at all.
+            if self._cancelled or home._search_generation != _my_search_gen:
+                raise asyncio.CancelledError()
 
             total = len(patients or [])
             home.search_progress.setRange(0, max(1, total))

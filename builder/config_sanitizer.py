@@ -50,12 +50,17 @@ from typing import Any, Dict, List, Tuple
 #   blank_children : every child value under this dotted path becomes ""
 SANITIZE: Dict[str, Dict[str, Any]] = {
     # EchoMind — real API key today. Model names / timeouts are product defaults.
+    # stt_custom_base_url / stt_auth_token belong to the Voice-to-Text section: a
+    # centre's own transcription server + its token must never ship. The PROVIDER
+    # choice (stt_provider) is a product default and is kept.
     "echomind_settings.json": {
         "blank": [
             "api_key",
             "openai_api_key",
             "openai_org_id",
             "openai_project_id",
+            "stt_custom_base_url",
+            "stt_auth_token",
         ],
     },
     # DICOM servers: root is a LIST of the dev centre's servers (host/AE title).
@@ -95,8 +100,18 @@ SANITIZE: Dict[str, Dict[str, Any]] = {
     "update_sources.json": {"blank": ["sources[].location"]},
 }
 
-# Files that must NEVER be packaged at all (dev leftovers / secret material).
-EXCLUDE_NAMES = {".gitignore"}
+# Files that must NEVER be packaged at all (dev leftovers / secret material /
+# machine-generated state).
+EXCLUDE_NAMES = {
+    ".gitignore",
+    # OPT-21: the persisted per-INSTALL hardware probe (OpenGL/GPU, CPU, RAM,
+    # disk). Shipping it would seed the DEVELOPER machine's results into every
+    # client — and because a persisted PASS is trusted with ZERO probing, a
+    # client whose driver cannot do OpenGL 3.2 would SKIP its own probe and walk
+    # straight into the native MPR crash the pre-flight exists to prevent.
+    # It is machine-generated state, never a config template.
+    "hardware_check.json",
+}
 EXCLUDE_DIRS = {"secrets", "__pycache__"}
 EXCLUDE_SUFFIX_PATTERNS = (
     re.compile(r"\.bak(-\d+)?$", re.I),   # aipacs_web.json.bak-20260613

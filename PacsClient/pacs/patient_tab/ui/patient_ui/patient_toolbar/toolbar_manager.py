@@ -10098,11 +10098,36 @@ class ToolbarManager:
                     progress_dialog.setValue(100)
                     progress_dialog.close()
                     self._disconnect_patient_sync_signals(sync_service)
-                    
+
                     # Re-enable sync button
                     if hasattr(self, 'sync_button'):
                         self.sync_button.setEnabled(True)
-                    
+
+                    # ── FIX-2 (2026-07-13) defence-in-depth ────────────────────
+                    # NEVER assert a server state the server did not confirm. The
+                    # sync service now routes an unsuccessful sync to sync_failed,
+                    # but this handler is the site that actually CLOSES the tab and
+                    # writes "physician_approved" + the green "synced" row — so it
+                    # re-validates the result itself. If a `result` ever arrives
+                    # here with recorded errors / status_updated=False (a legacy
+                    # emit, AIPACS_SYNC_STRICT_RESULT=0, or a future caller), we
+                    # keep the tab OPEN and do not mark the study approved.
+                    # Reuses the SAME pure predicate as the service so the two can
+                    # never drift.
+                    try:
+                        from PacsClient.pacs.patient_tab.utils.patient_sync_service import (
+                            _sync_result_failed as _sync_failed_check,
+                        )
+                        _unconfirmed = _sync_failed_check(result)
+                    except Exception:
+                        _unconfirmed = False
+                    if _unconfirmed:
+                        print(
+                            "[Toolbar] sync_completed carried an UNCONFIRMED result "
+                            f"({result}); not closing the tab and not marking approved."
+                        )
+                        return
+
                     # Update patient_widget report_status to match exactly what
                     # the sync service sent (physician_approved by default).
                     # Reads the single shared constant so this never drifts from
@@ -10112,7 +10137,7 @@ class ToolbarManager:
                     except Exception:
                         _synced_status = 'physician_approved'
                     self.patient_widget.report_status = _synced_status
-                    
+
                     # Update visited status to synced (green underline)
                     try:
                         from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
