@@ -3,11 +3,11 @@
   <scons_environment c_compiler="MSVC" the_cc_name="cl" the_compiler="cl" />
   <module name="PySide6" kind="CompiledPythonPackage" usage="import path parent" reason="Included to allow post load workaround code." source_path="${sys.prefix}\Lib\site-packages\PySide6\__init__.py" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
     <plugin-influence name="options-nanny" influence="condition-used" condition="use_pyside6" tags_used="use_pyside6" result="true" />
-    <optimization-time pass="1" time="0.0156" micro_passes="5" max_branch_merge="10" merged_total="728" />
-    <optimization-time pass="2" time="0.0000" micro_passes="1" max_branch_merge="10" merged_total="139" />
-    <code-generation-time time="0.0312" />
+    <optimization-time pass="1" time="0.0156" micro_passes="5" max_branch_merge="10" merged_total="784" />
+    <optimization-time pass="2" time="0.0156" micro_passes="1" max_branch_merge="10" merged_total="139" />
+    <code-generation-time time="0.0156" />
     <c-compilation-resources>
-      <c-cache tech="clcache" result="cache miss" />
+      <c-cache tech="clcache" result="cache hit" />
       <object-file size="1109266" />
     </c-compilation-resources>
     <distribution-usages>
@@ -25,11 +25,11 @@
     </module_usages>
   </module>
   <module name="PySide6-postLoad" kind="CompiledPythonModule" usage="plugins" reason="According to Yaml 'post-import-code' configuration." source_path="${sys.prefix}\Lib\site-packages\PySide6\PySide6-postLoad.py">
-    <optimization-time pass="1" time="0.0156" micro_passes="4" max_branch_merge="6" merged_total="116" />
+    <optimization-time pass="1" time="0.0156" micro_passes="4" max_branch_merge="9" merged_total="181" />
     <optimization-time pass="2" time="0.0000" micro_passes="1" max_branch_merge="6" merged_total="26" />
     <code-generation-time time="0.0000" />
     <c-compilation-resources>
-      <c-cache tech="clcache" result="cache miss" />
+      <c-cache tech="clcache" result="cache hit" />
       <object-file size="925895" />
     </c-compilation-resources>
     <distribution-usages>
@@ -47,7 +47,7 @@
     <optimization-time pass="2" time="0.0000" micro_passes="1" />
     <code-generation-time time="0.0000" />
     <c-compilation-resources>
-      <c-cache tech="clcache" result="cache miss" />
+      <c-cache tech="clcache" result="cache hit" />
       <object-file size="843585" />
     </c-compilation-resources>
     <module_usages>
@@ -60,11 +60,11 @@
     <module_usages />
   </module>
   <module name="PySide6.QtCore-postLoad" kind="CompiledPythonModule" usage="plugins" reason="Setting Qt library path to distribution folder. We need to avoid loading target&#10;system Qt plugins, which may be from another Qt version." source_path="${sys.prefix}\Lib\site-packages\PySide6\PySide6\QtCore-postLoad.py" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
-    <optimization-time pass="1" time="0.0156" micro_passes="2" max_branch_merge="1" merged_total="1" />
+    <optimization-time pass="1" time="0.0000" micro_passes="2" max_branch_merge="1" merged_total="1" />
     <optimization-time pass="2" time="0.0000" micro_passes="1" />
-    <code-generation-time time="0.0000" />
+    <code-generation-time time="0.0156" />
     <c-compilation-resources>
-      <c-cache tech="clcache" result="cache miss" />
+      <c-cache tech="clcache" result="cache hit" />
       <object-file size="851418" />
     </c-compilation-resources>
     <module_usages>
@@ -76,17 +76,17 @@
     </module_usages>
   </module>
   <module name="PySide6.QtGui" kind="PythonExtensionModule" usage="plugin:implicit-imports" reason="Extension module needed for standalone mode." source_path="${sys.prefix}\Lib\site-packages\PySide6\QtGui.pyd" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
-    <optimization-time pass="1" time="0.5625" />
+    <optimization-time pass="1" time="0.5469" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
   <module name="PySide6.QtNetwork" kind="PythonExtensionModule" usage="import fromlist" reason="Extension module needed for standalone mode." source_path="${sys.prefix}\Lib\site-packages\PySide6\QtNetwork.pyd" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
-    <optimization-time pass="1" time="0.4375" />
+    <optimization-time pass="1" time="0.4688" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
   <module name="PySide6.QtWidgets" kind="PythonExtensionModule" usage="import" reason="Extension module needed for standalone mode." source_path="${sys.prefix}\Lib\site-packages\PySide6\QtWidgets.pyd" distribution="PySide6,PySide6_Addons,PySide6_Essentials">
-    <optimization-time pass="1" time="0.6406" />
+    <optimization-time pass="1" time="0.4531" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
@@ -95,7 +95,7 @@
     <optimization-time pass="2" time="0.0000" micro_passes="1" />
     <code-generation-time time="0.0000" />
     <c-compilation-resources>
-      <c-cache tech="clcache" result="cache miss" />
+      <c-cache tech="clcache" result="cache hit" />
       <object-file size="848290" />
     </c-compilation-resources>
     <distribution-usages>
@@ -112,7 +112,7 @@
     <optimization-time pass="2" time="0.0000" micro_passes="1" />
     <code-generation-time time="0.0000" />
     <c-compilation-resources>
-      <c-cache tech="clcache" result="cache miss" />
+      <c-cache tech="clcache" result="cache hit" />
       <object-file size="834407" />
     </c-compilation-resources>
     <module_usages>
@@ -130,11 +130,11 @@
     <module_usages />
   </module>
   <module name="__main__" kind="PythonMainModule" usage="root_module" reason="Root module" source_path="${cwd}\builder nuitka\stage_entrypoints\stage2_qt_shell.py">
-    <optimization-time pass="1" time="0.0312" micro_passes="3" max_branch_merge="2" merged_total="6" />
+    <optimization-time pass="1" time="0.0156" micro_passes="3" max_branch_merge="2" merged_total="6" />
     <optimization-time pass="2" time="0.0000" micro_passes="1" max_branch_merge="2" merged_total="2" />
     <code-generation-time time="0.0000" />
     <c-compilation-resources>
-      <c-cache tech="clcache" result="cache miss" />
+      <c-cache tech="clcache" result="cache hit" />
       <object-file size="902178" />
     </c-compilation-resources>
     <distribution-usages>
@@ -1332,7 +1332,7 @@
   </module>
   <module name="encodings.cp1125" kind="UncompiledPythonModule" usage="stdlib" reason="Technically required for CPython library startup." source_path="${sys.real_prefix}\Lib\encodings\cp1125.py">
     <optimization-time pass="1" time="0.0156" micro_passes="4" max_branch_merge="8" merged_total="527" />
-    <optimization-time pass="2" time="0.0156" />
+    <optimization-time pass="2" time="0.0000" />
     <module_usages>
       <module_usage name="codecs" finding="absolute" line="5" />
     </module_usages>
@@ -2698,7 +2698,7 @@
   </module>
   <module name="importlib.simple" kind="UncompiledPythonModule" usage="stdlib" reason="Including as part of the non-excluded parts of standard library." source_path="${sys.real_prefix}\Lib\importlib\simple.py">
     <optimization-time pass="1" time="0.0000" micro_passes="2" max_branch_merge="4" merged_total="8" />
-    <optimization-time pass="2" time="0.0000" />
+    <optimization-time pass="2" time="0.0156" />
     <module_usages>
       <module_usage name="importlib.resources.simple" finding="absolute" line="8" />
     </module_usages>
@@ -3036,7 +3036,7 @@
   </module>
   <module name="pathlib._local" kind="UncompiledPythonModule" usage="import" reason="Including as part of the non-excluded parts of standard library." source_path="${sys.real_prefix}\Lib\pathlib\_local.py">
     <optimization-time pass="1" time="0.1875" micro_passes="5" max_branch_merge="48" merged_total="4313" />
-    <optimization-time pass="2" time="0.0156" />
+    <optimization-time pass="2" time="0.0000" />
     <module_usages>
       <module_usage name="io" finding="absolute" line="1" />
       <module_usage name="ntpath" finding="absolute" line="2" />
@@ -3377,11 +3377,11 @@
   </module>
   <module name="shiboken6" kind="CompiledPythonPackage" usage="plugin:implicit-imports" reason="Instructed by user to follow to all modules." source_path="${sys.prefix}\Lib\site-packages\shiboken6\__init__.py" distribution="shiboken6">
     <plugin-influence name="dll-files" influence="condition-used" condition="win32" tags_used="win32" result="true" />
-    <optimization-time pass="1" time="0.1562" micro_passes="2" />
+    <optimization-time pass="1" time="0.0469" micro_passes="2" />
     <optimization-time pass="2" time="0.0000" micro_passes="1" />
-    <code-generation-time time="0.0156" />
+    <code-generation-time time="0.0000" />
     <c-compilation-resources>
-      <c-cache tech="clcache" result="cache miss" />
+      <c-cache tech="clcache" result="cache hit" />
       <object-file size="853613" />
     </c-compilation-resources>
     <module_usages>
@@ -3406,7 +3406,7 @@
     </module_usages>
   </module>
   <module name="shiboken6.Shiboken" kind="PythonExtensionModule" usage="plugin:implicit-imports" reason="Extension module needed for standalone mode." source_path="${sys.prefix}\Lib\site-packages\shiboken6\Shiboken.pyd" distribution="shiboken6">
-    <optimization-time pass="1" time="0.0156" />
+    <optimization-time pass="1" time="0.0000" />
     <optimization-time pass="2" time="0.0000" />
     <module_usages />
   </module>
@@ -4104,9 +4104,9 @@
     </module_usages>
   </module>
   <performance>
-    <memory_usage name="after_launch" value="37216256" />
-    <memory_usage name="before_c_code_generation" value="279097344" />
-    <memory_usage name="before_running_scons" value="280141824" />
+    <memory_usage name="after_launch" value="37257216" />
+    <memory_usage name="before_c_code_generation" value="67121152" />
+    <memory_usage name="before_running_scons" value="67969024" />
   </performance>
   <included_extension name="QtCore.pyd" dest_path="PySide6\QtCore.pyd" source_path="${sys.prefix}\Lib\site-packages\PySide6\QtCore.pyd" package="PySide6" ignored="no" reason="used extension module" tags="copy" />
   <included_extension name="QtGui.pyd" dest_path="PySide6\QtGui.pyd" source_path="${sys.prefix}\Lib\site-packages\PySide6\QtGui.pyd" package="PySide6" ignored="no" reason="used extension module" tags="copy" />
@@ -4173,18 +4173,18 @@
     <module_data filename="module.shiboken6.const" blob_name="shiboken6" blob_size="411" input_size="827" />
   </data_composer>
   <performance-totals>
-    <optimization-time pass="1" time="21.7031" module_count="336" />
+    <optimization-time pass="1" time="21.3750" module_count="336" />
     <optimization-time pass="2" time="0.0312" module_count="336" />
-    <optimization-time pass="all" time="21.7344" module_count="336" />
-    <code-generation-time time="0.0469" module_count="8" />
+    <optimization-time pass="all" time="21.4062" module_count="336" />
+    <code-generation-time time="0.0312" module_count="8" />
   </performance-totals>
-  <python_binary filename="AIPacs.exe" backend_resource_mode="coff_obj" reproducible="no" size="5746688" />
+  <python_binary filename="AIPacs.exe" backend_resource_mode="coff_obj" reproducible="no" size="5746176" />
   <command_line>
     <option value="--standalone" />
     <option value="--output-dir=E:\ai-pacs\ai-pacs codes\ai-pacs beta version\builder nuitka\output\dist\stage_02_qt_shell" />
     <option value="--output-filename=AIPacs.exe" />
     <option value="--product-name=AIPacs" />
-    <option value="--product-version=3.4.5" />
+    <option value="--product-version=3.5.3" />
     <option value="--company-name=AIPacs" />
     <option value="--file-description=AIPacs - staged Nuitka build" />
     <option value="--windows-console-mode=attach" />

@@ -131,6 +131,12 @@ class ViewData:
     vtk_widget: object = None  # Reference to viewer widget for visualization
     manual_nipple_px: Optional[Tuple[float, float]] = None  # User-selected nipple (x_px, y_px)
     manual_pectoral_angle_deg: Optional[float] = None  # User-drawn pectoral line angle
+    # DICOM acquisition geometry (read from the header, not user-drawn). Additive /
+    # optional so every existing construction site stays byte-identical.
+    positioner_primary_angle_deg: Optional[float] = None  # (0018,1510) MLO gantry angle
+    body_part_thickness_mm: Optional[float] = None         # (0018,11a0) compressed thickness
+    patient_id: Optional[str] = None                       # (0010,0020) — keys the feature
+    #                                                        store + the contralateral pass
 
 
 # ─── Main Correlator Class ───────────────────────────────────────────────────

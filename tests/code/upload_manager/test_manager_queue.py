@@ -5,6 +5,14 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 
+# Q0 2026-07-14: these tests start a real `UploadManager` worker QThread that, under the
+# scattered `-n auto` distribution, outlives the test and contaminates the next one through the
+# shared `store_mod._STORE` global. The failure is NOT in the call phase, so an `xfail`
+# quarantine cannot convert it — so the module is marked `flaky_parallel` and runs SERIALLY
+# (`run_test.ps1`'s second pass), where it is deterministic. Real fix = drain the worker in the
+# fixture (a naive drain added teardown errors; needs care). Tracked as test-isolation debt.
+pytestmark = pytest.mark.flaky_parallel
+
 pytest.importorskip("PySide6")
 from PySide6.QtWidgets import QApplication
 

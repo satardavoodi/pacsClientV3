@@ -1238,7 +1238,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.5.2")
+    app.setApplicationVersion("3.5.3")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1347,10 +1347,42 @@ if __name__ == "__main__":
             shutdown_decode_service()
         except Exception:
             pass
+        # Kill any download subprocess still in flight. This is registered via
+        # atexit in _vw_globals too, but atexit does NOT run after the guarded
+        # os._exit() below (nor on some abrupt Qt teardowns), so call it EXPLICITLY
+        # here first — a normal close must never leave an orphaned download
+        # python.exe / AIPacs.exe worker in Task Manager (2026-07-14 shutdown review).
+        try:
+            from PacsClient.pacs.patient_tab.ui.patient_ui.vtk_widget._vw_globals import (
+                terminate_all_download_subprocesses,
+            )
+            terminate_all_download_subprocesses()
+        except Exception:
+            pass
         # Game-changer #1: flush async log listener before process exit so
         # no records are lost to the queue on shutdown.
         try:
             from PacsClient.utils.diagnostic_logging import shutdown_diagnostic_logging
             shutdown_diagnostic_logging()
+        except Exception:
+            pass
+        # HARD-EXIT FAILSAFE (2026-07-14 shutdown review). All cleanup above has
+        # run; now GUARANTEE the process actually dies. Without this, a lingering
+        # non-daemon thread (a native audio/PortAudio callback, a Qt Multimedia
+        # backend thread, a stuck VTK/OpenGL teardown, a blocked socket recv) can
+        # keep the interpreter — and therefore the whole AIPacs process and its
+        # child tree — alive in Task Manager after the user closed the window. The
+        # takeover path already had this failsafe (single_instance_lock
+        # _initiate_shutdown); the normal close did not. os._exit skips the rest of
+        # interpreter teardown, so it MUST come after the explicit subprocess kill
+        # + log flush above. Escape hatch: AIPACS_NO_HARD_EXIT=1 (debugging).
+        try:
+            if os.environ.get("AIPACS_NO_HARD_EXIT", "") != "1":
+                logging.getLogger(__name__).info(
+                    "Application shutdown: hard-exit failsafe (all cleanup done)."
+                )
+                sys.stdout.flush()
+                sys.stderr.flush()
+                os._exit(0)
         except Exception:
             pass

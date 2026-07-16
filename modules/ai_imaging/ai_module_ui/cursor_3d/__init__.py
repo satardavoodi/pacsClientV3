@@ -21,6 +21,27 @@ Architecture:
 
 from .correlator import CursorCorrelator3D
 from .geometry import MammogramGeometry, ChestWallOrientation
+
+# ── Two-Stage 3D Cursor (geometric region + lower-threshold AI rerun) ──
+# Stage 1 = search_region (SS strip / AB arc, corrected L-R, honest bands)
+# Stage 2 = second_pass (background rerun) + candidate_matching (ranking)
+# See docs/plans/mammography/EAGLEEYE_3D_CURSOR_ACCURACY_PLAN_2026-07-14.md
+from .search_region import (
+    SearchRegion,
+    compute_search_region,
+    absolute_error_mm,
+)
+from .candidate_matching import (
+    Candidate,
+    ScoredCandidate,
+    MatchResult,
+    rank_candidates,
+    score_candidate,
+    MATCH,
+    AMBIGUOUS,
+    NO_MATCH,
+)
+from .two_stage_session import TwoStageSession, save_session, load_sessions
 from .nipple_detect import detect_nipple_position
 from .nipple_picker import NipplePickerController
 from .pectoral_picker import PectoralLinePickerController, PickedPectoralLine
@@ -76,6 +97,21 @@ from .anchor_validation import (
 )
 
 __all__ = [
+    # Two-Stage 3D Cursor
+    "SearchRegion",
+    "compute_search_region",
+    "absolute_error_mm",
+    "Candidate",
+    "ScoredCandidate",
+    "MatchResult",
+    "rank_candidates",
+    "score_candidate",
+    "MATCH",
+    "AMBIGUOUS",
+    "NO_MATCH",
+    "TwoStageSession",
+    "save_session",
+    "load_sessions",
     # Legacy 3D Cursor
     "CursorCorrelator3D",
     "MammogramGeometry",

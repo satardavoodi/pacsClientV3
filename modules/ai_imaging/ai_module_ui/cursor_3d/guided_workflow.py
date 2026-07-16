@@ -149,7 +149,27 @@ def plan_cursor3d_steps(slots: List[ViewSlot]) -> Optional[List[Cursor3DStep]]:
                 f"click its <b>upper (superior)</b> end, then its <b>lower (inferior)</b> end."
             ),
             clicks=2,
-            why="Gives the pectoral angle θ used to project the lesion (H = Y·sinθ + Z·cosθ). Only the MLO view images the pectoral muscle — no CC line is needed.",
+            why="Gives the pectoral angle θ used to project the lesion (H = Y·sinθ + Z·cosθ), and the MLO nipple-to-pectoral distance for cross-view depth normalisation.",
+        ),
+        Cursor3DStep(
+            key="pectoral_cc",
+            kind="line",
+            view_position="CC",
+            view_label=cc.label,
+            viewer_index=cc.viewer_index,
+            title=f"Chest-wall line — CC ({cc.label})",
+            tool="Chest-wall reference · 2 clicks",
+            instruction=(
+                f"Draw the <b>posterior chest-wall reference line</b> in the "
+                f"<b>{cc.label}</b> view: click two points along the deep (chest-wall) "
+                f"edge of the breast — the pectoral shadow if visible, otherwise the "
+                f"posterior film edge."
+            ),
+            clicks=2,
+            why=("Gives the CC nipple-to-chest-wall distance (the CC Posterior Nipple "
+                 "Line). BOTH views' nipple-to-pectoral distances are required to "
+                 "normalise the lesion depth between CC and MLO — without a manual CC "
+                 "line the CC depth is only estimated and the localisation is off."),
         ),
     ]
 

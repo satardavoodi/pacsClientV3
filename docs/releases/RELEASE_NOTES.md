@@ -1,9 +1,67 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.2 (2026-07-14)
-**Previous Stable:** v3.5.1 (2026-07-13)
-**Release Date:** 2026-07-14
+**Current Stable Version:** v3.5.3 (2026-07-16)
+**Previous Stable:** v3.5.2 (2026-07-14)
+**Release Date:** 2026-07-16
 **Branch:** beta-version
+
+---
+
+## v3.5.3 (2026-07-16) - Minor release: Mammography 3D Cursor two-stage contralateral matching, test-suite repair, INO assign fix
+
+### Summary
+
+Minor release that builds the **second stage** of the Eagle Eye Mammography 3D
+Cursor — moving it from single-lesion CC/MLO correspondence to a two-stage,
+feature-based **contralateral (R↔L) matching** pipeline — and, separately,
+**repairs the test suite** so it is green by default and finally carries a real
+regression signal. Also fixes a reception-workflow regression where patients showed
+as "assigned" when only the RIS reporting radiologist existed.
+
+### Included — Eagle Eye Mammography 3D Cursor (two-stage)
+
+- **PNL cross-view depth normalization.** The single biggest correctness fix: a
+  lesion picked in a posterior MLO location was mapping to an anterior CC location
+  (patient 50513). Depth is now expressed as a **fractional** nipple→pectoral
+  Posterior-Nipple-Line ratio rather than an absolute distance, so the CC and MLO
+  views agree on where a lesion sits. **Default-on, live-validated on 50513
+  (+23 mm posterior corrected) and 50258 (no regression);** `=0` kill switch. Only
+  active when the pectoral line is drawn.
+- **Two-stage controller + session + contralateral matcher.** A second pass
+  (`second_pass.py`, `two_stage_controller.py`, `two_stage_session.py`) that takes
+  the geometric candidates from stage one and ranks them by a **lesion feature
+  store** (`lesion_feature_store.py`) capturing geometry *and* appearance (GLCM
+  texture, microcalcification constellation) per lesion, categorised for future
+  contralateral matching.
+- **Cross-view probability heatmap, findings panel, search region, threshold
+  policy** — the supporting rendering and decision layers
+  (`cross_view_heatmap.py`, `findings_panel.py`, `search_region.py`,
+  `region_render.py`, `candidate_matching.py`, `appearance_similarity.py`,
+  `geometric_model.py`, `threshold_policy.py`).
+- Bone Age and the rest of Eagle Eye remain unchanged.
+
+### Included — engineering health
+
+- **Test suite repaired (Q0).** The suite used to **hang forever** (a build test
+  spawned a real build) and was **red by default** (~80 permanent failures), so it
+  carried zero regression signal. It now completes in ~85 s and exits 0. Introduces
+  a self-cleaning quarantine debt register (`tests/quarantine.py`,
+  `tools/dev/build_quarantine.py`), a single `run_test.ps1` entry point, and a fast
+  lane in `pyproject.toml`. Any red is now a real regression.
+- **INO internal-assign false-"assigned" regression fixed.** The Assign and Report
+  columns showed patients as assigned when only the RIS reporting radiologist
+  existed (with an empty `last_assigned_by`). Assignment is now recognised only when
+  an actual assigner is present — one ingestion-boundary change that covers every
+  consumer. Default-on.
+- Report-sync / EchoMind-editor / reception audit and a shared reception fetch-speed
+  path.
+
+### Notes
+
+- The PNL normalization and the INO assign fix are flag-gated default-on with a
+  legacy kill switch.
+- The two-stage contralateral matcher and cross-view heatmap still need live
+  source-build verification on the reporting patients.
 
 ---
 

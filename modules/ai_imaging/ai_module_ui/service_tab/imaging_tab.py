@@ -46,7 +46,9 @@ def _read_dicom_pixel_geometry(dicom_path: str) -> dict:
     All measurements should use these values instead of hardcoded defaults.
     """
     result = {'img_width': None, 'img_height': None,
-              'pixel_spacing_x': None, 'pixel_spacing_y': None}
+              'pixel_spacing_x': None, 'pixel_spacing_y': None,
+              'positioner_primary_angle_deg': None, 'body_part_thickness_mm': None,
+              'patient_id': None}
     if not dicom_path or not os.path.isfile(str(dicom_path)):
         return result
     try:
@@ -64,6 +66,28 @@ def _read_dicom_pixel_geometry(dicom_path: str) -> dict:
         if spacing is not None and len(spacing) >= 2:
             result['pixel_spacing_y'] = float(spacing[0])  # row spacing
             result['pixel_spacing_x'] = float(spacing[1])  # col spacing
+        # DICOM acquisition geometry — the near-optimal refinement (step 1/2 research):
+        #   PositionerPrimaryAngle (0018,1510) = the true MLO gantry obliquity, used as
+        #     a fallback pectoral angle when the radiologist has not drawn the line.
+        #   BodyPartThickness (0018,11a0) = compressed breast thickness (mm), stored for
+        #     the future GM uncompression model. Both stored on every view regardless.
+        ppa = getattr(ds, 'PositionerPrimaryAngle', None)
+        if ppa is not None:
+            try:
+                result['positioner_primary_angle_deg'] = float(ppa)
+            except (TypeError, ValueError):
+                pass
+        bpt = getattr(ds, 'BodyPartThickness', None)
+        if bpt is not None:
+            try:
+                result['body_part_thickness_mm'] = float(bpt)
+            except (TypeError, ValueError):
+                pass
+        # PatientID (0010,0020) — keys the lesion feature store and lets the
+        # contralateral R↔L pass group a patient's lesions across studies/views.
+        pid = getattr(ds, 'PatientID', None)
+        if pid is not None:
+            result['patient_id'] = str(pid).strip() or None
     except Exception:
         pass
     return result
@@ -770,6 +794,20 @@ class ImagingToolsTab(AbstractTab):
             self._on_class_selection_changed
         )
 
+        # -------- 3D Cursor findings list (multiple corresponding lesions) --------
+        # A clickable list mirrored with the on-image corner panel: selecting a
+        # finding here reviews it (full box + region), others drop to markers. Hidden
+        # unless the 3D Cursor found more than one finding. Reliable selector even if
+        # the VTK-overlaid corner panel does not paint on a given machine.
+        self.cursor3d_findings_label = QLabel("3D Cursor Findings")
+        self.cursor3d_findings_list = QListWidget()
+        self.cursor3d_findings_list.setMaximumHeight(110)
+        self.cursor3d_findings_label.setVisible(False)
+        self.cursor3d_findings_list.setVisible(False)
+        self._cursor3d_on_select = None
+        self._cursor3d_finding_indices = []
+        self.cursor3d_findings_list.itemClicked.connect(self._on_cursor3d_finding_clicked)
+
         # -------- Features
         self.feature_label = QLabel("Features")
         self.feature_view = QTextEdit()
@@ -1160,9 +1198,164 @@ class ImagingToolsTab(AbstractTab):
             from PySide6.QtWidgets import QMessageBox
             QMessageBox.warning(self, "Error", error_msg)
             
+    @staticmethod
+    def _eagle_sidebar_v2_enabled() -> bool:
+        """Flag AIPACS_EAGLE_EYE_SIDEBAR_V2 (default ON; =0 = legacy flat sidebar)."""
+        import os as _os
+        raw = _os.environ.get("AIPACS_EAGLE_EYE_SIDEBAR_V2")
+        if raw is None:
+            return True
+        return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+    def _mg_group(self, title: str, expanded: bool = True):
+        """
+        A collapsible sidebar section (checkable QGroupBox). Returns
+        `(box, content_layout)`; clicking the title checkbox hides/shows the content so
+        the panel can be decluttered. Purely presentational — the widgets placed inside
+        keep ALL their existing signal wiring (they are the same pre-created objects).
+        """
+        box = QGroupBox(title)
+        box.setCheckable(True)
+        box.setChecked(expanded)
+        # Header title (checkbox + text) is drawn INSIDE the frame in a reserved
+        # `padding-top` strip (subcontrol-origin: padding) so it can never overlap the
+        # box above. Its VERTICAL position is STATE-DEPENDENT: when the section is
+        # COLLAPSED the title is vertically CENTERED in the short header box; when
+        # EXPANDED it stays at the top with the content below (unchanged). The box
+        # geometry (border, margins, padding-top) is identical in both states, so no box
+        # moves. Only the colour-free QGroupBox::title rule is swapped on toggle, so a
+        # retinted border colour in the QGroupBox{} rule is preserved. Do NOT override
+        # the ::indicator position — the native style aligns the checkbox with the text.
+        _base_css = ("QGroupBox{font-weight:bold;border:1px solid #2d3748;"
+                     "border-radius:6px;margin-top:8px;padding-top:22px;}")
+        _title_expanded = ("QGroupBox::title{subcontrol-origin:padding;"
+                           "subcontrol-position:top left;left:8px;top:4px;padding:0 3px;}")
+        _title_collapsed = ("QGroupBox::title{subcontrol-origin:padding;"
+                            "subcontrol-position:center left;left:8px;padding:0 3px;}")
+        box.setStyleSheet(_base_css + (_title_expanded if expanded else _title_collapsed))
+
+        def _set_title_alignment(checked):
+            # Swap ONLY the (colour-free) title rule so a retinted border is preserved.
+            css = box.styleSheet()
+            css = (css.replace(_title_collapsed, _title_expanded) if checked
+                   else css.replace(_title_expanded, _title_collapsed))
+            box.setStyleSheet(css)
+
+        inner = QWidget()
+        vl = QVBoxLayout(inner)
+        vl.setContentsMargins(6, 4, 6, 6)
+        vl.setSpacing(5)
+        outer = QVBoxLayout(box)
+        # padding-top (stylesheet) reserves the title strip inside the frame; small top
+        # margin here so content sits just below the title when expanded.
+        outer.setContentsMargins(6, 2, 6, 6)
+        outer.addWidget(inner)
+        inner.setVisible(expanded)
+
+        def _on_group_toggled(checked):
+            inner.setVisible(checked)
+            _set_title_alignment(checked)
+        box.toggled.connect(_on_group_toggled)
+        return box, vl
+
+    def _build_mg_sidebar_ui_v2(self, layout: QVBoxLayout):
+        """
+        Grouped, collapsible, compact MG sidebar — declutters the crowded flat panel.
+
+        Uses the SAME pre-created widgets as the legacy layout, only re-arranged into
+        four collapsible sections with compact form rows and sane sizing. `layout` has
+        already been cleared by the caller. Nothing here creates or rewires a control,
+        so every existing signal/handler is untouched.
+        """
+        layout.setSpacing(8)
+
+        # Sizing so text fits (the reported "fields too small / not fit for text").
+        for _c in (self.lst_boxes_combo, self.class_combo,
+                   self.validation_combo, self.mg_runs_combo):
+            try:
+                _c.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                _c.setMinimumWidth(150)
+            except Exception:
+                pass
+        try:
+            self.finding_summary_label.setWordWrap(True)
+            self.feature_view.setMinimumHeight(130)
+            self.notes_edit.setMinimumHeight(56)
+            self.notes_edit.setMaximumHeight(96)
+            self.cursor3d_findings_list.setMaximumHeight(90)
+        except Exception:
+            pass
+
+        def _form():
+            f = QFormLayout()
+            f.setContentsMargins(0, 0, 0, 0)
+            f.setSpacing(5)
+            try:
+                f.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                f.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+            except Exception:
+                pass
+            return f
+
+        # 1) FINDING — the primary controls (expanded)
+        g1, l1 = self._mg_group("Finding", expanded=True)
+        f1 = _form()
+        f1.addRow(self.detail_box_label, self.lst_boxes_combo)
+        f1.addRow(self.status_label, self.status_group)
+        l1.addLayout(f1)
+        l1.addWidget(self.finding_status_display)
+        l1.addWidget(self.finding_summary_label)
+        l1.addWidget(self.classification_label)
+        l1.addWidget(self.class_combo)
+        layout.addWidget(g1)
+
+        # 2) FINDINGS REPORT — 3D-cursor findings list + the report/symmetry text (expanded)
+        g2, l2 = self._mg_group("Findings Report", expanded=True)
+        l2.addWidget(self.cursor3d_findings_label)
+        l2.addWidget(self.cursor3d_findings_list)
+        l2.addWidget(self.feature_label)
+        l2.addWidget(self.feature_view)
+        layout.addWidget(g2)
+
+        # 3) REVIEW & CORRECTION — validation, reviewer, notes, actions (collapsed)
+        g3, l3 = self._mg_group("Review & Correction", expanded=False)
+        f3 = _form()
+        f3.addRow(self.validation_label, self.validation_combo)
+        f3.addRow(self.reviewer_label, self.reviewer_edit)
+        l3.addLayout(f3)
+        l3.addWidget(self.notes_label)
+        l3.addWidget(self.notes_edit)
+        _row_a = QHBoxLayout()
+        _row_a.setContentsMargins(0, 0, 0, 0)
+        _row_a.setSpacing(5)
+        _row_a.addWidget(self.confirm_finding_btn)
+        _row_a.addWidget(self.reject_finding_btn)
+        _row_b = QHBoxLayout()
+        _row_b.setContentsMargins(0, 0, 0, 0)
+        _row_b.setSpacing(5)
+        _row_b.addWidget(self.edit_finding_btn)
+        _row_b.addWidget(self.new_finding_btn)
+        l3.addLayout(_row_a)
+        l3.addLayout(_row_b)
+        layout.addWidget(g3)
+
+        # 4) AI RESULTS — model run + apply (collapsed)
+        g4, l4 = self._mg_group("AI Results", expanded=False)
+        f4 = _form()
+        f4.addRow(self.mg_runs_label, self.mg_runs_combo)
+        l4.addLayout(f4)
+        l4.addWidget(self.apply_btn)
+        layout.addWidget(g4)
+
+        layout.addStretch()
+
     def _build_mg_sidebar_ui(self, layout: QVBoxLayout):
         """
         Build MG sidebar UI using pre-initialized widgets.
+
+        V2 (default) groups the controls into collapsible sections with compact form
+        rows; `AIPACS_EAGLE_EYE_SIDEBAR_V2=0` restores the byte-identical legacy flat
+        stack. Either way every widget is the same pre-created, already-wired object.
         """
         # Ù¾Ø§Ú© Ú©Ø±Ø¯Ù† layout Ù‚Ø¨Ù„ÛŒ
         while layout.count():
@@ -1170,6 +1363,12 @@ class ImagingToolsTab(AbstractTab):
             if child.widget():
                 child.widget().deleteLater()
         
+        # V2 (default): grouped, collapsible, compact. `AIPACS_EAGLE_EYE_SIDEBAR_V2=0`
+        # falls through to the byte-identical legacy flat stack below.
+        if self._eagle_sidebar_v2_enabled():
+            self._build_mg_sidebar_ui_v2(layout)
+            return
+
         layout.addWidget(self.detail_box_label)
         layout.addWidget(self.lst_boxes_combo)
 
@@ -1183,6 +1382,9 @@ class ImagingToolsTab(AbstractTab):
 
         layout.addWidget(self.classification_label)
         layout.addWidget(self.class_combo)
+
+        layout.addWidget(self.cursor3d_findings_label)
+        layout.addWidget(self.cursor3d_findings_list)
 
         layout.addWidget(self.feature_label)
         layout.addWidget(self.feature_view)
@@ -1294,7 +1496,7 @@ class ImagingToolsTab(AbstractTab):
         _add_btn('Copy', 'fa5s.copy',
                  'Copy the visible viewer image to the clipboard',
                  self._eagle_copy_image)
-        _add_btn('Save Asâ€¦', 'fa5s.save',
+        _add_btn('Save As...', 'fa5s.save',
                  'Save the visible viewer image to a file',
                  self._eagle_save_image_as)
 
@@ -1321,6 +1523,24 @@ class ImagingToolsTab(AbstractTab):
             'Enable distance measurement ruler on the selected mammography viewer',
             self._on_mg_ruler_clicked
         )
+
+        # --- 3D Cursor findings selector (multiple corresponding lesions) ------
+        # Lives in the TOOLBAR next to Ruler — NOT inside the VTK viewport, which
+        # cannot reliably host a Qt overlay. Hidden until the 3D Cursor finds more
+        # than one corresponding lesion. Selecting a finding here reviews it (its
+        # box + region drawn full, the others as small markers).
+        self._findings_sep = QLabel('|')
+        layout.addWidget(self._findings_sep)
+        self.cursor3d_findings_toolbar_label = QLabel('Findings:')
+        layout.addWidget(self.cursor3d_findings_toolbar_label)
+        self.cursor3d_findings_combo = QComboBox()
+        self.cursor3d_findings_combo.setMinimumWidth(170)
+        self.cursor3d_findings_combo.setToolTip('Select which corresponding lesion to review')
+        self.cursor3d_findings_combo.activated.connect(self._on_cursor3d_finding_combo)
+        layout.addWidget(self.cursor3d_findings_combo)
+        self._findings_sep.setVisible(False)
+        self.cursor3d_findings_toolbar_label.setVisible(False)
+        self.cursor3d_findings_combo.setVisible(False)
 
         # Dual View feature removed by request.
 
@@ -1455,6 +1675,18 @@ class ImagingToolsTab(AbstractTab):
             show_message("3D Cursor is only available for Mammography (MG) modality.")
             return
 
+        # ── Stage 2a — start the lower-threshold re-analysis IMMEDIATELY. ──
+        # It runs in the background (no modal overlay) while the user places the
+        # landmarks below, so the extra detections are usually already back by the
+        # time Stage 1 has a region to score them against. Non-blocking and
+        # failure-tolerant: if it can't start, the cursor degrades to Stage 1 only.
+        self._ensure_two_stage_controller()
+        if self._two_stage is not None:
+            try:
+                self._two_stage.begin(self.study_uid, ATTACHMENT_PATH)
+            except Exception as e:
+                print(f"[3D-Cursor][2-STAGE] begin failed (non-critical): {e}")
+
         from modules.ai_imaging.ai_module_ui.cursor_3d.guided_workflow import guided_flow_enabled
 
         if guided_flow_enabled():
@@ -1474,14 +1706,20 @@ class ImagingToolsTab(AbstractTab):
         self._nipple_picker = NipplePickerController(self)
         self._nipple_picker.start(callback=self._on_nipples_picked)
 
-    def _on_guided_cursor3d_done(self, nipple_mlo, nipple_cc, pectoral_mlo):
-        """Guided flow finished — run the correlation with exactly what the math uses."""
+    def _on_guided_cursor3d_done(self, nipple_mlo, nipple_cc, pectoral_mlo, pectoral_cc=None):
+        """Guided flow finished — run the correlation with exactly what the math uses.
+
+        BOTH pectoral references are now collected: the MLO pectoral muscle line AND
+        the CC posterior chest-wall line, so the nipple-to-pectoral distance (the
+        Posterior Nipple Line) is measured MANUALLY in each view for cross-view depth
+        normalisation — instead of estimating the CC reference from the image edge."""
         if nipple_mlo is None or nipple_cc is None:
             self.set_processing_status("3D Cursor Cancelled", active=False)
             return
 
         print(f"[3D-Cursor][GUIDED] nipples: {nipple_mlo.view_key}, {nipple_cc.view_key}; "
-              f"pectoral: {pectoral_mlo.view_key if pectoral_mlo else 'auto-detect'}")
+              f"pectoral MLO: {pectoral_mlo.view_key if pectoral_mlo else 'auto-detect'}; "
+              f"pectoral CC: {pectoral_cc.view_key if pectoral_cc else 'MISSING (CC depth estimated)'}")
 
         self.set_processing_status("Running 3D Cursor Analysis...", active=True)
         QApplication.processEvents()
@@ -1489,8 +1727,8 @@ class ImagingToolsTab(AbstractTab):
         try:
             self._run_3d_cursor_analysis_with_nipples(
                 nipple_mlo, nipple_cc,
-                pectoral_line1=pectoral_mlo,   # MLO line only — the CC angle is never used
-                pectoral_line2=None,
+                pectoral_line1=pectoral_mlo,   # MLO pectoral muscle line
+                pectoral_line2=pectoral_cc,    # CC posterior chest-wall reference line
             )
         except Exception as e:
             import traceback
@@ -1659,17 +1897,27 @@ class ImagingToolsTab(AbstractTab):
             show_message(f"نقطه nipple برای ویوهای زیر ثبت نشده: {', '.join(missing_manual)}")
             return
 
-        # Inject manual pectoral angle if the user drew pectoral lines
+        # Inject manual pectoral angle if the user drew pectoral lines. Also stash
+        # the line's MIDPOINT (px) so the MLO geometry can measure the perpendicular
+        # nipple→pectoral distance (the PNL) for cross-view depth normalisation.
         if pectoral_line1 or pectoral_line2:
             pec_by_widget = {}
-            if pectoral_line1 and pectoral_line1.vtk_widget:
-                pec_by_widget[id(pectoral_line1.vtk_widget)] = pectoral_line1.angle_deg
-            if pectoral_line2 and pectoral_line2.vtk_widget:
-                pec_by_widget[id(pectoral_line2.vtk_widget)] = pectoral_line2.angle_deg
+            for pl in (pectoral_line1, pectoral_line2):
+                if pl and getattr(pl, 'vtk_widget', None):
+                    try:
+                        mid = pl.midpoint
+                    except Exception:
+                        mid = None
+                    line_px = (float(pl.p1_x_px), float(pl.p1_y_px),
+                               float(pl.p2_x_px), float(pl.p2_y_px))
+                    pec_by_widget[id(pl.vtk_widget)] = (pl.angle_deg, mid, line_px)
             for vd in valid_views:
                 wid = id(vd.vtk_widget) if vd.vtk_widget else None
                 if wid and wid in pec_by_widget:
-                    vd.manual_pectoral_angle_deg = pec_by_widget[wid]
+                    ang, mid, line_px = pec_by_widget[wid]
+                    vd.manual_pectoral_angle_deg = ang
+                    vd.manual_pectoral_point_px = mid
+                    vd.manual_pectoral_line_px = line_px   # both endpoints (for the CC PNL)
 
         # Run correlator
         correlator = CursorCorrelator3D()
@@ -1687,8 +1935,29 @@ class ImagingToolsTab(AbstractTab):
         summary_text = format_3d_cursor_summary(result)
         self.feature_view.setPlainText(summary_text)
 
-        # Draw projected boxes/rulers on the same selected views only
         views_by_key = {f"{v.laterality}_{v.view_position}": v for v in valid_views}
+
+        # ── Two-stage (Stage 1 region + Stage 2 candidate matching) ──
+        # It gets first refusal, and when it takes over it OWNS the overlay, the
+        # status strip and the summary panel.
+        #
+        # Why the legacy arc must not be drawn alongside it: the legacy
+        # `correspondence_arc` is an annular band fed the straight-strip distance,
+        # and it mirrors to the wrong side for LEFT breasts (it sweeps inferiorly).
+        # Painting that contradictory curve next to the corrected strip is worse
+        # than either alone — the radiologist would see two different answers and
+        # have no way to tell which to trust. One locus on screen, the correct one.
+        #
+        # We also deliberately do NOT raise the modal QMessageBox in this path: the
+        # second-pass result may still be in flight, and a modal box would sit in
+        # front of the very viewer the user is meant to be looking at.
+        two_stage_handled = self._start_two_stage_matching(
+            result, views_by_key, valid_views, correlator
+        )
+        if two_stage_handled:
+            return
+
+        # Legacy path (two-stage disabled, or nothing unpaired for it to work on).
         try:
             draw_3d_cursor_results(result, views_by_key)
         except Exception as e:
@@ -1702,6 +1971,261 @@ class ImagingToolsTab(AbstractTab):
 
         self.set_processing_status("3D Cursor Complete", active=False)
         QMessageBox.information(self, "3D Cursor - CC/MLO Correlation", summary_text)
+
+    # ---------- Two-Stage 3D Cursor (geometry + lower-threshold rerun) ----------
+
+    def _ensure_two_stage_controller(self):
+        """Create the two-stage controller once, owned by this (long-lived) tab.
+
+        Ownership matters: the second-pass QThread must outlive the transient
+        interactor style that the legacy analysis path parks its worker on — that
+        style is replaced on every Eagle Eye trigger, orphaning any running worker.
+        """
+        if getattr(self, '_two_stage', None) is not None:
+            return
+        self._two_stage = None
+        try:
+            from modules.ai_imaging.ai_module_ui.cursor_3d.two_stage_controller import (
+                ENABLED as _TWO_STAGE_ENABLED,
+                TwoStageCursorController,
+            )
+            if _TWO_STAGE_ENABLED:
+                self._two_stage = TwoStageCursorController(self)
+        except Exception as e:
+            print(f"[3D-Cursor][2-STAGE] controller unavailable: {e}")
+            self._two_stage = None
+
+    def _start_two_stage_matching(self, result, views_by_key, valid_views, correlator) -> bool:
+        """Hand off to the two-stage controller. Returns True if it took over."""
+        self._ensure_two_stage_controller()
+        if self._two_stage is None:
+            return False
+
+        try:
+            # Geometries are already built by the correlator — reuse them rather
+            # than rebuilding (a second build could pick a different nipple/pectoral
+            # and silently disagree with the correlation the user is looking at).
+            geoms_by_key = {}
+            for laterality, lat_result in result.lateralities.items():
+                if getattr(lat_result, 'cc_geometry', None) is not None:
+                    geoms_by_key[f"{laterality}_CC"] = lat_result.cc_geometry
+                if getattr(lat_result, 'mlo_geometry', None) is not None:
+                    geoms_by_key[f"{laterality}_MLO"] = lat_result.mlo_geometry
+
+            if not geoms_by_key:
+                return False
+
+            # AUTHORITATIVE PNL: set the manually drawn reference line (both endpoints,
+            # mm) on EACH geometry (MLO pectoral line AND CC chest-wall line) from its
+            # view's picked line. The geometry then measures the nipple->pectoral
+            # distance as the PERPENDICULAR to that exact line (sign-preserving) — the
+            # same value the on-screen ruler gives — for BOTH views. This fixes the MLO
+            # PNL that the old midpoint + abs(angle) under-measured (50107).
+            try:
+                for _vd in valid_views:
+                    _line = getattr(_vd, 'manual_pectoral_line_px', None)
+                    if not _line:
+                        continue
+                    _lat = str(getattr(_vd, 'laterality', '') or '').upper()
+                    _vp = str(getattr(_vd, 'view_position', '') or '').upper()
+                    _geom = geoms_by_key.get(f"{_lat}_{_vp}")
+                    if _geom is None:
+                        continue
+                    _sx = _geom.image.pixel_spacing.x
+                    _sy = _geom.image.pixel_spacing.y
+                    _geom.manual_reference_line_mm = (
+                        (_line[0] * _sx, _line[1] * _sy),
+                        (_line[2] * _sx, _line[3] * _sy),
+                    )
+                    try:
+                        _pnl = _geom.pectoral_reference_distance_mm()
+                        print(f"[3D-Cursor][PNL] {_lat}_{_vp} manual reference line -> "
+                              f"PNL={_pnl:.1f}mm" if _pnl else
+                              f"[3D-Cursor][PNL] {_lat}_{_vp} manual reference line set")
+                    except Exception:
+                        pass
+            except Exception as _ml_e:
+                print(f"[3D-Cursor][PNL] manual reference line wiring skipped: {_ml_e}")
+
+            # Breast contours clip the region to real tissue. Optional — the region
+            # is still valid without them, so a segmentation failure is not fatal.
+            contours_by_key = {}
+            for key, vd in views_by_key.items():
+                try:
+                    contours_by_key[key] = correlator._extract_breast_contour(vd)
+                except Exception:
+                    contours_by_key[key] = None
+
+            # CC PNL (nipple → chest-wall distance). PRIORITY:
+            #   1. the MANUALLY drawn CC chest-wall line (authoritative — what the
+            #      radiologist requires, measured the same way as the MLO pectoral),
+            #   2. the posterior breast-TISSUE boundary from the contour,
+            #   3. (inside the geometry) the raw image edge.
+            try:
+                import numpy as _np
+                from modules.ai_imaging.ai_module_ui.cursor_3d.geometry import (
+                    cc_posterior_tissue_distance_mm as _cc_tissue_dist,
+                    perpendicular_point_to_line_mm as _perp_to_line,
+                )
+                _cc_vd = next(
+                    (v for v in valid_views
+                     if str(getattr(v, 'view_position', '')).upper() == 'CC'), None)
+                _manual_cc_line = getattr(_cc_vd, 'manual_pectoral_line_px', None) if _cc_vd else None
+                for _lat_key, _cc_geom in geoms_by_key.items():
+                    if not str(_lat_key).endswith("_CC") or _cc_geom is None:
+                        continue
+                    _sx = _cc_geom.image.pixel_spacing.x
+                    _sy = _cc_geom.image.pixel_spacing.y
+                    # 1. manual CC chest-wall line → perpendicular nipple→line distance.
+                    if _manual_cc_line is not None:
+                        _p = (_cc_geom.nipple.x_px * _sx, _cc_geom.nipple.y_px * _sy)
+                        _a = (_manual_cc_line[0] * _sx, _manual_cc_line[1] * _sy)
+                        _b = (_manual_cc_line[2] * _sx, _manual_cc_line[3] * _sy)
+                        _dm = _perp_to_line(_p, _a, _b)
+                        if _dm is not None and _dm > 1e-6:
+                            _cc_geom.cc_reference_distance_mm = float(_dm)
+                            print(f"[3D-Cursor][PNL] CC MANUAL chest-wall PNL={_dm:.1f}mm ({_lat_key})")
+                            continue
+                    # 2. posterior tissue boundary (auto fallback).
+                    _contour = contours_by_key.get(_lat_key)
+                    if _contour is None:
+                        continue
+                    _pts = _np.asarray(_contour).reshape(-1, 2)
+                    _d = _cc_tissue_dist(_pts, _cc_geom.nipple.x_px, _cc_geom.laterality, _sx)
+                    if _d is not None:
+                        _cc_geom.cc_reference_distance_mm = float(_d)
+                        print(f"[3D-Cursor][PNL] CC tissue-boundary PNL={_d:.1f}mm ({_lat_key}) — manual CC line not drawn")
+            except Exception as _cc_e:
+                print(f"[3D-Cursor][PNL] CC reference distance skipped: {_cc_e}")
+
+            pectoral = None
+            for vd in valid_views:
+                ang = getattr(vd, 'manual_pectoral_angle_deg', None)
+                if ang is not None and str(getattr(vd, 'view_position', '')).upper() == 'MLO':
+                    pectoral = float(ang)
+                    # Attach the pectoral line POINT (mm) to the MLO geometry so the
+                    # PNL depth normaliser can measure the perpendicular nipple→
+                    # pectoral distance. Additive + guarded: a failure here never
+                    # affects the (unchanged) legacy angle-only path.
+                    try:
+                        pt_px = getattr(vd, 'manual_pectoral_point_px', None)
+                        lat = str(getattr(vd, 'laterality', '') or '').upper()
+                        mlo_geom = geoms_by_key.get(f"{lat}_MLO")
+                        if pt_px is not None and mlo_geom is not None:
+                            sx = mlo_geom.image.pixel_spacing.x
+                            sy = mlo_geom.image.pixel_spacing.y
+                            mlo_geom.pectoral_ref_point_mm = (
+                                float(pt_px[0]) * sx, float(pt_px[1]) * sy
+                            )
+                    except Exception as _pnl_e:
+                        print(f"[3D-Cursor][PNL] pectoral point attach skipped: {_pnl_e}")
+                    break
+
+            # DICOM fallback for the MLO pectoral angle. When the radiologist did NOT
+            # draw the pectoral line, use the true acquisition obliquity — Positioner
+            # Primary Angle (0018,1510) — instead of leaving the MLO depth normal
+            # undefined (horizontal). Manual line stays AUTHORITATIVE (only runs when
+            # `pectoral is None`); the value is rejected unless it folds into a
+            # plausible MLO band. Flag-gated, default OFF pending live validation.
+            if pectoral is None and os.getenv(
+                    "AIPACS_CURSOR3D_DICOM_ANGLE", "0").strip().lower() in ("1", "true", "yes", "on"):
+                try:
+                    from modules.ai_imaging.ai_module_ui.cursor_3d.geometry import (
+                        pectoral_angle_from_positioner_angle,
+                    )
+                    for vd in valid_views:
+                        if str(getattr(vd, 'view_position', '')).upper() != 'MLO':
+                            continue
+                        _ppa = getattr(vd, 'positioner_primary_angle_deg', None)
+                        eff = pectoral_angle_from_positioner_angle(_ppa)
+                        if eff is not None:
+                            pectoral = eff
+                            print(f"[3D-Cursor][PNL] MLO pectoral angle from DICOM "
+                                  f"PositionerPrimaryAngle={_ppa} -> {eff:.1f}° "
+                                  f"(no manual line drawn)")
+                            break
+                except Exception as _dcm_e:
+                    print(f"[3D-Cursor][PNL] DICOM angle fallback skipped: {_dcm_e}")
+
+            # Returns False when every lesion was already paired (nothing for this
+            # workflow to do) — in that case the caller falls back to the legacy
+            # arc + summary rather than leaving the viewer silent.
+            return bool(self._two_stage.on_landmarks_ready(
+                result=result,
+                views_by_key=views_by_key,
+                geoms_by_key=geoms_by_key,
+                contours_by_key=contours_by_key,
+                study_uid=self.study_uid,
+                attachments_path=ATTACHMENT_PATH,
+                pectoral_angle_deg=pectoral,
+            ))
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            print(f"[3D-Cursor][2-STAGE] matching failed (non-critical): {e}")
+            return False
+
+    def cursor3d_set_findings(self, items, selected, on_select):
+        """Populate the sidebar 3D-Cursor findings list (synced with the on-image
+        corner panel). `items` = [(global_index, number, score|None, subtitle), ...];
+        `on_select(global_index)` is called when the user clicks a row. Hidden unless
+        there is more than one finding."""
+        try:
+            self._cursor3d_on_select = on_select
+            lst = self.cursor3d_findings_list
+            lst.blockSignals(True)
+            lst.clear()
+            self._cursor3d_finding_indices = []
+            current_row = 0
+            for row, (gidx, number, score, subtitle) in enumerate(items):
+                sc = "" if score is None else f"   {score:.2f}"
+                lst.addItem(f"#{number}{sc}   ·   {subtitle}")
+                self._cursor3d_finding_indices.append(int(gidx))
+                if gidx == selected:
+                    current_row = row
+            if lst.count():
+                lst.setCurrentRow(current_row)
+            lst.blockSignals(False)
+            multi = len(items) > 1
+            self.cursor3d_findings_label.setVisible(multi)
+            self.cursor3d_findings_list.setVisible(multi)
+
+            # Toolbar combo (primary selector, next to Ruler — reliable over VTK).
+            try:
+                combo = self.cursor3d_findings_combo
+                combo.blockSignals(True)
+                combo.clear()
+                for (gidx, number, score, subtitle) in items:
+                    sc = "" if score is None else f"  {score:.2f}"
+                    combo.addItem(f"#{number}{sc}  ·  {subtitle}", int(gidx))
+                for ci in range(combo.count()):
+                    if combo.itemData(ci) == selected:
+                        combo.setCurrentIndex(ci)
+                        break
+                combo.blockSignals(False)
+                self._findings_sep.setVisible(multi)
+                self.cursor3d_findings_toolbar_label.setVisible(multi)
+                self.cursor3d_findings_combo.setVisible(multi)
+            except Exception as _ce:
+                print(f"[3D-Cursor][FINDINGS] toolbar combo update failed (non-critical): {_ce}")
+        except Exception as exc:
+            print(f"[3D-Cursor][FINDINGS] sidebar list update failed (non-critical): {exc}")
+
+    def _on_cursor3d_finding_clicked(self, item):
+        try:
+            row = self.cursor3d_findings_list.row(item)
+            if 0 <= row < len(self._cursor3d_finding_indices) and self._cursor3d_on_select:
+                self._cursor3d_on_select(self._cursor3d_finding_indices[row])
+        except Exception as exc:
+            print(f"[3D-Cursor][FINDINGS] sidebar click failed (non-critical): {exc}")
+
+    def _on_cursor3d_finding_combo(self, index):
+        try:
+            gidx = self.cursor3d_findings_combo.itemData(index)
+            if gidx is not None and self._cursor3d_on_select:
+                self._cursor3d_on_select(int(gidx))
+        except Exception as exc:
+            print(f"[3D-Cursor][FINDINGS] toolbar combo select failed (non-critical): {exc}")
 
     def _draw_probability_heatmap_on_arcs(self, result, views_by_key, valid_views):
         """Compute and render probability heatmaps on the correspondence arcs."""
@@ -1973,6 +2497,9 @@ class ImagingToolsTab(AbstractTab):
             pixel_spacing_x=geom['pixel_spacing_x'],
             pixel_spacing_y=geom['pixel_spacing_y'],
             vtk_widget=vtk_widget,
+            positioner_primary_angle_deg=geom.get('positioner_primary_angle_deg'),
+            body_part_thickness_mm=geom.get('body_part_thickness_mm'),
+            patient_id=geom.get('patient_id'),
         )
 
     def _collect_views_from_csv_fallback(self) -> list:
@@ -2033,6 +2560,9 @@ class ImagingToolsTab(AbstractTab):
                 pixel_spacing_x=geom['pixel_spacing_x'],
                 pixel_spacing_y=geom['pixel_spacing_y'],
                 vtk_widget=None,
+                positioner_primary_angle_deg=geom.get('positioner_primary_angle_deg'),
+                body_part_thickness_mm=geom.get('body_part_thickness_mm'),
+                patient_id=geom.get('patient_id'),
             ))
 
         return data

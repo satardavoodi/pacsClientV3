@@ -343,8 +343,18 @@ class _HPDownloadMixin:
 
         threading.Thread(target=_worker, daemon=True).start()
 
-    def _queue_reception_data_download_for_study(self, study_uid: str):
-        """Auto-fetch reception data for a completed image download (non-blocking)."""
+    def _queue_reception_data_download_for_study(self, study_uid: str, *,
+                                                 force: bool = False,
+                                                 on_done=None,
+                                                 source_tag: str = 'post_image_download'):
+        """Auto-fetch reception data for a study (non-blocking).
+
+        ``force=True`` re-fetches even if this study was already fetched this session
+        — used after a voice/attachment SYNC so the cached reception bundle
+        (``patient_<id>.json``) reflects the server's confirmed state, not a stale
+        pre-sync snapshot. ``on_done()`` fires on the WORKER thread when the fetch
+        finishes (the caller marshals any GUI update).
+        """
         suid = str(study_uid or '').strip()
         if not suid:
             return
@@ -358,8 +368,12 @@ class _HPDownloadMixin:
             inflight = set()
             self._auto_reception_inflight_studies = inflight
 
-        if suid in completed or suid in inflight:
+        if suid in inflight:
             return
+        if suid in completed and not force:
+            return
+        if force:
+            completed.discard(suid)   # allow this study to be fetched again
 
         patient_row = get_patient_by_study_uid(suid) or {}
         patient_id = str(patient_row.get('patient_id') or '').strip()
@@ -372,14 +386,56 @@ class _HPDownloadMixin:
 
         def _worker():
             try:
-                self._download_reception_data_for_targets(target, source_tag='post_image_download')
+                self._download_reception_data_for_targets(target, source_tag=source_tag)
             except Exception:
                 _print_logger.exception("[ReceptionData] Auto fetch failed study_uid=%s", suid)
             finally:
                 inflight.discard(suid)
                 completed.add(suid)
+                if on_done:
+                    try:
+                        on_done()
+                    except Exception:
+                        _print_logger.exception("[ReceptionData] on_done failed study_uid=%s", suid)
 
         threading.Thread(target=_worker, daemon=True).start()
+
+    def refresh_patient_status_after_sync(self, study_uid: str, patient_id: str = ''):
+        """Public entry point after a successful voice/attachment SYNC (2026-07-14).
+
+        Makes the red microphone appear on the Main Page the instant the user is back
+        home — no click-away-and-back:
+          1. repaint the Status cell NOW from local disk (the voice is saved locally
+             before upload, so the mic shows immediately), and
+          2. re-pull the reception bundle from the SERVER (the source of truth) in
+             the background, then repaint again so any server-only flag also lands.
+        Both steps are best-effort and GUI-safe.
+        """
+        suid = str(study_uid or '').strip()
+        if not suid:
+            return
+        table = getattr(self, 'patient_table_widget', None)
+        if table is None:
+            return
+
+        # (1) immediate local repaint
+        try:
+            table.refresh_status_for_study(suid, patient_id)
+        except Exception:
+            pass
+
+        # (2) server re-pull, then repaint again on the GUI thread
+        def _after_server():
+            try:
+                QTimer.singleShot(
+                    0, lambda: table.refresh_status_for_study(suid, patient_id))
+            except Exception:
+                pass
+        try:
+            self._queue_reception_data_download_for_study(
+                suid, force=True, on_done=_after_server, source_tag='post_voice_sync')
+        except Exception:
+            pass
 
     def _get_or_create_download_manager_tab(self, activate_tab: bool = False):
         """Get existing Download Manager tab or create new one (delegates to service).

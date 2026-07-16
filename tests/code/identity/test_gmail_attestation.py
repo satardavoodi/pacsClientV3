@@ -71,11 +71,16 @@ def fake_oauth(monkeypatch):
     )
 
     def install_flow(id_token):
+        # Q0 2026-07-14: the fake must mirror the REAL signature of
+        # `oauth_flow.run_installed_app_flow`, which gained `require_embedded`. The stale
+        # double raised `TypeError: unexpected keyword argument` and took 8 identity tests
+        # red — invisible, because the suite was already red by default.
         def _fake_flow(client_config, scopes=None, *, auth_url_kwargs=None,
-                       open_url_cb=None):
+                       open_url_cb=None, require_embedded=False):
             state["flow_calls"].append({
                 "client_config": client_config, "scopes": scopes,
                 "auth_url_kwargs": auth_url_kwargs, "open_url_cb": open_url_cb,
+                "require_embedded": require_embedded,
             })
             return types.SimpleNamespace(
                 id_token=id_token, token="acc", refresh_token="ref",

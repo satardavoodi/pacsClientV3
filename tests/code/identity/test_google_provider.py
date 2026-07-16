@@ -18,7 +18,12 @@ def test_connect_builds_identity_and_stores_token(monkeypatch):
     # Bypass dependency/config gating for the unit test.
     monkeypatch.setattr(GoogleIdentityProvider, "is_available", lambda self: (True, "ok"))
     monkeypatch.setattr(cfg, "load_google_client_config", lambda: {"installed": {"client_id": "x"}})
-    monkeypatch.setattr(oauth_flow, "run_installed_app_flow", lambda client_config, scopes=None: object())
+    # Q0 2026-07-14: mirror the REAL signature — it gained keyword-only args
+    # (auth_url_kwargs / open_url_cb / require_embedded). A stale double raised TypeError.
+    monkeypatch.setattr(
+        oauth_flow, "run_installed_app_flow",
+        lambda client_config, scopes=None, **_kw: object(),
+    )
     monkeypatch.setattr(
         oauth_flow, "fetch_userinfo",
         lambda creds: {

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "aipacs"
-version = "3.5.2"
+version = "3.5.3"
 description = "Modular DICOM workstation with viewer, download, printing, education, and AI assistant modules."
 readme = "README.md"
 requires-python = ">=3.13.5"
@@ -22,7 +22,53 @@ dependencies = { file = ["requirements-core.txt"] }
 dev = { file = ["requirements-dev.txt"] }
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+# ── The FAST LANE (default) ────────────────────────────────────────────────────
+# Q0, 2026-07-14 — repairing the instrument. Before this, the full suite could NOT
+# be run to completion: a build/packaging integration test (`-m build`) spawned a real
+# build and blocked forever, so the run hung at ~56 % and had to be killed. A suite that
+# cannot finish gives zero regression signal, which is why "did I break anything?" was
+# being answered by hand with `git stash` A/B runs.
+#
+#   --timeout=120       no single test may hang the suite ever again; a hang NAMES ITSELF.
+#   -m "not build ..."  heavy/integration lanes are opt-in, not accidental.
+#   -p no:randomly      (only if pytest-randomly is added later — keep order stable for now)
+#
+# Lanes:
+#   pytest                     → fast lane: pure + offscreen Qt. MUST be green, MUST be quick.
+#   pytest -m build            → build/packaging (spawns real builds; nightly / pre-release)
+#   pytest -m slow             → long-running / soak
+#   pytest -m live             → needs a running app or a real server (clinical lane)
+#   pytest -m property         → hypothesis property-based (higher example counts nightly)
+#   pytest -n auto             → parallel (pytest-xdist)
+# Default `--dist load` (fast, ~90 s). `loadscope`/`loadgroup` were both tried and REJECTED —
+# each ran >4 min because pytest-xdist's grouped distributions don't rebalance the 157-file
+# viewer suite. So the flakiness a few state-leaking modules showed under scattering is fixed
+# AT THE SOURCE (proper per-test cleanup / concurrency-based assertions), not by distribution.
+# `--reruns 2`: a residual set of viewer INTERACTION tests (the B34/B41 "fast interaction"
+# cluster) are timing-sensitive and fail ~1 run in 3 under parallel load. A test that PASSES on
+# retry was flaky, not broken — rerunfailures absorbs that (logged as RERUN), while a genuine
+# regression still fails all 3 attempts and reddens the suite. Zero cost on a clean run (reruns
+# fire only on failure). This is a stopgap for the timing flakiness, not a licence to ignore it —
+# the RERUN log lines are the burn-down list. Real fix = make those tests drive a deterministic
+# clock/interaction state instead of wall-time.
+addopts = "-ra --timeout=120 --timeout-method=thread --reruns 3 --reruns-delay 2 -m 'not build and not slow and not live and not flaky_parallel and not property'"
+markers = [
+    "build: heavyweight build/packaging tests — spawn REAL builds and can block. Excluded from the fast lane; run with `-m build`.",
+    "slow: long-running tests (soak, large fixtures). Excluded from the fast lane.",
+    "live: requires a running app instance or a real server (the clinical lane, driven by the control MCP). Excluded from the fast lane.",
+    # `property`: hypothesis property/stateful tests. Excluded from the parallel fast lane — a
+    # CPU-heavy hypothesis run competes with the timing-sensitive viewer-interaction tests and
+    # makes them flake. Run in its own pass (`run_test.ps1` no-args, or nightly with more examples):
+    # `pytest -m property`.
+    "property: hypothesis property-based / stateful test. Own lane (`-m property`), not the fast lane.",
+    # `flaky_parallel`: PASSES reliably in isolation but is unsafe under the scattered `-n auto`
+    # distribution (leaked Qt worker threads / shared process globals). Its failure mode is NOT
+    # in the call phase, so an `xfail` quarantine cannot convert it — the only reliable option is
+    # to keep it OUT of the parallel fast lane and run it SERIALLY. `run_test.ps1` does exactly
+    # that: fast lane `-n auto`, then a quick serial `-m flaky_parallel -p no:xdist` pass. Each is
+    # a real test-isolation bug to be fixed (then the marker comes off). Do not grow this set.
+    "flaky_parallel: parallel-unsafe (Qt threads / globals); run SERIALLY, excluded from the fast lane.",
+]
 testpaths = [
     "tests",
     "EchoMind/secretary/tests",

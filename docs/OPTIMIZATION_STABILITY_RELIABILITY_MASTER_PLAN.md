@@ -474,6 +474,15 @@ guard-tested, and unproven on a real build. Each has an exact acceptance signal.
 **Rule: no new optimization work starts until V-1…V-4 have run at least once.** A clean V-1 is
 *also* the gate that unlocks OPT-35 P3–P5.
 
+> **⚠ The V-lane is currently a MANUAL checklist, and that is itself the problem.** See the companion
+> **`docs/plans/QUALITY_AND_VALIDATION_ROADMAP_2026-07-14.md`** — it measures the test suite (566 files,
+> but the full run **does not complete**, ~68 permanently-red tests, **zero** GUI tests, **no coverage
+> tooling**) and shows that **none of the last 10 user-facing bugs was catchable by any existing test**.
+> Its Phase Q1 turns V-1…V-5 into **automated scenario scripts** driven by the control MCP and asserted
+> against the log-oracle set — which pays off this verification debt *and* creates the permanent
+> live-regression lane. **Do the roadmap's Q0 (repair the instrument) before trusting any regression
+> result, including mine.**
+
 **S — STRUCTURAL (only after V).** In priority order:
 - **S-1 · OPT-35 P3 — cache/switch re-key by `series_uid`.** This is **no longer theoretical**: the
   50264 live run showed 3 × `[IDENTITY-GATE] SKIP`, and the trace pins them on the **switch path's

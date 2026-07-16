@@ -22,6 +22,8 @@ import os
 import sys
 import unittest
 
+import pytest
+
 # ---------------------------------------------------------------------------
 # Path setup
 # ---------------------------------------------------------------------------
@@ -239,6 +241,7 @@ class TestLlmClientSourcePin(unittest.TestCase):
 # 4. Live GapGPT connection — skipped when unreachable
 # ===========================================================================
 
+@pytest.mark.live  # Q0 2026-07-14: REAL HTTP → excluded from the fast lane (was flaky under -n auto)
 @unittest.skipUnless(_GAPGPT_REACHABLE, "GapGPT API not reachable from this environment")
 class TestGapGptLiveConnection(unittest.TestCase):
     """Real HTTP calls to https://api.gapgpt.app/v1/chat/completions."""
@@ -339,6 +342,7 @@ class TestGapGptLiveConnection(unittest.TestCase):
 # 5. Live AI backend (port 8085) — skipped when unreachable
 # ===========================================================================
 
+@pytest.mark.live  # Q0 2026-07-14: REAL HTTP to the local AI backend → fast lane excludes it
 @unittest.skipUnless(_AI_BACKEND_REACHABLE, "AI backend (port 8085) not reachable")
 class TestAiBackendLiveConnection(unittest.TestCase):
     """Real HTTP calls to the local AI backend server."""

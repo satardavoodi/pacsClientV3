@@ -60,9 +60,9 @@ echo                   Nuitka Pipeline Completed Successfully!
 echo ===============================================================================
 echo.
 echo Check staged outputs at: builder nuitka\output\
-if exist "builder nuitka\output\installer\ai-pacs-nuitka-installer.exe" (
-    echo Installer: builder nuitka\output\installer\ai-pacs-nuitka-installer.exe
-    for /f "delims=" %%F in ('dir /b /o-d "builder nuitka\output\installer\ai-pacs-nuitka-installer v*.exe" 2^>nul') do (
+if exist "builder nuitka\output\installer\ai-pacs installer.exe" (
+    echo Installer: builder nuitka\output\installer\ai-pacs installer.exe
+    for /f "delims=" %%F in ('dir /b /o-d "builder nuitka\output\installer\ai-pacs installer v*.exe" 2^>nul') do (
         echo Versioned installer: builder nuitka\output\installer\%%F
         goto :printed_versioned_installer
     )

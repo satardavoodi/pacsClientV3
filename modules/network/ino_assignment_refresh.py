@@ -58,6 +58,33 @@ def snapshot_ttl_s() -> float:
         return DEFAULT_SNAPSHOT_TTL_S
 
 
+#: Falsey env tokens that turn a default-ON flag off.
+_DISABLE_TOKENS = {"0", "false", "off", "no"}
+
+
+def require_assigner() -> bool:
+    """Require a real assigner (``last_assigned_by``) before calling a reception
+    internally ASSIGNED (2026-07-15 regression fix). **Default ON.**
+
+    WHY: the PACS ``GET /api/patients/{id}/assign`` endpoint returns the RIS
+    **reporting** radiologist for almost every reported reception
+    (``source=ris_personnel``, ``last_assigned_by=""``) — NOT only deliberate
+    internal assignments. Treating any ``radiologist.id`` as "assigned" made every
+    reported patient show as internally assigned (live: 50258/50016/50107/50304 all
+    showed Active/Completed with an EMPTY "Assigned by"). A genuine AI-PACS assign
+    records the assigner: the assign ``PUT`` sends ``X-User-Id`` and the server
+    stores it as ``last_assigned_by`` (verified — 50210, the one real assign on this
+    center, is the ONLY reception with it populated). So a radiologist with no
+    assigner is the reporting radiologist and must not count as an assignment.
+
+    ``AIPACS_INO_ASSIGN_REQUIRE_ASSIGNER=0`` restores the legacy (id-only) behaviour.
+    """
+    val = str(os.environ.get("AIPACS_INO_ASSIGN_REQUIRE_ASSIGNER", "") or "").strip().lower()
+    if val:
+        return val not in _DISABLE_TOKENS
+    return True
+
+
 def _snapshot_is_fresh(state_mod, reception_id: str, ttl: float) -> bool:
     try:
         snap = state_mod.get_state(reception_id) or {}
@@ -108,6 +135,13 @@ def parse_assignment(assignment: Dict[str, Any]) -> Dict[str, Any]:
 
     An EMPTY id means "not assigned" — the server clears the id on unassign, so an
     empty string must never be treated as an assignment.
+
+    ``assigned`` additionally requires a real ASSIGNER (``last_assigned_by``) when
+    :func:`require_assigner` is on (the default) — a radiologist id with no assigner
+    is the RIS reporting radiologist, not a deliberate internal assignment. The
+    assignee identity fields (``assignee_id`` / ``radiologist_name`` …) are still
+    returned so a tooltip can name the reporting radiologist; only the ``assigned``
+    verdict is gated.
     """
     a = assignment if isinstance(assignment, dict) else {}
     rad = a.get("radiologist") if isinstance(a.get("radiologist"), dict) else {}
@@ -119,8 +153,13 @@ def parse_assignment(assignment: Dict[str, Any]) -> Dict[str, Any]:
     primary_id = rad_id or typ_id
     primary = rad if rad_id else (typ if typ_id else {})
 
+    assigner = str(a.get("last_assigned_by") or "").strip()
+    # A radiologist/typist id with NO assigner is the auto-populated RIS reporting
+    # radiologist — NOT an internal assignment (2026-07-15 regression fix).
+    assigned = bool(primary_id) and (bool(assigner) or not require_assigner())
+
     return {
-        "assigned": bool(primary_id),
+        "assigned": assigned,
         "assign_type": "radiologist" if rad_id else ("typist" if typ_id else ""),
         "assignee_id": primary_id,
         "assignee_name": str(primary.get("name") or "").strip(),

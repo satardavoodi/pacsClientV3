@@ -8,6 +8,7 @@ import asyncio
 import os
 import math
 import logging
+import os
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +16,124 @@ from PySide6.QtCore import Signal
 
 
 _AI_MG_LOGGER = logging.getLogger(__name__)
+
+# Instrumentation for the "two images in one MG viewport" bug.
+#
+# Ground truth for the reported study (50016) is CLEAN: each MG series has exactly
+# 1 file on disk and 1 instance row in the DB (image_count=1), and the reslice
+# reset rebinds correctly for a single-slice volume. So the extra scrollable image
+# is a RUNTIME condition — a volume that arrived with Z>1, or a metadata instance
+# list of length >1, or a slice-count/slider mismatch — none of which is visible in
+# static analysis. This logs every candidate source at the viewport boundary so the
+# next real run pins the mechanism exactly, in app.log (prints never reached it).
+_MG_VOLUME_DIAG = os.getenv("AIPACS_MG_VOLUME_DIAG", "1").strip().lower() not in ("0", "false", "no", "off")
+
+# Hard invariant guard: a mammography series in this product is single-image
+# (confirmed: every MG series has image_count=1). When True, if an MG series still
+# arrives with a metadata instance list of length > 1 (the "previous image was
+# appended" signature), the extra instances are dropped so the viewport shows the
+# ONE intended image. Default OFF until the diagnostic above confirms the exact
+# mechanism on a live run — a blind volume edit could mis-handle a genuine
+# multi-frame MG series (tomo/cine), which is why this is opt-in, not default-on.
+_MG_ENFORCE_SINGLE_IMAGE = os.getenv("AIPACS_MG_ENFORCE_SINGLE_IMAGE", "0").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _diagnose_mg_volume(logger, where, vtk_image_data, metadata, series_index):
+    """Log the incoming volume geometry vs the series' instance list. Never raises."""
+    if not _MG_VOLUME_DIAG:
+        return
+    try:
+        series_meta = metadata.get("series", {}) if isinstance(metadata, dict) else {}
+        modality = str(series_meta.get("modality", "") or "").upper()
+        if modality != "MG":
+            return
+
+        # Volume Z (the number of scrollable slices the viewer will offer).
+        vol_z = None
+        try:
+            if vtk_image_data is not None and hasattr(vtk_image_data, "GetDimensions"):
+                vol_z = int(vtk_image_data.GetDimensions()[2])
+        except Exception:
+            vol_z = None
+
+        instances = metadata.get("instances", []) if isinstance(metadata, dict) else []
+        inst_n = len(instances) if isinstance(instances, (list, tuple)) else 0
+
+        # Distinct SOP UIDs and files — the append-bug stacks DIFFERENT SOPs/files.
+        sops, files = set(), set()
+        for it in (instances or []):
+            if isinstance(it, dict):
+                s = it.get("sop_uid") or it.get("sop_instance_uid")
+                p = it.get("instance_path")
+                if s:
+                    sops.add(str(s))
+                if p:
+                    files.add(os.path.basename(str(p)))
+
+        lat = str(series_meta.get("laterality", "") or "?")
+        vp = str(series_meta.get("view_position", "") or "?")
+        suid = str(series_meta.get("series_uid", "") or "")[-16:]
+
+        suspect = (vol_z is not None and vol_z > 1) or inst_n > 1 or len(sops) > 1
+        level = logging.WARNING if suspect else logging.INFO
+        logger.log(
+            level,
+            "[MG][VTK-DIAG] %s series=%s %s-%s uid=...%s vol_z=%s meta_instances=%d "
+            "distinct_sops=%d distinct_files=%d%s",
+            where, series_index, lat, vp, suid, vol_z, inst_n, len(sops), len(files),
+            "  <-- SUSPECT: single-image MG series carrying >1 image" if suspect else "",
+        )
+        if suspect and files:
+            logger.warning("[MG][VTK-DIAG] %s files=%s sops=%s", where, sorted(files), sorted(s[-12:] for s in sops))
+    except Exception as exc:  # noqa: BLE001 — diagnostics must never break a load
+        try:
+            logger.debug("[MG][VTK-DIAG] failed: %s", exc)
+        except Exception:
+            pass
+
+
+def enforce_single_image_metadata(metadata, series_index=None, logger=None):
+    """
+    Collapse an MG series' metadata instance list to its single intended image.
+
+    Returns the (possibly trimmed) metadata. Pure aside from logging; safe to call
+    unconditionally — it only acts when ALL of these hold, which is exactly the
+    append-bug signature and NEVER a legitimate single-image or multi-frame series:
+        • modality == MG
+        • the flag AIPACS_MG_ENFORCE_SINGLE_IMAGE is on
+        • the instance list has >1 entry with DISTINCT SOP UIDs (i.e. genuinely
+          different images stacked together, not one multi-frame file)
+
+    A multi-frame MG series (one file, many frames) has ONE instance/SOP, so it is
+    left untouched. Keeps the FIRST instance (index order == the intended image).
+    """
+    if not _MG_ENFORCE_SINGLE_IMAGE or not isinstance(metadata, dict):
+        return metadata
+    try:
+        series_meta = metadata.get("series", {}) or {}
+        if str(series_meta.get("modality", "") or "").upper() != "MG":
+            return metadata
+        instances = metadata.get("instances", [])
+        if not isinstance(instances, (list, tuple)) or len(instances) <= 1:
+            return metadata
+        distinct_sops = {
+            str(it.get("sop_uid") or it.get("sop_instance_uid"))
+            for it in instances if isinstance(it, dict) and (it.get("sop_uid") or it.get("sop_instance_uid"))
+        }
+        if len(distinct_sops) <= 1:
+            return metadata  # one image / multi-frame — leave it alone
+        keep = [instances[0]]
+        metadata = dict(metadata)
+        metadata["instances"] = keep
+        if logger is not None:
+            logger.warning(
+                "[MG][SINGLE-IMAGE] series=%s trimmed %d stacked images -> 1 (kept sop=...%s)",
+                series_index, len(instances),
+                str((keep[0].get("sop_uid") or "") if isinstance(keep[0], dict) else "")[-12:],
+            )
+    except Exception:
+        return metadata
+    return metadata
 
 
 class AIVTKWidget(VTKWidget):
@@ -929,6 +1048,10 @@ class AIVTKWidget(VTKWidget):
         modality = str(series_meta.get('modality', '') or '').upper()
         print(f"[MG][VTK] start_process_series called for series={series_index} modality={modality or 'N/A'}")
 
+        # Diagnose the "two images in one MG viewport" bug at its entry point.
+        _diagnose_mg_volume(_AI_MG_LOGGER, "start_process_series", vtk_image_data, metadata, series_index)
+        metadata = enforce_single_image_metadata(metadata, series_index, _AI_MG_LOGGER)
+
         # Clear 3D cursor actors from the previous series
         self._clear_3d_cursor_actors()
 
@@ -985,6 +1108,10 @@ class AIVTKWidget(VTKWidget):
         # with the shared switch pipeline. Without this kwarg every series load
         # into the AI viewport raised TypeError and the image never appeared.
         print(f"[MG][VTK] switch_series called for series={series_index} modality={metadata.get('series', {}).get('modality', 'N/A')}")
+
+        # Diagnose the "two images in one MG viewport" bug at the switch entry point.
+        _diagnose_mg_volume(_AI_MG_LOGGER, "switch_series", vtk_image_data, metadata, series_index)
+        metadata = enforce_single_image_metadata(metadata, series_index, _AI_MG_LOGGER)
 
         # Clear 3D cursor actors from the previous series so they don't persist
         self._clear_3d_cursor_actors()

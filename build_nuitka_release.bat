@@ -58,5 +58,5 @@ echo.
 echo [SUCCESS] Nuitka release build complete.
 echo Staged launcher: builder nuitka\output\stage\core\AIPacs.exe
 echo Staged engine:   builder nuitka\output\stage\core\Engine\AIPacs.exe
-echo Installer:       builder nuitka\output\installer\ai-pacs-nuitka-installer.exe
+echo Installer:       builder nuitka\output\installer\ai-pacs installer.exe
 pause

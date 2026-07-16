@@ -148,6 +148,48 @@ def test_empty_id_is_not_an_assignment():
     assert p["assigned"] is False and p["assignee_id"] == ""
 
 
+# ── regression 2026-07-15: the RIS reporting radiologist is NOT an assignment ──
+# The PACS /assign endpoint returns the auto-populated reporting radiologist for
+# almost every reported reception (source=ris_personnel, last_assigned_by="").
+# Treating any radiologist id as "assigned" made every reported patient show as
+# internally assigned (live: 50258/50016/50107/50304). A real assign records the
+# assigner (X-User-Id → last_assigned_by), so that is the discriminator.
+_SERVER_50304_REPORTING = {
+    "radiologist": {"id": "6011aa22bb33cc44dd55ee66",
+                    "name": "دكتر رضا علیزاده",
+                    "source": "ris_personnel"},
+    "typist": {"id": "", "name": "", "source": ""},
+    "last_assigned_at": "2026-07-15T16:23:31.536000",
+    "last_assigned_by": "",   # ← auto-populated reporting radiologist, no assigner
+}
+
+
+def test_reporting_radiologist_without_assigner_is_not_assigned():
+    p = refresh.parse_assignment(_SERVER_50304_REPORTING)
+    assert p["assigned"] is False, "reporting radiologist (no assigner) must not count"
+    # identity fields are still exposed (for a tooltip), only the verdict is gated
+    assert p["radiologist_name"] == "دكتر رضا علیزاده"
+    assert p["last_assigned_by"] == ""
+
+
+def test_same_payload_becomes_assigned_once_an_assigner_is_present():
+    assigned_payload = dict(_SERVER_50304_REPORTING,
+                            last_assigned_by="69f9041818d430369ecdab06")
+    p = refresh.parse_assignment(assigned_payload)
+    assert p["assigned"] is True
+
+
+def test_require_assigner_flag_off_restores_legacy_id_only(monkeypatch):
+    monkeypatch.setenv("AIPACS_INO_ASSIGN_REQUIRE_ASSIGNER", "0")
+    p = refresh.parse_assignment(_SERVER_50304_REPORTING)
+    assert p["assigned"] is True, "flag off = legacy id-only behaviour"
+
+
+def test_require_assigner_is_default_on(monkeypatch):
+    monkeypatch.delenv("AIPACS_INO_ASSIGN_REQUIRE_ASSIGNER", raising=False)
+    assert refresh.require_assigner() is True
+
+
 def test_identity_is_matched_by_ID_not_display_name():
     ids = ["507f1f77bcf86cd799439011", "6887a95ae7e66cdc2029a960"]
     assert refresh.assignment_is_mine("6887a95ae7e66cdc2029a960", ids) is True

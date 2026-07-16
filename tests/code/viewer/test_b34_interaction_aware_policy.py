@@ -17,6 +17,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+# Q0 2026-07-14: this interaction-aware-prefetch cluster asserts on THROTTLE / RADIUS / EPOCH
+# state that depends on wall-clock timing and CPU scheduling. Under the loaded parallel fast lane
+# these tests flake (they pass reliably when run serially/in isolation). Marked `flaky_parallel`
+# so they run in the SERIAL advisory lane (run_test.ps1) instead of the scattered `-n auto` pool.
+# Real fix = drive a deterministic clock / interaction state instead of real time. Tracked debt.
+pytestmark = pytest.mark.flaky_parallel
+
 
 # ---------------------------------------------------------------------------
 # Bridge tests — fast_interaction propagation

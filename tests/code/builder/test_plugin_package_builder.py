@@ -1,8 +1,27 @@
+"""Plugin-package BUILD tests.
+
+⚠ These invoke the REAL builder (`build_release.build_module_packages`), which stages and zips
+plugin packages and can spawn build subprocesses. On a developer box that blocks indefinitely
+(a stray `AIPacsLiteViewer.exe` holding a lock on `generated-files/build/`, per CLAUDE.md) — this
+is the test that made the full suite hang at ~56 % and never finish (2026-07-14).
+
+They are therefore marked `build` and are **excluded from the default fast lane**. They still run:
+
+    pytest -m build            # the heavy lane (nightly / pre-release)
+
+Do NOT un-mark them to "get more coverage in CI" — an integration test that can hang forever inside
+the unit lane destroys the regression signal for all 566 files.
+"""
+
 import json
+
+import pytest
 
 import aipacs_runtime as runtime
 from builder import build_release
 from builder.plugin_package_registry import plugin_package_definition_map
+
+pytestmark = pytest.mark.build
 
 
 def test_build_module_packages_stages_portable_plugin_package_metadata(monkeypatch, tmp_path):

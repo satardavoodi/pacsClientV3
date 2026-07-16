@@ -2991,6 +2991,58 @@ class PatientTableWidget(QWidget):
         except Exception:
             return False
 
+    def refresh_status_for_study(self, study_uid: str, patient_id: str = '') -> bool:
+        """Force-repaint ONE patient's Status column from the CURRENT on-disk +
+        reception state — the "no click-away-and-back" refresh.
+
+        THE BUG (2026-07-14): after "Sync Patient Data and Close" the red microphone
+        did not appear until the user clicked another patient and back. The voice is
+        saved to local disk BEFORE it is uploaded (local-first persistence), so the
+        local scan in ``_compute_local_status_flags`` already sees it — the ONLY
+        reason the icon stayed hidden was that this row's ``_local_status_cache``
+        entry (built when the list was first populated, before the voice existed) was
+        never invalidated on the sync → close → Main-Page transition. Popping it and
+        rebuilding the Status cell makes the icon appear immediately.
+
+        Because the server confirmed the sync (``sync_completed`` success) AND the
+        file is on local disk, the rebuilt cell reflects server-confirmed state.
+
+        Returns True when a row was repainted. Safe on the GUI thread; backs off and
+        retries if a full table rebuild is in progress.
+        """
+        suid = str(study_uid or '').strip()
+        if not suid:
+            return False
+        if self.table_rebuild_in_progress():
+            # A fresh search is rebuilding every row anyway; try again shortly so we
+            # never mutate a cell mid-teardown (the FIX-3 re-entrancy hazard).
+            QTimer.singleShot(
+                150, lambda: self.refresh_status_for_study(suid, patient_id))
+            return False
+        try:
+            # Drop EVERY cached status entry for this study (patient_id may be
+            # unknown at the call site) so the rebuild recomputes from scratch.
+            for k in [k for k in list(self._local_status_cache) if k and k[0] == suid]:
+                self._local_status_cache.pop(k, None)
+            self._invalidate_study_downloaded_cache(suid)
+        except Exception:
+            pass
+        try:
+            for row in range(self.results_table.rowCount()):
+                uid_item = self.results_table.item(row, COL['study_uid'])
+                if not uid_item or uid_item.text().strip() != suid:
+                    continue
+                pid_item = self.results_table.item(row, COL['patient_id'])
+                pid = (str(patient_id or '').strip()
+                       or (pid_item.text().strip() if pid_item else ''))
+                self.results_table.setCellWidget(
+                    row, COL['status'],
+                    self._build_local_status_widget(suid, pid))
+                return True
+        except Exception as exc:
+            print(f"[Status] refresh_status_for_study failed: {exc}")
+        return False
+
     def update_study_download_status(self, study_uid: str, status: str = None, is_downloaded: bool = None):
         """
         Update download status icon for a study

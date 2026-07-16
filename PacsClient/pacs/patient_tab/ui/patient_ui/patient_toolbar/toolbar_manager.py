@@ -10138,14 +10138,28 @@ class ToolbarManager:
                         _synced_status = 'physician_approved'
                     self.patient_widget.report_status = _synced_status
 
-                    # Update visited status to synced (green underline)
+                    # Update visited status to synced (green underline) AND refresh
+                    # the patient's Status column so the red microphone appears the
+                    # instant the user is back on the Main Page — no click-away-and-
+                    # back (2026-07-14). The server has just CONFIRMED the sync
+                    # (this is the success branch), and the voice file is on local
+                    # disk, so the refresh reflects server-confirmed state; the home
+                    # panel also re-pulls the reception bundle from the server.
                     try:
                         from PacsClient.pacs.workstation_ui.home_ui.home_ui import get_home_widget
                         home_widget = get_home_widget()
                         if home_widget and hasattr(home_widget, 'patient_table_widget'):
                             home_widget.patient_table_widget.update_visited_status(study_uid, status='synced')
-                    except Exception:
-                        pass
+                            _pid = str(getattr(self.patient_widget, 'patient_id', '') or '')
+                            _refresh = getattr(home_widget, 'refresh_patient_status_after_sync', None)
+                            if callable(_refresh):
+                                # Defer past the tab-close / view transition.
+                                from PySide6.QtCore import QTimer as _QTimer
+                                _QTimer.singleShot(0, lambda u=study_uid, p=_pid: _refresh(u, p))
+                            else:
+                                home_widget.patient_table_widget.refresh_status_for_study(study_uid, _pid)
+                    except Exception as _st_exc:
+                        print(f"[Toolbar] post-sync status refresh failed: {_st_exc}")
 
                     # Success — close silently without asking the user to click OK.
                     if close_after_sync and hasattr(self.patient_widget, 'close_and_remove_patient_tab'):

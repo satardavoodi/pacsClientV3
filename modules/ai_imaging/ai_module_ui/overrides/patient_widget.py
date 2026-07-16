@@ -26,6 +26,55 @@ def _normalize_eagle_eye_mode(mode):
     return None
 
 
+def resolve_thumb_lat_view(thumb: dict) -> tuple:
+    """
+    Resolve (laterality, view_position) for a series thumbnail from the most
+    reliable source, NOT from series order or viewer position.
+
+    Order of authority (first non-empty wins):
+      1. series metadata (already parsed from DICOM at load time), then
+      2. the DICOM tags on the series' first instance file
+         (ImageLaterality / Laterality, ViewPosition) — the ground truth.
+
+    Returns uppercased single-letter laterality ('R'/'L') and view ('CC'/'MLO'/…),
+    or ('', '') when neither source can determine it. Never raises.
+
+    Bug #2 (2026-07-14): auto-pairing previously read ONLY series metadata; when a
+    center's DICOM populated the tags but the metadata parse left them blank, the
+    CC/MLO auto-pair silently failed. The DICOM fallback closes that gap without
+    touching the shared loader.
+    """
+    lat, vp = "", ""
+    try:
+        smeta = (thumb.get("metadata", {}) or {}).get("series", {}) or {}
+        lat = str(smeta.get("laterality", "") or "").upper().strip()
+        vp = str(smeta.get("view_position", "") or "").upper().strip()
+    except Exception:
+        smeta = {}
+
+    if lat and vp:
+        return lat[:1], vp
+
+    # Fall back to the DICOM tags on the first instance.
+    try:
+        instances = (thumb.get("metadata", {}) or {}).get("instances", []) or []
+        inst_path = ""
+        if instances and isinstance(instances[0], dict):
+            inst_path = str(instances[0].get("instance_path", "") or "")
+        if inst_path and Path(inst_path).is_file():
+            import pydicom
+            ds = pydicom.dcmread(inst_path, stop_before_pixels=True, force=True)
+            if not lat:
+                lat = str(getattr(ds, "ImageLaterality", None)
+                          or getattr(ds, "Laterality", None) or "").upper().strip()
+            if not vp:
+                vp = str(getattr(ds, "ViewPosition", None) or "").upper().strip()
+    except Exception as exc:
+        logger.debug(f"[MG][VIEW-ID] DICOM fallback failed: {exc}")
+
+    return (lat[:1] if lat else ""), vp
+
+
 class AIPatientWidget(PatientWidget):
     """
     AI Module Patient Widget - extends base PatientWidget with AI-specific functionality
@@ -325,14 +374,14 @@ class AIPatientWidget(PatientWidget):
             except Exception:
                 return
 
-            # Determine the laterality/view of the dropped series
+            # Determine the laterality/view of the dropped series — from DICOM-backed
+            # identity, never from series order (bug #2).
             dropped_lat = ''
             dropped_vp = ''
             if 0 <= series_index < len(self.lst_thumbnails_data):
-                smeta = (self.lst_thumbnails_data[series_index]
-                         .get('metadata', {}).get('series', {}))
-                dropped_lat = str(smeta.get('laterality', '') or '').upper()
-                dropped_vp = str(smeta.get('view_position', '') or '').upper()
+                dropped_lat, dropped_vp = resolve_thumb_lat_view(
+                    self.lst_thumbnails_data[series_index]
+                )
 
             # Find the complementary view index
             complement_index = None
@@ -341,9 +390,7 @@ class AIPatientWidget(PatientWidget):
                 for idx, thumb in enumerate(self.lst_thumbnails_data):
                     if idx == series_index:
                         continue
-                    tmeta = thumb.get('metadata', {}).get('series', {})
-                    t_lat = str(tmeta.get('laterality', '') or '').upper()
-                    t_vp = str(tmeta.get('view_position', '') or '').upper()
+                    t_lat, t_vp = resolve_thumb_lat_view(thumb)
                     if t_lat == dropped_lat and t_vp == target_vp:
                         complement_index = idx
                         break

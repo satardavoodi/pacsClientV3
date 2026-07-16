@@ -349,7 +349,29 @@ class MamoWorker(QThread):
 
             if self.canceled:
                 raise Exception("Process canceled by user")
-            resp.raise_for_status()
+
+            # NOTE: do NOT use resp.raise_for_status() here.
+            #
+            # raise_for_status() builds its HTTPError from the status LINE only and
+            # discards the response BODY — but the body is where the AI server puts
+            # the actual cause. A 502 therefore surfaced to the user as a bare
+            # "Bad Gateway" while the discarded body said, e.g.:
+            #     "PACS request failed: 127.0.0.1:8000 ... actively refused"
+            # i.e. the AI server's own PACS backend was down. The user (and we) had
+            # no way to see that. Read the body, then raise.
+            if not resp.ok:
+                detail = ""
+                try:
+                    detail = (resp.text or "").strip()
+                except Exception:
+                    pass
+                if len(detail) > 600:
+                    detail = detail[:600] + "…"
+                print(f"[MG][RESP] error body={detail!r}")
+                raise Exception(
+                    f"AI server returned {resp.status_code} {resp.reason or ''}".strip()
+                    + (f" — {detail}" if detail else "")
+                )
 
             try:
                 data = resp.json()

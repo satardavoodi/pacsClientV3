@@ -15,6 +15,7 @@ Pure/offline — no network (the HTTP layer is stubbed).
 """
 from __future__ import annotations
 
+import threading
 import time
 
 import pytest
@@ -25,14 +26,34 @@ from modules.network import ino_assignment_refresh as refresh
 
 # ── the fan-out ────────────────────────────────────────────────────────────
 def test_assignments_are_fetched_in_parallel(monkeypatch, tmp_path):
-    """The sequential loop was the bottleneck. 24 slow fetches must not add up."""
+    """The sequential loop was the bottleneck. The fetches must run CONCURRENTLY.
+
+    Q0 2026-07-14: this used to assert on WALL-CLOCK time (`elapsed < 0.6s`), which is
+    unreliable on a loaded parallel test runner — the 8 pool threads compete for CPU with
+    the other xdist workers and the 50 ms sleeps stretch past the threshold, so the test
+    failed non-deterministically. It now asserts on the property it actually cares about —
+    OBSERVED CONCURRENCY: at some instant, more than one fetch was in flight at once. That
+    is a direct, timing-robust proof of parallelism (a sequential loop can never exceed 1).
+    """
     from modules.network import ino_assignment_server_state as state
     monkeypatch.setattr(state, "_base_dir", lambda: str(tmp_path))
     monkeypatch.setenv("AIPACS_RECEPTION_WORKERS", "8")
     monkeypatch.setenv("AIPACS_ASSIGN_SNAPSHOT_TTL_S", "0")
 
+    _lock = threading.Lock()
+    _inflight = 0
+    _max_inflight = 0
+
     def slow(rid):
-        time.sleep(0.05)          # 50 ms per "server" call
+        nonlocal _inflight, _max_inflight
+        with _lock:
+            _inflight += 1
+            _max_inflight = max(_max_inflight, _inflight)
+        try:
+            time.sleep(0.05)      # hold the "connection" open so overlap is observable
+        finally:
+            with _lock:
+                _inflight -= 1
         return {"assigned": True, "assignee_name": "Dr X", "assignee_id": "1",
                 "assign_type": "radiologist", "assignee_source": "ris_personnel",
                 "last_assigned_by": "", "last_assigned_at": "", "mine": False,
@@ -41,13 +62,12 @@ def test_assignments_are_fetched_in_parallel(monkeypatch, tmp_path):
     monkeypatch.setattr(refresh, "fetch_assignment", slow)
     rids = [str(i) for i in range(24)]
 
-    t0 = time.perf_counter()
     out = refresh.refresh_assignments(rids)
-    elapsed = time.perf_counter() - t0
 
     assert out["updated"] == 24
-    # sequential would be 24 x 50 ms = 1.2 s; 8 workers ⇒ 3 waves ≈ 0.15 s
-    assert elapsed < 0.6, f"fetches are still serialised ({elapsed:.2f}s)"
+    # A sequential loop can never have >1 fetch in flight. Any overlap proves the fan-out.
+    # (8 workers ⇒ up to 8; require ≥2 to stay robust even if the pool is starved.)
+    assert _max_inflight >= 2, f"fetches are serialised (max concurrency={_max_inflight})"
 
 
 def test_sequential_mode_is_still_available(monkeypatch, tmp_path):

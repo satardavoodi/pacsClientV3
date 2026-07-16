@@ -163,7 +163,7 @@ class Cursor3DWizardPanel(QDialog):
 class Cursor3DGuidedPicker(QObject):
     """Drives the whole 3D-Cursor setup: nipple (MLO) → nipple (CC) → pectoral (MLO)."""
 
-    finished = Signal(object, object, object)  # (nipple_mlo, nipple_cc, pectoral_mlo)
+    finished = Signal(object, object, object, object)  # (nipple_mlo, nipple_cc, pectoral_mlo, pectoral_cc)
 
     def __init__(self, imaging_tab, parent=None):
         super().__init__(parent)
@@ -330,16 +330,18 @@ class Cursor3DGuidedPicker(QObject):
         nipple_mlo = _picked_nipple("nipple_mlo")
         nipple_cc = _picked_nipple("nipple_cc")
         pectoral_mlo = _picked_line("pectoral_mlo")
+        pectoral_cc = _picked_line("pectoral_cc")
 
         self._panel.render_flow(flow)
         self._teardown(clear_overlays=False)
 
         if pectoral_mlo is not None:
-            print(f"[3D-Cursor][GUIDED] complete — pectoral angle = {pectoral_mlo.angle_deg:.1f}°")
+            print(f"[3D-Cursor][GUIDED] complete — MLO pectoral angle = {pectoral_mlo.angle_deg:.1f}°"
+                  + (f", CC chest-wall line drawn" if pectoral_cc is not None else ", CC line MISSING"))
 
         if self._callback:
-            self._callback(nipple_mlo, nipple_cc, pectoral_mlo)
-        self.finished.emit(nipple_mlo, nipple_cc, pectoral_mlo)
+            self._callback(nipple_mlo, nipple_cc, pectoral_mlo, pectoral_cc)
+        self.finished.emit(nipple_mlo, nipple_cc, pectoral_mlo, pectoral_cc)
 
     # -- helpers -------------------------------------------------------------
     def _teardown(self, *, clear_overlays: bool) -> None:
