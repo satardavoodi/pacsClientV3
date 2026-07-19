@@ -99,6 +99,19 @@ _FAST_STACK_PRESSURE_ENABLED = str(os.getenv('AIPACS_FAST_STACK_PRESSURE', '') o
 # It only rewrites descriptive text — never series identity/number, geometry,
 # slice order, or the slice counter.
 _CANONICAL_OVERLAY_METADATA = str(os.getenv('AIPACS_CANONICAL_OVERLAY_METADATA', '') or '').strip() == '1'
+# Image-sourced overlay identity (2026-07-19, clinical-safety). When ON (the
+# DEFAULT), the four-corner overlay's patient/study IDENTITY text is resolved
+# with the DISPLAYED series' OWN first-instance DICOM header as the top-precedence
+# source (via PacsClient.utils.overlay_identity_source.read_series_identity_from_
+# instances), falling back to the tab-level metadata_fixed (the local DB row) only
+# for a tag genuinely absent from the image, then "NA". This fixes the defect
+# where the overlay showed a DB patient row keyed by a (non-unique-in-practice)
+# Patient ID — so two patients sent under one Patient ID painted the SAME name on
+# both. It supersedes _CANONICAL_OVERLAY_METADATA (which fed the DB copy into the
+# dicom slot). Kill switch: AIPACS_OVERLAY_IMAGE_IDENTITY=0 restores the exact
+# legacy metadata_fixed path. Descriptive/identity TEXT only — never series
+# identity/number, geometry, slice order, or the slice counter.
+_OVERLAY_IMAGE_IDENTITY = str(os.getenv('AIPACS_OVERLAY_IMAGE_IDENTITY', '1') or '1').strip() != '0'
 # Per-instance DICOM window/level on stack scroll (46370 series 61 — Siemens CSI
 # spectroscopy). A series can be HETEROGENEOUS: it may mix SPECTRUM secondary
 # captures (WC2048/WW4096) with REFERENCEIMAGE frames (WC301/WW637). The viewer
@@ -1953,13 +1966,48 @@ class QtViewerBridge:
             if not series.get("series_time"):
                 series["series_time"] = fixed.get("study_time", fixed.get("series_time", ""))
 
-        # Canonical overlay TEXT (flag-gated, default OFF). Route the descriptive
-        # fields through the single trunk provider so the name uses the English
-        # PersonName component, the source precedence is deterministic, and "NA"
-        # only appears when truly missing. Identity (series number), geometry and
-        # the slice counter are deliberately NOT touched here. Never raises into
-        # the paint path.
-        if _CANONICAL_OVERLAY_METADATA:
+        # Overlay identity resolution. Two flag-gated variants route the
+        # descriptive/identity TEXT through the ONE trunk provider so the name
+        # uses the English PersonName component, precedence is deterministic and
+        # "NA" appears only when a field is truly missing. Series identity
+        # (number), geometry and the slice counter are deliberately NOT touched.
+        # Never raises into the paint path.
+        if _OVERLAY_IMAGE_IDENTITY:
+            # DEFAULT: the DISPLAYED series' own DICOM header is the authority.
+            # Read it once (cached) from the series' first instance and hand it
+            # to the trunk as `dicom=`, with the DB copy demoted to `db=`. This
+            # is what makes the overlay match the image on screen even when the
+            # DB patient row is wrong (e.g. two patients under one Patient ID).
+            try:
+                from PacsClient.utils.overlay_identity_source import (
+                    read_series_identity_from_instances,
+                )
+                from PacsClient.utils.overlay_metadata import build_overlay_metadata
+                image_tags = read_series_identity_from_instances(
+                    metadata.get("instances") or []
+                )
+                canon = build_overlay_metadata(
+                    dicom=image_tags,   # the ACTUAL image tags — top precedence
+                    db=fixed,           # local DB row — fallback for absent tags
+                    series=series,
+                    name_pref="english",
+                )
+                patient["patient_name"] = canon["patient_name"]
+                patient["patient_id"] = canon["patient_id"]
+                patient["patient_age"] = canon["patient_age"]
+                patient["patient_sex"] = canon["patient_sex"]
+                study["study_date"] = canon["study_date"]
+                study["institution_name"] = canon["institution_name"]
+                if canon["study_time"] != "NA":
+                    series["series_time"] = canon["study_time"]
+                # descriptive series text only (NOT series_number / identity)
+                if canon["series_description"] != "NA":
+                    series["series_description"] = canon["series_description"]
+            except Exception:
+                pass
+        elif _CANONICAL_OVERLAY_METADATA:
+            # Legacy opt-in (superseded): routes through the trunk but with the
+            # DB copy in the dicom slot — kept for back-compat only.
             try:
                 from PacsClient.utils.overlay_metadata import build_overlay_metadata
                 canon = build_overlay_metadata(

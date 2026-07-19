@@ -5,8 +5,8 @@
     {
       "id": "primary",
       "title": "Primary Update Source",
-      "type": "file",
-      "location": "",
+      "type": "url",
+      "location": "http://localhost:8080/updates/aipacs/stable",
       "channel": "stable"
     }
   ]

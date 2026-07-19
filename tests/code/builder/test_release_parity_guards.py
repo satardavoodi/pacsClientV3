@@ -42,6 +42,8 @@ FEATURE_FLAG_CONFIG_FILES = (
     "identity/identity.json",
     "cloud_consultation/cloud_consultation.json",
     "identity/aipacs_web.json",
+    # modules/agent_gateway/feature_flags.py -> agent_gateway/agent_gateway.json
+    "agent_gateway/agent_gateway.json",
 )
 
 

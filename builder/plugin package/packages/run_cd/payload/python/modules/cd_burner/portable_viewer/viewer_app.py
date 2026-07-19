@@ -67,7 +67,6 @@ if __package__:  # package-relative (dev run inside AI-PACS repo)
         discover_media_root,
         load_media_info,
         scan_media,
-        scan_paths,
     )
     from .render import (
         SliceData,
@@ -77,7 +76,6 @@ if __package__:  # package-relative (dev run inside AI-PACS repo)
         ruler_length_label,
         slice_to_qimage,
     )
-    from .viewer_log import configure_logging, log_session_banner
     from .welcome import WelcomePage
 else:  # standalone build / direct script execution
     from viewer_meta import VIEWER_DISPLAY_NAME, VIEWER_VERSION  # type: ignore
@@ -87,7 +85,6 @@ else:  # standalone build / direct script execution
         discover_media_root,
         load_media_info,
         scan_media,
-        scan_paths,
     )
     from render import (  # type: ignore
         SliceData,
@@ -97,7 +94,6 @@ else:  # standalone build / direct script execution
         ruler_length_label,
         slice_to_qimage,
     )
-    from viewer_log import configure_logging, log_session_banner  # type: ignore
     from welcome import WelcomePage  # type: ignore
 
 logger = logging.getLogger(__name__)
@@ -128,57 +124,8 @@ QLabel#sliceLabel { color: #9aa6b2; font-size: 12px; padding: 0 8px; }
 # Background workers
 # ---------------------------------------------------------------------------
 
-def local_paths_from_mime(mime) -> List[str]:
-    """Local filesystem paths carried by a ``text/uri-list`` drop payload.
-
-    Explorer drops (including from a CD/DVD) arrive as file:// URLs. Remote /
-    non-local URLs are dropped. Pure and headless-testable.
-    """
-    paths: List[str] = []
-    try:
-        if not mime.hasUrls():
-            return paths
-        for url in mime.urls():
-            try:
-                if not url.isLocalFile():
-                    continue
-                local = url.toLocalFile()
-                if local:
-                    paths.append(os.path.normpath(local))
-            except Exception:
-                continue
-    except Exception:
-        return paths
-    return paths
-
-
-def _is_optical(path: str) -> bool:
-    """True when *path* is on a CD/DVD — diagnostic only, never gates the import."""
-    try:
-        if __package__:
-            from .optical_io import is_optical_path
-        else:  # standalone build
-            from optical_io import is_optical_path  # type: ignore
-        return bool(is_optical_path(path))
-    except Exception:
-        return False
-
-
-def _drop_payload_kind(mime) -> Optional[str]:
-    """``"series"`` (internal drag) · ``"paths"`` (external files) · ``None``."""
-    try:
-        if mime.hasFormat(_SERIES_MIME):
-            return "series"
-        if mime.hasUrls():
-            return "paths"
-    except Exception:
-        pass
-    return None
-
-
 class _Bridge(QObject):
     scan_done = Signal(object)                 # ScanResult
-    import_done = Signal(object, int)          # ScanResult, target pane (-1 = none)
     slice_loaded = Signal(str, int, object)    # path, frame, SliceData
 
 
@@ -191,24 +138,6 @@ class _ScanTask(QRunnable):
     def run(self):  # pragma: no cover — thin thread wrapper
         result = scan_media(self._root)
         self._bridge.scan_done.emit(result)
-
-
-class _ImportTask(QRunnable):
-    """Off-thread import of dropped paths — the GUI never blocks on optical I/O."""
-
-    def __init__(self, bridge: _Bridge, paths: List[str], pane: int):
-        super().__init__()
-        self._bridge = bridge
-        self._paths = list(paths)
-        self._pane = int(pane)
-
-    def run(self):  # pragma: no cover — thin thread wrapper
-        try:
-            result = scan_paths(self._paths)
-        except Exception as exc:  # a drop must never take the viewer down
-            result = ScanResult(root="")
-            result.errors.append(f"Import failed: {exc}")
-        self._bridge.import_done.emit(result, self._pane)
 
 
 class _SliceLoadTask(QRunnable):
@@ -412,8 +341,6 @@ class ImageCanvas(QWidget):
             lambda p1, p2: None
         )
         self.on_series_dropped: Callable[[int], None] = lambda series_index: None
-        # External drop (Explorer / the CD) → import file(s) or folder(s) here.
-        self.on_paths_dropped: Callable[[List[str]], None] = lambda paths: None
 
         self._drag_button: Optional[Qt.MouseButton] = None
         self._drag_last: QPoint = QPoint()
@@ -691,17 +618,10 @@ class ImageCanvas(QWidget):
         self.on_interaction_changed()
         event.accept()
 
-    # -- drag-and-drop (series → pane, and external files/folders → pane) ------
-    #
-    # TWO payloads are accepted:
-    #   1. _SERIES_MIME  — a series dragged from this viewer's own series list.
-    #   2. text/uri-list — files/folders dragged from File Explorer, e.g. the
-    #      patient CD itself. This is what a user naturally tries first, and it
-    #      used to be silently rejected (the pane accepted ONLY _SERIES_MIME,
-    #      so Explorer drops showed the "no entry" cursor and nothing happened).
+    # -- drag-and-drop (series → pane) ----------------------------------------
 
     def dragEnterEvent(self, event):  # noqa: N802 — Qt override
-        if _drop_payload_kind(event.mimeData()):
+        if event.mimeData().hasFormat(_SERIES_MIME):
             event.setDropAction(Qt.CopyAction)
             event.accept()
             self._drop_hover = True
@@ -710,7 +630,7 @@ class ImageCanvas(QWidget):
             event.ignore()
 
     def dragMoveEvent(self, event):  # noqa: N802 — Qt override
-        if _drop_payload_kind(event.mimeData()):
+        if event.mimeData().hasFormat(_SERIES_MIME):
             event.setDropAction(Qt.CopyAction)
             event.accept()
         else:
@@ -722,23 +642,7 @@ class ImageCanvas(QWidget):
 
     def dropEvent(self, event):  # noqa: N802 — Qt override
         self._drop_hover = False
-        mime = event.mimeData()
-        kind = _drop_payload_kind(mime)
-
-        if kind == "paths":
-            paths = local_paths_from_mime(mime)
-            if not paths:
-                event.ignore()
-                self.update()
-                return
-            event.setDropAction(Qt.CopyAction)
-            event.accept()
-            self.on_activated()
-            self.on_paths_dropped(paths)
-            self.update()
-            return
-
-        data = mime.data(_SERIES_MIME)
+        data = event.mimeData().data(_SERIES_MIME)
         if data.isEmpty():
             event.ignore()
             self.update()
@@ -793,7 +697,6 @@ class LiteViewerWindow(QMainWindow):
 
         self._bridge = _Bridge()
         self._bridge.scan_done.connect(self._on_scan_done)
-        self._bridge.import_done.connect(self._on_import_done)
         self._bridge.slice_loaded.connect(self._on_slice_loaded)
         self._pool = QThreadPool(self)
         self._pool.setMaxThreadCount(2)
@@ -804,11 +707,6 @@ class LiteViewerWindow(QMainWindow):
         self._cache: "OrderedDict[Tuple[str, int], SliceData]" = OrderedDict()
         self._pending_loads: set = set()
         self._wl_by_series: Dict[str, Tuple[float, float]] = {}
-        self._import_busy: bool = False
-
-        # Files/folders dropped from Explorer (the CD, a USB stick, local disk)
-        # are accepted anywhere on the window — not only over a viewport pane.
-        self.setAcceptDrops(True)
 
         self.pane_states: List[PaneState] = [PaneState() for _ in range(self.PANE_COUNT)]
         self.canvases: List[ImageCanvas] = []
@@ -872,8 +770,7 @@ class LiteViewerWindow(QMainWindow):
             canvas.on_activated = (lambda i=index: self._set_active_pane(i))
             canvas.on_ruler_done = (lambda p1, p2, i=index: self._add_ruler(i, p1, p2))
             canvas.on_series_dropped = (lambda series_index, i=index: self._on_series_dropped(i, series_index))
-            canvas.on_paths_dropped = (lambda paths, i=index: self._import_dropped_paths(paths, pane=i))
-            canvas.empty_text = "Click or drag a series here\n\nor drop DICOM files / a folder from the CD"
+            canvas.empty_text = "Click or drag a series here"
             self.canvases.append(canvas)
 
         toolbar = QToolBar("Main", self)
@@ -1100,18 +997,6 @@ class LiteViewerWindow(QMainWindow):
         self._series = list(result.series)
         self._populate_series_list()
 
-        logger.info(
-            "[LITE-SCAN] root=%s source=%s series=%d images=%d errors=%s",
-            result.root, result.source, len(result.series), result.total_images,
-            result.errors or "none",
-        )
-        for series in result.series:
-            logger.info(
-                "[LITE-SCAN] series uid=%s number=%s modality=%s images=%d study=%s",
-                series.series_uid, series.series_number, series.modality,
-                series.image_count, series.study_uid,
-            )
-
         if not self._series:
             message = result.errors[0] if result.errors else "No DICOM images found."
             self.canvases[0].empty_text = (
@@ -1132,110 +1017,6 @@ class LiteViewerWindow(QMainWindow):
         if len(self._series) > 1 and self._two_view:
             self._select_series_for_pane(1, 1)
         self._set_active_pane(0)
-
-    # -- external drag-and-drop import (Explorer / CD → viewer) ---------------
-    #
-    # The whole window is a drop target, so a user can drop onto a viewport
-    # pane (loads straight into THAT pane), onto the series list, or anywhere
-    # else. Discovery is by CONTENT (see media_scan.scan_paths), so an
-    # extension-less patient-CD file such as ``IM000000`` imports fine, and
-    # nothing is ever written to the source media.
-
-    def dragEnterEvent(self, event):  # noqa: N802 — Qt override
-        if _drop_payload_kind(event.mimeData()) == "paths":
-            event.setDropAction(Qt.CopyAction)
-            event.accept()
-        else:
-            event.ignore()
-
-    def dragMoveEvent(self, event):  # noqa: N802 — Qt override
-        if _drop_payload_kind(event.mimeData()) == "paths":
-            event.setDropAction(Qt.CopyAction)
-            event.accept()
-        else:
-            event.ignore()
-
-    def dropEvent(self, event):  # noqa: N802 — Qt override
-        paths = local_paths_from_mime(event.mimeData())
-        if not paths:
-            event.ignore()
-            return
-        event.setDropAction(Qt.CopyAction)
-        event.accept()
-        self._import_dropped_paths(paths, pane=self.active_pane)
-
-    def _import_dropped_paths(self, paths: List[str], pane: int = -1):
-        """Import dropped files/folders off-thread, then load into `pane`."""
-        paths = [p for p in (paths or []) if p]
-        if not paths:
-            return
-        if self._import_busy:
-            self.statusBar().showMessage("An import is already running…")
-            return
-
-        logger.info(
-            "[LITE-DROP] drop_received count=%d pane=%d optical=%s first=%s",
-            len(paths), pane, _is_optical(paths[0]), paths[0],
-        )
-        self._import_busy = True
-        self._leave_welcome()
-        self.statusBar().showMessage(
-            f"Importing {len(paths)} dropped item(s)…"
-        )
-        for canvas in self.canvases:
-            if canvas.empty_text.startswith("No DICOM"):
-                canvas.empty_text = "Importing…"
-                canvas.update()
-        self._pool.start(_ImportTask(self._bridge, paths, pane))
-
-    def _on_import_done(self, result: ScanResult, pane: int):
-        """Merge imported series into the list and show the first one."""
-        self._import_busy = False
-
-        if not result.series:
-            message = result.errors[0] if result.errors else (
-                "The dropped item(s) contain no readable DICOM images."
-            )
-            logger.warning("[LITE-DROP] import_failed: %s", message)
-            self.statusBar().showMessage(message)
-            QMessageBox.information(self, "Import", message)
-            return
-
-        # Merge by series_uid — re-dropping the same series must not duplicate it.
-        existing = {s.series_uid: i for i, s in enumerate(self._series)}
-        first_index: Optional[int] = None
-        added = 0
-        for series in result.series:
-            index = existing.get(series.series_uid)
-            if index is None:
-                index = len(self._series)
-                self._series.append(series)
-                existing[series.series_uid] = index
-                added += 1
-            if first_index is None:
-                first_index = index
-
-        logger.info(
-            "[LITE-DROP] import_done source=%s series_found=%d new=%d images=%d "
-            "target_pane=%d",
-            result.source, len(result.series), added, result.total_images, pane,
-        )
-
-        self._populate_series_list()
-        if not self._media_root and result.root:
-            self._media_root = result.root
-            self._apply_media_info(result.root)
-
-        target = pane if 0 <= pane < self.PANE_COUNT else self.active_pane
-        if first_index is not None:
-            self._select_series_for_pane(target, first_index)
-            self._set_active_pane(target)
-
-        patients = ", ".join(result.patient_labels()[:3])
-        self.statusBar().showMessage(
-            f"Imported {len(result.series)} series · {result.total_images} images · "
-            f"{patients} · source: {result.source}"
-        )
 
     def _populate_series_list(self):
         self.series_list.blockSignals(True)
@@ -1538,14 +1319,6 @@ class LiteViewerWindow(QMainWindow):
     def _on_slice_loaded(self, path: str, frame: int, data: SliceData):
         key = (path, frame)
         self._pending_loads.discard(key)
-        if getattr(data, "error", ""):
-            # Decode failure (unreadable optical sector, missing codec, ...).
-            # load_slice never raises — without this line the failure would be
-            # invisible outside the viewport placeholder.
-            logger.error(
-                "[LITE-DECODE] failed path=%s frame=%d error=%s",
-                path, frame, str(data.error).replace("\n", " "),
-            )
         if key not in self._cache:
             self._cache_put(key, data)
         for pane, state in enumerate(self.pane_states):
@@ -1711,11 +1484,7 @@ def run_selftest() -> int:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    # Real FILE logging. The shipped viewer is built --windowed, so the old
-    # stderr-only basicConfig() discarded every diagnostic line — there was
-    # nothing to read when a patient CD misbehaved on a client PC.
-    log_path = configure_logging()
-
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
     argv = list(sys.argv[1:] if argv is None else argv)
     args = _parse_args(argv)
 
@@ -1729,14 +1498,6 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     exe_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
     media_root = discover_media_root(args.import_folder or args.folder, exe_dir=exe_dir)
-
-    log_session_banner(media_root, VIEWER_VERSION, log_path)
-    if not media_root:
-        logger.warning(
-            "[LITE-START] No DICOM media detected from cli=%s exe_dir=%s — the user "
-            "can still use Open Folder… or drag files/folders onto the window.",
-            args.import_folder or args.folder, exe_dir,
-        )
 
     window = LiteViewerWindow(media_root, show_welcome=not args.no_welcome)
     window.show()

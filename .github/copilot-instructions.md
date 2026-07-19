@@ -1,8 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.5.3 (2026-07-16) - Minor release: Eagle Eye Mammography 3D Cursor two-stage contralateral matching (PNL cross-view depth normalization, cross-view heatmap, findings panel, lesion feature store), test-suite repair (Q0 — green by default), and the INO internal-assign false-assigned regression fix. See `docs/releases/VERSION_3.5.3_RELEASE.md`.
+**Current Stable Version:** v3.5.4 (2026-07-19) - Minor release: automatic incremental update system (OPT-38), Agent Gateway (mobile/MCP connectivity), demographic DICOM-tag editor, viewport overlay reads the displayed image's own DICOM identity (clinical safety), sortable Status/Report columns, "Imported On" column, and the series-sidebar overlap-on-open fix. See `docs/releases/VERSION_3.5.4_RELEASE.md`.
 
-**Previous Stable:** v3.5.2 (2026-07-14) - Patch release: viewport load reliability (OPT-36 drop-never-abandoned, OPT-37 thumbnail resync TTL), Eagle Eye Mammography 3D Cursor, and the DICOM VM-collapse (ImageType) diagnosis. See `docs/releases/VERSION_3.5.2_RELEASE.md`.
+**Previous Stable:** v3.5.3 (2026-07-16) - Minor release: Eagle Eye Mammography 3D Cursor two-stage contralateral matching (PNL cross-view depth normalization), test-suite repair (Q0 — green by default), and the INO internal-assign false-assigned regression fix. See `docs/releases/VERSION_3.5.3_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 

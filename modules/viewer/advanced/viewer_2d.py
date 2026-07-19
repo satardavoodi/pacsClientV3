@@ -44,6 +44,19 @@ _ADV_MG_MONO1_INVERT_ENV = "AIPACS_ADV_MG_MONO1_INVERT"
 _VIEWER_RENDER_THROTTLE_MS = 16  # ~60fps max render rate
 _VIEWER_BATCH_DELAY_MS = 8  # Delay for batching multiple render requests
 
+# Image-sourced overlay identity (2026-07-19, clinical-safety). When ON (the
+# DEFAULT), the Advanced viewer's patient/study IDENTITY overlay text is
+# resolved with the DISPLAYED series' OWN first-instance DICOM header as the
+# top-precedence source, falling back to the tab-level metadata_fixed (local DB
+# row) only when a tag is absent from the image. This is the same fix, and the
+# same trunk, as the FAST viewer (each domain reads its own series header and
+# calls the shared read-only trunk — never across the domain boundary). It also
+# corrects, as a side effect of routing through the trunk, the pre-existing
+# Advanced defects where Sex/Age always showed N/A (the DB row exposes sex/age
+# but this viewer asked for patient_sex/patient_age). Kill switch:
+# AIPACS_OVERLAY_IMAGE_IDENTITY=0 restores the exact legacy metadata_fixed reads.
+_OVERLAY_IMAGE_IDENTITY = str(os.getenv('AIPACS_OVERLAY_IMAGE_IDENTITY', '1') or '1').strip() != '0'
+
 
 class ViewerType(enum.Enum):
     AXIAL = "Axial"
@@ -1156,6 +1169,50 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
                 exc_info=True,
             )
 
+    def _overlay_identity(self) -> Optional[dict]:
+        """Effective overlay IDENTITY text for the displayed series, or None.
+
+        Returns a dict (patient_name/id/sex/age, study_date/time,
+        institution_name) resolved through the shared trunk with the displayed
+        series' OWN first-instance DICOM header as the top-precedence source and
+        the tab-level ``metadata_fixed`` (DB row) as the fallback. Returns None
+        when the image-identity flag is off OR resolution fails, signalling the
+        caller to use the exact legacy ``metadata_fixed`` reads.
+
+        Memoised by first-instance path so the three corner builders and the
+        per-slice corner refresh do NOT re-run it: the underlying header read is
+        itself cached, and identity is series-constant, so this is a cheap dict
+        lookup after the first call for a series. ``missing='N/A'`` keeps the
+        rendered sentinel identical to this viewer's legacy default.
+        """
+        if not _OVERLAY_IMAGE_IDENTITY:
+            return None
+        try:
+            instances = (self.metadata or {}).get('instances') or []
+            first = instances[0] if instances and isinstance(instances[0], dict) else {}
+            key = first.get('instance_path', '') or ''
+            if getattr(self, '_overlay_identity_key', None) == key and \
+                    getattr(self, '_overlay_identity_cache', None) is not None:
+                return self._overlay_identity_cache
+            from PacsClient.utils.overlay_identity_source import (
+                read_series_identity_from_instances,
+            )
+            from PacsClient.utils.overlay_metadata import build_overlay_metadata
+            image_tags = read_series_identity_from_instances(instances)
+            ident = build_overlay_metadata(
+                dicom=image_tags,                     # the ACTUAL image tags
+                db=(self.metadata_fixed or {}),        # DB row — fallback only
+                series=(self.metadata or {}).get('series') or {},
+                name_pref="english",
+                missing="N/A",
+            )
+            self._overlay_identity_key = key
+            self._overlay_identity_cache = ident
+            return ident
+        except Exception:
+            logger.debug("[OVERLAY-IDENTITY] advanced resolve failed", exc_info=True)
+            return None
+
     def _update_corners_actors_impl(self, update_just_zoom=False, window_height=None):
         if update_just_zoom:
             if self.vtk_image_data is None:
@@ -1182,8 +1239,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
             current_slice = self.GetSlice()         # raw VTK k — used for metadata indexing
             display_slice = self.get_display_slice() # display_k — used for slice counter text
 
-            study_date = self.metadata_fixed.get('study_date', 'N/A')
-            series_time = self.metadata_fixed.get('study_time', 'N/A')
+            _ident = self._overlay_identity()
+            if _ident is not None:
+                study_date = _ident['study_date']
+                series_time = _ident['study_time']
+            else:
+                study_date = self.metadata_fixed.get('study_date', 'N/A')
+                series_time = self.metadata_fixed.get('study_time', 'N/A')
 
             series_name = self.metadata['series']['series_name']
             series_desc = self.metadata['series']['series_description']
@@ -1230,8 +1292,13 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         # changeable
         current_slice = self.GetSlice()          # raw VTK k
         display_slice = self.get_display_slice() # display_k for slice counter
-        study_date = self.metadata_fixed.get('study_date', 'N/A')
-        series_time = self.metadata_fixed.get('study_time', 'N/A')
+        _ident = self._overlay_identity()
+        if _ident is not None:
+            study_date = _ident['study_date']
+            series_time = _ident['study_time']
+        else:
+            study_date = self.metadata_fixed.get('study_date', 'N/A')
+            series_time = self.metadata_fixed.get('study_time', 'N/A')
 
         series_name = self.metadata['series']['series_name']
         series_desc = self.metadata['series']['series_description']
@@ -1264,11 +1331,19 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         left = 0.02
         gap = 0.02
 
-        # fixed
-        p_name = self.metadata_fixed.get('patient_name', 'N/A')
-        p_id = self.metadata_fixed.get('patient_id', 'N/A')
-        p_sex = self.metadata_fixed.get('patient_sex', 'N/A')
-        p_age = self.metadata_fixed.get('patient_age', 'N/A')
+        # fixed — identity from the displayed series' own DICOM header when the
+        # image-identity flag is on, else the legacy DB (metadata_fixed) reads.
+        _ident = self._overlay_identity()
+        if _ident is not None:
+            p_name = _ident['patient_name']
+            p_id = _ident['patient_id']
+            p_sex = _ident['patient_sex']
+            p_age = _ident['patient_age']
+        else:
+            p_name = self.metadata_fixed.get('patient_name', 'N/A')
+            p_id = self.metadata_fixed.get('patient_id', 'N/A')
+            p_sex = self.metadata_fixed.get('patient_sex', 'N/A')
+            p_age = self.metadata_fixed.get('patient_age', 'N/A')
 
         self.dicom_tags_actors.p_name_actor = make_corner_actor(p_name, left, top, 'left', 'top')
         self.dicom_tags_actors.p_id_actor = make_corner_actor(f'PID:{p_id}', left, (top - 1 * gap), 'left', 'top')
@@ -1341,7 +1416,11 @@ class ImageViewer2D(vtk.vtkResliceImageViewer):
         bottom = 0.04
         right = 0.96
 
-        hospital_name = self.metadata_fixed.get('institution_name', 'N/A')
+        _ident = self._overlay_identity()
+        if _ident is not None:
+            hospital_name = _ident['institution_name']
+        else:
+            hospital_name = self.metadata_fixed.get('institution_name', 'N/A')
 
         self.dicom_tags_actors.im_hospital_name_actor = make_corner_actor(hospital_name, right, bottom, 'right',
                                                                           'bottom')

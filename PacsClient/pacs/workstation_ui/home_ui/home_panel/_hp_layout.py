@@ -504,6 +504,9 @@ class _HPLayoutMixin:
         # Right-click "Refresh / Sync from server" → forced server completeness
         # check + pull newly-added series for the patient (45611).
         self.patient_table_widget.resyncFromServerRequested.connect(self._on_resync_from_server_requested)
+        # Right-click "Edit patient / study info…" → demographic DICOM-tag
+        # editor (local files + local DB; identity UIDs are never rewritten).
+        self.patient_table_widget.editPatientInfoRequested.connect(self._on_edit_patient_info_requested)
 
         # ★★★ تنظیمات وسط‌چین کردن هدر جدول ★★★
         if hasattr(self.patient_table_widget, 'results_table'):

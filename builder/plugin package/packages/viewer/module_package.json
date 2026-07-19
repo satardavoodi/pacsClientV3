@@ -4,7 +4,7 @@
   "module_id": "viewer",
   "title": "Viewer",
   "tier": "basic",
-  "version": "3.4.6",
+  "version": "3.5.4",
   "package_kind": "core",
   "payload_dir": "payload",
   "python_paths": [],

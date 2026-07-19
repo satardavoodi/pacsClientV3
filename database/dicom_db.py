@@ -99,10 +99,31 @@ def init_database():
                 number_of_instances INTEGER DEFAULT 0,
                 study_path      TEXT DEFAULT NULL,
                 attachments_uploaded TEXT DEFAULT NULL,
+                imported_at      TEXT DEFAULT NULL,
                 FOREIGN KEY(patient_fk) REFERENCES patients(patient_pk) ON DELETE CASCADE
             )
             """
         )
+
+        # --- imported_at migration (Imported On column, 2026-07-18) ----------
+        # WHEN this study first entered the LOCAL database on THIS computer —
+        # distinct from study_date, which is when the images were acquired.
+        # The two diverge exactly where the column earns its keep: a CD or
+        # external import of an old study.
+        #
+        # Stored as local-time ISO-8601 ("YYYY-MM-DD HH:MM:SS") so it sorts
+        # lexicographically == chronologically, which is what lets the table
+        # sort on the raw string without parsing.
+        #
+        # Pre-existing rows are deliberately left NULL (product decision
+        # 2026-07-18): there is no trustworthy record of when they were
+        # imported, and inventing one from a folder mtime would silently
+        # present a guess as fact. They render blank and sort last.
+        try:
+            cur.execute("SELECT imported_at FROM studies LIMIT 1")
+        except sqlite3.OperationalError:
+            cur.execute("ALTER TABLE studies ADD COLUMN imported_at TEXT DEFAULT NULL")
+            logger.info("[DB-MIGRATION] studies.imported_at added (existing rows left NULL)")
 
         cur.execute(
             """
@@ -493,8 +514,9 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
                 """
                 INSERT INTO studies
                     (study_uid, patient_fk, study_date, study_time, study_description,
-                     institution_name, modality, body_part, number_of_series, number_of_instances, study_path)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     institution_name, modality, body_part, number_of_series, number_of_instances,
+                     study_path, imported_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
                 """,
                 (
                     study_uid, patient_fk, study_date, study_time, study_description,
@@ -527,6 +549,11 @@ def insert_study(study_uid: str, patient_fk: int, study_date: str = None, study_
                         )
             except Exception:
                 effective_patient_fk = patient_fk
+            # NOTE: `imported_at` is deliberately ABSENT from this UPDATE.
+            # This branch runs on every metadata refresh of an existing study,
+            # so touching it here would keep re-stamping the row and the column
+            # would degrade into "last refreshed" instead of "first imported".
+            # It is written ONCE, in the INSERT above. Do not add it here.
             cur.execute(
                 """
                 UPDATE studies
@@ -1051,6 +1078,43 @@ def find_study_pk_with_study_uid(study_uid: str) -> int:
         cur.execute("SELECT study_pk FROM studies WHERE study_uid = ?", (study_uid,))
         result = cur.fetchone()
         return result[0] if result else None
+
+
+def get_imported_at_map(study_uids) -> dict:
+    """Map ``study_uid -> imported_at`` for the given UIDs (Imported On column).
+
+    ONE query for the whole visible page rather than a lookup per row — the
+    patient table renders hundreds of rows and the per-row DB call is exactly
+    the pattern that made the list feel slow before (OPT-24). UIDs with no
+    local row (a server result that was never downloaded here) are simply
+    absent from the result; the caller renders those blank.
+
+    Never raises: the column is informational, and a DB hiccup must not take
+    down the patient list.
+    """
+    uids = [str(u or "").strip() for u in (study_uids or []) if str(u or "").strip()]
+    if not uids:
+        return {}
+    out = {}
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            # Chunked to stay under SQLite's variable limit (default 999).
+            for start in range(0, len(uids), 500):
+                chunk = uids[start:start + 500]
+                placeholders = ",".join("?" * len(chunk))
+                cur.execute(
+                    f"SELECT study_uid, imported_at FROM studies "
+                    f"WHERE study_uid IN ({placeholders}) AND imported_at IS NOT NULL",
+                    chunk,
+                )
+                for uid, imported_at in cur.fetchall():
+                    if imported_at:
+                        out[str(uid)] = str(imported_at)
+    except Exception:
+        logger.debug("[IMPORTED-ON] lookup failed; column renders blank", exc_info=True)
+        return {}
+    return out
 
 
 def mark_series_indexed(series_pk: int, indexed_count: int, expected_count: int = None,

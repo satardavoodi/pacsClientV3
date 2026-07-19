@@ -48,21 +48,21 @@ VALID_STATUSES = [
 ]
 
 # Status set by the Patient-Tab Cloud "Sync Patient Data with Server" action.
-# The workstation user is the reading physician, so a sync marks the report
-# Physician Approved (the report is now the secretary's downstream concern) —
-# NEVER secretary_approved, which is the secretary's own, separate action.
-# physician_approved and secretary_approved are deliberately distinct states and
-# this value must never be the latter. Single source of truth: both the sync
-# service and the toolbar's post-sync local update read this constant so they
-# can never drift apart. Override / kill-switch: set env AIPACS_SYNC_REPORT_STATUS
-# (e.g. to "awaiting_secretary_approval" to restore the pre-2026-06-22 value).
-SYNC_REPORT_STATUS = os.environ.get("AIPACS_SYNC_REPORT_STATUS", "physician_approved")
+# 2026-07-15 (user directive): a cloud sync hands the study to the secretary with
+# a CLEAN approval slate — status "Awaiting Secretary Approval" with BOTH approval
+# flags cleared (the physician has synced the study but has NOT formally approved
+# yet). This intentionally reverses the 2026-06-22 "physician_approved" default.
+# Single source of truth: both the sync service and the toolbar's post-sync local
+# update read this constant so they can never drift apart. Override / kill-switch:
+# set env AIPACS_SYNC_REPORT_STATUS (e.g. to "physician_approved" to restore the
+# 2026-06-22 value). See docs/reports/PATIENT_TAB_STATUS_SYNC_CONTROLS_AUDIT_2026-07-15.md.
+SYNC_REPORT_STATUS = os.environ.get("AIPACS_SYNC_REPORT_STATUS", "awaiting_secretary_approval")
 if SYNC_REPORT_STATUS not in VALID_STATUSES:
     logger.warning(
-        "Invalid AIPACS_SYNC_REPORT_STATUS=%r; falling back to physician_approved",
+        "Invalid AIPACS_SYNC_REPORT_STATUS=%r; falling back to awaiting_secretary_approval",
         SYNC_REPORT_STATUS,
     )
-    SYNC_REPORT_STATUS = "physician_approved"
+    SYNC_REPORT_STATUS = "awaiting_secretary_approval"
 
 # Report statuses with English labels
 REPORT_STATUSES = {
@@ -107,13 +107,27 @@ UPDATE_REPORT_APPROVAL_FLAGS = (
 # Physician has signed off at/after the physician-approved stage. Secretary has
 # finalized at/after the secretary-approved stage. Everything else (pending /
 # awaiting_*) is not yet approved.
+#
+# 2026-07-15 (user directive): "Awaiting Secretary Approval" now clears BOTH
+# approval flags — it is a clean slate handed to the secretary, NOT "physician
+# already approved". This makes the Cloud sync (which sets awaiting_secretary_
+# approval) produce physicianApproved=false, secretaryApproved=false, and is
+# applied GLOBALLY (the dropdown / editor use the same map). Kill switch
+# AIPACS_AWAITING_SECRETARY_BOTH_FALSE=0 restores the legacy meaning
+# (awaiting_secretary_approval ⇒ physicianApproved=true).
+_AWAITING_SECRETARY_BOTH_FALSE = (
+    os.environ.get("AIPACS_AWAITING_SECRETARY_BOTH_FALSE", "1") or "1"
+).strip() != "0"
+
 _PHYSICIAN_APPROVED_STATES = {
     "physician_approved",
-    "awaiting_secretary_approval",  # physician approved, awaiting secretary
     "secretary_approved",
     "completed",
     "archived",
 }
+if not _AWAITING_SECRETARY_BOTH_FALSE:
+    # Legacy: physician approved, awaiting secretary.
+    _PHYSICIAN_APPROVED_STATES.add("awaiting_secretary_approval")
 _SECRETARY_APPROVED_STATES = {"secretary_approved", "completed", "archived"}
 
 

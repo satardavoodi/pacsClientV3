@@ -915,11 +915,48 @@ class _PWThumbnailsMixin:
         except Exception:
             chunk = 3
         end = min(index + chunk, len(thumbs))
-        for i in range(index, end):
+
+        # ── Overlap-on-open fix (2026-07-19) ──────────────────────────────
+        # A QGridLayout assigns a freshly addWidget-ed card its cell geometry
+        # only on the NEXT layout pass. Because this builder yields to the event
+        # loop between chunks with the container VISIBLE and painting ENABLED, a
+        # just-added fixed-size (190×215) card could paint once at the default
+        # (0,0) origin — stacked on the cards already present — before the
+        # deferred layout moved it to its row. That read as "series thumbnails
+        # overlap for <1s then snap into place" on patient open. Suppress
+        # painting while a chunk is added and FORCE the grid to compute geometry
+        # (activate) BEFORE re-enabling paint, so a card is never shown before it
+        # is positioned. This is the same bracket the synchronous
+        # show_exist_thumbnails / _render_multistudy_grouped paths already use;
+        # only this chunked (single-study, >4 series) default path lacked it.
+        # Per-chunk (not whole-sequence) so the progressive, non-freezing append
+        # is preserved. Kill switch AIPACS_SIDEBAR_CHUNK_SUPPRESS=0 restores the
+        # legacy unbracketed behaviour.
+        _suppress = os.getenv("AIPACS_SIDEBAR_CHUNK_SUPPRESS", "1") != "0"
+        container = None
+        if _suppress:
             try:
-                thumb_index = self._render_one_thumbnail_file(thumbs[i], thumb_index, sp_downloaded)
+                container = self.thumb_grid.parentWidget()
             except Exception:
-                pass
+                container = None
+        if container is not None:
+            container.setUpdatesEnabled(False)
+        try:
+            for i in range(index, end):
+                try:
+                    thumb_index = self._render_one_thumbnail_file(thumbs[i], thumb_index, sp_downloaded)
+                except Exception:
+                    pass
+        finally:
+            if container is not None:
+                try:
+                    # Compute the new cards' geometry NOW, while paint is off,
+                    # so the re-enabled repaint shows them already positioned.
+                    self.thumb_grid.activate()
+                except Exception:
+                    pass
+                container.setUpdatesEnabled(True)
+
         if end < len(thumbs):
             QTimer.singleShot(0, lambda: self._render_files_chunked(thumbs, end, thumb_index, sp_downloaded, token))
 

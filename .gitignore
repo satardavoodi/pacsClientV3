@@ -10,6 +10,14 @@ thumbnails
 .DS_Store
 dist/
 build/
+# Exception: tools/build/ holds SOURCE build tooling (lite-viewer build,
+# update-manifest generator, update publisher) — not build output. Without
+# this negation the generic build/ rule silently untracked all of it.
+!tools/build/
+!tools/build/**
+# Update-publish credentials (website FTP/API) live ONLY on the build machine.
+# Commit builder/publish_targets.template.json instead.
+builder/publish_targets.json
 Pacs.spec
 attachment/
 source/
@@ -112,3 +120,13 @@ generated-files/*.txt
 generated-files/*.log
 generated-files/*.err
 tools/testing/aipacs_control_mcp/clinical_validation_runs/
+
+# ── Agent Gateway runtime secrets/state (2026-07-19) — MUST NEVER be committed ──
+# Machine-generated on first run: TLS private key, channel key, paired-device
+# tokens, and a live per-machine config (bind IP, enabled flag). The gateway
+# self-seeds these via config_store.py; config_sanitizer blanks them at build.
+# Committing gateway_key.pem to a public repo is a security incident.
+config/agent_gateway/
+
+# ── Auto-update runtime state (2026-07-19) ──
+generated-files/updates/

@@ -481,6 +481,94 @@ def force_update_study_path(study_pk: int, study_path: str) -> int:
         return cur.rowcount
 
 
+# --- demographic correction (right-click ▸ Edit patient / study info) --------
+#
+# The `update_*_missing_fields` helpers above are FILL-ONLY by design: every
+# column is wrapped in `CASE WHEN col IS NULL OR col='' ... THEN ? ELSE col END`
+# so an ingest can never clobber a populated value. That is the correct default
+# for the download/ingest path — but it makes them useless for a deliberate
+# CORRECTION, where the whole point is to overwrite a value that is populated
+# and wrong. The two `force_update_*_demographics` helpers below are the
+# explicit, narrowly-scoped opt-out, following the `force_update_study_path`
+# precedent: unconditional UPDATE, demographic columns only, one study/patient
+# at a time. Do NOT widen them into a general-purpose overwrite, and do NOT
+# call them from an ingest path.
+
+def force_update_patient_demographics(patient_pk: int, *,
+                                      patient_id: str = None,
+                                      patient_name: str = None,
+                                      age: str = None) -> int:
+    """Unconditionally overwrite patient demographics for one patient row.
+
+    `patient_id` is UNIQUE in the schema, so the caller must have already
+    resolved a collision (see `_hp_patient_edit._sync_patient_row`) — this
+    helper does not merge rows.
+    """
+    fields = {"patient_id": patient_id, "patient_name": patient_name, "age": age}
+    sets, params = [], []
+    for col, val in fields.items():
+        if val is None:
+            continue
+        sets.append(f"{col} = ?")
+        params.append(val)
+    if not sets:
+        return 0
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE patients SET {', '.join(sets)} WHERE patient_pk = ?",
+            (*params, patient_pk),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def force_update_study_demographics(study_pk: int, *,
+                                    study_date: str = None,
+                                    study_time: str = None,
+                                    institution_name: str = None,
+                                    patient_fk: int = None) -> int:
+    """Unconditionally overwrite study demographics for one study row.
+
+    `institution_name` also exists on `series`; that column is refreshed by the
+    caller so a study-level edit does not leave the series rows disagreeing.
+    """
+    fields = {
+        "study_date": study_date,
+        "study_time": study_time,
+        "institution_name": institution_name,
+        "patient_fk": patient_fk,
+    }
+    sets, params = [], []
+    for col, val in fields.items():
+        if val is None:
+            continue
+        sets.append(f"{col} = ?")
+        params.append(val)
+    if not sets:
+        return 0
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            f"UPDATE studies SET {', '.join(sets)} WHERE study_pk = ?",
+            (*params, study_pk),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
+def force_update_series_institution(study_pk: int, institution_name: str) -> int:
+    """Refresh `series.institution_name` for every series of a study."""
+    with database.get_db_connection() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE series SET institution_name = ? WHERE study_fk = ?",
+            (institution_name, study_pk),
+        )
+        conn.commit()
+        return cur.rowcount
+
+
 def update_series_missing_fields(series_pk: int, *,
                                  series_uid: str = None,
                                  series_name: str = None,

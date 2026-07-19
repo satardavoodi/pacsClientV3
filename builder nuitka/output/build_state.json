@@ -4,7 +4,15 @@
   "completed_stages": [
     0,
     1,
-    2
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
   ],
   "stages": {
     "0": {
@@ -105,14 +113,340 @@
     },
     "3": {
       "name": "Core Package Inclusion",
-      "status": "running",
+      "status": "completed",
       "started_at_utc": "2026-07-16T08:20:14.829727+00:00",
-      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_03_core_packages.log"
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_03_core_packages.log",
+      "finished_at_utc": "2026-07-16T08:46:31.546582+00:00",
+      "command": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages",
+        "--output-filename=AIPacs.exe",
+        "--product-name=AIPacs",
+        "--product-version=3.5.3",
+        "--company-name=AIPacs",
+        "--file-description=AIPacs - staged Nuitka build",
+        "--windows-console-mode=attach",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_03_core_packages.xml",
+        "--assume-yes-for-downloads",
+        "--python-flag=static_hashes",
+        "--python-flag=safe_path",
+        "--lto=auto",
+        "--msvc=latest",
+        "--include-module=base64",
+        "--include-module=database._pool",
+        "--include-module=modules.module_system",
+        "builder nuitka/stage_entrypoints/stage3_core_bootstrap.py"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages\\stage3_core_bootstrap.dist"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages\\stage3_core_bootstrap.dist\\AIPacs.exe"
+      ],
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_03_core_packages.xml",
+      "issues": [],
+      "notes": []
+    },
+    "4": {
+      "name": "DICOM Basic Viewer Dependencies",
+      "status": "completed",
+      "started_at_utc": "2026-07-16T08:46:31.548585+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_04_dicom_basic.log",
+      "finished_at_utc": "2026-07-16T08:52:49.790404+00:00",
+      "command": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic",
+        "--output-filename=AIPacs.exe",
+        "--product-name=AIPacs",
+        "--product-version=3.5.3",
+        "--company-name=AIPacs",
+        "--file-description=AIPacs - staged Nuitka build",
+        "--windows-console-mode=attach",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_04_dicom_basic.xml",
+        "--assume-yes-for-downloads",
+        "--python-flag=static_hashes",
+        "--python-flag=safe_path",
+        "--lto=auto",
+        "--msvc=latest",
+        "--nofollow-import-to=modules.EchoMind",
+        "--nofollow-import-to=modules.cd_burner",
+        "--nofollow-import-to=modules.data_analysis",
+        "--nofollow-import-to=modules.mpr.advanced_3d_slicer",
+        "--nofollow-import-to=modules.printing",
+        "--nofollow-import-to=modules.web_browser",
+        "--include-module=numpy",
+        "--include-module=pydicom",
+        "--include-module=pydicom.encoders",
+        "--include-module=pydicom.pixel_data_handlers",
+        "--include-module=pydicom.pixel_data_handlers.numpy_handler",
+        "--include-package=numpy",
+        "--include-package=pydicom",
+        "builder nuitka/stage_entrypoints/stage4_dicom_bootstrap.py"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic\\stage4_dicom_bootstrap.dist"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic\\stage4_dicom_bootstrap.dist\\AIPacs.exe"
+      ],
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_04_dicom_basic.xml",
+      "issues": [],
+      "notes": []
+    },
+    "5": {
+      "name": "Heavy Native Imaging Stack",
+      "status": "completed",
+      "started_at_utc": "2026-07-16T08:52:49.792332+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_05_heavy_native.log",
+      "finished_at_utc": "2026-07-16T09:03:40.128047+00:00",
+      "command": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_05_heavy_native",
+        "--output-filename=AIPacs.exe",
+        "--product-name=AIPacs",
+        "--product-version=3.5.3",
+        "--company-name=AIPacs",
+        "--file-description=AIPacs - staged Nuitka build",
+        "--windows-console-mode=attach",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_05_heavy_native.xml",
+        "--assume-yes-for-downloads",
+        "--python-flag=static_hashes",
+        "--python-flag=safe_path",
+        "--lto=auto",
+        "--msvc=latest",
+        "--include-data-files=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\graphics_runtime\\opengl32sw.dll=./opengl32sw.dll",
+        "--include-data-files=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\graphics_runtime\\osmesa.dll=./osmesa.dll",
+        "--include-data-files=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\graphics_runtime\\pipe_swrast.dll=./pipe_swrast.dll",
+        "--nofollow-import-to=modules.EchoMind",
+        "--nofollow-import-to=modules.cd_burner",
+        "--nofollow-import-to=modules.data_analysis",
+        "--nofollow-import-to=modules.mpr.advanced_3d_slicer",
+        "--nofollow-import-to=modules.printing",
+        "--nofollow-import-to=modules.web_browser",
+        "--include-module=PySide6.QtCore",
+        "--include-module=PySide6.QtGui",
+        "--include-module=PySide6.QtWidgets",
+        "--include-module=SimpleITK",
+        "--include-module=SimpleITK._SimpleITK",
+        "--include-module=numpy",
+        "--include-module=pydicom",
+        "--include-module=pydicom.encoders",
+        "--include-module=pydicom.pixel_data_handlers",
+        "--include-module=pydicom.pixel_data_handlers.numpy_handler",
+        "--include-module=vtkmodules",
+        "--include-module=vtkmodules.all",
+        "--include-module=vtkmodules.qt.QVTKRenderWindowInteractor",
+        "--include-module=vtkmodules.util.numpy_support",
+        "--include-package=SimpleITK",
+        "--include-package=numpy",
+        "--include-package=pydicom",
+        "--include-package=vtkmodules",
+        "--include-data-files=modules/EchoMind/secretary/module_map.yaml=modules/EchoMind/secretary/module_map.yaml",
+        "--include-data-files=graphics_runtime/opengl32sw.dll=./opengl32sw.dll",
+        "--include-data-files=graphics_runtime/osmesa.dll=./osmesa.dll",
+        "--include-data-files=graphics_runtime/pipe_swrast.dll=./pipe_swrast.dll",
+        "builder nuitka/stage_entrypoints/stage5_native_bootstrap.py"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_05_heavy_native",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_05_heavy_native\\stage5_native_bootstrap.dist"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_05_heavy_native\\stage5_native_bootstrap.dist\\AIPacs.exe"
+      ],
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_05_heavy_native.xml",
+      "issues": [],
+      "notes": []
+    },
+    "6": {
+      "name": "Full Core Build",
+      "status": "completed",
+      "started_at_utc": "2026-07-16T09:03:40.130052+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_06_full_core.log",
+      "finished_at_utc": "2026-07-16T09:19:25.343728+00:00",
+      "command": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
+        "-m",
+        "nuitka",
+        "--standalone",
+        "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_06_full_core",
+        "--output-filename=AIPacs.exe",
+        "--product-name=AIPacs",
+        "--product-version=3.5.3",
+        "--company-name=AIPacs",
+        "--file-description=AIPacs - staged Nuitka build",
+        "--windows-console-mode=attach",
+        "--report=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_06_full_core.xml",
+        "--assume-yes-for-downloads",
+        "--python-flag=static_hashes",
+        "--python-flag=safe_path",
+        "--lto=auto",
+        "--msvc=latest",
+        "--enable-plugin=pyside6",
+        "--no-deployment-flag=excluded-module-usage",
+        "--include-data-files=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\graphics_runtime\\opengl32sw.dll=./opengl32sw.dll",
+        "--include-data-files=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\graphics_runtime\\osmesa.dll=./osmesa.dll",
+        "--include-data-files=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\graphics_runtime\\pipe_swrast.dll=./pipe_swrast.dll",
+        "--nofollow-import-to=modules.EchoMind",
+        "--nofollow-import-to=modules.cd_burner",
+        "--nofollow-import-to=modules.data_analysis",
+        "--nofollow-import-to=modules.mpr.advanced_3d_slicer",
+        "--nofollow-import-to=modules.printing",
+        "--nofollow-import-to=modules.web_browser",
+        "--include-module=PySide6.QtWebEngineCore",
+        "--include-module=PySide6.QtWebEngineWidgets",
+        "--include-module=base64",
+        "--include-module=pydicom",
+        "--include-module=pydicom.encoders",
+        "--include-module=pydicom.encoders.base",
+        "--include-module=pydicom.encoders.gdcm",
+        "--include-module=pydicom.encoders.native",
+        "--include-module=pydicom.encoders.pylibjpeg",
+        "--include-module=pydicom.pixel_data_handlers",
+        "--include-module=pydicom.pixel_data_handlers.gdcm_handler",
+        "--include-module=pydicom.pixel_data_handlers.numpy_handler",
+        "--include-package=PacsClient.pacs.workstation_ui.settings_ui",
+        "--include-package=pydicom",
+        "--include-data-files=modules/EchoMind/secretary/module_map.yaml=modules/EchoMind/secretary/module_map.yaml",
+        "--include-data-files=graphics_runtime/opengl32sw.dll=./opengl32sw.dll",
+        "--include-data-files=graphics_runtime/osmesa.dll=./osmesa.dll",
+        "--include-data-files=graphics_runtime/pipe_swrast.dll=./pipe_swrast.dll",
+        "main.py"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_06_full_core",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_06_full_core\\main.dist"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_06_full_core\\main.dist\\AIPacs.exe"
+      ],
+      "report_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\reports\\nuitka_stage_06_full_core.xml",
+      "issues": [],
+      "notes": [
+        "Optional plugin boundary check passed (no compiled optional modules found in report)"
+      ]
+    },
+    "7": {
+      "name": "Runtime Resources",
+      "status": "completed",
+      "started_at_utc": "2026-07-16T09:19:25.345001+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_07_runtime_resources.log",
+      "finished_at_utc": "2026-07-16T09:22:23.885563+00:00",
+      "command": [],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\core"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\core\\Engine\\AIPacs.exe",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\core\\AIPacs.exe",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\core\\Launch AIPacs.cmd",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\core\\Launch AIPacs.vbs"
+      ],
+      "report_path": null,
+      "issues": [],
+      "notes": [
+        "Runtime resources staged",
+        "PacsClient -> Engine/PacsClient",
+        "Fonts -> Engine/Fonts",
+        "Qss -> Engine/Qss",
+        "generated-files/build/config_clean -> Engine/config",
+        "modules/EchoMind/secretary/catalog -> Engine/modules/EchoMind/secretary/catalog",
+        "modules/EchoMind/secretary/prompts -> Engine/modules/EchoMind/secretary/prompts",
+        "json-styles -> Engine/json-styles",
+        "generated-files -> Engine/generated-files",
+        "generated-files/css/main.css -> Engine/Qss/main.qss",
+        "AIPacs.exe (root launcher exe)",
+        "Launch AIPacs.cmd",
+        "Launch AIPacs.vbs",
+        "User Data/ (parallel to Engine)",
+        "compare:Qss: pyinstaller=yes nuitka_engine=yes",
+        "compare:Fonts: pyinstaller=no nuitka_engine=yes",
+        "compare:config: pyinstaller=no nuitka_engine=yes",
+        "compare:json-styles: pyinstaller=no nuitka_engine=yes"
+      ]
+    },
+    "8": {
+      "name": "External Plugin Package Staging",
+      "status": "completed",
+      "started_at_utc": "2026-07-16T09:22:23.886500+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_08_plugin_staging.log",
+      "finished_at_utc": "2026-07-16T09:24:28.057161+00:00",
+      "command": [],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\plugin_packages"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\plugin_packages\\module_package_feed.json"
+      ],
+      "report_path": null,
+      "issues": [],
+      "notes": [
+        "Staged optional plugin packages: advanced_mpr, consultation, data_analysis, echomind, printing, run_cd, web_browser"
+      ]
+    },
+    "9": {
+      "name": "Installer Staging",
+      "status": "completed",
+      "started_at_utc": "2026-07-16T09:24:28.058289+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_09_installer_staging.log",
+      "finished_at_utc": "2026-07-16T09:24:28.060554+00:00",
+      "command": [],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\manifest",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\manifest\\installation_profile.json",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\manifest\\release_manifest.json"
+      ],
+      "report_path": null,
+      "issues": [],
+      "notes": [
+        "Installer staging manifests generated"
+      ]
+    },
+    "10": {
+      "name": "Inno Setup Installer",
+      "status": "completed",
+      "started_at_utc": "2026-07-16T09:24:28.061398+00:00",
+      "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_10_inno_setup.log",
+      "finished_at_utc": "2026-07-16T09:51:41.220865+00:00",
+      "command": [
+        "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe",
+        "/DMyAppVersion=3.5.3",
+        "/DStageDir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage",
+        "/DInstallerOutputDir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer",
+        "/DInstallerBaseName=ai-pacs installer",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\installer\\AIPacs_Nuitka_Setup.iss"
+      ],
+      "output_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer"
+      ],
+      "artifact_paths": [
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer\\ai-pacs installer.exe",
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer\\ai-pacs installer v3.5.3.exe"
+      ],
+      "report_path": null,
+      "issues": [],
+      "notes": [
+        "Inno Setup installer built: E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer\\ai-pacs installer.exe"
+      ]
     }
   },
-  "updated_at_utc": "2026-07-16T08:20:14.829740+00:00",
+  "updated_at_utc": "2026-07-16T09:51:41.221353+00:00",
   "mode": "fresh",
   "failed_stage": null,
-  "current_stage": 3,
+  "current_stage": null,
   "clean_mode": "none"
 }

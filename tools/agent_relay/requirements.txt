@@ -1,0 +1,4 @@
+# AIPACS Agent Relay (deployed on the AIPACS cloud, NOT part of the workstation build).
+# aiohttp gives us both the REST registry endpoints and the WebSocket rendezvous
+# in one small dependency. Everything else is stdlib (sqlite3, secrets, hashlib).
+aiohttp>=3.9.0

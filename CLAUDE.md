@@ -222,6 +222,203 @@ viewer backend as normal patient-open. Before editing
   `tests/code/ui_services/test_import_viewer_backend.py`. NEEDS live source-build
   verify.
 
+### Series-sidebar thumbnails overlap-on-open — chunked render layout gap (2026-07-19)
+On patient open, the viewer's left series-thumbnail sidebar briefly showed the cards OVERLAPPING at
+the origin, then they snapped into their rows within <1s. NOT a server / parse / thumbnail-gen /
+threading-data issue — pure **UI layout timing**. The sidebar is a `QGridLayout` (one fixed-size
+190×215 card per row, `_pw_panels.py`). The single-study default render path
+`_render_files_chunked` (`_pw_thumbnails.py`) appends ~3 cards per `QTimer.singleShot(0)` tick to
+avoid freezing the GUI on a many-series open. A `QGridLayout` assigns a freshly `addWidget`-ed card
+its cell geometry only on the NEXT layout pass, so because this path yields to the event loop
+between chunks with the container VISIBLE and painting ENABLED, a just-added card painted once at
+(0,0) — stacked on the existing cards — before the deferred layout moved it.
+- **The fix mirrors the bracket the OTHER two render paths already had.** `show_exist_thumbnails`
+  and `_render_multistudy_grouped` both wrap their adds in
+  `setUpdatesEnabled(False) … setUpdatesEnabled(True); updateGeometry()`; the chunked path was the
+  one outlier without it. Now each chunk's adds are bracketed
+  `setUpdatesEnabled(False)` → add → `self.thumb_grid.activate()` (compute geometry NOW, while paint
+  is off) → `setUpdatesEnabled(True)`, in a `finally` so an exception mid-chunk can never leave the
+  sidebar frozen with painting disabled. **Per-chunk, not whole-sequence**, so the progressive
+  non-freezing append AND the `_sidebar_build_token` stale-render cancellation are preserved.
+- `layout.activate()` (not just `updateGeometry()`, which only POSTS a LayoutRequest) is what
+  guarantees the cards are positioned before the re-enabled repaint. Cost is negligible (grid geom
+  calc, ~7×/open) and merely forces synchronously the layout that would run anyway.
+- The `<=4`-series synchronous fallback and both other paths were already safe (no mid-build yield).
+  Kill switch `AIPACS_SIDEBAR_CHUNK_SUPPRESS=0` = byte-identical legacy (buggy) behaviour; gated
+  alongside the existing `AIPACS_SIDEBAR_BUILD_CHUNKED` / `AIPACS_SIDEBAR_BUILD_CHUNK`.
+- `_pw_thumbnails.py` is NOT plugin-mirrored. Guard:
+  `tests/code/ui_services/test_sidebar_chunk_overlap.py` (5, incl. a real-QGridLayout behavioural
+  test proving overlap-before-`activate()` and distinct rows after). NEEDS live source-build verify
+  (open a >4-series patient → cards appear already in place, no overlap/snap).
+
+### Viewport overlay identity reads the DISPLAYED IMAGE's DICOM tags (2026-07-19, clinical-safety)
+The four-corner viewport overlay (Patient Name/ID/Sex/Age, Study Date/Time, Institution) used to be
+read from the tab-level `metadata_fixed` dict — a **local DB `patients`/`studies` row copied ONCE per
+tab**, keyed by `patient_pk` (resolved from the DICOM `PatientID`, which is `UNIQUE`). So two
+different people accidentally sent under **one Patient ID** collapsed to a single DB row and the
+overlay painted the SAME name on BOTH patients' images. The overlay now reads identity from the
+**displayed series' own first-instance DICOM header**. Before editing
+`PacsClient/utils/overlay_identity_source.py`, `overlay_metadata.py`, the FAST
+`qt_viewer_bridge._build_annotation_metadata`, or the Advanced `viewer_2d.py` `_overlay_identity` /
+`load_*_actors`, know:
+- **THE RULE: the image on screen is the identity authority.** Precedence is
+  DICOM(image) → DB(`metadata_fixed`) → NA, chosen with the user. The DB fills ONLY a tag genuinely
+  absent from the image; NA appears only when both are empty. The image tag is NEVER overridden by a
+  mismatched DB value. Image dimensions (Rows×Columns) were already per-image and are unchanged.
+- **TWO domains, ONE trunk.** FAST and Advanced each read their own series header via the shared
+  `overlay_identity_source.read_series_identity_from_instances(instances)` and resolve text through
+  the pure `overlay_metadata.build_overlay_metadata(dicom=<image tags>, db=<metadata_fixed>, …)`.
+  Neither viewer reaches into the other — they unify only through this read-only trunk pair (respects
+  the Fast/Advanced/VTK separation rule). `overlay_identity_source.py` is the ONLY pydicom piece;
+  `overlay_metadata.py` stays pure stdlib.
+- **`dicom=` must receive the IMAGE tags, not `metadata_fixed`.** The pre-existing (default-OFF)
+  `AIPACS_CANONICAL_OVERLAY_METADATA` path passed `dicom=fixed` (the DB copy) — it did NOT fix this
+  and is now superseded/`elif`-gated behind the new flag. Never feed the DB copy into the `dicom`
+  slot.
+- **SCOPE: descriptive/identity TEXT only.** The reader captures PatientName/ID/Sex/Age,
+  StudyDate/Time, Institution, SeriesDescription, Modality — NEVER SeriesInstanceUID/number, geometry,
+  IPP/IOP, slice order, or the slice counter (a guard test forbids those tags in the reader). Those
+  are owned downstream and must not be sourced here.
+- **PERFORMANCE: no I/O on the paint path.** The header read is `stop_before_pixels`, limited to the
+  identity tags, and cached by `(path, mtime)` — the `mtime` key means a file rewritten by the
+  demographic-tag editor is re-read fresh, not served stale. Advanced additionally memoises the
+  resolved dict by first-instance path so the 3 corner builders + per-slice refresh don't recompute.
+  Reads NEVER raise → on any failure the trunk falls back to the DB (== legacy behaviour).
+- **Fixed as a side effect of trunk routing:** Advanced's Sex/Age (it read `patient_sex`/`patient_age`
+  but the DB row exposes `sex`/`age`; the trunk accepts both) and the wrong-study date on multi-study
+  patients (`fetchone`). MPR renders no identity overlay (orientation labels only) — unaffected.
+- Flag `AIPACS_OVERLAY_IMAGE_IDENTITY` (default **ON**, `=0` = byte-identical legacy `metadata_fixed`
+  reads). **Both viewer files ARE plugin-mirrored** — `tools/dev/sync_plugin_mirrors.py` after any
+  edit (417/417 pairs verified). `overlay_identity_source.py` is under `PacsClient/utils` (base
+  package, like `overlay_metadata.py`), not the viewer payload. Guard:
+  `tests/code/viewer/test_overlay_image_identity.py` (15, incl. the concrete two-patients-one-ID
+  scenario with real synthetic DICOM). NEEDS live source-build verify (drag a series → overlay
+  matches THAT series' DICOM; the same-Patient-ID case shows each image's own name).
+
+### Demographic DICOM-tag editor — right-click ▸ "Edit patient / study info…" (2026-07-18)
+The main-page patient context menu gained an **Edit** action beside "Refresh / Sync from server".
+It corrects six demographic tags — PatientName, PatientID, InstitutionName, StudyDate, StudyTime,
+PatientAge — across **every series and every image** of every study on the row. Before editing
+`PacsClient/utils/dicom_demographics_edit.py`, `patient_edit_dialog.py`, `_hp_patient_edit.py`, or
+the `force_update_*_demographics` helpers in `database/manager.py`, know:
+- **THE HARD RULE: IDENTITY IS NEVER REWRITTEN.** Study/Series/SOP InstanceUID (and every other
+  UI-VR element, including file_meta) stay byte-identical. This is not a preference — the disk
+  layout (`SOURCE_PATH/<study_uid>/<series_number>/`), the thumbnails
+  (`THUMBNAIL_PATH/<study_uid>/<series_number>.png`), `studies.study_uid` / `series.series_uid`,
+  `SeriesRef` (OPT-35) and the **fail-closed viewport identity gate** are ALL keyed on those UIDs.
+  Regenerating one orphans every layer at once and presents as the recurring "series won't
+  display" class (48912 / 49836 / 50238). A demographic correction is the SAME physical exam with
+  descriptive attributes that were wrong — DICOM agrees identity is unchanged. Do **NOT** add UID
+  regeneration here; `cd_burner/dicom_prepare.py` remaps UIDs only because anonymisation produces
+  a genuinely NEW derived object.
+- **The guarantee is VERIFIED, not assumed:** `_edit_one_file` snapshots every UI-VR element,
+  writes, re-reads the file **as written**, and raises on any mismatch → that study rolls back.
+- **Writes are atomic + backed up.** `.part` → `os.replace` (the download manager's contract), and
+  the whole study folder is copied to `backups/dicom_edit_<uid>_<ts>/` FIRST. A study is
+  all-or-nothing: any failure restores it from that backup. `*.part` files are **excluded** from
+  both enumeration and backup — they belong to an in-flight download, and editing one corrupts it.
+- **Normalisation strips SEPARATORS ONLY.** An earlier draft stripped all non-digits, so a typo
+  like `18 July 2026` collapsed to `""` = "clear this tag" and would have **silently deleted the
+  study date**. Anything non-separator must survive so `validate_edit` can reject it. Guard:
+  `test_a_mistyped_date_is_rejected_not_silently_cleared`.
+- **LOCAL ONLY — the server has no demographic-write endpoint** (verified 2026-07-18: the socket
+  protocol is read-only apart from `UpdateReportStatus`; the 4 REST write endpoints only touch
+  report content/status, approval flags, comment and assignment). `server_push_supported()` is the
+  ONE place that reports this; the dialog warns the user that "Refresh / Sync from server" will
+  bring the server's original values back. Flip that function if a server endpoint is ever added.
+- **`force_update_*_demographics` are the deliberate opt-out from fill-only semantics.** The
+  `update_*_missing_fields` helpers wrap every column in `CASE WHEN col IS NULL OR col='' …` so an
+  ingest can never clobber a good value — correct for ingest, useless for a correction. Do NOT
+  widen the force helpers into a general overwrite and do NOT call them from an ingest path.
+- **`patients.patient_id` is UNIQUE**, so editing an ID onto an existing one re-points
+  `studies.patient_fk` at that row rather than duplicating the identity. `series.institution_name`
+  is refreshed alongside `studies.institution_name` so the two never disagree.
+- Disk is the authority, the DB is a derived index: files are written FIRST, DB second. A failed DB
+  sync leaves correct files. The core module is **pure stdlib + pydicom** (no Qt/VTK/DB) — keep it
+  that way; it is why this is unit-testable offscreen. The apply runs on a `QThread`, never the GUI
+  thread. Guard: `tests/code/ui_services/test_dicom_demographics_edit.py` (34, real synthetic
+  DICOM). None of these files are plugin-mirrored. **NEEDS live source-build verify.**
+
+### Sortable Status / Report columns — widget-backed cells (2026-07-18)
+Status and Report were the only two unsortable columns for a structural reason: both render a
+**cell widget**, and a widget carries **no item data**, so `sortItems` had nothing to compare.
+Each cell now also gets a HIDDEN `SortableItem` (empty text — nothing paints behind the widget)
+holding `sort_key` = rank and `tiebreak` = the row's `(date, time)`.
+- **Ranking is two pure module-level functions** (`report_status_rank`, `status_flags_rank`) —
+  no Qt/DB/disk. `REPORT_STATUS_RANK`: HIGHER == more complete (archived 0 … completed 7); the
+  header cycle's first click is **DescendingOrder**, so higher-is-more-complete is what puts
+  finished reports on top. `STATUS_FLAG_WEIGHTS`: **DICOM (32) must exceed the SUM of all other
+  weights (9)** so any row with local images outranks any row without, whatever chips it carries.
+  An earlier draft used 8 and silently let voice+ai+docs+case+printed beat a downloaded study —
+  `test_dicom_outranks_every_combination_without_it` caught it and now pins the arithmetic, so
+  adding a new flag fails the suite until DICOM is raised.
+- **The tie-break compensates for sort direction.** Qt sorts with ONE comparator and reverses it
+  wholesale for descending, so a naive composite key (a `(rank, date)` tuple) flips the SECONDARY
+  ordering too and ties come out oldest-first the moment the user reverses the primary.
+  `SortableItem._descending` (class-level — Qt compares pairwise with no context) is set by
+  `_programmatic_sort` and inverts the tie-break so ties stay **newest-first in both directions**.
+  It is reset in a `finally`; a leaked flag would corrupt the NEXT sort.
+- **Keys are re-synced in ONE place, not at each refresh site.** Report status / status chips are
+  mutated from ~a dozen paths; hooking each one means the sort goes stale the day someone adds the
+  thirteenth. `_refresh_widget_sort_keys()` re-derives both keys from the live widgets immediately
+  before a sort — and **mutates `_sort_key`/`_tiebreak` in place rather than calling `setItem`**, so
+  the model emits no `dataChanged` and the view does not repaint. Guard tests forbid
+  `_compute_local_status_flags` / `get_db_connection` / `os.walk` / `setItem` in that method.
+- **`_build_local_status_widget` stashes `container.status_flags` + `container.status_rank`** so the
+  refresh never re-runs the expensive flag computation (attachments walk + 2 DB queries).
+- **Cell widgets DO travel with their rows** — verified, not assumed: `tools/dev/
+  verify_sort_widget_alignment.py` stamps each row's identity into both the item and the widget and
+  reports 0 mismatches at 50/500/2000 rows in both directions. This matters clinically: if widgets
+  did not follow, a sorted row would display ANOTHER patient's report status. Re-run it after any
+  change to the sort path. (The pre-existing checkbox-state re-apply in `_programmatic_sort` is a
+  separate concern — checkbox *state*, not widget position — and is unchanged.)
+- **Measured** (`tools/dev/bench_status_report_sort.py`, offscreen, heavy tie density = worst case):
+  a full header click (key refresh + sort) is **1.1 ms @100 rows, 7 ms @500, 17 ms @1000, 40 ms
+  @2000, 116 ms @5000**. A clinic page is a few hundred rows ⇒ ~7 ms, well under one frame.
+- **The hidden item MUST stay SELECTABLE** — `item.flags() & ~Qt.ItemIsEditable`, the same flags
+  `_mk` gives every other cell. A first cut used bare `Qt.ItemIsEnabled`, which strips
+  `ItemIsSelectable`, so those two cells did NOT join the row selection: clicking a row highlighted
+  every column except Status and Report, leaving a dark "shadow" gap through the selection band
+  (reported from a screenshot 2026-07-18). Verified empirically: a cell with NO item — the
+  pre-change state — IS selected, which is why the columns highlighted correctly before. Guards:
+  `test_hidden_sort_item_stays_selectable` + `test_hidden_sort_item_flags_match_normal_cells`.
+- `_header_titles` MUST carry a base title for every sortable column or the ▲/▼ suffix is appended
+  to whatever text is there and never stripped, so the arrows accumulate.
+- Guard: `tests/code/ui_services/test_status_report_sorting.py` (23). Not plugin-mirrored.
+  **NEEDS live source-build verify** (click both headers, confirm order + that each row's chips
+  still match its patient).
+
+### "Imported On" patient-table column + `studies.imported_at` (2026-07-18)
+Main-page column showing when a study FIRST entered the local DB on THIS computer — distinct from
+the Date column (acquisition). The two diverge exactly where it earns its keep: a CD / external
+import of an old study. **Hidden by default**, opt-in via the gear ▸ Column Settings.
+- **NEW COLUMNS ARE APPENDED, NEVER INSERTED.** `imported_on` is `COL` index **15**, `TOTAL_COLS`
+  16 — every pre-existing index (0–14, incl. the hidden `study_uid`=13 / `order`=14) is unchanged.
+  `_save_column_settings` persists ORDER / VISIBILITY / WIDTH **keyed by these integers**, so
+  renumbering would silently scramble the saved layout of every workstation on upgrade. Guard:
+  `test_existing_column_indices_are_unchanged` pins all 15.
+- **`imported_at` is written ONCE, in the INSERT branch of `insert_study`** (`datetime('now',
+  'localtime')`). It is deliberately ABSENT from the IntegrityError/UPDATE branch — that branch runs
+  on **every metadata refresh**, so stamping there would degrade the column into "last refreshed"
+  and make CD-import sorting useless. Do NOT add it to that UPDATE. Guard:
+  `test_insert_stamps_but_update_does_not` + a live e2e check (insert → refresh → value unchanged).
+- **Stored as local-time ISO `YYYY-MM-DD HH:MM:SS`** so it sorts lexicographically ==
+  chronologically; the raw string IS the Qt sort key (no parsing at sort time). Display collapses to
+  `2026-07-18  14:30`. A row with no record uses an EMPTY sort key so it sorts LAST descending.
+- **Pre-existing rows stay NULL** (product decision 2026-07-18 — no invented backfill from folder
+  mtime; a guess must not be presented as fact). Verified on a COPY of the live DB: 1979 studies,
+  column added, zero rows lost, zero stamped.
+- **One query per page, not per row** (`dicom_db.get_imported_at_map`, chunked at 500 for SQLite's
+  variable limit, memoised in `_imported_on_cache`, cleared in BOTH `clear_table` paths). The
+  per-row DB call is what made the patient list feel slow before (OPT-24). The helper never raises —
+  the column is informational and must never take down the list.
+- A patient row aggregates studies → shows the **most recent** import. `load_current_settings` skips
+  only `study_uid`/`order`, so the column appears in the gear automatically; `reset_to_default`
+  keeps it in the default ORDER but unchecked via `ColumnSettingsDialog._DEFAULT_HIDDEN`. Old saved
+  settings files have no key `"15"` → the column keeps its shipped default (hidden, width 140).
+- Guard: `tests/code/ui_services/test_imported_on_column.py` (18). Neither file is plugin-mirrored.
+  **NEEDS live source-build verify** (enable via gear, import from CD, sort by the column).
+
 ### Multi-study viewer (patients with >1 study under one Patient ID)
 Before editing the viewer thumbnail sidebar, the series-load path
 (`_vc_load.py` / `_vc_switch.py`), `thumbnail_manager.py`, or the home-page
@@ -2088,6 +2285,51 @@ _detect_mg_dicom_image_size → pydicom.dcmread`. Before editing
   constructed at all on Eagle Eye open; surface the AI server's error `detail` (`MamoWorker.run`'s
   `raise_for_status()` discards the body — a 502 showed "Bad Gateway" while the body said "PACS request
   failed: 127.0.0.1:8000 … actively refused", i.e. the AI server's OWN PACS HTTP API was down).
+
+### Automatic incremental update system (OPT-38, 2026-07-16)
+Clients detect, download (delta), and install new releases from a static website feed. Before editing
+`modules/auto_update/`, `tools/build/generate_update_manifest.py`/`publish_update.py`, the
+`publish_update_bundle`/version-marker blocks in `builder/build_release.py`, or the `delta` keys in
+`summarize_available_updates`, **read `docs/plans/architecture/AUTO_UPDATE_SYSTEM_2026-07-16.md`**.
+- **It EXTENDS the pre-existing update seam** (`update_sources.json` → `update_feed.json` →
+  `summarize_available_updates` → Settings UI) — never fork a second checker/feed. The full-installer
+  path is the PRESERVED fallback (`artifact_type:"installer"`); a feed without `delta` must stay
+  byte-identical legacy.
+- **THE PATH GUARD IS A CLINICAL RULE.** The applier may only write manifest paths accepted by
+  `manifest.is_safe_manifest_path` (a top-level FILE, `engine/**`, or `Qss/**` — the staged payload
+  roots; case-insensitive) — enforced at generator, client, AND inside the PowerShell helper. That is what makes `User Data\`, `%APPDATA%\AIPacs\config`
+  (ALL center settings/credentials), ProgramData profile, and module_packages untouchable BY
+  CONSTRUCTION. Never widen it; config reaches users only via the existing seed/migrate machinery.
+- **The helper never kills the app** — it WAITS for clean exit (timeout ⇒ abort untouched, exit 2);
+  any copy failure ⇒ automatic restore of every backed-up file + relaunch of the OLD exe (exit 3).
+  Backups persist under `%LOCALAPPDATA%\AIPacs\updates\backup\<from-version>\` (keep 2) with
+  `rollback_update.ps1`. v1 applies adds/replacements only — NO deletions.
+- **Nothing downloads or installs without user consent** (decision 2026-07-16); `required` feeds only
+  nag. Startup check is delayed + off-thread (`AIPACS_AUTO_UPDATE_CHECK`: unset ⇒ frozen-only,
+  honoring `auto_check_on_startup`; dev stays quiet; `=1` force / `=0` kill). GUI thread never blocked.
+- **Version identity ships IN the payload**: the build stamps `engine/version.json` (stage step,
+  BEFORE the release gate/ISCC); after a delta apply, boot reconcile stamps
+  `runtime_profile.app_version`. `pyproject.toml` stays the build-time truth.
+- **Manifests/blobs are exact bytes**: `dump_manifest` must `write_bytes` (a `write_text` regression
+  re-breaks `manifest_sha256` on Windows via CRLF — caught by the guard tests). Store blobs are
+  gzip named by the sha256 of the UNCOMPRESSED content — content-addressed, so publishing adds only
+  new hashes and the two mirror sites stay rsync-able.
+- Delta generation at build is GUARDED (`AIPACS_UPDATE_DELTA_PUBLISH=0` to skip) — it must never fail
+  the release build. `tools/build/` is SOURCE tooling: the `.gitignore` negation (`!tools/build/`)
+  must stay, or the generic `build/` rule silently untracks it again (it had already swallowed
+  `build_lite_viewer.py`).
+- **Remote publishing is INCREMENTAL by construction (2026-07-17,
+  `tools/build/remote_publish.py`).** Targets (URL/credentials) live in `builder/publish_targets.json`
+  — **GITIGNORED; never commit it** (commit `publish_targets.template.json`). The publisher lists the
+  server's content-addressed store and uploads ONLY this release's missing blobs (unchanged DLLs never
+  re-transfer), feed LAST + read-back byte-verify; the ~600 MB installer is opt-in per target
+  (`with_installer` / `--with-installer`). Auto-publish runs from `build_release.py` for targets with
+  `"auto": true` (kill `AIPACS_UPDATE_REMOTE_PUBLISH=0`); an upload failure must NEVER fail the build.
+  Do not bypass it with whole-tree FTP pushes — that re-uploads 2 GB and can go live feed-FIRST.
+- Website layout + 2-mirror publish workflow: `website_update_service/README.md` (upload
+  `files/` + manifests first, `update_feed.json` LAST). Guards: `tests/code/auto_update/` (69).
+  `modules/auto_update/*` is NOT plugin-mirrored. NEEDS live verify: a real vN→vN+1 cycle on an
+  installed build (design doc §10 checklist) + first FTPS publish against real Hostinger.
 
 ## VS Code Agent Mode environment (configured 2026-06-02)
 

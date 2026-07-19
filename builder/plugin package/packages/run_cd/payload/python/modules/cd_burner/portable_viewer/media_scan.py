@@ -27,10 +27,8 @@ from pydicom import dcmread
 
 if __package__:  # package-relative (dev run inside AI-PACS repo)
     from .optical_io import read_bytes
-    from .viewer_meta import VIEWER_EXE_NAME
 else:  # standalone build / direct script execution
     from optical_io import read_bytes  # type: ignore
-    from viewer_meta import VIEWER_EXE_NAME  # type: ignore
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +41,7 @@ def _dcmread_header(path: str):
         return dcmread(path, stop_before_pixels=True)
 
 # Directories that never contain patient DICOM data on AI-PACS media.
-#
-# "_internal" is the PyInstaller payload folder of the viewer's OWN bundle. It
-# ships pydicom, whose package data includes ~25 sample .dcm test files. Without
-# this entry a scan of the viewer's own folder would "discover" those samples
-# and present them to the patient as if they were their images. See
-# _is_viewer_bundle_dir() for the matching guard on the media-root search.
-_SKIP_DIR_NAMES = {
-    "viewer", "$recycle.bin", "system volume information", "__pycache__", "_internal",
-}
+_SKIP_DIR_NAMES = {"viewer", "$recycle.bin", "system volume information", "__pycache__"}
 
 # Files at the media root that are definitely not DICOM instances.
 _SKIP_FILE_NAMES = {
@@ -232,23 +222,15 @@ def _iter_candidate_files(root: Path):
             # Any other extension (.png/.txt/.exe/...) is ignored.
 
 
-def _group_files_into_series(
-    candidates,
+def _scan_files(
+    root: Path,
     progress: Optional[Callable[[int, str], None]] = None,
     max_files: int = 50000,
-    stats: Optional[Dict[str, int]] = None,
 ) -> List[SeriesRecord]:
-    """Header-read each candidate file and group them patient → study → series.
-
-    Shared by the recursive media scan and the drag-and-drop import, so both
-    discover DICOM **by content**, never by file extension — patient CDs store
-    instances as extension-less ``IM000000`` files.
-    """
     series_map: Dict[str, SeriesRecord] = {}
     checked = 0
-    valid = 0
 
-    for path in candidates:
+    for path in _iter_candidate_files(root):
         if checked >= max_files:
             logger.warning("File scan stopped at %s files (safety cap)", max_files)
             break
@@ -263,7 +245,6 @@ def _group_files_into_series(
         series_uid = str(getattr(ds, "SeriesInstanceUID", "") or "")
         if not series_uid:
             continue
-        valid += 1
         record = series_map.get(series_uid)
         if record is None:
             record = SeriesRecord(
@@ -286,26 +267,11 @@ def _group_files_into_series(
             )
         )
 
-    if stats is not None:
-        stats["checked"] = checked
-        stats["valid"] = valid
-        stats["invalid"] = checked - valid
-
     series = [s for s in series_map.values() if s.instances]
     for s in series:
         s.sort_instances()
     series.sort(key=_series_sort_key)
     return series
-
-
-def _scan_files(
-    root: Path,
-    progress: Optional[Callable[[int, str], None]] = None,
-    max_files: int = 50000,
-) -> List[SeriesRecord]:
-    return _group_files_into_series(
-        _iter_candidate_files(root), progress=progress, max_files=max_files
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -346,106 +312,6 @@ def scan_media(
     return result
 
 
-def scan_paths(
-    paths: List[str],
-    progress: Optional[Callable[[int, str], None]] = None,
-) -> ScanResult:
-    """Discover DICOM series from an arbitrary set of dropped/selected paths.
-
-    This is the drag-and-drop / Open-Import entry point. It accepts, in any
-    combination:
-
-    * a single DICOM file (with **or without** a ``.dcm`` extension)
-    * several files from one or more series
-    * a series folder, a study folder, or a patient folder
-    * a disc root containing ``DICOMDIR`` (the standard patient-CD layout)
-    * the ``DICOMDIR`` file itself
-
-    Discovery is by **content**, never by extension: patient CDs write
-    instances as extension-less ``IM000000`` files, so an extension filter
-    would find nothing. Read-only media is fine — nothing is ever written
-    to the source.
-
-    Never raises; problems land in ``ScanResult.errors``.
-    """
-    result = ScanResult(root="")
-    try:
-        raw = [str(p) for p in (paths or []) if str(p).strip()]
-        if not raw:
-            result.errors.append("Nothing was dropped.")
-            return result
-
-        # A folder that is a media root (has DICOMDIR) — or the DICOMDIR file
-        # itself — goes through the fast, standard File-set reader first.
-        for path in raw:
-            candidate = Path(path)
-            if candidate.name.upper() == "DICOMDIR" and candidate.is_file():
-                candidate = candidate.parent
-            if candidate.is_dir() and (candidate / "DICOMDIR").is_file():
-                series = _scan_dicomdir(candidate)
-                if series:
-                    result.root = str(candidate)
-                    result.series = series
-                    result.source = "dicomdir"
-                    logger.info(
-                        "[LITE-DROP] dicomdir_import root=%s series=%d images=%d",
-                        candidate, len(series), sum(s.image_count for s in series),
-                    )
-                    return result
-
-        # Otherwise: expand folders recursively, take files as-is (no extension
-        # filter — a dropped file is a deliberate user choice; we validate it by
-        # parsing it), then group by content.
-        files: List[Path] = []
-        seen: set = set()
-        missing = 0
-        for path in raw:
-            candidate = Path(path)
-            try:
-                if candidate.is_dir():
-                    for found in _iter_candidate_files(candidate):
-                        key = str(found)
-                        if key not in seen:
-                            seen.add(key)
-                            files.append(found)
-                elif candidate.is_file():
-                    key = str(candidate)
-                    if key not in seen and candidate.name.lower() != "dicomdir":
-                        seen.add(key)
-                        files.append(candidate)
-                else:
-                    missing += 1
-            except OSError as exc:  # unreadable / disconnected media
-                result.errors.append(f"Cannot read {candidate}: {exc}")
-
-        if missing:
-            result.errors.append(f"{missing} dropped path(s) no longer exist.")
-        if not files:
-            result.errors.append("No files were found in the dropped item(s).")
-            return result
-
-        stats: Dict[str, int] = {}
-        series = _group_files_into_series(files, progress=progress, stats=stats)
-        result.root = str(Path(raw[0]).parent if Path(raw[0]).is_file() else raw[0])
-        logger.info(
-            "[LITE-DROP] filescan_import files=%d valid_dicom=%d invalid=%d series=%d",
-            stats.get("checked", 0), stats.get("valid", 0),
-            stats.get("invalid", 0), len(series),
-        )
-        if series:
-            result.series = series
-            result.source = "filescan"
-            return result
-
-        result.errors.append(
-            "The dropped item(s) contain no readable DICOM images."
-        )
-    except Exception as exc:  # defensive: a drop must never crash the viewer
-        logger.exception("[LITE-DROP] scan_paths failed")
-        result.errors.append(f"Import failed: {exc}")
-    return result
-
-
 def load_media_info(root: str) -> dict:
     """Read AIPACS_MEDIA_INFO.json at the media root (defensive, never raises).
 
@@ -465,30 +331,6 @@ def load_media_info(root: str) -> dict:
     return {}
 
 
-def _is_viewer_bundle_dir(path: Path) -> bool:
-    """True when *path* is the viewer's OWN program folder, not patient media.
-
-    CLINICAL SAFETY. The viewer's PyInstaller bundle ships pydicom, and pydicom's
-    package data contains ~25 sample ``.dcm`` files. ``RUN_VIEWER.cmd`` copies the
-    viewer to ``%TEMP%\\AIPacsLiteViewer`` and runs it from there, so the exe's
-    folder is a media-root candidate — and if the ``--import-folder`` argument is
-    ever lost or malformed, the fallback "does this folder contain any DICOM?"
-    probe would find those samples and the patient would be shown **someone
-    else's test images** instead of their own study.
-
-    A directory that holds the viewer executable, or a PyInstaller ``_internal``
-    payload, is the program — never the media. Reject it outright.
-    """
-    try:
-        if (path / VIEWER_EXE_NAME).is_file():
-            return True
-        if (path / "_internal" / "base_library.zip").is_file():
-            return True
-    except OSError:
-        pass
-    return False
-
-
 def discover_media_root(
     cli_folder: Optional[str],
     exe_dir: Optional[str] = None,
@@ -498,9 +340,6 @@ def discover_media_root(
     Order: explicit CLI folder → env override → the executable's folder and
     its parent (the viewer lives in ``<root>/VIEWER`` on burned media) →
     current working directory.
-
-    The viewer's own program folder is never accepted (see
-    :func:`_is_viewer_bundle_dir`).
     """
     candidates: List[Path] = []
     if cli_folder:
@@ -522,8 +361,6 @@ def discover_media_root(
         if str(resolved) in seen or not resolved.is_dir():
             continue
         seen.add(str(resolved))
-        if _is_viewer_bundle_dir(resolved):
-            continue  # the viewer's own folder is never patient media
         if (resolved / "DICOMDIR").is_file():
             return str(resolved)
 
@@ -534,14 +371,6 @@ def discover_media_root(
         except Exception:
             continue
         if not resolved.is_dir():
-            continue
-        if _is_viewer_bundle_dir(resolved):
-            # Would otherwise match pydicom's bundled sample .dcm files and show
-            # them to the patient as their own images.
-            logger.warning(
-                "[LITE-START] Skipping the viewer's own program folder as a media "
-                "root candidate: %s", resolved,
-            )
             continue
         checked = 0
         for path in _iter_candidate_files(resolved):

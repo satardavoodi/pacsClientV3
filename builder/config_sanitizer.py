@@ -48,6 +48,12 @@ from typing import Any, Dict, List, Tuple
 #   empty_list : dotted paths whose value becomes []
 #   root_list  : the file's ROOT is a JSON array -> becomes []
 #   blank_children : every child value under this dotted path becomes ""
+#   force      : {dotted path -> literal value} the SHIPPED file must carry,
+#                whatever the dev tree happens to contain. Use for "this feature
+#                must ship OFF": on a SOURCE build the roaming config root IS the
+#                repo config/ dir, so simply enabling a feature in the app
+#                rewrites the template — the build, not the dev's tree, has to be
+#                the authority.
 SANITIZE: Dict[str, Dict[str, Any]] = {
     # EchoMind — real API key today. Model names / timeouts are product defaults.
     # stt_custom_base_url / stt_auth_token belong to the Voice-to-Text section: a
@@ -98,6 +104,21 @@ SANITIZE: Dict[str, Dict[str, Any]] = {
     "offline_cloud_servers.json": {"empty_list": ["servers"]},
     "ino_assignment_config.json": {"blank": ["assignment_api_base_url"]},
     "update_sources.json": {"blank": ["sources[].location"]},
+    # Agent Gateway: a centre's relay endpoint + this workstation's relay
+    # credential must never ship. Booleans / ports / mode are product defaults.
+    "agent_gateway/agent_gateway.json": {
+        "blank": [
+            "relay_base_url", "relay_auth_token", "relay_workstation_id",
+            # A dev's pinned VPN/LAN address is centre-specific — never ship it.
+            "advertise_host",
+            # P2/P3 rendezvous: the relay URL and this workstation's relay
+            # credential are per-install identity, never product defaults.
+            "relay_ws_url", "relay_workstation_secret",
+        ],
+        # The gateway MUST ship disabled no matter what the dev tree says
+        # (a source build writes its runtime state straight into this template).
+        "force": {"enabled": False},
+    },
 }
 
 # Files that must NEVER be packaged at all (dev leftovers / secret material /
@@ -111,6 +132,15 @@ EXCLUDE_NAMES = {
     # straight into the native MPR crash the pre-flight exists to prevent.
     # It is machine-generated state, never a config template.
     "hardware_check.json",
+    # Agent Gateway runtime state written under config/agent_gateway/ when a
+    # SOURCE build enables the gateway (in source mode the roaming config root
+    # IS the repo config/ dir). These are per-machine artifacts — a paired-device
+    # registry and a self-signed TLS cert + PRIVATE KEY — and must NEVER be
+    # packaged. On a frozen install they live in %APPDATA%, never in the bundle;
+    # this guard covers a dev who ran the source build before packaging.
+    "devices.json",
+    "gateway_cert.pem",
+    "gateway_key.pem",
 }
 EXCLUDE_DIRS = {"secrets", "__pycache__"}
 EXCLUDE_SUFFIX_PATTERNS = (
@@ -188,6 +218,8 @@ def sanitize_obj(rel_posix: str, data: Any) -> Any:
         if isinstance(node, dict):
             for k in list(node.keys()):
                 node[k] = ""
+    for dotted, value in (rule.get("force") or {}).items():
+        _set_by_path(out, dotted, value)
     return out
 
 

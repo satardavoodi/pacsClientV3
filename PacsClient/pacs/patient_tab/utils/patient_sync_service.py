@@ -2,7 +2,8 @@
 Patient Data Synchronization Service
 =====================================
 این سرویس همه داده‌های بیمار (attachments، audio، و غیره) را با سرور همگام‌سازی می‌کند
-و report status را روی "تایید شده توسط پزشک" (physician_approved) قرار می‌دهد.
+و report status را روی "در انتظار تایید منشی" (awaiting_secretary_approval) قرار می‌دهد
+(هر دو تایید پزشک و منشی پاک می‌شوند — دستورالعمل کاربر ۲۰۲۶-۰۷-۱۵).
 """
 
 import os
@@ -271,12 +272,15 @@ class PatientSyncService(QObject):
                     result['attachments_failed'] = total_files
                     result['errors'].append(f"Error uploading attachments: {str(e)}")
             
-            # Update report status. The workstation user is the reading
-            # physician, so a sync marks the report Physician Approved
-            # (physician_approved) — NOT secretary_approved (the secretary's
-            # own, separate action) and NOT awaiting_secretary_approval. The
-            # exact value is the single shared constant SYNC_REPORT_STATUS so
-            # this site and the toolbar's post-sync local update never drift.
+            # Update report status. 2026-07-15 (user directive): a cloud sync
+            # hands the study to the secretary with a CLEAN slate — status
+            # awaiting_secretary_approval with BOTH approval flags cleared. It
+            # must NEVER set secretary_approved (the secretary's own, separate
+            # action). The exact value is the single shared constant
+            # SYNC_REPORT_STATUS so this site and the toolbar's post-sync local
+            # update never drift. (The reception approvalFlags are driven by the
+            # toolbar's post-sync INO approval-flags PATCH — the socket update
+            # here only touches the PACS-side store.)
             try:
                 from modules.network.socket_report_status_service import (
                     get_report_status_service, SYNC_REPORT_STATUS,

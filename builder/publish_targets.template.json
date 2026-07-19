@@ -1,0 +1,54 @@
+{
+  "_readme": [
+    "Remote publish targets for the AI-PACS update service (OPT-38).",
+    "COPY this file to builder/publish_targets.json and fill in credentials.",
+    "publish_targets.json is GITIGNORED — it must never be committed/pushed.",
+    "Types: 'ftp' (FTPS by default; set tls=false for plain FTP), 'folder'.",
+    "remote_root = the directory that CONTAINS the updates/ tree on the server",
+    "(e.g. Hostinger web root 'public_html' -> files land under",
+    " public_html/updates/aipacs/<channel>/).",
+    "auto=true -> build_release.py publishes there automatically after each",
+    "successful release build (kill switch: AIPACS_UPDATE_REMOTE_PUBLISH=0).",
+    "with_installer=false keeps the ~600 MB installer OFF the upload; only the",
+    "delta store/manifest/feed go up. Upload it explicitly when wanted:",
+    "  python tools/build/publish_update.py --target ai-pacs-com --with-installer"
+  ],
+  "app": "aipacs",
+  "channel": "stable",
+  "targets": [
+    {
+      "id": "local-laragon",
+      "type": "folder",
+      "site_root": "D:\\laragon-www\\ai-pacs\\public_html",
+      "enabled": true,
+      "auto": false,
+      "with_installer": true
+    },
+    {
+      "id": "ai-pacs-com",
+      "type": "ftp",
+      "host": "ftp.ai-pacs.com",
+      "port": 21,
+      "tls": true,
+      "username": "",
+      "password": "",
+      "remote_root": "public_html",
+      "enabled": false,
+      "auto": false,
+      "with_installer": false
+    },
+    {
+      "id": "mirror-site",
+      "type": "ftp",
+      "host": "",
+      "port": 21,
+      "tls": true,
+      "username": "",
+      "password": "",
+      "remote_root": "public_html",
+      "enabled": false,
+      "auto": false,
+      "with_installer": false
+    }
+  ]
+}

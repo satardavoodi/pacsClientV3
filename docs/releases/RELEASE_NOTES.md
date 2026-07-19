@@ -1,9 +1,90 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.3 (2026-07-16)
-**Previous Stable:** v3.5.2 (2026-07-14)
-**Release Date:** 2026-07-16
+**Current Stable Version:** v3.5.4 (2026-07-19)
+**Previous Stable:** v3.5.3 (2026-07-16)
+**Release Date:** 2026-07-19
 **Branch:** beta-version
+
+---
+
+## v3.5.4 (2026-07-19) - Minor release: auto-update system, Agent Gateway, demographic editor, image-identity overlay, sortable columns
+
+### Summary
+
+Minor release with several independent additions. The two structural ones are an
+**automatic incremental update system** (clients detect, download a delta, and
+install new releases from the AI-PACS website, with a center-config path guard and
+a wait-never-kill / auto-rollback applier) and an **Agent Gateway** that lets a
+phone or MCP client pair with and drive the workstation over a second transport
+onto the existing command bus. On the clinical side, the **viewport overlay now
+reads patient identity from the displayed image's own DICOM header** — closing a
+safety gap where two patients sent under one Patient ID could paint the same name
+on both. Plus a right-click **demographic DICOM-tag editor**, **sortable
+Status/Report columns**, an **"Imported On" column**, and a series-sidebar
+overlap-on-open fix.
+
+### Included — new subsystems
+
+- **Automatic incremental update system (OPT-38).** Clients read a static website
+  feed, download only the changed files (delta), and install them. Nothing
+  downloads or installs without user consent. The applier only writes
+  manifest-approved payload paths (top-level files, `engine/**`, `Qss/**`) — so
+  `User Data\`, center config, credentials, and module packages are untouchable by
+  construction. The helper waits for a clean app exit (never kills it) and
+  auto-rolls-back every backed-up file on any copy failure. Full-installer fallback
+  preserved. `modules/auto_update/`, `tools/build/`, `website_update_service/`.
+- **Agent Gateway — mobile / MCP connectivity (Settings ▸ Agent).** Phone/MCP
+  clients pair with and drive the workstation via a second transport onto the
+  existing EchoMind command bus (no fork). QR pairing, self-signed TLS with
+  certificate pinning, per-device tokens; LAN or relay reachability for no-static-IP
+  sites. **Default-OFF** (`AIPACS_AGENT_GATEWAY`). `modules/agent_gateway/`,
+  `tools/agent_relay/`. Soft new deps `segno` (QR) + `websocket-client` (relay), both
+  with text/long-poll fallbacks.
+
+### Included — clinical safety
+
+- **Viewport overlay identity reads the displayed image's DICOM tags.** The
+  four-corner overlay (name / ID / sex / age, study date, institution) used to be
+  read from a per-tab DB row keyed by Patient ID. Two different people accidentally
+  sent under one Patient ID collapsed to a single row, so the overlay painted the
+  **same name on both patients' images**. The overlay now reads identity from the
+  displayed series' own first-instance header (precedence: image → DB → NA), with
+  no I/O on the paint path (cached by path+mtime). Both FAST and Advanced viewers,
+  default-on (`AIPACS_OVERLAY_IMAGE_IDENTITY`).
+- **Demographic DICOM-tag editor (right-click ▸ Edit patient / study info).**
+  Corrects six demographic tags (name, ID, institution, study date/time, age)
+  across every series and image of a patient's studies. **Identity UIDs are never
+  rewritten** — verified per file with rollback on mismatch; atomic writes with a
+  full study backup first. Local-only (the server has no demographic-write API).
+
+### Included — UI
+
+- **Sortable Status and Report columns.** They were the only unsortable columns
+  because each renders a cell *widget* (which carries no sortable item data). Hidden
+  sort-key items now back each cell, with a direction-compensating tie-break, and a
+  single pre-sort re-sync that mutates in place (no repaint, no DB hit). Cell-widget
+  ↔ row alignment is verified (a sorted row must never show another patient's
+  status). ~7 ms at 500 rows.
+- **"Imported On" column** (hidden by default; enable via the gear). Shows when a
+  study first entered the local DB on this computer — distinct from the acquisition
+  date, so a CD/external import of an old study is visible. `studies.imported_at` is
+  stamped once on insert, never on refresh; existing rows stay blank (no invented
+  backfill). New table columns are appended, never inserted, so saved layouts don't
+  scramble.
+- **Series-sidebar overlap-on-open fixed.** The chunked thumbnail render yielded to
+  the event loop with painting enabled, so a just-added card painted once at the
+  origin before the grid laid it out — the cards briefly overlapped, then snapped
+  into rows. Each chunk's adds are now bracketed with painting off + a forced layout
+  pass, matching the other two render paths.
+- **Admission Reports dashboard** in Data Analysis; Cloud "Sync + Close" now sets
+  Awaiting-Secretary approval flags.
+
+### Notes
+
+- The overlay-identity fix, demographic editor, sortable columns, and imported-on
+  column are default-on / additive; the Agent Gateway is default-OFF.
+- The auto-update system, Agent Gateway (Android client is separate), and the
+  clinical overlay/editor changes still need live source-build verification.
 
 ---
 

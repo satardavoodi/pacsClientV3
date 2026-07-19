@@ -26,7 +26,10 @@ from modules.network.socket_report_status_service import (  # noqa: E402
         ("awaiting_physician_approval", False, False),
         ("awaiting_approval", False, False),
         ("physician_approved", True, False),
-        ("awaiting_secretary_approval", True, False),  # physician done, awaiting secretary
+        # 2026-07-15 (user directive): awaiting_secretary_approval is a clean slate
+        # handed to the secretary — BOTH flags cleared (default on;
+        # AIPACS_AWAITING_SECRETARY_BOTH_FALSE=0 restores True/False).
+        ("awaiting_secretary_approval", False, False),
         ("secretary_approved", True, True),
         ("completed", True, True),
         ("archived", True, True),

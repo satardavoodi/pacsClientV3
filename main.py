@@ -1238,7 +1238,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.5.3")
+    app.setApplicationVersion("3.5.4")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1330,6 +1330,23 @@ if __name__ == "__main__":
     )
     app._disk_alert_service.start(initial_delay_ms=2000)
 
+    # OPT-38: automatic update check — delayed, off-thread, flag-gated
+    # (AIPACS_AUTO_UPDATE_CHECK; enabled by default only in frozen builds).
+    # Never blocks the GUI thread; failure here must never affect startup.
+    try:
+        from modules.auto_update.service import AutoUpdateService as _AutoUpdateService
+        from modules.auto_update import ui as _auto_update_ui
+
+        app._auto_update_service = _AutoUpdateService(app)
+        app._auto_update_service.updateAvailable.connect(
+            lambda summary: _auto_update_ui.show_update_notification(window, summary)
+        )
+        app._auto_update_service.start()
+    except Exception as _auto_update_exc:
+        logging.getLogger(__name__).warning(
+            "Auto-update service not started: %s", _auto_update_exc
+        )
+
     # Store lock on app for cleanup on exit
     app._instance_lock = instance_lock
 
@@ -1357,6 +1374,16 @@ if __name__ == "__main__":
                 terminate_all_download_subprocesses,
             )
             terminate_all_download_subprocesses()
+        except Exception:
+            pass
+        # Agent Gateway: stop the LAN HTTPS server + relay client (daemon
+        # threads + a bound socket) explicitly before the hard-exit failsafe, so
+        # no listener thread lingers in Task Manager (same rationale as the
+        # download-subprocess kill above). No-op when the gateway never started.
+        try:
+            _gw = getattr(app, "_agent_gateway_service", None)
+            if _gw is not None:
+                _gw.stop()
         except Exception:
             pass
         # Game-changer #1: flush async log listener before process exit so

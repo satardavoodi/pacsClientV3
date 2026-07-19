@@ -43,3 +43,15 @@ cryptography>=42.0.0
 pypdf>=4.0.0
 python-pptx>=0.6.23
 pytesseract>=0.3.10
+
+# ── Agent Gateway: mobile / MCP connectivity (2026-07-17) ──
+# segno is a ZERO-dependency pure-Python QR generator (no Pillow needed) used to
+# render the pairing QR in Settings ▸ Agent. Feature is default-OFF; the gateway
+# reuses cryptography (self-signed TLS) + requests (relay tunnel), both already
+# pinned above. If segno is absent the tab falls back to showing the pairing URI
+# as text, so this dependency is soft.
+segno>=1.5.2
+# Persistent outbound WebSocket to the AIPACS relay (remote access with no static
+# IP / no port forwarding). SOFT dependency: if absent the gateway falls back to
+# the long-poll relay transport, so the build still works without it.
+websocket-client>=1.7.0

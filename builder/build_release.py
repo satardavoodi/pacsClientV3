@@ -1188,6 +1188,24 @@ def write_installer_release_metadata(installer_artifacts: dict[str, str], versio
     (INSTALLER_OUTPUT_DIR / "SHA256_FA.txt").write_text(sha256_fa, encoding="utf-8")
 
 
+def _load_update_manifest_tool():
+    """Load tools/build/generate_update_manifest.py (tools/ is not a package).
+
+    Used for the OPT-38 incremental-update artifacts. Callers guard with
+    try/except — a delta failure must never fail the release build.
+    """
+    import importlib.util
+
+    tool_path = PROJECT_ROOT / "tools" / "build" / "generate_update_manifest.py"
+    spec = importlib.util.spec_from_file_location(
+        "aipacs_generate_update_manifest", tool_path
+    )
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
 def publish_update_bundle(
     version: str,
     module_packages: list[dict[str, object]],
@@ -1239,9 +1257,28 @@ def publish_update_bundle(
             {
                 "artifact_path": f"core/{versioned_name}",
                 "sha256": _sha256_file(UPDATES_CORE_DIR / versioned_name),
+                "size": (UPDATES_CORE_DIR / versioned_name).stat().st_size,
                 "available": True,
             }
         )
+
+    # OPT-38: incremental-update artifacts (file manifest + content-addressed
+    # store). Guarded — a delta failure never fails the release build; the
+    # feed then simply carries the full-installer path only.
+    if os.environ.get("AIPACS_UPDATE_DELTA_PUBLISH", "1") != "0":
+        try:
+            _tool = _load_update_manifest_tool()
+            _notes = PROJECT_ROOT / "docs" / "releases" / f"VERSION_{version}_RELEASE.md"
+            _extras = _tool.generate_core_delta(
+                STAGE_DIR / "core",
+                version,
+                UPDATES_OUTPUT_DIR,
+                notes_source=_notes if _notes.is_file() else None,
+            )
+            if _extras:
+                core_entry.update(_extras)
+        except Exception as exc:  # noqa: BLE001 — never fail the build on delta
+            print(f"[WARN] Delta manifest generation failed (feed carries installer only): {exc}")
 
     components: list[dict[str, object]] = []
     for definition in load_plugin_package_definitions(optional_only=False):
@@ -1536,6 +1573,14 @@ def main() -> int:
         verify_frozen_mpr_geometry(source_dir)
 
         core_dir = stage_core_bundle(source_dir, incremental=incremental)
+        # OPT-38: stamp engine/version.json into the payload BEFORE the release
+        # gate + ISCC so both the installer and the delta manifest ship the
+        # version identity marker (read by auto-update's boot reconcile).
+        try:
+            if _load_update_manifest_tool().stamp_stage_version(core_dir, version) is not None:
+                print(f"[OK] Stamped engine/version.json ({version})")
+        except Exception as exc:  # noqa: BLE001 — marker is best-effort
+            print(f"[WARN] version marker stamp failed: {exc}")
         advanced_payload = stage_advanced_mpr_payload()
         if not bool(advanced_payload.get("staged")):
             allow_missing = os.environ.get("AIPACS_ALLOW_MISSING_ADVANCED_MPR", "").strip().lower() in {
@@ -1601,6 +1646,48 @@ def main() -> int:
                     installer_artifacts["woa"] = str(woa_artifact)
 
         publish_update_bundle(version, module_packages, installer_artifacts)
+
+        # OPT-38: automatic INCREMENTAL remote publish. Targets with
+        # "auto": true in builder/publish_targets.json (gitignored) receive
+        # only the blobs the server does not already have — never the whole
+        # 2 GB. Guarded: an upload failure never fails the release build
+        # (artifacts stay in builder/output/updates for a manual retry via
+        # tools/build/publish_update.py --target <id>).
+        # Kill switch: AIPACS_UPDATE_REMOTE_PUBLISH=0.
+        if os.environ.get("AIPACS_UPDATE_REMOTE_PUBLISH", "1") != "0":
+            try:
+                _targets_config = BUILDER_DIR / "publish_targets.json"
+                if _targets_config.is_file():
+                    import importlib.util as _ilu
+
+                    _pu_path = PROJECT_ROOT / "tools" / "build" / "publish_update.py"
+                    _pu_spec = _ilu.spec_from_file_location("aipacs_publish_update", _pu_path)
+                    _pu = _ilu.module_from_spec(_pu_spec)
+                    assert _pu_spec.loader is not None
+                    _pu_spec.loader.exec_module(_pu)
+                    _rp = _pu._load_remote_publish_module()
+                    _cfg = _rp.load_publish_targets(_targets_config)
+                    _auto = [
+                        t for t in _cfg["targets"] if t.get("enabled") and t.get("auto")
+                    ]
+                    if _auto:
+                        print_step("Publishing update to remote targets (incremental)")
+                        for _target in _auto:
+                            try:
+                                _rp.publish_release_to_target(
+                                    UPDATES_OUTPUT_DIR,
+                                    _target,
+                                    app=str(_cfg.get("app") or "aipacs"),
+                                    channel=str(_cfg.get("channel") or "stable"),
+                                )
+                            except Exception as _pub_exc:  # noqa: BLE001
+                                print(
+                                    f"[WARN] remote publish to {_target.get('id')} failed "
+                                    f"(retry manually with publish_update.py --target "
+                                    f"{_target.get('id')}): {_pub_exc}"
+                                )
+            except Exception as _publish_setup_exc:  # noqa: BLE001
+                print(f"[WARN] remote publish skipped: {_publish_setup_exc}")
 
         print_step("Release staging complete")
         print(f"Core bundle: {core_dir}")

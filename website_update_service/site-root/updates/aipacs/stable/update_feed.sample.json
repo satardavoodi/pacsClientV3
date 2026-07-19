@@ -1,0 +1,26 @@
+{
+  "app_name": "AIPacs",
+  "channel": "stable",
+  "generated_at_utc": "2026-07-16T00:00:00+00:00",
+  "core": {
+    "module_id": "core_app",
+    "title": "AIPacs Core",
+    "release_version": "3.5.4",
+    "artifact_type": "installer",
+    "artifact_path": "core/ai-pacs installer v3.5.4.exe",
+    "sha256": "<sha256 of the installer>",
+    "size": 850000000,
+    "available": true,
+    "required": false,
+    "min_version": "",
+    "release_notes": "Short summary shown in the update popup.",
+    "release_notes_path": "core/notes-3.5.4.md",
+    "delta": {
+      "manifest_path": "core/manifest-3.5.4.json",
+      "manifest_sha256": "<sha256 of the manifest json>",
+      "files_base": "files/",
+      "compression": "gzip"
+    }
+  },
+  "components": []
+}

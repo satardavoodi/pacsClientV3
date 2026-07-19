@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.5.3",
-    "build_date": "2026-07-16",
-    "release_date": "2026-07-16",
+    "version": "3.5.4",
+    "build_date": "2026-07-19",
+    "release_date": "2026-07-19",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Dragging a series while it downloads no longer reverts to the previous image",
-        "Thumbnails now refresh when new images arrive on the server",
-        "Eagle Eye: Mammography 3D Cursor with pectoral line and probability heatmap",
-        "More reliable series display on patients with several studies",
-        "Voice-to-text is now a shared service configurable in Settings",
+        "Automatic incremental updates from the AI-PACS website",
+        "Right-click a patient to correct name, ID, and study details",
+        "Viewport overlay now reads identity from the displayed image itself",
+        "Status and Report columns are now sortable; new 'Imported On' column",
+        "Series thumbnails no longer overlap briefly when a patient opens",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.5.3",
+        "AI-PACS Version 3.5.4",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۵.۳",
+        "AI-PACS نسخهٔ ۳.۵.۴",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

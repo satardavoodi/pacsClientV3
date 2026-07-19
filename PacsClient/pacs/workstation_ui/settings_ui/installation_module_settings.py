@@ -7,6 +7,7 @@ from PySide6.QtCore import QThread, Qt, Signal, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -100,6 +101,7 @@ class InstallationModuleSettingsWidget(QWidget):
         self._core_update_worker: CoreUpdateWorker | None = None
         self._records: list[dict] = []
         self._update_records: list[dict] = []
+        self._last_update_summary: dict | None = None
         self._setup_ui()
         self.refresh_modules()
         self.refresh_updates()
@@ -301,6 +303,17 @@ class InstallationModuleSettingsWidget(QWidget):
         self.update_source_label.setStyleSheet("color: #e5e7eb; font-size: 13px;")
         update_layout.addWidget(self.update_source_label)
 
+        # OPT-38: startup update check toggle (persisted in update_sources.json).
+        self.auto_check_checkbox = QCheckBox("Check for updates at startup")
+        try:
+            self.auto_check_checkbox.setChecked(
+                bool(load_update_sources().get("auto_check_on_startup", True))
+            )
+        except Exception:
+            self.auto_check_checkbox.setChecked(True)
+        self.auto_check_checkbox.toggled.connect(self._on_auto_check_toggled)
+        update_layout.addWidget(self.auto_check_checkbox)
+
         # Update Source action row — 5 buttons. Wrap in a horizontal
         # QScrollArea so the row scrolls instead of clipping the right
         # side on narrower Settings columns (same Archetype 1 treatment
@@ -468,6 +481,7 @@ class InstallationModuleSettingsWidget(QWidget):
 
         if not source_location:
             self._update_records = []
+            self._last_update_summary = None
             self.update_table.setRowCount(0)
             self.update_status_label.setText(
                 "No update source is configured yet. Set a local updates folder or a feed URL to check for newer releases."
@@ -479,6 +493,7 @@ class InstallationModuleSettingsWidget(QWidget):
             summary = summarize_available_updates()
         except Exception as exc:
             self._update_records = []
+            self._last_update_summary = None
             self.update_table.setRowCount(0)
             self.update_status_label.setText(f"Update check failed: {exc}")
             self._sync_update_buttons()
@@ -486,6 +501,7 @@ class InstallationModuleSettingsWidget(QWidget):
 
         records = [summary["core"], *summary["components"]]
         self._update_records = records
+        self._last_update_summary = summary  # OPT-38: reused by the delta apply flow
         self.update_table.setRowCount(len(records))
         for row, record in enumerate(records):
             values = [
@@ -567,7 +583,35 @@ class InstallationModuleSettingsWidget(QWidget):
         self._set_update_busy(False)
         self._update_worker = None
 
+    def _on_auto_check_toggled(self, checked: bool) -> None:
+        try:
+            save_update_sources({"auto_check_on_startup": bool(checked)})
+        except Exception as exc:
+            QMessageBox.warning(self, "Installation Module", f"Could not save the setting: {exc}")
+
     def _start_core_update(self) -> None:
+        # OPT-38: prefer the incremental (delta) flow when the feed offers a
+        # verified file manifest — downloads only changed files, applies via
+        # the rollback-capable helper. Any failure falls back to the legacy
+        # full-installer path below.
+        summary = self._last_update_summary
+        core = dict((summary or {}).get("core") or {})
+        if (
+            summary is not None
+            and isinstance(core.get("delta"), dict)
+            and os.getenv("AIPACS_UPDATE_DELTA", "1") != "0"
+        ):
+            try:
+                from modules.auto_update.ui import begin_update_flow
+
+                begin_update_flow(self.window() or self, summary)
+                return
+            except Exception as exc:  # noqa: BLE001 — legacy path still works
+                QMessageBox.warning(
+                    self,
+                    "Installation Module",
+                    f"Incremental update could not start ({exc}). Falling back to the full installer.",
+                )
         if self._core_update_worker is not None and self._core_update_worker.isRunning():
             QMessageBox.information(self, "Installation Module", "The core update installer is already being prepared.")
             return

@@ -140,9 +140,10 @@ from ._hp_priority import _HPPriorityMixin
 from ._hp_modules import _HPModulesMixin
 from ._hp_offline import _HPOfflineMixin
 from ._hp_study_save import _HPStudySaveMixin
+from ._hp_patient_edit import _HPPatientEditMixin
 
 
-class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPImportMixin, _HPDownloadMixin, _HPSeriesMixin, _HPPriorityMixin, _HPModulesMixin, _HPOfflineMixin, _HPStudySaveMixin, QWidget):
+class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPImportMixin, _HPDownloadMixin, _HPSeriesMixin, _HPPriorityMixin, _HPModulesMixin, _HPOfflineMixin, _HPStudySaveMixin, _HPPatientEditMixin, QWidget):
     studyDoubleClicked = Signal(str, str, str)  # patient_id, patient_name, study_uid
     
     # Signal for thread-safe progress updates
@@ -276,6 +277,22 @@ class HomePanelWidget(_HPLayoutMixin, _HPPatientOpenMixin, _HPSearchMixin, _HPIm
                 )
             except Exception as _ts_err:  # noqa: BLE001
                 print(f"[TestServer] init skipped (non-fatal): {_ts_err}")
+            # Agent Gateway — production external transport for the bus (mobile
+            # app + MCP clients). Installed always (cheap: no threads/ports until
+            # started); starts only when enabled in Settings ▸ Agent / env flag
+            # AIPACS_AGENT_GATEWAY. Default OFF. Stored on the QApplication so the
+            # shutdown finally in main.py can stop it before the hard-exit.
+            try:
+                from modules.agent_gateway.service import install_service
+                from PySide6.QtWidgets import QApplication
+
+                _gw = install_service(lambda: self.command_bus)
+                _gw.start_if_enabled()
+                _app = QApplication.instance()
+                if _app is not None:
+                    _app._agent_gateway_service = _gw
+            except Exception as _gw_err:  # noqa: BLE001
+                print(f"[AgentGateway] init skipped (non-fatal): {_gw_err}")
         except Exception as _cmd_bus_err:  # noqa: BLE001
             print(f"[CommandBus] init failed (non-fatal): {_cmd_bus_err}")
 

@@ -1206,6 +1206,13 @@ def summarize_available_updates(
         "artifact_path": str(core_feed.get("artifact_path") or ""),
         "sha256": str(core_feed.get("sha256") or ""),
         "installed": bool(core_current.get("installed")),
+        # OPT-38 incremental-update extras (additive; absent in old feeds):
+        "size": int(core_feed.get("size") or 0),
+        "required": bool(core_feed.get("required")),
+        "min_version": str(core_feed.get("min_version") or ""),
+        "release_notes": str(core_feed.get("release_notes") or ""),
+        "release_notes_path": str(core_feed.get("release_notes_path") or ""),
+        "delta": dict(core_feed["delta"]) if isinstance(core_feed.get("delta"), dict) else None,
     }
 
     component_summaries: list[dict[str, Any]] = []
@@ -2131,6 +2138,13 @@ CONFIG_FAMILY_VERSIONS: dict[str, int] = {
     # v1 (2026-06-11): aipacs_web pairing config (ADR-0008) — new file that
     # older installs cannot have.
     "identity/aipacs_web.json": 1,
+    # v1 (2026-07-17): Agent Gateway (mobile / MCP connectivity) feature-flag +
+    # settings file. New file older installs cannot have; seeds default-OFF.
+    # v2 (2026-07-17): add "advertise_host" — the address the pairing QR lists
+    # first on a multi-homed workstation (VPN/tunnel address for remote access).
+    # v3 (2026-07-17): add the outbound-rendezvous keys (relay_ws_url,
+    # relay_workstation_secret) + "e2e_encryption" for the zero-knowledge relay.
+    "agent_gateway/agent_gateway.json": 3,
 }
 
 _CONFIG_SEED_SKIP_DIRNAMES = {"secrets", "__pycache__"}

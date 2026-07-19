@@ -10135,8 +10135,32 @@ class ToolbarManager:
                     try:
                         from modules.network.socket_report_status_service import SYNC_REPORT_STATUS as _synced_status
                     except Exception:
-                        _synced_status = 'physician_approved'
+                        _synced_status = 'awaiting_secretary_approval'
                     self.patient_widget.report_status = _synced_status
+
+                    # Drive the INO reception approvalFlags to match the synced
+                    # status (both-false for awaiting_secretary). The sync worker
+                    # only updates the PACS socket; INO renders the patient state
+                    # from report.approvalFlags, which are set by a SEPARATE workflow
+                    # endpoint (resolve reception -> workflow id -> PATCH approval-
+                    # flags). This is the SAME INO path the status dropdown and the
+                    # Report Editor use, so the Cloud button no longer skips it.
+                    # Off-thread, best-effort; flag AIPACS_INO_APPROVAL_SYNC.
+                    try:
+                        from modules.network.ino_report_workflow import (
+                            sync_report_approval_for_status_async,
+                        )
+                        _rid = ''
+                        try:
+                            _rid = str(
+                                self.patient_widget._resolve_patient_id_for_comment() or ''
+                            ).strip()
+                        except Exception:
+                            _rid = str(getattr(self.patient_widget, 'patient_id', '') or '').strip()
+                        if _rid:
+                            sync_report_approval_for_status_async(_rid, _synced_status)
+                    except Exception as _flag_exc:
+                        print(f"[Toolbar] cloud INO approval-flags sync skipped: {_flag_exc}")
 
                     # Update visited status to synced (green underline) AND refresh
                     # the patient's Status column so the red microphone appears the

@@ -157,9 +157,32 @@ class CustomHeaderView(QHeaderView):
 
 
 class SortableItem(QTableWidgetItem):
-    def __init__(self, text="", sort_key=None):
+    """Table item with an explicit sort key and an optional tie-break key.
+
+    ``sort_key`` is the primary ordering value. ``tiebreak`` breaks ties
+    between equal primaries and is ALWAYS applied newest/highest-first,
+    independently of the column's ascending/descending state — see below.
+
+    WHY THE TIE-BREAK COMPENSATES FOR DIRECTION
+    -------------------------------------------
+    Qt sorts with a single comparator and simply reverses it for descending
+    order. A naive composite key (e.g. a ``(rank, date)`` tuple) therefore
+    flips the SECONDARY ordering too, so ties would come out oldest-first the
+    moment the user reverses the primary — which reads as a bug. Since the
+    comparison already runs in Python here, the tie-break inverts itself when
+    ``_descending`` is set, so the net on-screen result is newest-first in
+    both directions. ``_programmatic_sort`` is the ONLY place that sets it.
+    """
+
+    #: Set by ``_programmatic_sort`` for the duration of a sort. Class-level on
+    #: purpose: Qt compares items pairwise with no context, so the direction
+    #: cannot be threaded through the call.
+    _descending = False
+
+    def __init__(self, text="", sort_key=None, tiebreak=None):
         super().__init__(text)
         self._sort_key = sort_key
+        self._tiebreak = tiebreak
 
     def __lt__(self, other):
         # اگر هر دو SortableItem باشند و sort_key داشته باشند
@@ -167,9 +190,84 @@ class SortableItem(QTableWidgetItem):
             a = self._sort_key
             b = other._sort_key
             if a is not None and b is not None:
-                return a < b
+                if a != b:
+                    try:
+                        return a < b
+                    except TypeError:
+                        # Mixed key types (str vs int) — fall back to text.
+                        return super().__lt__(other)
+                # Primary tie → order by the secondary key, newest first.
+                ta = self._tiebreak
+                tb = other._tiebreak
+                if ta is not None and tb is not None and ta != tb:
+                    try:
+                        newest_first = ta > tb
+                    except TypeError:
+                        return False
+                    return (not newest_first) if type(self)._descending else newest_first
+                return False
         # پیش‌فرض: مقایسه متنی
         return super().__lt__(other)
+
+
+# ── Sort ranking for the Status and Report columns (2026-07-18) ──────────────
+# Both columns render a CELL WIDGET, and a widget carries no item data, so Qt
+# had nothing to sort on — that is why they were the only two unsortable
+# columns. They are now backed by a hidden SortableItem whose key comes from
+# these two PURE functions. Keep them pure (no Qt, no DB, no disk): they run
+# once per row at build time and once per row on refresh, never inside the
+# sort comparison itself.
+
+#: Report workflow progression — HIGHER == more complete. The first header
+#: click sorts DESCENDING, so a higher rank surfaces finished reports at the
+#: top ("reported studies appear first").
+REPORT_STATUS_RANK = {
+    "archived": 0,   # terminal but shelved — deliberately below Pending
+    "pending": 1,
+    "awaiting_approval": 2,
+    "awaiting_physician_approval": 3,
+    "awaiting_secretary_approval": 4,
+    "physician_approved": 5,
+    "secretary_approved": 6,
+    "completed": 7,
+}
+
+#: Status indicator weights — HIGHER == more significant.
+#:
+#: DICOM must outweigh the SUM of every other flag so that any row holding
+#: local images ranks above any row without them, however many lesser chips it
+#: carries. That is a real arithmetic constraint, not a vibe: the non-DICOM
+#: weights total 4+2+1+1+1 = 9, so DICOM has to exceed 9 (an earlier draft used
+#: 8 and quietly let a voice+AI+docs+case+printed row outrank a downloaded
+#: study). ``test_dicom_outranks_every_combination_without_it`` enforces it, so
+#: adding a new flag below will fail the suite until DICOM is raised to match.
+STATUS_FLAG_WEIGHTS = {
+    "dicom": 32,
+    "voice": 4,
+    "ai": 2,
+    "documents": 1,
+    "case_of_day": 1,
+    "printed": 1,
+}
+
+
+def report_status_rank(status) -> int:
+    """Rank a report status. Unknown/empty sorts with Pending's neighbours."""
+    key = str(status or "").strip().lower()
+    if key == "complete":  # legacy alias, normalised elsewhere too
+        key = "completed"
+    return REPORT_STATUS_RANK.get(key, 1)
+
+
+def status_flags_rank(flags) -> int:
+    """Rank a row's local-availability indicator set (0 == nothing present)."""
+    if not flags:
+        return 0
+    total = 0
+    for name, weight in STATUS_FLAG_WEIGHTS.items():
+        if flags.get(name):
+            total += weight
+    return total
 
 
 class PatientNameDelegate(QStyledItemDelegate):
@@ -309,9 +407,15 @@ COL = {
     'age': 11,
     'description': 12,
     'study_uid': 13,   # hidden
-    'order': 14        # hidden (برای بازگشت به حالت پیش‌فرض)
+    'order': 14,       # hidden (برای بازگشت به حالت پیش‌فرض)
+    # APPENDED, never inserted. Every existing index above must keep its value:
+    # users' saved column settings (`_save_column_settings`) persist ORDER,
+    # VISIBILITY and WIDTH keyed by these integers, so renumbering would
+    # silently scramble the layout of every existing workstation on upgrade.
+    # A new column therefore always goes at the end.
+    'imported_on': 15  # when the study first entered THIS computer's database
 }
-TOTAL_COLS = 15
+TOTAL_COLS = 16
 
 
 class ColumnSettingsDialog(QDialog):
@@ -331,7 +435,8 @@ class ColumnSettingsDialog(QDialog):
         9: "Images",
         10: "Modality",
         11: "Age",
-        12: "Study Description"
+        12: "Study Description",
+        15: "Imported On"
     }
     
     # Icon mapping for columns (same as table headers)
@@ -348,8 +453,14 @@ class ColumnSettingsDialog(QDialog):
         "Images": "fa5s.images",
         "Modality": "fa5s.x-ray",
         "Age": "fa5s.birthday-cake",
-        "Study Description": "fa5s.file-medical"
+        "Study Description": "fa5s.file-medical",
+        "Imported On": "fa5s.file-import"
     }
+
+    #: Columns present in the default LAYOUT but switched OFF until the user
+    #: opts in. Keeps "Reset to Default" honest: it must restore the shipped
+    #: state, not turn on every column that exists.
+    _DEFAULT_HIDDEN = {"Imported On"}
     
     def __init__(self, parent, table, col_dict):
         super().__init__(parent)
@@ -614,9 +725,13 @@ class ColumnSettingsDialog(QDialog):
                 self.col_dict['images'],
                 self.col_dict['modality'],
                 self.col_dict['age'],
-                self.col_dict['description']
+                self.col_dict['description'],
+                # "Imported On" is part of the default LAYOUT (so Reset restores
+                # it to the far right) but is NOT visible by default — see
+                # _DEFAULT_HIDDEN below. Users opt in via this same dialog.
+                self.col_dict['imported_on']
             ]
-            
+
             # Get column names from COLUMN_NAMES mapping
             for logical_idx in default_order:
                 header_text = self.COLUMN_NAMES.get(logical_idx, f"Column {logical_idx}")
@@ -638,11 +753,11 @@ class ColumnSettingsDialog(QDialog):
                         pass  # If icon fails, continue without it
                 
                 checkbox = CustomCheckbox(header_text)
-                checkbox.setChecked(True)
-                
+                checkbox.setChecked(header_text not in self._DEFAULT_HIDDEN)
+
                 widget_layout.addWidget(checkbox)
                 widget_layout.addStretch()
-                
+
                 item.setSizeHint(widget.sizeHint())
                 self.column_list.addItem(item)
                 self.column_list.setItemWidget(item, widget)
@@ -713,6 +828,7 @@ class PatientTableWidget(QWidget):
     # Right-click "Refresh / Sync from server": force a server completeness check
     # for the patient's studies and pull any newly-added series (45611).
     resyncFromServerRequested = Signal(str, str, list)  # patient_id, patient_name, study_uids
+    editPatientInfoRequested = Signal(str, str, list)   # patient_id, patient_name, study_uids
     # The SERVER's assignment answer for the visible receptions came back
     # (worker thread → GUI thread). Payload: the refresh_assignments summary.
     assignmentsRefreshed = Signal(dict)
@@ -886,7 +1002,8 @@ class PatientTableWidget(QWidget):
             "Age",
             "Study Description",
             "",  # StudyInstanceUID (hidden)
-            ""  # Insert Order (hidden)
+            "",  # Insert Order (hidden)
+            "Imported On"  # hidden by default; opt-in via the gear ▸ Column Settings
         ]
         self.results_table.setHorizontalHeaderLabels(headers)
         self.results_table.horizontalHeader().setTextElideMode(Qt.ElideRight)
@@ -915,6 +1032,11 @@ class PatientTableWidget(QWidget):
         
         self.results_table.setColumnHidden(COL['study_uid'], True)
         self.results_table.setColumnHidden(COL['order'], True)
+        # "Imported On" ships HIDDEN so the existing layout is untouched on
+        # upgrade — it is opt-in via the gear ▸ Column Settings. Unlike the two
+        # above it is a REAL user-facing column, so a saved setting must be able
+        # to override this default; `_apply_column_settings` runs later and wins.
+        self.results_table.setColumnHidden(COL['imported_on'], True)
 
         # Right-click context menu: "Refresh / Sync from server" (45611). Forces a
         # server completeness check for the patient under the cursor and pulls any
@@ -935,7 +1057,13 @@ class PatientTableWidget(QWidget):
             COL['date']: headers[COL['date']],
             COL['images']: headers[COL['images']],
             COL['modality']: headers[COL['modality']],
-            COL['description']: headers[COL['description']]
+            COL['description']: headers[COL['description']],
+            # Newly sortable columns. Without a base title here the ▲/▼ suffix
+            # would be appended to whatever text the header happens to hold and
+            # never stripped again, so the arrows would accumulate.
+            COL['status']: headers[COL['status']],
+            COL['report']: headers[COL['report']],
+            COL['imported_on']: headers[COL['imported_on']],
         }
 
         # Setup Select All checkbox in header
@@ -951,7 +1079,12 @@ class PatientTableWidget(QWidget):
         self._tri_sortable_cols = {
             COL['patient_name'], COL['patient_id'], COL['age'],
             COL['time'], COL['date'], COL['images'], COL['modality'],
-            COL['body_part'], COL['description']  # Added more sortable columns
+            COL['body_part'], COL['description'],  # Added more sortable columns
+            # Widget-backed columns: sortable via the hidden SortableItem set by
+            # _apply_status_sort_key / _apply_report_sort_key. Primary = rank,
+            # ties broken by date+time newest-first.
+            COL['status'], COL['report'],
+            COL['imported_on'],
         }
         # Sort state for each column: 0=default, 1=ascending, 2=descending
         self._sort_states = {}
@@ -1019,6 +1152,7 @@ class PatientTableWidget(QWidget):
         header.setSectionResizeMode(COL['description'], QHeaderView.Interactive)
         header.setSectionResizeMode(COL['study_uid'], QHeaderView.Fixed)
         header.setSectionResizeMode(COL['order'], QHeaderView.Fixed)
+        header.setSectionResizeMode(COL['imported_on'], QHeaderView.Interactive)
 
         # Balanced adaptive resize support (2026-06-06): track MANUAL column
         # drags so window-resize auto-refit stands down once the user takes
@@ -1045,6 +1179,10 @@ class PatientTableWidget(QWidget):
         self.results_table.setColumnWidth(COL['age'], 60)  # Age
         self.results_table.setColumnWidth(COL['study_uid'], 0)
         self.results_table.setColumnWidth(COL['order'], 0)
+        # Wide enough for "2026-07-18  14:30" — set even though the column
+        # ships hidden, so it has a usable width the moment the user enables it
+        # (a 0-width column would look like the feature is broken).
+        self.results_table.setColumnWidth(COL['imported_on'], 140)
         
         # Set default row height - ULTRA MINIMAL
         self.results_table.verticalHeader().setDefaultSectionSize(32)
@@ -2667,6 +2805,12 @@ class PatientTableWidget(QWidget):
         flags = self._compute_local_status_flags(study_uid, patient_id)
 
         container = QWidget()
+        # Stash the already-computed flags on the widget so the Status sort key
+        # can be refreshed later WITHOUT re-running _compute_local_status_flags
+        # (which walks the attachments folder and hits the DB on a cache miss).
+        # Sorting must never trigger that work — see _apply_status_sort_key.
+        container.status_flags = dict(flags)
+        container.status_rank = status_flags_rank(flags)
         layout = QHBoxLayout(container)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(6)
@@ -3350,6 +3494,187 @@ class PatientTableWidget(QWidget):
             return False
         return True  # existed patient on db
 
+    # ── Status / Report sort keys ────────────────────────────────────────
+    #
+    # Both columns are CELL WIDGETS, which carry no item data — that is why Qt
+    # could not sort them. Each cell now also gets a hidden SortableItem
+    # (empty text, so nothing paints behind the widget) holding:
+    #     sort_key  = the column's rank  (report workflow stage / status chips)
+    #     tiebreak  = the row's date+time, applied newest-first
+    #
+    # PERFORMANCE CONTRACT — the sort itself must do NO work beyond comparing
+    # two integers:
+    #   * ranks are computed ONCE, when the widget is built or rebuilt, from
+    #     data already in hand (the flags dict / the report status string);
+    #   * the date+time tiebreak is READ from the Date and Time items' existing
+    #     sort keys — never re-parsed;
+    #   * nothing here touches the database, the disk, or the network.
+
+    def _row_datetime_tiebreak(self, row: int):
+        """The row's (date, time) sort keys — reused, never recomputed."""
+        try:
+            date_item = self.results_table.item(row, COL['date'])
+            time_item = self.results_table.item(row, COL['time'])
+            date_key = getattr(date_item, '_sort_key', None) if date_item else None
+            time_key = getattr(time_item, '_sort_key', None) if time_item else None
+            return (date_key or 0, time_key or 0)
+        except Exception:
+            return (0, 0)
+
+    def _make_hidden_sort_item(self, rank, tiebreak):
+        """An invisible item that exists purely to carry sort data.
+
+        FLAGS MATTER VISUALLY. The item must stay SELECTABLE — same flags as
+        every other cell (`_mk`: default minus ItemIsEditable). An earlier
+        version used bare ``Qt.ItemIsEnabled``, which strips ItemIsSelectable,
+        so these two cells did not join the row's selection: clicking a row
+        highlighted every column EXCEPT Status and Report, which read as a dark
+        "shadow" gap punched through the selection band. The text is empty, so
+        a selectable item paints nothing but the correct highlight.
+        """
+        item = SortableItem("", sort_key=rank, tiebreak=tiebreak)
+        item.setFlags(item.flags() & ~Qt.ItemIsEditable)
+        return item
+
+    def _apply_status_sort_key(self, row: int, flags=None, rank=None):
+        """(Re)write the hidden sort item behind the Status cell.
+
+        ``rank``/``flags`` come from the caller (the widget that was just
+        built), so this never recomputes the expensive flag set. When neither
+        is given the value stashed on the existing widget is reused.
+        """
+        try:
+            if rank is None:
+                if flags is None:
+                    widget = self.results_table.cellWidget(row, COL['status'])
+                    rank = getattr(widget, 'status_rank', None)
+                    if rank is None:
+                        flags = getattr(widget, 'status_flags', None)
+                if rank is None:
+                    rank = status_flags_rank(flags)
+            self.results_table.setItem(
+                row, COL['status'],
+                self._make_hidden_sort_item(int(rank), self._row_datetime_tiebreak(row)),
+            )
+        except Exception:
+            pass  # sorting is a convenience; it must never break row rendering
+
+    def _apply_report_sort_key(self, row: int, report_status=None):
+        """(Re)write the hidden sort item behind the Report cell."""
+        try:
+            if report_status is None:
+                widget = self.results_table.cellWidget(row, COL['report'])
+                report_status = getattr(widget, 'report_status', None)
+            self.results_table.setItem(
+                row, COL['report'],
+                self._make_hidden_sort_item(
+                    report_status_rank(report_status), self._row_datetime_tiebreak(row)
+                ),
+            )
+        except Exception:
+            pass
+
+    def _refresh_widget_sort_keys(self):
+        """Re-sync the Status/Report sort keys from their widgets, in place.
+
+        WHY THIS EXISTS INSTEAD OF PATCHING EVERY REFRESH SITE
+        -----------------------------------------------------
+        A report status or a status chip set is mutated from roughly a dozen
+        places (server refresh, download-manager events, the status dialog,
+        row merges, hydration…). Hooking a key update onto each one means the
+        sort silently goes stale the day someone adds the thirteenth. Instead
+        the keys are re-derived from the widgets in ONE place — here — right
+        before a sort runs, which is the only moment they actually matter.
+
+        This is deliberately cheap and allocation-free:
+          * it MUTATES the existing hidden items (``_sort_key`` / ``_tiebreak``
+            are plain Python attributes) rather than calling ``setItem``, so
+            the model emits no dataChanged and the view does not repaint;
+          * the values come from attributes already stashed on the widgets, so
+            there is no database query, no disk access, and no recomputation
+            of the expensive local-status flags;
+          * it runs only on an explicit sort, never while streaming rows in.
+        """
+        table = self.results_table
+        status_col = COL['status']
+        report_col = COL['report']
+        for row in range(table.rowCount()):
+            tiebreak = self._row_datetime_tiebreak(row)
+
+            item = table.item(row, status_col)
+            if item is not None:
+                widget = table.cellWidget(row, status_col)
+                rank = getattr(widget, 'status_rank', None)
+                if rank is None:
+                    rank = status_flags_rank(getattr(widget, 'status_flags', None))
+                item._sort_key = int(rank)
+                item._tiebreak = tiebreak
+
+            item = table.item(row, report_col)
+            if item is not None:
+                widget = table.cellWidget(row, report_col)
+                item._sort_key = report_status_rank(
+                    getattr(widget, 'report_status', None)
+                )
+                item._tiebreak = tiebreak
+
+    # ── "Imported On" support ────────────────────────────────────────────
+    #: Blank placeholder for a study with no local import record (never
+    #: downloaded here, or imported before the column existed).
+    _IMPORTED_ON_EMPTY = "—"
+
+    def _resolve_imported_on(self, study_uids):
+        """Return ``(display_text, sort_key)`` for the Imported On cell.
+
+        A patient row can aggregate several studies; we show the MOST RECENT
+        import, which answers "when did this patient last land on this
+        machine" — the question someone asks right after inserting a CD.
+
+        The stored form is local-time ISO ("YYYY-MM-DD HH:MM:SS"), which sorts
+        lexicographically == chronologically, so the raw string IS the sort
+        key. Rows with no record sort LAST in descending order by using an
+        empty key.
+
+        Results are memoised per search (cleared in ``clear_table``) so a
+        250-row page does not issue 250 queries — the per-row DB call is the
+        pattern that made the list feel slow before (OPT-24).
+        """
+        uids = [str(u or '').strip() for u in (study_uids or []) if str(u or '').strip()]
+        if not uids:
+            return self._IMPORTED_ON_EMPTY, ""
+
+        if not hasattr(self, '_imported_on_cache'):
+            self._imported_on_cache = {}
+
+        missing = [u for u in uids if u not in self._imported_on_cache]
+        if missing:
+            try:
+                from database.dicom_db import get_imported_at_map
+                found = get_imported_at_map(missing)
+            except Exception:
+                found = {}
+            for uid in missing:
+                self._imported_on_cache[uid] = found.get(uid) or ""
+
+        stamps = [self._imported_on_cache.get(u) or "" for u in uids]
+        newest = max(stamps) if stamps else ""
+        if not newest:
+            return self._IMPORTED_ON_EMPTY, ""
+        return self._format_imported_on(newest), newest
+
+    @staticmethod
+    def _format_imported_on(stamp: str) -> str:
+        """'2026-07-18 14:30:00' -> '2026-07-18  14:30'. Never raises."""
+        text = str(stamp or '').strip()
+        if not text:
+            return PatientTableWidget._IMPORTED_ON_EMPTY
+        try:
+            date_part, _, time_part = text.partition(' ')
+            hhmm = ':'.join(time_part.split(':')[:2]) if time_part else ''
+            return f"{date_part}  {hhmm}".strip()
+        except Exception:
+            return text
+
     def add_patient_data(self, **kwargs):
         """
         Add a study row with new column order + Date column.
@@ -3723,12 +4048,27 @@ class PatientTableWidget(QWidget):
         self.results_table.setItem(row, COL['study_uid'], study_uid_item)
         self.results_table.setItem(row, COL['order'], _mk(str(self._insert_seq), self._insert_seq))
 
+        # ── "Imported On" — when the study first entered THIS computer's DB ──
+        # Distinct from the Date column (acquisition). A CD/external import of
+        # an old study shows an old Date but today's Imported On, which is the
+        # whole point: it lets the user sort by "what did I just bring in".
+        # Resolved from the local DB; a server result that was never downloaded
+        # here has no local row and renders blank.
+        _imported_display, _imported_key = self._resolve_imported_on(merged_study_uids)
+        self.results_table.setItem(
+            row, COL['imported_on'], _mk(_imported_display, _imported_key)
+        )
+
         # ستون «order» برای بازگشت به ترتیب اولیه
         self.results_table.setItem(row, COL['order'], _mk(str(self._insert_seq), self._insert_seq))
 
         # وضعیت‌ها
         self.results_table.setCellWidget(row, COL['status'], status_widget)
         self.results_table.setCellWidget(row, COL['report'], report_container)
+        # Hidden sort items behind the two widget cells. Ranks are passed in
+        # from the values just computed above — no recomputation, no DB.
+        self._apply_status_sort_key(row, rank=getattr(status_widget, 'status_rank', None))
+        self._apply_report_sort_key(row, report_status=report_status)
         self.results_table.setCellWidget(row, COL['assign'], assign_label)
 
         # ظاهر
@@ -5809,6 +6149,10 @@ class PatientTableWidget(QWidget):
             return
 
         self._table_rebuilding = True
+        # Drop the per-search "Imported On" memo so a study downloaded or
+        # imported since the last search shows its new timestamp instead of a
+        # cached blank. Cheap: it is rebuilt lazily as rows are added.
+        self._imported_on_cache = {}
         try:
             # 1. Cancel the timer-driven producers BEFORE the table is touched.
             #    Bumping the token makes any already-queued singleShot link of the
@@ -5927,6 +6271,7 @@ class PatientTableWidget(QWidget):
             pinned_rows_kept = False
         if not pinned_rows_kept:
             self.results_table.setRowCount(0)
+        self._imported_on_cache = {}  # see clear_table(); keep both paths in step
         self._last_checked_checkbox = None  # anchor widget no longer exists after clear
         self._prog_items = []
         self._prog_cursor = 0
@@ -6417,6 +6762,26 @@ class PatientTableWidget(QWidget):
     def get_patient_data_by_row(self, row):
         return self._extract_row_data(row)
 
+    #: Roomier than Qt's cramped default so the entries read as a real menu.
+    #: Scoped to this menu instance only — it must never leak into the table's
+    #: own styling.
+    _CONTEXT_MENU_QSS = """
+        QMenu {
+            background-color: #1a202c;
+            border: 1px solid #2d3748;
+            border-radius: 6px;
+            padding: 6px 4px;
+        }
+        QMenu::item {
+            padding: 10px 28px 10px 18px;
+            min-width: 220px;
+            font-size: 13px;
+            border-radius: 4px;
+        }
+        QMenu::item:selected { background-color: #2b6cb0; color: #ffffff; }
+        QMenu::separator { height: 1px; background: #2d3748; margin: 5px 8px; }
+    """
+
     def _on_table_context_menu(self, pos):
         """Right-click menu on a patient row → 'Refresh / Sync from server'
         (45611). Emits resyncFromServerRequested(patient_id, patient_name,
@@ -6440,10 +6805,24 @@ class PatientTableWidget(QWidget):
             if not pid or not uids:
                 return
             menu = QMenu(self)
+            try:
+                menu.setStyleSheet(self._CONTEXT_MENU_QSS)
+            except Exception:
+                pass
             act_refresh = menu.addAction("Refresh / Sync from server")
+            menu.addSeparator()
+            act_edit = menu.addAction("Edit patient / study info…")
+            act_edit.setToolTip(
+                "Correct Patient Name/ID, Institution, Study Date/Time and Age "
+                "in the DICOM files on this workstation"
+            )
             chosen = menu.exec(self.results_table.viewport().mapToGlobal(pos))
-            if chosen is not None and chosen == act_refresh:
+            if chosen is None:
+                return
+            if chosen == act_refresh:
                 self.resyncFromServerRequested.emit(pid, pname, uids)
+            elif chosen == act_edit:
+                self.editPatientInfoRequested.emit(pid, pname, uids)
         except Exception:
             pass
 
@@ -7306,6 +7685,12 @@ class PatientTableWidget(QWidget):
         selection correct, the set of checked study UIDs is captured before
         the sort and re-applied by study identity afterwards.
         """
+        # Re-sync the widget-backed Status/Report keys from the live widgets so
+        # a status changed since the last sort is honoured. O(rows), in place,
+        # no DB, no repaint — see _refresh_widget_sort_keys.
+        if col in (COL['status'], COL['report']):
+            self._refresh_widget_sort_keys()
+
         # Capture which studies are checked BEFORE the sort (rows still aligned).
         checked_uids = set()
         try:
@@ -7321,9 +7706,17 @@ class PatientTableWidget(QWidget):
         was_enabled = self.results_table.isSortingEnabled()
         # Temporarily enable sorting to make sortItems work
         self.results_table.setSortingEnabled(True)
-        self.results_table.sortItems(col, order)
-        # Restore previous state
-        self.results_table.setSortingEnabled(was_enabled)
+        # Tell SortableItem which way this sort runs so its tie-break can stay
+        # newest-first in BOTH directions (Qt reverses the comparator wholesale
+        # for descending, which would otherwise flip the secondary ordering
+        # too). Reset in `finally` so a later sort can never inherit it.
+        SortableItem._descending = (order == Qt.DescendingOrder)
+        try:
+            self.results_table.sortItems(col, order)
+        finally:
+            SortableItem._descending = False
+            # Restore previous state
+            self.results_table.setSortingEnabled(was_enabled)
 
         # Re-apply the checkbox state by study identity so the selection
         # survives the sort regardless of how the cell-widgets reflowed.

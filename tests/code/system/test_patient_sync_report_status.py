@@ -2,17 +2,18 @@
 """
 Guard: Cloud "Sync Patient Data with Server" report-status contract
 ===================================================================
-Pins the server-status alignment fix (2026-06-22):
+Pins the Patient-Tab Cloud "Sync + Close + Home" report-status contract.
 
-* The Patient-Tab Cloud sync sets the report to ``physician_approved`` — the
-  workstation user is the reading physician, so a sync means the doctor has
-  approved. It must NEVER set ``secretary_approved`` (the secretary's own,
-  separate action) and the value is read from ONE shared constant
-  (``SYNC_REPORT_STATUS``) so the sync service and the toolbar's post-sync
-  local update can never drift apart.
-* ``physician_approved`` and ``secretary_approved`` stay distinct states.
-* The compact patient-tab badge distinguishes *awaiting* (…) from *approved*
-  (✓) so an "Awaiting Secretary" report never reads like "Secretary Approved".
+2026-07-15 (user directive) — the cloud sync hands the study to the secretary
+with a CLEAN slate:
+* status ``awaiting_secretary_approval`` (NOT ``physician_approved``; this
+  reverses the 2026-06-22 value), read from ONE shared constant
+  (``SYNC_REPORT_STATUS``) so the sync service and the toolbar's post-sync local
+  update can never drift apart. Kill switch: ``AIPACS_SYNC_REPORT_STATUS``.
+* it must NEVER set ``secretary_approved`` (the secretary's own, separate action).
+* ``physician_approved`` and ``secretary_approved`` stay distinct enum states.
+* the compact patient-tab badge distinguishes *awaiting* (…) from *approved* (✓)
+  so an "Awaiting Secretary" report never reads like "Secretary Approved".
 
 Source-pin style (no PySide6 / no socket import) to match the repo's other
 behavioural guards — it reads the implementation files as text and also
@@ -63,12 +64,12 @@ def _read_complete(p: Path, anchor: str) -> str:
 # --------------------------------------------------------------------------- #
 # Central service: the single source of truth for the sync value + the enum.
 # --------------------------------------------------------------------------- #
-def test_central_defines_shared_sync_constant_default_physician_approved():
+def test_central_defines_shared_sync_constant_default_awaiting_secretary():
     src = _read(CENTRAL)
     assert "SYNC_REPORT_STATUS = os.environ.get(" in src, \
         "SYNC_REPORT_STATUS must be defined in the central service"
-    assert '"AIPACS_SYNC_REPORT_STATUS", "physician_approved"' in src, \
-        "Cloud-sync status must default to physician_approved"
+    assert '"AIPACS_SYNC_REPORT_STATUS", "awaiting_secretary_approval"' in src, \
+        "Cloud-sync status must default to awaiting_secretary_approval (2026-07-15)"
 
 
 def test_central_enum_keeps_physician_and_secretary_distinct():
@@ -125,9 +126,9 @@ def test_toolbar_badge_distinguishes_awaiting_from_approved():
 # Contract of the env resolution, re-implemented in isolation (no imports).
 # --------------------------------------------------------------------------- #
 def _resolve(env_value, valid):
-    status = env_value if env_value is not None else "physician_approved"
+    status = env_value if env_value is not None else "awaiting_secretary_approval"
     if status not in valid:
-        status = "physician_approved"
+        status = "awaiting_secretary_approval"
     return status
 
 
@@ -137,11 +138,11 @@ def test_env_resolution_contract():
         "awaiting_approval", "physician_approved", "secretary_approved",
         "completed", "archived",
     ]
-    # Default → physician_approved
-    assert _resolve(None, valid) == "physician_approved"
+    # Default → awaiting_secretary_approval (2026-07-15)
+    assert _resolve(None, valid) == "awaiting_secretary_approval"
     # Garbage env → safe fallback
-    assert _resolve("not_a_status", valid) == "physician_approved"
+    assert _resolve("not_a_status", valid) == "awaiting_secretary_approval"
     # Explicit kill-switch override is respected
-    assert _resolve("awaiting_secretary_approval", valid) == "awaiting_secretary_approval"
+    assert _resolve("physician_approved", valid) == "physician_approved"
     # Never silently becomes secretary_approved from the default path
     assert _resolve(None, valid) != "secretary_approved"
