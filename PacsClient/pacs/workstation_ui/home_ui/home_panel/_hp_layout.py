@@ -498,6 +498,8 @@ class _HPLayoutMixin:
         self.patient_table_widget.receptionDataRequested.connect(self._on_reception_data_download_requested)
         self.patient_table_widget.offlineCloudExportRequested.connect(self._on_offline_cloud_export_requested)
         self.patient_table_widget.offlineCloudSyncRequested.connect(self._on_offline_cloud_sync_requested)
+        # Offline Service "manage existing" workflow (edit/delete offline patients).
+        self.patient_table_widget.offlineCloudManageRequested.connect(self._on_offline_cloud_manage_requested)
         self.patient_table_widget.cdBurnRequested.connect(self._on_cd_burn_requested)
         self.patient_table_widget.printRequested.connect(self.open_printing_module)
         self.patient_table_widget.localStudyStateChanged.connect(self._on_local_study_state_changed)

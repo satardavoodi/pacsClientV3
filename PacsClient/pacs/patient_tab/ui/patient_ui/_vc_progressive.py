@@ -216,6 +216,24 @@ _DISK_READY_RESUME_RETRY_S = max(1.0, float(_os.getenv("AIPACS_VIEWPORT_DISK_REA
 # `AIPACS_RESUME_SKIP_INACTIVE_TAB=0` restores the legacy (churn) behaviour.
 _RESUME_SKIP_INACTIVE_TAB = (_os.getenv("AIPACS_RESUME_SKIP_INACTIVE_TAB", "1") or "1").strip() != "0"
 
+# A1-grow watchdog arming from the PROGRESSIVE path (2026-07-20, patients 51234/51249). The
+# displayed-to-disk grow (`_maybe_grow_displayed_to_disk`) is the ONLY backstop that grows a
+# previous-exam / secondary-study series that was dragged mid-download and then had the rest of its
+# images arrive with NO progress event bridged to this viewer (the home-download progress bridge
+# filters by study_uid). But that grow runs only inside the `_dl_watchdog` timer, which is armed
+# ONLY from the awaiting/spinner path (`_begin_download_wait` / `_update_download_spinner_text`) and
+# SELF-STOPS when nothing is awaiting AND nothing is behind. A drop that awaited, showed its first
+# image (progressive), and cleared its awaiting flag (`_apply_progressive_to_target_viewer`) can hit
+# a stop-check tick where disk == displayed and no `.part` is momentarily present -> the watchdog
+# stops; the later-arriving images then never trigger A1 and the series sticks at e.g. 1/3 until the
+# user changes LAYOUT (which re-loads it fresh from the now-complete disk) — the exact 51234/51249
+# report. Entering PROGRESSIVE mode means the series is known-incomplete (total > avail) and A1 must
+# stand guard, so (re)arm the watchdog there. `_ensure_dl_watchdog` is idempotent (restarts only if
+# not active) and the tick self-stops once the series is caught up, so it costs nothing on a healthy
+# load. `=0` restores the awaiting-only arming. Complements — does not replace — the awaiting-path
+# arming; both feed the same self-stopping watchdog.
+_PROGRESSIVE_ARMS_WATCHDOG = (_os.getenv("AIPACS_PROGRESSIVE_ARMS_WATCHDOG", "1") or "1").strip() != "0"
+
 # S2b — per-series STATE AUTHORITY as a settled signal (unified viewer pipeline,
 # docs/plans/architecture/VIEWER_UNIFICATION_STAGED_PLAN_2026-06-25.md). The
 # SeriesStateStore keeps a MONOTONIC high-water mark of displayed slices, so once a
@@ -4596,6 +4614,16 @@ class _VCProgressiveMixin:
                     "progressive: activated viewer series=%s avail=%d total=%d fast=%s",
                     series_number, avail, total_expected, is_fast,
                 )
+                # A1 backstop (51234/51249, 2026-07-20): a series shown in progressive mode is
+                # known-incomplete; ensure the displayed-to-disk grow watchdog is running so its
+                # remaining images (esp. a secondary / previous-exam series with no bridged
+                # progress) are grown without a layout switch. Idempotent + self-stopping.
+                if _PROGRESSIVE_ARMS_WATCHDOG and _GROW_DISPLAYED_TO_DISK:
+                    try:
+                        if int(total_expected or 0) > int(avail or 0):
+                            self._ensure_dl_watchdog()
+                    except Exception:
+                        pass
 
     def _apply_progressive_to_target_viewer(
         self, series_number: str, total: int, vtk_widget, node
@@ -4675,6 +4703,18 @@ class _VCProgressiveMixin:
             avail = vtk_widget.get_count_of_slices()
             vtk_widget.enter_progressive_mode(total, str(series_number))
             vtk_widget.update_available_slice_count(avail)
+            # A1 backstop (51234/51249, 2026-07-20): this drop just cleared its awaiting flag
+            # (above) and entered progressive mode with an INCOMPLETE stack. The rest of a
+            # secondary / previous-exam series' images arrive with no bridged progress event, so
+            # ensure the displayed-to-disk grow watchdog is running — otherwise it can self-stop in
+            # the gap before those images land and the series sticks until a layout switch.
+            # Idempotent + self-stopping; no cost once caught up.
+            if _PROGRESSIVE_ARMS_WATCHDOG and _GROW_DISPLAYED_TO_DISK:
+                try:
+                    if int(total or 0) > int(avail or 0):
+                        self._ensure_dl_watchdog()
+                except Exception:
+                    pass
             _set_progressive_lifecycle_state(
                 self,
                 str(series_number),

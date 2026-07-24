@@ -50,93 +50,6 @@ from modules.network.socket_token_manager import get_socket_token_manager
 logger = logging.getLogger(__name__)
 _download_progress_aggregator = DownloadProgressAggregator(logger, interval_seconds=2.0)
 
-
-def _decode_socket_payload(data: bytes) -> str:
-    """Decode a socket JSON payload tolerantly.
-
-    The payload is normally UTF-8 JSON, but a single field (a patient name or
-    description) can carry non-UTF-8 bytes — Persian / Western-European source data
-    that was encoded Windows-1256 / Latin-1 by the modality and forwarded verbatim.
-    A strict ``decode('utf-8')`` then raises ``UnicodeDecodeError`` and aborts the
-    ENTIRE download (observed on a client PC: bytes 0xe7/0xf6/0xed/0xfb at
-    ``_send_request_once``). Try strict UTF-8 first (the normal case — zero change),
-    then fall back to UTF-8 with replacement so ``json.loads`` still succeeds and the
-    download proceeds; only the offending text field degrades to a placeholder, never
-    the image data.
-    """
-    try:
-        return data.decode('utf-8')
-    except UnicodeDecodeError as exc:
-        logger.warning(
-            "Socket payload had non-UTF-8 byte(s) (%s); decoding with replacement so "
-            "the download proceeds (a name/description field may show a placeholder).",
-            exc,
-        )
-        return data.decode('utf-8', errors='replace')
-
-
-# ---------------------------------------------------------------------------
-# Per-instance DICOM payload key names (GetSeriesImages response)
-# ---------------------------------------------------------------------------
-# The service contract defines the raw DICOM bytes under MORE THAN ONE name:
-#   DicomInstanceResponse.dicom_data   ("Actual DICOM file content")
-#   DicomImageInfo.image_data          ("Raw DICOM file bytes")
-# and server builds differ in which they emit (and in snake_case vs camelCase).
-# Reading only `dicom_data` made a server that answers with `image_data` look
-# like it had returned an EMPTY image: every instance was skipped with "Empty
-# DICOM data", the series "completed" with 0 files on disk, and the study could
-# never be displayed (Roshana, 2026-07-12). Same tolerant-key pattern as
-# `_normalize_image_count` in grpc_client.py.
-#
-# Order matters: the documented names first. A key is only accepted when it
-# carries a NON-EMPTY str/bytes value, so an empty/absent variant can never
-# shadow a populated one.
-_INSTANCE_PAYLOAD_KEYS = (
-    "dicom_data",
-    "image_data",
-    "dicomData",
-    "imageData",
-    "file_data",
-    "fileData",
-    "data",
-    "content",
-)
-
-
-def _extract_instance_payload(instance_data):
-    """Return ``(payload, key_used)`` for one instance, or ``("", "")``.
-
-    Never raises. Only non-empty ``str``/``bytes`` values are accepted.
-    """
-    if not isinstance(instance_data, dict):
-        return "", ""
-    for key in _INSTANCE_PAYLOAD_KEYS:
-        value = instance_data.get(key)
-        if isinstance(value, (str, bytes, bytearray)) and len(value) > 0:
-            if key != "dicom_data":
-                logger.warning(
-                    "[INSTANCE_PAYLOAD_KEY] server sent the DICOM bytes under '%s' "
-                    "(not 'dicom_data') — accepting it; without this the image would "
-                    "have been dropped as empty.",
-                    key,
-                )
-            return value, key
-    return "", ""
-
-
-# Max server broadcast messages to skip while waiting for a request's own response.
-# On a busy PACS the server interleaves legitimate `type='broadcast'` events on the
-# shared socket; a low cap (was 10) made GetSeriesImages fail with "Too many broadcast
-# messages, no response received" during normal multi-workstation use (observed 43x on
-# a client PC). These are valid broadcasts (not a stream desync — desync raises length
-# errors, not parseable broadcasts), so skipping more of them is safe: each recv is
-# socket-timeout-bounded, so a genuinely-lost response still fails, just after more
-# skips. Configurable via AIPACS_MAX_BROADCAST_RETRIES.
-try:
-    _MAX_BROADCAST_RETRIES = max(10, int(os.getenv('AIPACS_MAX_BROADCAST_RETRIES', '50') or '50'))
-except (TypeError, ValueError):
-    _MAX_BROADCAST_RETRIES = 50
-
 # Distinct non-failure marker for the same-study critical yield (2026-06-05):
 # a SeriesDownloadResult carrying this error_message means "stopped cleanly at
 # a batch boundary so a dragged CRITICAL series can go first" — the series is
@@ -193,14 +106,6 @@ _SERIES_FORCE_BATCH_ONE_MODALITIES = {
     "XRAY",
 }
 
-# Large-frame modality extended timeout (2026-07-11, PX download failure fix).
-# PX (Panoramic X-Ray), MG, XA, RF images are often 20-100+ MB. On remote/slow
-# servers the default 30s socket timeout is insufficient for the server to read,
-# base64-encode, and transmit the large frame. This causes "Socket connection lost"
-# → retry → same timeout → fail. The extended timeout is applied ONLY during
-# download_batch for these modalities. Default 120s; env override available.
-_LARGE_FRAME_TIMEOUT = float(os.getenv("AIPACS_LARGE_FRAME_TIMEOUT", "120") or "120")
-
 # Soft byte budget per batch response (2026-06-05, large-radiology stalls):
 # when a successful batch's payload exceeds this, the NEXT batches of the
 # same series halve their instance count. Catches huge-frame series that the
@@ -208,103 +113,6 @@ _LARGE_FRAME_TIMEOUT = float(os.getenv("AIPACS_LARGE_FRAME_TIMEOUT", "120") or "
 # alignment/view images) without slowing normal CT/MR batches. Per-series
 # only — never persisted to the global adaptive batch size.
 _BATCH_BYTES_SOFT_CAP = 64 * 1024 * 1024
-
-# First-image prime (2026-06-17, slow/unstable-link drag-drop perception).
-# On a freshly-viewed / drag-dropped series (nothing on disk yet) fetch the FIRST
-# batch as a single image so the progressive feed can paint one slice in a single
-# round-trip instead of waiting for a whole 10-image batch — the dominant perceived
-# latency on a slow/dropping link (where first-batch time is dominated by the socket
-# timeout, not transfer). After that first image is written the full adaptive batch
-# size is restored, so a healthy LAN pays at most one extra round-trip for the whole
-# series and bulk transfer speed is unchanged. Default on; kill switch = set
-# AIPACS_FIRST_IMAGE_PRIME=0. Skipped on resume (skipped_count>0, so the R19b
-# leading-batch skip is unaffected) and when batches are already forced to 1.
-_FIRST_IMAGE_PRIME = (os.getenv("AIPACS_FIRST_IMAGE_PRIME", "1") or "1").strip() != "0"
-
-# Poor-network KPI telemetry (2026-06-24, slow-link first-image review).
-# Emit explicit, parseable [KPI] markers anchored to the series-download start so
-# the slow-link experience is measurable directly from download_diagnostics.log:
-#   TTFI = ms from series-download start to the FIRST image written to disk.
-#   TTFS = ms to the SECOND image (a minimally scrollable 2-slice stack).
-#   TTFC = ms to the FULL series on disk (download complete) + avg slice ms.
-# Pure additive WARNING logs with NO effect on download control-flow, so they are
-# safe to leave on by default. Kill switch: AIPACS_POOR_NETWORK_KPIS=0.
-_POOR_NET_KPIS = (os.getenv("AIPACS_POOR_NETWORK_KPIS", "1") or "1").strip() != "0"
-
-# Pagination safety (2026-06-19, data-completeness fix).
-# The server pages by batch_index = batch_start // batch_size (see download_batch),
-# which only tiles a series correctly when batch_size stays CONSTANT. Adaptive
-# mid-series GROWTH changes batch_size while batch_start advances additively, so
-# batch_start stops being a multiple of the new size and batch_index can repeat or
-# stick at 0 — the client re-fetches the series HEAD and silently drops the TAIL.
-# Verified live: patient 47221 series 202 wrote 40/52 to disk (missing the contiguous
-# tail, instances 41-52) at batch=10, while batch=1 wrote 52/52. When this is on
-# (default) mid-series batch growth is disabled so the index tiling stays exact; the
-# first-image prime (size 1 -> full) and the byte-cap halve are alignment-safe and stay.
-# Kill switch: AIPACS_DOWNLOAD_PAGINATION_SAFE=0 (restores legacy grow-while-paging).
-_PAGINATION_SAFE = (os.getenv("AIPACS_DOWNLOAD_PAGINATION_SAFE", "1") or "1").strip() != "0"
-# Per-batch trace: one WARNING line per batch (batch_index / size / received / has_more)
-# so a pagination gap is visible directly in download_diagnostics.log. Default on;
-# disable with AIPACS_DOWNLOAD_BATCH_TRACE=0.
-_BATCH_TRACE = (os.getenv("AIPACS_DOWNLOAD_BATCH_TRACE", "1") or "1").strip() != "0"
-# B2 prime/pagination alignment (2026-06-21, perf — staged, default OFF).
-# After the size-1 first-image prime, realign batch_start to the restored tile size
-# so the main loop fetches the final tile instead of leaving a 1-instance tail to the
-# INCOMPLETE_SERIES gap-fill. Every series whose instance count ≡ 1 (mod batch_size)
-# otherwise paid a guaranteed extra full disk re-scan + gap-fill round-trip (observed
-# 16×/day: expected=11 and expected=21 series). Pure perf: NO data-loss risk — the
-# gap-fill backstop is unchanged, so completeness is still guaranteed if this ever
-# mis-aligns. Default ON (live-validated 2026-06-21 on an expected=41 series: clean
-# tiling 0→1→2→3→4, no INCOMPLETE_SERIES); kill switch AIPACS_PRIME_ALIGN=0 restores
-# the legacy off-by-one + gap-fill.
-_PRIME_ALIGN = (os.getenv("AIPACS_PRIME_ALIGN", "1") or "1").strip() != "0"
-# B6 oversized-single-instance fast-fail (2026-06-21, perf — staged, default OFF).
-# A "Response too large" at a single-instance batch is the server's HARD payload cap
-# on one oversized instance — deterministic, so the inner exponential-backoff retry
-# (+ the coordinator's series re-attempts) just burns minutes before the series fails
-# anyway (observed ~8 min on a 558 MB instance). A genuine stream-DESYNC (the 4 length
-# bytes were really payload) still recovers on ONE fresh-socket reconnect, so allow
-# exactly one quick reconnect then fail fast. Scope: ONLY single-instance
-# (batch_size<=1) "Response too large"; normal multi-image batches and every other
-# error keep the full R27/R28 backoff-retry unchanged. Enable: AIPACS_FASTFAIL_OVERSIZE=1.
-_FASTFAIL_OVERSIZE = (os.getenv("AIPACS_FASTFAIL_OVERSIZE", "0") or "0").strip() == "1"
-
-
-def _grow_batch_size(current, max_size, consecutive_ok, growth_after, step):
-    """Pure helper for adaptive batch GROWTH (2026-06-16, download speed).
-
-    On a stable connection the download is round-trip-bound (telemetry: ~90% of
-    per-series time on a LAN is request/response wait, not transfer/disk/decode),
-    so fewer, larger batches = fewer round-trips = faster. Given a just-completed
-    CLEAN batch, return ``(new_batch_size, new_consecutive_ok)``: after
-    ``growth_after`` consecutive clean batches, grow ``current`` by ``step`` up to
-    ``max_size`` and reset the streak; otherwise keep ``current`` and carry the
-    incremented streak. Never exceeds ``max_size``. The caller resets the streak
-    on any shrink (server "Response too large" or the 64 MB byte budget), so this
-    is self-tuning and safe on a flaky link (it simply never ramps up there).
-    """
-    consecutive_ok += 1
-    if consecutive_ok >= growth_after and current < max_size:
-        return min(max_size, current + step), 0
-    return current, consecutive_ok
-
-
-def _first_image_prime_size(enabled, skipped_count, batch_size, force_single):
-    """Pure helper for the first-image prime (2026-06-17, slow-link drag-drop).
-
-    Return ``(first_batch_size, restore_size)``. On a freshly-viewed series (nothing
-    on disk) with a multi-image batch, return ``(1, batch_size)`` so the first batch
-    fetches a single slice — the viewer paints one image in one round-trip instead of
-    waiting for a whole batch on a slow/dropping link — and the caller restores
-    ``restore_size`` after that batch. Otherwise return ``(batch_size, None)`` (no
-    prime): on resume (``skipped_count > 0`` → the R19b leading-batch skip is
-    unaffected), when the modality already forces single-image batches, when the batch
-    is already 1, or when disabled. ``restore_size is None`` means "no restore needed".
-    """
-    if enabled and skipped_count == 0 and batch_size > 1 and not force_single:
-        return 1, batch_size
-    return batch_size, None
-
 
 _SERIES_FORCE_BATCH_ONE_DESC_KEYWORDS = (
     "PANORAM",
@@ -417,28 +225,9 @@ class SocketDicomClient:
         # Reversible load-shaping knobs (weak-hardware friendly).
         # Set to 0 to disable pacing behavior immediately.
         self._batch_size_cap = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP", "10") or "10"))
-        # Adaptive batch GROWTH (2026-06-16, download speed). The batch size used
-        # to start at BATCH_SIZE (10) and only ever SHRINK (on "Response too large"
-        # or the 64 MB byte budget) — so even a rock-solid link kept paying the
-        # round-trip overhead of tiny batches (the dominant cost). Now it ramps UP
-        # toward _batch_size_max after consecutive clean batches and shrinks back
-        # on any error, i.e. fast on good links and safe on the flaky client.
-        # Disable: AIPACS_DOWNLOAD_BATCH_GROWTH=0. Ceiling: AIPACS_DOWNLOAD_BATCH_SIZE_MAX
-        # (default 40). Cadence: AIPACS_DOWNLOAD_BATCH_GROWTH_AFTER (default 2). An
-        # explicitly-set AIPACS_DOWNLOAD_BATCH_SIZE_CAP still hard-caps growth.
-        self._batch_growth_enabled = (os.getenv("AIPACS_DOWNLOAD_BATCH_GROWTH", "1") or "1").strip() != "0"
-        _bmax = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_MAX", "40") or "40"))
-        if os.getenv("AIPACS_DOWNLOAD_BATCH_SIZE_CAP") is not None:
-            _bmax = min(_bmax, self._batch_size_cap)  # honor an explicit operator cap
-        self._batch_size_max = max(1, _bmax)
-        self._batch_growth_after = max(1, int(os.getenv("AIPACS_DOWNLOAD_BATCH_GROWTH_AFTER", "2") or "2"))
-        self._consecutive_ok_batches = 0
         self._inter_batch_pause_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_INTER_BATCH_PAUSE_MS", "3") or "3") / 1000.0)
         self._post_request_yield_s = max(0.0, float(os.getenv("AIPACS_DOWNLOAD_POST_REQUEST_YIELD_MS", "5") or "5") / 1000.0)
         self._last_resource_probe_ts = 0.0
-        # Current series modality (set by download_series, used by download_batch
-        # to apply extended timeout for large-frame modalities like PX/MG/XA/RF).
-        self._current_series_modality: Optional[str] = None
         
         logger.debug(
             f"🔌 SocketDicomClient initialized ({self.host}:{self.port})",
@@ -721,23 +510,7 @@ class SocketDicomClient:
                         user['role'] = response.get('roles', {}).get('Name', 'user')
                     if not user:
                         user = None
-
-                # IDENTITY (2026-07-14). The internal-assignment UI must know WHICH
-                # user is logged in, to tell "assigned to me" from "assigned to
-                # someone else" — and the server identifies an assignee by id
-                # (a PACS user _id, a RIS Personnel _id or a RIS AdminUser _id), never
-                # by name. The dict built above carried only full_name/username/role,
-                # so that comparison could never match. Carry the ids through when the
-                # server sends them (ASSIGN_CLIENT_GUIDE_FA §4.1). Purely additive —
-                # absent fields are simply not set.
-                if user is not None:
-                    _data = response.get('data') if isinstance(response.get('data'), dict) else {}
-                    for _key in ('user_id', 'id', '_id', 'personnel_id', 'ris_user_id'):
-                        if not user.get(_key):
-                            _val = response.get(_key) or _data.get(_key)
-                            if _val:
-                                user[_key] = _val
-
+                
                 if token:
                     # Store token in token manager
                     self.token_manager.set_token(token, user)
@@ -960,9 +733,8 @@ class SocketDicomClient:
                 )
                 logger.debug(f"📤 Request sent, waiting for response...")
 
-                # Loop to handle broadcasts and wait for actual response. Cap raised
-                # + made configurable (was a hard 10) — see _MAX_BROADCAST_RETRIES.
-                max_broadcast_retries = _MAX_BROADCAST_RETRIES
+                # Loop to handle broadcasts and wait for actual response
+                max_broadcast_retries = 10
                 broadcast_count = 0
                 
                 while broadcast_count < max_broadcast_retries:
@@ -1061,10 +833,9 @@ class SocketDicomClient:
                         response_bytes=str(len(response_data)),
                     )
 
-                    # Parse response (tolerant decode: a non-UTF-8 byte in a name/
-                    # description field must not crash the whole download).
+                    # Parse response
                     t_parse = now_ms()
-                    response = json.loads(_decode_socket_payload(response_data))
+                    response = json.loads(response_data.decode('utf-8'))
                     log_stage_timing(
                         logger,
                         component="ipc",
@@ -1245,34 +1016,12 @@ class SocketDicomClient:
         )
         
         # Use correct endpoint: GetSeriesImages (not DownloadDicomBatch)
-        # Apply extended timeout for large-frame modalities (PX, MG, XA, RF etc.)
-        # These single-frame images can be 20-100+ MB; on remote/slow servers the
-        # default 30s timeout is insufficient for the server to read + encode + send.
-        _original_timeout = None
-        if (self._current_series_modality
-                and self._current_series_modality in _SERIES_FORCE_BATCH_ONE_MODALITIES
-                and self.socket is not None
-                and _LARGE_FRAME_TIMEOUT > self.timeout):
-            _original_timeout = self.timeout
-            try:
-                self.socket.settimeout(_LARGE_FRAME_TIMEOUT)
-            except Exception:
-                pass  # socket may be closed; will reconnect on failure
-
         response = self.send_request('GetSeriesImages', {
             'series_uid': series_uid,
             'batch_size': batch_size,
             'batch_index': batch_index,
             'metadata_only': False
         })
-
-        # Restore original timeout
-        if _original_timeout is not None:
-            try:
-                if self.socket is not None:
-                    self.socket.settimeout(_original_timeout)
-            except Exception:
-                pass
         
         if response:
             status = response.get('status', 'unknown')
@@ -1291,36 +1040,9 @@ class SocketDicomClient:
                 logger.info(f"⏸️ download_batch cancelled before response")
             else:
                 logger.warning(f"📥 download_batch: No response received!")
-
+        
         return response
-
-    def _poor_connectivity_active(self) -> bool:
-        """Is the active download server in "Poor Connectivity" / unstable-internet
-        single-image download mode?
-
-        Resolved from ``config/servers.json`` (per-server ``poor_connectivity`` flag,
-        matched by the active socket host) or the ``AIPACS_POOR_CONNECTIVITY`` env
-        override — see ``modules.network.socket_config.is_poor_connectivity_enabled``.
-
-        Cached per client instance: the flag is per-server and the client is built
-        per download task, so it is stable for this client's lifetime and this avoids
-        re-reading config on every series. Any failure resolves to ``False`` so a
-        config/import problem can never break downloading.
-        """
-        cached = getattr(self, "_poor_conn_cached", None)
-        if cached is not None:
-            return cached
-        val = False
-        try:
-            from modules.network.socket_config import (
-                is_poor_connectivity_enabled as _ipc,
-            )
-            val = bool(_ipc())
-        except Exception:
-            val = False
-        self._poor_conn_cached = val
-        return val
-
+    
     async def download_series(
         self,
         study_uid: str,
@@ -1343,8 +1065,6 @@ class SocketDicomClient:
         series_uid = series_info.series_uid
         series_number = series_info.series_number
         expected_count = series_info.image_count
-        # Track modality for extended timeout in download_batch (PX fix)
-        self._current_series_modality = (getattr(series_info, 'modality', None) or '').upper().strip()
         
         set_log_context(study_uid=study_uid, series_uid=series_uid)
         logger.warning(
@@ -1364,57 +1084,15 @@ class SocketDicomClient:
         skipped_count = len(existing_files)
         logger.info(f"📊 Found {skipped_count} existing files")
         
-        # Calculate batches (adaptive + configurable cap). Ceiling is
-        # _batch_size_max so a stable connection can ramp UP (see _grow_batch_size);
-        # _adaptive_batch_size still starts conservative and shrinks on errors.
-        batch_size = min(self._adaptive_batch_size, self._batch_size_max)
-        _modality_force_single = _should_force_single_instance_batches(series_info)
-        if _modality_force_single:
+        # Calculate batches (adaptive + configurable cap)
+        batch_size = min(self._adaptive_batch_size, self._batch_size_cap)
+        if _should_force_single_instance_batches(series_info):
             batch_size = 1
             logger.info(
                 "📦 Using single-image batches for large-frame modality/series type "
                 f"(series={series_number}, modality={series_info.modality or 'N/A'})"
             )
-        # Per-server "Poor Connectivity" mode (config/servers.json `poor_connectivity`,
-        # resolved by the active socket host): force single-image batches and disable
-        # adaptive growth so a flaky/unstable link retries at the IMAGE level and keeps
-        # every image already on disk, instead of failing/re-fetching a whole batch.
-        # Same proven mechanism as the large-frame modality force above.
-        _poor_conn = self._poor_connectivity_active()
-        if _poor_conn:
-            batch_size = 1
-            logger.warning(
-                "🐢 [POOR_CONN] server flagged poor-connectivity/unstable-internet → "
-                "single-image batches (batch_size=1), adaptive growth disabled, "
-                "image-level retry + resume "
-                f"(series={series_number}, modality={series_info.modality or 'N/A'}, "
-                f"expected={expected_count})"
-            )
-        # Either condition pins the series to one image per batch (no ramp-up below).
-        _force_single = _modality_force_single or _poor_conn
         min_batch_size = 1
-        # First-image prime: on a fresh series (nothing on disk) fetch slice 1 as a
-        # single-image batch so the viewer paints one image in one round-trip, then
-        # restore the full adaptive size after that batch (see the advance below).
-        # Skipped on resume (skipped_count>0 → R19b leading-batch skip unaffected) and
-        # when the modality already forces single-image batches. _prime_restore_size is
-        # the size to jump back to; None means "no prime active for this series".
-        # _prime_restore_size is the size to jump back to after the size-1 first
-        # batch; None means "no prime active for this series" (see the advance below).
-        batch_size, _prime_restore_size = _first_image_prime_size(
-            _FIRST_IMAGE_PRIME,
-            skipped_count,
-            batch_size,
-            _force_single,
-        )
-        if _prime_restore_size is not None:  # total_batches is computed from batch_size below
-            # WARNING level (not info) so this is captured in download_diagnostics.log:
-            # socket_client INFO is filtered there, which previously made the prime
-            # impossible to observe at runtime (2026-06-18 review). Behaviour unchanged.
-            logger.warning(
-                f"⚡ First-image prime: fetching slice 1 of series {series_number} as a "
-                f"single-image batch, then resuming batch size {_prime_restore_size}"
-            )
         # U1: bounded same-size retries once the batch can't shrink further.
         # An implausible declared length (>500MB) usually means the socket
         # stream desynchronized, not real payload size — the socket has been
@@ -1588,7 +1266,6 @@ class SocketDicomClient:
                         batch_size = max(min_batch_size, batch_size // 2)
                         self._adaptive_batch_size = batch_size
                         SocketDicomClient._global_adaptive_batch_size = batch_size
-                        self._consecutive_ok_batches = 0  # reset growth streak on shrink
                         total_batches = (expected_count + batch_size - 1) // batch_size
                         logger.warning(
                             f"⚠️ Response too large - reducing batch size to {batch_size} and retrying batch"
@@ -1626,22 +1303,10 @@ class SocketDicomClient:
             # Process instances in batch (using GetSeriesImages response format)
             data = response.get('data', {})
             instances = data.get('instances', [])
-            if not instances:
-                # Some server builds put the images under an alternate list key.
-                for _alt_list_key in ('images', 'dicom_instances', 'files'):
-                    _alt = data.get(_alt_list_key)
-                    if isinstance(_alt, list) and _alt:
-                        instances = _alt
-                        logger.warning(
-                            "[INSTANCE_LIST_KEY] server returned images under '%s' "
-                            "(not 'instances') — series=%s",
-                            _alt_list_key, series_number,
-                        )
-                        break
             # Payload estimate (base64 chars ≈ bytes) for the byte-budget
             # soft cap applied after this batch's advance.
             _batch_payload_bytes = sum(
-                len(_extract_instance_payload(inst)[0] or '') for inst in instances
+                len(inst.get('dicom_data') or '') for inst in instances
             )
             
             logger.debug(
@@ -1655,23 +1320,9 @@ class SocketDicomClient:
             batch_files_written = 0
 
             for _inst_idx, instance_data in enumerate(instances):
-                # The DICOM bytes may arrive under more than one key name: the
-                # service contract itself defines BOTH `dicom_data`
-                # (DicomInstanceResponse) and `image_data` (DicomImageInfo, "raw
-                # DICOM file bytes"), and server builds differ. Reading only
-                # `dicom_data` made a server that sends `image_data` look like it
-                # had returned an EMPTY image — the download "completed" with
-                # 0 files and the study never displayed (Roshana, 2026-07-12).
-                # Same tolerant-key pattern as _normalize_image_count.
-                dicom_data_b64, _payload_key = _extract_instance_payload(instance_data)
-                is_compressed = bool(
-                    instance_data.get('is_compressed',
-                                      instance_data.get('isCompressed', False))
-                )
-                instance_number = instance_data.get(
-                    'instance_number',
-                    instance_data.get('instanceNumber', downloaded_count + 1),
-                )
+                dicom_data_b64 = instance_data.get('dicom_data', '')
+                is_compressed = instance_data.get('is_compressed', False)
+                instance_number = instance_data.get('instance_number', downloaded_count + 1)
                 
                 # Generate file name from instance number
                 try:
@@ -1695,28 +1346,7 @@ class SocketDicomClient:
                     continue
                 
                 if not dicom_data_b64:
-                    # DECISIVE DIAGNOSTIC. "Empty DICOM data" on its own could not
-                    # distinguish "our client looked under the wrong key" from
-                    # "the server really sent no bytes". Dump the entry's SHAPE —
-                    # key names and value sizes only, never the pixel data itself.
-                    try:
-                        _shape = ", ".join(
-                            f"{k}={type(v).__name__}"
-                            f"({len(v) if isinstance(v, (str, bytes, bytearray, list, dict)) else v})"
-                            for k, v in list(instance_data.items())[:20]
-                        )
-                    except Exception:
-                        _shape = "<unreadable>"
-                    logger.error(
-                        "[EMPTY_INSTANCE_PAYLOAD] series=%s instance=%s — the server "
-                        "response carried NO DICOM bytes under any known key "
-                        "(tried: %s). Entry shape: {%s}. If a payload key is listed "
-                        "above with a non-zero size, add it to _INSTANCE_PAYLOAD_KEYS; "
-                        "if every candidate is 0/absent, the SERVER does not hold the "
-                        "pixel data for this instance.",
-                        series_number, instance_number,
-                        ", ".join(_INSTANCE_PAYLOAD_KEYS), _shape,
-                    )
+                    logger.warning(f"⚠️ Empty DICOM data for instance {instance_number}")
                     continue
                 
                 try:
@@ -1754,62 +1384,7 @@ class SocketDicomClient:
                     batch_write_bytes += len(dicom_bytes)
                     total_write_bytes += len(dicom_bytes)
                     batch_files_written += 1
-
-                    # KPI (2026-06-24): TTFI / TTFS anchored to the series-download
-                    # start. Only on a freshly-fetched series (skipped_count == 0) so
-                    # the number is the true time-to-first-image and not a resume
-                    # artifact (a resumed series already had earlier images on disk).
-                    # Additive WARNING — no effect on the download loop.
-                    if _POOR_NET_KPIS and skipped_count == 0 and downloaded_count in (1, 2):
-                        _kpi_ms = (time.time() - start_time) * 1000.0
-                        logger.warning(
-                            "[KPI] kind=%s scope=download study=%s series=%s "
-                            "ms_since_series_start=%.1f images=%d/%d batch_size=%d poor_conn=%s",
-                            "TTFI" if downloaded_count == 1 else "TTFS",
-                            study_uid, series_number, _kpi_ms,
-                            downloaded_count, expected_count, batch_size, _poor_conn,
-                            extra={"component": "download", "study_uid": study_uid,
-                                   "series_uid": series_uid},
-                        )
-
-                    # ── Issue A (46472 DX) — surface header-only image stubs ──────
-                    # The server can return a DICOM whose header is intact but whose
-                    # PixelData element is EMPTY. It decodes to non-empty bytes (so the
-                    # `if not dicom_data_b64` guard above misses it), is written as a
-                    # normal .dcm, and the name+128B resume scan (DM-L4) then treats it
-                    # as a COMPLETE instance — so it is never re-fetched and renders
-                    # blank, which makes the study look "missing". Surface it loudly so
-                    # the condition is never silent again; the actual display fix is
-                    # server-side (the pixel data must be re-sent). LOGGING ONLY — no
-                    # change to download/resume control flow. Bounded + precise: only
-                    # inspect small payloads (real images are far larger) and only flag
-                    # a dataset that DECLARES image pixels but carries none (SR/PDF/PR
-                    # have no Rows/Columns and are never flagged). Disable with
-                    # AIPACS_PIXELLESS_STUB_PROBE=0.
-                    try:
-                        if (os.environ.get('AIPACS_PIXELLESS_STUB_PROBE', '1') != '0'
-                                and len(dicom_bytes) < 32768):
-                            import pydicom as _pydicom
-                            from io import BytesIO as _BytesIO
-                            _ds = _pydicom.dcmread(_BytesIO(dicom_bytes), force=True)
-                            _rows = getattr(_ds, 'Rows', None)
-                            _cols = getattr(_ds, 'Columns', None)
-                            _bits = getattr(_ds, 'BitsAllocated', None)
-                            _declares_image = bool(_rows) and bool(_cols) and bool(_bits)
-                            _pixels_present = bool(_ds.get('PixelData', None))
-                            if _declares_image and not _pixels_present:
-                                logger.warning(
-                                    "[DOWNLOAD][pixelless-stub] header-only image written "
-                                    "(empty PixelData) — renders blank and the name/128B "
-                                    "resume scan treats it as complete (DM-L4); pixel data "
-                                    "must be re-sent server-side. file=%s series=%s "
-                                    "instance=%s bytes=%d dims=%sx%sx%s",
-                                    file_path, series_number, instance_number,
-                                    len(dicom_bytes), _rows, _cols, _bits,
-                                )
-                    except Exception:
-                        pass
-
+                    
                 except Exception as e:
                     logger.error(f"❌ Error saving instance {instance_number}: {e}")
                     # Log the full path for debugging
@@ -1883,26 +1458,6 @@ class SocketDicomClient:
             
             # Check if more batches are needed (server pagination)
             has_more = data.get('has_more', False)
-
-            # Per-batch pagination trace (2026-06-19): make the actual batch_index /
-            # size / received / has_more visible in download_diagnostics.log (WARNING)
-            # so a pagination gap (index stuck/repeating, tail dropped) is observable
-            # at runtime instead of only as a short on-disk count.
-            if _BATCH_TRACE:
-                logger.warning(
-                    "[BATCH_TRACE] series=%s batch_index=%d size=%d received=%d "
-                    "has_more=%s downloaded=%d skipped=%d expected=%d",
-                    series_number,
-                    (batch_start // batch_size if batch_size > 0 else 0),
-                    batch_size,
-                    len(instances),
-                    has_more,
-                    downloaded_count,
-                    skipped_count,
-                    expected_count,
-                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
-                )
-
             if not has_more:
                 logger.info(f"📦 Server indicates no more batches")
                 break
@@ -1915,74 +1470,23 @@ class SocketDicomClient:
             batch_idx += 1
             batch_start += batch_size
 
-            # First-image prime restore: the priming size-1 batch (batch_idx 0) has
-            # now been written and its progress emitted, so restore the full adaptive
-            # batch size for the remainder — bulk transfer speed is unchanged. The
-            # advance above used the OLD size (1), so batch_start is now exactly 1 and
-            # the next request is correctly aligned to slice index 1. Run before the
-            # shrink/grow block below so adaptive tuning continues from the full size.
-            if _prime_restore_size is not None and batch_idx == 1:
-                batch_size = _prime_restore_size
-                if _PRIME_ALIGN:
-                    # B2 (2026-06-21): realign batch_start to the restored tile size.
-                    # The size-1 prime consumed only instance index 0; the legacy
-                    # advance left batch_start at 1, so batch_index = 1//size = 0 still
-                    # re-requested tile 0 and batch_start then stepped 1, size+1,
-                    # 2*size+1, … — never a clean tile boundary. For any series whose
-                    # count ≡ 1 (mod size) the final tile (its last instance) was never
-                    # requested in the main loop and fell to the INCOMPLETE_SERIES
-                    # gap-fill (an extra full disk re-scan + fetch). Resetting to 0
-                    # resumes clean tiling (0, size, 2*size, …); instance 0 is re-sent
-                    # in tile 0 and file-skipped (already primed) so no tile is dropped.
-                    # The gap-fill below is UNCHANGED and still backstops completeness.
-                    batch_start = 0
-                total_batches = (expected_count + batch_size - 1) // batch_size
-                _prime_restore_size = None
-
             # Byte-budget soft cap: halve the NEXT batches when this one's
             # payload was oversized. Applied AFTER the advance so the just-
             # received window is never re-requested; halving keeps
             # batch_start aligned to the new size (start = k*old = 2k*new),
             # so the server's batch_index mapping stays exact.
-            _payload_oversized = _batch_payload_bytes > _BATCH_BYTES_SOFT_CAP
-            if _payload_oversized and batch_size > min_batch_size:
+            if (
+                _batch_payload_bytes > _BATCH_BYTES_SOFT_CAP
+                and batch_size > min_batch_size
+            ):
                 batch_size = max(min_batch_size, batch_size // 2)
                 total_batches = (expected_count + batch_size - 1) // batch_size
-                self._consecutive_ok_batches = 0  # reset growth streak on shrink
                 logger.warning(
                     f"📉 Batch payload {_batch_payload_bytes / (1024*1024):.0f} MB "
                     f"exceeds {_BATCH_BYTES_SOFT_CAP // (1024*1024)} MB soft cap — "
                     f"halving subsequent batches of series {series_number} to "
                     f"{batch_size} instance(s)"
                 )
-            elif _payload_oversized:
-                # Already at the minimum batch size — cannot shrink further, but a
-                # large payload means we must NOT grow either.
-                self._consecutive_ok_batches = 0
-            elif (
-                self._batch_growth_enabled
-                and not _PAGINATION_SAFE
-                and batch_size < self._batch_size_max
-                and not _force_single
-            ):
-                # Adaptive batch GROWTH (2026-06-16, download speed): on a stable
-                # connection ramp the batch size UP so a healthy link pays fewer
-                # round-trips (the dominant cost). Bounded by _batch_size_max and
-                # reset by either shrink path above, so it is self-tuning and safe
-                # on the flaky client.
-                _new, self._consecutive_ok_batches = _grow_batch_size(
-                    batch_size, self._batch_size_max, self._consecutive_ok_batches,
-                    self._batch_growth_after, BATCH_SIZE,
-                )
-                if _new != batch_size:
-                    batch_size = _new
-                    self._adaptive_batch_size = batch_size
-                    SocketDicomClient._global_adaptive_batch_size = batch_size
-                    total_batches = (expected_count + batch_size - 1) // batch_size
-                    logger.info(
-                        f"⏫ Stable connection — grew batch size to {batch_size} "
-                        f"(max {self._batch_size_max}) for series {series_number}"
-                    )
 
         # Download diagnostics default to WARNING threshold. Emit one summary
         # write-stage sample per series at WARNING so KPI parsers can
@@ -2021,110 +1525,7 @@ class SocketDicomClient:
             total_decompress_ms,
             extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
         )
-
-        # KPI (2026-06-24): TTFC (time-to-full-cache) for this series, anchored to the
-        # series-download start, plus the average per-slice download time. For a
-        # from-scratch series (skipped=0) this IS the full first-load time; on resume
-        # `skipped` shows how many were already cached. Additive WARNING only.
-        if _POOR_NET_KPIS:
-            _avg_slice_ms = (elapsed * 1000.0 / downloaded_count) if downloaded_count > 0 else 0.0
-            logger.warning(
-                "[KPI] kind=TTFC scope=download study=%s series=%s "
-                "ms_since_series_start=%.1f downloaded=%d skipped=%d expected=%d "
-                "avg_slice_ms=%.1f poor_conn=%s",
-                study_uid, series_number, elapsed * 1000.0,
-                downloaded_count, skipped_count, expected_count, _avg_slice_ms, _poor_conn,
-                extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
-            )
-
-        # ── Completeness guard (2026-06-19, data-completeness fix) ──────────────────
-        # The server's batch pagination can finish early (premature has_more=False) or,
-        # with legacy grow-while-paging, leave a gap — silently dropping the TAIL of a
-        # series so the viewer shows "N/N" while disk holds fewer files. Compare the
-        # on-disk unique-instance count against the server's expected_count; if short,
-        # fill the gap with explicit, correctly-tiled batch requests (batch_index k at a
-        # CONSTANT size, so batch_start = k*size is always a clean multiple → exact
-        # tiling, immune to the index-stick bug) and log the outcome loudly. The
-        # [SERIES_COMPLETE] / [INCOMPLETE_SERIES] markers make completeness observable in
-        # download_diagnostics.log; the atomic-write + file-level dedup are reused, so a
-        # present file is never re-written. Runs only for a genuine short series.
-        if expected_count > 0 and not self.is_cancelled():
-            try:
-                _on_disk = set(self._scan_existing_files(output_dir))
-            except Exception:
-                _on_disk = set()
-            if len(_on_disk) < expected_count:
-                logger.error(
-                    "[INCOMPLETE_SERIES] series=%s on_disk=%d expected=%d missing=%d "
-                    "study=%s pagination_safe=%s — filling pagination gap",
-                    series_number, len(_on_disk), expected_count,
-                    expected_count - len(_on_disk), study_uid, _PAGINATION_SAFE,
-                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
-                )
-                _fill_size = 1 if _force_single else max(
-                    1, min(self._adaptive_batch_size, self._batch_size_max)
-                )
-                _n_batches = (expected_count + _fill_size - 1) // _fill_size
-                for _bi in range(_n_batches):
-                    if self.is_cancelled():
-                        break
-                    # Skip a batch only when every expected instance file in its
-                    # contiguous range already exists (optimization; file-level dedup
-                    # below keeps it correct even when instance numbers are sparse).
-                    _lo, _hi = _bi * _fill_size + 1, min(_bi * _fill_size + _fill_size, expected_count)
-                    if all(f"Instance_{i:04d}.dcm" in _on_disk for i in range(_lo, _hi + 1)):
-                        continue
-                    _resp = await self._download_batch_with_retry(
-                        study_uid, series_uid, _bi * _fill_size, _fill_size
-                    )
-                    if not _resp or _resp.get('status') != 'success':
-                        continue
-                    for _inst in (_resp.get('data', {}) or {}).get('instances', []):
-                        try:
-                            _num = int(_inst.get('instance_number', 0))
-                        except (ValueError, TypeError):
-                            continue
-                        _fn = f"Instance_{_num:04d}.dcm"
-                        _b64 = _inst.get('dicom_data', '')
-                        if not _num or _fn in _on_disk or not _b64:
-                            continue
-                        try:
-                            _raw = base64.b64decode(_b64)
-                            if _inst.get('is_compressed', False):
-                                _raw = gzip.decompress(_raw)
-                            _fp = output_dir / _fn
-                            _tmp = _fp.with_name(_fp.name + '.part')
-                            with open(_tmp, 'wb') as _fh:
-                                _fh.write(_raw)
-                            os.replace(_tmp, _fp)
-                            _on_disk.add(_fn)
-                            downloaded_count += 1
-                        except Exception as _e:
-                            logger.error(
-                                "[INCOMPLETE_SERIES] gap-fill write failed series=%s instance=%s: %s",
-                                series_number, _num, _e,
-                            )
-                _final_on_disk = len(_on_disk)
-                if _final_on_disk >= expected_count:
-                    logger.warning(
-                        "[SERIES_COMPLETE] series=%s on_disk=%d expected=%d study=%s (gap-fill resolved)",
-                        series_number, _final_on_disk, expected_count, study_uid,
-                        extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
-                    )
-                else:
-                    logger.error(
-                        "[INCOMPLETE_SERIES] series=%s STILL SHORT after gap-fill: on_disk=%d "
-                        "expected=%d study=%s — server may not hold all instances",
-                        series_number, _final_on_disk, expected_count, study_uid,
-                        extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
-                    )
-            else:
-                logger.warning(
-                    "[SERIES_COMPLETE] series=%s on_disk=%d expected=%d study=%s",
-                    series_number, len(_on_disk), expected_count, study_uid,
-                    extra={"component": "download", "study_uid": study_uid, "series_uid": series_uid},
-                )
-
+        
         return SeriesDownloadResult(
             success=True,
             series_uid=series_uid,
@@ -2198,8 +1599,7 @@ class SocketDicomClient:
         """
         logger.debug(f"🔄 _download_batch_with_retry called: series={series_uid[:30]}..., start={batch_start}, size={batch_size}")
         self._last_retry_count = 0
-        _oversize_seen = 0  # B6: count of single-instance "Response too large" hits this call
-
+        
         for attempt in range(MAX_RETRIES):
             # R25: Check for cancellation before each attempt
             if self.is_cancelled():
@@ -2253,31 +1653,7 @@ class SocketDicomClient:
                 
                 # R30: Record failure
                 self.health_monitor.record_failure()
-
-                # B6 (2026-06-21, staged default-off): bound a deterministic
-                # single-instance "Response too large" (server hard payload cap on one
-                # oversized instance). Retrying the SAME instance with escalating
-                # backoff just burns minutes; a genuine stream-DESYNC still recovers on
-                # ONE fresh-socket reconnect, so allow exactly one quick reconnect then
-                # fail fast. Untouched: normal batches (size>1) and all other errors
-                # keep the full R27/R28 backoff-retry below.
-                if _FASTFAIL_OVERSIZE and batch_size <= 1 and "Response too large" in str(e):
-                    _oversize_seen += 1
-                    if _oversize_seen >= 2 or attempt >= MAX_RETRIES - 1:
-                        logger.error(
-                            "❌ Single-instance payload exceeds the server cap even "
-                            "after a fresh-socket retry — failing series fast "
-                            "(no further doomed retries)"
-                        )
-                        return None
-                    logger.warning(
-                        "⚠️ Response too large at single-instance batch — one quick "
-                        "reconnect (stream-desync recovery) then fail fast"
-                    )
-                    self.disconnect()
-                    self.connect_with_retry(max_retries=3)
-                    continue
-
+                
                 if attempt < MAX_RETRIES - 1:
                     # R27, R31: Exponential backoff with jitter
                     jitter = random.uniform(0, 0.5)

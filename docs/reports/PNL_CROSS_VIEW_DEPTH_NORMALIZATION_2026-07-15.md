@@ -440,3 +440,58 @@ themed stylesheet, so they follow the APP theme. The fix: my new group border ha
 **`#2d3748`** so the sections retint WITH the theme like every other border; the title text inherits the
 themed `#f7fafc`. Following the OS theme instead of the app theme would be a separate, larger change
 (the whole module is app-themed on purpose).
+
+## 3D-Cursor CLOSE regression — default-on flips reverted (2026-07-20)
+
+User: the 3D cursor closes the app on use. Evidence (host-side log read): `app.log` ends abruptly at
+`[3D-Cursor][2ND-PASS] launching 0.30` with **no Python traceback**; the app logger is an async
+`QueueHandler`, so a hard crash loses the queued finalize lines. `native_fault.log` for that session shows
+only the benign `0x8001010d`. The run got PAST rung 0.40 (it escalated) and died at/after **finalize** —
+exactly where the recently-promoted default-on flips add new work: the **heatmap VTK render**
+(`_maybe_draw_heatmap`, the ONLY new *native* code path at finalize — a native crash produces no Python
+traceback), the appearance capture, and the contralateral pass. Before those flips the 3D cursor worked
+→ regression.
+
+Fix: reverted all three defaults to **OFF** (their original known-good values) —
+`AIPACS_CURSOR3D_HEATMAP` + `AIPACS_CURSOR3D_APPEARANCE` (`two_stage_controller.py`) and
+`AIPACS_CURSOR3D_CONTRALATERAL` (`contralateral_matcher.py`). Each still opts in via its env flag, so the
+culprit can be isolated one at a time. Feature-store GEOMETRY persistence stays on (pure atomic file
+write, not a native path); with appearance off, stored records are geometry-only. Guard tests updated to
+pin default-OFF (`test_controller_defaults_appearance_and_heatmap_off`,
+`test_contralateral_enabled_default_off`). NEEDS live confirm the revert stops the close; then re-enable
+`AIPACS_CURSOR3D_HEATMAP=1` alone to confirm the heatmap VTK draw is the crash, and gate it behind the
+existing OpenGL pre-flight (OPT-21) / harden the draw before re-promoting.
+
+**CONFIRMED: the heatmap VTK render is the crash (2026-07-20/21, patient 51345).** Re-tested with
+appearance + contralateral OFF (reverted) but `AIPACS_CURSOR3D_HEATMAP=1` — still crashes. app.log stops
+at `[2ND-PASS] launching 0.27` (finalize logs lost to the async QueueHandler). native_fault.log shows the
+benign `0x8001010d` with the Current thread **idle in `run_forever`** — the signature of an ASYNC
+GPU-driver crash: `draw_heatmap_field` submits the translucent poly, the main thread returns to the event
+loop, then the driver faults and kills the process (so no Python traceback and the fault stack is idle).
+The candidate boxes/region band (also VTK) never crash because they are a few actors inside the image;
+the heatmap uniquely pushes THOUSANDS of translucent per-cell quads whose grid can extend past the image.
+HARDENING applied to `region_render.draw_heatmap_field`: (1) validate EVERY quad corner and drop cells
+with non-finite (NaN/Inf) world coords — NaN vertices are a classic native GPU access-violation; (2) cap
+total cells at 6000. Heatmap STAYS default-OFF (the 3D cursor is fully functional without it — region
+band + candidate boxes + findings + the localization all render). PROPER FIX (follow-up, needs live GPU
+testing): re-render the heatmap as ONE textured-image overlay (`vtkImageActor`, a single draw call with 4
+finite corners) instead of thousands of translucent quads — this removes the per-cell GPU stress that is
+the likely async-crash trigger. `region_render.py` is not plugin-mirrored.
+
+**ROOT-CAUSE (2026-07-21, user: "it worked before — what changed?").** `draw_heatmap_field` itself is
+UNCHANGED and its own comment says "NEEDS LIVE SOURCE-BUILD VERIFY — VTK not exercised in the sandbox"
+(default-OFF, so its render was likely never actually run — what showed before was the green search-REGION
+band, `draw_search_region`, which is different, working code). What DID change is the DATA fed to it: the
+heatmap field's bbox comes from the search region (`cross_view_heatmap._region_bbox_px`), and the
+PNL-normalization + DICOM-angle geometry can now place the region toward/past the image edge. The heatmap
+grid then includes OFF-IMAGE cells whose `ijk_to_world` returns non-finite coords → NaN vertices → native
+GPU crash (before the geometry work the region stayed inside the image, so it never hit this). Two
+portability fixes (both safe for normal in-image regions): (1) `draw_heatmap_field` drops any cell with a
+non-finite corner + caps at 6000 quads; (2) `build_heatmap_field` bounds the grid to <=200 cells/axis by
+growing the step, so a large/off-image bbox can never allocate a gigantic array (OOM) or push millions of
+quads. These should make the heatmap render safe HERE and on other PCs. **RE-ENABLED default-ON 2026-07-21**
+(user relies on the color map = the vertical-position-probability visualization; the two guards target the
+evidenced crash cause, and this PC renders the band/boxes fine so its GPU is healthy). `AIPACS_CURSOR3D_
+HEATMAP=0` = kill switch. If it STILL closes the app with these guards, the cause is the fundamental
+translucent poly render (not the data), and the single `vtkImageActor` image-overlay rewrite is the next
+step. NEEDS live confirm on the source build.

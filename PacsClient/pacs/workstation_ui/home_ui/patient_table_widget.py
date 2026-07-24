@@ -813,6 +813,7 @@ class PatientTableWidget(QWidget):
     receptionDataRequested = Signal(list)  # list of patient data dictionaries for reception data download
     offlineCloudExportRequested = Signal(list)  # downloaded studies to export into offline cloud package
     offlineCloudSyncRequested = Signal(list)  # selected studies for offline cloud import/export
+    offlineCloudManageRequested = Signal()  # open the offline-package manager (edit/delete existing)
     cdBurnRequested = Signal(list)  # list of patient data dictionaries for CD burning
     printRequested = Signal()  # request to open printing module with current selected studies
     statusUpdateResult = Signal(str, str, object)  # study_uid, new_status, response
@@ -2271,26 +2272,83 @@ class PatientTableWidget(QWidget):
             print(f"Error in reception data download request: {str(e)}")
             QMessageBox.critical(self, "Error", f"Error preparing reception data download: {str(e)}")
 
+    def _prompt_offline_service_choice(self, add_enabled: bool) -> str | None:
+        """Custom Add/Manage/Cancel chooser with full-width vertical buttons.
+
+        Replaces a QMessageBox whose long button captions were truncated on
+        Windows. Returns 'add', 'manage', or None. Buttons stack vertically so
+        the full labels always fit regardless of caption length."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Offline Service")
+        dlg.setModal(True)
+        dlg.setMinimumWidth(420)
+        lay = QVBoxLayout(dlg)
+        lay.setContentsMargins(20, 18, 20, 16)
+        lay.setSpacing(10)
+
+        title = QLabel("What would you like to do with the Offline Service?")
+        title.setWordWrap(True)
+        lay.addWidget(title)
+
+        result = {"choice": None}
+
+        def _pick(value):
+            result["choice"] = value
+            dlg.accept()
+
+        add_btn = QPushButton("Add Selected Patient to Offline Service")
+        add_btn.setMinimumHeight(38)
+        add_btn.clicked.connect(lambda: _pick("add"))
+        add_btn.setEnabled(bool(add_enabled))
+        if not add_enabled:
+            add_btn.setToolTip("Download the selected study first — export needs the local images.")
+        lay.addWidget(add_btn)
+
+        manage_btn = QPushButton("Edit or Delete Existing Offline Patients")
+        manage_btn.setMinimumHeight(38)
+        manage_btn.clicked.connect(lambda: _pick("manage"))
+        lay.addWidget(manage_btn)
+
+        lay.addSpacing(4)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setMinimumHeight(32)
+        cancel_btn.clicked.connect(dlg.reject)
+        lay.addWidget(cancel_btn)
+
+        dlg.exec()
+        return result["choice"]
+
     def _on_offline_cloud_sync_clicked(self):
-        """Emit selected studies for offline cloud import/export actions."""
+        """Offline Sync entry: choose between ADDING the selected patient(s) to
+        the offline package and MANAGING (edit/delete) patients already in it.
+
+        The "manage" path must be reachable with NO selection (spec), so an
+        empty selection routes straight to the manager instead of warning."""
         try:
             selected_data = self.get_selected_patient_data_list()
+
+            # No selection → go straight to the offline-package manager.
             if not selected_data:
-                QMessageBox.warning(
-                    self,
-                    "No Studies Selected",
-                    "Select at least one study for Offline Cloud sync.",
-                )
+                self.offlineCloudManageRequested.emit()
                 return
-            if not self._is_offline_cloud_selection_mode() and not self._get_downloaded_selected_studies():
-                QMessageBox.warning(
-                    self,
-                    "Download Required",
-                    "Download the selected study or studies first. After the local download is complete, "
-                    "Offline Sync will let you choose which Offline Cloud Server folder to export into.",
-                )
-                return
-            self.offlineCloudSyncRequested.emit(selected_data)
+
+            downloaded_ok = (
+                self._is_offline_cloud_selection_mode()
+                or bool(self._get_downloaded_selected_studies())
+            )
+
+            # Selection present → offer the two workflows. Uses a custom dialog
+            # with FULL-WIDTH, vertically-stacked buttons: a QMessageBox elides
+            # long button captions on Windows (the labels were truncated to
+            # "…d Patient to Off"). "Add" is only enabled when the selection is
+            # actually downloaded (export needs local data).
+            choice = self._prompt_offline_service_choice(downloaded_ok)
+            if choice == "add" and downloaded_ok:
+                self.offlineCloudSyncRequested.emit(selected_data)
+            elif choice == "manage":
+                self.offlineCloudManageRequested.emit()
         except Exception as e:
             print(f"Error in Offline Cloud sync: {str(e)}")
             QMessageBox.critical(self, "Error", f"Error preparing Offline Cloud sync: {str(e)}")

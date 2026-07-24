@@ -1,9 +1,85 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.4 (2026-07-19)
-**Previous Stable:** v3.5.3 (2026-07-16)
-**Release Date:** 2026-07-19
+**Current Stable Version:** v3.5.5 (2026-07-25)
+**Previous Stable:** v3.5.4 (2026-07-19)
+**Release Date:** 2026-07-25
 **Branch:** beta-version
+
+---
+
+## v3.5.5 (2026-07-25) - Minor release: multi-frame DICOM geometry, Offline Service delete, Report-Editor previous exams, viewport-load fixes
+
+### Summary
+
+Minor release spanning several areas. The largest is **multi-frame DICOM
+geometry** (OPT-42): single-file cine and enhanced MR/CT series now read their
+per-frame geometry from the DICOM functional groups instead of assuming top-level
+tags, so measurements, overlays, and reference lines are correct. The **Offline
+Service** gains patient management (delete patients from an existing package,
+recoverably). The **Report Editor** gains a cross-PatientID "Previous Exams"
+header. Plus a cluster of viewport-load reliability fixes (previous-exam
+mid-download grow, manual-download study discovery, startup prewarm hardening) and
+a large download-client cleanup, backed by the project's first test-suite KPI
+baseline.
+
+### Included — viewer
+
+- **Multi-frame DICOM handling + geometry (OPT-42).** Enhanced/cine files store
+  geometry in *functional groups*, not top-level tags. A new pure
+  `multiframe_geometry` reader extracts per-frame IPP/IOP/spacing and classifies
+  the file (spatial volume / multi-dimensional / multi-stack / temporal cine); the
+  frame expansion now stamps each frame with its own geometry — fixing measurements,
+  overlay identity, and reference lines on cine ultrasound and enhanced MR/CT. MPR
+  is gated so a degenerate multi-frame volume can't be built. **Ordinary
+  multi-file series are untouched.** Default-on; the VTK volume builder for spatial
+  multi-frame is staged.
+- **Previous-exam series grow after a mid-download drop, with no layout switch
+  (OPT-39).** A cross-PatientID previous exam dragged mid-download would stick at
+  its first image until the user changed viewport layout. The A1 grow watchdog was
+  only armed from the awaiting/spinner path and self-stopped too early; it is now
+  also armed on progressive activation when the series is known-incomplete, so it
+  sweeps a behind viewport regardless of await timing.
+
+### Included — download / reliability
+
+- **Manual "Download" no longer skips the newest study (OPT-40).** The Download
+  button used the row's single (latest-only) study UID and ignored the row's full
+  study set, and never reset a stale COMPLETED marker — so a just-arrived study
+  could be skipped. It now routes through the same shared study-set authority the
+  open path uses.
+- **Startup prewarm idle-gate hardened (OPT-41).** The web-browser Chromium prewarm
+  could still land its ~17 s warm-boot as the user's very first clicks; the idle
+  gate now requires a genuine pause *between* interactions plus a longer untouched
+  grace before warming.
+- **Download-client cleanup (−670 lines).** `socket_client.py` (and its plugin
+  mirror) trimmed of dead code, keeping behaviour identical.
+- **Thumbnail resync grows on server** — regression test proving the delta math is
+  sound (companion to OPT-37).
+
+### Included — workflow
+
+- **Offline Service — patient management (delete).** The Offline Service was
+  export-only; it now supports deleting patients from an existing package. The
+  delete is recoverable and atomic: snapshot + move-to-trash first, prune orphan
+  patient rows, rebuild DICOMDIR + manifest, validate, and roll back on any
+  failure. New `OfflineCloudManagerDialog`; all mutation delegates to the engine
+  primitives.
+- **Report Editor — "Previous Exams" header.** A hidden-until-found indicator that
+  looks up the patient's cross-PatientID reception history off the GUI thread; if
+  older Patient IDs exist it reveals a dropdown, and selecting one shows that
+  record's reports **read-only** — the active report is never touched.
+
+### Included — engineering
+
+- **First test-suite KPI baseline** (`tests/_kpi/kpi_baseline_2026-07-23.json`) plus
+  a test-suite-health and threading/subprocess architecture review.
+
+### Notes
+
+- OPT-39/40/41 and the multi-frame geometry are flag-gated default-on with legacy
+  kill switches.
+- The multi-frame spatial VTK volume builder is staged (not built); the viewer
+  changes still need live source-build verification on real cine / enhanced series.
 
 ---
 

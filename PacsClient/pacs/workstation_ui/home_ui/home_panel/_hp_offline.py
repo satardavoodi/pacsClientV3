@@ -24,6 +24,27 @@ class _HPOfflineMixin:
             auth_user = None
         return dict(auth_user or {})
 
+    def _on_offline_cloud_manage_requested(self):
+        """Open the offline-package MANAGER (edit/delete patients already stored
+        in an Offline Cloud folder). Available with no patient selected."""
+        try:
+            servers = get_all_offline_cloud_servers()
+            if not servers:
+                QMessageBox.information(
+                    self, "Offline Service",
+                    "No Offline Cloud Server folder is configured yet.\n"
+                    "Add one in Settings ▸ Offline Cloud Server, then you can manage "
+                    "the patients stored inside it.")
+                return
+            from ..offline_cloud_manager_dialog import OfflineCloudManagerDialog
+            dlg = OfflineCloudManagerDialog(
+                self, servers=servers, actor=self._current_actor_identity())
+            dlg.exec()
+        except Exception:
+            traceback.print_exc()
+            QMessageBox.critical(self, "Offline Service",
+                                 "Could not open the offline-package manager.")
+
     @staticmethod
     def _server_identity(server: dict | None) -> dict | None:
         if not isinstance(server, dict):

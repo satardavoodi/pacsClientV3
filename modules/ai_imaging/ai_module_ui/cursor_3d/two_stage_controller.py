@@ -67,13 +67,13 @@ ENABLED = os.getenv("AIPACS_CURSOR3D_TWO_STAGE", "1").strip().lower() not in ("0
 # view-pair on the GUI thread (bounded: 2 decodes per finding at match-finalize, not
 # per-candidate, and cached on the entry). KNOWN caveat kept as a tracked follow-up:
 # move that read off-thread. `=0` restores the geometry-only legacy behaviour.
-APPEARANCE_ENABLED = os.getenv("AIPACS_CURSOR3D_APPEARANCE", "1").strip().lower() not in ("0", "false", "no", "off")
+APPEARANCE_ENABLED = os.getenv("AIPACS_CURSOR3D_APPEARANCE", "0").strip().lower() in ("1", "true", "yes", "on")  # reverted to OFF 2026-07-20 (3D-Cursor close regression; re-enable to isolate)
 
 # Dense three-factor visual heatmap overlay on the target viewport. **Default ON
 # (promoted 2026-07-15 per directive.)** Render is wrapped (`_maybe_draw_heatmap`
 # logs + never raises), so a VTK issue degrades to "no overlay", never a crash; the
 # candidate scoring already uses the factors regardless. `=0` = no overlay (legacy).
-HEATMAP_ENABLED = os.getenv("AIPACS_CURSOR3D_HEATMAP", "1").strip().lower() not in ("0", "false", "no", "off")
+HEATMAP_ENABLED = os.getenv("AIPACS_CURSOR3D_HEATMAP", "1").strip().lower() not in ("0", "false", "no", "off")  # RE-ENABLED default-ON 2026-07-21 after hardening the draw (drop non-finite cells + grid cap for off-image regions). `=0` = kill switch if it still closes the app.
 
 # Persist every lesion's full descriptor (geometry + the appearance "pattern
 # matrix") to the lesion feature store, so the SAME measurements can later drive
@@ -82,6 +82,12 @@ HEATMAP_ENABLED = os.getenv("AIPACS_CURSOR3D_HEATMAP", "1").strip().lower() not 
 # the APPEARANCE pattern is stored only when the pixel arrays were already decoded
 # for factor 3 (no extra GUI-thread read). `=0` disables the store entirely.
 FEATURE_STORE_ENABLED = os.getenv("AIPACS_CURSOR3D_FEATURE_STORE", "1").strip().lower() not in ("0", "false", "no", "off")
+
+# UNIFY: process a PAIRED lesion (the AI already found it in BOTH views) through the
+# SAME two-stage path (GM band + heatmap) instead of deferring it to the legacy
+# correlation arc + "PAIRED" popup — so the 3D-cursor display is consistent whether or
+# not the lesion was already paired. Default ON. `=0` = legacy arc for paired lesions.
+UNIFY_PAIRED_ENABLED = os.getenv("AIPACS_CURSOR3D_UNIFY_PAIRED", "1").strip().lower() not in ("0", "false", "no", "off")
 
 # Multiple-findings UX (2026-07-15): declutter when >1 corresponding lesion is
 # found — draw only the SELECTED finding's full overlay (box + region + heatmap),
@@ -343,8 +349,14 @@ class TwoStageCursorController(QObject):
 
         for laterality, lat_result in result.lateralities.items():
             for m in lat_result.cursor_matches:
-                if m.match_type == "paired":
-                    continue  # already seen in both views — nothing to search for
+                # A PAIRED lesion was found by the AI in BOTH views. Legacy behaviour
+                # skipped it here (nothing to SEARCH cross-view) so it fell back to the
+                # correlation arc + popup. UNIFY: process it through the SAME two-stage
+                # path so it gets the GM band + heatmap like every other lesion — the
+                # region is built in the target view and the shared second-pass confirms
+                # the already-detected lesion (match → heatmap on it). `=0` = legacy arc.
+                if m.match_type == "paired" and not UNIFY_PAIRED_ENABLED:
+                    continue
 
                 src_key = f"{laterality}_{m.source_view}"
                 tgt_key = f"{laterality}_{m.target_view}"
@@ -393,6 +405,14 @@ class TwoStageCursorController(QObject):
                     "match": None,
                     "pnl": _pnl_log,          # PNL depth-normalisation diagnostic
                     "_appearance_fn": None,   # cached lazily (factor 3)
+                    # PAIRED lesion: the AI already located it in the TARGET view, so its
+                    # known box anchors the heatmap core at the EXACT vertical position —
+                    # better than the weak geometric height prior. None for unpaired.
+                    "paired_target_box_px": (
+                        list(m.target_lesion.to_pixel_box())
+                        if (m.match_type == "paired" and m.target_lesion is not None)
+                        else None
+                    ),
                 })
 
                 vtk_w = getattr(tgt_view, "vtk_widget", None)
@@ -874,17 +894,27 @@ class TwoStageCursorController(QObject):
             vtk_w = getattr(entry["target_view_data"], "vtk_widget", None)
             if vtk_w is None:
                 return
-            # When the corresponding lesion was FOUND, pull the hot core onto it —
-            # the geometric height along the band is only a weak prior, so the found
-            # detection owns the bright core (fixes "core sits a bit low" on the MLO).
+            # Pull the hot core onto the KNOWN lesion — the geometric height along the
+            # band is only a weak prior. Precedence:
+            #   1. a PAIRED lesion's own AI-located target box (exact vertical position);
+            #   2. the second-pass matched candidate;
+            #   3. else no emphasis → the core stays at the geometric nominal.
             emphasis = None
-            best = getattr(match, "best", None) if match is not None else None
-            if best is not None:
+            _pt = entry.get("paired_target_box_px")
+            if _pt is not None:
                 try:
-                    b = [float(v) for v in best.candidate.box_px]
+                    b = [float(v) for v in _pt]
                     emphasis = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
                 except Exception:
                     emphasis = None
+            if emphasis is None:
+                best = getattr(match, "best", None) if match is not None else None
+                if best is not None:
+                    try:
+                        b = [float(v) for v in best.candidate.box_px]
+                        emphasis = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
+                    except Exception:
+                        emphasis = None
             field = _hm.build_heatmap_field(entry["region"], emphasis_px=emphasis)
             if field is not None:
                 region_render.draw_heatmap_field(vtk_w, field)

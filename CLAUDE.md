@@ -295,6 +295,115 @@ overlay painted the SAME name on BOTH patients' images. The overlay now reads id
   scenario with real synthetic DICOM). NEEDS live source-build verify (drag a series → overlay
   matches THAT series' DICOM; the same-Patient-ID case shows each image's own name).
 
+### Medical Report Editor — "Previous Exams" header (cross-PatientID reports, 2026-07-19)
+The report editor header (`report_editor_dialog.py`) gained a **hidden-until-found** "Previous
+Exams" indicator. On open it looks up the patient's cross-PatientID reception history off the GUI
+thread; if the patient has OLDER Patient IDs the indicator reveals with a count and a dropdown of
+those prior IDs. Selecting one shows THAT record's reports **read-only** — the active report is
+never touched. Before editing this, know:
+- **Source of previous IDs = the RECEPTION SERVER, not PACS/local DB.** Reuses the existing sync
+  socket path `socket_patient_service.get_reception_history_sync` (`GetPatientReceptionHistory`, the
+  National-ID cross-PatientID linkage) + `get_patient_status_sync`, fed into the SAME pure
+  `previous_exams.build_previous_exam_set` the viewer's Previous-Exam button uses. New pure helper
+  `previous_exams.distinct_previous_patient_ids(exam_set, exclude_ids=…)` groups the result by prior
+  Patient ID (newest-first, current excluded). Mirrors the `_pw_previous_exams` daemon-thread +
+  `QMetaObject.invokeMethod` pattern.
+- **Previous REPORTS = live reception server, local fallback.** `_previous_reports_worker` (daemon
+  thread) fetches the prior record via `GET {reception_base}/api/pacs/patients/{prev_id}` (the same
+  REST endpoint `ReceptionDataFetchWorker` uses for the current patient), normalizes it with the pure
+  `report_history.normalize_reception_record_reports` (record → viewer report-dict shape), and falls
+  back to the local `ai_get_reception_reports(prev_id)` when the server has nothing. Displayed via a
+  NEW additive `ReceptionReportsViewer.show_provided_reports(reports, source_label)` that renders a
+  provided list with ZERO DB read/write (read-only).
+  - **ENVELOPE GOTCHA (live-fixed 2026-07-21, patient 47633):** `GET /api/pacs/patients/{id}` returns
+    `{"success": true, "data": {...}}` — the report is at `data.report.content` (and `.findings`),
+    NOT at the top level, and the reporting physician is `data.report.radiologist` (an OBJECT
+    `{"name": …}`, often Persian). `normalize_reception_record_reports` MUST unwrap the `data`
+    envelope (handles `data` being a single-element list) and coerce the physician object → name.
+    The first cut read `report` off the top level → "No reports were found" even though the report
+    existed. Verified against the live server for both the current (51353) and a previous (47633)
+    id. Guard: `test_unwraps_success_data_envelope`.
+  - **DISPLAY GOTCHA (live-fixed 2026-07-21):** `ReceptionReportsViewer` is a **`QWidget`, not a
+    `QDialog`** — it has no `.exec()`. `_on_previous_reports_ready` must host it inside a modal
+    `QDialog` wrapper (`QDialog(self)` → `QVBoxLayout` → add viewer → `dlg.exec()`), NOT call
+    `viewer.exec()` (which raised `AttributeError` → "Could not display the previous reports"). The
+    pre-existing "Reception Reports" button (`_show_reception_reports_viewer`) has the SAME latent
+    `viewer.exec()` bug — untouched here, but it means that button likely never worked either.
+    `show_provided_reports` also disables the viewer's mutating buttons (mark-read/archive/delete)
+    since server-sourced reports aren't local DB rows. Guards:
+    `test_previous_reports_shown_read_only_via_provided_reports`,
+    `test_provided_reports_view_disables_mutating_actions`.
+  - **EMPTY-PREVIEW + `{'_id': '1'}` LABEL GOTCHA (live-fixed 2026-07-21):** the server sends
+    `modality` as an OBJECT (`{"_id":"1","Modality":"CT","FullName":"CT Scan","PerFullName":"سی تی
+    اسکن"}`) — a bare `str()` leaked `{'_id': '1'...}` into the list label. `report_history.
+    _modality_text` coerces it to the short code. And the preview was empty because the single
+    report was never auto-selected: `show_provided_reports` now `setCurrentRow(0)` +
+    `_on_report_clicked(first)` to render immediately — BEFORE re-disabling the mutating buttons
+    (which `_on_report_clicked` re-enables). Guards: `test_modality_object_is_coerced_to_a_label`,
+    `test_provided_reports_view_auto_selects_first_report`. Live-verified: 47633 → 2359-char report,
+    `sender_info: Modality: CT`.
+  - **THEME-INDEPENDENCE + BIDI (2026-07-21):** `_display_report` used to render on a hard-coded dark
+    `#2b2b2b` canvas. Reception reports are authored on WHITE (dark-navy `rgb(0,32,96)` /
+    `rgb(34,34,85)` text), so on the dark preview that text was nearly invisible (the "faint gold"
+    lines) while un-coloured lines inherited the light default and looked fine — a confusing split.
+    Now the preview renders on a FIXED white paper with dark default text (`#ffffff` / `#1a1a1a`),
+    the info card is a light chip, and the `QTextBrowser` chrome is pinned white too — so it reads
+    identically regardless of the Windows/app light-or-dark theme and the author's colours keep
+    contrast. Direction: `unicode-bidi: plaintext` on body + every block so each paragraph flows by
+    its own first strong char (a Persian report reads RTL/right-aligned, an embedded Latin line
+    LTR), on top of the report's own saved `direction:rtl`. This is the SHARED preview, so the
+    existing "Reception Reports" button benefits too. Verified: 47633 uses only dark colours (no
+    light text that would vanish on white). Guard:
+    `test_report_preview_is_theme_independent_and_bidi_correct`.
+- **THE INVARIANT: the active report is never mutated.** None of the previous-exams methods write
+  `self.text_edit` / `self.report` / `self.original_content` / emit `report_saved` (guard test
+  `test_previous_exams_paths_never_touch_the_active_report`). Viewing is reference-only.
+- Flag `AIPACS_REPORT_EDITOR_PREVIOUS_EXAMS` (default **ON**, `=0` = byte-identical legacy header, no
+  lookup). All four files (`previous_exams.py`, new `report_history.py`, `reception_reports_viewer.py`,
+  `report_editor_dialog.py`) are **NOT plugin-mirrored**. Guard:
+  `tests/code/ui_services/test_report_editor_previous_exams.py` (21). ui_services 580 green. NEEDS
+  live source-build verify (open a report for a patient with prior receptions under other IDs →
+  indicator appears → select one → its reports show read-only, active report unchanged). NOTE: the
+  `report_editor_dialog` module cannot be imported standalone in a test due to a PRE-EXISTING
+  `PatientWidget` circular import in the `ai_imaging` package chain — the wiring is source-pinned.
+
+### Offline Service (Offline Cloud) — patient management: delete (P1, 2026-07-21)
+The Offline Service ("Offline Sync" button; engine = `PacsClient/utils/offline_cloud.py`, a single
+~1900-line file; `modules/offline_cloud_server/service.py` is a `from …offline_cloud import *`
+facade) was export-only. P1 adds **patient-level DELETE** of patients already in a package. Full
+review + phased design: `docs/plans/architecture/OFFLINE_SERVICE_MANAGEMENT_REVIEW_2026-07-21.md`.
+Before editing the delete path, know:
+- **Package layout** (`package_paths`): `manifest.json` + `package.db` (SQLite mirror of the local
+  `dicom.db` for 10 tables) + `patients/{dicom,attachments,thumbnails}/<study_uid>/` + a standards
+  `DICOM/<PatientName>/<StudyUID>/PT/ST/SE/IM + DICOMDIR` interchange tree (shared builder
+  `modules/dicom_media/dicomdir.py`, pydicom `FileSet`). **study_uid is the identity**; patient by
+  `patient_id`.
+- **New primitives** (in `offline_cloud.py`): `list_offline_cloud_patients(server)` (per-patient
+  summary from `package.db`), `remove_studies_from_offline_cloud(server, study_uids)` (the building
+  block), `remove_patients_from_offline_cloud(server, patient_ids)` (patient-level = delete ALL that
+  patient's studies). They REUSE the existing primitives (`_delete_rows_for_study`,
+  `build_offline_cloud_dicomdir`, `rebuild_offline_cloud_manifest`, `validate_offline_cloud_package`)
+  — do NOT fork them.
+- **THE DELETE CONTRACT (recoverable + atomic):** snapshot `package.db` + `manifest.json` and **MOVE
+  (not unlink)** the removed study folders into `<root>/.trash/<ts>/` FIRST; delete DB rows; **prune
+  orphan patient rows** (patient with no remaining studies); rebuild DICOMDIR (force) — **but an
+  empty package is VALID, not a failure**, so when 0 DICOM files remain, `_clear_previous_dicomdir`
+  instead of building (`build_offline_cloud_dicomdir` returns `ok=False` on an empty payload);
+  rebuild manifest; `validate_offline_cloud_package`; **if not `is_complete` → ROLL BACK from the
+  snapshot** (restore db + manifest + moved folders). Never regenerate a UID (delete only removes).
+- **UI:** the "Offline Sync" button now offers two workflows — "Add Selected Patient to Offline
+  Service" (existing export, only when the selection is downloaded) and "Edit or Delete Existing
+  Offline Patients" (reachable with NO selection → `offlineCloudManageRequested` →
+  `OfflineCloudManagerDialog`: multi-select patient list + off-thread delete + post-op validation
+  report). The dialog delegates ALL mutation to the engine primitives (no sqlite/DICOMDIR/shutil in
+  the dialog).
+- **STAGED (not built): P2 reconcile** (files→DB orphan scan — validation today only checks DB→files),
+  **P3 edit** (reuse `dicom_demographics_edit` against the package's folders — UIDs preserved).
+  `offline_cloud.py` is NOT plugin-mirrored. Guard:
+  `tests/code/offline_cloud_server/test_offline_cloud_manage.py` (10, real package + real DICOMDIR;
+  delete-one-keep-rest, multi-patient, single-study-keeps-sibling, no-orphan, rollback-on-failure).
+  25 green across offline_cloud_server + dicom_media. NEEDS live source-build verify.
+
 ### Demographic DICOM-tag editor — right-click ▸ "Edit patient / study info…" (2026-07-18)
 The main-page patient context menu gained an **Edit** action beside "Refresh / Sync from server".
 It corrects six demographic tags — PatientName, PatientID, InstitutionName, StudyDate, StudyTime,
@@ -2176,6 +2285,39 @@ abandoning the drop, via two compounding bugs:
   `tests/code/viewer/test_drop_never_abandoned_to_previous_image.py` (19). NEEDS live verify: drag a
   previous-exam series the instant its study starts downloading → the loading GIF must persist until
   the images appear, with **no** intermediate revert to the previous image.
+
+### A PREVIOUS-EXAM series must grow after a mid-download drop WITHOUT a layout switch (OPT-39, 51234/51249, 2026-07-20)
+The recurring "the previous study can't grow automatically at first, but after viewing other layouts
+it shows all the images" report. A cross-PatientID previous exam (offset key `2000001`/`1000001`)
+dragged mid-download paints `open_series slices=1`; the download completes to disk=3 but the series
+sticks at 1 until the user changes viewport LAYOUT (a fresh `change_series_on_viewer` re-reads the
+now-complete disk). Before editing `_activate_progressive_mode_on_viewers` /
+`_apply_progressive_to_target_viewer` / `_ensure_dl_watchdog` / `_maybe_grow_displayed_to_disk`
+(`_vc_progressive.py`, NOT plugin-mirrored), know:
+- **The A1 grow (`_maybe_grow_displayed_to_disk`) is offset-key-correct and is NOT the bug.**
+  `_viewport_displayed_series_number` returns the STRING offset key `'2000001'`; `_server_series_info`
+  is STRING-keyed (`_rebuild_multistudy_series_index` builds `key = str(orig_int + offset)`), so
+  `_resolve_canonical_series_identity('2000001')` HITS → the previous exam's OWN `study_uid` + orig
+  series, and A1 scandirs THAT folder (never `<primary>/2000001`) and smooth-grows via `bridge.grow`.
+  (48695 live-verified A1 growing prev-exam keys.) **Do NOT "fix" the resolver by int-keying — the
+  string key is load-bearing.**
+- **ROOT: A1 only runs inside the `_dl_watchdog` timer, which was armed ONLY from the awaiting/spinner
+  path** (`_begin_download_wait` / `_update_download_spinner_text`) and **self-stops** when nothing is
+  awaiting AND nothing is behind. A drop that awaited, showed its first image (the drop path
+  `_apply_progressive_to_target_viewer` CLEARS `_awaiting_series_number`), then hit a stop-check tick
+  where `disk == displayed` and no `.part` was momentarily present → the watchdog stopped; the
+  later-arriving images then never triggered A1. The laptop's field build ALSO predated OPT-35 (no
+  `[SERIESREF-SHADOW]` in the session; the legacy `completion-verify` EXHAUSTED with nothing to
+  rescue it) — that build must be updated.
+- **FIX (flag `AIPACS_PROGRESSIVE_ARMS_WATCHDOG`, default on; `=0` = awaiting-only arming = legacy):**
+  both progressive-activation paths now `_ensure_dl_watchdog()` when the series is known-incomplete
+  (`total > avail`), so A1 is guaranteed to sweep a progressively-loaded-but-behind viewport
+  regardless of await timing. `_ensure_dl_watchdog` is idempotent (restarts only if not active) and
+  the tick self-stops once caught up, so it costs nothing on a healthy load, and A1 only ever rebuilds
+  a SETTLED behind folder (never mid-download) → no interference with the native progressive grow.
+- Guard: `tests/code/viewer/test_grow_previous_exam_offset_key.py` (behavioral A1-grows-offset-key +
+  wiring pins). NEEDS live source-build verify on 51234/51249 (drag a previous exam mid-download → it
+  grows to all images with no layout switch; `[GROW-DISPLAYED] … displayed` climbs).
 
 ### SERIES IDENTITY IS RESOLVED ONCE — `SeriesRef` is the ONE authority (OPT-35, 2026-07-14)
 48912 (disk path) + 49836 (tab path) + 50238 (DB pk) were the SAME defect in three dimensions:

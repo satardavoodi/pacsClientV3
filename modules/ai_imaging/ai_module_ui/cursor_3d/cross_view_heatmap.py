@@ -65,6 +65,11 @@ W_APPEARANCE = float(os.getenv("AIPACS_CURSOR3D_W_APPEARANCE", "0.30"))
 # geometric nominal — should own the bright core. Wide enough to keep the band
 # visible as the uncertainty; `=0` disables the pull (core stays at the nominal).
 _EMPHASIS_SIGMA_MM = float(os.getenv("AIPACS_CURSOR3D_EMPHASIS_SIGMA_MM", "28.0"))
+# The emphasis Gaussian brightens the core but must NOT drive the surrounding band to
+# ~0 (that leaves only a tiny patch above the draw threshold — "partially coloured").
+# Keep a floor so cells far from the core retain this fraction of their combined
+# score, so the WHOLE band stays visible as a gradient. 1.0 = no emphasis dimming.
+_EMPHASIS_FLOOR = max(0.0, min(1.0, float(os.getenv("AIPACS_CURSOR3D_EMPHASIS_FLOOR", "0.5"))))
 
 
 # ─── Factor 1 — geometric ────────────────────────────────────────────────────
@@ -252,6 +257,17 @@ def build_heatmap_field(
     if x2 - x1 < 2 or y2 - y1 < 2:
         return None
 
+    # Portability guard: a region pushed toward/past the image edge (by the PNL /
+    # DICOM-angle geometry) can produce a very large bbox. Bound the grid to
+    # <= _MAX_GRID cells per axis by GROWING the step, so the field array can never
+    # allocate gigantically (OOM native crash) and the downstream draw can never push
+    # millions of quads at the GPU. Normal in-image regions are unaffected (step stays
+    # at the requested value).
+    _MAX_GRID = 200
+    step_px = max(int(step_px),
+                  (x2 - x1) // _MAX_GRID + 1,
+                  (y2 - y1) // _MAX_GRID + 1)
+
     xs = list(range(x1, x2, max(1, step_px)))
     ys = list(range(y1, y2, max(1, step_px)))
     combined = np.zeros((len(ys), len(xs)), dtype="float32")
@@ -289,7 +305,8 @@ def build_heatmap_field(
             if ex_mm is not None:
                 _dx = cx * sx_sp - ex_mm
                 _dy = cy * sy_sp - ey_mm
-                c *= math.exp(-(_dx * _dx + _dy * _dy) / _two_sig2)
+                _emph = math.exp(-(_dx * _dx + _dy * _dy) / _two_sig2)
+                c *= (_EMPHASIS_FLOOR + (1.0 - _EMPHASIS_FLOOR) * _emph)
             combined[iy, ix] = c
 
     peak = None

@@ -5,7 +5,9 @@ A professional dialog for viewing and editing medical report HTML content
 with full RTL support, rich text editing capabilities, and maximize/minimize.
 """
 
+import os
 import re
+import threading
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
@@ -13,7 +15,7 @@ from PySide6.QtWidgets import (
     QFrame, QSplitter, QSizePolicy, QColorDialog, QFontComboBox,
     QSpinBox, QToolBar, QWidgetAction, QMenu, QInputDialog
 )
-from PySide6.QtCore import Qt, Signal, QTimer, QSize
+from PySide6.QtCore import Qt, Signal, QTimer, QSize, QMetaObject, Slot
 from PySide6.QtGui import (
     QFont, QTextCharFormat, QTextCursor, QColor, 
     QTextListFormat, QTextBlockFormat, QTextFrameFormat,
@@ -68,6 +70,19 @@ pre, code {
     text-align: left;
 }
 """
+
+
+# Previous-Exams-in-editor (2026-07-19). When ON (the DEFAULT), the editor
+# header shows a "Previous Exams" indicator once the reception server confirms
+# the patient has OLDER Patient IDs (cross-PatientID history via
+# GetPatientReceptionHistory). Selecting a previous Patient ID loads THAT
+# record's reports READ-ONLY (live from the reception server, falling back to
+# the local reception-reports DB) in the existing viewer — the active report is
+# never touched. Kill switch AIPACS_REPORT_EDITOR_PREVIOUS_EXAMS=0 restores the
+# byte-identical legacy header (no indicator, no history lookup).
+_REPORT_EDITOR_PREVIOUS_EXAMS = str(
+    os.getenv('AIPACS_REPORT_EDITOR_PREVIOUS_EXAMS', '1') or '1'
+).strip() != '0'
 
 
 class ReportEditorDialog(QDialog):
@@ -141,12 +156,261 @@ class ReportEditorDialog(QDialog):
             "archived": "آرشیو شده",
         }
         
+        # Previous-Exams state (populated off-thread after open).
+        self._previous_patient_ids = []      # list[PreviousPatientId]
+        self._pending_previous_reports = None  # (reports_or_None, prev_id) handoff
+
         logger.info("[REPORT_EDITOR] Setting up UI components")
         self._setup_ui()
         self._setup_shortcuts()
         self._setup_connections()
         self._apply_initial_content()
+
+        # Kick off the cross-PatientID history lookup in the background so the
+        # header can reveal the "Previous Exams" indicator once the reception
+        # server confirms older Patient IDs exist. Never blocks the UI; failures
+        # leave the indicator hidden (== legacy).
+        if _REPORT_EDITOR_PREVIOUS_EXAMS:
+            try:
+                self._start_previous_exams_lookup()
+            except Exception:
+                logger.debug("[REPORT_EDITOR] previous-exams lookup not started", exc_info=True)
+
         logger.info("[REPORT_EDITOR] Initialization complete")
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # PREVIOUS EXAMS (cross-PatientID history) — header indicator + reports
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _previous_exams_btn_style(self) -> str:
+        return """
+            QToolButton {
+                background: rgba(255, 200, 80, 0.22);
+                color: white;
+                border: 1px solid rgba(255, 210, 120, 0.7);
+                border-radius: 6px;
+                padding: 5px 12px;
+                margin-right: 6px;
+                font-weight: bold;
+            }
+            QToolButton:hover { background: rgba(255, 200, 80, 0.38); }
+            QToolButton::menu-indicator { image: none; width: 0; }
+        """
+
+    def _resolve_history_query_id(self) -> str:
+        """The identifier used to query cross-PatientID reception history.
+
+        The server treats a PatientID as an alias for the reception id and
+        resolves the same real person by National ID server-side, so the
+        current reception/patient id is the right input."""
+        pd = self.patient_data or {}
+        patient = pd.get("patient", {}) if isinstance(pd.get("patient"), dict) else {}
+        for value in (
+            pd.get("receptionId"), pd.get("ReceptionID"),
+            pd.get("patientId"), pd.get("patient_id"),
+            pd.get("_id"), patient.get("_id"), patient.get("NationalID"),
+        ):
+            v = str(value or "").strip()
+            if v:
+                return v
+        return ""
+
+    def _current_id_variants(self) -> set:
+        """All identifiers that denote the CURRENT record, so the previous-ID
+        list can exclude them (we only want OTHER, older Patient IDs)."""
+        pd = self.patient_data or {}
+        patient = pd.get("patient", {}) if isinstance(pd.get("patient"), dict) else {}
+        out = set()
+        for value in (
+            pd.get("receptionId"), pd.get("ReceptionID"),
+            pd.get("patientId"), pd.get("patient_id"),
+            pd.get("_id"), patient.get("_id"),
+        ):
+            v = str(value or "").strip()
+            if v:
+                out.add(v)
+        return out
+
+    def _start_previous_exams_lookup(self):
+        query_id = self._resolve_history_query_id()
+        if not query_id:
+            return
+        study_uid = str(
+            (self.patient_data or {}).get("studyUID")
+            or (self.patient_data or {}).get("study_uid") or ""
+        ).strip()
+        threading.Thread(
+            target=self._previous_exams_worker,
+            args=(query_id, study_uid),
+            daemon=True,
+        ).start()
+
+    def _previous_exams_worker(self, query_id: str, study_uid: str):
+        """Daemon thread: fetch reception history + patient status, build the
+        distinct previous-Patient-ID list, marshal back to the GUI thread."""
+        result = []
+        try:
+            from modules.network.socket_patient_service import get_socket_patient_service
+            from PacsClient.utils.previous_exams import (
+                build_previous_exam_set, distinct_previous_patient_ids,
+            )
+            svc = get_socket_patient_service()
+            reception_data = None
+            status_data = None
+            try:
+                reception_data = svc.get_reception_history_sync(patient_id=query_id)
+            except Exception:
+                reception_data = None
+            try:
+                status_data = svc.get_patient_status_sync(query_id)
+            except Exception:
+                status_data = None
+
+            exam_set = build_previous_exam_set(
+                current_patient_id=query_id,
+                current_study_uid=study_uid,
+                reception_data=reception_data,
+                status_data=status_data,
+            )
+            result = distinct_previous_patient_ids(
+                exam_set, exclude_ids=self._current_id_variants()
+            )
+        except Exception:
+            import logging
+            logging.getLogger(__name__).debug(
+                "[REPORT_EDITOR] previous-exams worker failed", exc_info=True)
+            result = []
+
+        self._previous_patient_ids = result
+        try:
+            QMetaObject.invokeMethod(self, "_on_previous_exams_ready", Qt.ConnectionType.QueuedConnection)
+        except Exception:
+            pass
+
+    @Slot()
+    def _on_previous_exams_ready(self):
+        """GUI thread: reveal + populate the indicator if previous IDs exist."""
+        prev_ids = self._previous_patient_ids or []
+        btn = getattr(self, "btn_previous_exams", None)
+        if btn is None:
+            return
+        if not prev_ids:
+            btn.setVisible(False)
+            return
+
+        menu = self._previous_exams_menu
+        menu.clear()
+        header = menu.addAction("Previous Patient IDs")
+        header.setEnabled(False)
+        menu.addSeparator()
+        for pid in prev_ids:
+            bits = [pid.patient_id]
+            if pid.display_date:
+                bits.append(pid.display_date)
+            if pid.modality_label:
+                bits.append(pid.modality_label)
+            if pid.exam_count > 1:
+                bits.append(f"{pid.exam_count} exams")
+            act = menu.addAction("   ".join(bits))
+            act.triggered.connect(lambda _checked=False, p=pid: self._open_previous_reports(p))
+
+        btn.setText(f" Previous Exams ({len(prev_ids)})")
+        btn.setVisible(True)
+
+    def _open_previous_reports(self, prev):
+        """Fetch the selected previous ID's reports off-thread, then show them
+        read-only. `prev` is a PreviousPatientId."""
+        prev_id = str(getattr(prev, "patient_id", "") or "").strip()
+        if not prev_id:
+            return
+        # Give immediate feedback while the fetch runs.
+        try:
+            self.btn_previous_exams.setEnabled(False)
+        except Exception:
+            pass
+        threading.Thread(
+            target=self._previous_reports_worker,
+            args=(prev_id,),
+            daemon=True,
+        ).start()
+
+    def _previous_reports_worker(self, prev_id: str):
+        """Daemon thread: fetch the previous record LIVE from the reception
+        server (REST), normalize; fall back to the local reception-reports DB."""
+        reports = None
+        try:
+            import requests
+            from modules.network.reception_api_config import get_reception_api_base_url
+            from PacsClient.utils.report_history import normalize_reception_record_reports
+            base = (get_reception_api_base_url() or "").rstrip("/")
+            if base:
+                try:
+                    resp = requests.get(f"{base}/api/pacs/patients/{prev_id}", timeout=30)
+                    if resp.ok:
+                        record = resp.json()
+                        if isinstance(record, list):
+                            record = record[0] if record else {}
+                        reports = normalize_reception_record_reports(record, patient_id=prev_id)
+                except Exception:
+                    reports = None
+        except Exception:
+            reports = None
+
+        # Fallback: locally-persisted reception reports for this id.
+        if not reports:
+            try:
+                from PacsClient.utils.database import ai_get_reception_reports
+                local = ai_get_reception_reports(patient_id=str(prev_id), status=None)
+                reports = list(local or [])
+            except Exception:
+                reports = reports or []
+
+        self._pending_previous_reports = (reports, prev_id)
+        try:
+            QMetaObject.invokeMethod(self, "_on_previous_reports_ready", Qt.ConnectionType.QueuedConnection)
+        except Exception:
+            pass
+
+    @Slot()
+    def _on_previous_reports_ready(self):
+        """GUI thread: display the fetched previous reports read-only."""
+        try:
+            self.btn_previous_exams.setEnabled(True)
+        except Exception:
+            pass
+        payload = self._pending_previous_reports
+        self._pending_previous_reports = None
+        if not payload:
+            return
+        reports, prev_id = payload
+        if not reports:
+            QMessageBox.information(
+                self, "Previous Reports",
+                f"No reports were found for previous Patient ID {prev_id}.",
+            )
+            return
+        try:
+            # ReceptionReportsViewer is a QWidget (NOT a QDialog), so it has no
+            # .exec(). Host it inside a modal QDialog wrapper so it shows as a
+            # proper popup regardless of its base class.
+            dlg = QDialog(self)
+            dlg.setWindowTitle(f"Previous Reports — Patient ID {prev_id} (read-only)")
+            dlg.resize(1040, 720)
+            lay = QVBoxLayout(dlg)
+            lay.setContentsMargins(0, 0, 0, 0)
+            viewer = ReceptionReportsViewer(parent=dlg)
+            viewer.show_provided_reports(reports, source_label=prev_id)
+            lay.addWidget(viewer)
+            dlg.setModal(True)
+            dlg.exec()
+        except Exception:
+            import logging
+            logging.getLogger(__name__).error(
+                "[REPORT_EDITOR] failed to show previous reports", exc_info=True)
+            QMessageBox.warning(
+                self, "Previous Reports",
+                "Could not display the previous reports.",
+            )
     
     def _setup_ui(self):
         """Set up the dialog UI."""
@@ -215,7 +479,28 @@ class ReportEditorDialog(QDialog):
             }}
         """)
         layout.addWidget(patient_info)
-        
+
+        # Previous-Exams indicator (hidden until the reception server confirms
+        # the patient has older Patient IDs). Selecting one shows that record's
+        # reports read-only; the active report is untouched. See
+        # _start_previous_exams_lookup / _on_previous_exams_ready.
+        self.btn_previous_exams = QToolButton()
+        self.btn_previous_exams.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.btn_previous_exams.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.btn_previous_exams.setIcon(qta.icon('fa5s.history', color='white'))
+        self.btn_previous_exams.setText(" Previous Exams")
+        self.btn_previous_exams.setToolTip(
+            "This patient has earlier examinations under other Patient IDs — "
+            "select one to view its reports (read-only)"
+        )
+        self.btn_previous_exams.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_previous_exams.setStyleSheet(self._previous_exams_btn_style())
+        self._previous_exams_menu = QMenu(self.btn_previous_exams)
+        self.btn_previous_exams.setMenu(self._previous_exams_menu)
+        self.btn_previous_exams.setVisible(False)  # revealed only when found
+        layout.addWidget(self.btn_previous_exams)
+        layout.addSpacing(10)
+
         # Status badge
         status = self.report.get("status", "pending")
         status_texts = {"completed": "Completed", "in_progress": "In Progress", "pending": "Pending"}

@@ -50,6 +50,14 @@ def _make_bundled_config(root: Path) -> Path:
     )
     (src / "identity" / ".gitignore").write_text("secrets/\n", encoding="utf-8")
     (src / "identity" / "secrets" / "token.json").write_text("{}", encoding="utf-8")
+    # Agent Gateway (mobile / MCP) family — added to CONFIG_FAMILY_VERSIONS 2026-07-17.
+    # Mirror the real bundle so the migration seeds it and records its version
+    # (otherwise the idempotency test KeyErrors on an unrecorded family).
+    (src / "agent_gateway").mkdir(parents=True)
+    (src / "agent_gateway" / "agent_gateway.json").write_text(
+        json.dumps({"enabled": False, "transport": "relay", "e2e_encryption": True}),
+        encoding="utf-8",
+    )
     (src / "servers.json").write_text(json.dumps({"host": "1.2.3.4"}), encoding="utf-8")
     return src
 

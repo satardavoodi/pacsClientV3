@@ -27,7 +27,31 @@ def _app():
     app = QApplication.instance() or QApplication([])
     # fresh store per test
     store_mod._STORE = None
-    yield app
+    # Drain every UploadManager built during the test. Each manager starts a real
+    # UploadWorker QThread; a running QThread destroyed at teardown/process-exit makes
+    # Qt __fastfail (native exit 0xC0000409) — this was the flaky_parallel native crash,
+    # and a worker outliving the test also contaminated the next one via the shared
+    # store_mod._STORE global. shutdown() cooperatively cancels the active upload and
+    # JOINS the worker (synchronous wait; no event-pump that could re-fire notifications).
+    _created: list = []
+    _orig_init = UploadManager.__init__
+
+    def _tracking_init(self, *args, **kwargs):
+        _orig_init(self, *args, **kwargs)
+        _created.append(self)
+
+    UploadManager.__init__ = _tracking_init
+    try:
+        yield app
+    finally:
+        UploadManager.__init__ = _orig_init
+        for _mgr in _created:
+            try:
+                _mgr.shutdown()
+            except Exception:
+                pass
+        store_mod._STORE = None
+    return
 
 
 def _job(jid, transfer):

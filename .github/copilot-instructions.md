@@ -1,8 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.5.4 (2026-07-19) - Minor release: automatic incremental update system (OPT-38), Agent Gateway (mobile/MCP connectivity), demographic DICOM-tag editor, viewport overlay reads the displayed image's own DICOM identity (clinical safety), sortable Status/Report columns, "Imported On" column, and the series-sidebar overlap-on-open fix. See `docs/releases/VERSION_3.5.4_RELEASE.md`.
+**Current Stable Version:** v3.5.5 (2026-07-25) - Minor release: multi-frame DICOM geometry (OPT-42 — cine/enhanced MR-CT), Offline Service patient-delete management, Report Editor "Previous Exams" (cross-PatientID) header, previous-exam mid-download grow (OPT-39), prewarm idle-gate hardening (OPT-41), manual-download study-discovery fix (OPT-40), a −670-line download-client cleanup, and the first test-suite KPI baseline. See `docs/releases/VERSION_3.5.5_RELEASE.md`.
 
-**Previous Stable:** v3.5.3 (2026-07-16) - Minor release: Eagle Eye Mammography 3D Cursor two-stage contralateral matching (PNL cross-view depth normalization), test-suite repair (Q0 — green by default), and the INO internal-assign false-assigned regression fix. See `docs/releases/VERSION_3.5.3_RELEASE.md`.
+**Previous Stable:** v3.5.4 (2026-07-19) - Minor release: automatic incremental update system (OPT-38), Agent Gateway (mobile/MCP connectivity), demographic DICOM-tag editor, viewport overlay reads the displayed image's own DICOM identity (clinical safety), sortable Status/Report columns, "Imported On" column. See `docs/releases/VERSION_3.5.4_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 

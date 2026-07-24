@@ -1,0 +1,79 @@
+{
+  "_meta": {
+    "generated": "2026-07-23",
+    "generator": "Cowork test-suite audit (headless lanes; live lane deferred)",
+    "app_version": "3.5.4",
+    "python": "3.13.5",
+    "pytest": "9.0.3",
+    "pyside6": "6.10.2",
+    "machine": "dralizadeh (Windows)",
+    "working_tree": "DIRTY (uncommitted OPT-39 / offline-cloud / release_gate / patient_table_sort.json changes present at run time)",
+    "note": "First populated baseline. Runtime app KPIs (startup/series-load/thumbnail-gen/download/sync-duration/RSS/CPU/UI-freeze) require the LIVE lane and were NOT captured this run; their registry thresholds are carried forward for future comparison. Test-execution + stability KPIs ARE measured."
+  },
+  "test_execution_kpis": {
+    "collected_items_code_lane": 6378,
+    "collected_after_marker_deselect": 6312,
+    "collection_time_sec": 24.6,
+    "fast_lane": {
+      "cmd": "pytest tests/code -q -n auto",
+      "passed": 6145,
+      "failed": 28,
+      "errored": 1,
+      "skipped": 58,
+      "xfailed": 79,
+      "xpassed": 7,
+      "reruns": 85,
+      "warnings": 1472,
+      "duration_sec": 565.05,
+      "exit_code": 1,
+      "xdist_worker_crashes": 4
+    },
+    "property_lane":   { "cmd": "pytest tests/code -m property", "passed": 7,  "skipped": 5, "duration_sec": 17.28, "exit_code": 0 },
+    "gui_ci_lane":     { "cmd": "pytest tests/gui/echomind_driven", "passed": 16, "duration_sec": 63.01, "exit_code": 0 },
+    "flaky_parallel_lane": { "cmd": "pytest tests/code -m flaky_parallel -p no:xdist", "result": "NATIVE_CRASH", "exit_code": -1073740791, "exit_hex": "0xC0000409", "meaning": "STATUS_STACK_BUFFER_OVERRUN" },
+    "resync_guard_targeted": { "cmd": "new resync test + download_manager sync guards", "passed": 28, "duration_sec": 0.92, "exit_code": 0 },
+    "build_lane": "SKIPPED (per request)",
+    "live_lane": "DEFERRED (needs running app + real PACS server)"
+  },
+  "stability_kpis": {
+    "xdist_worker_crashes_fast_lane": 4,
+    "native_interpreter_crash_flaky_lane": 1,
+    "decode_service_hard_failure_events": 1,
+    "orphaned_worker_processes_after_run": 2,
+    "import_order_circular_import_files": 1,
+    "new_regressions_vs_quarantine_baseline": 28,
+    "quarantined_tests_now_passing_xpass": 7
+  },
+  "slowest_tests_sec": {
+    "utils/test_structured_logging_lint::test_no_silent_drop_violations": 111.93,
+    "echomind/test_agent_background::test_ocr_probe_never_raises": 76.08,
+    "cd_burner/test_lite_viewer_core::test_discover_media_root_prefers_cli_then_probes": 61.95,
+    "viewer/test_decode_service::test_benchmark_subprocess_vs_inprocess": 44.32,
+    "viewer/test_decode_service::test_subprocess_decode_matches_inprocess": 39.53,
+    "viewer/test_decode_service::test_decode_worker_produces_valid_array": 33.92,
+    "viewer/test_disk_pixel_cache::test_benchmark_disk_cache_vs_pydicom": 31.96
+  },
+  "runtime_kpis_measured_historical": {
+    "patient_open.elapsed_ms": { "samples": [180, 175, 190], "unit": "ms", "hard": 400, "warn": 250, "verdict": "PASS", "source": "prior source-run in tests/_kpi sink (not this audit)" }
+  },
+  "runtime_kpis_not_captured_this_run": {
+    "reason": "live lane deferred",
+    "thresholds_carried_forward": {
+      "app_startup.recovery.restart_to_ready_ms": { "hard": 15000, "warn": 8000 },
+      "search.server_round_trip_ms": { "hard": 1500, "warn": 800 },
+      "viewer.first_render_ms": { "hard": 800, "warn": 500 },
+      "viewer.scroll_fps": { "hard": 30, "warn": 45, "higher_better": true },
+      "viewer.stack_rebuild_ms": { "hard": 500, "warn": 300 },
+      "thumbnail.load_ms": { "hard": 200, "warn": 100 },
+      "thumbnail.cross_patient_leak": { "hard": 0, "warn": 0 },
+      "bulk_download.first_chunk_ms": { "hard": 5000, "warn": 2500 },
+      "socket.send_request_ms.GetSeriesImages": { "hard": 3000, "warn": 1500 },
+      "proc.rss_mb_steady": { "hard": 1500, "warn": 1000 },
+      "proc.rss_mb_growth_per_hour": { "hard": 50, "warn": 20 },
+      "proc.idle_cpu_pct": { "hard": 5.0, "warn": 2.0 },
+      "ui.freeze_ms_per_session": { "hard": 1000, "warn": 200 },
+      "crash.native_fault_count": { "hard": 0, "warn": 0 },
+      "proc.zombie_after_close": { "hard": 0, "warn": 0 }
+    }
+  }
+}

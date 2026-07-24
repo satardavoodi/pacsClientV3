@@ -29,6 +29,24 @@ from PacsClient.utils.db_manager import get_patient_by_study_uid
 from modules.network.zeta_adapter import get_zeta_download_manager_widget, get_zeta_executor, get_zeta_worker_pool, start_zeta_download, create_download_task_from_study
 from pathlib import Path
 
+# ── Manual Download unification (root fix, 2026-07-23) ────────────────────────
+# The manual Download button used to enqueue ONLY the study_uid carried by each
+# checked table row. GetPatientList returns just the LATEST study UID per patient
+# (and grouped rows carry a `study_uids` list that was IGNORED and can be stale),
+# so a multi-study patient's remaining studies — typically the newest scanned-
+# document study — were silently skipped and only appeared later when the OPEN
+# path's reconcile/back-fill discovered them. With this flag ON (default) the
+# Download button routes through the SAME patient-level discovery authority the
+# open/single-click paths use (`_reconcile_patient_studies_on_click` →
+# merge_study_uids → build_download_payload), so "Download" means the patient's
+# FULL server-known study set, missing-only (DM resume scan + disk-aware dedup).
+# Kill switch: AIPACS_MANUAL_DL_PATIENT_DISCOVERY=0 restores the legacy row-only
+# behavior byte-identically.
+_MANUAL_DL_PATIENT_DISCOVERY = (
+    os.getenv('AIPACS_MANUAL_DL_PATIENT_DISCOVERY', '1') or '1'
+).strip() != '0'
+
+
 class _HPDownloadMixin:
     """Download coordination: start, complete, fail, resume, progress dialog"""
 
@@ -74,6 +92,14 @@ class _HPDownloadMixin:
                         self.tab_widget.setCurrentIndex(i)
                         break
             
+            # ── Unified patient-level discovery (root fix, 2026-07-23) ───────
+            # Route the manual Download through the SAME study-discovery
+            # authority the open path uses, so a multi-study patient's newest
+            # (e.g. scanned-document) study is never skipped. Falls through to
+            # the legacy row-only body when the flag is off or no loop runs.
+            if self._start_manual_download_with_discovery(selected_studies, zeta_manager):
+                return
+
             # ── Enhance studies with series information before adding ──
             #
             # PERF FIX (multi-patient queue slowness, 2026-05-27): the previous
@@ -188,6 +214,223 @@ class _HPDownloadMixin:
             import traceback
             traceback.print_exc()
             QMessageBox.critical(self, "Error", f"Error in download request: {str(e)}")
+
+    # ── Unified manual-download discovery (2026-07-23) ──────────────────────
+
+    def _start_manual_download_with_discovery(self, selected_studies, zeta_manager) -> bool:
+        """Schedule the authority-routed manual download. Returns True when the
+        async path was scheduled (the caller must return); False → caller runs
+        the legacy row-only path (kill switch off, no running loop, or error)."""
+        if not _MANUAL_DL_PATIENT_DISCOVERY:
+            return False
+        try:
+            loop = asyncio.get_event_loop()
+            if not loop.is_running():
+                return False
+            task = loop.create_task(
+                self._manual_download_with_patient_discovery(selected_studies, zeta_manager))
+            # Keep a reference so the task is never garbage-collected mid-flight.
+            self._manual_dl_discovery_task = task
+            return True
+        except Exception:
+            return False
+
+    async def _expand_selection_to_patient_studysets(self, selected_studies):
+        """Expand checked table rows to each patient's FULL study set.
+
+        Uses `_reconcile_patient_studies_on_click` — the same server-truth
+        discovery the single-click/select path uses (server patient row +
+        per-modality enumeration + merge_study_uids owner filter + study-info
+        persistence) — with the sync `_resolve_patient_study_uids` and the raw
+        row `study_uids` as fallbacks. Returns the original row dicts (order
+        preserved, deduped by study_uid) plus one minimal dict per newly
+        discovered study. Never raises; on total failure returns the input.
+        """
+        try:
+            from PacsClient.utils.patient_study_set import merge_study_uids
+
+            out = []
+            seen_uids = set()
+            patients = {}  # pid -> {'name': str, 'primary': str, 'row_uids': [..]}
+
+            for row in (selected_studies or []):
+                uid = str((row or {}).get('study_uid') or '').strip()
+                if uid and uid not in seen_uids:
+                    seen_uids.add(uid)
+                    out.append(row)
+                pid = str((row or {}).get('patient_id') or '').strip()
+                if not pid:
+                    continue
+                entry = patients.setdefault(
+                    pid, {'name': str((row or {}).get('patient_name') or '').strip(),
+                          'primary': uid, 'row_uids': []})
+                for extra in [uid, *(list((row or {}).get('study_uids') or []))]:
+                    extra = str(extra or '').strip()
+                    if extra and extra not in entry['row_uids']:
+                        entry['row_uids'].append(extra)
+
+            added_total = 0
+            for pid, entry in patients.items():
+                pname, primary = entry['name'], entry['primary']
+                resolved = []
+                # 1) Server-truth reconcile — the open/single-click authority.
+                try:
+                    if hasattr(self, '_reconcile_patient_studies_on_click'):
+                        resolved = await self._reconcile_patient_studies_on_click(
+                            pid, pname, primary) or []
+                except Exception as exc:
+                    print(f"[MANUAL-DL] reconcile failed for patient {pid}: {exc}")
+                    resolved = []
+                # 2) Local resolver fallback (table + right panel + cache).
+                if not resolved:
+                    try:
+                        if hasattr(self, '_resolve_patient_study_uids'):
+                            resolved = self._resolve_patient_study_uids(pid, primary) or []
+                    except Exception:
+                        resolved = []
+                # 3) Canonical owner-filtered union with the raw row uids.
+                try:
+                    owner_of = getattr(self, '_study_owner_patient_id', None)
+                    merged, _dropped = merge_study_uids(
+                        [entry['row_uids'], resolved], primary,
+                        owner_of=owner_of, patient_id=pid)
+                except Exception:
+                    merged = [u for u in [*entry['row_uids'], *resolved] if u]
+
+                added = 0
+                for uid in merged:
+                    if uid in seen_uids:
+                        continue
+                    seen_uids.add(uid)
+                    out.append({'patient_id': pid, 'patient_name': pname, 'study_uid': uid})
+                    added += 1
+                added_total += added
+                try:
+                    self._log_open_trace(
+                        (primary or (merged[0] if merged else '')),
+                        'manual_download_expanded', patient_id=pid,
+                        row_studies=len(entry['row_uids']),
+                        resolved_studies=len(merged), added_studies=added)
+                except Exception:
+                    pass
+            print(f"[MANUAL-DL] discovery: {len(selected_studies or [])} row(s) → "
+                  f"{len(out)} study(ies) ({added_total} discovered)")
+            return out
+        except Exception as exc:
+            print(f"[MANUAL-DL] expansion failed — using raw selection: {exc}")
+            return list(selected_studies or [])
+
+    def _reset_stale_terminal_dm_state(self, zeta_manager, studies) -> int:
+        """Reset stale COMPLETED/CANCELLED DM states so a study that GREW on the
+        server is accepted by add_downloads (which rejects ANY existing state).
+        Mirrors the open back-fill / resync unblock (FIX-010, 46640); the DM
+        resume scan still skips files already on disk, so nothing re-downloads."""
+        reset_count = 0
+        try:
+            _ss = getattr(zeta_manager, 'state_store', None)
+            if _ss is None:
+                return 0
+            for study in (studies or []):
+                uid = str((study or {}).get('study_uid') or '').strip()
+                if not uid:
+                    continue
+                try:
+                    _st = _ss.get(uid)
+                    _stn = getattr(getattr(_st, 'status', None), 'name', '') if _st else ''
+                    if _stn in ('COMPLETED', 'CANCELLED'):
+                        _ss.reset(uid)
+                        reset_count += 1
+                        try:
+                            self._log_open_trace(
+                                uid, 'manual_download_reset_stale_complete',
+                                prior_status=_stn)
+                        except Exception:
+                            pass
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        return reset_count
+
+    async def _manual_download_with_patient_discovery(self, selected_studies, zeta_manager):
+        """Authority-routed manual download: discover → unblock → enrich → enqueue.
+
+        Series info is fetched fresh (force_refresh) off-thread with bounded
+        concurrency — the async equivalent of the legacy ThreadPoolExecutor
+        prefetch, without the processEvents pump. Fail-safe: any unexpected
+        error falls back to enqueueing the ORIGINAL selection so the user's
+        click is never lost."""
+        try:
+            from PacsClient.utils.patient_study_set import build_download_payload
+
+            expanded = await self._expand_selection_to_patient_studysets(selected_studies)
+            self._reset_stale_terminal_dm_state(zeta_manager, expanded)
+
+            sem = asyncio.Semaphore(8)
+
+            async def _enrich(study):
+                uid = str((study or {}).get('study_uid') or '').strip()
+                if not uid or study.get('series'):
+                    return
+                async with sem:
+                    try:
+                        info = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self._get_or_fetch_series_info, uid,
+                                study.get('patient_id'), True),
+                            timeout=45.0)
+                    except Exception as exc:
+                        print(f"⚠️ [MANUAL-DL] series prefetch failed for {uid[:40]}: {exc}")
+                        return
+                    if not info:
+                        return
+                    # Cross-patient isolation — same guard as resync/reconcile.
+                    _owner = str((info or {}).get('patient_id') or '').strip()
+                    _pid = str(study.get('patient_id') or '').strip()
+                    if _owner and _pid and _owner != _pid:
+                        study['_manual_dl_drop'] = True
+                        try:
+                            self._log_open_trace(
+                                uid, 'manual_download_cross_patient_skip',
+                                level='warning', requested_patient_id=_pid,
+                                owner_patient_id=_owner)
+                        except Exception:
+                            pass
+                        return
+                    payload = build_download_payload(
+                        uid, study.get('patient_id'), study.get('patient_name'), info)
+                    for key, value in payload.items():
+                        if value or key not in study:
+                            study[key] = value
+
+            await asyncio.gather(*(_enrich(s) for s in expanded))
+            final = [s for s in expanded if not (s or {}).get('_manual_dl_drop')]
+
+            print(f"[MANUAL-DL] Adding {len(final)} studies to manager "
+                  f"(from {len(selected_studies or [])} selected rows)")
+            zeta_manager.add_downloads(final, start_immediately=True)
+            for study in final:
+                uid = str((study or {}).get('study_uid') or '').strip()
+                if uid:
+                    try:
+                        self._log_open_trace(
+                            uid, 'DownloadEnqueued',
+                            patient_id=str(study.get('patient_id') or ''),
+                            source='manual_download', trigger='download_button')
+                    except Exception:
+                        pass
+            try:
+                from modules.zeta_boost.engine import set_global_download_active
+                set_global_download_active(True)
+                print("[GlobalDL] set_global_download_active=True")
+            except Exception:
+                pass
+        except Exception as exc:
+            print(f"❌ [MANUAL-DL] discovery path failed — legacy enqueue: {exc}")
+            try:
+                zeta_manager.add_downloads(list(selected_studies or []), start_immediately=True)
+            except Exception:
+                pass
 
     def _normalize_study_uids(self, studies):
         return sorted({

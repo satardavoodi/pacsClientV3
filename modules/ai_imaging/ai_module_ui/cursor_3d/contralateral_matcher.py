@@ -403,7 +403,9 @@ def contralateral_enabled() -> bool:
     by default. `=0` restores the silent-engine legacy behaviour (the pure engine can
     still be called directly, e.g. by tests or an offline audit).
     """
+    # Reverted to default-OFF 2026-07-20 while isolating a 3D-Cursor close regression
+    # (the pass runs at finalize; kept off by default until the crash cause is confirmed).
     raw = os.environ.get("AIPACS_CURSOR3D_CONTRALATERAL")
     if raw is None:
-        return True
-    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+        return False
+    return str(raw).strip().lower() in ("1", "true", "yes", "on")

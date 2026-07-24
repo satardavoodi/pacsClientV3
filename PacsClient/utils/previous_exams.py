@@ -345,6 +345,113 @@ def build_previous_exam_set(
     )
 
 
+@dataclass(frozen=True)
+class PreviousPatientId:
+    """One prior PatientID/reception the same real person was imaged under.
+
+    A patient opened today may have OLDER Patient IDs at this center (different
+    reception episodes linked by National ID). This groups the previous exams by
+    that prior identifier so the Medical Report Editor can list the distinct
+    previous Patient IDs and, on selection, load that record's reports."""
+
+    patient_id: str
+    reception_id: str = ""
+    exam_count: int = 0
+    latest_date: str = ""          # YYYYMMDD (newest study under this id)
+    modalities: tuple = ()
+    report_statuses: tuple = ()
+    study_uids: tuple = ()
+    patient_name: str = ""
+    national_code: str = ""
+
+    @property
+    def display_date(self) -> str:
+        return format_study_date(self.latest_date)
+
+    @property
+    def modality_label(self) -> str:
+        return "/".join(self.modalities) if self.modalities else ""
+
+
+def distinct_previous_patient_ids(
+    exam_set: Optional[PreviousExamSet],
+    *,
+    exclude_ids: Iterable[str] = (),
+) -> List[PreviousPatientId]:
+    """Group a ``PreviousExamSet`` by prior PatientID, newest-first.
+
+    Only PREVIOUS studies are considered (``exam_set.previous_studies`` already
+    excludes the currently-open exam). ``exclude_ids`` drops the current
+    patient's own identifier(s) so the list shows only genuinely OTHER Patient
+    IDs. Each entry's ``patient_id`` is the prior id (falling back to the
+    reception id when the server did not carry a distinct PatientID). Pure —
+    returns [] for an empty/None set so a server without the history endpoints
+    leaves the feature inert."""
+    if not exam_set:
+        return []
+    exclude = {_clean(x) for x in exclude_ids if _clean(x)}
+
+    groups: dict = {}
+    order: List[str] = []
+    for s in exam_set.previous_studies:
+        key = _clean(s.patient_id) or _clean(s.reception_id)
+        if not key or key in exclude:
+            continue
+        acc = groups.get(key)
+        if acc is None:
+            acc = {
+                "reception_id": _clean(s.reception_id),
+                "count": 0,
+                "latest": "",
+                "modalities": [],
+                "mod_seen": set(),
+                "statuses": [],
+                "stat_seen": set(),
+                "uids": [],
+                "name": _clean(s.patient_name),
+                "national": _clean(s.national_code),
+            }
+            groups[key] = acc
+            order.append(key)
+        acc["count"] += 1
+        acc["uids"].append(_clean(s.study_uid))
+        for m in s.modalities:
+            mm = _clean(m).upper()
+            if mm and mm not in acc["mod_seen"]:
+                acc["mod_seen"].add(mm)
+                acc["modalities"].append(mm)
+        st = _clean(s.report_status)
+        if st and st not in acc["stat_seen"]:
+            acc["stat_seen"].add(st)
+            acc["statuses"].append(st)
+        sd = s.study_date if (len(s.study_date) == 8 and s.study_date.isdigit()) else ""
+        if sd > acc["latest"]:
+            acc["latest"] = sd
+        if not acc["reception_id"]:
+            acc["reception_id"] = _clean(s.reception_id)
+        if not acc["name"]:
+            acc["name"] = _clean(s.patient_name)
+        if not acc["national"]:
+            acc["national"] = _clean(s.national_code)
+
+    out = [
+        PreviousPatientId(
+            patient_id=key,
+            reception_id=acc["reception_id"],
+            exam_count=acc["count"],
+            latest_date=acc["latest"],
+            modalities=tuple(acc["modalities"]),
+            report_statuses=tuple(acc["statuses"]),
+            study_uids=tuple(u for u in acc["uids"] if u),
+            patient_name=acc["name"],
+            national_code=acc["national"],
+        )
+        for key, acc in ((k, groups[k]) for k in order)
+    ]
+    out.sort(key=lambda p: p.latest_date, reverse=True)
+    return out
+
+
 def sanctioned_study_uids(exam_set: Optional[PreviousExamSet]) -> frozenset:
     """The allow-list of ``study_uid`` values that may be admitted into the
     current patient's grouped viewer despite belonging to a different PatientID.

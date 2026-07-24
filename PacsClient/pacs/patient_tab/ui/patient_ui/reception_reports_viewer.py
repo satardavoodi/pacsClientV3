@@ -355,6 +355,45 @@ class ReceptionReportsViewer(QWidget):
             logger.error(f"Failed to load reports: {e}", exc_info=True)
             QMessageBox.critical(self, "Error", f"Failed to load reports:\n{e}")
     
+    def show_provided_reports(self, reports: list, source_label: str = ""):
+        """Render an EXTERNALLY-supplied list of report dicts, read-only.
+
+        Used by the Medical Report Editor's "Previous Exams" feature to display
+        reports fetched LIVE from the reception server (normalized via
+        ``report_history.normalize_reception_record_reports``) without writing to
+        the local DB. The report dicts must carry the same keys the DB path
+        produces (``id``, ``patient_id``, ``study_uid``, ``created_at``,
+        ``status``, ``sender_info``, ``html_content``, reporting-physician). This
+        method only reads them into the existing read-only preview — it never
+        persists, edits, or sends anything. Safe to call repeatedly."""
+        try:
+            self.current_patient_id = source_label or None
+            self.current_patient_ids = [source_label] if source_label else []
+            self.current_reports = list(reports or [])
+            self._update_list_view(self.current_reports)
+            # Auto-select the first report so the preview renders immediately —
+            # there is usually exactly one previous report and the user should
+            # not have to click to see it (the "empty box" report).
+            if self.current_reports and self.reports_list.count() > 0:
+                self.reports_list.setCurrentRow(0)
+                first_item = self.reports_list.item(0)
+                if first_item is not None:
+                    self._on_report_clicked(first_item)
+            # These reports are fetched live and are NOT rows in the local DB,
+            # so the mutating actions (mark-read / archive / delete / refresh)
+            # cannot apply — disable them (AFTER the auto-select above, which
+            # re-enables them) to keep this a strictly read-only view. Copy stays
+            # available since copying is harmless.
+            for _btn_name in ("btn_mark_read", "btn_archive", "btn_delete", "btn_refresh"):
+                _b = getattr(self, _btn_name, None)
+                if _b is not None:
+                    _b.setEnabled(False)
+                    _b.setToolTip("Read-only preview of a previous exam's report")
+            logger.info("Displaying %d provided report(s) for %s",
+                        len(self.current_reports), source_label or "?")
+        except Exception as e:
+            logger.error(f"Failed to show provided reports: {e}", exc_info=True)
+
     def load_reports_multi_id(self, patient_ids: list):
         """
         Load reports from database searching with multiple patient IDs.
@@ -494,15 +533,19 @@ class ReceptionReportsViewer(QWidget):
         except:
             time_str = "Unknown"
         
+        # Header is a LIGHT card on the fixed white "paper" (see below) so it is
+        # readable regardless of the OS / app light-or-dark theme.
+        _status_color = ("#b8860b" if status == "PENDING"
+                         else "#2e7d32" if status == "READ" else "#555")
         info_html = f"""
-        <div dir='ltr' style='direction: ltr; text-align: left; background-color: #2b2b2b; padding: 10px; border-radius: 6px; margin-bottom: 10px;'>
+        <div dir='ltr' style='direction: ltr; text-align: left; background-color: #f2f4f7; color: #333333; padding: 10px; border: 1px solid #dcdcdc; border-radius: 6px; margin-bottom: 10px;'>
             <b>Report #{report_id}</b><br>
-            <span style='color: #888;'>
+            <span style='color: #555555;'>
             👤 Patient: {patient_id}<br>
             🔬 Study: {study_uid}<br>
             🩺 Reporting Physician: {reporting_physician}<br>
             📅 Created: {time_str}<br>
-            📊 Status: <span style='color: {"#ffc107" if status == "PENDING" else "#4caf50" if status == "READ" else "#888"};'>{status}</span><br>
+            📊 Status: <span style='color: {_status_color}; font-weight: bold;'>{status}</span><br>
             ℹ️ Info: {sender_info}
             </span>
         </div>
@@ -528,20 +571,35 @@ class ReceptionReportsViewer(QWidget):
             Qt.RightToLeft if base_dir == "rtl" else Qt.LeftToRight
         )
 
-        # Wrap content with styling
+        # Render on a FIXED white "paper" with dark default text, exactly like
+        # the report editor — so the report reads identically regardless of the
+        # Windows / app light-or-dark theme, and the author's own inline colours
+        # (blue headings, etc.), which were written for a white page, keep their
+        # intended contrast instead of washing out on a dark background.
+        #   * unicode-bidi: plaintext -> each paragraph/line flows by its OWN
+        #     first strong character, so a mostly-Persian report reads RTL and a
+        #     Latin line inside it still reads LTR (correct per-line direction).
+        #   * the report's saved <p style="direction:rtl; text-align:right"> is
+        #     respected; base_dir/content_align only set the fallback for blocks
+        #     that don't carry their own.
         full_html = f"""
         <!DOCTYPE html>
         <html dir="{base_dir}">
         <head>
+            <meta charset="utf-8">
             <style>
                 body {{
-                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-                    color: #e0e0e0;
-                    background-color: #2b2b2b;
+                    font-family: 'Tahoma', 'Vazirmatn', 'Segoe UI', 'Arial', sans-serif;
+                    color: #1a1a1a;
+                    background-color: #ffffff;
                     margin: 0;
                     padding: 16px;
                     direction: {base_dir};
+                    unicode-bidi: plaintext;
                     text-align: {content_align};
+                }}
+                p, div, li, ul, ol, h1, h2, h3, h4, h5, h6, td, th {{
+                    unicode-bidi: plaintext;
                 }}
                 table {{
                     border-collapse: collapse;
@@ -550,25 +608,34 @@ class ReceptionReportsViewer(QWidget):
                     direction: {base_dir};
                 }}
                 th, td {{
-                    border: 1px solid #3a3a3a;
+                    border: 1px solid #cccccc;
                     padding: 8px;
                     text-align: {content_align};
                 }}
                 th {{
-                    background-color: #1e1e1e;
+                    background-color: #eef1f5;
                     font-weight: bold;
                 }}
             </style>
         </head>
         <body>
             {info_html}
-            <div dir="{base_dir}" style='direction: {base_dir}; text-align: {content_align}; border-top: 2px solid #3a3a3a; padding-top: 15px;'>
+            <div dir="{base_dir}" style='direction: {base_dir}; unicode-bidi: plaintext; text-align: {content_align}; border-top: 1px solid #e0e0e0; padding-top: 15px;'>
                 {html_content}
             </div>
         </body>
         </html>
         """
 
+        # Pin the widget chrome to the same white paper so no dark theme frame
+        # shows through the padding (theme independence for the widget itself).
+        try:
+            self.preview_browser.setStyleSheet(
+                "QTextBrowser{background:#ffffff; color:#1a1a1a;"
+                " border:1px solid #d0d0d0; border-radius:6px;}"
+            )
+        except Exception:
+            pass
         self.preview_browser.setHtml(full_html)
 
     @staticmethod

@@ -113,6 +113,31 @@ _FAST_MULTIFRAME = str(
     os.environ.get("AIPACS_FAST_MULTIFRAME", "1")
 ).strip().lower() not in ("0", "false", "no", "off")
 
+# The background/subprocess decode service (decode_service.decode) is NOT
+# frame-aware — it returns arr[0] for any NumberOfFrames>1 file. Using it to
+# prefetch a multi-frame FRAME caches frame 0 under that frame's key (poisoning
+# both the in-memory and L2 disk caches), which shows the WRONG/"missing" frame
+# during fast stack-scroll while the frame-aware in-process foreground decode is
+# correct. When on (default), a multi-frame frame is decoded in-process
+# (frame-aware) instead of via the subprocess. `=0` = legacy (subprocess) path.
+_FAST_MULTIFRAME_SUBPROC_GUARD = str(
+    os.environ.get("AIPACS_FAST_MULTIFRAME_SUBPROC_GUARD", "1")
+).strip().lower() not in ("0", "false", "no", "off")
+
+# Per-frame geometry for Enhanced multi-frame files. An Enhanced MR/CT/angio file
+# leaves the top-level IPP/IOP/PixelSpacing EMPTY and stores geometry in the
+# Shared + Per-Frame Functional Groups. Without this, every expanded frame inherits
+# the (absent → default) top-level geometry — IPP=(0,0,0), IOP=identity,
+# spacing=(1,1) — so measurements, the slice-location overlay and reference lines
+# are all wrong even though the frames display. When on (default), each frame's
+# SliceMeta is stamped with its OWN functional-group geometry; a frame lacking
+# per-frame geometry (e.g. a geometry-less US cine) falls back to the legacy
+# top-level values, so nothing regresses. `=0` = legacy (shared top-level geometry
+# on every frame). Ordinary single-frame / many-file series never enter this path.
+_FAST_MULTIFRAME_GEOMETRY = str(
+    os.environ.get("AIPACS_FAST_MULTIFRAME_GEOMETRY", "1")
+).strip().lower() not in ("0", "false", "no", "off")
+
 
 def _dataset_has_dicom_extras(ds) -> bool:
     """Cheap header probe: does this dataset carry an overlay plane or a colour
@@ -299,7 +324,17 @@ _OVERLAP_LOG_SAMPLE_N = _env_positive_int("AIPACS_OVERLAP_LOG_SAMPLE", 5)
 # identity, so old entries can survive upgrades and produce mixed old/new
 # appearance until they are naturally evicted. Appending a small policy tag to
 # the key creates an explicit cache boundary without changing on-disk format.
-_FAST_DISK_CACHE_POLICY_TAG = "decode-v4"
+#
+# v5 (2026-07-21): invalidate every pre-existing pixel-cache entry. A build
+# before the multi-frame cache-key fix (the `::f{frame_index}` suffix, added
+# 2026-07-01) cached the WRONG frame for NumberOfFrames>1 files (enhanced
+# MR/CT, cine), and those poisoned entries survive the upgrade — a multi-frame
+# series then displays a scrambled/edge frame at the wrong slice position
+# (reported for an imported Enhanced-MR brain study: pydicom decodes every frame
+# cleanly; the FAST viewport showed an edge slice at 12/26). The decode itself
+# is correct on a clean cache; bumping the tag forces a one-time re-decode so no
+# user carries a poisoned multi-frame cache. Cheap (the perf cache repopulates).
+_FAST_DISK_CACHE_POLICY_TAG = "decode-v5"
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -844,7 +879,11 @@ class Lightweight2DPipeline(QObject):
 
         # Multi-frame / cine / enhanced: expand any NumberOfFrames>1 file into one
         # SliceMeta per frame so the viewport scrolls all N frames (not just frame 0).
-        # No-op for ordinary single-frame series (the common case).
+        # No-op for ordinary single-frame series (the common case). Reset any
+        # multi-frame classification from a previously-opened series first so it
+        # cannot leak into an ordinary single-frame series.
+        self._multiframe_classification = None
+        self._mf_geometry_cache = {}
         self._slices = self._expand_multiframe_slices(self._slices)
 
         self._hydrate_series_display_metadata(metadata)
@@ -3461,6 +3500,18 @@ class Lightweight2DPipeline(QObject):
                     use_subprocess_prefetch = False
 
             sm = self._slices[idx] if idx < len(self._slices) else None
+            # Multi-frame guard: the subprocess decoder is not frame-aware
+            # (decode_service returns arr[0] for a NumberOfFrames>1 file), so it
+            # would cache frame 0 under THIS frame's key and poison the L2/mem
+            # cache → wrong/"missing" frames on fast stack-scroll. Force the
+            # frame-aware in-process decode for any multi-frame frame.
+            if (
+                _FAST_MULTIFRAME
+                and _FAST_MULTIFRAME_SUBPROC_GUARD
+                and sm is not None
+                and getattr(sm, 'frame_index', None) is not None
+            ):
+                use_subprocess_prefetch = False
             if (
                 use_subprocess_prefetch
                 and sm is not None
@@ -3879,17 +3930,112 @@ class Lightweight2DPipeline(QObject):
         for sm in slices:
             n = int(getattr(sm, "num_frames", 1) or 1)
             if n > 1 and getattr(sm, "frame_index", None) is None:
+                geoms = self._read_multiframe_geometry(sm.path, n)
                 for k in range(n):
-                    out.append(_dc_replace(sm, frame_index=k, num_frames=n))
+                    g = geoms[k] if (geoms is not None and k < len(geoms)) else None
+                    if g is not None and g.has_spatial_geometry:
+                        # Stamp this frame with its OWN functional-group geometry.
+                        # A frame lacking a per-frame value keeps the base slice's
+                        # (top-level) value, so nothing is lost.
+                        out.append(_dc_replace(
+                            sm, frame_index=k, num_frames=n,
+                            ipp=tuple(g.ipp), iop=tuple(g.iop),
+                            pixel_spacing=(tuple(g.pixel_spacing) if g.pixel_spacing else sm.pixel_spacing),
+                            slice_thickness=(g.slice_thickness if g.slice_thickness is not None else sm.slice_thickness),
+                            spacing_between_slices=(g.spacing_between_slices if g.spacing_between_slices is not None else sm.spacing_between_slices),
+                        ))
+                    else:
+                        out.append(_dc_replace(sm, frame_index=k, num_frames=n))
             else:
                 out.append(sm)
         try:
+            _cls = getattr(self, "_multiframe_classification", None)
             logger.info(
-                "lw2d-pipeline multiframe-expand files=%d -> slices=%d",
+                "lw2d-pipeline multiframe-expand files=%d -> slices=%d kind=%s mpr=%s",
                 len(slices), len(out),
+                getattr(_cls, "kind", "-"), getattr(_cls, "mpr_eligible", "-"),
             )
         except Exception:
             pass
+        return out
+
+    def _read_multiframe_geometry(self, path: str, n_frames: int):
+        """Read per-frame geometry + classification for a multi-frame file ONCE
+        (cached by path). Returns the list of FrameGeometry (len == n_frames) or
+        None when unavailable / disabled. Also stores the classification on the
+        pipeline for the MPR / reference-line gates. Never raises."""
+        if not (_FAST_MULTIFRAME and _FAST_MULTIFRAME_GEOMETRY):
+            return None
+        cache = getattr(self, "_mf_geometry_cache", None)
+        if cache is None:
+            cache = {}
+            self._mf_geometry_cache = cache
+        if path in cache:
+            geoms = cache[path]
+        else:
+            geoms = None
+            try:
+                import modules.viewer.fast.multiframe_geometry as _mfg
+                with warnings.catch_warnings():
+                    _ignore_unknown_encoding_warning()
+                    ds = pydicom.dcmread(path, stop_before_pixels=True, force=True)
+                geoms = _mfg.read_frame_geometries(ds)
+                try:
+                    self._multiframe_classification = _mfg.classify_frames(geoms)
+                except Exception:
+                    self._multiframe_classification = None
+            except Exception as exc:  # pragma: no cover - defensive
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("multiframe-geometry read failed path=%s: %s", path, exc)
+                geoms = None
+            cache[path] = geoms
+        return geoms
+
+    def multiframe_classification(self):
+        """Classification of the current multi-frame series (or None for an
+        ordinary single-frame / many-file series). Consumed by the MPR
+        eligibility gate and the reference-line validity check."""
+        return getattr(self, "_multiframe_classification", None)
+
+    def is_multiframe_series(self) -> bool:
+        """True when the current series is a single-file multi-frame series that
+        was expanded into per-frame slices."""
+        try:
+            return any(getattr(sm, "frame_index", None) is not None for sm in self._slices)
+        except Exception:
+            return False
+
+    def export_frame_instances(self) -> List[Dict[str, Any]]:
+        """Export ONE per-frame instance dict per expanded frame, in frame order,
+        carrying each frame's OWN geometry.
+
+        This mirrors the pipeline's per-frame SliceMeta geometry into the
+        `metadata['instances']` shape the geometry consumers (reference lines /
+        cross-series sync / overlay slice-location) read. For a single-file
+        multi-frame Enhanced series the DB has ONE instance row (no per-frame
+        geometry), so those consumers otherwise see one geometry-less slice.
+        Returns [] for an ordinary single-frame / many-file series (caller must
+        not overwrite the real per-file instances)."""
+        out: List[Dict[str, Any]] = []
+        try:
+            if not self.is_multiframe_series():
+                return []
+            for sm in self._slices:
+                out.append({
+                    "instance_path": sm.path,
+                    "instance_number": sm.instance_number,
+                    "frame_index": sm.frame_index,
+                    "image_position_patient": [float(x) for x in sm.ipp],
+                    "image_orientation_patient": [float(x) for x in sm.iop],
+                    "pixel_spacing": [float(x) for x in sm.pixel_spacing],
+                    "slice_thickness": sm.slice_thickness,
+                    "spacing_between_slices": sm.spacing_between_slices,
+                    "rows": sm.rows,
+                    "columns": sm.cols,
+                    "photometric_interpretation": sm.photometric,
+                })
+        except Exception:  # pragma: no cover - defensive; never break load
+            return []
         return out
 
     def _decode_cache_key(self, sm: SliceMeta) -> str:

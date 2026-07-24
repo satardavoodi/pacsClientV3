@@ -357,7 +357,7 @@ def _heat_color(v: float) -> Tuple[float, float, float]:
     t = (v - 0.75) / 0.25;      return (1.0, 1.0 - t, 0.0)
 
 
-def draw_heatmap_field(vtk_widget, field, *, min_show: float = 0.35, opacity: float = 0.45) -> bool:
+def draw_heatmap_field(vtk_widget, field, *, min_show: float = 0.20, opacity: float = 0.45) -> bool:
     """
     Render the dense three-factor confidence field as translucent colored cells over
     the target viewport. Additive: drawn UNDER the candidate boxes; cells below
@@ -386,22 +386,49 @@ def draw_heatmap_field(vtk_widget, field, *, min_show: float = 0.35, opacity: fl
         colors.SetNumberOfComponents(3)
         colors.SetName("heat")
         nid = 0
+        # Bound the geometry: a pathological field must not push tens of thousands of
+        # quads at the GPU. Skip the remainder once the cap is hit.
+        _MAX_CELLS = 6000
+        _n_cells = 0
+        _skipped_nonfinite = 0
         for iy in range(h):
+            if _n_cells >= _MAX_CELLS:
+                break
             for ix in range(w):
+                if _n_cells >= _MAX_CELLS:
+                    break
                 v = float(vals[iy, ix])
                 if v < min_show:
                     continue
                 cx = x1 + ix * step
                 cy = y1 + iy * step
                 corners = [(cx, cy), (cx + step, cy), (cx + step, cy + step), (cx, cy + step)]
+                world = [ijk_to_world(px, py, None, y_flip=True) for (px, py) in corners]
+                # A NON-FINITE (NaN/Inf) vertex fed to the GPU is a native access
+                # violation that CLOSES the whole app (not a catchable Python error).
+                # The heatmap grid can extend past the image, so validate EVERY corner
+                # and drop the cell if any coordinate is not finite.
+                bad = False
+                for wp in world:
+                    if (wp is None or len(wp) < 3
+                            or not (_np.isfinite(wp[0]) and _np.isfinite(wp[1])
+                                    and _np.isfinite(wp[2]))):
+                        bad = True
+                        break
+                if bad:
+                    _skipped_nonfinite += 1
+                    continue
                 quad = _vtk.vtkQuad()
-                for k, (px, py) in enumerate(corners):
-                    pts.InsertNextPoint(ijk_to_world(px, py, None, y_flip=True))
+                for k, wp in enumerate(world):
+                    pts.InsertNextPoint(float(wp[0]), float(wp[1]), float(wp[2]))
                     quad.GetPointIds().SetId(k, nid)
                     nid += 1
                 cells.InsertNextCell(quad)
                 r, g, b = _heat_color(v)
                 colors.InsertNextTuple3(int(r * 255), int(g * 255), int(b * 255))
+                _n_cells += 1
+        if _skipped_nonfinite:
+            print(f"[3D-Cursor][HEATMAP] skipped {_skipped_nonfinite} cell(s) with non-finite coords")
         if nid == 0:
             return False
         poly = _vtk.vtkPolyData()

@@ -130,6 +130,11 @@ def test_every_config_template_is_seed_reachable(tmp_path):
             or ".bak-" in rel.name
             or any(part in release_gate.CONFIG_SEED_SKIP_DIRNAMES for part in rel.parts[:-1])
             or rel.name in release_gate.CONFIG_SEED_SKIP_FILENAMES
+            # Subdirectory excludes are matched by full POSIX path in
+            # iter_seedable_config_templates (e.g. agent_gateway/devices.json) —
+            # mirror that here so machine-generated agent_gateway state (paired
+            # devices, e2e channel key, TLS cert+key) is recognised as excluded.
+            or rel.as_posix() in release_gate.CONFIG_TEMPLATE_EXCLUDES
             or (len(rel.parts) == 1 and rel.name in release_gate.CONFIG_TEMPLATE_EXCLUDES)
         )
         assert (rel_posix in expected_set) != skipped, (

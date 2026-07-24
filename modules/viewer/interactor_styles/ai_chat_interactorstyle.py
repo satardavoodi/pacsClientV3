@@ -24,7 +24,13 @@ from pathlib import Path
 from urllib.parse import urljoin
 from PacsClient.utils.config import SOURCE_PATH, ATTACHMENT_PATH, IMAGES_LOGIN_PATH
 from PacsClient.utils.utils import SERVERS_FILE, get_server_url
-from modules.ai_imaging.ai_module_ui.feedback_schema import write_bone_age_feedback_csv
+# write_bone_age_feedback_csv is imported LAZILY inside _save_feedback_csv (below).
+# A module-level import pulls in modules.ai_imaging.ai_module_ui.__init__, which
+# eagerly loads ai_mainwindow -> service_tab -> overrides -> AIPatientWidget, and
+# AIPatientWidget subclasses PacsClient...PatientWidget. When this style module is
+# reached DURING PatientWidget's own import (patient_toolbar -> this module), that
+# closes an import cycle ("cannot import name 'PatientWidget' from a partially
+# initialized module") whenever the import order isn't primed by another test.
 from modules.viewer.advanced.viewer_2d import create_text_actor
 
 
@@ -628,6 +634,9 @@ class BoneAgeWorker(QThread):
 
     def _save_feedback_csv(self, data: dict):
         try:
+            from modules.ai_imaging.ai_module_ui.feedback_schema import (
+                write_bone_age_feedback_csv,
+            )
             out_dir = ATTACHMENT_PATH / self.study_uid
             out_dir.mkdir(parents=True, exist_ok=True)
             out_path = write_bone_age_feedback_csv(

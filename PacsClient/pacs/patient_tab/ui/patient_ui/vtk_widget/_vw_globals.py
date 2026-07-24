@@ -70,6 +70,43 @@ def _create_qt_viewer_bridge(vtk_widget, metadata, metadata_fixed):
                 series_path = str(Path(first_path).parent)
     pipeline.open_series(series_path, metadata=metadata)
 
+    # ── Multi-frame geometry → metadata['instances'] (2026-07-24) ────────────
+    # Reference lines / cross-series sync / the slice-location overlay read
+    # per-slice geometry from metadata['instances'] (built from the DB). A
+    # single-file multi-frame Enhanced series has ONE DB instance row (no
+    # per-frame geometry), so those consumers saw one geometry-less slice while
+    # the viewport scrolled N frames. The pipeline just built N per-frame
+    # SliceMetas WITH correct per-frame IPP/IOP/spacing (from the functional
+    # groups); hand the bridge a SHALLOW-COPIED metadata whose `instances` is the
+    # per-frame list, so every geometry consumer gets the real per-frame geometry
+    # WITHOUT mutating the shared thumbnail/DB metadata (which keys a multi-frame
+    # file as ONE instance for download-completeness). Ordinary single-frame /
+    # many-file series export [] → the bridge keeps the original metadata
+    # (byte-identical). Flag AIPACS_MULTIFRAME_SYNC_INSTANCES=0 = legacy.
+    bridge_metadata = metadata
+    try:
+        import os as _os
+        if _os.environ.get("AIPACS_MULTIFRAME_SYNC_INSTANCES", "1") != "0" and isinstance(metadata, dict):
+            _frame_instances = pipeline.export_frame_instances()
+            if _frame_instances:
+                _existing = metadata.get("instances")
+                _n_existing = len(_existing) if isinstance(_existing, list) else 0
+                # only when the DB list is SHORTER than the true frame count
+                # (the single-row multi-frame case); never shrink an expanded list.
+                if _n_existing < len(_frame_instances):
+                    bridge_metadata = dict(metadata)          # shallow copy; shared dict untouched
+                    bridge_metadata["instances"] = _frame_instances
+                    try:
+                        logger.info(
+                            "[MULTIFRAME-SYNC-INSTANCES] bridge instances %d -> %d "
+                            "(per-frame geometry for reference lines / sync / overlay)",
+                            _n_existing, len(_frame_instances),
+                        )
+                    except Exception:
+                        pass
+    except Exception:
+        bridge_metadata = metadata
+
     # Create the Qt viewer widget as a child of the VTK widget
     qt_viewer = QtSliceViewer(parent=vtk_widget)
     qt_viewer.setGeometry(vtk_widget.rect())
@@ -77,7 +114,7 @@ def _create_qt_viewer_bridge(vtk_widget, metadata, metadata_fixed):
     bridge = QtViewerBridge(
         qt_viewer=qt_viewer,
         pipeline=pipeline,
-        metadata=metadata,
+        metadata=bridge_metadata,
         metadata_fixed=metadata_fixed,
         vtk_widget=vtk_widget,
     )

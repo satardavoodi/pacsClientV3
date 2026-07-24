@@ -139,6 +139,10 @@ EXCLUDE_NAMES = {
     # packaged. On a frozen install they live in %APPDATA%, never in the bundle;
     # this guard covers a dev who ran the source build before packaging.
     "devices.json",
+    # channel_key.json is the workstation's e2e channel keypair (priv/pub/salt) —
+    # a PRIVATE KEY. Shipping it would seed ONE machine's key into every install
+    # and break the zero-knowledge relay. Machine-generated, never a template.
+    "channel_key.json",
     "gateway_cert.pem",
     "gateway_key.pem",
 }

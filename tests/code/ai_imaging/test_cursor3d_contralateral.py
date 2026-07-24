@@ -165,24 +165,37 @@ def test_analyze_from_store_end_to_end(tmp_path):
     assert by["lonely"].asymmetry_flag is True
 
 
-def test_contralateral_enabled_default_on(monkeypatch):
-    """Promoted to default-ON 2026-07-15; `=0` remains the kill switch."""
+def test_contralateral_enabled_default_off(monkeypatch):
+    """Reverted to default-OFF 2026-07-20 (3D-Cursor close regression); env opts in."""
     monkeypatch.delenv("AIPACS_CURSOR3D_CONTRALATERAL", raising=False)
-    assert cm.contralateral_enabled() is True
-    monkeypatch.setenv("AIPACS_CURSOR3D_CONTRALATERAL", "0")
     assert cm.contralateral_enabled() is False
-    monkeypatch.setenv("AIPACS_CURSOR3D_CONTRALATERAL", "on")
+    monkeypatch.setenv("AIPACS_CURSOR3D_CONTRALATERAL", "1")
     assert cm.contralateral_enabled() is True
+    monkeypatch.setenv("AIPACS_CURSOR3D_CONTRALATERAL", "off")
+    assert cm.contralateral_enabled() is False
 
 
-def test_controller_defaults_appearance_and_heatmap_on():
-    """Source-pin: the two controller flags default ON (promoted 2026-07-15)."""
+def test_controller_flag_defaults():
+    """Source-pin: appearance stays default-OFF; heatmap re-enabled default-ON after
+    the draw was hardened (drop non-finite cells + grid cap) 2026-07-21."""
     import pathlib
     root = pathlib.Path(__file__).resolve().parents[3]
     text = (root / "modules" / "ai_imaging" / "ai_module_ui" / "cursor_3d"
             / "two_stage_controller.py").read_text(encoding="utf-8")
-    assert 'os.getenv("AIPACS_CURSOR3D_APPEARANCE", "1")' in text
+    assert 'os.getenv("AIPACS_CURSOR3D_APPEARANCE", "0")' in text
     assert 'os.getenv("AIPACS_CURSOR3D_HEATMAP", "1")' in text
+
+
+def test_paired_lesions_unified_into_two_stage():
+    """Source-pin: a PAIRED lesion goes through the two-stage (band/heatmap) by
+    default rather than deferring to the legacy correlation arc — the skip is gated
+    on UNIFY_PAIRED_ENABLED (default ON, `=0` restores the legacy arc)."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parents[3]
+    text = (root / "modules" / "ai_imaging" / "ai_module_ui" / "cursor_3d"
+            / "two_stage_controller.py").read_text(encoding="utf-8")
+    assert 'os.getenv("AIPACS_CURSOR3D_UNIFY_PAIRED", "1")' in text
+    assert 'if m.match_type == "paired" and not UNIFY_PAIRED_ENABLED:' in text
 
 
 def test_controller_wires_the_contralateral_pass():

@@ -929,6 +929,257 @@ def export_studies_to_offline_cloud(
     return result
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# OFFLINE-PACKAGE MANAGEMENT — list / delete (P1, 2026-07-21)
+#
+# Turns the export-only Offline Service into a package manager. These are thin
+# orchestrations over the SAME primitives export/import already use
+# (_delete_rows_for_study, build_offline_cloud_dicomdir, rebuild_offline_cloud_
+# manifest, validate_offline_cloud_package) — nothing here forks the engine.
+#
+# INVARIANTS:
+#   * study_uid is the identity; patient-level delete = delete ALL that
+#     patient's studies, then prune the now-orphan patient row.
+#   * DESTRUCTIVE OPS ARE RECOVERABLE: package.db + manifest.json are snapshotted
+#     and the removed study folders are MOVED (not unlinked) into <root>/.trash/
+#     <ts>/ before anything else, so a delete can be undone and a mid-operation
+#     failure auto-rolls-back.
+#   * EVERY delete ends with rebuild(DICOMDIR + manifest) + validate; a package
+#     that does not validate as complete is ROLLED BACK.
+#   * UIDs are never touched (delete only removes; it never rewrites identity).
+# ─────────────────────────────────────────────────────────────────────────────
+
+_TRASH_DIRNAME = ".trash"
+
+
+def list_offline_cloud_patients(server: dict[str, Any]) -> list[dict[str, Any]]:
+    """Patients currently stored in a package, grouped for the manage UI.
+
+    Reads ``package.db`` (the authority for what is actually in the package) and
+    returns one row per patient with a study/image summary. A patient row with
+    no studies is skipped (it would be an orphan). Never raises — a broken
+    package returns ``[]`` so the UI degrades gracefully."""
+    try:
+        paths = package_paths(server.get("folder_path", ""))
+        if not paths["database"].exists():
+            return []
+        out: list[dict[str, Any]] = []
+        with _connect(paths["database"]) as conn:
+            if not _has_table(conn, "patients") or not _has_table(conn, "studies"):
+                return []
+            for p in _fetch_all(conn, "SELECT * FROM patients"):
+                pk = p.get("patient_pk")
+                studies = _fetch_all(
+                    conn,
+                    "SELECT study_uid, study_date, study_time, modality, "
+                    "number_of_series, number_of_instances "
+                    "FROM studies WHERE patient_fk = ?",
+                    (pk,),
+                )
+                if not studies:
+                    continue  # orphan patient — do not present
+                study_uids = [str(s.get("study_uid") or "").strip() for s in studies]
+                study_uids = [u for u in study_uids if u]
+                dates = sorted(
+                    (str(s.get("study_date") or "").strip() for s in studies
+                     if str(s.get("study_date") or "").strip()),
+                    reverse=True,
+                )
+                modalities = sorted({
+                    str(s.get("modality") or "").strip().upper()
+                    for s in studies if str(s.get("modality") or "").strip()
+                })
+                out.append({
+                    "patient_pk": pk,
+                    "patient_id": str(p.get("patient_id") or "").strip(),
+                    "patient_name": str(p.get("patient_name") or "").strip(),
+                    "study_count": len(studies),
+                    "image_count": sum(int(s.get("number_of_instances") or 0) for s in studies),
+                    "series_count": sum(int(s.get("number_of_series") or 0) for s in studies),
+                    "study_uids": study_uids,
+                    "latest_study_date": dates[0] if dates else "",
+                    "modalities": modalities,
+                })
+        out.sort(key=lambda r: (r.get("latest_study_date") or "", r.get("patient_name") or ""), reverse=True)
+        return out
+    except Exception:
+        _log.debug("[OFFLINE-MANAGE] list patients failed", exc_info=True)
+        return []
+
+
+def _package_validation(root: str | Path) -> tuple[bool, dict[str, Any]]:
+    """(is_complete, manifest-with-validation). Rewrites the manifest."""
+    res = validate_offline_cloud_package(root, rewrite_manifest=True)
+    if isinstance(res, dict):
+        v = res.get("validation")
+        if isinstance(v, dict):
+            return bool(v.get("is_complete")), res
+        return bool(res.get("is_complete")), res
+    return False, {}
+
+
+def remove_studies_from_offline_cloud(
+    server: dict[str, Any],
+    study_uids: list[str],
+    *,
+    actor: dict[str, Any] | None = None,
+    operation: str = "delete",
+) -> dict[str, Any]:
+    """Remove studies from a package: DB rows + on-disk folders + orphan patient
+    rows, then rebuild DICOMDIR + manifest and validate. Recoverable + atomic.
+
+    The building block for patient-level delete. Returns
+    ``{ok, removed, removed_study_uids, removed_patient_ids, trash_dir,
+    validation, errors}``."""
+    uids = sorted({str(u or "").strip() for u in study_uids if str(u or "").strip()})
+    if not uids:
+        return {"ok": False, "removed": 0, "errors": ["No study selected."]}
+
+    paths = package_paths(server.get("folder_path", ""))
+    root = paths["root"]
+    if not paths["database"].exists():
+        return {"ok": False, "removed": 0, "errors": ["Package database not found."]}
+
+    # 1. Snapshot db + manifest into the trash BEFORE touching anything.
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    trash = root / _TRASH_DIRNAME / f"delete_{ts}"
+    trash.mkdir(parents=True, exist_ok=True)
+    backup_db = trash / PACKAGE_DB_NAME
+    backup_manifest = trash / MANIFEST_NAME
+    try:
+        shutil.copy2(paths["database"], backup_db)
+        if paths["manifest"].exists():
+            shutil.copy2(paths["manifest"], backup_manifest)
+    except Exception as exc:
+        return {"ok": False, "removed": 0,
+                "errors": [f"Could not back up the package before deleting: {exc}"]}
+
+    moved_folders: list[tuple[Path, Path]] = []  # (original, trash_dest) for rollback
+    removed_patient_ids: list[str] = []
+    try:
+        # 2. Delete DB rows (study→series→instances + AI tables) and prune orphan
+        #    patients (no remaining studies).
+        with _connect(paths["database"]) as conn:
+            affected_pks: set[Any] = set()
+            for uid in uids:
+                row = _fetch_one(conn, "SELECT patient_fk FROM studies WHERE study_uid = ?", (uid,))
+                if row and row.get("patient_fk") is not None:
+                    affected_pks.add(row["patient_fk"])
+                _delete_rows_for_study(conn, uid)  # existing cascade
+            for pk in affected_pks:
+                still = _fetch_one(conn, "SELECT 1 FROM studies WHERE patient_fk = ? LIMIT 1", (pk,))
+                if not still:
+                    prow = _fetch_one(conn, "SELECT patient_id FROM patients WHERE patient_pk = ?", (pk,))
+                    if prow and str(prow.get("patient_id") or "").strip():
+                        removed_patient_ids.append(str(prow["patient_id"]).strip())
+                    conn.execute("DELETE FROM patients WHERE patient_pk = ?", (pk,))
+            conn.commit()
+
+        # 3. MOVE (not delete) the on-disk study folders into the trash.
+        for uid in uids:
+            for key in ("dicom", "attachments", "thumbnails"):
+                folder = paths[key] / uid
+                if folder.exists():
+                    dest = trash / key / uid
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(folder), str(dest))
+                    moved_folders.append((folder, dest))
+
+        # 4. Rebuild the interchange tree. A now-EMPTY package is valid, not a
+        #    failure — clear the DICOM/ tree instead of building an empty one.
+        if _count_files(paths["dicom"]) > 0:
+            dicomdir_result = build_offline_cloud_dicomdir(root, force=True)
+            if not dicomdir_result.get("ok"):
+                raise RuntimeError(
+                    "DICOMDIR rebuild failed: " + str(dicomdir_result.get("error") or "unknown"))
+        else:
+            _clear_previous_dicomdir(root)
+            dicomdir_result = {"ok": True, "skipped": True, "empty_package": True}
+
+        # 5. Rebuild manifest from the (now smaller) DB and validate.
+        rebuild_offline_cloud_manifest(
+            root, actor=actor, changed_studies=uids, operation=operation)
+        is_complete, validation = _package_validation(root)
+        if not is_complete:
+            raise RuntimeError("Post-delete validation did not report a complete package.")
+
+        _log.info("[OFFLINE-MANAGE] removed studies=%s patients=%s trash=%s",
+                  len(uids), len(removed_patient_ids), trash)
+        return {
+            "ok": True,
+            "removed": len(uids),
+            "removed_study_uids": uids,
+            "removed_patient_ids": removed_patient_ids,
+            "trash_dir": str(trash),
+            "dicomdir": dicomdir_result,
+            "validation": validation.get("validation") if isinstance(validation, dict) else None,
+        }
+    except Exception as exc:
+        # ROLLBACK: restore db + manifest + moved folders, rebuild interchange.
+        _log.exception("[OFFLINE-MANAGE] delete failed — rolling back")
+        try:
+            if backup_db.exists():
+                shutil.copy2(backup_db, paths["database"])
+            if backup_manifest.exists():
+                shutil.copy2(backup_manifest, paths["manifest"])
+            for original, dest in moved_folders:
+                if dest.exists() and not original.exists():
+                    original.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.move(str(dest), str(original))
+            if _count_files(paths["dicom"]) > 0:
+                build_offline_cloud_dicomdir(root, force=True)
+        except Exception:
+            _log.exception("[OFFLINE-MANAGE] ROLLBACK ALSO FAILED — backup is at %s", trash)
+        return {"ok": False, "removed": 0, "errors": [str(exc)], "trash_dir": str(trash),
+                "rolled_back": True}
+
+
+def remove_patients_from_offline_cloud(
+    server: dict[str, Any],
+    patient_ids: list[str],
+    *,
+    actor: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Patient-level delete: remove every study of each given patient_id from the
+    package (which prunes the patient rows), in ONE rebuild/validate pass.
+
+    Resolves patient_ids -> their package study_uids from ``package.db`` and
+    delegates to :func:`remove_studies_from_offline_cloud`."""
+    wanted = [str(p or "").strip() for p in patient_ids if str(p or "").strip()]
+    if not wanted:
+        return {"ok": False, "removed": 0, "errors": ["No patient selected."]}
+
+    paths = package_paths(server.get("folder_path", ""))
+    if not paths["database"].exists():
+        return {"ok": False, "removed": 0, "errors": ["Package database not found."]}
+
+    study_uids: list[str] = []
+    try:
+        with _connect(paths["database"]) as conn:
+            if not _has_table(conn, "patients") or not _has_table(conn, "studies"):
+                return {"ok": False, "removed": 0, "errors": ["Package has no patient data."]}
+            placeholders = ",".join("?" * len(wanted))
+            rows = _fetch_all(
+                conn,
+                f"SELECT s.study_uid AS study_uid FROM studies s "
+                f"JOIN patients p ON p.patient_pk = s.patient_fk "
+                f"WHERE p.patient_id IN ({placeholders})",
+                tuple(wanted),
+            )
+            study_uids = [str(r.get("study_uid") or "").strip() for r in rows if str(r.get("study_uid") or "").strip()]
+    except Exception as exc:
+        return {"ok": False, "removed": 0, "errors": [f"Could not resolve patient studies: {exc}"]}
+
+    if not study_uids:
+        return {"ok": False, "removed": 0,
+                "errors": ["Selected patient(s) have no studies in the package."]}
+
+    result = remove_studies_from_offline_cloud(
+        server, study_uids, actor=actor, operation="delete_patient")
+    result["requested_patient_ids"] = wanted
+    return result
+
+
 def sync_offline_cloud_study_preview_to_local(
     server: dict[str, Any],
     study_uid: str,

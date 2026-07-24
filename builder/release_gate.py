@@ -121,6 +121,12 @@ CONFIG_SEED_SKIP_FILENAMES = frozenset(
 CONFIG_TEMPLATE_EXCLUDES = frozenset({
     "installation_profile.json",
     "hardware_check.json",
+    # Agent Gateway runtime state is machine-generated (source-run artifacts),
+    # deliberately excluded by config_sanitizer and never seeded as templates.
+    "agent_gateway/devices.json",
+    "agent_gateway/channel_key.json",
+    "agent_gateway/gateway_cert.pem",
+    "agent_gateway/gateway_key.pem",
 })
 
 
@@ -142,6 +148,8 @@ def iter_seedable_config_templates(repo_root: Path | None = None) -> list[Path]:
         if any(part in CONFIG_SEED_SKIP_DIRNAMES for part in rel.parts[:-1]):
             continue
         if rel.name in CONFIG_SEED_SKIP_FILENAMES:
+            continue
+        if rel.as_posix() in CONFIG_TEMPLATE_EXCLUDES:
             continue
         if len(rel.parts) == 1 and rel.name in CONFIG_TEMPLATE_EXCLUDES:
             continue

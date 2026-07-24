@@ -817,6 +817,17 @@ Study UID: {study_uid}
                         self.tab_widget.setCurrentIndex(i)
                         break
             
+            # ── Unified patient-level discovery (root fix, 2026-07-23) ───────
+            # Route the manual Download through the SAME study-discovery
+            # authority the open/single-click paths use (reconcile →
+            # merge_study_uids → build_download_payload), so a multi-study
+            # patient's newest (e.g. scanned-document) study is never skipped
+            # and a study that GREW on the server is re-accepted (stale
+            # COMPLETED reset). Kill switch AIPACS_MANUAL_DL_PATIENT_DISCOVERY=0
+            # (or no running loop) falls through to the legacy row-only body.
+            if self._start_manual_download_with_discovery(selected_studies, download_manager):
+                return
+
             # Studies missing series info need a series-info fetch from the
             # PACS server. That fetch is a blocking socket round-trip that can
             # take many seconds (or time out) against a slow server, so it must

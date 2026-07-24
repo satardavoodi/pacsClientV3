@@ -5986,16 +5986,22 @@ class ToolbarManager:
             except Exception:
                 full_vtk = _build_full_vtk()      # never block MPR on the cache layer
             if full_vtk is None:
+                # Distinguish a multi-frame gate block (a classified, expected
+                # limitation) from a generic volume-load failure so the user gets
+                # an accurate message.
+                _mf_reason = getattr(self, "_mpr_multiframe_block_reason", None)
+                _reason_code = "multiframe_not_supported" if _mf_reason else "full_volume_load_failed"
                 self._emit_mpr_launch_route(
                     source_backend=source_backend,
                     mpr_path=mpr_path,
                     series_number=series_number,
                     status="blocked",
-                    reason="full_volume_load_failed",
+                    reason=_reason_code,
                 )
                 return None, {
                     "source_backend": source_backend,
-                    "reason": "full_volume_load_failed",
+                    "reason": _reason_code,
+                    "multiframe_reason": _mf_reason,
                 }
             self._emit_mpr_launch_route(
                 source_backend=source_backend,
@@ -6026,6 +6032,16 @@ class ToolbarManager:
             return (
                 "MPR requires a full decoded volume for this series, but it could not be loaded.\n\n"
                 "Make sure the series files are present and readable, then try again."
+            )
+        if reason == "multiframe_not_supported":
+            return (
+                "MPR is not available for this series.\n\n"
+                "This is a multi-frame series (a single DICOM file that contains all "
+                "the frames internally). 3D / MPR reconstruction from a multi-frame "
+                "file is not yet supported — the 2D viewer, scrolling, measurements "
+                "and reference lines work normally.\n\n"
+                "Cine / angiographic / localizer multi-frame series are not "
+                "volumetric and do not support MPR at all."
             )
         return "MPR launch was blocked due to missing or invalid volume data."
 
@@ -6935,6 +6951,39 @@ class ToolbarManager:
             n_files = len(dcm_files)
         except Exception:
             n_files = 0
+
+        # ── Multi-frame MPR eligibility gate (2026-07-24) ────────────────────
+        # The VTK volume builder (image_io.load_vtk_from_dicom_paths) documents
+        # that a multi-frame file must NOT be passed — it collapses to ONE
+        # degenerate instance. A single-file multi-frame Enhanced series (cine,
+        # angio, ophthalmic, Enhanced MR/CT) therefore cannot build a valid MPR
+        # volume through this path. Detect it and abort cleanly with a specific,
+        # classified reason instead of silently constructing a 1-slice "volume"
+        # (which is exactly the "don't generate incorrect MPR" requirement).
+        # Standard MULTI-FILE series and single-frame files are never gated →
+        # ordinary MPR is byte-identical. Flag AIPACS_MPR_MULTIFRAME_GATE=0 =
+        # legacy (pass through, may build a degenerate volume). The multi-frame
+        # VTK volume BUILDER is a staged follow-up (needs live VTK validation).
+        self._mpr_multiframe_block_reason = None
+        if _os.environ.get("AIPACS_MPR_MULTIFRAME_GATE", "1") != "0":
+            try:
+                import modules.viewer.fast.multiframe_geometry as _mfg
+                _mf_cls = _mfg.classify_series_files(dcm_files)
+            except Exception:
+                _mf_cls = None
+            if _mf_cls is not None:
+                self._mpr_multiframe_block_reason = _mf_cls.reason or _mf_cls.kind
+                self._mpr_multiframe_block_kind = _mf_cls.kind
+                try:
+                    logger.info(
+                        "[MPR MULTIFRAME GATE] blocked degenerate multi-frame volume: "
+                        "kind=%s mpr_eligible=%s frames=%s",
+                        _mf_cls.kind, _mf_cls.mpr_eligible, _mf_cls.number_of_frames,
+                    )
+                except Exception:
+                    pass
+                return None
+
         sync_only = _os.environ.get("AIPACS_ZETA_MPR_SYNC_LOAD", "0") == "1"
         try:
             threshold = int(_os.environ.get("AIPACS_ZETA_MPR_ASYNC_MIN_SLICES", "80"))

@@ -990,12 +990,29 @@ class AppHandler(QDialog):
             if not is_local and not self.auth_token:
                 self._show_error("Login required: authentication did not complete")
                 return
+            # [STARTUP_STAGE] pure-logging phase timers (no behaviour change).
+            # This is the REAL post-login main-window build; the main.py
+            # window.show() only paints the lightweight login form. Bracketing
+            # construct vs first-show here lets app.log attribute the one-time
+            # startup cost precisely (complements the setupUi stage=home_widget/
+            # settings_widget/apply_theme logs inside ControlPanelInterface).
+            import time as _startup_time
+            _t_mw_construct = _startup_time.perf_counter()
             self.main_page = MainWindowWidget(
                 auth_user=self.auth_user,
                 auth_token=self.auth_token,
                 startup_import_folder=self.startup_import_folder,
             )
+            logger.warning(
+                "[STARTUP_STAGE] stage=mainwindow_construct ms=%.1f",
+                (_startup_time.perf_counter() - _t_mw_construct) * 1000.0,
+            )
+            _t_mw_show = _startup_time.perf_counter()
             self.main_page.showMaximized()
+            logger.warning(
+                "[STARTUP_STAGE] stage=mainwindow_show ms=%.1f",
+                (_startup_time.perf_counter() - _t_mw_show) * 1000.0,
+            )
             self.hide()
             self.deleteLater()
         except Exception as e:

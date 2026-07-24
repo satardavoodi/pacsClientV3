@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 import aipacs_runtime as runtime
 from builder import build_release
 from builder.plugin_package_registry import plugin_package_definition_map
@@ -117,6 +119,13 @@ def test_validate_release_bundle_graphics_runtime_checks_dist_payload(monkeypatc
         raise AssertionError("validate_release_bundle_graphics_runtime should fail when dist bundle is incomplete")
 
 
+# SLOW LANE: publish_update_bundle builds a content-addressed store by gzip-
+# compressing the REAL viewer/printing module trees (via the un-monkeypatched
+# plugin_package_definition_map source paths). That legitimately exceeds the
+# 120s fast-lane --timeout on a loaded box and, under -n auto, surfaces as a
+# dead xdist worker ("node down"). It is real bundle-publishing, not a unit
+# test, so it belongs in the opt-in slow lane. Run with `pytest -m slow`.
+@pytest.mark.slow
 def test_publish_update_bundle_writes_core_and_module_feed(monkeypatch, tmp_path):
     monkeypatch.setattr(build_release, "PACKAGE_OUTPUT_DIR", tmp_path / "packages")
     monkeypatch.setattr(build_release, "INSTALLER_OUTPUT_DIR", tmp_path / "installer")
