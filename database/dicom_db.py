@@ -1019,6 +1019,20 @@ def search_patients_local(search_data: dict) -> list:
                 query += " AND s.study_date <= ?"
                 params.append(search_data['date_to'])
 
+        # Import-date filter (2026-07-24) — uses studies.imported_at (when the
+        # study FIRST entered THIS local DB), NOT study_date (acquisition). This
+        # is a LOCAL-only field, so it applies even to a Patient-ID search.
+        # imported_at is stored 'YYYY-MM-DD HH:MM:SS' (local), so a lexicographic
+        # string compare against a day boundary is correct. from/to are 'YYYY-MM-DD'.
+        _imp_from = search_data.get('import_date_from')
+        _imp_to = search_data.get('import_date_to')
+        if _imp_from:
+            query += " AND s.imported_at >= ?"
+            params.append(f"{str(_imp_from).strip()} 00:00:00")
+        if _imp_to:
+            query += " AND s.imported_at <= ?"
+            params.append(f"{str(_imp_to).strip()} 23:59:59")
+
         if search_data.get('study_description'):
             query += " AND LOWER(s.study_description) LIKE LOWER(?)"
             params.append(f"%{search_data['study_description']}%")

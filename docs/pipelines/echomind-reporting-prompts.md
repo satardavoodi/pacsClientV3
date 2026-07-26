@@ -193,6 +193,27 @@ default — there is no built-in template that ships both sexes.
 
 ---
 
+## 7c. Non-obstetric ultrasound — exam-specific normal templates (2026-07-09)
+
+**Problem:** the non-OB ultrasound prompt had a single thin "RSNA NORMAL FINDINGS — GENERAL
+ULTRASOUND" list (liver/GB/pancreas/kidneys/spleen/bladder/prostate/soft-tissue, no measurements),
+so normal reports were only a few generic lines and not exam-specific.
+
+**Change:** replaced that flat list with an **exam-specific normal-template library** inside the
+`["sonography","ultrasound"]` branch. The model is instructed to detect the ONE exam type and build
+Normal Findings from only that template, organ-by-organ, with standard terminology and normal
+**reference** measurements (stated as normal thresholds, not fabricated patient values). Templates
+provided: Complete Abdominal, Hepatobiliary/RUQ, Renal-Urinary (KUB), Pelvic-Male, Thyroid/Neck,
+Breast, Scrotal/Testicular, Carotid/Vertebral Doppler, Extremity Venous (DVT), Extremity Arterial,
+Appendix/RIF, Soft-tissue/Superficial/MSK. The **Gynecologic / female-pelvic** block was expanded
+with uterine dimensions, endometrial thickness by phase, and ovarian volume.
+
+**Untouched (by request):** the obstetric (ISUOG) template — it already follows protocol. The
+sex-specific anatomy rule (§7b) and physician-content preservation rule (§5) inside the ultrasound
+branch are retained. Guard: `test_non_ob_ultrasound_has_exam_specific_normal_templates`.
+
+---
+
 ## 8. Tests
 
 - **Guard test:** `tests/code/echomind/test_report_prompt_preservation.py`

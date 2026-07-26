@@ -211,6 +211,7 @@ def save_prompt_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
 # while Secretary read it but only as a 3-way provider route with no endpoint.
 STT_PROVIDER_AIPACS_1 = "aipacs_1"   # AI-PACS Server 1 (A100 GPU)
 STT_PROVIDER_AIPACS_2 = "aipacs_2"   # AI-PACS Server 2 (Windows)
+STT_PROVIDER_AIPACS_3 = "aipacs_3"   # AI-PACS Server 3 (OpenAI-compatible Whisper)
 STT_PROVIDER_GOOGLE = "v2t"          # Google Speech (local library, no endpoint)
 STT_PROVIDER_OPENAI = "openai"       # OpenAI transcription (own base_url)
 STT_PROVIDER_CUSTOM = "custom"       # user-entered server
@@ -218,6 +219,7 @@ STT_PROVIDER_CUSTOM = "custom"       # user-entered server
 STT_PROVIDERS = (
     STT_PROVIDER_AIPACS_1,
     STT_PROVIDER_AIPACS_2,
+    STT_PROVIDER_AIPACS_3,
     STT_PROVIDER_GOOGLE,
     STT_PROVIDER_OPENAI,
     STT_PROVIDER_CUSTOM,

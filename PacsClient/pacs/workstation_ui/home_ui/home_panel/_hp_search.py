@@ -308,6 +308,28 @@ class _HPSearchMixin:
         self.patient_search_widget.set_searching_state(True)
         self._cancel_search_requested = False
         self._warmup_download_manager_once()
+
+        # Import-date filter (2026-07-24) is LOCAL-only (studies.imported_at, when
+        # the study entered THIS database — not the acquisition date), so route it
+        # to the local DB search instead of the PACS server. Other advanced fields
+        # (modality, a single Patient ID) refine the same local query.
+        if query.get('import_date_from') or query.get('import_date_to'):
+            extra = {
+                'import_date_from': query.get('import_date_from'),
+                'import_date_to': query.get('import_date_to'),
+            }
+            _mods = query.get('modalities') or []
+            if _mods:
+                extra['modality'] = ",".join(_mods)
+            _pids = query.get('patient_ids') or []
+            if len(_pids) == 1:
+                extra['patient_id'] = _pids[0]
+            self.source_of_patient_load = SourceOfPatientLoad.DB
+            self._search_task = asyncio.create_task(
+                self.search_service.search_local(extra_criteria=extra)
+            )
+            return
+
         self.source_of_patient_load = SourceOfPatientLoad.SERVER
         self._search_task = asyncio.create_task(
             self.search_service.search_server_advanced(query)

@@ -22,7 +22,7 @@
   "prompt_image_artifact": "",
   "secretary_stt_provider": "native",
   "secretary_stt_fallback": true,
-  "stt_provider": "aipacs_1",
+  "stt_provider": "aipacs_3",
   "stt_custom_base_url": "",
   "stt_custom_port": 0,
   "stt_endpoint_path": "/generate_transcript",

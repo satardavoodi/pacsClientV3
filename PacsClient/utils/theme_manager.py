@@ -552,3 +552,119 @@ def get_theme_manager() -> ThemeManager:
     if _theme_manager is None:
         _theme_manager = ThemeManager()
     return _theme_manager
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Centralised OS-theme immunity (2026-07-24)
+# ═══════════════════════════════════════════════════════════════════════════
+# The app applies a global QSS, but the QSS only targets the built-in dialog
+# classes (QMessageBox/QInputDialog/QFileDialog/QToolTip). A CUSTOM dialog or
+# popup that doesn't set its own complete stylesheet therefore falls back to the
+# QApplication PALETTE — and with the native Windows style + no fixed palette,
+# that palette FOLLOWS the OS light/dark mode, so such popups become unreadable
+# (dark text on a dark bg, or white-on-white). This is the recurring "every new
+# popup breaks in light/dark mode" defect (e.g. the 3D Cursor windows).
+#
+# The fix is centralised: install the Fusion style (which HONOURS the app
+# palette and does NOT follow the OS theme) and a fixed dark QPalette derived
+# from the active theme. The global QSS is applied ON TOP and overrides both for
+# every already-styled widget, so only the currently-broken un-styled widgets
+# change — from OS-coloured to correctly dark. One place, all popups fixed.
+
+def build_application_palette(theme: dict | None = None):
+    """Build a fixed dark ``QPalette`` from the active theme so any widget WITHOUT
+    explicit stylesheet colours falls back to the app's intended colours instead
+    of the OS light/dark palette. Pure + import-light (returns a QPalette)."""
+    from PySide6.QtGui import QPalette, QColor
+
+    t = theme or get_theme_manager().current_theme()
+
+    def c(key, fallback):
+        try:
+            return QColor(str(t.get(key, fallback) or fallback))
+        except Exception:
+            return QColor(fallback)
+
+    window_bg = c("window_bg", "#18212f")
+    panel_bg = c("panel_bg", "#111927")
+    panel_alt = c("panel_alt_bg", "#1b2536")
+    text_primary = c("text_primary", "#f8fafc")
+    text_muted = c("text_muted", "#93a4b7")
+    accent = c("accent", "#2563eb")
+    button_text = c("button_text", "#ffffff")
+    menu_bg = c("menu_bg", "#223246")
+    border = c("border", "#33415a")
+
+    pal = QPalette()
+    pal.setColor(QPalette.ColorRole.Window, window_bg)
+    pal.setColor(QPalette.ColorRole.WindowText, text_primary)
+    pal.setColor(QPalette.ColorRole.Base, panel_alt)            # input fields
+    pal.setColor(QPalette.ColorRole.AlternateBase, panel_bg)
+    pal.setColor(QPalette.ColorRole.Text, text_primary)
+    pal.setColor(QPalette.ColorRole.PlaceholderText, text_muted)
+    pal.setColor(QPalette.ColorRole.Button, panel_alt)
+    pal.setColor(QPalette.ColorRole.ButtonText, text_primary)
+    pal.setColor(QPalette.ColorRole.BrightText, QColor("#ffffff"))
+    pal.setColor(QPalette.ColorRole.ToolTipBase, menu_bg)
+    pal.setColor(QPalette.ColorRole.ToolTipText, text_primary)
+    pal.setColor(QPalette.ColorRole.Highlight, accent)
+    pal.setColor(QPalette.ColorRole.HighlightedText, button_text)
+    pal.setColor(QPalette.ColorRole.Link, accent)
+    pal.setColor(QPalette.ColorRole.Light, panel_alt)
+    pal.setColor(QPalette.ColorRole.Mid, border)
+    pal.setColor(QPalette.ColorRole.Dark, panel_bg)
+    # Disabled group — muted but still readable (never OS-default).
+    for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text,
+                 QPalette.ColorRole.ButtonText):
+        pal.setColor(QPalette.ColorGroup.Disabled, role, text_muted)
+    pal.setColor(QPalette.ColorGroup.Disabled, QPalette.ColorRole.Highlight, menu_bg)
+    return pal
+
+
+def _force_app_theme_enabled() -> bool:
+    import os as _os
+    return _os.environ.get("AIPACS_FORCE_APP_THEME", "").strip().lower() not in (
+        "0", "false", "off", "no",
+    )
+
+
+def apply_global_app_theme(app, theme: dict | None = None) -> None:
+    """Make the whole application immune to the OS light/dark mode: install the
+    Fusion style (honours the palette, ignores the OS theme) + a fixed dark
+    palette. Call once at startup and again on every theme change (BEFORE/with
+    the global stylesheet). No-op (byte-identical legacy) when
+    AIPACS_FORCE_APP_THEME=0. Never raises into startup."""
+    if app is None or not _force_app_theme_enabled():
+        return
+    try:
+        from PySide6.QtWidgets import QStyleFactory
+        # Fusion is a Qt-drawn style whose colours come from the palette, so it
+        # does not track the OS light/dark theme (unlike the native windows style).
+        if str(app.style().objectName() or "").lower() != "fusion":
+            _fusion = QStyleFactory.create("Fusion")
+            if _fusion is not None:
+                app.setStyle(_fusion)
+    except Exception:
+        pass
+    try:
+        app.setPalette(build_application_palette(theme))
+    except Exception:
+        pass
+
+
+def apply_dialog_theme(widget, theme: dict | None = None) -> None:
+    """Residual-case helper: force the app's dark palette onto ONE widget subtree.
+
+    With ``apply_global_app_theme`` installed, almost no dialog needs this — a
+    popup that sets no background inherits the fixed dark palette automatically.
+    Use this ONLY for a widget that was given a conflicting light palette/context
+    (e.g. built under a different top-level, or embedding a native child). It does
+    NOT override a hard-coded light STYLESHEET — for those, remove the hard-coded
+    colour and use theme tokens (`get_theme_manager().current_theme()`), which is
+    the consistent correction method. Never raises."""
+    if widget is None:
+        return
+    try:
+        widget.setPalette(build_application_palette(theme))
+    except Exception:
+        pass

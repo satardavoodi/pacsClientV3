@@ -51,6 +51,7 @@ from .settings_store import (
     STT_HTTP_PROVIDERS,
     STT_PROVIDER_AIPACS_1,
     STT_PROVIDER_AIPACS_2,
+    STT_PROVIDER_AIPACS_3,
     STT_PROVIDER_CUSTOM,
     STT_PROVIDER_GOOGLE,
     STT_PROVIDER_OPENAI,
@@ -65,10 +66,23 @@ log = logging.getLogger(__name__)
 AIPACS_SERVER_1_BASE = "http://81.16.117.196:8082"   # A100 GPU
 AIPACS_SERVER_2_BASE = "http://80.210.31.214:8085"   # Windows server
 
+# ── AI-PACS Server 3 — an OpenAI-COMPATIBLE Whisper endpoint (GapGPT) ─────────
+# Unlike Servers 1/2 (multipart ``audio_files`` + ``quality_mode`` at
+# ``/generate_transcript``), Server 3 speaks the OpenAI transcription REST API:
+# ``POST {base}/audio/transcriptions`` with ``model`` + ``file`` and a Bearer
+# key. Shown in the UI ONLY as "AI-PACS Server 3"; the base URL / key / model
+# live here and are never surfaced (same product rule as Servers 1/2). A token
+# entered in Settings would override the built-in key, but the field is hidden
+# for this name-only server, so the built-in key is used.
+AIPACS_SERVER_3_BASE = "https://api.gapgpt.app/v1"
+AIPACS_SERVER_3_MODEL = "gapgpt/whisper-1"
+AIPACS_SERVER_3_KEY = "sk-WRCKo4GRoH4N7gCVVD1AeILMZe6DGsrLIHmF1ZVKZ2BzIP1k"
+
 #: (provider_id, display label) — the Settings combo renders exactly this.
 STT_PROVIDER_CHOICES = (
     (STT_PROVIDER_AIPACS_1, "AI-PACS Server 1"),
     (STT_PROVIDER_AIPACS_2, "AI-PACS Server 2"),
+    (STT_PROVIDER_AIPACS_3, "AI-PACS Server 3"),
     (STT_PROVIDER_GOOGLE, "Google Speech"),
     (STT_PROVIDER_OPENAI, "OpenAI Transcription"),
     (STT_PROVIDER_CUSTOM, "Custom Server"),
@@ -222,6 +236,18 @@ class VoiceTranscriptionService:
                 if key
                 else {"ok": False, "detail": "No OpenAI API key configured."}
             )
+        if provider == STT_PROVIDER_AIPACS_3:
+            # OpenAI-compatible server: probe the base without exposing its
+            # address in the (user-visible) detail string.
+            key = str(cfg.get("auth_token") or "").strip() or AIPACS_SERVER_3_KEY
+            headers = {"Authorization": f"Bearer {key}"} if key else {}
+            try:
+                r = requests.get(f"{AIPACS_SERVER_3_BASE}/models", headers=headers, timeout=8)
+                if r.status_code < 500:
+                    return {"ok": True, "detail": f"AI-PACS Server 3 reachable (HTTP {r.status_code})."}
+                return {"ok": False, "detail": f"AI-PACS Server 3 error (HTTP {r.status_code})."}
+            except Exception as exc:
+                return {"ok": False, "detail": f"AI-PACS Server 3 not reachable: {exc}"}
 
         endpoint = resolve_endpoint(cfg)
         if not endpoint:
@@ -259,6 +285,8 @@ class VoiceTranscriptionService:
             return self._delegate("v2t", paths, quality_mode, timeout, cfg)
         if provider == STT_PROVIDER_OPENAI:
             return self._delegate("openai", paths, quality_mode, timeout, cfg)
+        if provider == STT_PROVIDER_AIPACS_3:
+            return self._post_openai_compatible(paths, timeout, cfg)
         return self._post_audio(paths, quality_mode, timeout, cfg)
 
     # -- non-HTTP providers reuse the existing implementations ---------------
@@ -350,6 +378,64 @@ class VoiceTranscriptionService:
             }
         )
         return out
+
+    # -- AI-PACS Server 3: OpenAI-compatible Whisper (GapGPT) -----------------
+    def _post_openai_compatible(self, paths, timeout, cfg) -> Dict[str, Any]:
+        """Transcribe via the OpenAI ``/audio/transcriptions`` REST API.
+
+        One file per request (the OpenAI endpoint takes a single ``file``), so
+        multiple recordings are transcribed in turn and joined — mirroring the
+        existing OpenAI provider. Returns the SAME response contract as the AI-PACS
+        native path so both callers (chat + Secretary) work unchanged: there is no
+        ``quality_mode`` / ``accepted`` here, so ``quality_report`` is always ``[]``
+        (a Whisper endpoint has no low-quality "noisy" retry signal).
+        """
+        # A configured token may override the built-in key; the built-in key is
+        # the normal case (the token field is hidden for this name-only server).
+        key = str(cfg.get("auth_token") or "").strip() or AIPACS_SERVER_3_KEY
+        endpoint = build_endpoint(AIPACS_SERVER_3_BASE, "/audio/transcriptions")
+        request_timeout = int(timeout or cfg.get("timeout_seconds") or DEFAULT_TIMEOUT_S)
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+
+        statuses: List[Dict[str, Any]] = []
+        chunks: List[str] = []
+        for p in paths or []:
+            if not p or not os.path.exists(p):
+                statuses.append({"path": p, "ok": False, "error": "missing_file"})
+                continue
+            try:
+                with open(p, "rb") as fh:
+                    r = requests.post(
+                        endpoint,
+                        headers=headers,
+                        files={"file": (os.path.basename(p), fh, "audio/wav")},
+                        data={"model": AIPACS_SERVER_3_MODEL},
+                        timeout=request_timeout,
+                    )
+                r.raise_for_status()
+                body = r.json()
+                text = str((body or {}).get("text") or "").strip()
+                statuses.append({"path": p, "ok": True, "text": text})
+                if text:
+                    chunks.append(text)
+            except Exception as exc:  # noqa: BLE001 — never raise into the audio path
+                statuses.append({"path": p, "ok": False, "error": str(exc)})
+
+        if not any(s.get("ok") for s in statuses):
+            first_err = next((s.get("error") for s in statuses if s.get("error")), "upload failed")
+            return self._error(cfg, f"AI-PACS Server 3 transcription failed: {first_err}", statuses)
+
+        transcript = "\n".join(c for c in chunks if c).strip()
+        return {
+            "ok": True,
+            "provider": "native",          # SttRouter's provider name
+            "stt_provider": cfg.get("provider"),
+            "route_used": "native",
+            "transcript": transcript,
+            "quality_report": [],
+            "files": statuses,
+            "endpoint": "",                # never surface Server 3's address
+        }
 
     @staticmethod
     def _error(cfg, message: str, statuses=None) -> Dict[str, Any]:

@@ -1,6 +1,6 @@
 # AIPacs Documentation
 
-> **Current Stable Version:** v3.5.5 (2026-07-25)
+> **Current Stable Version:** v3.5.6 (2026-07-26)
 
 This is the canonical entrypoint for all project documentation. The docs are organized by concern area so you can find what you need quickly.
 
@@ -204,4 +204,5 @@ Build & release infrastructure (separate from docs/):
 - `PacsClient/pacs/patient_tab/zeta mpr/` uses a space in the folder name (runtime depends on dynamic imports).
 - Some package-local notes still contain encoding issues or time-bound details.
 - `docs/archive/reference-bundles/clear-canvas/` is an archived duplicate bundle kept only for historical reading order; canonical ClearCanvas docs now live in `docs/analysis/`, `docs/architecture/`, and `docs/plans/`.
+
 

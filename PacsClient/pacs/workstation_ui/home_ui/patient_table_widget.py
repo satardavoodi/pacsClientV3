@@ -4186,17 +4186,34 @@ class PatientTableWidget(QWidget):
     # total kept visible. The caller passes the buffer already in DISPLAY
     # (date-descending) order so the first batch is the newest studies.
     _PROGRESSIVE_BATCH = 100
+    # First paint = a SMALL batch so the list appears immediately even on a very
+    # large local database, then the rest streams in on an idle timer (background)
+    # WITHOUT waiting for the user to scroll — the user can interact with the
+    # visible rows the whole time. Scroll-near-end still advances too.
+    _PROGRESSIVE_INITIAL_BATCH = 20
+    _PROGRESSIVE_BG_BATCH = 40
+    _PROGRESSIVE_BG_DELAY_MS = 50
 
-    def load_progressive(self, items, render_one, batch_size=None):
+    @staticmethod
+    def _progressive_bg_enabled() -> bool:
+        import os as _os
+        return _os.environ.get("AIPACS_PROGRESSIVE_LOCAL_BG", "").strip().lower() not in (
+            "0", "false", "off",
+        )
+
+    def load_progressive(self, items, render_one, batch_size=None, initial_batch=None):
         """Render ``items`` incrementally. ``render_one(item)`` renders one row
-        (returns True if a row was added). Renders the first batch now; later
-        batches load on scroll-near-end. Replaces any prior progressive buffer."""
+        (returns True if a row was added). Renders a SMALL first batch now (fast
+        first paint), then streams the rest in the background on an idle timer and
+        on scroll-near-end. Replaces any prior progressive buffer."""
         self._prog_items = list(items or [])
         self._prog_render_one = render_one
-        self._prog_batch = int(batch_size or self._PROGRESSIVE_BATCH)
+        self._prog_batch = int(batch_size or self._PROGRESSIVE_BG_BATCH)
+        self._prog_initial = int(initial_batch or self._PROGRESSIVE_INITIAL_BATCH)
         self._prog_cursor = 0
         self._prog_total = len(self._prog_items)
         self._prog_loading = False
+        self._prog_bg_gen = int(getattr(self, '_prog_bg_gen', 0)) + 1  # invalidates old bg timers
         if not getattr(self, '_prog_scroll_connected', False):
             try:
                 self.results_table.verticalScrollBar().valueChanged.connect(
@@ -4205,9 +4222,12 @@ class PatientTableWidget(QWidget):
                 self._prog_scroll_connected = True
             except Exception:
                 pass
-        self._progressive_render_next()
+        # 1) small first batch immediately (the "first 20")
+        self._progressive_render_next(self._prog_initial)
+        # 2) stream the remainder in the background (non-blocking, yields to the UI)
+        self._schedule_progressive_background()
 
-    def _progressive_render_next(self):
+    def _progressive_render_next(self, count=None):
         items = getattr(self, '_prog_items', None)
         if not items or getattr(self, '_prog_loading', False):
             return
@@ -4218,9 +4238,12 @@ class PatientTableWidget(QWidget):
         render_one = getattr(self, '_prog_render_one', None)
         if not callable(render_one):
             return
+        n = int(count if count is not None else getattr(self, '_prog_batch', self._PROGRESSIVE_BATCH))
+        if n <= 0:
+            n = self._PROGRESSIVE_BG_BATCH
         self._prog_loading = True
         try:
-            end = min(cursor + int(getattr(self, '_prog_batch', self._PROGRESSIVE_BATCH)), total)
+            end = min(cursor + n, total)
             self.begin_bulk_insert()
             try:
                 for idx in range(cursor, end):
@@ -4235,6 +4258,33 @@ class PatientTableWidget(QWidget):
         finally:
             self._prog_loading = False
 
+    def _schedule_progressive_background(self):
+        """Arm an idle-timer step to render the next background batch, unless the
+        buffer is exhausted or background streaming is disabled."""
+        if not self._progressive_bg_enabled():
+            return
+        if int(getattr(self, '_prog_cursor', 0)) >= int(getattr(self, '_prog_total', 0)):
+            return
+        try:
+            from PySide6.QtCore import QTimer
+            gen = int(getattr(self, '_prog_bg_gen', 0))
+            QTimer.singleShot(
+                int(self._PROGRESSIVE_BG_DELAY_MS),
+                lambda g=gen: self._progressive_background_step(g),
+            )
+        except Exception:
+            pass
+
+    def _progressive_background_step(self, gen):
+        # A newer load_progressive() invalidates in-flight timers.
+        if int(gen) != int(getattr(self, '_prog_bg_gen', 0)):
+            return
+        if int(getattr(self, '_prog_cursor', 0)) >= int(getattr(self, '_prog_total', 0)):
+            return
+        self._progressive_render_next(self._prog_batch)
+        # re-arm until fully loaded
+        self._schedule_progressive_background()
+
     def _on_progressive_scroll(self, value):
         try:
             if int(getattr(self, '_prog_cursor', 0)) >= int(getattr(self, '_prog_total', 0)):
@@ -4242,7 +4292,7 @@ class PatientTableWidget(QWidget):
             sb = self.results_table.verticalScrollBar()
             mx = sb.maximum()
             if mx > 0 and value >= int(mx * 0.85):
-                self._progressive_render_next()
+                self._progressive_render_next(self._prog_batch)
         except Exception:
             pass
 

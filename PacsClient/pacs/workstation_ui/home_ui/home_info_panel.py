@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.5.5",
-    "build_date": "2026-07-25",
-    "release_date": "2026-07-25",
+    "version": "3.5.6",
+    "build_date": "2026-07-26",
+    "release_date": "2026-07-26",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Multi-frame studies (ultrasound cine, enhanced MR/CT) display correctly",
-        "Report editor shows a patient's previous exams under older Patient IDs",
-        "Manage the Offline Service: delete patients from an existing package",
-        "Previous-exam series now fill in as they download, no layout switch needed",
-        "Faster, smoother startup and a lighter download client",
+        "Popups and dialogs stay readable in any Windows light/dark theme",
+        "Local patient list loads instantly and fills in as you scroll",
+        "Advanced Search can filter the local list by import date",
+        "EchoMind reporting keeps your prompt and adds a new voice option",
+        "Assorted stability and reliability fixes",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.5.5",
+        "AI-PACS Version 3.5.6",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۵.۵",
+        "AI-PACS نسخهٔ ۳.۵.۶",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

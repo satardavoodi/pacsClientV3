@@ -42,6 +42,10 @@ def _progressive_local_enabled() -> bool:
 
 
 _LOCAL_SEARCH_BATCH = 100
+# Engage progressive rendering (fast first paint + background streaming) as soon
+# as the result set exceeds a small first-page, so even a few-hundred-row local
+# list shows instantly instead of blocking on a full render.
+_LOCAL_PROGRESSIVE_MIN = 20
 
 
 # ── OPT-24 (2026-07-11): patient-search client-side waste removal ──────────────
@@ -251,8 +255,14 @@ class HomeSearchService:
     # Local DB search
     # ------------------------------------------------------------------
 
-    async def search_local(self) -> None:
-        """Search the local database — cancellable, chunk-based UI update."""
+    async def search_local(self, extra_criteria: dict = None) -> None:
+        """Search the local database — cancellable, chunk-based UI update.
+
+        ``extra_criteria`` (optional) merges into the search filters AFTER the
+        home-page fields — used by the Advanced-Search Import-date filter to run
+        a LOCAL query on ``studies.imported_at`` (import_date_from/to), reusing
+        this method's progressive rendering. None ⇒ byte-identical legacy path.
+        """
         home = self._home
         loop = asyncio.get_running_loop()
         home._cancel_search_requested = False
@@ -281,6 +291,14 @@ class HomeSearchService:
             if str(search_data_local.get('patient_id') or '').strip():
                 search_data_local['modality'] = []
                 search_data_local['patient_name'] = None
+
+            # Advanced Import-date filter (2026-07-24): merge the extra criteria
+            # (import_date_from/to + optional modality/patient_id) AFTER the
+            # home-page fields so the local query filters on studies.imported_at.
+            if extra_criteria:
+                for _k, _v in extra_criteria.items():
+                    if _v not in (None, "", []):
+                        search_data_local[_k] = _v
 
             patients = await loop.run_in_executor(self._thread_pool(), search_patients_local, search_data_local)
 
@@ -369,17 +387,18 @@ class HomeSearchService:
                     )
                     return True
 
-                if _progressive_local_enabled() and total > _LOCAL_SEARCH_BATCH:
-                    # PROGRESSIVE: render the first batch immediately and lazy-
-                    # load the rest on scroll — no per-row UI freeze, scales to
-                    # very large local databases. The buffer is reversed to
-                    # DISPLAY (date-descending = newest-first) order so the first
-                    # batch is the newest studies (matches the table's default
-                    # date-desc sort). Subsequent batches load on scroll-near-end.
+                if _progressive_local_enabled() and total > _LOCAL_PROGRESSIVE_MIN:
+                    # PROGRESSIVE: render a small FIRST batch immediately (fast
+                    # first paint even on a very large local DB), then stream the
+                    # rest in the BACKGROUND (idle timer) while the user interacts,
+                    # plus scroll-near-end. No per-row UI freeze. The buffer is
+                    # reversed to DISPLAY (date-descending = newest-first) order so
+                    # the first batch is the newest studies (matches the table's
+                    # default date-desc sort).
                     patients_display = list(reversed(patients))
                     home.search_progress.setVisible(False)
                     home.patient_table_widget.load_progressive(
-                        patients_display, render_one, _LOCAL_SEARCH_BATCH
+                        patients_display, render_one
                     )
                 else:
                     # LEGACY: render every row up front, chunked + yielding so the

@@ -1380,36 +1380,87 @@ def reporter(
                 – OB Doppler (if mentioned): UA PI, MCA PI, DV.
 
                 -----------------------------------------------------------------------
-                RSNA NORMAL FINDINGS — GENERAL ULTRASOUND
+                NON-OBSTETRIC ULTRASOUND — EXAM-SPECIFIC NORMAL TEMPLATES
                 -----------------------------------------------------------------------
+                HOW TO USE THIS SECTION (non-obstetric studies):
+                • Identify the ONE examination type from the Report Title / dictation (abdominal,
+                  hepatobiliary/RUQ, renal-urinary/KUB, pelvic male, pelvic/gynecologic female, thyroid/neck,
+                  breast, scrotal/testicular, carotid/vertebral Doppler, extremity venous Doppler (DVT),
+                  extremity arterial Doppler, appendix/RIF, soft-tissue/superficial/MSK).
+                • Build "Normal Findings" using ONLY that exam's template below — cover every listed structure,
+                  organ-by-organ, in order, using standard radiology terminology and a consistent structure.
+                • Measurements shown are NORMAL REFERENCE RANGES. State the structure as normal and, where
+                  natural, cite the normal threshold (e.g. "common bile duct is not dilated (≤6 mm)"). Do NOT
+                  fabricate a specific patient measurement that was not dictated; if the physician dictated a
+                  measurement, use that value.
+                • Exclude any organ/structure already described in Pathological Findings.
+                • Apply the SEX-SPECIFIC ANATOMY RULE (see the GYNECOLOGIC section below) for prostate, uterus,
+                  ovaries, and testes: include a sex-specific organ ONLY IF the physician explicitly mentioned
+                  it, never assume the patient's sex, and never list both male and female organs together.
+                • Keep it concise but complete — one short line per structure, no filler.
 
-                • Liver:
-                – Homogeneous echotexture with smooth contour.
-                – Normal portal vein caliber; hepatopetal flow present.
-                – No focal hepatic lesions.
+                ▌COMPLETE ABDOMINAL ULTRASOUND
+                • Liver: normal in size (right lobe ≤15–16 cm), smooth contour, homogeneous echotexture, no focal lesion; intrahepatic bile ducts non-dilated.
+                • Portal vein: patent with hepatopetal flow and normal caliber (≤13 mm).
+                • Gallbladder: normally distended, thin wall (≤3 mm), no calculus, sludge, or polyp; no pericholecystic fluid.
+                • Biliary tree: common bile duct not dilated (≤6 mm; up to ≈8–10 mm post-cholecystectomy).
+                • Pancreas: normal size and echogenicity; pancreatic duct not dilated; no peripancreatic collection (where visualized through bowel gas).
+                • Spleen: normal in size (≤12 cm long axis), homogeneous echotexture, no focal lesion.
+                • Kidneys: both normal in length (≈9–12 cm) and cortical thickness, with preserved corticomedullary differentiation; no hydronephrosis, calculus, or mass.
+                • Abdominal aorta: normal caliber (≤2 cm), no aneurysm. IVC: normal caliber with respiratory variation.
+                • No ascites; no retroperitoneal or mesenteric lymphadenopathy.
 
-                • Gallbladder & Biliary Tree:
-                – Thin, smooth gallbladder wall; no stones or sludge.
-                – Common bile duct within normal diameter.
+                ▌HEPATOBILIARY / RIGHT-UPPER-QUADRANT (focused)
+                • Liver: homogeneous echotexture, normal size, no focal lesion; intrahepatic ducts non-dilated.
+                • Gallbladder: thin wall (≤3 mm), no calculus or sludge; no pericholecystic fluid.
+                • Common bile duct: not dilated (≤6 mm). Portal vein: patent with hepatopetal flow.
 
-                • Pancreas:
-                – Normal size and echogenicity; no peripancreatic fluid.
+                ▌RENAL / URINARY-TRACT (KUB) ULTRASOUND
+                • Right and left kidney: normal length (≈9–12 cm) and cortical thickness, preserved corticomedullary differentiation; no hydronephrosis, calculus, or mass.
+                • Pelvicalyceal system: non-dilated. Ureters: not dilated (normally not visualized).
+                • Urinary bladder: normal wall thickness (≤3 mm when distended), no calculus or mass; post-void residual normal (≤50 mL) when measured.
+                • Prostate — INCLUDE ONLY IF explicitly mentioned (sex rule): normal size and echotexture, volume within normal limits (≈≤30 mL).
 
-                • Kidneys:
-                – Preserved corticomedullary differentiation.
-                – No hydronephrosis, nephrolithiasis, or renal masses.
+                ▌PELVIC ULTRASOUND — MALE (bladder / prostate)
+                • Urinary bladder: normal wall thickness, no calculus or mass; post-void residual normal (≤50 mL) when measured.
+                • Prostate — INCLUDE ONLY IF explicitly mentioned (sex rule): normal size and echotexture, volume within normal limits (≈≤30 mL), no focal lesion.
+                • (Female pelvic / gynecologic template is the GYNECOLOGIC section below.)
 
-                • Spleen:
-                – Normal size; uniform echotexture.
+                ▌THYROID / NECK ULTRASOUND
+                • Right and left thyroid lobes: normal in size (each ≈ AP ≤2 cm, transverse ≤2 cm, length 4–6 cm), homogeneous echotexture, no nodule; normal parenchymal vascularity.
+                • Isthmus: normal thickness (≤3–4 mm).
+                • Cervical regions: no pathological lymphadenopathy (nodes with preserved fatty hilum, <1 cm short axis).
 
-                • Urinary Bladder:
-                – Smooth walls; no debris or masses.
+                ▌BREAST ULTRASOUND (bilateral / targeted)
+                • Skin and subcutaneous tissue normal; normal fibroglandular parenchyma with no architectural distortion.
+                • No mass, cyst, or ductal dilatation.
+                • Axillary regions: no pathological lymph nodes (normal cortical thickness with preserved fatty hilum).
+                • (When a BI-RADS category is dictated, preserve it exactly as provided.)
 
-                • Prostate — INCLUDE ONLY IF the physician explicitly mentioned the prostate (see SEX-SPECIFIC ANATOMY RULE below); otherwise OMIT entirely:
-                – Normal morphology and echogenicity; normal volume.
+                ▌SCROTAL / TESTICULAR ULTRASOUND
+                • Both testes: normal in size (each ≈ 3–5 × 2–3 × 2–3 cm), symmetric homogeneous echotexture, with symmetric normal vascularity on colour Doppler.
+                • Epididymes: normal in size and echogenicity.
+                • No hydrocele, no varicocele (veins ≤2–3 mm without reflux), no focal intratesticular mass.
 
-                • Soft Tissues:
-                – No abnormal masses, fluid collections, or abnormal vascularity.
+                ▌CAROTID / VERTEBRAL DOPPLER
+                • Common, internal, and external carotid arteries bilaterally: patent, no plaque; intima–media thickness normal (<0.9 mm); normal spectral waveforms.
+                • No haemodynamically significant stenosis (ICA peak systolic velocity <125 cm/s).
+                • Vertebral arteries: patent with normal antegrade flow bilaterally.
+
+                ▌EXTREMITY VENOUS DOPPLER (DVT study)
+                • Named deep veins fully compressible with phasic flow and normal augmentation (lower limb: common femoral, femoral, popliteal, calf veins; upper limb: subclavian, axillary, brachial).
+                • No intraluminal thrombus; superficial venous system unremarkable where assessed.
+
+                ▌EXTREMITY ARTERIAL DOPPLER
+                • Named arteries patent with triphasic spectral waveforms; no significant stenosis or occlusion; normal distal flow.
+
+                ▌APPENDIX / RIGHT-ILIAC-FOSSA ULTRASOUND
+                • Appendix (when visualized): compressible, blind-ending, maximal diameter ≤6 mm, no wall thickening; no periappendiceal fluid or fat changes.
+                • No free fluid or lymphadenopathy in the right iliac fossa.
+
+                ▌SOFT-TISSUE / SUPERFICIAL / MUSCULOSKELETAL ULTRASOUND
+                • Skin, subcutaneous tissue, and underlying muscle normal in echotexture; no collection, mass, or abnormal vascularity.
+                • For joints/tendons: no joint effusion; tendons intact with a normal fibrillar pattern; no bursal distension.
 
                 -----------------------------------------------------------------------
                 ISUOG NORMAL FINDINGS — OBSTETRIC ULTRASOUND
@@ -1459,17 +1510,22 @@ def reporter(
                   about it, OMIT that organ entirely — do NOT emit a normal/"unremarkable" statement for it.
                 • NEVER include BOTH male organs (prostate) AND female organs (uterus/ovaries) in the same report.
 
+                (Female pelvic / gynecologic study — cover uterus, endometrium, both ovaries, adnexa, and
+                cul-de-sac; state the imaging route when dictated: transabdominal (TAS) or transvaginal (TVS).)
+
                 • Uterus — INCLUDE ONLY IF the physician explicitly mentioned it; otherwise OMIT:
-                – Normal size and contour.
-                – Myometrium homogeneous.
-                – Endometrium appropriate for menstrual phase.
+                – Normal size (≈7–9 × 4–5 × 3–4 cm premenopausal; smaller postmenopausal) and contour; normal position (anteverted/retroverted as noted).
+                – Myometrium homogeneous with no fibroid.
+                – Endometrium homogeneous with thickness appropriate for menstrual phase (proliferative ≈4–8 mm, secretory ≈7–14 mm, postmenopausal ≤5 mm without hormone therapy).
 
                 • Ovaries — INCLUDE ONLY IF the physician explicitly mentioned them; otherwise OMIT:
-                – Normal size with physiological follicles.
-                – No adnexal masses or abnormal free fluid.
+                – Both ovaries normal in size (volume ≈≤10 mL premenopausal; atrophic postmenopausal) with physiological follicles.
+                – No adnexal mass; no abnormal or complex free fluid (small physiological cul-de-sac fluid may be normal).
 
                 • Cervix — INCLUDE ONLY IF the physician explicitly mentioned it; otherwise OMIT:
-                – Normal length and morphology.
+                – Normal length and morphology; endocervical canal unremarkable.
+
+                • Urinary bladder (when a transabdominal pelvic study is described): normal wall, adequately distended, no mass or calculus.
 
                 -----------------------------------------------------------------------
 

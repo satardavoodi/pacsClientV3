@@ -1238,7 +1238,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.5.5")
+    app.setApplicationVersion("3.5.6")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1249,6 +1249,18 @@ if __name__ == "__main__":
     theme_manager = get_theme_manager()
 
     def _apply_application_theme(theme=None):
+        # Centralised OS-theme immunity (2026-07-24): install Fusion + a fixed
+        # dark palette so custom popups/dialogs/text boxes that don't set their
+        # own complete stylesheet no longer fall back to the OS light/dark
+        # palette (the recurring "popup unreadable in light/dark mode" defect,
+        # e.g. the 3D Cursor windows). The stylesheet below overrides both for
+        # every already-styled widget, so only the broken un-styled ones change.
+        # Kill switch: AIPACS_FORCE_APP_THEME=0.
+        try:
+            from PacsClient.utils.theme_manager import apply_global_app_theme
+            apply_global_app_theme(app, theme or theme_manager.current_theme())
+        except Exception:
+            pass
         themed_stylesheet = theme_manager.build_application_stylesheet(theme) + get_scroll_area_style()
         app.setStyleSheet(themed_stylesheet)
 

@@ -1,9 +1,60 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.5 (2026-07-25)
-**Previous Stable:** v3.5.4 (2026-07-19)
-**Release Date:** 2026-07-25
+**Current Stable Version:** v3.5.6 (2026-07-26)
+**Previous Stable:** v3.5.5 (2026-07-25)
+**Release Date:** 2026-07-26
 **Branch:** beta-version
+
+---
+
+## v3.5.6 (2026-07-26) - Minor release: OS theme immunity for dialogs, local list incremental loading + import-date filter, EchoMind reporting/voice
+
+### Summary
+
+Minor release with three threads. A **theme-immunity** fix so popups and dialogs
+stay readable whatever light/dark theme Windows is set to; **local patient-list
+incremental loading** with a new Advanced-Search **import-date filter**; and a set of
+**EchoMind reporting/voice** improvements (the report editor keeps your prompt
+instead of discarding it, a new assist endpoint, and an added voice-transcription
+provider).
+
+### Included — UI / theming
+
+- **OS light/dark theme immunity for popups and dialogs (OPT-44).** Custom popups
+  and dialogs could fall back to the operating system's palette and become
+  unreadable (e.g. dark text on a dark surface) when Windows switched between light
+  and dark mode. Root cause: the app used the native Qt style with no fixed palette,
+  and the stylesheet only covered Qt's built-in dialog classes — so any custom
+  widget inherited the OS palette. The fix is central: apply the Fusion style with a
+  fixed dark palette at the application level, then keep the QSS overrides for the
+  widgets that are already styled, so only the broken ones change. New
+  `docs/design/THEMING_DIALOGS.md`.
+
+### Included — home / search
+
+- **Local patient list — incremental loading + import-date filter (OPT-43).** The
+  local list now paints its first rows immediately and streams the rest in the
+  background (driven by an idle timer, not only on scroll), so a large local store no
+  longer stalls the list. Advanced Search gains an **import-date filter** (Today /
+  Yesterday / Two days ago / a custom day / a range) over `studies.imported_at`,
+  routed to the local search path.
+
+### Included — EchoMind
+
+- **Report-prompt preservation.** The reporting flow no longer discards the user's
+  prompt on the way to the model — a regression guard test pins it.
+- **New assist endpoint** for EchoMind reporting, with a server-side test.
+- **Voice transcription** gains an added provider option (the `aipacs_3` server) and
+  routing, going through the one shared `VoiceTranscriptionService` (never a fork),
+  with the endpoint still resolved per call from Settings. `modules/EchoMind/*` is
+  plugin-mirrored and synced. New `docs/pipelines/echomind-reporting-prompts.md`.
+
+### Notes
+
+- OPT-43 / OPT-44 are default-on / additive.
+- The theming and local-list changes still need live source-build verification
+  (dialogs render correctly under both Windows themes; the local list streams and the
+  import-date filter returns the right studies).
 
 ---
 
@@ -2930,4 +2981,5 @@ This consolidated release note covers the performance optimization sprint from v
 - Detailed metrics: `docs/METRICS_TRACKING_v2.2.3.x.md`
 - Decision log: `docs/PERFORMANCE_DECISION_LOG_2026-02-27.md`
 - Cross-PC workflow: `docs/CROSS_PC_IMPROVEMENT_WORKFLOW.md`
+
 

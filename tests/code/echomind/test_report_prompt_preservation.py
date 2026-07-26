@@ -189,6 +189,38 @@ def test_template_override_has_sex_caveat():
     assert "even if the provided template lists" in low, "template-override sex caveat missing"
 
 
+def test_non_ob_ultrasound_has_exam_specific_normal_templates():
+    """The non-obstetric ultrasound prompt must provide structured, exam-specific normal templates
+    (not one thin generic list), with reference measurements, while leaving the OB section intact."""
+    reporter, capture = _build_reporter()
+    capture.clear()
+    reporter("thyroid ultrasound. no nodule.", modality="SONOGRAPHY")
+    sp = capture.get("system_prompt", "")
+    required_templates = [
+        "EXAM-SPECIFIC NORMAL TEMPLATES",
+        "COMPLETE ABDOMINAL ULTRASOUND",
+        "RENAL / URINARY-TRACT (KUB)",
+        "THYROID / NECK ULTRASOUND",
+        "BREAST ULTRASOUND",
+        "SCROTAL / TESTICULAR",
+        "CAROTID / VERTEBRAL DOPPLER",
+        "EXTREMITY VENOUS DOPPLER (DVT",
+        "APPENDIX / RIGHT-ILIAC-FOSSA",
+        "SOFT-TISSUE / SUPERFICIAL / MUSCULOSKELETAL",
+    ]
+    for t in required_templates:
+        assert t in sp, f"ultrasound prompt missing exam template: {t!r}"
+    # reference measurements present
+    assert "not dilated (≤6 mm)" in sp, "missing CBD normal measurement reference"
+    assert "proliferative ≈4–8 mm" in sp, "missing endometrial thickness reference"
+    # thin generic list removed
+    assert "RSNA NORMAL FINDINGS — GENERAL ULTRASOUND" not in sp, "old thin generic list still present"
+    # OB untouched, sex + preservation rules retained
+    assert "ISUOG NORMAL FINDINGS — OBSTETRIC ULTRASOUND" in sp, "OB section must remain"
+    assert "SEX-SPECIFIC ANATOMY RULE" in sp
+    assert "PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS" in sp
+
+
 def test_no_central_single_rule_all_branches_independent():
     """Regression guard for the architecture directive: the preservation rule must live INSIDE each
     modality branch, not as one shared block appended once to every prompt. We assert the MRI, CT,

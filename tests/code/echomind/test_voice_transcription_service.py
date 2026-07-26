@@ -208,12 +208,95 @@ def test_sttrouter_route_stays_three_way(cfg):
     for provider, expected in (
         ("aipacs_1", "native"),
         ("aipacs_2", "native"),
+        ("aipacs_3", "native"),   # OpenAI-compatible, but delegated via the service
         ("custom", "native"),
         ("v2t", "v2t"),
         ("openai", "openai"),
     ):
         ss.save_stt_settings({"provider": provider, "custom_base_url": "http://x"})
         assert ss.get_secretary_stt_route() == expected
+
+
+# ── AI-PACS Server 3 — OpenAI-compatible Whisper (GapGPT) ────────────────────
+@pytest.fixture()
+def captured_openai(monkeypatch):
+    """Capture a Server-3 style POST (files is a DICT with a single 'file')."""
+    calls = []
+
+    def fake_post(url, files=None, data=None, headers=None, timeout=None, **kw):
+        calls.append({
+            "url": url,
+            "file_fields": sorted((files or {}).keys()),
+            "data": dict(data or {}),
+            "headers": dict(headers or {}),
+            "timeout": timeout,
+        })
+        return _Resp({"text": "salaam donya"})
+
+    monkeypatch.setattr(vt.requests, "post", fake_post)
+    return calls
+
+
+def test_server3_is_a_named_choice_no_address_shown():
+    labels = dict(vt.STT_PROVIDER_CHOICES)
+    assert labels["aipacs_3"] == "AI-PACS Server 3"
+    # the GapGPT host / key must never appear in a UI label
+    for label in labels.values():
+        assert "gapgpt" not in label.lower() and "sk-" not in label
+
+
+def test_server3_is_a_valid_provider():
+    assert "aipacs_3" in ss.STT_PROVIDERS
+    assert ss.normalize_stt_provider("aipacs_3") == "aipacs_3"
+
+
+def test_server3_posts_openai_transcriptions_format(cfg, captured_openai, tmp_path):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF....WAVE")
+    ss.save_stt_settings({"provider": "aipacs_3"})
+    out = vt.VoiceTranscriptionService().transcribe([str(wav)])
+
+    call = captured_openai[-1]
+    assert call["url"] == vt.AIPACS_SERVER_3_BASE + "/audio/transcriptions"
+    assert call["file_fields"] == ["file"]                       # OpenAI format
+    assert call["data"] == {"model": vt.AIPACS_SERVER_3_MODEL}   # gapgpt/whisper-1
+    assert call["headers"]["Authorization"] == f"Bearer {vt.AIPACS_SERVER_3_KEY}"
+
+    # response contract both callers depend on
+    assert out["ok"] is True
+    assert out["transcript"] == "salaam donya"
+    assert out["quality_report"] == []          # no low-quality signal for Whisper
+    assert out["stt_provider"] == "aipacs_3"
+    assert out["route_used"] == "native"
+    assert out["endpoint"] == ""                # Server 3 address never surfaced
+
+
+def test_server3_configured_token_overrides_builtin_key(cfg, captured_openai, tmp_path):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF")
+    ss.save_stt_settings({"provider": "aipacs_3", "auth_token": "sk-override"})
+    vt.VoiceTranscriptionService().transcribe([str(wav)])
+    assert captured_openai[-1]["headers"]["Authorization"] == "Bearer sk-override"
+
+
+def test_server3_upload_failure_is_reported_not_raised(cfg, monkeypatch, tmp_path):
+    wav = tmp_path / "a.wav"
+    wav.write_bytes(b"RIFF")
+
+    def boom(*a, **k):
+        raise RuntimeError("network down")
+
+    monkeypatch.setattr(vt.requests, "post", boom)
+    ss.save_stt_settings({"provider": "aipacs_3"})
+    out = vt.VoiceTranscriptionService().transcribe([str(wav)])
+    assert out["ok"] is False and out["transcript"] == ""
+    assert "Server 3" in out["error"]
+
+
+def test_server3_never_surfaces_address_in_resolve_endpoint(cfg):
+    """resolve_endpoint is used by describe(); it must not leak the GapGPT host."""
+    ss.save_stt_settings({"provider": "aipacs_3"})
+    assert vt.resolve_endpoint() == ""
 
 
 def test_kill_switch_restores_the_legacy_hardcoded_endpoint(cfg, monkeypatch):

@@ -21,16 +21,39 @@ except Exception:
 # API endpoints
 # =============================
 AI_BASE      = 'http://80.210.31.214:8085'
+
+# ── Assist / Search server (2026-07-17) ──────────────────────────────────────
+# The "Assist" capability (POST /generate_assistant) AND its related "Search"
+# (POST /search) were moved off AI_BASE to a dedicated server. Search uses the
+# SAME server + backend structure as Assist (owner request 2026-07-17 — Search
+# was previously pointed at AI_BASE and did not work). This is the ONE central
+# place to change that address — edit ASSIST_BASE and nothing else.
+# Scope is deliberately Assist+Search ONLY: Chat (/chat), Report
+# (/generate_report), Transcript (voice_transcription + STT settings) and the
+# OpenAI/ChatGPT flow are unchanged and still use AI_BASE / their own paths.
+ASSIST_BASE  = 'http://81.16.117.196:8082'
+
+
+def resolve_assist_endpoint() -> str:
+    """The Assist endpoint (central resolver, so a future move is one edit)."""
+    return f"{ASSIST_BASE.rstrip('/')}/generate_assistant"
+
+
+def resolve_search_endpoint() -> str:
+    """The Search endpoint — SAME server as Assist (central resolver)."""
+    return f"{ASSIST_BASE.rstrip('/')}/search"
+
+
 URL_CHAT             = f"{AI_BASE}/chat"
 URL_GEN_REPORT       = f"{AI_BASE}/generate_report"
 URL_GEN_TRANSCRIPT   = f"{AI_BASE}/generate_transcript"
 URL_HEALTH           = f"{AI_BASE}/health"
 URL_STATUS           = f"{AI_BASE}/status"
 URL_SESSIONS         = f"{AI_BASE}/sessions"
-URL_SESSION_GET      = f"{AI_BASE}/session"      
+URL_SESSION_GET      = f"{AI_BASE}/session"
 URL_EXPORT_ALL       = f"{AI_BASE}/export_all"
-URL_GEN_ASSISTANT    = f"{AI_BASE}/generate_assistant"
-URL_SEARCH           = f"{AI_BASE}/search"
+URL_GEN_ASSISTANT    = resolve_assist_endpoint()   # → ASSIST_BASE, not AI_BASE
+URL_SEARCH           = resolve_search_endpoint()   # → ASSIST_BASE (same as Assist)
 
 
 # =============================

@@ -3007,10 +3007,64 @@ class OneChatPage(QWidget):
         )
 
 
+    def _assist_menu_icon(self, kind: str):
+        """Icon for the Assistant/Search chooser. QtAwesome when available,
+        else a Qt standard icon, else none. Never raises."""
+        color = CLR_TEXT if str(CLR_TEXT).startswith("#") else "#e5e7eb"
+        try:
+            import qtawesome as qta
+            return qta.icon(
+                {"Assistant": "fa5s.robot", "Search": "fa5s.search"}.get(kind, "fa5s.circle"),
+                color=color,
+            )
+        except Exception:
+            try:
+                sp = {"Assistant": QStyle.SP_MessageBoxInformation,
+                      "Search": QStyle.SP_FileDialogContentsView}.get(kind)
+                if sp is not None:
+                    return self.style().standardIcon(sp)
+            except Exception:
+                pass
+        return None
+
     def _open_assist_menu(self, text: str):
         menu = QMenu(self)
-        has_text = bool(text.strip()) or bool(self.controller.session_id)
+        menu.setObjectName("assistSearchMenu")
+        menu.setCursor(Qt.PointingHandCursor)
+        # Clean, theme-aligned styling (matches the EchoMind chat surfaces):
+        # rounded card, comfortable hit targets, real accent on hover, muted
+        # disabled state. Uses the same design tokens as the chat bubbles/composer.
+        menu.setStyleSheet(f"""
+            QMenu#assistSearchMenu {{
+                background: {CLR_BG_PANEL};
+                color: {CLR_TEXT};
+                border: 1px solid {CLR_BORDER};
+                border-radius: 12px;
+                padding: 8px;
+            }}
+            QMenu#assistSearchMenu::item {{
+                background: transparent;
+                padding: 10px 22px 10px 14px;
+                margin: 3px 4px;
+                border-radius: 9px;
+                min-width: 168px;
+                font-size: 14px;
+                font-weight: 600;
+                icon-size: 18px;
+            }}
+            QMenu#assistSearchMenu::item:selected {{
+                background: {CLR_ACCENT};
+                color: #ffffff;
+            }}
+            QMenu#assistSearchMenu::item:disabled {{
+                color: rgba(148, 163, 184, 0.55);
+            }}
+            QMenu#assistSearchMenu::icon {{
+                padding-left: 10px;
+            }}
+        """)
 
+        has_text = bool(text.strip()) or bool(self.controller.session_id)
         items = [
             ("Assistant", has_text, "Enter some text or use an existing session."),
             ("Search", bool(text.strip()), "For Search, you must enter text."),
@@ -3018,15 +3072,26 @@ class OneChatPage(QWidget):
 
         for name, enabled, tip in items:
             act = QAction(name, menu)
+            icon = self._assist_menu_icon(name)
+            if icon is not None:
+                act.setIcon(icon)
             act.setEnabled(enabled)
+            act.setToolTip("" if enabled else tip)
             if enabled:
-                act.triggered.connect(lambda _=False, n=name, t=text: self._send_with_mode(t, "Assistant" if n=="Assistant" else "Search"))
-            else:
-                act.setToolTip(tip)
+                act.triggered.connect(
+                    lambda _=False, n=name, t=text:
+                    self._send_with_mode(t, "Assistant" if n == "Assistant" else "Search")
+                )
             menu.addAction(act)
 
         btn = self.composer.btn_send
-        menu.exec(btn.mapToGlobal(btn.rect().bottomLeft()))
+        # Show just above the Send button, right-aligned to it — reads as a
+        # clean popover attached to the action rather than a bare native menu.
+        menu.adjustSize()
+        pos = btn.mapToGlobal(btn.rect().topRight())
+        pos.setX(pos.x() - menu.sizeHint().width())
+        pos.setY(pos.y() - menu.sizeHint().height() - 6)
+        menu.exec(pos)
 
     def _log_irannobat_usage_from_resp(self, resp: object, model_name: str = "Irannobat") -> None:
         """

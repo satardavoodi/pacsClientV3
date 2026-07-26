@@ -67,6 +67,17 @@ class AdvancedSearchDialog(QDialog):
         ("Custom range", "custom"),
     ]
 
+    # Import date = when the study FIRST entered THIS local database
+    # (studies.imported_at), NOT the acquisition/study date. Local-only filter.
+    _IMPORT_PRESETS = [
+        ("Any import date", None),
+        ("Imported today", 0),
+        ("Imported yesterday", 1),
+        ("Imported two days ago", 2),
+        ("Custom import date", "single"),
+        ("Import date range", "range"),
+    ]
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Advanced Patient Search")
@@ -124,6 +135,36 @@ class AdvancedSearchDialog(QDialog):
         date_layout.addWidget(QLabel("To"), 2, 0)
         date_layout.addWidget(self.date_to, 2, 1)
         root.addWidget(date_group)
+
+        # Import date (LOCAL only) — when the study first entered this database
+        imp_group = QGroupBox("Import date (local — when imported to this computer)")
+        imp_layout = QGridLayout(imp_group)
+        self.import_preset = QComboBox()
+        for label, data in self._IMPORT_PRESETS:
+            self.import_preset.addItem(label, data)
+        self.import_preset.currentIndexChanged.connect(self._on_import_preset_changed)
+        imp_layout.addWidget(self.import_preset, 0, 0, 1, 2)
+
+        self.import_from = QDateEdit()
+        self.import_to = QDateEdit()
+        for de in (self.import_from, self.import_to):
+            de.setDisplayFormat("yyyy-MM-dd")
+            de.setCalendarPopup(True)
+            de.setDate(QDate.currentDate())
+            de.setEnabled(False)
+            try:
+                cal = de.calendarWidget()
+                if cal is not None:
+                    cal.setFirstDayOfWeek(Qt.DayOfWeek.Saturday)
+            except Exception:
+                pass
+        self.import_from_label = QLabel("From")
+        self.import_to_label = QLabel("To")
+        imp_layout.addWidget(self.import_from_label, 1, 0)
+        imp_layout.addWidget(self.import_from, 1, 1)
+        imp_layout.addWidget(self.import_to_label, 2, 0)
+        imp_layout.addWidget(self.import_to, 2, 1)
+        root.addWidget(imp_group)
 
         # Modalities
         mod_group = QGroupBox("Modalities (none checked = all)")
@@ -190,6 +231,22 @@ class AdvancedSearchDialog(QDialog):
             self.date_from.setDate(today.addDays(-int(data)))
             self.date_to.setDate(today)
 
+    def _on_import_preset_changed(self, _index):
+        data = self.import_preset.currentData()
+        single = data == "single"          # one custom import date
+        rng = data == "range"              # from/to import date range
+        self.import_from.setEnabled(single or rng)
+        self.import_to.setEnabled(rng)
+        # In single-date mode the "To" picker is hidden (from == to).
+        self.import_to.setVisible(not single)
+        self.import_to_label.setVisible(not single)
+        self.import_from_label.setText("Date" if single else "From")
+        if isinstance(data, int):
+            # preset day offset (0=today, 1=yesterday, 2=two days ago)
+            day = QDate.currentDate().addDays(-int(data))
+            self.import_from.setDate(day)
+            self.import_to.setDate(day)
+
     def _apply_style(self):
         t = self._theme
 
@@ -254,6 +311,18 @@ class AdvancedSearchDialog(QDialog):
 
         modalities = [m for m, c in self.modality_checks.items() if c.isChecked()]
 
+        # Import-date range (LOCAL, studies.imported_at) as 'yyyy-MM-dd' or None.
+        import_from = import_to = None
+        idata = self.import_preset.currentData()
+        if idata == "single":
+            import_from = import_to = self.import_from.date().toString("yyyy-MM-dd")
+        elif idata == "range":
+            import_from = self.import_from.date().toString("yyyy-MM-dd")
+            import_to = self.import_to.date().toString("yyyy-MM-dd")
+        elif isinstance(idata, int):
+            day = QDate.currentDate().addDays(-int(idata))
+            import_from = import_to = day.toString("yyyy-MM-dd")
+
         return {
             'version': QUERY_VERSION,
             'patient_ids': parse_patient_ids(self.ids_edit.toPlainText()),
@@ -264,4 +333,6 @@ class AdvancedSearchDialog(QDialog):
             'age_min': self.age_min.value() if self.age_min.value() > 0 else None,
             'age_max': self.age_max.value() if self.age_max.value() > 0 else None,
             'physician': self.physician_edit.text().strip(),
+            'import_date_from': import_from,
+            'import_date_to': import_to,
         }
