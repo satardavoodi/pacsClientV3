@@ -1,11 +1,64 @@
 from __future__ import annotations
 
+import json
+import logging
+import os
+from pathlib import Path
 from typing import Set
 
 from PySide6.QtCore import QObject, QTimer, Qt
 from PySide6.QtWidgets import QMessageBox, QWidget
 
 from modules.storage.local_storage_cleanup_manager import LocalStorageCleanupManager
+
+logger = logging.getLogger(__name__)
+
+_PREFS_FILENAME = "disk_alert_prefs.json"
+_SUPPRESS_KEY = "suppress_disk_space_alert"
+_DONT_SHOW_AGAIN_LABEL = "Don't show again"
+
+
+def _prefs_path() -> Path:
+    from PacsClient.utils.data_paths import USER_DATA_ROOT
+
+    return Path(USER_DATA_ROOT) / "config" / _PREFS_FILENAME
+
+
+def is_disk_space_alert_suppressed() -> bool:
+    """True when the user chose not to see disk-space alerts again."""
+    try:
+        path = _prefs_path()
+        if not path.exists():
+            return False
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            return False
+        return bool(raw.get(_SUPPRESS_KEY))
+    except Exception:
+        logger.debug("disk alert prefs read failed; treating as not suppressed", exc_info=True)
+        return False
+
+
+def set_disk_space_alert_suppressed(suppressed: bool = True) -> bool:
+    """Persist the user's choice to hide future disk-space alerts."""
+    try:
+        path = _prefs_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {_SUPPRESS_KEY: bool(suppressed)}
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        os.replace(tmp, path)
+        return True
+    except Exception:
+        logger.warning("failed to persist disk alert suppression", exc_info=True)
+        return False
+
+
+def disk_space_alert_enabled() -> bool:
+    """Global gate: env kill-switch + user suppression preference."""
+    if os.getenv("AIPACS_DISK_SPACE_ALERT", "").strip() == "0":
+        return False
+    return not is_disk_space_alert_suppressed()
 
 
 class DiskUsageAlertService(QObject):
@@ -27,6 +80,8 @@ class DiskUsageAlertService(QObject):
         self._timer.timeout.connect(self.check_now)
 
     def start(self, initial_delay_ms: int = 2000):
+        if not disk_space_alert_enabled():
+            return
         QTimer.singleShot(int(initial_delay_ms), self.check_now)
         self._timer.start()
 
@@ -34,17 +89,25 @@ class DiskUsageAlertService(QObject):
         self._timer.stop()
 
     def _show_disk_alert(self, title: str, message: str):
+        if is_disk_space_alert_suppressed():
+            self.stop()
+            return
+
         parent_pos = None
         parent_size = None
         if self.parent_widget is not None:
             parent_pos = self.parent_widget.pos()
             parent_size = self.parent_widget.size()
 
-        msg_box = QMessageBox(None)
+        msg_box = QMessageBox(self.parent_widget)
         msg_box.setIcon(QMessageBox.Warning)
         msg_box.setWindowTitle(title)
         msg_box.setText(message)
         msg_box.setStandardButtons(QMessageBox.Ok)
+        dont_show_btn = msg_box.addButton(
+            _DONT_SHOW_AGAIN_LABEL,
+            QMessageBox.ButtonRole.ActionRole,
+        )
         msg_box.setWindowModality(Qt.ApplicationModal)
 
         if self.parent_widget is not None and self.parent_widget.isVisible():
@@ -55,6 +118,10 @@ class DiskUsageAlertService(QObject):
             msg_box.move(msg_frame.topLeft())
 
         msg_box.exec()
+
+        if msg_box.clickedButton() is dont_show_btn:
+            set_disk_space_alert_suppressed(True)
+            self.stop()
 
         if (
             self.parent_widget is not None
@@ -68,6 +135,9 @@ class DiskUsageAlertService(QObject):
                 self.parent_widget.resize(parent_size)
 
     def check_now(self):
+        if not disk_space_alert_enabled():
+            self.stop()
+            return
         try:
             high_rows = LocalStorageCleanupManager.get_high_usage_drives(self.threshold_percent)
             current_high_drives = {str(r.get("drive", "")) for r in high_rows}

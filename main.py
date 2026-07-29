@@ -659,7 +659,7 @@ import asyncio
 #     window.show()
 #     sys.exit(app.exec())
 from PacsClient.utils import IMAGES_LOGIN_PATH
-from modules.storage.disk_alert_service import DiskUsageAlertService
+from modules.storage.disk_alert_service import DiskUsageAlertService, disk_space_alert_enabled
 from PacsClient.utils.diagnostic_logging import configure_diagnostic_logging
 
 # Graphics configuration has been moved to configure_graphics_fallback() function
@@ -1335,12 +1335,13 @@ if __name__ == "__main__":
     # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     # Global disk usage alert checks (modular service)
-    app._disk_alert_service = DiskUsageAlertService(
-        parent_widget=window,
-        threshold_percent=90.0,
-        interval_ms=5 * 60 * 1000,
-    )
-    app._disk_alert_service.start(initial_delay_ms=2000)
+    if disk_space_alert_enabled():
+        app._disk_alert_service = DiskUsageAlertService(
+            parent_widget=window,
+            threshold_percent=90.0,
+            interval_ms=5 * 60 * 1000,
+        )
+        app._disk_alert_service.start(initial_delay_ms=2000)
 
     # OPT-38: automatic update check — delayed, off-thread, flag-gated
     # (AIPACS_AUTO_UPDATE_CHECK; enabled by default only in frozen builds).

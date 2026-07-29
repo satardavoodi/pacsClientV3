@@ -4,7 +4,7 @@ Pins four behaviors:
   1. Patient-ID search is GLOBAL — socket params contain ONLY the ID
      (no modality, no dates, no name). Previously modality leaked in and an
      ID search missed patients whose modality wasn't ticked.
-  2. Date presets re-apply on RE-click (QComboBox.activated wiring) —
+  2. Date presets re-apply on RE-click (LoginComboField.activated wiring) —
      manually-edited dates snap back when the same preset is picked again.
   3. Start/End date fields show a VISIBLE calendar dropdown button and the
      calendar opens with a Saturday-first weekday header.
@@ -105,20 +105,24 @@ def test_preset_reclick_reapplies_dates(qapp, stub_qta):
 def test_date_fields_have_visible_calendar_button_and_saturday_first(qapp, stub_qta):
     from PySide6.QtCore import Qt
     from PacsClient.pacs.workstation_ui.home_ui.patient_search_widget import PatientSearchWidget
+    from PacsClient.utils.login_form_styles import LoginComboField, LoginDateField, LoginLineField
 
     w = PatientSearchWidget()
+    assert isinstance(w.patient_id_edit, LoginLineField)
+    assert w.patient_id_edit.actionButton() is not None
+    assert "border:" in w.patient_id_edit.styleSheet()
+    assert isinstance(w.patient_name_edit, LoginLineField)
+    assert w.patient_name_edit.actionButton() is not None
+    assert w.patient_name_edit.trailingActionEnabled() is False
+    assert isinstance(w.study_id, LoginLineField)
     for field in (w.date_from_edit, w.date_to_edit):
+        assert isinstance(field, LoginDateField)
         assert field.calendarPopup() is True
-        style = field.styleSheet()
-        assert "QDateEdit::down-arrow" in style, "calendar button must be visible"
-        assert "drop-down" in style
-        # Vertical alignment: the date fields' dropdown zone must be EXACTLY
-        # as wide as the date-range combo's (30px) so the three icons line up.
-        assert "width: 30px" in style
+        assert "border:" in field.styleSheet()
         cal = field.calendarWidget()
         assert cal is not None
         assert cal.firstDayOfWeek() == Qt.DayOfWeek.Saturday
-    assert "width: 30px" in w.date_selector.styleSheet()
+    assert isinstance(w.date_selector, LoginComboField)
 
 
 # --------------------------------------------- 4: advanced filter popup ----

@@ -274,6 +274,53 @@ def active_server_clinical_root() -> Path:
     return CLINICAL_DATA_ROOT
 
 
+def _sync_config_path_exports() -> None:
+    """Push rebinding into ``PacsClient.utils.config`` re-exports (never raises)."""
+    try:
+        import PacsClient.utils.config as cfg
+
+        cfg.SOURCE_PATH = DICOM_IMAGES_DIR
+        cfg.ATTACHMENT_PATH = ATTACHMENTS_DIR
+        cfg.THUMBNAIL_PATH = THUMBNAILS_DIR
+        cfg.DATABASE_PATH = DATABASE_FILE
+    except Exception as exc:
+        logger.warning("config path sync skipped: %s", exc)
+
+
+def reload_active_profile_paths() -> bool:
+    """Rebind module-level clinical paths to the *current* active server profile.
+
+    Intended for login / settings saves **before** the main window warms the DB
+    pool, or after an explicit pool cleanup. Never raises.
+    """
+    global CLINICAL_DATA_ROOT, PATIENTS_DIR, DICOM_IMAGES_DIR, ATTACHMENTS_DIR
+    global THUMBNAILS_DIR, DATABASE_DIR, DATABASE_FILE
+
+    try:
+        new_root = _clinical_data_root(USER_DATA_ROOT)
+    except Exception as exc:
+        logger.warning("reload_active_profile_paths skipped: %s", exc)
+        return False
+
+    CLINICAL_DATA_ROOT = new_root
+    PATIENTS_DIR = new_root / "patients"
+    DICOM_IMAGES_DIR = PATIENTS_DIR / "dicom"
+    ATTACHMENTS_DIR = PATIENTS_DIR / "attachments"
+    THUMBNAILS_DIR = PATIENTS_DIR / "thumbnails"
+    DATABASE_DIR = new_root / "database"
+    DATABASE_FILE = DATABASE_DIR / "dicom.db"
+
+    for _d in (DICOM_IMAGES_DIR, ATTACHMENTS_DIR, THUMBNAILS_DIR, DATABASE_DIR):
+        try:
+            _d.mkdir(parents=True, exist_ok=True)
+        except Exception as exc:
+            logger.warning("Could not ensure dir %s: %s", _d, exc)
+
+    _sync_config_path_exports()
+    logger.info("Clinical data paths rebound to %s", new_root)
+    return True
+
+
 def server_clinical_root(profile_id: str) -> Path:
     """Clinical-data root for a SPECIFIC profile (used for per-server delete/inspect)."""
     from PacsClient.utils.server_profiles import server_data_root

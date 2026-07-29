@@ -1,7 +1,7 @@
 [
     {
         "name": "razi",
-        "host": "192.168.2.222",
+        "host": "81.16.117.196",
         "port": "105",
         "ae_title": "aipacs",
         "poor_connectivity": false
