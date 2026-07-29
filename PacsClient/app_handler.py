@@ -337,6 +337,7 @@ class AppHandler(QDialog):
         self.btn_toggle_password.clicked.connect(self._toggle_password)
         self.btn_toggle_password.setFixedSize(50, 48)
         self.btn_toggle_password.setToolTip("Show/Hide Password")
+        self.btn_toggle_password.setCursor(Qt.PointingHandCursor)
         
         # Server settings button
         self.btn_server_settings = QPushButton(password_container)
@@ -345,6 +346,7 @@ class AppHandler(QDialog):
         self.btn_server_settings.clicked.connect(self._show_server_settings)
         self.btn_server_settings.setFixedSize(50, 48)
         self.btn_server_settings.setToolTip("Server Settings")
+        self.btn_server_settings.setCursor(Qt.PointingHandCursor)
         
         password_row.addWidget(self.line_edit_password)
         password_row.addWidget(self.btn_toggle_password)
@@ -448,6 +450,7 @@ class AppHandler(QDialog):
         
         forgot_password = QLabel('<a href="#" style="color: #3b82f6; text-decoration: none;">Forgot password?</a>', form_panel)
         forgot_password.setStyleSheet("font-size: 13px;")
+        forgot_password.setCursor(Qt.PointingHandCursor)
         options_row.addWidget(forgot_password)
         form_layout.addLayout(options_row)
 
@@ -467,11 +470,13 @@ class AppHandler(QDialog):
         self.button_login.setProperty("variant", "primary")
         self.button_login.clicked.connect(self.login)
         self.button_login.setMinimumHeight(50)
+        self.button_login.setCursor(Qt.PointingHandCursor)
         
         self.button_cancel = QPushButton("Cancel", buttons_container)
         self.button_cancel.setProperty("variant", "secondary")
         self.button_cancel.clicked.connect(self.reject)
         self.button_cancel.setMinimumHeight(50)
+        self.button_cancel.setCursor(Qt.PointingHandCursor)
         
         buttons_layout.addWidget(self.button_login)
         buttons_layout.addWidget(self.button_cancel)
@@ -844,8 +849,27 @@ class AppHandler(QDialog):
         from modules.network.server_settings_dialog import ServerSettingsDialog
         dialog = ServerSettingsDialog(self)
         if dialog.exec() == QDialog.Accepted:
-            # Server settings updated, could show notification
-            pass
+            try:
+                from modules.network.runtime_server_refresh import (
+                    apply_saved_server_settings_runtime,
+                )
+
+                apply_saved_server_settings_runtime(
+                    profile_switched=bool(
+                        getattr(dialog, "profile_switched_on_save", False)
+                    )
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Login runtime server refresh after settings save failed: %s",
+                    exc,
+                )
+            try:
+                host = self.socket_service.config.get_socket_host()
+                port = int(self.socket_service.config.get_socket_port())
+                self.socket_service.update_server(host, port, save_to_file=False)
+            except Exception as exc:
+                logger.warning("Login socket client refresh after settings save failed: %s", exc)
 
     def login(self):
         username = self.line_edit_username.text().strip()

@@ -1,12 +1,98 @@
-from PySide6.QtWidgets import QApplication, QWidget, QTabWidget, QVBoxLayout, QLabel, QComboBox, QPushButton, \
-    QFileDialog, QHBoxLayout
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QWidget,
+    QTabWidget,
+    QVBoxLayout,
+    QLabel,
+    QPushButton,
+    QFileDialog,
+    QHBoxLayout,
+    QFrame,
+    QSizePolicy,
+)
+from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont, QColor
 from pathlib import Path
 
 from PacsClient.utils import get_all_selectable_servers, get_selectable_server
+from PacsClient.utils.login_form_styles import LoginComboField
 from PacsClient.utils.theme_manager import get_theme_manager
 import qtawesome as qta
+
+
+def _segment_rail_frame_stylesheet(theme: dict) -> str:
+    t = theme or {}
+    rail = t.get("panel_alt_bg", "#121a26")
+    border = t.get("border", "#64748b")
+    return f"""
+        QFrame#DataAccessSegmentRail {{
+            background-color: {rail};
+            border: 1px solid {border};
+            border-radius: 8px;
+        }}
+    """
+
+
+def _segment_button_stylesheet(theme: dict, *, active: bool) -> str:
+    t = theme or {}
+    accent = t.get("accent", "#3b82f6")
+    accent_hover = t.get("accent_hover", accent)
+    btn_text = t.get("button_text", "#ffffff")
+    muted = t.get("text_muted", "#94a3b8")
+    text = t.get("text_primary", "#f8fafc")
+    border = t.get("border", "#64748b")
+    if active:
+        return f"""
+            QPushButton#DataAccessSegmentBtn {{
+                background-color: {accent};
+                color: {btn_text};
+                border: none;
+                border-radius: 6px;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 0 10px;
+            }}
+            QPushButton#DataAccessSegmentBtn:pressed {{
+                background-color: {t.get('accent_pressed', accent)};
+            }}
+        """
+    return f"""
+        QPushButton#DataAccessSegmentBtn {{
+            background-color: transparent;
+            color: {muted};
+            border: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            padding: 0 10px;
+        }}
+        QPushButton#DataAccessSegmentBtn:hover {{
+            background-color: rgba(255, 255, 255, 0.06);
+            color: {text};
+        }}
+        QPushButton#DataAccessSegmentBtn:pressed {{
+            background-color: rgba(255, 255, 255, 0.04);
+        }}
+    """
+
+
+def _tab_body_stylesheet(theme: dict) -> str:
+    """Content area below the custom segment rail — native tab bar is hidden."""
+    t = theme or {}
+    bg = t.get("panel_bg", "#0f1419")
+    return f"""
+        QTabWidget#DataAccessTabWidget {{
+            background: transparent;
+            border: none;
+        }}
+        QTabWidget#DataAccessTabWidget::pane {{
+            border: none;
+            background: {bg};
+            margin: 0;
+            padding: 0;
+            top: 0;
+        }}
+    """
 
 
 def _rgba_glow(hex_color: str, alpha_top: float = 0.10, alpha_bottom: float = 0.05, alpha_border: float = 0.30) -> tuple:
@@ -44,9 +130,8 @@ class DataAccessPanelWidget(QWidget):
         self.setup_local_tab()
         self.load_servers()
         self.theme_manager.themeChanged.connect(self.apply_theme)
+        self.tabs.setCurrentIndex(1)  # Server is the default source.
         self.apply_theme(self._active_theme)
-
-        self.tabs.setCurrentIndex(1)  # set tab server as default tab.
 
 
     def get_result(self):
@@ -61,72 +146,76 @@ class DataAccessPanelWidget(QWidget):
     def setup_ui(self):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
-        
-        # Archetype 5: minimum-height floor so the tab bar area can grow
-        # with font/DPI. Consistent visual height preserved at default font.
+        self.layout.setSpacing(8)
+
         self.setMinimumHeight(180)
 
+        # Custom segmented rail — Qt's native QTabBar renders poorly on Windows.
+        self._segment_meta: list[tuple[str, str]] = []
+        self._segment_buttons: list[QPushButton] = []
+        self._segment_rail = QFrame()
+        self._segment_rail.setObjectName("DataAccessSegmentRail")
+        self._segment_rail_layout = QHBoxLayout(self._segment_rail)
+        self._segment_rail_layout.setContentsMargins(4, 4, 4, 4)
+        self._segment_rail_layout.setSpacing(3)
+
         self.tabs = QTabWidget()
+        self.tabs.setObjectName("DataAccessTabWidget")
         self.tabs.currentChanged.connect(self.on_tab_changed)
-        self.tabs.setUsesScrollButtons(False)
-        self.tabs.setTabBarAutoHide(False)
-        self.tabs.setTabPosition(QTabWidget.North)
-        self.tabs.setDocumentMode(True)
-        
-        # Enhanced tab styling with proper horizontal alignment
-        self.tabs.setStyleSheet("""
-                QTabWidget {
-                    background: transparent;
-                    border: none;
-                }
+        self.tabs.tabBar().hide()
 
-                /* <<< این قسمت عامل اصلی خط بالاست >>> */
-                QTabWidget::pane {
-                    border: none;              /* حذف کامل بوردر */
-                    background: #1a202c;
-                    margin-top: 0px;           /* حذف فاصله بالا */
-                    padding: 8px;
-                }
+        self.layout.addWidget(self._segment_rail)
+        self.layout.addWidget(self.tabs, 1)
 
-                QTabBar {
-                    background: transparent;
-                    border: none;
-                    qproperty-drawBase: 0;     /* <<< خیلی مهم */
-                    alignment: center;
-                }
+    def _add_data_tab(self, widget: QWidget, label: str, icon_name: str) -> int:
+        idx = self.tabs.addTab(widget, label)
+        self._segment_meta.append((label, icon_name))
 
-                QTabBar::tab {
-                    background: #2d3748;
-                    color: #a0aec0;
-                    border: none;              /* تب‌ها خودشون خط نسازن */
-                    border-radius: 6px 6px 0 0;
-                    padding: 6px 10px;
-                    margin-right: 2px;
-                    font-size: 13px;
-                    font-weight: 500;
-                    min-width: 50px;
-                    max-width: 65px;
-                    height: 28px;
-                }
+        btn = QPushButton(label)
+        btn.setObjectName("DataAccessSegmentBtn")
+        btn.setCheckable(True)
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setIconSize(QSize(15, 15))
+        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        btn.setFixedHeight(36)
+        tab_index = len(self._segment_buttons)
+        btn.clicked.connect(lambda _checked=False, i=tab_index: self._on_segment_clicked(i))
+        self._segment_buttons.append(btn)
+        self._segment_rail_layout.addWidget(btn)
+        return idx
 
-                QTabBar::tab:selected {
-                    background: #3182ce;
-                    color: white;
-                    font-weight: 600;
-                }
+    def _on_segment_clicked(self, index: int) -> None:
+        if 0 <= index < self.tabs.count() and self.tabs.currentIndex() != index:
+            self.tabs.setCurrentIndex(index)
 
-                QTabBar::tab:hover:!selected {
-                    background: #4a5568;
-                    color: #e2e8f0;
-                }
-            """)
-        
-        self.layout.addWidget(self.tabs)
+    def _apply_segment_selection(self, index: int) -> None:
+        for i, btn in enumerate(self._segment_buttons):
+            btn.setChecked(i == index)
+        self._refresh_segment_styles(index)
 
-    def on_tab_changed(self, index):
-        tab_name = self.tabs.tabText(index)
-        self.tab_selected_name = tab_name
+    def _refresh_segment_styles(self, selected_index: int) -> None:
+        t = self._active_theme or self.theme_manager.current_theme()
+        for i, btn in enumerate(self._segment_buttons):
+            active = i == selected_index
+            btn.setStyleSheet(_segment_button_stylesheet(t, active=active))
+            if i < len(self._segment_meta):
+                _label, icon_name = self._segment_meta[i]
+                icon_color = (
+                    t.get("button_text", "#ffffff")
+                    if active
+                    else t.get("text_muted", "#94a3b8")
+                )
+                try:
+                    btn.setIcon(qta.icon(icon_name, color=icon_color))
+                except Exception:
+                    pass
+
+    def on_tab_changed(self, index: int) -> None:
+        if index < 0:
+            return
+        self.tab_selected_name = self.tabs.tabText(index)
+        if self._segment_buttons:
+            self._apply_segment_selection(index)
 
     ##################################################################################################
     def setup_database_tab(self):
@@ -189,6 +278,7 @@ class DataAccessPanelWidget(QWidget):
                 background: #1e40af;
             }
         """)
+        refresh_button.setCursor(Qt.PointingHandCursor)
         self.refresh_local_button = refresh_button
         
         db_layout.addWidget(local_label)
@@ -197,7 +287,7 @@ class DataAccessPanelWidget(QWidget):
         db_layout.addStretch()
         
         db_tab.setLayout(db_layout)
-        self.tabs.addTab(db_tab, "Local")
+        self._add_data_tab(db_tab, "Local", "fa5s.database")
 
     ###################################################################################################
     def setup_select_server_tab(self):
@@ -223,56 +313,9 @@ class DataAccessPanelWidget(QWidget):
             }
         """)
         
-        # Enhanced server combo
-        self.server_combo = QComboBox()
-        self.server_combo.setStyleSheet("""
-            QComboBox {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1a202c, stop:1 #2d3748);
-                border: 2px solid #4a5568;
-                border-radius: 6px;
-                padding: 6px 10px;
-                font-size: 20px;
-                color: #f7fafc;
-                min-height: 20px;
-                font-weight: 500;
-            }
-            QComboBox:hover {
-                border-color: #3182ce;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2d3748, stop:1 #4a5568);
-            }
-            QComboBox:focus {
-                border-color: #3182ce;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2d3748, stop:1 #4a5568);
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 24px;
-                background: transparent;
-            }
-            QComboBox QAbstractItemView {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #2d3748, stop:1 #1a202c);
-                border: 2px solid #3182ce;
-                border-radius: 6px;
-                selection-background-color: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #3182ce, stop:1 #2563eb);
-                color: #f7fafc;
-                padding: 6px;
-                outline: none;
-            }
-            QComboBox QAbstractItemView::item {
-                padding: 4px 8px;
-                border-radius: 4px;
-                margin: 1px;
-            }
-            QComboBox QAbstractItemView::item:hover {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #4a5568, stop:1 #2d3748);
-            }
-        """)
+        # Server picker — same Windows-safe shell as login / patient search.
+        self.server_combo = LoginComboField(field_h=36)
+        self.server_combo.setToolTip("Select the PACS or offline server for patient search")
         self.server_combo.currentIndexChanged.connect(self.on_server_changed)
         
         # Connection status label
@@ -298,27 +341,19 @@ class DataAccessPanelWidget(QWidget):
         server_layout.addStretch()
         
         server_tab.setLayout(server_layout)
-        self.tabs.addTab(server_tab, "Server")
+        self._add_data_tab(server_tab, "Server", "fa5s.server")
 
-    def on_server_changed(self):
-        server_name = self.server_combo.currentText()
-        
-        # Skip error messages and placeholders
-        if (server_name and 
-            not server_name.startswith("Select a PACS server") and
-            not server_name.startswith("No servers") and
-            not server_name.startswith("Error loading")):
-            
-            # Remove any leading spaces (from icon spacing)
-            server_name = server_name.strip()
-            
+    def on_server_changed(self, _index: int = -1):
+        server_name = self.server_combo.currentText().strip()
+
+        if (
+            server_name
+            and not server_name.startswith("Select a PACS server")
+            and not server_name.startswith("No servers")
+            and not server_name.startswith("Error loading")
+        ):
             self.server_selected = server_name
-            
-            # Update connection status — colors now derive from the active
-            # theme's semantic tokens (`warning` for the in-flight check,
-            # `success` for ready/offline-ready, `danger` for not-found) so a
-            # Yellow / Green / Dark Red workstation theme produces a status
-            # pill whose hue matches the rest of the chrome.
+
             t = self.theme_manager.current_theme()
             warning_hex = t.get("warning", "#f59e0b")
             warn_top, warn_bot, warn_border = _rgba_glow(warning_hex)
@@ -337,7 +372,6 @@ class DataAccessPanelWidget(QWidget):
                 }}
             """)
 
-            # Check if server actually exists
             server_config = get_selectable_server(server_name=self.server_selected)
             if server_config:
                 is_offline = server_config.get("server_type") == "offline_cloud"
@@ -407,11 +441,11 @@ class DataAccessPanelWidget(QWidget):
                         icon = qta.icon('fa5s.cloud', color='#60a5fa')
                     else:
                         icon = qta.icon('fa5s.hospital', color='#10b981')
-                    self.server_combo.addItem(icon, f" {server['name']}")
+                    self.server_combo.addItem(icon, server["name"])
                 
                 if len(servers) > 0:
                     self.server_combo.setCurrentIndex(0)
-                    self.on_server_changed()
+                    self.on_server_changed(0)
             else:
                 self.server_combo.addItem("No servers found")
                 self.server_selected = None
@@ -471,6 +505,7 @@ class DataAccessPanelWidget(QWidget):
             }
         """)
         self.select_folder_btn.clicked.connect(self.method_select_folder)
+        self.select_folder_btn.setCursor(Qt.PointingHandCursor)
         
         # Folder path display
         self.folder_path_label = QLabel("No folder selected")
@@ -490,8 +525,8 @@ class DataAccessPanelWidget(QWidget):
         pc_layout.addWidget(self.select_folder_btn)
         pc_layout.addWidget(self.folder_path_label)
         pc_layout.addStretch()
-        
-        self.tabs.addTab(pc_tab, "Import")
+
+        self._add_data_tab(pc_tab, "Import", "fa5s.folder-open")
 
 
         # self.select_file_btn = QPushButton("Select File")
@@ -522,48 +557,14 @@ class DataAccessPanelWidget(QWidget):
     def apply_theme(self, theme=None):
         self._active_theme = theme or self.theme_manager.current_theme()
         t = self._active_theme
-        self.tabs.setStyleSheet(
-            f"""
-            QTabWidget {{
-                background: transparent;
-                border: none;
-            }}
-            QTabWidget::pane {{
-                border: none;
-                background: {t['panel_bg']};
-                margin-top: 0px;
-                padding: 8px;
-            }}
-            QTabBar {{
-                background: transparent;
-                border: none;
-                qproperty-drawBase: 0;
-                alignment: center;
-            }}
-            QTabBar::tab {{
-                background: {t['tab_bg']};
-                color: {t['text_muted']};
-                border: none;
-                border-radius: 6px 6px 0 0;
-                padding: 6px 10px;
-                margin-right: 2px;
-                font-size: 13px;
-                font-weight: 500;
-                min-width: 50px;
-                max-width: 65px;
-                height: 28px;
-            }}
-            QTabBar::tab:selected {{
-                background: {t['accent']};
-                color: {t['button_text']};
-                font-weight: 600;
-            }}
-            QTabBar::tab:hover:!selected {{
-                background: {t['tab_hover_bg']};
-                color: {t['text_primary']};
-            }}
-            """
-        )
+        if hasattr(self, "_segment_rail"):
+            self._segment_rail.setStyleSheet(_segment_rail_frame_stylesheet(t))
+        self.tabs.setStyleSheet(_tab_body_stylesheet(t))
+        if self._segment_buttons:
+            self._refresh_segment_styles(max(0, self.tabs.currentIndex()))
+        if hasattr(self, "server_combo") and isinstance(self.server_combo, LoginComboField):
+            self.server_combo.apply_theme(t, font_pt=12, field_h=36)
+            self.server_combo.setCursor(Qt.PointingHandCursor)
         if hasattr(self, "refresh_local_button"):
             self.refresh_local_button.setStyleSheet(
                 f"""
@@ -611,43 +612,10 @@ class DataAccessPanelWidget(QWidget):
                 }}
                 """
             )
-        if hasattr(self, "server_combo"):
-            self.server_combo.setStyleSheet(
-                f"""
-                QComboBox {{
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                        stop:0 {t['panel_alt_bg']}, stop:1 {t['card_bg']});
-                    border: 2px solid {t['border']};
-                    border-radius: 6px;
-                    padding: 6px 10px;
-                    font-size: 20px;
-                    color: {t['text_primary']};
-                    min-height: 20px;
-                    font-weight: 500;
-                }}
-                QComboBox:hover {{
-                    border-color: {t['accent']};
-                }}
-                QComboBox:focus {{
-                    border-color: {t['accent']};
-                }}
-                QComboBox::drop-down {{
-                    border: none;
-                    width: 24px;
-                    background: transparent;
-                }}
-                QComboBox QAbstractItemView {{
-                    background: {t['panel_bg']};
-                    border: 2px solid {t['accent']};
-                    border-radius: 6px;
-                    selection-background-color: {t['accent']};
-                    color: {t['text_primary']};
-                    padding: 6px;
-                    outline: none;
-                }}
-                """
-            )
+        if hasattr(self, "refresh_local_button"):
+            self.refresh_local_button.setCursor(Qt.PointingHandCursor)
         if hasattr(self, "select_folder_btn"):
+            self.select_folder_btn.setCursor(Qt.PointingHandCursor)
             self.select_folder_btn.setStyleSheet(
                 f"""
                 QPushButton {{

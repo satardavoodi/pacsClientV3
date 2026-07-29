@@ -4,8 +4,12 @@ import os
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QKeyEvent, QIcon
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLineEdit, QPushButton, QLabel, \
-    QStackedWidget, QMenuBar, QMenu, QMessageBox, QCheckBox, QComboBox
+    QStackedWidget, QMenuBar, QMenu, QMessageBox, QCheckBox
 from PacsClient.utils import IMAGES_LOGIN_PATH
+from PacsClient.utils.login_form_styles import (
+    LoginComboField,
+    configure_login_line_edit,
+)
 from modules.network.socket_service import SocketService
 from modules.network.socket_token_manager import get_socket_token_manager
 
@@ -66,8 +70,37 @@ class LoginWindow(QWidget):
         return os.path.join(base_dir, "login_config.json")
 
     def setup_ui(self):
+        self.setObjectName("LoginFormRoot")
         self.setWindowTitle("Login Page")
         self.setWindowIcon(QIcon(fr"{IMAGES_LOGIN_PATH}/favicon.ico"))
+        self.setStyleSheet("""
+            #LoginFormRoot {
+                background-color: #0f1419;
+            }
+            #LoginFormRoot QLabel {
+                color: #cbd5e1;
+                font-size: 13px;
+                font-weight: 600;
+            }
+            #LoginFormRoot QPushButton {
+                background-color: #2563eb;
+                color: #ffffff;
+                border: none;
+                border-radius: 8px;
+                padding: 10px 16px;
+                font-size: 14px;
+                font-weight: 600;
+                min-height: 40px;
+            }
+            #LoginFormRoot QPushButton:hover {
+                background-color: #1d4ed8;
+            }
+            #LoginFormRoot QCheckBox {
+                color: #94a3b8;
+                font-size: 13px;
+                spacing: 8px;
+            }
+        """)
 
         # Create layout
         layout = QVBoxLayout()
@@ -78,6 +111,7 @@ class LoginWindow(QWidget):
         # Username input
         self.username_label = QLabel("Username:")
         self.username_input = QLineEdit()
+        configure_login_line_edit(self.username_input)
         layout.addWidget(self.username_label)
         layout.addWidget(self.username_input)
 
@@ -85,22 +119,26 @@ class LoginWindow(QWidget):
         self.password_label = QLabel("Password:")
         self.password_input = QLineEdit()
         self.password_input.setEchoMode(QLineEdit.Password)  # To hide the password
+        configure_login_line_edit(self.password_input)
         layout.addWidget(self.password_label)
         layout.addWidget(self.password_input)
 
         # Center input
         self.center_label = QLabel("Center:")
         self.center_input = QLineEdit()
+        configure_login_line_edit(self.center_input)
         layout.addWidget(self.center_label)
         layout.addWidget(self.center_input)
 
         # Remember Me checkbox
         self.remember_me_checkbox = QCheckBox("Remember Me")
+        self.remember_me_checkbox.setCursor(Qt.PointingHandCursor)
         self.remember_me_checkbox.setChecked(True)
         layout.addWidget(self.remember_me_checkbox)
 
         # Login button
         self.login_button = QPushButton("Login")
+        self.login_button.setCursor(Qt.PointingHandCursor)
         self.login_button.clicked.connect(self.on_login_clicked)
         layout.addWidget(self.login_button)
 
@@ -120,7 +158,7 @@ class LoginWindow(QWidget):
             if not profiles:
                 return
             self.server_label = QLabel("Server:")
-            self.server_combo = QComboBox()
+            self.server_combo = LoginComboField()
             self._profile_ids = []
             active = _sp.get_active_profile_id()
             active_index = 0
@@ -147,10 +185,10 @@ class LoginWindow(QWidget):
         return ""
 
     def _apply_server_selection_or_restart(self) -> bool:
-        """If the user picked a different center than the app started with, set it
-        active and ask for a restart (data root + socket resolve at startup).
+        """If the user picked a different center, activate it and apply live.
 
-        Returns True if a restart was triggered (caller must stop the login).
+        Returns True only when login must abort (legacy hook — runtime apply keeps
+        this False so sign-in can continue without a full restart).
         """
         try:
             from PacsClient.utils import server_profiles as _sp
@@ -159,19 +197,24 @@ class LoginWindow(QWidget):
             picked = self._selected_profile_id()
             if not picked:
                 return False
-            current = self._startup_active_id or _sp.get_active_profile_id()
+            current = _sp.get_active_profile_id() or self._startup_active_id
             if picked == current:
                 return False  # same center — proceed with normal login
             _sp.set_active_profile_id(picked)
-            prof = _sp.get_profile(picked)
-            name = prof.display_name if prof else picked
-            QMessageBox.information(
-                self, "Switch Server",
-                f"Switching to {name}.\n\nAI-PACS will now close — please reopen it "
-                f"to load this center's data and connection.",
-            )
-            QApplication.quit()
-            return True
+            try:
+                from modules.network.runtime_server_refresh import apply_saved_server_settings_runtime
+
+                apply_saved_server_settings_runtime(profile_switched=True)
+            except Exception as exc:
+                print(f"[login] runtime server apply failed: {exc}")
+            try:
+                host = self.socket_service.config.get_socket_host()
+                port = int(self.socket_service.config.get_socket_port())
+                self.socket_service.update_server(host, port, save_to_file=False)
+            except Exception as exc:
+                print(f"[login] socket client refresh failed: {exc}")
+            self._startup_active_id = picked
+            return False
         except Exception as exc:
             print(f"[login] server switch failed: {exc}")
             return False

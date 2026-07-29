@@ -5,14 +5,20 @@ import os
 
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
-    QPushButton, QFrame, QSpinBox, QMessageBox, QComboBox, QFormLayout,
-    QSizePolicy
+    QPushButton, QFrame, QMessageBox, QGridLayout, QDialogButtonBox,
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 import qtawesome as qta
 from .socket_config import get_socket_config
 from PacsClient.utils import IMAGES_LOGIN_PATH
+from PacsClient.utils.login_form_styles import (
+    LoginComboField,
+    LoginNumberField,
+    configure_login_line_edit,
+    login_form_fields_qss,
+    FIELD_H,
+)
 
 
 def _server_picker_enabled() -> bool:
@@ -22,6 +28,60 @@ def _server_picker_enabled() -> bool:
     """
     val = str(os.environ.get("AIPACS_LOGIN_SERVER_PICKER", "1")).strip().lower()
     return val not in ("0", "false", "no", "off")
+
+
+_ADD_SERVER_MARKER = "__add_server__"
+
+
+class _AddServerNameDialog(QDialog):
+    """Prompt for a display name when adding a server from the login settings combo."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Add Server")
+        self.setWindowIcon(QIcon(str(IMAGES_LOGIN_PATH / "favicon.ico")))
+        self.setModal(True)
+        self.setMinimumWidth(380)
+        self.setStyleSheet("""
+            QDialog { background-color: #0f1419; }
+            QLabel { color: #cbd5e1; font-size: 13px; font-weight: 600; }
+            QPushButton {
+                background-color: #2563eb; color: #fff; border: none;
+                border-radius: 8px; padding: 8px 16px; font-weight: 600;
+            }
+            QPushButton:hover { background-color: #1d4ed8; }
+            QPushButton#CancelButton {
+                background: transparent; color: #cbd5e1;
+                border: 2px solid #475569;
+            }
+        """ + login_form_fields_qss())
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(12)
+
+        hint = QLabel("Enter a name for the new imaging center / server.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("e.g. Razi Imaging Center")
+        configure_login_line_edit(self.name_input)
+        layout.addWidget(self.name_input)
+
+        buttons = QDialogButtonBox()
+        cancel = buttons.addButton("Cancel", QDialogButtonBox.RejectRole)
+        cancel.setObjectName("CancelButton")
+        cancel.setCursor(Qt.PointingHandCursor)
+        ok = buttons.addButton("Add", QDialogButtonBox.AcceptRole)
+        ok.setCursor(Qt.PointingHandCursor)
+        ok.setDefault(True)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def server_name(self) -> str:
+        return self.name_input.text().strip()
 
 
 class ServerSettingsDialog(QDialog):
@@ -48,9 +108,22 @@ class ServerSettingsDialog(QDialog):
         self.server_combo = None      # set when profiles are available
         self.host_input = None        # always built (editable in both modes)
         self.ae_input = None          # only meaningful when a profile is selected
+        self.profile_switched_on_save = False
+        self._prev_server_index = 0
+        self._profiles_enabled = self._profiles_feature_enabled()
         self._profiles = self._load_profiles()
         self.setup_ui()
         self.load_settings()
+
+    def _profiles_feature_enabled(self) -> bool:
+        if not _server_picker_enabled():
+            return False
+        try:
+            from PacsClient.utils.server_profiles import server_profiles_enabled
+
+            return bool(server_profiles_enabled())
+        except Exception:
+            return False
 
     # ── shared server store ────────────────────────────────────────────────
     def _load_profiles(self):
@@ -67,14 +140,128 @@ class ServerSettingsDialog(QDialog):
             )
             if not server_profiles_enabled():
                 return []
-            return [p for p in list_profiles() if getattr(p, "host", "")]
+            return list(list_profiles())
         except Exception:
             return []
+
+    def _rebuild_server_combo(self, *, select_id: str | None = None, load_fields: bool = True) -> None:
+        if not self.server_combo:
+            return
+        self._profiles = self._load_profiles()
+        self.server_combo.blockSignals(True)
+        self.server_combo.clear()
+        for prof in self._profiles:
+            self.server_combo.addItem(
+                qta.icon("fa5s.hospital-symbol", color="#60a5fa"),
+                prof.display_name,
+                prof.id,
+            )
+        self.server_combo.addItem(
+            qta.icon("fa5s.plus", color="#34d399"),
+            "+ Add Server...",
+            _ADD_SERVER_MARKER,
+        )
+        idx = 0
+        if select_id:
+            found = self.server_combo.findData(select_id)
+            if found >= 0:
+                idx = found
+        elif self._profiles:
+            try:
+                from PacsClient.utils.server_profiles import get_active_profile_id
+
+                active = self.server_combo.findData(get_active_profile_id())
+                if active >= 0:
+                    idx = active
+            except Exception:
+                pass
+        self.server_combo.setCurrentIndex(idx)
+        self._prev_server_index = idx
+        self.server_combo.blockSignals(False)
+        if load_fields and self.host_input is not None:
+            self._load_selected_server_fields()
+
+    def _load_selected_server_fields(self) -> None:
+        prof = self._selected_profile()
+        if prof is None:
+            return
+        self.host_input.setText(str(prof.host or ""))
+        self.port_input.setValue(int(prof.socket_port or 50052))
+        if self.ae_input is not None:
+            self.ae_input.setText(str(prof.ae_title or ""))
+
+    def _prompt_add_server(self) -> None:
+        revert_index = max(0, min(self._prev_server_index, self.server_combo.count() - 2))
+        dlg = _AddServerNameDialog(self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            self.server_combo.blockSignals(True)
+            self.server_combo.setCurrentIndex(revert_index)
+            self._prev_server_index = revert_index
+            self.server_combo.blockSignals(False)
+            return
+
+        name = dlg.server_name()
+        if not name:
+            QMessageBox.warning(self, "Invalid Input", "Please enter a server name.")
+            self.server_combo.blockSignals(True)
+            self.server_combo.setCurrentIndex(revert_index)
+            self._prev_server_index = revert_index
+            self.server_combo.blockSignals(False)
+            return
+
+        try:
+            from PacsClient.utils import server_profiles as sp
+
+            if sp.find_profile_by_name(name):
+                QMessageBox.warning(
+                    self,
+                    "Duplicate Server",
+                    f"A server named \"{name}\" already exists.",
+                )
+                self.server_combo.blockSignals(True)
+                self.server_combo.setCurrentIndex(revert_index)
+                self._prev_server_index = revert_index
+                self.server_combo.blockSignals(False)
+                return
+
+            pid = sp.data_segment(name)
+            seen = {p.id for p in self._profiles}
+            base_pid, n = pid, 2
+            while pid in seen:
+                pid = f"{base_pid}-{n}"
+                n += 1
+
+            prof = sp.ServerProfile(
+                id=pid,
+                display_name=name,
+                host="",
+                socket_port=50052,
+                dicom_port=104,
+                ae_title="aipacs",
+            )
+            sp.upsert_profile(prof)
+            sp.write_profile_to_servers_json(prof)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Add Server",
+                f"Could not add the server:\n{exc}",
+            )
+            self.server_combo.blockSignals(True)
+            self.server_combo.setCurrentIndex(revert_index)
+            self._prev_server_index = revert_index
+            self.server_combo.blockSignals(False)
+            return
+
+        self._rebuild_server_combo(select_id=pid)
+        self.host_input.setFocus()
 
     def _selected_profile(self):
         if not self.server_combo:
             return None
         pid = self.server_combo.currentData()
+        if pid == _ADD_SERVER_MARKER:
+            return None
         for p in self._profiles:
             if p.id == pid:
                 return p
@@ -88,15 +275,16 @@ class ServerSettingsDialog(QDialog):
         """
         return self.host_input.text().strip(), int(self.port_input.value())
 
-    def _on_server_changed(self, *_):
+    def _on_server_changed(self, index: int = -1):
         """Selecting a server loads ITS values into the editable fields."""
-        prof = self._selected_profile()
-        if prof is None:
+        if not self.server_combo:
             return
-        self.host_input.setText(str(prof.host or ""))
-        self.port_input.setValue(int(prof.socket_port))
-        if self.ae_input is not None:
-            self.ae_input.setText(str(prof.ae_title or ""))
+        if self.server_combo.currentData() == _ADD_SERVER_MARKER:
+            self._prompt_add_server()
+            return
+        if index >= 0:
+            self._prev_server_index = index
+        self._load_selected_server_fields()
     
     def setup_ui(self):
         """Setup UI"""
@@ -105,7 +293,8 @@ class ServerSettingsDialog(QDialog):
         self.setMinimumWidth(500)
         self.setModal(True)
         
-        # Modern styling
+        # Modern styling — field controls use the shared login-form QSS so spinners
+        # and dropdown chevrons stay off the digits on Windows.
         self.setStyleSheet("""
             QDialog {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -130,164 +319,6 @@ class ServerSettingsDialog(QDialog):
                 font-size: 12px;
                 font-weight: 400;
                 margin-bottom: 20px;
-            }
-            
-            QLineEdit, QSpinBox, QComboBox {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1e293b, stop:1 #0f172a);
-                color: #f1f5f9;
-                border: 2px solid #334155;
-                border-radius: 8px;
-                padding: 9px 12px;
-                font-size: 13px;
-                min-height: 34px;
-                font-weight: 500;
-            }
-
-            QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-                border: 2px solid #3b82f6;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #1e3a8a, stop:1 #1e293b);
-            }
-
-            QLineEdit:hover, QSpinBox:hover, QComboBox:hover {
-                border: 2px solid #475569;
-            }
-
-            /* ── Spin box steppers ──────────────────────────────────────────
-               Once a stylesheet sets padding/border on a QSpinBox, Qt stops
-               laying the steppers out for us and they end up drawn ON TOP of the
-               digits ("500▲▼"). Position them explicitly on the RIGHT EDGE of the
-               field and reserve room for them with padding-right. */
-            QSpinBox {
-                padding-right: 30px;
-            }
-
-            QSpinBox::up-button, QSpinBox::down-button {
-                subcontrol-origin: border;
-                background: #243047;
-                border: none;
-                border-left: 1px solid #3b4a63;
-                width: 26px;
-            }
-
-            QSpinBox::up-button {
-                subcontrol-position: top right;
-                margin: 2px 2px 0px 0px;
-                border-top-right-radius: 6px;
-            }
-
-            QSpinBox::down-button {
-                subcontrol-position: bottom right;
-                margin: 0px 2px 2px 0px;
-                border-bottom-right-radius: 6px;
-            }
-
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background: #2563eb;
-            }
-
-            QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {
-                background: #1d4ed8;
-            }
-
-            QSpinBox::up-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-bottom: 5px solid #93c5fd;
-            }
-
-            QSpinBox::down-arrow {
-                image: none;
-                width: 0px;
-                height: 0px;
-                border-left: 4px solid transparent;
-                border-right: 4px solid transparent;
-                border-top: 5px solid #93c5fd;
-            }
-
-            QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off {
-                border-bottom-color: #475569;
-            }
-
-            QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off {
-                border-top-color: #475569;
-            }
-
-            /* ── Server picker ──────────────────────────────────────────────
-               Shows the configured server NAME (never a raw IP). Explicit
-               background + foreground pair so the popup can never inherit the
-               Windows light/dark palette. */
-            QComboBox#ServerCombo {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #223049, stop:1 #16233a);
-                border: 2px solid #3b4a63;
-                border-radius: 10px;
-                padding: 10px 14px;
-                min-height: 40px;
-                font-size: 14px;
-                font-weight: 600;
-                color: #f8fafc;
-            }
-
-            QComboBox#ServerCombo:hover {
-                border: 2px solid #3b82f6;
-            }
-
-            QComboBox#ServerCombo:on {          /* popup open */
-                border: 2px solid #3b82f6;
-                border-bottom-left-radius: 0px;
-                border-bottom-right-radius: 0px;
-            }
-
-            QComboBox#ServerCombo::drop-down {
-                subcontrol-origin: padding;
-                subcontrol-position: center right;
-                width: 34px;
-                border: none;
-                border-left: 1px solid #3b4a63;
-                margin: 4px;
-            }
-
-            QComboBox#ServerCombo::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 6px solid #93c5fd;
-                width: 0px;
-                height: 0px;
-                margin-right: 12px;
-            }
-
-            QComboBox QAbstractItemView {
-                background: #16233a;
-                color: #f1f5f9;
-                border: 2px solid #3b82f6;
-                border-radius: 10px;
-                padding: 6px;
-                outline: 0;
-                selection-background-color: #2563eb;
-                selection-color: #ffffff;
-            }
-
-            QComboBox QAbstractItemView::item {
-                min-height: 34px;
-                padding: 6px 10px;
-                border-radius: 6px;
-                color: #f1f5f9;
-            }
-
-            QComboBox QAbstractItemView::item:hover {
-                background: #1d4ed8;
-                color: #ffffff;
-            }
-
-            QComboBox QAbstractItemView::item:selected {
-                background: #2563eb;
-                color: #ffffff;
             }
             
             QPushButton {
@@ -334,13 +365,12 @@ class ServerSettingsDialog(QDialog):
                     stop:0 #059669, stop:1 #047857);
             }
             
-            QFrame#ContentFrame {
+            QFrame#LoginFormFields {
                 background: rgba(30, 41, 59, 0.5);
                 border: 1px solid #334155;
                 border-radius: 10px;
-                padding: 20px;
             }
-        """)
+        """ + login_form_fields_qss(scope="LoginFormFields"))
         
         layout = QVBoxLayout(self)
         layout.setContentsMargins(30, 30, 30, 30)
@@ -356,67 +386,57 @@ class ServerSettingsDialog(QDialog):
         desc_label.setObjectName("DescLabel")
         layout.addWidget(desc_label)
         
-        # Content frame — a clean two-column form (label ▸ field).
+        # Content frame — fixed-height rows so every field matches (40 px).
         content_frame = QFrame()
-        content_frame.setObjectName("ContentFrame")
-        content_layout = QFormLayout(content_frame)
-        content_layout.setSpacing(14)
-        content_layout.setContentsMargins(4, 4, 4, 4)
-        content_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        content_layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        content_frame.setObjectName("LoginFormFields")
+        content_layout = QGridLayout(content_frame)
+        content_layout.setContentsMargins(16, 16, 16, 16)
+        content_layout.setHorizontalSpacing(12)
+        content_layout.setVerticalSpacing(10)
+        content_layout.setColumnStretch(1, 1)
+
+        def _form_label(text: str) -> QLabel:
+            lbl = QLabel(text)
+            lbl.setFixedHeight(FIELD_H)
+            lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            return lbl
 
         # Server picker — choose the CONFIGURED SERVER BY NAME (e.g. "Razi Imaging
         # Center"), never a raw host/IP. The list comes from the SAME server-profile
         # store Settings ▸ Server Settings writes, so the two screens stay in sync.
-        # Falls back to a plain host field when nothing is configured yet (or
-        # AIPACS_LOGIN_SERVER_PICKER=0), otherwise a new centre could never add its
-        # first server.
-        if self._profiles:
-            self.server_combo = QComboBox()
-            self.server_combo.setObjectName("ServerCombo")
-            self.server_combo.setCursor(Qt.PointingHandCursor)
-            for prof in self._profiles:
-                self.server_combo.addItem(
-                    qta.icon('fa5s.hospital-symbol', color='#60a5fa'),
-                    prof.display_name,
-                    prof.id,
-                )
+        row = 0
+        if self._profiles_enabled:
+            self.server_combo = LoginComboField()
+            self._rebuild_server_combo(load_fields=False)
             self.server_combo.currentIndexChanged.connect(self._on_server_changed)
-            content_layout.addRow(QLabel("Server:"), self.server_combo)
+            content_layout.addWidget(_form_label("Server:"), row, 0)
+            content_layout.addWidget(self.server_combo, row, 1)
+            row += 1
 
-        # Host / Port / AE Title / Timeout — ALL directly editable. A change here is
-        # written back to the SELECTED server's profile on Save, so Server Settings
-        # shows exactly the same values.
         self.host_input = QLineEdit()
         self.host_input.setPlaceholderText("e.g. 192.168.1.100")
-        content_layout.addRow(QLabel("Host:"), self.host_input)
+        configure_login_line_edit(self.host_input)
+        content_layout.addWidget(_form_label("Host:"), row, 0)
+        content_layout.addWidget(self.host_input, row, 1)
+        row += 1
 
-        self.port_input = QSpinBox()
-        self.port_input.setRange(1, 65535)
-        self.port_input.setValue(50052)
-        # Stretch to the same width as the QLineEdit rows. A QSpinBox defaults to a
-        # shrink-to-fit size policy, so without this it renders as a narrow box and
-        # the steppers crowd the digits.
-        self.port_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.port_input.setButtonSymbols(QSpinBox.UpDownArrows)
-        content_layout.addRow(QLabel("Port:"), self.port_input)
+        self.port_input = LoginNumberField(minimum=1, maximum=65535, value=50052)
+        content_layout.addWidget(_form_label("Port:"), row, 0)
+        content_layout.addWidget(self.port_input, row, 1)
+        row += 1
 
-        # AE Title lives on the server profile, so it is only meaningful when a
-        # server is selected (in the legacy no-profile fallback there is nowhere to
-        # store it).
-        if self._profiles:
+        if self._profiles_enabled:
             self.ae_input = QLineEdit()
             self.ae_input.setPlaceholderText("AE_TITLE")
             self.ae_input.setMaxLength(16)
-            content_layout.addRow(QLabel("AE Title:"), self.ae_input)
+            configure_login_line_edit(self.ae_input)
+            content_layout.addWidget(_form_label("AE Title:"), row, 0)
+            content_layout.addWidget(self.ae_input, row, 1)
+            row += 1
 
-        self.timeout_input = QSpinBox()
-        self.timeout_input.setRange(1, 300)
-        self.timeout_input.setValue(30)
-        self.timeout_input.setSuffix(" s")
-        self.timeout_input.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.timeout_input.setButtonSymbols(QSpinBox.UpDownArrows)
-        content_layout.addRow(QLabel("Connection Timeout:"), self.timeout_input)
+        self.timeout_input = LoginNumberField(minimum=1, maximum=300, value=30, suffix=" s")
+        content_layout.addWidget(_form_label("Connection Timeout:"), row, 0)
+        content_layout.addWidget(self.timeout_input, row, 1)
 
         layout.addWidget(content_frame)
         
@@ -428,15 +448,20 @@ class ServerSettingsDialog(QDialog):
         self.test_button.setObjectName("TestButton")
         self.test_button.setIcon(qta.icon('fa5s.plug', color='white'))
         self.test_button.clicked.connect(self.test_connection)
+        self.test_button.setCursor(Qt.PointingHandCursor)
         
         self.save_button = QPushButton("Save")
         self.save_button.setIcon(qta.icon('fa5s.save', color='white'))
+        self.save_button.setDefault(True)
+        self.save_button.setAutoDefault(True)
         self.save_button.clicked.connect(self.save_settings)
+        self.save_button.setCursor(Qt.PointingHandCursor)
         
         self.cancel_button = QPushButton("Cancel")
         self.cancel_button.setObjectName("CancelButton")
         self.cancel_button.setIcon(qta.icon('fa5s.times', color='#cbd5e1'))
         self.cancel_button.clicked.connect(self.reject)
+        self.cancel_button.setCursor(Qt.PointingHandCursor)
         
         buttons_layout.addWidget(self.test_button)
         buttons_layout.addStretch()
@@ -455,25 +480,36 @@ class ServerSettingsDialog(QDialog):
             self.port_input.setValue(self.config.get_socket_port())
             return
 
-        # Preselect the ACTIVE profile — the same notion of "current server" that
-        # Server Settings uses. If none is set, match the host we are pointed at.
-        idx = -1
+        select_id = None
         try:
             from PacsClient.utils.server_profiles import get_active_profile_id
-            idx = self.server_combo.findData(get_active_profile_id())
+
+            select_id = get_active_profile_id()
         except Exception:
-            idx = -1
-        if idx < 0:
+            select_id = None
+        if not select_id and self._profiles:
             cur_host = self.config.get_socket_host()
-            for i, prof in enumerate(self._profiles):
+            for prof in self._profiles:
                 if prof.host == cur_host:
-                    idx = i
+                    select_id = prof.id
                     break
-        self.server_combo.setCurrentIndex(max(0, idx))
-        self._on_server_changed()   # pull that profile's port + host hint
+        self._rebuild_server_combo(select_id=select_id)
+        if not self._profiles:
+            self.host_input.setText(self.config.get_socket_host())
+            self.port_input.setValue(self.config.get_socket_port())
+            if self.ae_input is not None:
+                self.ae_input.setText("aipacs")
 
     def save_settings(self):
         """Save — writing THROUGH to the shared server-profile store."""
+        prev_active_id = ""
+        try:
+            from PacsClient.utils.server_profiles import get_active_profile_id
+
+            prev_active_id = get_active_profile_id()
+        except Exception:
+            pass
+
         port = int(self.port_input.value())
         timeout = int(self.timeout_input.value())
 
@@ -529,13 +565,17 @@ class ServerSettingsDialog(QDialog):
         self.config.set("socket_port", port)
         self.config.set("connection_timeout", timeout)
         self.config.save_config()
-        
-        # QMessageBox.information(
-        #     self, 
-        #     "Success", 
-        #     f"Server settings saved successfully.\n\nHost: {host}\nPort: {port}\nTimeout: {timeout}s"
-        # )
-        # self.accept()
+
+        profile_switched = False
+        try:
+            from PacsClient.utils.server_profiles import get_active_profile_id
+
+            profile_switched = get_active_profile_id() != prev_active_id
+        except Exception:
+            profile_switched = bool(self.server_combo)
+
+        self.profile_switched_on_save = profile_switched
+        self.accept()
     
     def test_connection(self):
         """Test connection to server"""

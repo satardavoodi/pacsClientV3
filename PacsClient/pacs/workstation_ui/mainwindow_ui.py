@@ -749,7 +749,7 @@ class MainWindowWidget(QWidget):
         self.title_bar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         title_layout = QHBoxLayout(self.title_bar)
-        title_layout.setContentsMargins(10, 2, 5, 2)
+        title_layout.setContentsMargins(10, 2, 5, 0)
         title_layout.setSpacing(10)
 
         self.tab_area = QFrame()
@@ -765,69 +765,51 @@ class MainWindowWidget(QWidget):
         self.right_tab_area.setObjectName("RightTabArea")
         title_layout.addWidget(self.right_tab_area)
 
+        # Right column: window controls on top, user card fills the rest (no gap).
+        self.title_bar_right = QFrame()
+        self.title_bar_right.setObjectName("TitleBarRight")
+        self.title_bar_right.setMinimumWidth(142)
+        self.title_bar_right.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        right_col = QVBoxLayout(self.title_bar_right)
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(3)
+
+        self.window_buttons_host = QWidget()
+        self.window_buttons_host.setObjectName("WindowButtonsHost")
+        self.window_buttons_host.setFixedHeight(32)
+        self._window_btn_row_layout = QHBoxLayout(self.window_buttons_host)
+        self._window_btn_row_layout.setContentsMargins(0, 0, 0, 0)
+        self._window_btn_row_layout.setSpacing(2)
+        self._window_btn_row_layout.addStretch(1)
+        right_col.addWidget(self.window_buttons_host, 0)
+
+        self._title_bar_right_layout = right_col
+        title_layout.addWidget(self.title_bar_right, 0, Qt.AlignmentFlag.AlignRight)
+
         if self.auth_user:
-            self.setup_user_info(title_layout)
+            self.setup_user_info(self._title_bar_right_layout)
 
         parent_layout.addWidget(self.title_bar)
 
-    def setup_user_info(self, title_layout):
+    def setup_user_info(self, right_col: QVBoxLayout):
         user_container = QFrame()
         user_container.setObjectName("UserInfoContainer")
         self.user_info_container = user_container
-        # Archetype 5: minimum-height floor (Archetype 5). Width already
-        # uses setMinimumWidth which is correct.
-        user_container.setMinimumHeight(70)
-        user_container.setMinimumWidth(170)
-        # Stage 9 follow-up (2026-05-29): without an upper bound + Fixed
-        # vertical size policy, Qt's default Preferred/Preferred let the
-        # pill grow vertically to fill the title bar, rendering as a tall
-        # portrait box (~170x120) that overflowed into the search panel
-        # below. The pill needs ~70 px of content; cap at 74 px and forbid
-        # vertical expansion so the title-bar height stays at its 84 px
-        # floor regardless of available space.
-        user_container.setMaximumHeight(74)
-        user_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-        user_container.setStyleSheet("""
-            QFrame#UserInfoContainer {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(59, 130, 246, 0.22),
-                    stop:1 rgba(99, 102, 241, 0.18));
-                border: 2px solid rgba(99, 102, 241, 0.4);
-                border-radius: 10px;
-                padding: 6px 14px;
-                margin-right: 10px;
-            }
-            QFrame#UserInfoContainer:hover {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(59, 130, 246, 0.34),
-                    stop:1 rgba(99, 102, 241, 0.28));
-                border: 2px solid rgba(148, 163, 184, 0.7);
-            }
-            QLabel#UserNameLabel {
-                color: #ffffff;
-                font-size: 13px;
-                font-weight: 700;
-                letter-spacing: 0.3px;
-                background: transparent;
-                border: none;
-            }
-            QLabel#UserRoleLabel {
-                color: #93c5fd;
-                font-size: 10px;
-                font-weight: 600;
-                letter-spacing: 0.5px;
-                background: transparent;
-                border: none;
-            }
-        """)
+        user_container.setMinimumHeight(48)
+        user_container.setMinimumWidth(120)
+        user_container.setMaximumWidth(168)
+        user_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)
+        user_container.setCursor(Qt.PointingHandCursor)
 
         lay = QHBoxLayout(user_container)
-        lay.setContentsMargins(10, 8, 10, 8)
-        lay.setSpacing(12)
+        lay.setContentsMargins(8, 6, 10, 6)
+        lay.setSpacing(8)
+        lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         user_icon_label = QLabel()
         user_icon = qta.icon('fa5s.user', color='#60a5fa')
-        user_icon_label.setPixmap(user_icon.pixmap(36, 36))
+        user_icon_label.setPixmap(user_icon.pixmap(22, 22))
+        user_icon_label.setFixedSize(22, 22)
         user_icon_label.setAlignment(Qt.AlignCenter)
         lay.addWidget(user_icon_label)
         self.user_icon_label = user_icon_label
@@ -858,24 +840,26 @@ class MainWindowWidget(QWidget):
             pass
 
         text_lay = QVBoxLayout()
-        text_lay.setSpacing(2)
-        text_lay.setContentsMargins(0, 2, 0, 2)
+        text_lay.setSpacing(1)
+        text_lay.setContentsMargins(0, 0, 0, 0)
+        text_lay.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
         user_name = self.auth_user.get('full_name', 'Unknown User')
-        if len(user_name) > 20:
-            user_name = user_name[:17] + "..."
+        if len(user_name) > 14:
+            user_name = user_name[:12] + "..."
         self.user_name_label = QLabel(user_name)
         self.user_name_label.setObjectName("UserNameLabel")
         text_lay.addWidget(self.user_name_label)
 
         user_role = self.auth_user.get('role', 'User').upper()
-        self.user_role_label = QLabel(f"● {user_role}")
+        self.user_role_label = QLabel(user_role)
         self.user_role_label.setObjectName("UserRoleLabel")
         text_lay.addWidget(self.user_role_label)
 
-        lay.addLayout(text_lay)
+        lay.addLayout(text_lay, 1)
 
-        title_layout.addWidget(user_container)
+        right_col.addWidget(user_container, 1)
+        user_container.setStyleSheet(self._user_info_stylesheet())
 
         # ── External Identity module (additive, feature-flagged, default OFF) ──
         # Adds a "Connected Accounts" menu to the EXISTING account container so a
@@ -998,30 +982,25 @@ class MainWindowWidget(QWidget):
         theme = self._active_theme
         return f"""
             QFrame#UserInfoContainer {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {theme['accent_soft']},
-                    stop:1 {theme['menu_bg']});
-                border: 2px solid {theme['accent']};
-                border-radius: 10px;
-                padding: 6px 14px;
-                margin-right: 10px;
+                background: {theme['panel_bg']};
+                border: 1px solid {theme['border']};
+                border-radius: 6px;
             }}
             QFrame#UserInfoContainer:hover {{
-                border-color: {theme['accent_hover']};
+                border-color: {theme['accent']};
+                background: {theme['menu_hover_bg']};
             }}
             QLabel#UserNameLabel {{
                 color: {theme['text_primary']};
-                font-size: 13px;
-                font-weight: 700;
-                letter-spacing: 0.3px;
+                font-size: 12px;
+                font-weight: 600;
                 background: transparent;
                 border: none;
             }}
             QLabel#UserRoleLabel {{
-                color: {theme['text_secondary']};
+                color: {theme['text_muted']};
                 font-size: 10px;
-                font-weight: 600;
-                letter-spacing: 0.5px;
+                font-weight: 500;
                 background: transparent;
                 border: none;
             }}
@@ -1074,6 +1053,14 @@ class MainWindowWidget(QWidget):
         self.apply_modern_styling()
         if hasattr(self, "user_info_container"):
             self.user_info_container.setStyleSheet(self._user_info_stylesheet())
+        if hasattr(self, "user_icon_label"):
+            try:
+                accent = self._active_theme.get("accent", "#60a5fa")
+                self.user_icon_label.setPixmap(
+                    qta.icon("fa5s.user", color=accent).pixmap(22, 22)
+                )
+            except Exception:
+                pass
         styles = self._window_button_styles()
         if hasattr(self, "minimize_button"):
             self.minimize_button.setStyleSheet(styles["neutral"])
@@ -1318,10 +1305,19 @@ class MainWindowWidget(QWidget):
         """)
         self.close_button.clicked.connect(self.close)
 
-        title_layout = self.title_bar.layout()
-        title_layout.addWidget(self.minimize_button)
-        title_layout.addWidget(self.maximize_button)
-        title_layout.addWidget(self.close_button)
+        for btn in (self.minimize_button, self.maximize_button, self.close_button):
+            btn.setCursor(Qt.PointingHandCursor)
+
+        row = getattr(self, "_window_btn_row_layout", None)
+        if row is not None:
+            row.addWidget(self.minimize_button)
+            row.addWidget(self.maximize_button)
+            row.addWidget(self.close_button)
+        else:
+            title_layout = self.title_bar.layout()
+            title_layout.addWidget(self.minimize_button)
+            title_layout.addWidget(self.maximize_button)
+            title_layout.addWidget(self.close_button)
 
         self._sync_maximize_button_state()
 

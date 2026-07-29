@@ -1,11 +1,12 @@
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QGroupBox, QLineEdit, QPushButton, QLabel, QDateEdit, \
-    QHBoxLayout, QComboBox, QCheckBox, QSizePolicy
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QGroupBox, QLineEdit, QPushButton, QLabel, \
+    QHBoxLayout, QCheckBox, QSizePolicy
 from PySide6.QtCore import Signal, QDate, Qt
 import qtawesome as qta
 import os
 from datetime import datetime, timedelta
 from PacsClient.utils.custom_checkbox import CustomCheckbox
 from PacsClient.utils.theme_manager import get_theme_manager
+from PacsClient.utils.login_form_styles import LoginComboField, LoginDateField, LoginLineField
 
 class PatientSearchWidget(QWidget):
     """
@@ -253,6 +254,7 @@ class PatientSearchWidget(QWidget):
         except Exception:
             pass
         self.search_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.search_btn.setCursor(Qt.PointingHandCursor)
         self.search_btn.clicked.connect(self._on_search_clicked)
         self.search_button_layout.addWidget(self.search_btn)
 
@@ -299,36 +301,31 @@ class PatientSearchWidget(QWidget):
     def _create_search_fields(self):
         """Create all search input fields"""
         # Patient Information Fields
-        self.patient_id_edit = QLineEdit()
+        self.patient_id_edit = LoginLineField(
+            field_h=36,
+            trailing_icon="fa5s.sliders-h",
+            trailing_tooltip=(
+                "Advanced search…\nMultiple patient IDs, date range, modality, "
+                "body part, age, reporting doctor"
+            ),
+        )
         self.patient_id_edit.setPlaceholderText("Patient ID (e.g., 12345)")
         self.patient_id_edit.setToolTip("💡 Patient's unique identifier\nExample: 12345, P001, etc.")
         self.patient_id_edit.setMaxLength(50)
-        # Pressing Enter in the Patient ID field triggers the search,
-        # exactly like clicking the Search Patients button.
         self.patient_id_edit.returnPressed.connect(self._on_search_clicked)
+        self.patient_id_edit.actionTriggered.connect(self._open_advanced_search_dialog)
 
-        # Advanced filter popup trigger (2026-06-06): a small filter icon
-        # INSIDE the Patient ID field (trailing position — same visual
-        # language as the date-range dropdown button). Opens the structured
-        # multi-ID / date / modality / clinical filter dialog.
-        try:
-            self._advanced_filter_action = self.patient_id_edit.addAction(
-                qta.icon('fa5s.sliders-h', color='#9ca3af'),
-                QLineEdit.ActionPosition.TrailingPosition,
-            )
-            self._advanced_filter_action.setToolTip(
-                "Advanced search…\nMultiple patient IDs, date range, modality, "
-                "body part, age, reporting doctor"
-            )
-            self._advanced_filter_action.triggered.connect(self._open_advanced_search_dialog)
-        except Exception:
-            self._advanced_filter_action = None
-
-        self.patient_name_edit = QLineEdit()
+        self.patient_name_edit = LoginLineField(
+            field_h=36,
+            trailing_icon="fa5s.user",
+            trailing_tooltip="Patient name",
+            trailing_action=False,
+        )
         self.patient_name_edit.setPlaceholderText("Patient Name (e.g., John Doe)")
         self.patient_name_edit.setToolTip(
             "💡 Patient's full name\nSupports partial matching\nExample: John, Doe, John Doe")
         self.patient_name_edit.setMaxLength(100)
+        self.patient_name_edit.returnPressed.connect(self._on_search_clicked)
 
         self.patient_sex = QLineEdit()
         self.patient_sex.setPlaceholderText("Gender (M/F/O)")
@@ -336,13 +333,14 @@ class PatientSearchWidget(QWidget):
         self.patient_sex.setMaxLength(1)
 
         # Study Information Fields
-        self.study_id = QLineEdit()
+        self.study_id = LoginLineField(field_h=36)
         self.study_id.setPlaceholderText("Study ID (e.g., S001)")
         self.study_id.setToolTip("💡 Unique study identifier\nAssigned by the system\nExample: S001, ST123")
         self.study_id.setMaxLength(50)
+        self.study_id.returnPressed.connect(self._on_search_clicked)
 
         # Date selector combo box
-        self.date_selector = QComboBox()
+        self.date_selector = LoginComboField(field_h=36)
         self.date_selector.addItem("Custom Date", "custom")
         self.date_selector.addItem("All Dates", "all_dates")
         self.date_selector.addItem("Today", "today")
@@ -362,17 +360,15 @@ class PatientSearchWidget(QWidget):
         self.date_selector.activated.connect(self._on_date_selector_activated)
 
         # Date From field
-        self.date_from_edit = QDateEdit()
+        self.date_from_edit = LoginDateField(field_h=36)
         self.date_from_edit.setDisplayFormat("yyyy-MM-dd")
         self.date_from_edit.setToolTip("💡 Start date for date range search\nClick to select date")
-        self.date_from_edit.setCalendarPopup(True)
         self.date_from_edit.setDate(QDate.currentDate())
 
         # Date To field
-        self.date_to_edit = QDateEdit()
+        self.date_to_edit = LoginDateField(field_h=36)
         self.date_to_edit.setDisplayFormat("yyyy-MM-dd")
         self.date_to_edit.setToolTip("💡 End date for date range search\nClick to select date")
-        self.date_to_edit.setCalendarPopup(True)
         self.date_to_edit.setDate(QDate.currentDate())
 
         self.study_description = QLineEdit()
@@ -387,7 +383,7 @@ class PatientSearchWidget(QWidget):
         self.series_description.setMaxLength(200)
 
         # Modality field
-        self.modality = QComboBox()
+        self.modality = LoginComboField(field_h=36)
         self.modality.addItem("All Modalities", "")
         self.modality.addItem("CT", "CT")
         self.modality.addItem("MR", "MR")
@@ -403,7 +399,7 @@ class PatientSearchWidget(QWidget):
         self.modality.setToolTip("💡 Medical imaging modality type")
 
         # Request Type field
-        self.request_type = QComboBox()
+        self.request_type = LoginComboField(field_h=36)
         self.request_type.addItem("All Types", "")
         self.request_type.addItem("Study Query", "STUDY")
         self.request_type.addItem("Patient Query", "PATIENT")
@@ -419,7 +415,6 @@ class PatientSearchWidget(QWidget):
         t = theme or self._active_theme
         base_pt = 13
         combo_pt = 12
-        date_pt = 12
 
         fields = [
             self.patient_id_edit,
@@ -427,8 +422,6 @@ class PatientSearchWidget(QWidget):
             self.patient_sex,
             self.study_id,
             self.date_selector,
-            self.date_from_edit,
-            self.date_to_edit,
             self.study_description,
             self.series_description,
             self.modality,
@@ -436,142 +429,11 @@ class PatientSearchWidget(QWidget):
         ]
 
         for field in fields:
-            if isinstance(field, QComboBox):
-                field.setStyleSheet(f"""
-                    QComboBox {{
-                        background: {t['panel_alt_bg']};
-                        border: 1px solid {t['border']};
-                        border-radius: 5px;
-                        padding: 6px 10px;
-                        font-size: {combo_pt}pt;
-                        font-family: 'Roboto', sans-serif;
-                        color: {t['text_primary']};
-                        selection-background-color: {t['accent']};
-                    }}
-                    QComboBox:hover {{
-                        border: 1px solid {t['accent']};
-                        background: {t['card_bg']};
-                    }}
-                    QComboBox:focus {{
-                        border: 2px solid {t['accent']};
-                        background: {t['card_bg']};
-                        outline: none;
-                    }}
-                    QComboBox::drop-down {{
-                        border: none;
-                        width: 30px;
-                        background: {t['card_bg']};
-                        border-left: 1px solid {t['border']};
-                        border-top-right-radius: 5px;
-                        border-bottom-right-radius: 5px;
-                        subcontrol-origin: padding;
-                        subcontrol-position: right center;
-                    }}
-                    QComboBox::down-arrow {{
-                        width: 0;
-                        height: 0;
-                        border-left: 5px solid transparent;
-                        border-right: 5px solid transparent;
-                        border-top: 6px solid {t['text_muted']};
-                    }}
-                    QComboBox::down-arrow:hover {{
-                        border-top-color: {t['text_primary']};
-                    }}
-                    QComboBox QAbstractItemView {{
-                        background: {t['panel_bg']};
-                        border: 1px solid {t['border']};
-                        border-radius: 5px;
-                        color: {t['text_primary']};
-                        selection-background-color: {t['accent']};
-                        selection-color: {t['button_text']};
-                        outline: none;
-                        font-size: {combo_pt}pt;
-                    }}
-                    QComboBox QAbstractItemView::item {{
-                        padding: 6px 10px;
-                        border: none;
-                    }}
-                    QComboBox QAbstractItemView::item:hover {{
-                        background: {t['card_bg']};
-                    }}
-                    QComboBox QAbstractItemView::item:selected {{
-                        background: {t['accent']};
-                        color: {t['button_text']};
-                    }}
-                """)
-            elif isinstance(field, QDateEdit):
-                field.setStyleSheet(f"""
-                    QDateEdit {{
-                        background: {t['panel_alt_bg']};
-                        border: 1px solid {t['border']};
-                        border-radius: 5px;
-                        padding: 6px 10px;
-                        font-size: {date_pt}pt;
-                        font-family: 'Roboto', sans-serif;
-                        color: {t['text_primary']};
-                        selection-background-color: {t['accent']};
-                    }}
-                    QDateEdit:hover {{
-                        border: 1px solid {t['accent']};
-                        background: {t['card_bg']};
-                    }}
-                    QDateEdit:focus {{
-                        border: 2px solid {t['accent']};
-                        background: {t['card_bg']};
-                        outline: none;
-                    }}
-                    QDateEdit::drop-down {{
-                        border: none;
-                        width: 30px;
-                        background: {t['card_bg']};
-                        border-left: 1px solid {t['border']};
-                        border-top-right-radius: 5px;
-                        border-bottom-right-radius: 5px;
-                        subcontrol-origin: padding;
-                        subcontrol-position: right center;
-                    }}
-                    QDateEdit::down-arrow {{
-                        width: 0;
-                        height: 0;
-                        border-left: 5px solid transparent;
-                        border-right: 5px solid transparent;
-                        border-top: 6px solid {t['text_muted']};
-                    }}
-                    QDateEdit::down-arrow:hover {{
-                        border-top-color: {t['text_primary']};
-                    }}
-                    QCalendarWidget {{
-                        background-color: {t['panel_bg']};
-                    }}
-                    QCalendarWidget QWidget {{
-                        color: {t['text_primary']};
-                    }}
-                    QCalendarWidget QAbstractItemView:enabled {{
-                        background-color: {t['card_bg']};
-                        color: {t['text_primary']};
-                        selection-background-color: {t['accent']};
-                        selection-color: {t['button_text']};
-                    }}
-                    QCalendarWidget QToolButton {{
-                        color: {t['text_primary']};
-                        background-color: {t['card_bg']};
-                        border-radius: 4px;
-                        padding: 4px;
-                    }}
-                    QCalendarWidget QToolButton:hover {{
-                        background-color: {t['menu_hover_bg']};
-                    }}
-                    QCalendarWidget QSpinBox {{
-                        background-color: {t['card_bg']};
-                        color: {t['text_primary']};
-                        border: 1px solid {t['border']};
-                    }}
-                    QCalendarWidget QMenu {{
-                        background-color: {t['panel_bg']};
-                        color: {t['text_primary']};
-                    }}
-                """)
-                field.setCalendarPopup(True)
+            if isinstance(field, LoginLineField):
+                field.apply_theme(t, font_pt=base_pt, field_h=36)
+            elif isinstance(field, LoginComboField):
+                field.apply_theme(t, font_pt=combo_pt, field_h=36)
+                field.setCursor(Qt.PointingHandCursor)
             else:
                 field.setStyleSheet(f"""
                     QLineEdit {{
@@ -600,130 +462,20 @@ class PatientSearchWidget(QWidget):
                 """)
 
     def _apply_date_field_styling(self, theme=None):
-        """Safer/lighter styling for date fields (QDateEdit + popup calendar)"""
-        from PySide6.QtGui import QFont, QFontMetrics
-        from PySide6.QtWidgets import QCalendarWidget
-
+        """Theme styling for LoginDateField widgets (calendar popup + Saturday-first week)."""
         t = theme or self._active_theme
-        date_fields = [self.date_from_edit, self.date_to_edit]
-
         date_pt = 12
-        calendar_pt = 11
-        pad_y, pad_x = 5, 8
-
-        for field in date_fields:
+        for field in (self.date_from_edit, self.date_to_edit):
             if not field:
                 continue
-
-            field.setCalendarPopup(True)
-            f = QFont(field.font())
-            f.setPointSize(date_pt)
-            field.setFont(f)
-            fm = QFontMetrics(f)
-            min_h = max(22, int(fm.height() * 1.4))
-            # Calendar button visibility (2026-06-06): the drop-down zone was
-            # styled border-less/transparent with NO ::down-arrow rule, which
-            # rendered it invisible — users had no clue the fields open a
-            # calendar. Style it like the "Today" (date-range) combo's button:
-            # a bordered zone with a triangle arrow.
-            field.setStyleSheet(f"""
-                QDateEdit {{
-                    background: {t['panel_alt_bg']};
-                    border: 1px solid {t['border']};
-                    border-radius: 5px;
-                    padding: {pad_y}px {pad_x}px;
-                    font-size: {date_pt}pt;
-                    color: {t['text_primary']};
-                    selection-background-color: {t['accent']};
-                }}
-                QDateEdit:hover {{ border: 1px solid {t['accent']}; background: {t['card_bg']}; }}
-                QDateEdit:focus {{ border: 2px solid {t['accent']}; background: {t['card_bg']}; }}
-                QDateEdit::drop-down {{
-                    border: none;
-                    width: 30px;  /* EXACTLY the date-range combo's button width
-                                     so all three dropdown icons align vertically */
-                    background: {t['card_bg']};
-                    border-left: 1px solid {t['border']};
-                    border-top-right-radius: 5px;
-                    border-bottom-right-radius: 5px;
-                    subcontrol-origin: padding;
-                    subcontrol-position: right center;
-                }}
-                QDateEdit::down-arrow {{
-                    width: 0;
-                    height: 0;
-                    border-left: 5px solid transparent;
-                    border-right: 5px solid transparent;
-                    border-top: 6px solid {t['text_muted']};
-                }}
-                QDateEdit::down-arrow:hover {{
-                    border-top-color: {t['text_primary']};
-                }}
-            """)
-            field.setMinimumHeight(min_h + pad_y * 2)
-
-            cal = field.calendarWidget()
-            if cal is None:
-                cal = QCalendarWidget()
-                field.setCalendarWidget(cal)
-
-            # Month view opens with a weekday header; the working week here
-            # starts on Saturday (Sat/Sun/Mon...), so order the columns that way.
-            try:
-                cal.setFirstDayOfWeek(Qt.DayOfWeek.Saturday)
-                cal.setHorizontalHeaderFormat(QCalendarWidget.HorizontalHeaderFormat.ShortDayNames)
-                cal.setGridVisible(True)
-            except Exception:
-                pass
-
-            cal_f = QFont(cal.font())
-            cal_f.setPointSize(calendar_pt)
-            cal.setFont(cal_f)
-            cfm = cal.fontMetrics()
-            cell_h = max(18, int(cfm.height() * 1.3))
-            nav_h = max(22, int(cfm.height() * 1.5))
-
-            cal.setStyleSheet(f"""
-                QCalendarWidget {{
-                    background: {t['panel_bg']};
-                    border: 1px solid {t['accent']};
-                    border-radius: 6px;
-                }}
-                QCalendarWidget QWidget#qt_calendar_navigationbar {{
-                    background: {t['card_bg']};
-                    border-bottom: 1px solid {t['border']};
-                    min-height: {nav_h}px;
-                }}
-                QCalendarWidget QToolButton {{
-                    color: {t['text_primary']};
-                    background: transparent;
-                    font-size: {calendar_pt}pt;
-                    padding: 2px 5px;
-                }}
-                QCalendarWidget QToolButton:hover {{ background: {t['menu_hover_bg']}; }}
-                QCalendarWidget QAbstractItemView {{
-                    selection-background-color: {t['accent']};
-                    selection-color: {t['button_text']};
-                    outline: none;
-                    font-size: {calendar_pt}pt;
-                    color: {t['text_primary']};
-                    background: {t['panel_bg']};
-                    gridline-color: {t['border']};
-                }}
-                QCalendarWidget QAbstractItemView:item {{
-                    min-height: {cell_h}px;
-                    margin: 1px;
-                    border-radius: 3px;
-                }}
-                QCalendarWidget QAbstractItemView:item:hover {{ background: {t['card_bg']}; }}
-                QCalendarWidget QTableView QHeaderView::section {{
-                    background: {t['card_bg']};
-                    color: {t['text_secondary']};
-                    font-size: {calendar_pt}pt;
-                    padding: 2px 0px;
-                    border: none;
-                }}
-            """)
+            if isinstance(field, LoginDateField):
+                field.apply_theme(
+                    t,
+                    font_pt=date_pt,
+                    field_h=36,
+                    first_day_of_week=Qt.DayOfWeek.Saturday,
+                )
+                field.setCursor(Qt.PointingHandCursor)
 
     def apply_theme(self, theme=None):
         self._active_theme = theme or self.theme_manager.current_theme()
