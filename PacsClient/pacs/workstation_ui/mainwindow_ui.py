@@ -1,7 +1,7 @@
 from PySide6.QtGui import Qt, QIcon, QCursor
 from PySide6.QtWidgets import (
     QWidget, QApplication, QFrame, QLabel, QPushButton,
-    QHBoxLayout, QVBoxLayout, QTabWidget,
+    QHBoxLayout, QVBoxLayout, QTabWidget, QMessageBox,
     QAbstractButton, QLineEdit, QTextEdit, QPlainTextEdit,
     QComboBox, QSpinBox, QAbstractSlider, QTabBar, QSizePolicy
 )
@@ -858,43 +858,27 @@ class MainWindowWidget(QWidget):
 
         lay.addLayout(text_lay, 1)
 
+        chevron = QLabel()
+        chevron.setPixmap(qta.icon("fa5s.chevron-down", color="#64748b").pixmap(10, 10))
+        chevron.setFixedSize(10, 10)
+        chevron.setAlignment(Qt.AlignCenter)
+        lay.addWidget(chevron)
+
         right_col.addWidget(user_container, 1)
         user_container.setStyleSheet(self._user_info_stylesheet())
 
-        # ── External Identity module (additive, feature-flagged, default OFF) ──
-        # Adds a "Connected Accounts" menu to the EXISTING account container so a
-        # logged-in user can link external identities (Google, …). The server login
-        # and the labels above are unchanged. When the flag is OFF this imports
-        # nothing new and is a no-op; any failure is swallowed so the title bar can
-        # never break. See docs/plans/cloud-consultation/.
+        # Account dropdown — always on (English UI); Identity badge when enabled.
         try:
-            from modules.Identity.feature_flags import identity_module_enabled
+            from PacsClient.pacs.workstation_ui.user_account_menu import attach_user_account_menu
 
-            if identity_module_enabled():
-                try:
-                    from modules.cloud_consultation.ui.account_hook import (
-                        attach_account_popup,
-                    )
-
-                    attach_account_popup(
-                        user_container, auth_user=self.auth_user, parent_window=self
-                    )
-                except Exception as _popup_exc:
-                    logger.warning(
-                        "Account popup unavailable, falling back to basic menu: %s",
-                        _popup_exc,
-                    )
-                    from modules.Identity.ui.account_menu_hook import (
-                        attach_identity_account_menu,
-                    )
-
-                    attach_identity_account_menu(
-                        user_container,
-                        auth_user=self.auth_user,
-                        parent_window=self,
-                    )
-        except Exception as _identity_exc:  # never break the title bar
-            logger.warning("Identity account-menu hook skipped: %s", _identity_exc)
+            attach_user_account_menu(
+                user_container,
+                auth_user=self.auth_user,
+                parent_window=self,
+                control_panel=getattr(self, "control_panel", None),
+            )
+        except Exception as _menu_exc:
+            logger.warning("User account menu hook skipped: %s", _menu_exc)
 
     def get_tab_area(self):
         return self.tab_area
@@ -1375,7 +1359,32 @@ class MainWindowWidget(QWidget):
         if (not self.isMaximized()) and (not self.isMinimized()) and (not (self.windowState() & Qt.WindowFullScreen)):
             self._normal_geometry = self.geometry()
 
+    def _confirm_application_exit(self) -> bool:
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle("Close AI-PACS")
+        box.setText("Are you sure you want to close the application?")
+        box.setInformativeText(
+            "Any unsaved work in open patient tabs may be lost."
+        )
+        box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        box.setDefaultButton(QMessageBox.No)
+        yes_btn = box.button(QMessageBox.Yes)
+        no_btn = box.button(QMessageBox.No)
+        if yes_btn is not None:
+            yes_btn.setText("Close")
+            yes_btn.setCursor(Qt.PointingHandCursor)
+        if no_btn is not None:
+            no_btn.setText("Cancel")
+            no_btn.setCursor(Qt.PointingHandCursor)
+        return box.exec() == QMessageBox.Yes
+
     def closeEvent(self, event):
+        if not getattr(self, "_exit_confirmed", False):
+            if not self._confirm_application_exit():
+                event.ignore()
+                return
+            self._exit_confirmed = True
         # Drain all registered resources in reverse order via lifecycle manager.
         from PacsClient.components.lifecycle_manager import lifecycle_manager
         results = lifecycle_manager.shutdown_all()
