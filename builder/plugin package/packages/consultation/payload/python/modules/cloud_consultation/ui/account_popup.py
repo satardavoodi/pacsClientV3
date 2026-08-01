@@ -25,9 +25,11 @@ import logging
 import time
 
 from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
     QFrame,
+    QGraphicsDropShadowEffect,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -148,12 +150,13 @@ class AccountPopup(QWidget):
         self._storage_worker = None
         self._storage_label = None
         self.setObjectName("AccountPopup")
-        self.setFixedWidth(382)
+        self.setFixedWidth(360)
         self._p = palette()
         self._root = QVBoxLayout(self)
-        self._root.setContentsMargins(14, 14, 14, 14)
-        self._root.setSpacing(12)
+        self._root.setContentsMargins(16, 16, 16, 14)
+        self._root.setSpacing(10)
         self._apply_style()
+        self._apply_shadow()
         self._refresh()
 
     # ── services ─────────────────────────────────────────────────────────────
@@ -223,34 +226,46 @@ class AccountPopup(QWidget):
     def _header(self) -> QWidget:
         p = self._p
         f = QFrame()
-        lay = QHBoxLayout(f)
+        f.setObjectName("AccountPopupHeader")
+        lay = QVBoxLayout(f)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(11)
+        lay.setSpacing(10)
+
+        eyebrow = QLabel("Account")
+        eyebrow.setStyleSheet(
+            f"color:{p['text_muted']};font-size:11px;font-weight:600;letter-spacing:0.4px;"
+        )
+        lay.addWidget(eyebrow)
+
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
         name = str(self.auth_user.get("full_name") or self.auth_user.get("username") or "User")
         role = str(self.auth_user.get("role") or "user").upper()
         avatar = QLabel((name[:1] or "U").upper())
-        avatar.setFixedSize(42, 42)
+        avatar.setFixedSize(40, 40)
         avatar.setAlignment(Qt.AlignCenter)
         avatar.setStyleSheet(
             f"background:{p['accent_soft']};color:{p['accent']};border:1px solid {p['accent']};"
-            f"border-radius:21px;font-size:16px;font-weight:600;"
+            f"border-radius:20px;font-size:15px;font-weight:700;"
         )
-        lay.addWidget(avatar)
+        row.addWidget(avatar)
         col = QVBoxLayout()
-        col.setSpacing(1)
+        col.setSpacing(2)
         nm = QLabel(name)
-        nm.setStyleSheet(f"color:{p['text']};font-size:15px;font-weight:600;")
-        sub = QLabel("AI-PACS server account")
-        sub.setStyleSheet(f"color:{p['text_muted']};font-size:12px;")
+        nm.setStyleSheet(f"color:{p['text']};font-size:14px;font-weight:600;")
+        sub = QLabel("AI-PACS workstation account")
+        sub.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
         col.addWidget(nm)
         col.addWidget(sub)
-        lay.addLayout(col, 1)
+        row.addLayout(col, 1)
         badge = QLabel(role)
         badge.setStyleSheet(
-            f"background:rgba(59,130,246,0.18);color:#93c5fd;font-size:10px;"
-            f"padding:3px 9px;border-radius:10px;"
+            f"background:rgba(59,130,246,0.16);color:#93c5fd;font-size:10px;font-weight:600;"
+            f"padding:4px 10px;border-radius:10px;"
         )
-        lay.addWidget(badge, 0, Qt.AlignTop)
+        row.addWidget(badge, 0, Qt.AlignTop)
+        lay.addLayout(row)
         return f
 
     def _connected_identity_section(self) -> QWidget:
@@ -270,7 +285,7 @@ class AccountPopup(QWidget):
 
         ident = self._aipacs_web_identity()
         if ident is None:
-            btn = QPushButton("Connect Google Account")
+            btn = self._wire_button(QPushButton("Connect Google Account"))
             btn.setObjectName("primary")
             btn.clicked.connect(self._sign_in_aipacs_web)
             v.addWidget(btn)
@@ -304,7 +319,7 @@ class AccountPopup(QWidget):
         info.addWidget(self._consultation_status_label())
         row.addLayout(info, 1)
 
-        manage = QPushButton("Manage")
+        manage = self._wire_button(QPushButton("Manage"))
         manage.setObjectName("ghost")
         manage.setStyleSheet("font-size:11px;padding:4px 10px;")
         manage.clicked.connect(self._open_manage_account)
@@ -334,13 +349,13 @@ class AccountPopup(QWidget):
         return lbl
 
     def _manage_account_button(self) -> QPushButton:
-        btn = QPushButton("Manage Account")
+        btn = self._wire_button(QPushButton("Manage Account"))
         btn.setObjectName("ghost")
         btn.clicked.connect(self._open_manage_account)
         return btn
 
     def _consultation_source_button(self) -> QPushButton:
-        btn = QPushButton("Open Consultation source")
+        btn = self._wire_button(QPushButton("Open Consultation Source"))
         btn.setObjectName("ghost")
         btn.clicked.connect(self._open_consultation_source)
         return btn
@@ -434,7 +449,7 @@ class AccountPopup(QWidget):
         head.setSpacing(8)
         head.addWidget(self._label(caption), 1)
         if unread_total:
-            clear = QPushButton("Clear all")
+            clear = self._wire_button(QPushButton("Clear All"))
             clear.setObjectName("ghost")
             clear.setStyleSheet("font-size:10px;padding:3px 9px;")
             clear.clicked.connect(self._clear_all_notifications)
@@ -526,13 +541,13 @@ class AccountPopup(QWidget):
             col.addWidget(sub)
         lay.addLayout(col, 1)
         if is_unread:
-            mark = QPushButton("Mark read")
+            mark = self._wire_button(QPushButton("Mark Read"))
             mark.setObjectName("ghost")
             mark.setStyleSheet("font-size:10px;padding:3px 8px;")
             mark.clicked.connect(lambda _=False, nid=n.get("id"): self._mark_read(nid))
             lay.addWidget(mark, 0, Qt.AlignTop)
         else:
-            seen = QLabel("read")
+            seen = QLabel("Read")
             seen.setStyleSheet(f"color:{p['text_muted']};font-size:9px;")
             lay.addWidget(seen, 0, Qt.AlignTop)
         return card
@@ -644,8 +659,8 @@ class AccountPopup(QWidget):
         except Exception as exc:  # pragma: no cover - best-effort by contract
             logger.debug("quota notification skipped: %s", exc)
 
-    def _deep_link_button(self, section: str, caption: str = "Open Education ▸ Consultation") -> QPushButton:
-        btn = QPushButton(caption)
+    def _deep_link_button(self, section: str, caption: str = "Open Education Consultation") -> QPushButton:
+        btn = self._wire_button(QPushButton(caption))
         btn.setObjectName("ghost")
         btn.clicked.connect(
             lambda _=False, s=section: self._open_online_consultation(section=s))
@@ -660,12 +675,27 @@ class AccountPopup(QWidget):
         f.setStyleSheet(f"QFrame{{border-top:1px solid {p['border']};}}")
         lay = QHBoxLayout(f)
         lay.setContentsMargins(0, 10, 0, 0)
-        hint = QLabel("Manage everything in Education ▸ Consultation")
+        hint = QLabel("Manage consultation settings in Education")
         hint.setStyleSheet(f"color:{p['text_muted']};font-size:11px;")
         lay.addWidget(hint, 1)
         return f
 
     # ── small builders ─────────────────────────────────────────────────────────
+    def _wire_button(self, btn: QPushButton) -> QPushButton:
+        btn.setCursor(Qt.PointingHandCursor)
+        btn.setMinimumHeight(36)
+        return btn
+
+    def _apply_shadow(self) -> None:
+        try:
+            shadow = QGraphicsDropShadowEffect(self)
+            shadow.setBlurRadius(28)
+            shadow.setOffset(0, 8)
+            shadow.setColor(QColor(0, 0, 0, 110))
+            self.setGraphicsEffect(shadow)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("account popup shadow skipped: %s", exc)
+
     def _label(self, text: str) -> QLabel:
         lbl = QLabel(text)
         lbl.setStyleSheet(f"color:{self._p['text_muted']};font-size:11px;font-weight:500;")
@@ -693,24 +723,62 @@ class AccountPopup(QWidget):
         p = self._p
         self.setStyleSheet(
             f"""
-            QWidget#AccountPopup {{ background:{p['surface']};
-                border:1px solid {p['accent']}; border-radius:12px; }}
-            QPushButton {{ background:{p['accent']}; color:{p['button_text']}; border:none;
-                border-radius:8px; padding:8px 14px; font-size:13px; }}
-            QPushButton#ghost {{ background:transparent; color:{p['text_muted']};
-                border:1px solid {p['border']}; }}
-            QPushButton#danger {{ background:transparent; color:{p['danger']};
-                border:1px solid rgba(248,113,113,0.35); padding:6px 11px; }}
-            QPushButton#primary {{ background:{p['accent']}; }}
-            QPushButton:hover {{ border:1px solid {p['accent']}; }}
+            QWidget#AccountPopup {{
+                background:{p['surface']};
+                border:1px solid {p['border']};
+                border-radius:12px;
+            }}
+            QFrame#AccountPopupHeader {{
+                background:transparent;
+                border:none;
+            }}
+            QPushButton {{
+                background:{p['accent']};
+                color:{p['button_text']};
+                border:1px solid {p['accent']};
+                border-radius:8px;
+                padding:8px 14px;
+                font-size:13px;
+                font-weight:600;
+                min-height:36px;
+            }}
+            QPushButton#ghost {{
+                background:{p['surface2']};
+                color:{p['text']};
+                border:1px solid {p['border']};
+            }}
+            QPushButton#ghost:hover {{
+                background:{p['accent_soft']};
+                border-color:{p['accent']};
+                color:{p['text']};
+            }}
+            QPushButton#danger {{
+                background:transparent;
+                color:{p['danger']};
+                border:1px solid rgba(248,113,113,0.35);
+                padding:6px 11px;
+            }}
+            QPushButton#primary {{
+                background:{p['accent']};
+            }}
+            QPushButton:hover {{
+                border-color:{p['accent']};
+            }}
             """
         )
 
     def show_under(self, anchor: QWidget):
         try:
             self.adjustSize()
-            bottom_right = anchor.mapToGlobal(anchor.rect().bottomRight())
-            self.move(max(0, bottom_right.x() - self.width()), bottom_right.y() + 6)
+            anchor_rect = anchor.rect()
+            bottom_right = anchor.mapToGlobal(anchor_rect.bottomRight())
+            x = bottom_right.x() - self.width()
+            y = bottom_right.y() + 6
+            screen = anchor.screen().availableGeometry() if anchor.screen() else None
+            if screen is not None:
+                x = max(screen.left() + 8, min(x, screen.right() - self.width() - 8))
+                y = max(screen.top() + 8, min(y, screen.bottom() - self.height() - 8))
+            self.move(max(0, x), y)
         except Exception as exc:
             logger.debug("popup positioning failed: %s", exc)
         self.show()

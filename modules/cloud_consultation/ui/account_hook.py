@@ -41,7 +41,7 @@ def attach_account_popup(user_container, auth_user=None, parent_window=None):
         return
 
     user_container.setCursor(Qt.PointingHandCursor)
-    user_container.setToolTip(user_container.toolTip() or "Account, connected identities & consultations")
+    user_container.setToolTip(user_container.toolTip() or "Open account menu")
 
     class _PopupFilter(QObject):
         def eventFilter(self, obj, event):
