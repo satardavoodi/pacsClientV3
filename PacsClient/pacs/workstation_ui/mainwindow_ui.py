@@ -1359,8 +1359,45 @@ class MainWindowWidget(QWidget):
         if (not self.isMaximized()) and (not self.isMinimized()) and (not (self.windowState() & Qt.WindowFullScreen)):
             self._normal_geometry = self.geometry()
 
+    def _should_confirm_exit(self, event) -> bool:
+        """Decide whether to ask the user before closing.
+
+        Three gates, in order:
+
+        1. ``_exit_confirmed`` — already answered once for this close.
+        2. ``AIPACS_CONFIRM_EXIT`` — default **OFF**. The prompt opens a nested
+           modal event loop inside ``closeEvent``; until that is live-verified on
+           a real workstation the legacy (no-prompt) path stays the default.
+           Set ``=1`` to enable.
+        3. ``event.spontaneous()`` — a PROGRAMMATIC close (single-instance
+           takeover, auto-updater, agent gateway, EchoMind, or the still-
+           unattributed closer the ``[SHUTDOWN-INITIATOR]`` diagnostic caught in
+           the field) must NEVER be interrupted by a dialog nobody is watching.
+           ``QApplication::quit()`` does not deliver a close event at all, but
+           anything that calls ``window.close()`` does — and blocking it there
+           risks the 8 s ``os._exit(0)`` failsafe in
+           ``single_instance_lock._initiate_shutdown``, which skips ``main.py``'s
+           ``finally`` (download-subprocess termination, DB WAL checkpoint, lock
+           release).
+        """
+        if getattr(self, "_exit_confirmed", False):
+            return False
+        if os.environ.get("AIPACS_CONFIRM_EXIT", "0") != "1":
+            return False
+        try:
+            if not event.spontaneous():
+                logger.info(
+                    "[EXIT-CONFIRM] programmatic close — skipping the confirmation prompt"
+                )
+                return False
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.debug("[EXIT-CONFIRM] spontaneous() unavailable (%s); skipping", exc)
+            return False
+        return True
+
     def _confirm_application_exit(self) -> bool:
         box = QMessageBox(self)
+        box.setAttribute(Qt.WA_DeleteOnClose, True)
         box.setIcon(QMessageBox.Question)
         box.setWindowTitle("Close AI-PACS")
         box.setText("Are you sure you want to close the application?")
@@ -1380,11 +1417,11 @@ class MainWindowWidget(QWidget):
         return box.exec() == QMessageBox.Yes
 
     def closeEvent(self, event):
-        if not getattr(self, "_exit_confirmed", False):
+        if self._should_confirm_exit(event):
             if not self._confirm_application_exit():
                 event.ignore()
                 return
-            self._exit_confirmed = True
+        self._exit_confirmed = True
         # Drain all registered resources in reverse order via lifecycle manager.
         from PacsClient.components.lifecycle_manager import lifecycle_manager
         results = lifecycle_manager.shutdown_all()

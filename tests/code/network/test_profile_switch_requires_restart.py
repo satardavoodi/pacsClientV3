@@ -164,8 +164,13 @@ def test_runtime_refresh_does_not_reach_into_private_db_pool():
 
 
 def test_runtime_refresh_does_not_construct_the_patient_service():
-    """get_socket_patient_service() CONSTRUCTS on first call; at the login screen
-    that would spin up a service the session does not need."""
+    """The public accessor CONSTRUCTS the service on first call; at the login
+    screen that would spin up a service the session does not need. Only the
+    already-live singleton may be refreshed."""
     src = _read("modules/network/runtime_server_refresh.py")
-    assert "get_socket_patient_service()" not in src
-    assert '_socket_patient_service", None' in src
+    code_lines = [
+        ln for ln in src.splitlines() if not ln.lstrip().startswith("#")
+    ]
+    code = "\n".join(code_lines)
+    assert "get_socket_patient_service(" not in code
+    assert '_socket_patient_service", None' in code
