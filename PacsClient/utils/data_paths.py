@@ -290,8 +290,17 @@ def _sync_config_path_exports() -> None:
 def reload_active_profile_paths() -> bool:
     """Rebind module-level clinical paths to the *current* active server profile.
 
-    Intended for login / settings saves **before** the main window warms the DB
-    pool, or after an explicit pool cleanup. Never raises.
+    WARNING: THIS DOES **NOT** MAKE A CENTRE SWITCH SAFE AT RUNTIME. It rebinds the
+    globals here (and the PacsClient.utils.config re-exports), but ~33
+    production modules bind SOURCE_PATH / THUMBNAIL_PATH /
+    ATTACHMENT_PATH **by value** at import time and are already imported
+    before the login screen exists, so they keep the OLD paths. Meanwhile
+    database/_pool.py resolves DATABASE_FILE with an in-function import
+    and DOES follow — which splits the database from the image tree.
+
+    A genuine profile switch must RESTART the app; see
+    modules/network/runtime_server_refresh.py. This helper is safe only at
+    true startup, before anything has snapshotted the paths. Never raises.
     """
     global CLINICAL_DATA_ROOT, PATIENTS_DIR, DICOM_IMAGES_DIR, ATTACHMENTS_DIR
     global THUMBNAILS_DIR, DATABASE_DIR, DATABASE_FILE

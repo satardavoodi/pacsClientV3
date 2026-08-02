@@ -185,10 +185,12 @@ class LoginWindow(QWidget):
         return ""
 
     def _apply_server_selection_or_restart(self) -> bool:
-        """If the user picked a different center, activate it and apply live.
+        """If the user picked a different center, activate it and close the app.
 
-        Returns True only when login must abort (legacy hook — runtime apply keeps
-        this False so sign-in can continue without a full restart).
+        Returns True when login must abort. A centre switch REQUIRES a restart:
+        the clinical data root and the socket target both resolve at startup, so
+        continuing in-process would split the database from the DICOM/thumbnail/
+        attachment tree. See ``modules/network/runtime_server_refresh.py``.
         """
         try:
             from PacsClient.utils import server_profiles as _sp
@@ -197,24 +199,19 @@ class LoginWindow(QWidget):
             picked = self._selected_profile_id()
             if not picked:
                 return False
-            current = _sp.get_active_profile_id() or self._startup_active_id
+            current = self._startup_active_id or _sp.get_active_profile_id()
             if picked == current:
                 return False  # same center — proceed with normal login
             _sp.set_active_profile_id(picked)
-            try:
-                from modules.network.runtime_server_refresh import apply_saved_server_settings_runtime
-
-                apply_saved_server_settings_runtime(profile_switched=True)
-            except Exception as exc:
-                print(f"[login] runtime server apply failed: {exc}")
-            try:
-                host = self.socket_service.config.get_socket_host()
-                port = int(self.socket_service.config.get_socket_port())
-                self.socket_service.update_server(host, port, save_to_file=False)
-            except Exception as exc:
-                print(f"[login] socket client refresh failed: {exc}")
-            self._startup_active_id = picked
-            return False
+            prof = _sp.get_profile(picked)
+            name = prof.display_name if prof else picked
+            QMessageBox.information(
+                self, "Switch Server",
+                f"Switching to {name}.\n\nAI-PACS will now close — please reopen it "
+                f"to load this center's data and connection.",
+            )
+            QApplication.quit()
+            return True
         except Exception as exc:
             print(f"[login] server switch failed: {exc}")
             return False

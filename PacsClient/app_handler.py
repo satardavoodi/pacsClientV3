@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QGraphicsDropShadowEffect,
     QLayout,
+    QApplication,
 )
 from PySide6.QtGui import QFont, QPalette, QColor, QPixmap, QPainter, QLinearGradient, QIcon
 from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, QParallelAnimationGroup, QSize
@@ -845,20 +846,31 @@ class AppHandler(QDialog):
         self.btn_local_login.setIconSize(self.btn_local_login.size())
     
     def _show_server_settings(self):
-        """Show server settings dialog"""
+        """Show server settings dialog.
+
+        A same-profile host/port/timeout edit is applied live. A CENTRE SWITCH is
+        not: the clinical data root and the socket target both resolve at startup,
+        so the app must close and reopen — otherwise the database follows the new
+        centre while DICOM/thumbnails/attachments keep writing into the old one.
+        See ``modules/network/runtime_server_refresh.py`` for the full rationale.
+        """
         from modules.network.server_settings_dialog import ServerSettingsDialog
         dialog = ServerSettingsDialog(self)
         if dialog.exec() == QDialog.Accepted:
             try:
                 from modules.network.runtime_server_refresh import (
+                    RESTART_REQUIRED,
                     apply_saved_server_settings_runtime,
                 )
 
-                apply_saved_server_settings_runtime(
+                outcome = apply_saved_server_settings_runtime(
                     profile_switched=bool(
                         getattr(dialog, "profile_switched_on_save", False)
                     )
                 )
+                if outcome == RESTART_REQUIRED:
+                    self._quit_for_profile_switch()
+                    return
             except Exception as exc:
                 logger.warning(
                     "Login runtime server refresh after settings save failed: %s",
@@ -870,6 +882,31 @@ class AppHandler(QDialog):
                 self.socket_service.update_server(host, port, save_to_file=False)
             except Exception as exc:
                 logger.warning("Login socket client refresh after settings save failed: %s", exc)
+
+    def _quit_for_profile_switch(self):
+        """Tell the user the centre changed and close cleanly (never raises)."""
+        name = ""
+        try:
+            from PacsClient.utils import server_profiles as _sp
+
+            prof = _sp.get_profile(_sp.get_active_profile_id())
+            name = getattr(prof, "display_name", "") or ""
+        except Exception as exc:
+            logger.debug("Could not resolve the new centre's display name: %s", exc)
+        target = f" to {name}" if name else ""
+        try:
+            QMessageBox.information(
+                self,
+                "Switch Server",
+                f"Switching{target}.\n\nAI-PACS will now close — please reopen it "
+                f"to load this center's data and connection.",
+            )
+        except Exception as exc:
+            logger.warning("Profile-switch notice could not be shown: %s", exc)
+        logger.info("Closing after a server-profile switch%s.", target)
+        app = QApplication.instance()
+        if app is not None:
+            app.quit()
 
     def login(self):
         username = self.line_edit_username.text().strip()
