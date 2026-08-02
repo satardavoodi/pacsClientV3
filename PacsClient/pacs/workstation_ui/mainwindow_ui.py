@@ -712,10 +712,17 @@ class MainWindowWidget(QWidget):
         # here because it is now clickable (Connected Accounts popup) — making it a
         # drag surface would swallow that click. A click on an actual tab returns
         # the tab/tabbar from widgetAt (not these frames), so tabs still work.
+        # 2026-08-02: the redesign inserted `title_bar_right` (the pill + window-
+        # button column) and `window_buttons_host` over the whole top-right region.
+        # The hit test compares identity (`w is surface`), so without these two the
+        # window could no longer be dragged from there — the area used to be raw
+        # `title_bar` background. The pill itself stays excluded: it is clickable.
         drag_surfaces = [
             self.title_bar,
             getattr(self, "tab_area", None),
             getattr(self, "right_tab_area", None),
+            getattr(self, "title_bar_right", None),
+            getattr(self, "window_buttons_host", None),
         ]
         return any(w is surface for surface in drag_surfaces if surface is not None)
 

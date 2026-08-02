@@ -70,8 +70,14 @@ def attach_user_account_menu(
     class _MenuFilter(QObject):
         def eventFilter(self, obj, event):
             try:
-                if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                etype = event.type()
+                if etype == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
                     self._toggle()
+                elif etype == QEvent.Resize:
+                    # The pill is elastic (min 120 / max 168, Expanding), so the
+                    # notification badge must follow it. Base's filter did this;
+                    # without it the badge only re-pins on the 90 s refresh.
+                    _reposition_pill_badge(user_container)
             except Exception as exc:
                 logger.debug("user account menu error: %s", exc)
             return False
@@ -86,9 +92,15 @@ def attach_user_account_menu(
                         return
                 except Exception:
                     pass
+            # Guard against two presses landing in one event-loop turn, which
+            # would queue two _open calls and orphan the first popup reference.
+            if getattr(self, "_open_pending", False):
+                return
+            self._open_pending = True
             QTimer.singleShot(0, self._open)
 
         def _open(self):
+            self._open_pending = False
             popup = _build_account_popup(
                 user_container,
                 auth_user=auth_user,
@@ -104,25 +116,79 @@ def attach_user_account_menu(
     user_container.installEventFilter(flt)
     user_container._user_account_menu_filter = flt
 
+    _register_account_pill(user_container, auth_user, flt)
     _attach_identity_extras(user_container, auth_user)
 
 
+def _reposition_pill_badge(user_container) -> None:
+    """Re-pin the notification badge after the pill resizes (never raises)."""
+    try:
+        from modules.cloud_consultation.ui.account_hook import _position_pill_badge
+
+        _position_pill_badge(user_container)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("pill badge reposition skipped: %s", exc)
+
+
+def _register_account_pill(user_container, auth_user, flt) -> None:
+    """Register the pill the way ``attach_account_popup`` used to.
+
+    ``refresh_account_area_after_connect`` (called by ``account_popup`` right
+    after a successful Google sign-in) starts with
+    ``getattr(app, _ACCOUNT_PILL_ATTR, None)`` and returns immediately when it is
+    ``None``. Because this menu replaced ``attach_account_popup`` — which is now
+    unreferenced — that registration stopped happening, so after linking an
+    identity mid-session the badge was not force-refreshed AND
+    ``ensure_consultation_poller`` was never re-armed for the new identity:
+    consultations silently stopped being polled until restart.
+    """
+    try:
+        from modules.cloud_consultation.ui.account_hook import (
+            _ACCOUNT_AUTH_ATTR,
+            _ACCOUNT_PILL_ATTR,
+        )
+        from PySide6.QtWidgets import QApplication
+
+        # The opener the refresh hook calls to reopen the Connected card.
+        user_container._account_popup_open = flt._open
+        app = QApplication.instance()
+        if app is not None:
+            setattr(app, _ACCOUNT_PILL_ATTR, user_container)
+            setattr(app, _ACCOUNT_AUTH_ATTR, auth_user)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("account pill registration skipped: %s", exc)
+
+
 def _attach_identity_extras(user_container, auth_user) -> None:
-    """Pill notification badge + consultation poller when Identity is enabled."""
+    """Pill notification badge + consultation poller when Identity is enabled.
+
+    The two are in SEPARATE try blocks on purpose: a badge failure must not stop
+    the consultation poller from starting (they were combined, so it did).
+    """
     try:
         from modules.Identity.feature_flags import identity_module_enabled
 
         if not identity_module_enabled():
             return
+    except Exception as exc:
+        logger.debug("identity gate unavailable; skipping pill extras: %s", exc)
+        return
+
+    try:
         from modules.cloud_consultation.ui.account_hook import _attach_pill_badge
+
+        _attach_pill_badge(user_container, auth_user)
+    except Exception as exc:
+        logger.debug("pill badge attach skipped: %s", exc)
+
+    try:
         from modules.cloud_consultation.notifications.autostart import (
             ensure_consultation_poller,
         )
 
-        _attach_pill_badge(user_container, auth_user)
         ensure_consultation_poller(auth_user)
     except Exception as exc:
-        logger.debug("identity extras on user pill skipped: %s", exc)
+        logger.debug("consultation poller start skipped: %s", exc)
 
 
 def _build_account_popup(anchor, *, auth_user, parent_window, control_panel):

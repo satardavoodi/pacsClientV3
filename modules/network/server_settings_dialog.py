@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import logging
 import os
 
 from PySide6.QtWidgets import (
@@ -19,6 +20,36 @@ from PacsClient.utils.login_form_styles import (
     login_form_fields_qss,
     FIELD_H,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _reconcile_server_stores() -> None:
+    """Route the two server stores through the ONE canonical reconciler.
+
+    SINGLE AUTHORITY (2026-07-13, ``settings_ui/server_settings.py``): every
+    mutation of the server list must funnel through
+    ``server_profiles.sync_profiles_with_servers`` so ``servers.json`` (the list
+    Server Settings edits) and ``server_profiles.json`` (what this login picker
+    reads) are reconciled by ONE rule instead of a hook per operation. The gear's
+    add path used a bespoke ``upsert_profile`` + reverse-mirror pair instead,
+    which is a second rule for the same job.
+
+    Never raises: the server has already been written by the caller, so a failure
+    here degrades to "the two stores reconcile on the next Settings save".
+    """
+    try:
+        from PacsClient.utils import server_profiles as sp
+
+        records = sp.load_servers_json() if hasattr(sp, "load_servers_json") else None
+        if records is None:
+            path = sp._config_dir() / sp._SERVERS_FILENAME
+            records = sp._read_json(path)
+        if isinstance(records, list):
+            sp.sync_profiles_with_servers(records)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("server-store reconcile after add skipped: %s", exc)
 
 
 def _server_picker_enabled() -> bool:
@@ -231,16 +262,16 @@ class ServerSettingsDialog(QDialog):
                 pid = f"{base_pid}-{n}"
                 n += 1
 
+            # Defaults come from the dataclass, not hard-coded here — a literal
+            # dicom_port=104 disagreed with the shipped razi profile (105).
             prof = sp.ServerProfile(
                 id=pid,
                 display_name=name,
                 host="",
-                socket_port=50052,
-                dicom_port=104,
-                ae_title="aipacs",
             )
             sp.upsert_profile(prof)
             sp.write_profile_to_servers_json(prof)
+            _reconcile_server_stores()
         except Exception as exc:
             QMessageBox.warning(
                 self,

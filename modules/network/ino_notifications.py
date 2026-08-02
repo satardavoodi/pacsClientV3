@@ -264,9 +264,8 @@ def on_study_assigned(event: Dict[str, Any]) -> None:
         assigner = str(data.get("assigned_by") or "")
         add_notification(
             rid,
-            title=f"Case {rid} assigned to you",
-            body=f"Case {rid} was assigned to you."
-            + (f" (from: {assigner})" if assigner else ""),
+            title=f"پرونده {rid} به شما ارجاع شد",
+            body=f"پرونده {rid} به شما ارجاع داده شد." + (f" (ارجاع‌دهنده: {assigner})" if assigner else ""),
             assigner=assigner,
             status=str(data.get("assign_type") or ""),
             kind="assignment_in",
@@ -412,7 +411,7 @@ def open_notifications_popup(anchor=None) -> Optional[object]:
     try:
         parent = anchor.window() if (anchor is not None and hasattr(anchor, "window")) else None
         dlg = QDialog(parent)
-        dlg.setWindowTitle("Internal Assignments")
+        dlg.setWindowTitle("اعلان‌های ارجاع داخلی")
         dlg.setWindowFlags(Qt.Popup)          # auto-closes on outside click
         dlg.setMinimumWidth(340)
         lay = QVBoxLayout(dlg)
@@ -420,9 +419,9 @@ def open_notifications_popup(anchor=None) -> Optional[object]:
         lay.setSpacing(6)
 
         hdr = QHBoxLayout()
-        title = QLabel("Internal assignment notifications")
+        title = QLabel("اعلان‌های ارجاع داخلی مرکز")
         title.setStyleSheet("font-weight:600;font-size:13px;")
-        mark = QPushButton("Mark all read")
+        mark = QPushButton("خواندن همه")
         mark.setCursor(Qt.PointingHandCursor)
         mark.clicked.connect(lambda: (mark_all_read(), dlg.accept()))
         hdr.addWidget(title, 1)
@@ -431,7 +430,7 @@ def open_notifications_popup(anchor=None) -> Optional[object]:
 
         rows = list_notifications(50)
         if not rows:
-            empty = QLabel("No notifications.")
+            empty = QLabel("اعلانی وجود ندارد.")
             empty.setStyleSheet("color:#9ca3af;padding:12px;")
             lay.addWidget(empty)
         else:
