@@ -35,9 +35,14 @@ def test_gear_reads_the_shared_server_profile_store():
 
 
 def test_gear_selects_server_by_name_not_ip():
-    """User picks 'Razi Imaging Center', not 192.168.x.x."""
+    """User picks 'Razi Imaging Center', not 192.168.x.x.
+
+    2026-08-02: the raw ``QComboBox`` was replaced by ``LoginComboField``, a
+    styled composite that wraps one. What matters is that a DROPDOWN of server
+    NAMES exists — not which class renders it — so the pin is widened to either.
+    """
     src = _read(_DIALOG)
-    assert "QComboBox" in src
+    assert "QComboBox" in src or "LoginComboField" in src
     assert "display_name" in src, "the dropdown must show the server NAME"
     # the legacy free-text host field must remain as a fallback, not the default
     assert "host_input" in src
@@ -59,11 +64,34 @@ def test_all_four_fields_are_editable_inputs():
     the Welcome page (they used to be a read-only hint label)."""
     src = _read(_DIALOG)
     assert "self.host_input = QLineEdit()" in src, "Host must be editable"
-    assert "self.port_input = QSpinBox()" in src, "Port must be editable"
+    assert "self.port_input = LoginNumberField(" in src, "Port must be editable"
     assert "self.ae_input = QLineEdit()" in src, "AE Title must be editable"
-    assert "self.timeout_input = QSpinBox()" in src, "Timeout must be editable"
+    assert "self.timeout_input = LoginNumberField(" in src, "Timeout must be editable"
     # the old read-only echo label is gone
     assert "host_hint" not in src
+
+
+def test_the_numeric_fields_accept_TYPED_input():
+    """2026-08-02: ``QSpinBox`` was replaced by ``LoginNumberField``. The first
+    cut of that widget rendered its value in a QLabel with +/-1 chevrons and no
+    keyboard path at all — changing the socket port from 50052 to 104 would have
+    taken ~49,948 clicks. This pins the ACTUAL requirement (a real text input),
+    which the class name alone does not."""
+    styles = _read(os.path.join(_ROOT, "PacsClient", "utils", "login_form_styles.py"))
+    body = styles.split("class LoginNumberField(", 1)[1].split("\nclass ", 1)[0]
+    assert "QLineEdit(self)" in body, "the value must be a real text input"
+    assert "QIntValidator(" in body, "typed input must be range-validated"
+    assert "editingFinished" in body, "a typed value must be committed"
+    assert "def keyPressEvent" in body, "Up/Down must step, like QSpinBox"
+    assert "setAutoRepeat" in styles, "the steppers must repeat when held"
+
+
+def test_a_stray_scroll_cannot_silently_change_the_port():
+    styles = _read(os.path.join(_ROOT, "PacsClient", "utils", "login_form_styles.py"))
+    body = styles.split("class LoginNumberField(", 1)[1].split("\nclass ", 1)[0]
+    wheel = body.split("def wheelEvent", 1)[1]
+    assert "hasFocus()" in wheel, "wheel must only step a FOCUSED field"
+    assert "event.ignore()" in wheel, "otherwise the scroll must reach the parent"
 
 
 def test_edits_are_written_back_to_the_selected_profile():

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import qtawesome as qta
 from PySide6.QtCore import Qt, QSize, Signal, QEvent, QDate
-from PySide6.QtGui import QFont, QFontMetrics
+from PySide6.QtGui import QFont, QFontMetrics, QIntValidator
 from PySide6.QtWidgets import (
     QAbstractSpinBox,
     QCalendarWidget,
@@ -133,6 +133,7 @@ _FIELD_SHELL_QSS = f"""
         background-color: #152238;
     }}
     QWidget#LoginNumberField QLabel#LoginFieldValue,
+    QWidget#LoginNumberField QLineEdit#LoginFieldValue,
     QWidget#LoginComboField QLabel#LoginFieldValue {{
         background: transparent;
         border: none;
@@ -140,6 +141,16 @@ _FIELD_SHELL_QSS = f"""
         font-size: 14px;
         font-weight: 500;
         padding: 0 0 0 12px;
+        selection-background-color: #2563eb;
+        selection-color: #ffffff;
+    }}
+    QWidget#LoginNumberField QLabel#LoginFieldSuffix {{
+        background: transparent;
+        border: none;
+        color: #94a3b8;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 0 4px 0 0;
     }}
     QWidget#LoginNumberField QToolButton#LoginFieldStep,
     QWidget#LoginComboField QToolButton#LoginFieldStep {{
@@ -220,12 +231,26 @@ def _step_btn(parent: QWidget, icon_name: str, tooltip: str, slot) -> QToolButto
     btn.setCursor(Qt.CursorShape.PointingHandCursor)
     btn.setToolTip(tooltip)
     btn.setAutoRaise(True)
+    # Hold-to-repeat: without this the only way to move a value by more than one
+    # is one click per unit.
+    btn.setAutoRepeat(True)
+    btn.setAutoRepeatDelay(400)
+    btn.setAutoRepeatInterval(60)
     btn.clicked.connect(slot)
     return btn
 
 
 class LoginNumberField(QWidget):
-    """Numeric field — same shell as text inputs; compact inline steppers (no rail)."""
+    """Numeric field — same shell as text inputs; compact inline steppers.
+
+    The value is a REAL EDITABLE INPUT (``QLineEdit`` + ``QIntValidator``), not a
+    label. It replaces a ``QSpinBox``, and the Welcome-page guard requires Host /
+    Port / AE Title / Connection Timeout to stay typeable — with steppers alone,
+    changing the socket port from 50052 to 104 is ~49,948 clicks.
+
+    The suffix (e.g. " s") is a separate trailing label so it can never end up
+    inside the editable text.
+    """
 
     valueChanged = Signal(int)
 
@@ -251,16 +276,29 @@ class LoginNumberField(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.setStyleSheet(_FIELD_SHELL_QSS)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         root = QHBoxLayout(self)
         root.setContentsMargins(0, 0, 2, 0)
         root.setSpacing(0)
 
-        self._label = QLabel(self)
-        self._label.setObjectName("LoginFieldValue")
-        self._label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self._label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._edit = QLineEdit(self)
+        self._edit.setObjectName("LoginFieldValue")
+        self._edit.setFrame(False)
+        self._edit.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self._edit.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self._edit.setValidator(QIntValidator(self._minimum, self._maximum, self._edit))
+        self._edit.setCursor(Qt.CursorShape.IBeamCursor)
+        self._edit.editingFinished.connect(self._commit_text)
+        self._edit.installEventFilter(self)
+        self.setFocusProxy(self._edit)
+
+        self._suffix_label = QLabel(self)
+        self._suffix_label.setObjectName("LoginFieldSuffix")
+        self._suffix_label.setAlignment(
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+        )
+        self._suffix_label.setVisible(bool(self._suffix))
+        self._suffix_label.setText(self._suffix)
 
         step_col = QWidget(self)
         step_col.setFixedWidth(_STEP_W)
@@ -273,27 +311,61 @@ class LoginNumberField(QWidget):
         self._down_btn = _step_btn(step_col, "fa5s.chevron-down", "Decrease", self._step_down)
         self._up_btn.setFixedSize(_STEP_W - 2, half)
         self._down_btn.setFixedSize(_STEP_W - 2, half)
+        for _b in (self._up_btn, self._down_btn):
+            _b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
         step_layout.addWidget(self._up_btn)
         step_layout.addWidget(self._down_btn)
 
-        root.addWidget(self._label, 1)
+        root.addWidget(self._edit, 1)
+        root.addWidget(self._suffix_label)
         root.addWidget(step_col)
 
         self.setValue(value)
 
+    # ── display ────────────────────────────────────────────────────────────
     def _refresh_display(self) -> None:
         text = str(self._value)
-        if self._suffix:
-            text = f"{text}{self._suffix}"
-        self._label.setText(text)
+        if self._edit.text() != text:
+            blocked = self._edit.blockSignals(True)
+            self._edit.setText(text)
+            self._edit.blockSignals(blocked)
+        self._suffix_label.setText(self._suffix)
+        self._suffix_label.setVisible(bool(self._suffix))
 
+    def _set_focus_property(self, focused: bool) -> None:
+        self.setProperty("focus", "true" if focused else "false")
+        style = self.style()
+        if style is not None:
+            style.unpolish(self)
+            style.polish(self)
+
+    def eventFilter(self, obj, event):
+        if obj is self._edit:
+            etype = event.type()
+            if etype == QEvent.Type.FocusIn:
+                self._set_focus_property(True)
+            elif etype == QEvent.Type.FocusOut:
+                self._set_focus_property(False)
+                self._commit_text()
+        return super().eventFilter(obj, event)
+
+    def _commit_text(self) -> None:
+        """Clamp whatever was typed. An empty/invalid box reverts to the value."""
+        raw = self._edit.text().strip()
+        try:
+            self.setValue(int(raw))
+        except (TypeError, ValueError):
+            self._refresh_display()
+
+    # ── stepping ───────────────────────────────────────────────────────────
     def _step_up(self) -> None:
         self.setValue(self._value + 1)
 
     def _step_down(self) -> None:
         self.setValue(self._value - 1)
 
+    # ── QSpinBox-compatible API ────────────────────────────────────────────
     def value(self) -> int:
         return self._value
 
@@ -308,13 +380,32 @@ class LoginNumberField(QWidget):
     def setRange(self, minimum: int, maximum: int) -> None:
         self._minimum = int(minimum)
         self._maximum = int(maximum)
+        self._edit.setValidator(QIntValidator(self._minimum, self._maximum, self._edit))
         self.setValue(self._value)
 
     def setSuffix(self, suffix: str) -> None:
         self._suffix = str(suffix or "")
         self._refresh_display()
 
+    def keyPressEvent(self, event):
+        """Up/Down and PageUp/PageDown step, matching QSpinBox."""
+        key = event.key()
+        if key == Qt.Key.Key_Up:
+            self._step_up()
+            event.accept()
+            return
+        if key == Qt.Key.Key_Down:
+            self._step_down()
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
     def wheelEvent(self, event):
+        """Only step when focused, so an accidental scroll over the form cannot
+        silently change the port; otherwise let the parent scroll."""
+        if not self._edit.hasFocus():
+            event.ignore()
+            return
         delta = event.angleDelta().y()
         if delta > 0:
             self._step_up()

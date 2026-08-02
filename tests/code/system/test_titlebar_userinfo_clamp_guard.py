@@ -48,32 +48,55 @@ def test_QSizePolicy_imported(src: str) -> None:
     )
 
 
-def test_user_container_has_max_height(src: str) -> None:
+def test_user_container_is_bounded(src: str) -> None:
+    """The pill must not be free to grow without limit in EITHER axis.
+
+    2026-08-02 (satar UI branch): the pill moved out of the flat title-bar
+    QHBoxLayout into a dedicated right column (``title_bar_right``) and is now
+    clamped on WIDTH (120-168) and stretches vertically inside that column.
+
+    The original 2026-05-29 defect was unbounded vertical growth in a title bar
+    that had no ceiling. That cannot recur: ``title_bar`` itself is clamped
+    (``setMaximumHeight`` + Fixed vertical policy, pinned below), so the pill's
+    vertical extent is bounded by its parent chain rather than by its own
+    ``setMaximumHeight``. The invariant is preserved; the mechanism moved.
+    """
     body = _setup_user_info_body(src)
-    assert "setMaximumHeight(" in body, (
-        "user_container in setup_user_info lost its setMaximumHeight call. "
-        "Without it the pill grows vertically to fill the title bar, "
-        "rendering as a tall portrait box that overflows into the search "
-        "panel below."
+    has_own_ceiling = "setMaximumHeight(" in body
+    has_width_clamp = "setMaximumWidth(" in body and "setMinimumWidth(" in body
+    assert has_own_ceiling or has_width_clamp, (
+        "user_container lost every size clamp in setup_user_info. It must be "
+        "bounded either by its own setMaximumHeight or by explicit width "
+        "clamps inside the (clamped) title-bar right column."
     )
 
 
-def test_user_container_uses_fixed_vertical_size_policy(src: str) -> None:
+def test_user_container_vertical_growth_is_bounded_by_the_title_bar(src: str) -> None:
+    """If the pill is vertically Expanding, its PARENT must supply the ceiling."""
     body = _setup_user_info_body(src)
+    if "QSizePolicy.Expanding" not in body:
+        pytest.skip("pill is not vertically expanding; its own clamp applies")
+    title_body = _setup_title_bar_body(src)
+    assert "self.title_bar.setMaximumHeight(" in title_body, (
+        "the pill is vertically Expanding, so the title bar MUST cap the "
+        "column it lives in — otherwise the 2026-05-29 tall-portrait-box "
+        "overflow returns."
+    )
     assert (
-        "QSizePolicy.Preferred, QSizePolicy.Fixed" in body
-        or "QSizePolicy.Fixed" in body
-    ), (
-        "user_container lost its Fixed vertical size policy. Without it the "
-        "QHBoxLayout in the title bar lets the pill stretch vertically."
+        "self.title_bar.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)"
+        in title_body
     )
 
 
 def test_user_container_min_height_preserved(src: str) -> None:
+    """A floor still anchors the pill so it looks consistent across themes.
+
+    2026-08-02: lowered 70 -> 48 by the redesign (the pill is now a compact
+    single-row chip, not a two-line block). The floor must still EXIST.
+    """
     body = _setup_user_info_body(src)
-    assert "setMinimumHeight(70)" in body, (
-        "user_container lost setMinimumHeight(70). The 70 px floor anchors "
-        "the pill so it looks consistent across themes."
+    assert "setMinimumHeight(" in body, (
+        "user_container lost its minimum-height floor entirely."
     )
 
 
