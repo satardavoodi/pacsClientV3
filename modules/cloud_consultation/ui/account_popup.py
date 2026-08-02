@@ -156,7 +156,6 @@ class AccountPopup(QWidget):
         self._root.setContentsMargins(16, 16, 16, 14)
         self._root.setSpacing(10)
         self._apply_style()
-        self._apply_shadow()
         self._refresh()
 
     # ── services ─────────────────────────────────────────────────────────────
@@ -687,6 +686,24 @@ class AccountPopup(QWidget):
         return btn
 
     def _apply_shadow(self) -> None:
+        """Drop shadow for the popup — DISABLED by default (2026-08-02).
+
+        AccountPopup is a TOP-LEVEL ``Qt.Tool`` window with an OPAQUE background
+        (there is no ``WA_TranslucentBackground`` anywhere in this file), so a
+        28 px shadow has nowhere to draw and is clipped into the popup's own
+        edges. Meanwhile a QGraphicsEffect forces the ENTIRE widget subtree to be
+        rendered into an offscreen image and blurred on every repaint — and this
+        popup repaints often (the storage QThread updates a label, ``_refresh``
+        rebuilds the tree, notification cards mark-read in place). Cost with no
+        visible benefit.
+
+        Set ``AIPACS_ACCOUNT_POPUP_SHADOW=1`` to restore it (the legacy path is
+        preserved, not deleted).
+        """
+        import os
+
+        if os.environ.get("AIPACS_ACCOUNT_POPUP_SHADOW", "0") != "1":
+            return
         try:
             shadow = QGraphicsDropShadowEffect(self)
             shadow.setBlurRadius(28)

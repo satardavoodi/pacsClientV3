@@ -185,8 +185,16 @@ class DataAccessPanelWidget(QWidget):
         return idx
 
     def _on_segment_clicked(self, index: int) -> None:
-        if 0 <= index < self.tabs.count() and self.tabs.currentIndex() != index:
+        if not (0 <= index < self.tabs.count()):
+            return
+        if self.tabs.currentIndex() != index:
             self.tabs.setCurrentIndex(index)
+            return
+        # Re-clicking the ACTIVE segment: the buttons are checkable, so Qt has
+        # already toggled `checked` off. Without this the button state desyncs
+        # from the real selection (harmless only while no `:checked` QSS rule
+        # exists — it would render the active tab as inactive the day one does).
+        self._apply_segment_selection(index)
 
     def _apply_segment_selection(self, index: int) -> None:
         for i, btn in enumerate(self._segment_buttons):
@@ -557,6 +565,18 @@ class DataAccessPanelWidget(QWidget):
     def apply_theme(self, theme=None):
         self._active_theme = theme or self.theme_manager.current_theme()
         t = self._active_theme
+        # OPT-01 dedup (2026-08-02): this method had no guard while the sibling
+        # patient_search_widget.apply_theme has had one since 2026-07-05. The UI
+        # redesign roughly doubled its cost (rail + tab body + 3 segment buttons +
+        # 3 LoginComboField.apply_theme + 2 buttons, plus qta.icon calls) and it is
+        # invoked several times during construction with the SAME theme. Every
+        # stylesheet below is a pure function of the theme dict, so re-applying an
+        # unchanged theme is redundant work with a byte-identical visual result.
+        try:
+            if t is not None and getattr(self, "_applied_theme_sig", None) == t:
+                return
+        except Exception:
+            pass
         if hasattr(self, "_segment_rail"):
             self._segment_rail.setStyleSheet(_segment_rail_frame_stylesheet(t))
         self.tabs.setStyleSheet(_tab_body_stylesheet(t))
@@ -647,4 +667,5 @@ class DataAccessPanelWidget(QWidget):
                 }}
                 """
             )
+        self._applied_theme_sig = t
 

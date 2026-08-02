@@ -24,8 +24,23 @@ def _prefs_path() -> Path:
     return Path(USER_DATA_ROOT) / "config" / _PREFS_FILENAME
 
 
-def is_disk_space_alert_suppressed() -> bool:
-    """True when the user chose not to see disk-space alerts again."""
+#: Process-wide cache of the persisted suppression flag. `check_now()` runs from
+#: a repeating GUI-thread QTimer (every 5 min, plus once at start() and once in
+#: _show_disk_alert), and each call used to stat + read + json-parse this file on
+#: the GUI thread. The value only changes when THIS process writes it, so a
+#: single read per process is enough; `set_disk_space_alert_suppressed` refreshes
+#: the cache on write. Call `invalidate_disk_alert_prefs_cache()` to force a
+#: re-read (used by the tests).
+_suppressed_cache: bool | None = None
+
+
+def invalidate_disk_alert_prefs_cache() -> None:
+    """Drop the cached suppression flag so the next read hits disk."""
+    global _suppressed_cache
+    _suppressed_cache = None
+
+
+def _read_suppressed_from_disk() -> bool:
     try:
         path = _prefs_path()
         if not path.exists():
@@ -39,6 +54,14 @@ def is_disk_space_alert_suppressed() -> bool:
         return False
 
 
+def is_disk_space_alert_suppressed() -> bool:
+    """True when the user chose not to see disk-space alerts again."""
+    global _suppressed_cache
+    if _suppressed_cache is None:
+        _suppressed_cache = _read_suppressed_from_disk()
+    return _suppressed_cache
+
+
 def set_disk_space_alert_suppressed(suppressed: bool = True) -> bool:
     """Persist the user's choice to hide future disk-space alerts."""
     try:
@@ -48,6 +71,8 @@ def set_disk_space_alert_suppressed(suppressed: bool = True) -> bool:
         tmp = path.with_suffix(".tmp")
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         os.replace(tmp, path)
+        global _suppressed_cache
+        _suppressed_cache = bool(suppressed)
         return True
     except Exception:
         logger.warning("failed to persist disk alert suppression", exc_info=True)

@@ -411,8 +411,24 @@ class PatientSearchWidget(QWidget):
         self._apply_date_field_styling()
 
     def _apply_field_styling(self, theme=None):
-        """Apply consistent styling to all input fields with scalable font in pt"""
+        """Apply consistent styling to all input fields with scalable font in pt.
+
+        OPT-01 follow-up (2026-08-02): ``apply_theme`` has a theme-signature
+        dedup guard, but this method is ALSO called directly — at the end of
+        ``setup_ui`` and at the end of ``_create_search_fields`` — which bypasses
+        it. The composite field widgets introduced by the UI redesign apply
+        several stylesheets each (11 fields x 1 became 3 plain + 3 LoginLineField
+        x2 + 3 LoginComboField x3), so construction ran three full passes of an
+        ~1.9x more expensive body in the exact function OPT-01 measured at a
+        ~2.3 s startup freeze. The same dedup rule applies here: every stylesheet
+        below is a pure function of the theme dict.
+        """
         t = theme or self._active_theme
+        try:
+            if t is not None and getattr(self, "_applied_field_theme_sig", None) == t:
+                return
+        except Exception:
+            pass
         base_pt = 13
         combo_pt = 12
 
@@ -460,10 +476,22 @@ class PatientSearchWidget(QWidget):
                         font-style: italic;
                     }}
                 """)
+        self._applied_field_theme_sig = t
 
     def _apply_date_field_styling(self, theme=None):
-        """Theme styling for LoginDateField widgets (calendar popup + Saturday-first week)."""
+        """Theme styling for LoginDateField widgets (calendar popup + Saturday-first week).
+
+        Same dedup rule as :meth:`_apply_field_styling`. A QCalendarWidget is the
+        most expensive single restyle target on this page (QTableView + header +
+        nav bar + 2 QToolButtons + a QSpinBox all re-polish), and the redesign
+        restyles it plus a QMenu and a panel on every pass.
+        """
         t = theme or self._active_theme
+        try:
+            if t is not None and getattr(self, "_applied_date_theme_sig", None) == t:
+                return
+        except Exception:
+            pass
         date_pt = 12
         for field in (self.date_from_edit, self.date_to_edit):
             if not field:
@@ -476,6 +504,7 @@ class PatientSearchWidget(QWidget):
                     first_day_of_week=Qt.DayOfWeek.Saturday,
                 )
                 field.setCursor(Qt.PointingHandCursor)
+        self._applied_date_theme_sig = t
 
     def apply_theme(self, theme=None):
         self._active_theme = theme or self.theme_manager.current_theme()
