@@ -391,6 +391,38 @@ class _CenterNumericDelegate(CombinedDelegate):
             pass
 
 
+class _PatientIdOverrideDelegate(CombinedDelegate):
+    """Patient-ID column: PAINT a locally-corrected ID over the server's value
+    without changing the cell's identity.
+
+    A reception typo (e.g. server ``52659`` for the correct ``52658``) is
+    corrected locally via right-click ▸ Edit, but the server has no
+    demographic-write endpoint and keeps returning the original ID. This
+    delegate shows the corrected value in the Patient ID column while the
+    model's DisplayRole / ``.text()`` stays the **server's original ID**
+    (== ``receptionID``) — so every server-directed read (assignment,
+    reception payload, report status, open, dedup) keeps using the real key
+    and keeps working. Only the transient painted ``option.text`` changes, and
+    only when ``AIPACS_PATIENT_ID_OVERRIDES=1`` AND an alias exists for this
+    exact server ID.
+
+    Mirrors :class:`_CenterNumericDelegate`: reuse all of CombinedDelegate's
+    painting; adjust ``option`` in ``initStyleOption`` only. Paint-safe — the
+    lookup is cache-backed (no disk after first load) and never raises.
+    """
+
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        try:
+            from database.patient_overrides import resolve_display_patient_id
+
+            corrected = resolve_display_patient_id(option.text)
+            if corrected:
+                option.text = corrected
+        except Exception:
+            pass
+
+
 COL = {
     'select': 0,
     'patient_name': 1,
@@ -836,6 +868,11 @@ class PatientTableWidget(QWidget):
     # An assignment lifecycle action (complete / deactivate / reactivate / cancel)
     # finished on a worker thread. Payload: the service's real result.
     assignStatusChanged = Signal(dict)
+    # Per-row Status flags computed on a background worker (off the GUI thread)
+    # so the local list render never blocks on the attachments os.walk +
+    # reception-file read + DB queries. Payload: study_uid, patient_id, flags,
+    # generation. Delivered to the GUI thread via a queued connection.
+    statusFlagsReady = Signal(str, str, object, int)
 
     def __init__(self, parent=None):
         super(PatientTableWidget, self).__init__(parent)
@@ -1264,7 +1301,12 @@ class PatientTableWidget(QWidget):
         _numeric_cols = (COL['images'], COL['age'])
         for col in range(self.results_table.columnCount()):
             if col != COL['select'] and col != COL['patient_name']:  # Don't apply to checkbox column or patient name column
-                if _v2_numeric and col in _numeric_cols:
+                if col == COL['patient_id']:
+                    # Display-only local Patient-ID correction: paints the
+                    # corrected ID while the cell's identity (.text()) stays the
+                    # server's original key. Reuses CombinedDelegate painting.
+                    delegate = _PatientIdOverrideDelegate(self.results_table, is_patient_name_column=False, theme_manager=self.theme_manager)
+                elif _v2_numeric and col in _numeric_cols:
                     delegate = _CenterNumericDelegate(self.results_table, is_patient_name_column=False, theme_manager=self.theme_manager)
                 else:
                     delegate = CombinedDelegate(self.results_table, is_patient_name_column=False, theme_manager=self.theme_manager)
@@ -2858,21 +2900,152 @@ class PatientTableWidget(QWidget):
             return canonical
         return fallback
 
-    def _build_local_status_widget(self, study_uid: str, patient_id: str = '') -> QWidget:
-        """Render DCM/DOC/VOC/AI indicators for local availability."""
-        flags = self._compute_local_status_flags(study_uid, patient_id)
+    def _build_local_status_widget(self, study_uid: str, patient_id: str = '', allow_async: bool = False) -> QWidget:
+        """Render DCM/DOC/VOC/AI indicators for local availability.
 
+        The flags require per-row disk I/O — os.walk of the study's attachments
+        folder + a reception-payload file read + several DB queries. Running that
+        on the GUI thread for every row froze the local patient list for seconds
+        during a render (2026-08-02).
+
+        ``allow_async`` is opted into ONLY by the bulk local-list render
+        (``add_patient_data``): on a cache MISS the row is built with an EMPTY
+        Status cell immediately and the flags are computed on a background worker,
+        then filled in via the ``statusFlagsReady`` signal. EVERY other caller
+        (single-row refresh, tests) keeps the default synchronous path, so
+        ``container.status_flags`` is fully populated on return. Flag
+        ``AIPACS_STATUS_ASYNC`` (default on; ``=0`` = always synchronous).
+        """
+        s_uid = str(study_uid or '')
+        p_id = str(patient_id or '')
         container = QWidget()
-        # Stash the already-computed flags on the widget so the Status sort key
-        # can be refreshed later WITHOUT re-running _compute_local_status_flags
-        # (which walks the attachments folder and hits the DB on a cache miss).
-        # Sorting must never trigger that work — see _apply_status_sort_key.
-        container.status_flags = dict(flags)
-        container.status_rank = status_flags_rank(flags)
+        container._status_study_uid = s_uid
+        container._status_patient_id = p_id
         layout = QHBoxLayout(container)
         layout.setContentsMargins(4, 0, 4, 0)
         layout.setSpacing(6)
         layout.setAlignment(Qt.AlignCenter)
+
+        _async = bool(allow_async) and self._status_async_enabled()
+        # In async mode read the cache ONLY (never compute on the GUI thread); a
+        # miss defers to a background worker. Otherwise compute synchronously so
+        # the flags are ready on return (legacy contract preserved for all
+        # non-bulk callers).
+        flags = self._get_cached_status_flags(s_uid, p_id) if _async else None
+        _deferred = False
+        if flags is None:
+            if _async:
+                flags = {}  # render empty now, fill on the worker result
+                _deferred = True
+            else:
+                flags = self._compute_local_status_flags(s_uid, p_id)
+
+        # Stash flags so the Status sort key can be refreshed WITHOUT re-running
+        # _compute_local_status_flags (see _apply_status_sort_key). Updated again
+        # when the async result lands.
+        container.status_flags = dict(flags)
+        container.status_rank = status_flags_rank(flags)
+        self._populate_status_chips(layout, flags)
+        container.setStyleSheet('background: transparent; border: none;')
+        if _deferred:
+            self._dispatch_status_flags_async(s_uid, p_id, container)
+        return container
+
+    # ── Off-GUI-thread Status flags (2026-08-02) ────────────────────────────
+    def _status_async_enabled(self) -> bool:
+        return (os.getenv("AIPACS_STATUS_ASYNC", "1") or "1").strip() != "0"
+
+    def _get_cached_status_flags(self, study_uid: str, patient_id: str):
+        """Fresh cached flags, or None (a MISS). GUI-thread-safe dict read; NEVER
+        computes (that is what keeps the render off the disk)."""
+        try:
+            key = (str(study_uid or '').strip(), str(patient_id or '').strip())
+            cached = self._local_status_cache.get(key)
+            if cached and (time.time() - float(cached.get('timestamp', 0.0))) < self._cache_validity_seconds:
+                data = cached.get('data')
+                if isinstance(data, dict):
+                    return dict(data)
+        except Exception:
+            pass
+        return None
+
+    def _ensure_status_async(self) -> None:
+        if getattr(self, '_status_pool', None) is not None:
+            return
+        if not hasattr(self, '_status_async_gen'):
+            self._status_async_gen = 0
+        if not hasattr(self, '_pending_status_containers'):
+            self._pending_status_containers = {}
+        try:
+            self.statusFlagsReady.connect(self._on_status_flags_ready)
+        except Exception:
+            pass
+        import concurrent.futures as _cf
+        self._status_pool = _cf.ThreadPoolExecutor(max_workers=3, thread_name_prefix="status-flags")
+
+    def _dispatch_status_flags_async(self, study_uid: str, patient_id: str, container) -> None:
+        try:
+            self._ensure_status_async()
+            gen = getattr(self, '_status_async_gen', 0)
+            self._pending_status_containers[str(study_uid or '')] = container
+
+            def _work(su=study_uid, pi=patient_id, g=gen):
+                try:
+                    _flags = self._compute_local_status_flags(su, pi)
+                except Exception:
+                    _flags = {}
+                try:
+                    self.statusFlagsReady.emit(str(su or ''), str(pi or ''), _flags, g)
+                except Exception:
+                    pass
+
+            self._status_pool.submit(_work)
+        except Exception:
+            # Dispatch failed — compute synchronously so the row never stays blank.
+            try:
+                _flags = self._compute_local_status_flags(study_uid, patient_id)
+                container.status_flags = dict(_flags)
+                container.status_rank = status_flags_rank(_flags)
+                self._populate_status_chips(container.layout(), _flags)
+            except Exception:
+                pass
+
+    def _on_status_flags_ready(self, study_uid: str, patient_id: str, flags, gen: int) -> None:
+        # Ignore results from a PRIOR population pass (table cleared / re-searched).
+        if gen != getattr(self, '_status_async_gen', 0):
+            return
+        try:
+            container = self._pending_status_containers.pop(str(study_uid or ''), None)
+        except Exception:
+            container = None
+        if container is None:
+            return
+        try:
+            if not isinstance(flags, dict):
+                flags = {}
+            container.status_flags = dict(flags)
+            container.status_rank = status_flags_rank(flags)
+            lay = container.layout()
+            if lay is not None:
+                self._populate_status_chips(lay, flags)
+        except RuntimeError:
+            return  # the row/container was deleted (re-sort / refresh / close) — benign
+        except Exception:
+            pass
+
+    def _populate_status_chips(self, layout, flags) -> None:
+        """(Re)build the Status chips from a flags dict. Idempotent — clears any
+        existing chips first — so it serves BOTH the initial render and the async
+        fill. GUI-thread only."""
+        try:
+            while layout.count():
+                _it = layout.takeAt(0)
+                _w = _it.widget() if _it is not None else None
+                if _w is not None:
+                    _w.setParent(None)
+                    _w.deleteLater()
+        except Exception:
+            pass
 
         # Status indicators: an icon for DICOM (download), Document (folder)
         # and Voice (microphone); literal text "AI" for AI results. A chip is
@@ -2948,9 +3121,6 @@ class PatientTableWidget(QWidget):
                 color=self._contrast_safe_color('print', theme_bg),
             ))
 
-        container.setStyleSheet('background: transparent; border: none;')
-        return container
-    
     def _delete_local_studies(self, studies_to_delete):
         """Delete local DICOM files and attachments for selected studies"""
         from PacsClient.utils.config import SOURCE_PATH, ATTACHMENT_PATH
@@ -3892,7 +4062,10 @@ class PatientTableWidget(QWidget):
         # transient UI flag, and survives refresh / reopen. One shared mapping
         # (_assign_icon_state) is used here AND on refresh so they can't drift.
         _ino_icon = self._assign_icon_state(patient_id)
-        status_widget = self._build_local_status_widget(study_uid, patient_id)
+        # Bulk local-list render: compute the Status flags OFF the GUI thread
+        # (attachments os.walk + reception file read + DB) so a large list does
+        # not freeze — the row renders now, chips fill in via statusFlagsReady.
+        status_widget = self._build_local_status_widget(study_uid, patient_id, allow_async=True)
 
         # Report status - get from kwargs or default to pending
         report_status = str(kwargs.get('report_status', 'pending') or '').strip().lower()
@@ -6267,6 +6440,15 @@ class PatientTableWidget(QWidget):
             #    chunked status-refresh chain a no-op (it compares the token).
             try:
                 self._status_refresh_token = getattr(self, '_status_refresh_token', 0) + 1
+            except Exception:
+                pass
+            # Invalidate any in-flight async Status-flag computations from the
+            # previous population pass so their results don't land on the rebuilt
+            # table (off-GUI-thread status flags, 2026-08-02).
+            try:
+                self._status_async_gen = getattr(self, '_status_async_gen', 0) + 1
+                if hasattr(self, '_pending_status_containers'):
+                    self._pending_status_containers.clear()
             except Exception:
                 pass
             try:

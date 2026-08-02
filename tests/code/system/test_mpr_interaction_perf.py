@@ -54,6 +54,14 @@ def _load_apply_interaction_update():
 class _Recorder:
     def __init__(self):
         self.calls = []
+        # Lifecycle guard added 2026-08-01: _apply_interaction_update now bails when
+        # the viewer is closed. A live viewer reports False, which is what these
+        # throttle/kind tests exercise. (`test_mpr_lifecycle_guard.py` owns the
+        # closed==True behaviour.)
+        self.closed = False
+
+    def _mpr_is_closed(self):
+        return self.closed
 
     def _update_all_crosshairs(self):
         self.calls.append("crosshairs")

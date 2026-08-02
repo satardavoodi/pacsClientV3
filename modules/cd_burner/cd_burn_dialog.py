@@ -146,6 +146,88 @@ class CDBurnDialog(QDialog):
 
         return False
 
+    # ----------------------------------------------------------- series pick --
+
+    def _build_series_selection_group(self):
+        """A 'Series to include' group with the shared per-series picker.
+
+        Returns ``None`` (feature silently omitted) if there are no downloaded
+        studies or the shared widget cannot be imported — the burn then keeps
+        its legacy whole-study behaviour.
+        """
+        if not self.downloaded_studies:
+            return None
+        try:
+            from PacsClient.pacs.workstation_ui.home_ui.series_selection_widget import (
+                SeriesSelectionWidget,
+            )
+            from database.manager import get_study_info_with_series
+        except Exception as e:  # pragma: no cover - defensive (plugin-only edge)
+            print(f"Series selection unavailable: {e}")
+            return None
+
+        series_studies = []
+        for study in self.downloaded_studies:
+            study_uid = str(study.get('study_uid') or '').strip()
+            if not study_uid:
+                continue
+            series_rows = []
+            try:
+                info = get_study_info_with_series(study_uid) or {}
+                series_rows = info.get('series') or []
+            except Exception as e:
+                print(f"Could not load series for {study_uid}: {e}")
+            title_bits = [
+                str(study.get('patient_name') or '').strip(),
+                str(study.get('modality') or '').strip(),
+            ]
+            series_studies.append({
+                'study_uid': study_uid,
+                'title': '  ·  '.join([b for b in title_bits if b]) or study_uid,
+                'series': [
+                    {
+                        'series_number': s.get('series_number'),
+                        'description': s.get('series_description'),
+                        'modality': s.get('modality'),
+                        'image_count': s.get('image_count'),
+                    }
+                    for s in series_rows
+                ],
+            })
+
+        # If not a single study yielded series rows, don't show an empty picker.
+        if not any(s['series'] for s in series_studies):
+            return None
+
+        group = QGroupBox("Series to include")
+        layout = QVBoxLayout()
+        layout.setSpacing(6)
+        hint = QLabel(
+            "By default every series is burned. Untick any series you do not "
+            "want on the disc — only the checked series are written to the CD "
+            "and its DICOMDIR."
+        )
+        hint.setWordWrap(True)
+        hint.setStyleSheet("font-size: 11px; color: #a0aec0;")
+        layout.addWidget(hint)
+
+        self.series_selection_widget = SeriesSelectionWidget()
+        self.series_selection_widget.set_studies(series_studies)
+        self.series_selection_widget.setMinimumHeight(150)
+        layout.addWidget(self.series_selection_widget)
+        group.setLayout(layout)
+        return group
+
+    def _current_series_selection(self):
+        """{study_uid: {series_number, ...}} of ticked series, or None for all."""
+        widget = getattr(self, 'series_selection_widget', None)
+        if widget is None:
+            return None
+        try:
+            return widget.get_selection()
+        except Exception:
+            return None
+
     # -------------------------------------------------------------------- UI --
 
     def setup_ui(self):
@@ -286,6 +368,12 @@ class CDBurnDialog(QDialog):
 
         studies_group.setLayout(studies_layout)
         content_layout.addWidget(studies_group)
+
+        # ---- Series selection (choose which series to burn) ----
+        self.series_selection_widget = None
+        series_group = self._build_series_selection_group()
+        if series_group is not None:
+            content_layout.addWidget(series_group)
 
         # ---- Imaging center identity (persisted per system) ----
         center_group = QGroupBox("Imaging Center")
@@ -877,6 +965,7 @@ class CDBurnDialog(QDialog):
             burn_to_disc=True,
             viewer_display_name=viewer_display_name,
             options=options,
+            series_selection=self._current_series_selection(),
         )
 
     def prepare_folder(self):
@@ -954,6 +1043,7 @@ class CDBurnDialog(QDialog):
             disc_label=disc_label,
             viewer_display_name=viewer_display_name,
             options=options,
+            series_selection=self._current_series_selection(),
         )
 
     def _confirm_viewer_available(self, light_viewer_path: Optional[str]) -> bool:

@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.5.6",
-    "build_date": "2026-07-26",
-    "release_date": "2026-07-26",
+    "version": "3.5.7",
+    "build_date": "2026-08-02",
+    "release_date": "2026-08-02",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "Popups and dialogs stay readable in any Windows light/dark theme",
-        "Local patient list loads instantly and fills in as you scroll",
-        "Advanced Search can filter the local list by import date",
-        "EchoMind reporting keeps your prompt and adds a new voice option",
-        "Assorted stability and reliability fixes",
+        "MPR is faster and no longer crashes on very large studies",
+        "The app stays responsive during heavy downloads; interrupted downloads resume",
+        "EchoMind reporting overhauled: reliable transport, safer prompts, voice templates",
+        "Choose which series to include when burning a CD or offline package",
+        "Corrected patient IDs stay corrected after a server refresh",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.5.6",
+        "AI-PACS Version 3.5.7",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۵.۶",
+        "AI-PACS نسخهٔ ۳.۵.۷",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

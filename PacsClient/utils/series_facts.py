@@ -130,6 +130,7 @@ def resolve_series_expected_count(
     metadata_flat_map: Mapping[str, Mapping[str, Any]] | None = None,
     thumbnail_items: Sequence[Any] | None = None,
     series_number_to_index: Mapping[str, Any] | None = None,
+    db_count_getter: Callable[[str], Any] | None = None,
     disk_count_getter: Callable[[str], Any] | None = None,
 ) -> SeriesExpectedCountResolution:
     """Resolve the best currently-known expected count for a series.
@@ -143,7 +144,13 @@ def resolve_series_expected_count(
     5. Explicit thumbnail/metadata series count.
     6. Metadata-flat instance count.
     7. Thumbnail metadata instance count.
-    8. Optional lightweight disk-count fallback.
+    8. Optional persisted DB image_count (authoritative server count, injected;
+       NOT disk-derived — safe as a completeness 'expected').
+    9. Optional lightweight disk-count fallback (heuristic last resort).
+
+    Both getters are injected by the caller so this module stays pure (no DB/disk
+    imports); every consumer therefore shares ONE resolution order rather than
+    inventing its own fallback.
     """
     requested_key = str(series_identifier or "").strip()
     series_key = resolve_series_identifier(
@@ -225,6 +232,16 @@ def resolve_series_expected_count(
             expected_count=metadata_count,
             source="thumbnail.instances",
         )
+
+    if db_count_getter is not None:
+        db_count = _normalize_count(db_count_getter(series_key))
+        if db_count > 0:
+            return SeriesExpectedCountResolution(
+                requested_identifier=requested_key,
+                series_identifier=series_key,
+                expected_count=db_count,
+                source="db.image_count",
+            )
 
     if disk_count_getter is not None:
         disk_count = _normalize_count(disk_count_getter(series_key))

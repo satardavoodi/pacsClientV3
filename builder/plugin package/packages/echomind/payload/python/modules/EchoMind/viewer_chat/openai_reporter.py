@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 import requests
 
 from .api_manager import APIKeyManager, Manage
+from modules.EchoMind import echomind_http
 from modules.EchoMind.llm_client import chat_completion
 from modules.EchoMind.settings_store import get_llm_backend, get_openai_settings, get_prompt_settings, get_proxy_settings
 
@@ -35,37 +36,24 @@ _DEFAULT_READ_TIMEOUT_S = 180.0
 
 
 def _request_timeout():
-    """(connect, read) timeout for every outbound AI call. None = legacy hang."""
-    raw = (os.getenv("AIPACS_ECHOMIND_HTTP_TIMEOUT", "") or "").strip()
-    if raw == "0":
-        return None  # kill switch: byte-identical legacy (wait forever)
-    connect = _DEFAULT_CONNECT_TIMEOUT_S
-    read = _DEFAULT_READ_TIMEOUT_S
-    if raw:
-        try:
-            read = float(raw)
-        except ValueError:
-            read = _DEFAULT_READ_TIMEOUT_S
-    return (connect, read)
+    """(connect, read) timeout for every outbound AI call. None = legacy hang.
 
-
-def _get_requests_proxies() -> "dict[str, str]":
-    """Return a requests-compatible proxies dict.
-
-    - 'direct': returns {} so requests explicitly bypasses ALL proxy sources
-      (system registry, HTTP_PROXY/HTTPS_PROXY env vars, Windows WinInet).
-      Passing proxies=None would still let requests pick up system proxies.
-    - 'socks5': returns the configured SOCKS5 proxy.
+    DELEGATES to ``echomind_http.resolve_timeout`` (F6). The values and the
+    ``AIPACS_ECHOMIND_HTTP_TIMEOUT`` kill switch are unchanged — but they now
+    come from the ONE authority, so the chat modes, voice uploads and the
+    OpenAI backend get the same connect/read split this module already had.
     """
-    try:
-        cfg = get_proxy_settings()
-        if cfg.get("connection_type") != "socks5":
-            return {}  # explicit bypass — no system/env proxy
-        port = int(cfg.get("proxy_port") or 2080)
-        proxy_url = f"socks5://127.0.0.1:{port}"
-        return {"http": proxy_url, "https": proxy_url}
-    except Exception:
-        return {}  # fail-safe: no proxy
+    return echomind_http.resolve_timeout()
+
+
+def _get_requests_proxies() -> "dict[str, str] | None":
+    """DELEGATES to ``echomind_http.requests_proxies`` (F3).
+
+    This was one of TWO identical private copies (the other in
+    ``modules/EchoMind/llm_client.py``), while the four chat modes and every
+    voice upload passed no ``proxies=`` at all. Do not re-implement it here.
+    """
+    return echomind_http.requests_proxies()
 
 
 # ------------------------------------------------------
@@ -139,34 +127,13 @@ def _compose_prompt(base_prompt: str, feature_name: str) -> str:
     return f"{extra}\n\n{base_prompt}"
 
 
-def _openai_result(
-    *,
-    system_prompt: str,
-    user_content: Any,
-    user_msg: str,
-    model: str,
-    api_key_override: str | None = None,
-    temperature: float | None = None,
-    max_tokens: int | None = None,
-) -> dict[str, Any]:
-    cfg = get_openai_settings()
-    result = chat_completion(
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        model=(_to_str(model).strip() or str(cfg.get("text_model") or "gpt-4o-mini")),
-        temperature=float(cfg.get("temperature", 0.2) if temperature is None else temperature),
-        max_tokens=int(max_tokens or cfg.get("max_output_tokens") or 4096),
-        timeout=int(cfg.get("timeout_seconds") or 60),
-        api_key_override=api_key_override,
-        reasoning_effort=str(cfg.get("reasoning_effort") or "").strip() or None,
-    )
-    return {
-        "content": result.get("content", ""),
-        "usage": result.get("usage", {}),
-    }
-
+# NOTE (2026-07-28): `_openai_result(...)` used to live here — a fully
+# implemented helper that routed a feature through `llm_client.chat_completion`,
+# and that NOTHING ever called (repo-wide grep: definition only). It was an
+# abandoned attempt at the backend unification that F7 finally landed, in
+# `ai_chat_pages._ai_module()` / `_ai_model()`. Removed so nobody mistakes it
+# for a live path; `chat_completion` is still imported and used by the OpenAI
+# sibling module `openai_parallel_backend`.
 
 
 _MRI_REQUIRED_KEYS: list = [
@@ -210,11 +177,24 @@ _OB_ULTRASOUND_REQUIRED_KEYS: list = [
     "Normal Findings",
 ]
 
+# 2026-08-01 — this set gates `temperature = 0.1` / `max_tokens` on the request
+# AND (since today) the output validation. It has to contain the strings the UI
+# ACTUALLY sends, which are:
+#     ["CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"]
+#                                              ^^^^^^^^^^^ one "m"
+# It previously held only the correctly-spelled "mammography", so the misspelled
+# UI value fell through: **mammography ran at the provider default temperature
+# with no token cap** — the one modality with a strictly structured, regex-locked
+# BI-RADS output. "radiology" was missing entirely, so X-ray did too. The
+# dispatch branch below already accepts all four mammography spellings; only
+# this set was out of step.
 _VALIDATED_MODALITIES: frozenset = frozenset({
-    "mri", "ct", "mammography",
+    "mri", "ct",
+    "mammography", "mamography", "mammogram", "mamogram",
     "sonography", "ultrasound",
     "obstetric ultrasound", "ob ultrasound",
     "pregnancy ultrasound", "fetal ultrasound",
+    "radiology",
 })
 
 
@@ -232,6 +212,23 @@ def _clean_model_json_text(raw):
     # Strip closing ``` fence
     text = _re.sub(r"\s*```$", "", text)
     return text.strip()
+_ENV_REPORT_VALIDATION = "AIPACS_ECHOMIND_REPORT_VALIDATION"
+
+
+def _report_validation_enabled() -> bool:
+    """Kill switch for post-response report validation (default ON).
+
+    `=0` restores the pre-2026-08-01 behaviour: validation for MRI/CT only, and
+    an incomplete ultrasound / mammography / radiography report rendering as if
+    it were complete.
+    """
+    import os as _os
+    raw = _os.environ.get(_ENV_REPORT_VALIDATION)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
 def _validate_report_json(raw, modality: str):
     """
     Validate and repair JSON output for a given modality.
@@ -254,7 +251,11 @@ def _validate_report_json(raw, modality: str):
             f"Expected a JSON object (dict) but got {type(data).__name__}"
         )
     # Determine required/optional keys per modality
-    if _mod == "mammography":
+    # 2026-08-01 — accept every spelling the DISPATCH branch accepts. The UI
+    # sends "MAMOGRAPHY" (one "m"); without these aliases a mammography report
+    # fell through to the generic 3-key branch below and was never checked for
+    # "BI-RADS Category" — the one field the referring clinician acts on.
+    if _mod in ("mammography", "mamography", "mammogram", "mamogram"):
         _required = _MAMMOGRAPHY_REQUIRED_KEYS
         _optional: list = []
     elif _mod in ("obstetric ultrasound", "ob ultrasound",
@@ -279,33 +280,114 @@ def _validate_report_json(raw, modality: str):
             raise ValueError(f"Required key missing or empty: {k!r}")
     return _json.dumps(data, ensure_ascii=False, indent=2)
 
-def reporter(
-    user_msg: str,
+def report_sampling_params(modality: Optional[str] = "") -> Dict[str, Any]:
+    """Sampling clamp for a modality whose output is STRUCTURE-VALIDATED.
+
+    `reporter()` below pins ``temperature=0.1`` / ``max_tokens=2500`` for every
+    modality in ``_VALIDATED_MODALITIES`` — the ones whose JSON is checked by
+    ``_validate_report_json``. This helper exposes the SAME decision so the
+    OpenAI twin backend (``openai_parallel_backend``) applies it too instead of
+    running a mammogram at whatever temperature Settings happens to hold.
+
+    `reporter()` deliberately keeps its two literal assignment lines (four tests
+    source-pin them); ``test_backend_prompt_parity`` asserts this helper and
+    those literals can never drift apart.
+    """
+    mo = _to_str(modality).strip().lower()
+    if mo and mo in _VALIDATED_MODALITIES:
+        return {"temperature": 0.1, "max_tokens": 2500}
+    return {}
+
+
+def build_report_system_prompt(
     modality: Optional[str] = "",
     normal_template: Optional[str] = "",
-    CENTER_Key: Optional[str] = None,
-    model: str = "gpt-4.1-mini"):
-    user_msg = _to_str(user_msg)
+) -> str:
+    """The report-generation system prompt — ONE authority, BOTH backends.
+
+    This body was lifted verbatim out of ``reporter()`` on 2026-08-01. Not one
+    character of prompt text changed; the block was already a pure function of
+    ``(modality, normal_template)`` (no network, no ``Manage``, no settings), it
+    was just trapped inside a function that also did the HTTP call.
+
+    WHY IT MOVED. ``openai_parallel_backend.reporter()`` — the path taken when
+    Settings ▸ EchoMind ▸ backend is ``openai`` — carried a ~1,100-character
+    generic prompt whose entire modality handling was
+    ``prompt += f"\nModality: {modality}."``. It discarded the BI-RADS rules, the
+    Persian/Finglish term maps, the per-region normal templates and the
+    projection/never-presume rules. So a settings toggle silently changed
+    CLINICAL CONTENT. Both backends now call this function.
+
+    Do NOT fork a second copy for a new backend. Add the backend, call this.
+    """
     modality = _to_str(modality)
     normal_template = _to_str(normal_template)
-    m = Manage.instance()
-    center, api_key = m.get_center_and_gapgpt_key()
     if normal_template:
         ##print("NORMAL TEMPLATE IS PRESENTED")
         template_logic = ("""
-            TEMPLATE LOGIC (User Provided Normal Template Override):
-            • A full normal_template has been provided by the user.
-            • You MUST ignore any internal rules or default logic related to RSNA-style generation of normal findings.
-            • DO NOT generate or reconstruct any normal findings yourself.
-            • DO NOT include any anatomical regions not present in the provided template.
-            • Use ONLY the provided normal_template for the "Normal Findings" section.
-            • Maintain the exact formatting and tone unless a region is affected by the provided pathological findings.
-            • If a pathological finding affects a specific region, remove or adjust ONLY that region from the normal_template accordingly.
+            TEMPLATE LOGIC (the physician's OWN normal-report template was supplied):
+
+            WHAT THE TEMPLATE IS
+            • The block fenced as ===== NORMAL_TEMPLATE ... ===== END NORMAL_TEMPLATE below is the
+              PHYSICIAN'S OWN report template for a NORMAL study of this type. It is their house
+              style: their sections, their order, their headings, their wording.
+            • It is a TEMPLATE, not patient data. Nothing in it is an observation about THIS patient
+              until you keep it.
+            • The dictation contains ONLY the abnormal findings. Your job is to merge the two:
+              the physician's pathology, expressed inside the physician's template.
+
+            STRUCTURE AND STYLE — FOLLOW THE TEMPLATE, NOT YOUR OWN HABITS
+            • Keep the template's SECTION ORDER and its section names.
+            • Keep the physician's TERMINOLOGY and phrasing verbatim. Do not improve, modernise,
+              standardise, abbreviate or re-word a phrase they chose.
+            • Do NOT add normal findings, sections or anatomy the template does not contain, and do
+              NOT reconstruct normals from your own default structure.
+            • This replaces the DEFAULT RSNA normal-findings generation ONLY. Every other rule in
+              this prompt — the absolute prohibitions, the physician-content preservation rules and
+              the MODALITY RULES below — still applies in full.
+
+            MERGING THE DICTATED PATHOLOGY INTO THE TEMPLATE
+            • Put each dictated finding in the section of the template where it belongs.
+            • A structure the physician described as ABNORMAL must NEVER also carry a normal
+              statement from the template. Edit or remove the template's sentence for that
+              structure. When the two disagree, the PHYSICIAN'S DICTATION WINS — always. A template
+              sentence may never overwrite, soften or contradict a dictated finding.
+            • A structure the physician did NOT mention keeps the template's normal sentence,
+              unchanged. Do not delete a normal statement the dictated pathology does not touch.
+
+            • PARTIAL INVOLVEMENT OF PAIRED OR GROUPED STRUCTURES — read this twice.
+              When ONE member of a pair or group is abnormal, do NOT delete the whole sentence and
+              do NOT leave it as it stands. SPLIT it: keep the normal statement for the members that
+              are still normal, and report the abnormal member as pathology.
+                Template : "Both menisci demonstrate normal morphology and signal intensity."
+                Dictated : "there is a tear of the lateral meniscus"
+                WRONG   → drop the sentence (the medial meniscus is silently lost)
+                WRONG   → keep it unchanged (the report now contradicts itself)
+                CORRECT → Normal Findings: "The medial meniscus demonstrates normal morphology and
+                          signal intensity."   Pathological Findings: the lateral meniscal tear.
+              Apply the same split to every sentence that covers more than one structure — "both",
+              "bilateral", "all", "the visualised ...", kidneys, lungs, breasts, ovaries, adnexa,
+              hips, cruciate and collateral ligaments, cerebral hemispheres, vertebral levels,
+              paranasal sinuses, and so on.
+
+            • If the physician dictates pathology in a structure the template does NOT cover, REPORT
+              IT ANYWAY in Pathological Findings. A gap in the template is never a reason to drop a
+              dictated finding. The template limits what may appear as NORMAL — never what may
+              appear as ABNORMAL.
+            • Never invent pathology. Only findings the physician actually dictated are abnormal.
+
             • SEX-SPECIFIC ANATOMY: Do NOT infer or assume the patient's sex. Even if the provided template lists
               sex-specific organs (prostate, uterus, ovaries, seminal vesicles, cervix, testes), OMIT any such organ
               the physician did NOT explicitly mention — do NOT auto-complete a normal/"unremarkable" statement for it,
               and NEVER output both male and female organs in the same report.
-            • Output must follow the standard JSON schema: { "Report Title", "Pathological Findings", "Normal Findings" } with <|end|> at the end."""
+
+            OUTPUT
+            • This block governs the CONTENT of the findings sections. It does NOT define the JSON
+              key set. Use EXACTLY the keys the MODALITY RULES below specify — a mammography report
+              is not three keys, and an obstetric report is not three keys. Only if the modality
+              rules below specify no key set at all, fall back to
+              { "Report Title", "Pathological Findings", "Normal Findings" }.
+            • End the output with <|end|> after the final closing brace."""
                         )
     else:
         template_logic = (
@@ -980,7 +1062,7 @@ def reporter(
                             "Report Title": "MRI of the Brain With and Without Contrast, Including DWI and MR Spectroscopy",
                             "Pathological Findings": "1. An infiltrative mass-like lesion is identified in the anterior parts of the right temporal lobe.\n2. DWI sequences show peripheral restricted diffusion.\n3. Post-contrast images reveal central necrosis within the lesion.\n4. MR Spectroscopy demonstrates elevated choline peak in solid components of the lesion.\n5. There is midline shift toward the left.\n6. Mass effect is noted on the right lateral ventricle.\n7. No definitive evidence of hemorrhage is observed.",
                             "Recommendations": "Further evaluation with MR perfusion and biopsy of the described lesion is recommended."
-                            "Normal Findings": "Ventricular System and Midline:\n * Left lateral ventricle is normal in size and configuration.\n * Third and fourth ventricles are within normal limits.\n * Midline structures are preserved.\n * Brainstem and cerebellum are unremarkable.\nCerebral Parenchyma:\n * No acute infarcts outside the known lesion.\n * No additional abnormal enhancements are seen.\nSinuses and Skull Base:\n * Paranasal sinuses and mastoid air cells are clear.\n * Skull base is unremarkable.\nOrbits:\n * Orbits and optic nerves appear normal."
+                            "Normal Findings": "Ventricular System and Midline:\n * Left lateral ventricle is normal in size and configuration.\n * Third and fourth ventricles are within normal limits.\n * Brainstem and cerebellum are unremarkable.\nCerebral Parenchyma:\n * No acute infarcts outside the known lesion.\n * No additional abnormal enhancements are seen.\nSinuses and Skull Base:\n * Paranasal sinuses and mastoid air cells are clear.\n * Skull base is unremarkable.\nOrbits:\n * Orbits and optic nerves appear normal."
                         "Impression": "Findings are suggestive of glioblastoma.",
                             '}\n\n'
                             "```  \n"
@@ -997,7 +1079,7 @@ def reporter(
                             '{\n'
                             "Report Title": "MRI of the Right Knee Joint Without Contrast",
                             "Pathological Findings": "1. Moderate joint effusion within the right knee.\n2. The ACL demonstrates thickening, edema, and fraying, indicating chronic injury with a celery stalk appearance. Mucoid degeneration is suggested.\n3. Bucket-handle tear in the body of the medial meniscus.\n4. Extrusion of the lateral meniscus body.\n5. Complex tear in the posterior horn of the lateral meniscus.\n6. Cartilage thinning in the medial compartment, accompanied by small subchondral cysts.",
-                            "Normal Findings": "Bone Marrow and Joint Fluid:\n * Bone marrow signal is age-appropriate.\n * No contusion or acute fracture.\nMenisci:\n * Abnormalities noted as above; other meniscal regions not involved are presumed normal.\nLigaments and Tendons:\n * PCL is intact with normal signal.\n * MCL and LCL are preserved.\n * Quadriceps and patellar tendons are normal.\n * Hoffa's fat pad is unremarkable.\nCartilage:\n * Cartilage in lateral compartment is preserved.\nSoft Tissues:\n * No abnormality in periarticular muscles or subcutaneous tissue."
+                            "Normal Findings": "Bone Marrow and Joint Fluid:\n * Bone marrow signal is age-appropriate.\n * No contusion or acute fracture.\nMenisci:\n * Meniscal segments other than those described above show no tear, degeneration, or extrusion.\nLigaments and Tendons:\n * PCL is intact with normal signal.\n * MCL and LCL are preserved.\n * Quadriceps and patellar tendons are normal.\n * Hoffa's fat pad is unremarkable.\nCartilage:\n * Cartilage in lateral compartment is preserved.\nSoft Tissues:\n * No abnormality in periarticular muscles or subcutaneous tissue."
                             '}\n\n'
                             "```  \n"
                             "<|end|>"
@@ -1049,7 +1131,7 @@ def reporter(
                             '{\n'
                             '  "Report Title": "MRI of the Right Knee Joint Without Contrast",\n'
                             '  "Pathological Findings": "1. Moderate joint effusion is noted within the right knee joint.\\n2. The anterior cruciate ligament (ACL) demonstrates thickening, edema, and fraying, indicative of chronic injury with a \\"celery stalk\\" appearance. These findings are suggestive of mucoid degeneration and chronic ligamentous injury.\\n3. A bucket-handle tear is identified in the body of the medial meniscus.\\n4. Extrusion of the body of the lateral meniscus is observed.\\n5. A complex tear is noted in the posterior horn of the lateral meniscus.\\n6. There is cartilage thinning in the medial compartment of the knee joint, accompanied by small subchondral cysts.",\n'
-                            '  "Normal Findings": "Marrow and Effusion:\\n • Bone marrow signal is normal for the patient\'s age.\\n • No signs of bone contusion or fracture beyond the noted findings.\\n Menisci:\\n • Medial meniscus: abnormal at the body (bucket-handle tear); other parts not separately mentioned, presumed involved.\\n • Lateral meniscus: abnormal at body and posterior horn; complex tear and extrusion noted.\\n Ligaments and Tendons:\\n • Posterior cruciate ligament (PCL): normal in shape and signal intensity.\\n • Medial and lateral collateral ligaments: intact and normal in signal.\\n • Popliteus tendon, pes anserinus tendons: normal.\\n • Extensor mechanism (quadriceps tendon and patellar tendon): unremarkable.\\n • Hoffa’s fat pad: normal signal intensity.\\n Cartilage:\\n • Normal cartilage thickness in lateral compartment.\\n • No subchondral edema beyond areas with cyst formation.\\n Soft Tissues:\\n • Periarticular muscles and subcutaneous tissues are within normal limits."\n'
+                            '  "Normal Findings": "Marrow and Effusion:\\n • Bone marrow signal is normal for the patient\'s age.\\n • No signs of bone contusion or fracture beyond the noted findings.\\n Menisci:\\n • Medial meniscus: bucket-handle tear at the body.\\n • Lateral meniscus: abnormal at body and posterior horn; complex tear and extrusion noted.\\n Ligaments and Tendons:\\n • Posterior cruciate ligament (PCL): normal in shape and signal intensity.\\n • Medial and lateral collateral ligaments: intact and normal in signal.\\n • Popliteus tendon, pes anserinus tendons: normal.\\n • Extensor mechanism (quadriceps tendon and patellar tendon): unremarkable.\\n • Hoffa’s fat pad: normal signal intensity.\\n Cartilage:\\n • Normal cartilage thickness in lateral compartment.\\n • No subchondral edema beyond areas with cyst formation.\\n Soft Tissues:\\n • Periarticular muscles and subcutaneous tissues are within normal limits."\n'
                             "Impression": "Findings are suggestive of mucoid degeneration and chronic ACL injury.",
                             '}\n\n'
                             "```  \n"
@@ -1808,6 +1890,23 @@ def reporter(
                 SECTION 9 — EXAMPLES (DO NOT MODIFY)
                 ====================================================================
 
+                🟥 COUNTER-EXAMPLE — READ THIS FIRST (2026-08-01)
+
+                Input:  "...برست چپ طبیعی است"  (the physician called the left breast
+                        normal, but dictated NO BI-RADS category for it)
+
+                WRONG   → "BI-RADS Category": { "Left Breast": "1 – Negative" }
+                CORRECT → "BI-RADS Category": { "Left Breast": "Not mentioned" }
+
+                Calling a breast "normal", "unremarkable" or "a normal reference" is
+                NOT a BI-RADS assignment. A BI-RADS category is a screening-interval
+                and management decision, and ONLY the physician may make it. If no
+                explicit category was dictated for a breast, the value is exactly
+                "Not mentioned" — never 1, never 2, never any number you inferred.
+
+                The same rule governs "Axillary Evaluation" and "Breast Composition":
+                if the physician did not address it, the value is "Not mentioned".
+
                 🟦 Example 1 – Input: (65 y/o, Right Breast Recurrence)
 
                 Input:
@@ -1822,10 +1921,10 @@ def reporter(
                     "Right Breast": "Apart from the above-mentioned findings, no additional abnormalities are seen.",
                     "Left Breast": "No suspicious mass, architectural distortion, or clustered microcalcifications. No asymmetry, nipple retraction, or skin thickening. Retroareolar region is unremarkable. Pectoralis muscle is visualized on MLO view."
                 },
-                "Axillary Evaluation": "No abnormal axillary lymph nodes detected.",
+                "Axillary Evaluation": "Not mentioned",
                 "BI-RADS Category": {
-                    "Right Breast": "6 – Known malignancy",
-                    "Left Breast": "1 – Negative"
+                    "Right Breast": "6 – Known biopsy-proven malignancy",
+                    "Left Breast": "Not mentioned"
                 }
                 }
 
@@ -1879,10 +1978,10 @@ def reporter(
                     "Right Breast": "No suspicious mass, architectural distortion, or clustered microcalcifications. No asymmetry, nipple retraction, or skin thickening. Retroareolar region is unremarkable. Pectoralis muscle is visualized on MLO view.",
                     "Left Breast": "Apart from the above-mentioned findings, no additional abnormalities are seen."
                 },
-                "Axillary Evaluation": "Left: abnormal; Right: normal.",
+                "Axillary Evaluation": "Left: lymphadenopathy is present in the left axilla. Right: Not mentioned.",
                 "BI-RADS Category": {
-                    "Right Breast": "1 – Negative",
-                    "Left Breast": "4C – Suspicious abnormality (high concern for malignancy)"
+                    "Right Breast": "Not mentioned",
+                    "Left Breast": "4C – High suspicion for malignancy"
                 }
                 }
 
@@ -1943,6 +2042,18 @@ def reporter(
                             - It MUST preserve the meaning and content from input exactly (no invention, no extra advice).
                             3) If either exists but you omit it OR leave it empty OR set it to null:
                             - Your output is INVALID and MUST be regenerated to comply.
+
+                            NEVER-PRESUME RULE (2026-08-01):
+                            - NEVER write "presumed", "assumed", "not separately mentioned",
+                              "presumed normal" or "presumed involved" anywhere in the report.
+                            - NEVER emit a normal statement about a structure that any
+                              Pathological Finding describes as abnormal. Before writing
+                              Normal Findings, re-read every Pathological Finding: if one
+                              mentions shift, mass effect, effusion, stenosis, compression
+                              or a tear, that structure is OMITTED from Normal Findings — do
+                              not restate it as preserved, intact, or normal.
+                            - If a structure was not addressed, omit it. Do not characterise
+                              it in either direction.
 
                             ABSOLUTE PROHIBITIONS:
                             - DO NOT invent Impression/Recommendations.
@@ -2074,15 +2185,48 @@ def reporter(
                                 "2. Normal Findings:\n"
                                 " • Objective: Highlight normal findings in a structured reporting format using a radiologic normal report template tailored to the patient's specific body part and imaging modality.\n"
                                 " • Guidelines:\n"
-                                " o Normal Findings MUST exist in every report regardless of pathological content.\n"  # <-- ADDED HERE
-                                " o Eliminate the normal findings section ONLY for the same anatomical part where a pathological finding is described.\n"
-                                " o Ensure the report includes all relevant normal findings not mentioned in the original report, covering aspects beyond the pathological findings.\n"
-                                " o Always state at least several normal points explicitly (e.g., normal bone alignment, patent airways, unremarkable surrounding tissues, etc.).\n\n"
+                                " o Normal Findings covers ONLY structures the physician actually assessed, or that are\n"
+                                "   standard for the stated projection AND were not described as abnormal.\n"
+                                " o Remove any normal statement about the same anatomical part described in Pathological Findings.\n"
+                                # ── 2026-08-01 ──────────────────────────────────────────────────
+                                # REMOVED two instructions that ordered the model to MANUFACTURE
+                                # pertinent negatives on a plain film:
+                                #   "include all relevant normal findings NOT MENTIONED in the
+                                #    original report, covering aspects beyond the pathological
+                                #    findings"
+                                #   "Always state at least SEVERAL normal points explicitly"
+                                # Those are an instruction to assert observations the radiologist
+                                # never made, and they contradicted "zero speculation" in the same
+                                # block. No other modality branch carries them. They are especially
+                                # wrong on radiography, where the projection often cannot support
+                                # the negative being asserted.
+                                " o If the dictation is focused (a single bone, a line/tube check, follow-up of\n"
+                                "   one finding), keep Normal Findings equally focused. A two-line Normal\n"
+                                "   Findings section is correct and expected — do NOT pad it.\n"
+                                " o NEVER assert a negative the physician did not state and the projection\n"
+                                "   cannot support (e.g. do not exclude pneumothorax, free intraperitoneal\n"
+                                "   air, or effusion unless the physician said so).\n"
+                                " o If nothing further was assessed, write: 'No other abnormality described.'\n\n"
 
                                 # 3. Style & Tone
                                 "3. Language & Tone:\n"
                                 " • ANSWER MUST STRICTLY IN ENGLISH.\n"
-                                " • Use *extreme exaggeration*—vivid, dramatic phrasing.\n"
+                                # ── 2026-08-01 ──────────────────────────────────────────────────
+                                # REMOVED: " • Use *extreme exaggeration*-vivid, dramatic phrasing."
+                                # That line was live in the radiography branch, which fires for the
+                                # UI value "RADIOLOGY". It instructed the model to dramatise a
+                                # CLINICAL RADIOLOGY REPORT, and it contradicted the rules directly
+                                # above and below it ("zero speculation", "no additional
+                                # implications"). It is a survivor of an older creative-writing
+                                # scaffold (note the "emulating a typist" framing further down) and
+                                # has no place in diagnostic text. Radiography was also the branch
+                                # with NO temperature clamp (see _VALIDATED_MODALITIES), so it was
+                                # the highest-variance sampling combined with an instruction to
+                                # exaggerate.
+                                " • Neutral, declarative, professional radiological register.\n"
+                                " • No intensifiers, no emphasis, no dramatic or evaluative language.\n"
+                                " • Do not overstate certainty: keep the physician's own degree of\n"
+                                "   confidence exactly as dictated.\n"
 
                                 # 4. Forbidden content
                                 "4. Absolutely *no* SELF-GENERATED content (this NEVER applies to content the physician explicitly dictated):\n"
@@ -2136,16 +2280,55 @@ def reporter(
             "or soften it.\n\n"
         )
 
+    # ── 2026-08-01: FENCE THE PHYSICIAN'S TEMPLATE ──────────────────────────
+    # It used to be interpolated as a BARE, UNLABELLED block sitting between two
+    # instruction blocks. TEMPLATE LOGIC above talks about "the provided
+    # normal_template", but that phrase pointed at nothing the model could
+    # identify — it had to infer which lines were the template from position
+    # alone, and a template that contains its own headings reads like more
+    # instructions. `correction()` has always fenced its inputs
+    # (===== ORIGINAL_REPORT =====); this is the same treatment.
+    #
+    # The empty case emits exactly the old separator, so a report generated
+    # WITHOUT a template gets a byte-identical prompt.
+    if normal_template:
+        normal_template_block = (
+            "===== NORMAL_TEMPLATE (the physician's own report template — "
+            "their sections, their order, their wording) =====\n"
+            f"{normal_template}\n"
+            "===== END NORMAL_TEMPLATE ====="
+        )
+    else:
+        normal_template_block = ""
+
     system_prompt = (
         "IMPORTANT: You MUST respond ONLY in English. "
         "This rule is ABSOLUTE and applies regardless of the user's input language. "
         "Do NOT translate the user's language unless explicitly instructed. "
         "Do NOT include any non-English text.\n\n"
         f"{template_logic.strip()}\n\n"
-        f"{normal_template}\n\n"
+        f"{normal_template_block}\n\n"
         f"{modality_logic.strip()}\n\n"
 
 )
+    return system_prompt
+
+
+def reporter(
+    user_msg: str,
+    modality: Optional[str] = "",
+    normal_template: Optional[str] = "",
+    CENTER_Key: Optional[str] = None,
+    model: str = "gpt-4.1-mini"):
+    user_msg = _to_str(user_msg)
+    modality = _to_str(modality)
+    normal_template = _to_str(normal_template)
+    m = Manage.instance()
+    center, api_key = m.get_center_and_gapgpt_key()
+    # 2026-08-01: assembled by the shared authority so the OpenAI twin
+    # backend gets byte-identical clinical instructions (see the function's
+    # docstring). The prompt text itself is unchanged.
+    system_prompt = build_report_system_prompt(modality, normal_template)
     payload: Dict[str, Any] = {
         "model": (_to_str(model).strip() or "Unknown"),
         "messages": [
@@ -2187,7 +2370,18 @@ def reporter(
     #  RETURN THE AI OUTPUT
     # ------------------------------------------------------
     raw_content = result["choices"][0]["message"]["content"]
-    if modality and modality.lower() in ("mri", "ct"):
+    # ── 2026-08-01 ───────────────────────────────────────────────────────────
+    # This was gated to ("mri", "ct"), so `_MAMMOGRAPHY_REQUIRED_KEYS`,
+    # `_ULTRASOUND_REQUIRED_KEYS` and `_OB_ULTRASOUND_REQUIRED_KEYS` were dead
+    # constants and a mammography report missing its BI-RADS category rendered
+    # as if complete. `_validate_report_json` already no-ops for anything
+    # outside `_VALIDATED_MODALITIES`, so passing the modality straight through
+    # is both correct and narrower than it looks.
+    #
+    # This makes an incomplete report FAIL LOUDLY instead of rendering
+    # partially, which is the intended behaviour for clinical output — but it
+    # is a live behaviour change, so it has a kill switch.
+    if modality and _report_validation_enabled():
         raw_content = _validate_report_json(raw_content, modality.lower())
     return {
         "content": raw_content,
@@ -3207,20 +3401,23 @@ def standardize(user_msg: str,CENTER_Key: Optional[str] = None,model: str = "gpt
     }
 
 
-def correction(
-    user_report: str,
-    correction_note:str,
-    CENTER_Key: str = "",
-    model: str = "gpt-4.1-mini"):
-    """report corrector"""
-    # ------------------------------------------------------
-    #  SELECT CENTER + API KEY
-    # ------------------------------------------------------
-    m = Manage.instance()
-    center, api_key = m.get_center_and_gapgpt_key()
+def build_correction_system_prompt() -> str:
+    """The correction (PATCH) system prompt — ONE authority, BOTH backends.
 
+    Lifted verbatim out of ``correction()`` on 2026-08-01 so the OpenAI twin
+    backend stops carrying a condensed paraphrase of it. The twin's copy still
+    hard-coded *"Return ONLY valid JSON with keys Report Title, Pathological
+    Findings, Normal Findings, Impression, Recommendations"* — the fixed 5-key
+    schema whose removal from THIS file was the whole point of the KEY-SET
+    MIRROR rule below. On that backend, correcting a typo on a mammogram still
+    deleted the BI-RADS category, the breast composition and the axillary
+    evaluation, and invented an empty Impression in their place.
 
-    system_msg = """
+    Two stale references to "the required 5-key JSON schema" in the HTML-input
+    instructions were repaired at the same time — they contradicted the mirror
+    rule three paragraphs below them.
+    """
+    return """
     ### ROLE
     You are a high-precision medical report editor performing a PATCH operation.
     Task: output = ORIGINAL_REPORT + minimum_edits_from_CORRECTION_NOTE.
@@ -3232,9 +3429,14 @@ def correction(
     1) ORIGINAL_REPORT — the approved medical report (JSON or HTML).
        • This is the authoritative source of truth.
        • JSON input: use directly as the edit baseline.
-       • HTML input: convert to the required 5-key JSON schema using ONLY content explicitly present;
+       • HTML input: reconstruct EXACTLY the sections the HTML shows, using ONLY content explicitly present;
          leave unmappable fields as empty strings; then apply CORRECTION_NOTE.
     2) CORRECTION_NOTE — the physician's exact instruction describing what to change.
+    3) TARGET_LOCATION (OPTIONAL) — the exact section / sentence / line / finding the physician
+       wants changed. When present, it pinpoints WHERE to apply the edit: find that exact text in
+       ORIGINAL_REPORT and confine the change to it. When absent, locate the target yourself from
+       CORRECTION_NOTE. TARGET_LOCATION narrows scope — it must NEVER cause more of the report to
+       change than the CORRECTION_NOTE requires.
 
     ======================================================
     ABSOLUTE OUTPUT FORMAT (NEVER BREAK)
@@ -3244,13 +3446,34 @@ def correction(
       - MUST_END_WITH_CODE_BLOCK: ```
       - MUST_TERMINATE_WITH: <|end|>
       - No text before or after the JSON block. No explanations. No comments.
-    • Output MUST contain EXACTLY these 5 keys (no more, no less):
-      1) "Report Title"
-      2) "Pathological Findings"
-      3) "Normal Findings"
-      4) "Impression"
-      5) "Recommendations"
+    • KEY-SET MIRROR (this replaces the old fixed 5-key rule, 2026-08-01):
+      Output MUST contain EXACTLY the SAME top-level keys as ORIGINAL_REPORT —
+      the same keys, the same spelling, the same order. Do NOT add a key, do NOT
+      remove a key, do NOT rename a key, do NOT flatten a nested one.
+      - If a value in ORIGINAL_REPORT is a nested object (for example
+        "BI-RADS Category": {"Right Breast": ..., "Left Breast": ...}), return it
+        as the same nested object with the same sub-keys.
+      - If ORIGINAL_REPORT has NO "Impression" (or no "Recommendations"), the
+        output MUST NOT have one either. Do not create it, not even empty.
+        Adding a section that did not exist is a FAILURE.
+      - If ORIGINAL_REPORT is HTML, reconstruct exactly the sections that HTML
+        shows. Do not map it onto any other schema.
+      WHY: a report is not always five keys. A mammography report is
+      Report Title / Breast Composition / Pathological Findings / Normal Findings /
+      Axillary Evaluation / BI-RADS Category; an obstetric report has eleven.
+      The old fixed 5-key rule silently DELETED the BI-RADS category, the breast
+      composition and every obstetric section whenever a physician corrected a
+      typo — and invented an empty Impression and Recommendations in their place.
     • NEVER output HTML — even when ORIGINAL_REPORT is HTML.
+    • The JSON MUST NOT contain any key that describes what you did — no
+      "Changes Made", "Note", "Notes", "Explanation", "Summary of Changes".
+      Do not narrate the edit anywhere in the output.
+    • Values MUST NOT contain markdown (**, ##, backticks, bullet characters)
+      unless ORIGINAL_REPORT already contains them.
+    • Reply in the SAME LANGUAGE as ORIGINAL_REPORT — Persian in, Persian out;
+      English in, English out. Copy the key names verbatim from ORIGINAL_REPORT,
+      in its own script. The language of CORRECTION_NOTE has NO bearing on the
+      language of the output.
 
     ======================================================
     CORE PRINCIPLE: PATCH, NOT REGENERATE
@@ -3311,26 +3534,106 @@ def correction(
     ======================================================
     PROCESS (follow in order)
     ======================================================
-    1) Parse ORIGINAL_REPORT (JSON: use directly; HTML: convert to 5-key JSON baseline).
-    2) Read CORRECTION_NOTE. Identify the minimum target change.
-    3) Apply ONLY that change to the target location(s).
-    4) Check for literal dependencies in other fields — update only those that would be
+    1) Parse ORIGINAL_REPORT (JSON: use directly; HTML: reconstruct exactly the sections it shows).
+    2) LOCATE the target: if TARGET_LOCATION is provided, find that exact text inside
+       ORIGINAL_REPORT; otherwise identify the smallest sentence/finding CORRECTION_NOTE refers to.
+    3) Read CORRECTION_NOTE. Identify the minimum target change.
+    4) Apply ONLY that change to the located target.
+    5) Check for literal dependencies in other fields — update only those that would be
        internally inconsistent without the update.
-    5) Verify: everything else is byte-identical to ORIGINAL_REPORT.
-    6) Return the complete corrected report in the required JSON code block + <|end|>.
+    6) Verify: everything else is byte-identical to ORIGINAL_REPORT (all other sentences,
+       measurements, terminology, and section order unchanged).
+    7) Return the COMPLETE corrected report — every key ORIGINAL_REPORT had, in its
+       original order, with every unchanged section included verbatim — in the
+       required JSON code block + <|end|>.
     """
+
+
+def build_correction_user_content(
+    user_report: str,
+    correction_note: str,
+    target_section: str = "",
+) -> str:
+    """The correction user turn — ONE authority, BOTH backends.
+
+    Clearly-delimited blocks so the model cannot confuse the report, the
+    instruction and the target location. TARGET_LOCATION is emitted only when a
+    target was supplied. Both backends already built byte-identical text here;
+    this makes that a fact rather than a coincidence.
+    """
+    user_report = _to_str(user_report)
+    correction_note = _to_str(correction_note)
+    target_section = _to_str(target_section).strip()
+    _target_block = ""
+    if target_section:
+        _target_block = (
+            "===== TARGET_LOCATION (the exact section/sentence/line/finding to change) =====\n"
+            f"{target_section}\n"
+            "===== END TARGET_LOCATION =====\n\n"
+        )
+    user_content = (
+        "Apply the correction below to ORIGINAL_REPORT and return the COMPLETE corrected report.\n"
+        "Change ONLY what CORRECTION_NOTE requires; keep every other section byte-identical.\n\n"
+        "===== ORIGINAL_REPORT (source of truth — preserve all unchanged content verbatim) =====\n"
+        f"{user_report}\n"
+        "===== END ORIGINAL_REPORT =====\n\n"
+        f"{_target_block}"
+        "===== CORRECTION_NOTE (physician instruction — the ONLY change to apply) =====\n"
+        f"{correction_note}\n"
+        "===== END CORRECTION_NOTE =====\n"
+    )
+    return user_content
+
+
+def correction(
+    user_report: str,
+    correction_note:str,
+    CENTER_Key: str = "",
+    model: str = "gpt-5.4",
+    target_section: str = ""):
+    """report corrector — final targeted-revision (PATCH) step.
+
+    Correction is the LAST revision stage: it must apply ONLY the physician's requested
+    change to the already-generated report and return the COMPLETE corrected report.
+    A stronger model is used by default (gpt-5.4) and temperature is pinned to 0 for
+    determinism, so the model does not rewrite unrelated content.
+
+    Args:
+        user_report:     the previously generated report (JSON or HTML) — source of truth.
+        correction_note: the physician's instruction describing what to change.
+        target_section:  OPTIONAL — the exact section / sentence / line / finding to change
+                         (e.g. a highlighted sentence). When provided it is sent as a
+                         separate, clearly-delimited TARGET block so the model knows exactly
+                         where to apply the edit; when empty the model locates the target
+                         from the correction note.
+    """
+    target_section = _to_str(target_section).strip()
+    # ------------------------------------------------------
+    #  SELECT CENTER + API KEY
+    # ------------------------------------------------------
+    m = Manage.instance()
+    center, api_key = m.get_center_and_gapgpt_key()
+
+
+    system_msg = build_correction_system_prompt()
+
+    # ------------------------------------------------------
+    #  USER MESSAGE — clearly-delimited blocks so the model cannot confuse the
+    #  report, the instruction, and the target location.
+    # ------------------------------------------------------
+    user_content = build_correction_user_content(
+        user_report, correction_note, target_section
+    )
 
     # API payload
     payload = {
         "model": model,
+        # Deterministic: correction is a surgical patch, not a creative rewrite.
+        "temperature": 0,
+        "max_tokens": 3000,
         "messages": [
             {"role": "system", "content": system_msg},
-            {"role": "user", "content": (
-                "ORIGINAL_REPORT:\n"
-                f"{user_report}\n\n"
-                "CORRECTION_NOTE:\n"
-                f"{correction_note}\n"
-            )}
+            {"role": "user", "content": user_content}
         ]
     }
 

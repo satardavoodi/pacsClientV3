@@ -703,6 +703,11 @@ def ai_fetch_messages_full(sid: str):
     return _db_ai.ai_fetch_messages_full(sid)
 
 
+def ai_count_messages_by_session():
+    """``{sid: message_count}`` for every session, in ONE query."""
+    return _db_ai.ai_count_messages_by_session()
+
+
 def ai_fetch_messages(sid: str):
     return _db_ai.ai_fetch_messages(sid)
 

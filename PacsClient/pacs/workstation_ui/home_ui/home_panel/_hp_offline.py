@@ -190,10 +190,15 @@ class _HPOfflineMixin:
             skipped_count=skipped_count,
         )
         if dlg.exec() != OfflineCloudExportDialog.Accepted:
-            return None, []
-        return dlg.selected_server(), downloaded_studies
+            return None, [], None
+        series_selection = None
+        try:
+            series_selection = dlg.series_selection()
+        except Exception:
+            series_selection = None
+        return dlg.selected_server(), downloaded_studies, series_selection
 
-    def _export_selected_studies_to_offline_cloud(self, cloud_server, selected_studies):
+    def _export_selected_studies_to_offline_cloud(self, cloud_server, selected_studies, series_selection=None):
         downloaded_lookup = {
             str(study.get("study_uid") or "").strip(): study
             for study in self.patient_table_widget.get_downloaded_selected_patient_data_list()
@@ -237,6 +242,9 @@ class _HPOfflineMixin:
             # exactly like the autosync path below. Without this the exported
             # folder has no DICOMDIR and no patient-named folders.
             include_dicomdir=True,
+            # None → every series (unchanged). A map exports only the series the
+            # user ticked in the pop-up; package.db + folders + DICOMDIR follow.
+            series_selection=series_selection,
         )
 
         if export_result.get("ok") and not export_result.get("errors"):
@@ -245,6 +253,7 @@ class _HPOfflineMixin:
                 f"Package studies available: {export_result.get('study_count', 0)}\n"
                 f"Manifest: {export_result.get('manifest_path', '')}\n\n"
             )
+            message += self._format_series_sync_summary(export_result)
             if skipped_count:
                 message += f"Skipped not-yet-downloaded selections: {skipped_count}\n\n"
             message += "This folder can now be transferred manually or synced by an external tool."
@@ -261,6 +270,38 @@ class _HPOfflineMixin:
             "Offline Cloud Export",
             f"Exported {export_result.get('exported', 0)} studies with some issues.\n\n{error_lines}",
         )
+
+    def _format_series_sync_summary(self, export_result: dict) -> str:
+        """Human-readable 'what synced' block for the offline export popup.
+
+        Lists, per study, how many series and images were written to the
+        package (and how many series were left out by the user's selection).
+        """
+        summaries = export_result.get("series_summaries") or []
+        if not summaries:
+            return ""
+        total_series = sum(int(s.get("series_kept") or 0) for s in summaries)
+        total_skipped = sum(int(s.get("series_skipped") or 0) for s in summaries)
+        total_images = sum(int(s.get("instances") or 0) for s in summaries)
+        lines = [f"Synced {total_series} series ({total_images} images) into the package:"]
+        for s in summaries[:12]:
+            uid = str(s.get("study_uid") or "")
+            uid_short = uid if len(uid) <= 28 else "…" + uid[-27:]
+            kept = int(s.get("series_kept") or 0)
+            skipped = int(s.get("series_skipped") or 0)
+            imgs = int(s.get("instances") or 0)
+            line = f"  • {uid_short}: {kept} series, {imgs} images"
+            if skipped:
+                line += f"  (excluded {skipped})"
+            lines.append(line)
+        if len(summaries) > 12:
+            lines.append(f"  … and {len(summaries) - 12} more studies")
+        if total_skipped:
+            lines.append(f"\nExcluded {total_skipped} series that were not selected.")
+        dicomdir = export_result.get("dicomdir") or {}
+        if dicomdir.get("ok"):
+            lines.append("DICOMDIR: rebuilt for the selected series.")
+        return "\n".join(lines) + "\n\n"
 
     def _sync_local_study_to_ai_server(self, study_uid: str, ai_server: dict, actor: dict | None = None) -> dict:
         """Push locally stored workstation-side changes back to the active AI PACS server."""
@@ -375,10 +416,10 @@ class _HPOfflineMixin:
                 return
 
             if not current_server:
-                cloud_server, export_studies = self._confirm_offline_cloud_export(selected_studies)
+                cloud_server, export_studies, series_selection = self._confirm_offline_cloud_export(selected_studies)
                 if not cloud_server or not export_studies:
                     return
-                self._export_selected_studies_to_offline_cloud(cloud_server, export_studies)
+                self._export_selected_studies_to_offline_cloud(cloud_server, export_studies, series_selection)
                 return
 
             allow_export = bool(downloaded_studies)
@@ -414,10 +455,10 @@ class _HPOfflineMixin:
                     return
 
             if mode == "Export to Offline Cloud":
-                cloud_server, export_studies = self._confirm_offline_cloud_export(selected_studies)
+                cloud_server, export_studies, series_selection = self._confirm_offline_cloud_export(selected_studies)
                 if not cloud_server or not export_studies:
                     return
-                self._export_selected_studies_to_offline_cloud(cloud_server, export_studies)
+                self._export_selected_studies_to_offline_cloud(cloud_server, export_studies, series_selection)
                 return
 
             cloud_server = self._choose_offline_cloud_server(

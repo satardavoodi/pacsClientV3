@@ -5,10 +5,56 @@ and the _add_click_handler factory method for StandardMPRViewer.
 
 import logging
 import math
+import os as _os
 
 import vtkmodules.all as vtk
 
 logger = logging.getLogger(__name__)
+
+
+def scroll_camera_invariant_enabled() -> bool:
+    """Stack-scroll camera invariant (2026-08-01) — shares AIPACS_MPR_STABLE_SCROLL."""
+    return (_os.getenv("AIPACS_MPR_STABLE_SCROLL", "1") or "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def stable_scroll_camera_step(before_focal, before_pos, direction, step):
+    """PURE: translate focal AND position by exactly ``step * unit(direction)``.
+
+    Enforces the clinical requirement that scrolling the stack changes ONLY the
+    slice position:
+
+    * focal and position receive the SAME translation vector → the view
+      direction and the camera-to-focal distance are invariant;
+    * the translation is along the pane's own scroll direction, normalised, so
+      no in-plane drift can accumulate (an unnormalised or slightly off-axis
+      direction vector would slide the image sideways as you scroll — exactly
+      the "image is not stable" symptom);
+    * nothing here touches parallel scale (zoom), view-up (rotation), the slice
+      plane's spacing/origin or the direction matrix — the caller restores
+      scale/view-up explicitly as a belt-and-braces guarantee.
+
+    Oblique-safe: it moves along the ACTUAL scroll direction (which for an
+    oblique/rerouted pane is that pane's true through-plane normal), never along
+    a hardcoded world axis. A zero/invalid direction returns the inputs unchanged
+    (no movement is better than a wrong movement).
+    """
+    try:
+        norm = math.sqrt(sum(float(d) * float(d) for d in direction))
+    except (TypeError, ValueError):
+        return list(before_focal), list(before_pos)
+    if not norm or norm <= 0.0 or not math.isfinite(norm):
+        return list(before_focal), list(before_pos)
+    unit = [float(d) / norm for d in direction]
+    # Move the FOCAL point, then carry the camera rigidly with it by re-adding the
+    # exact pre-move offset. Advancing both independently lets their rounding
+    # diverge, so the camera-to-focal distance would creep over hundreds of
+    # notches; deriving position FROM focal keeps the rig exactly rigid.
+    offset = [float(before_pos[i]) - float(before_focal[i]) for i in range(3)]
+    focal = [float(before_focal[i]) + unit[i] * float(step) for i in range(3)]
+    pos = [focal[i] + offset[i] for i in range(3)]
+    return focal, pos
 
 
 class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
@@ -748,12 +794,22 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         except Exception:
             step = 2.0
 
-        focal[0] += scroll_dir[0] * step
-        focal[1] += scroll_dir[1] * step
-        focal[2] += scroll_dir[2] * step
-        pos[0] += scroll_dir[0] * step
-        pos[1] += scroll_dir[1] * step
-        pos[2] += scroll_dir[2] * step
+        # Stack-scroll camera invariant (2026-08-01): translate focal+position by
+        # exactly one normalised step along this pane's scroll direction, and pin
+        # zoom + view-up, so scrolling can ONLY change the slice position.
+        if scroll_camera_invariant_enabled():
+            _scale_before = camera.GetParallelScale()
+            _up_before = list(camera.GetViewUp())
+            focal, pos = stable_scroll_camera_step(focal, pos, scroll_dir, step)
+            camera.SetParallelScale(_scale_before)
+            camera.SetViewUp(_up_before)
+        else:
+            focal[0] += scroll_dir[0] * step
+            focal[1] += scroll_dir[1] * step
+            focal[2] += scroll_dir[2] * step
+            pos[0] += scroll_dir[0] * step
+            pos[1] += scroll_dir[1] * step
+            pos[2] += scroll_dir[2] * step
 
         self.parent.current_position[0] = focal[0]
         self.parent.current_position[1] = focal[1]
@@ -796,12 +852,20 @@ class CrosshairInteractorStyle(vtk.vtkInteractorStyleImage):
         except Exception:
             step = 2.0
 
-        focal[0] -= scroll_dir[0] * step
-        focal[1] -= scroll_dir[1] * step
-        focal[2] -= scroll_dir[2] * step
-        pos[0] -= scroll_dir[0] * step
-        pos[1] -= scroll_dir[1] * step
-        pos[2] -= scroll_dir[2] * step
+        # Same invariant as the forward handler, one step in the -direction.
+        if scroll_camera_invariant_enabled():
+            _scale_before = camera.GetParallelScale()
+            _up_before = list(camera.GetViewUp())
+            focal, pos = stable_scroll_camera_step(focal, pos, scroll_dir, -step)
+            camera.SetParallelScale(_scale_before)
+            camera.SetViewUp(_up_before)
+        else:
+            focal[0] -= scroll_dir[0] * step
+            focal[1] -= scroll_dir[1] * step
+            focal[2] -= scroll_dir[2] * step
+            pos[0] -= scroll_dir[0] * step
+            pos[1] -= scroll_dir[1] * step
+            pos[2] -= scroll_dir[2] * step
 
         self.parent.current_position[0] = focal[0]
         self.parent.current_position[1] = focal[1]

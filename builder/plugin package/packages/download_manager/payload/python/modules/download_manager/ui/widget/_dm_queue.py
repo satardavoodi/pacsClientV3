@@ -23,6 +23,33 @@ logger = logging.getLogger(__name__)
 class _DMQueueMixin:
     """Download queue: add/update/remove rows, progress bars, badges"""
 
+    def _restore_persisted_queue(self) -> None:
+        """OPT-46: re-enqueue interrupted downloads persisted before a crash/restart.
+
+        Scans each study's ``.dm_task.json`` under this DM's own ``base_output_dir``, drops (and
+        cleans up) any study already COMPLETE on disk, and re-feeds the incomplete ones to the SAME
+        ``add_downloads`` path with ``start_immediately=False`` — so they resume via the normal
+        priority/concurrency rules and the disk resume scan skips already-downloaded images (never a
+        re-fetch). Idempotent (``add_downloads`` skips studies already in the live queue). Flag-gated
+        (default-off) inside the scan; never raises.
+        """
+        try:
+            from modules.download_manager.state.queue_persistence import scan_incomplete_task_specs
+            specs = scan_incomplete_task_specs(str(getattr(self, "base_output_dir", "") or ""))
+        except Exception as exc:
+            logger.debug("[DM-QUEUE-RESTORE] scan skipped: %s", exc)
+            return
+        if not specs:
+            return
+        try:
+            logger.info(
+                "[DM-QUEUE-RESTORE] re-enqueueing %d interrupted download(s) after restart",
+                len(specs),
+            )
+            self.add_downloads(specs, start_immediately=False)
+        except Exception as exc:
+            logger.warning("[DM-QUEUE-RESTORE] restore failed: %s", exc)
+
     def add_downloads(self, studies: List[Dict], start_immediately: bool = False) -> None:
         """
         Add downloads to queue
@@ -89,6 +116,15 @@ class _DMQueueMixin:
                 # Add to state store (observers auto-notify)
                 state = self.state_store.create(task)
                 added_studies.append(task.study_uid)
+
+                # OPT-46: persist a tiny re-enqueue spec to the study's own folder so an
+                # interrupted download survives a crash/restart and auto-resumes. DISK only (no
+                # dicom.db write → no interaction with OPT-45), flag-gated default-off, best-effort.
+                try:
+                    from modules.download_manager.state.queue_persistence import persist_task_spec
+                    persist_task_spec(getattr(task, "output_dir", None), study_data)
+                except Exception:
+                    pass
 
                 # QueueExpectedCount comes from the de-duplicated, manifest-derived
                 # series_list (task.total_image_count) — never an accumulating queue.

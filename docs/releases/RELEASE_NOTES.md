@@ -1,9 +1,103 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.6 (2026-07-26)
-**Previous Stable:** v3.5.5 (2026-07-25)
-**Release Date:** 2026-07-26
+**Current Stable Version:** v3.5.7 (2026-08-02)
+**Previous Stable:** v3.5.6 (2026-07-26)
+**Release Date:** 2026-08-02
 **Branch:** beta-version
+
+---
+
+## v3.5.7 (2026-08-02) - Minor release: MPR crash/perf hardening, DB + download resilience, EchoMind Phase-1 overhaul, per-series export
+
+### Summary
+
+The largest release in the 3.5 line — a week of stability, reliability, and
+reporting work. Four themes: **MPR** no longer crashes on very large studies and
+opens/scrolls faster (OPT-47/48/49); the app **stays responsive under heavy load**
+(role-aware DB timeout, crash-durable download queue, status column moved off the
+GUI thread); **EchoMind** got a deep Phase-1 reliability overhaul (one HTTP
+transport authority, honest error classification, no blocking work on the GUI
+thread, the two AI backends unified, and a proper Normal-Template workflow); and
+export/workflow polish (per-series CD/offline selection, a local Patient-ID
+correction alias, Advanced-Search Local/Server routing).
+
+### Included — MPR (crash + performance)
+
+- **Large-study MPR no longer crashes on the first open (OPT-47).** Three
+  compounding causes on a ~700-800 slice study: the GPU volume budget was a fixed
+  512 MB (× VTK's 0.75 = exactly 768 slices) on a mapper with **no CPU fallback**,
+  so a bigger volume was a silent native death; the ITK→VTK host path made three
+  full copies (~1.26 GB transient); and teardown released nothing, so VRAM
+  accumulated and the *first* open failed while a relaunch succeeded. All three
+  fixed, with reconstruction geometry unchanged.
+- **MPR opens and scrolls faster on high slice counts (OPT-48), and its lifecycle
+  is sound (OPT-49).** The L-R flip moved off the GUI thread; a re-entrancy guard
+  stops a second open building a duplicate pipeline; and close is now the inverse of
+  open (every actor / container / timer / cross-module reference released), fixing
+  the monotonic memory growth across repeated open→close. Enlarged reconstructed
+  panes no longer shake on scroll.
+
+### Included — responsiveness & durability
+
+- **Role-aware `dicom.db` busy-timeout (OPT-45).** A flat 120 s timeout let a
+  GUI-thread write block for up to two minutes behind the download subprocess under
+  a heavy download. The main GUI process now fails fast (5 s) while the download
+  subprocess keeps the full 120 s — so the UI stays responsive and no instance row
+  is ever dropped.
+- **Crash-durable download queue (OPT-46).** The pending/failed/priority queue was
+  in-memory only, so a crash lost it (downloaded data was always safe on disk). It
+  now persists each study's re-enqueue spec to disk and auto-resumes interrupted
+  downloads ~9 s after restart, reusing the normal enqueue path. Default-off until
+  live-verified.
+- **Local list Status column computed off the GUI thread (2026-08-02).** Rendering
+  the local list did per-row disk I/O (attachment walk + reception JSON + DB) on the
+  GUI thread — multi-second freezes on a large store. The bulk render now reads a
+  cache and computes misses on a background worker, filling the chips in via signal.
+
+### Included — EchoMind Phase-1 reliability overhaul
+
+- **One transport authority** (`echomind_http.py`): every AI/voice call now goes
+  through a single `post`/`get` that honours the Settings proxy (four chat modes and
+  every voice upload previously bypassed it), with correct connect/read timeouts and
+  retry only on connect-phase failures (never a report-generating ReadTimeout).
+- **Honest error classification** — auth / quota / model / server / network are no
+  longer all flattened to "check your internet", while still redacting endpoint
+  details.
+- **No blocking I/O on the GUI thread** — reception send, both Settings "Test
+  Connection" probes, and the Secretary voice command's planning phase moved to
+  workers (they froze the UI for tens of seconds); teardown uses detach-don't-wait.
+- **The two AI backends are one product again** — the `openai` twin ran a ~1,100-char
+  generic prompt with no BI-RADS / temperature clamp / validation; report and
+  correction prompts are now shared authorities called by both backends.
+- **Normal Template workflow** — physicians' normal-report templates now live on
+  disk (`normal_templates.py`) instead of being re-uploaded every launch, with a
+  fenced, schema-deferring merge prompt and a manage dialog.
+- **Reception dedupe + safer storage** — a byte-identical still-pending report no
+  longer inserts twice; attachments and transcripts can't cross a session boundary;
+  no clinical content is written to logs or stdout.
+
+### Included — export & workflow
+
+- **Per-series export selection.** Both the CD burn and Offline export pop-ups let
+  you pick which series to include (default: all), filtered at the on-disk copy
+  layer so package.db, the folders, and the DICOMDIR all agree.
+- **Local Patient-ID correction alias.** A reception-typo Patient ID corrected
+  locally now *stays* corrected in the list after a server refresh — a display-only
+  alias; the server's ID remains the identity/join key. Default-off (opt-in).
+- **Advanced Search follows the Local/Server tab.** The More-Filters search used to
+  always hit the server; it now routes by the active data-source tab, and clears the
+  table on a mode switch so stale rows never linger.
+- **Shutdown-initiator logging.** Diagnostic hooks that attribute an unexplained
+  "the app just closed" to its real cause (a clean close, a crash, or a
+  single-instance takeover) — plus a fixed orphaned-download-subprocess leak.
+
+### Notes
+
+- OPT-45/47/48/49, the status-column async, per-series export, and Advanced-Search
+  routing are flag-gated default-on with legacy kill switches; OPT-46 and the
+  Patient-ID alias ship default-off until live-verified.
+- The MPR, download-durability, and EchoMind changes still need live source-build
+  verification (a full clinical-lane pass in particular).
 
 ---
 

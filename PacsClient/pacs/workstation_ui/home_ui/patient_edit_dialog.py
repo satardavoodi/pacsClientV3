@@ -141,12 +141,31 @@ class PatientEditDialog(QDialog):
             root.addWidget(note)
 
         if not dde.server_push_supported():
-            scope = QLabel(
+            try:
+                from database.patient_overrides import patient_overrides_enabled
+                _alias_on = patient_overrides_enabled()
+            except Exception:
+                _alias_on = False
+            _scope_msg = (
                 "This change is written to the DICOM files and database on "
                 "<b>this workstation only</b> — the server has no endpoint for "
-                "updating demographics. Running “Refresh / Sync from server” "
-                "afterwards will bring the server's original values back."
+                "updating demographics, so the reception / RIS server stays the "
+                "<b>system of record</b> for patient identity and keeps the "
+                "original ID. To correct it everywhere (reception, billing, "
+                "other workstations), have <b>reception fix it at admission</b>."
             )
+            if _alias_on:
+                _scope_msg += (
+                    " This workstation will keep <b>showing</b> your corrected "
+                    "Patient ID in the list; server actions (assignment, "
+                    "reports) still use the original ID underneath."
+                )
+            else:
+                _scope_msg += (
+                    " After “Refresh / Sync from server” the list shows the "
+                    "server's original value again."
+                )
+            scope = QLabel(_scope_msg)
             scope.setWordWrap(True)
             scope.setTextFormat(Qt.RichText)
             scope.setStyleSheet("color:#d69e2e;")

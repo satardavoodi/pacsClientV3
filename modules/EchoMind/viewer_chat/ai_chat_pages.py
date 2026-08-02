@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import typing as t
+import logging
 import os, json, tempfile, time
 import base64
 import hashlib
@@ -29,6 +30,7 @@ from PacsClient.utils.database import (
 
 from .openai_reporter import reporter, translate_report, standardize, standard_assist_search, correction, translate_text_to_persian
 from . import openai_parallel_backend as openai_direct
+from . import openai_reporter as company_direct
 import re
 try:
     from PacsClient.utils import ICON_PATH
@@ -52,6 +54,7 @@ from .ai_chat_helpers import _set_icon, _safe_fa_connection_error, extract_plain
 from .ai_chat_api import ChatApiClient, ChatController, ApiWorker
 from .ai_chat_widgets import ChatHistory, UnifiedComposer, MessageBubble, PATIENT_SCROLLBAR_QSS
 from .ai_chat_config import CLR_BG, CLR_BG_PANEL, CLR_TEXT, CLR_BORDER, CLR_ACCENT,URL_GEN_TRANSCRIPT,URL_GEN_REPORT,URL_CHAT,URL_GEN_ASSISTANT,URL_STATUS,URL_SESSIONS,URL_HEALTH,URL_EXPORT_ALL,URL_SEARCH,URL_SESSION_GET
+from modules.EchoMind import echomind_http
 from modules.EchoMind.llm_client import get_active_backend_display_name, is_active_backend_configured
 from modules.EchoMind.secretary.stt.router import SttRouter
 from modules.EchoMind.settings_store import get_llm_backend, get_openai_model_for_feature, get_openai_settings
@@ -105,6 +108,169 @@ def _transcribe_with_active_backend(paths: list[str], quality_mode: str = "clear
     from modules.EchoMind.voice_transcription import VoiceTranscriptionService
 
     return VoiceTranscriptionService().transcribe(paths, quality_mode=quality_mode)
+
+
+# ── F1 (2026-07-28): "Send to Reception" must not block the GUI thread ───────
+# `_send_to_reception` used to call its nested `_send_with_patient_id` inline:
+# a `requests.get(timeout=20)`, a `requests.post(timeout=30)` and a DB write, all
+# on the Qt main thread with no spinner, no wait cursor and no cancel. On a slow
+# or unreachable reception server that is a ~50 s hard freeze of the entire
+# workstation. The work now runs on an `ApiWorker`; every Qt touch is returned to
+# the GUI thread as data (see `_deliver_reception_result`).
+#
+# `AIPACS_ECHOMIND_RECEPTION_ASYNC=0` restores the fully-synchronous legacy path.
+_ENV_RECEPTION_ASYNC = "AIPACS_ECHOMIND_RECEPTION_ASYNC"
+
+
+def _reception_send_async_enabled() -> bool:
+    """Kill switch for the off-GUI-thread reception send (default ON)."""
+    raw = os.environ.get(_ENV_RECEPTION_ASYNC)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+# ── 2026-07-31: Send-with-a-voice-attachment never actually sent ─────────────
+# `_upload_voices_then` documents "Always calls: cont(transcript_text,
+# session_id)" and its error path does exactly that. Its SUCCESS path did not —
+# the call was commented out, and `git blame` puts that comment in the initial
+# commit, so this has never run in this repository's history.
+#
+# `cont` IS the send. All four call sites pass a continuation that runs
+# `_send_with_mode(...)` or `_on_send_chatgpt(...)`. Without it, pressing Send
+# with a voice chip queued uploaded the audio, transcribed it, drew a bubble and
+# stopped: no report, no error, and the transcript stranded in read-only history
+# where the user cannot even re-send it without copying it out by hand.
+#
+# Reachability: the ordinary mic flow does NOT come through here — recording
+# auto-emits `transcribeRequested` -> `_transcribe_now`, which drops the chip on
+# success. This path is reached when a transcription failed or was cancelled and
+# the chip survived, or when an audio file was attached by hand.
+#
+# `AIPACS_ECHOMIND_VOICE_SEND_CONT=0` restores the byte-identical legacy
+# behaviour (transcript shown as a bubble, nothing sent).
+_ENV_VOICE_SEND_CONT = "AIPACS_ECHOMIND_VOICE_SEND_CONT"
+
+
+def _voice_send_cont_enabled() -> bool:
+    """Kill switch for issuing the queued send after a voice upload (default ON)."""
+    raw = os.environ.get(_ENV_VOICE_SEND_CONT)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+# ── F8 (2026-07-28): stop printing clinical content to stdout ────────────────
+# The four chat modes used to `print()` the FULL outgoing payload — the
+# physician's dictated text — and the FULL response body — the generated
+# report — on every request. That is patient content on stdout: unconditional,
+# not gated by any log level, impossible to switch off, and captured by any
+# shell transcript or console log. Serialising a large report to stdout on every
+# request also costs real time on the worker thread.
+#
+# These helpers keep the diagnostics that were actually useful (which endpoint,
+# what status, how big, how long) and drop the bodies. Set the `echomind.chat`
+# logger to DEBUG to see sizes; the content itself is never logged.
+_log = logging.getLogger("echomind.chat")
+
+
+def _dbg_request(tag: str, url: str, payload: dict) -> None:
+    """Log an outbound chat request WITHOUT its clinical content.
+
+    2026-07-31 — both measurements used to run BEFORE the level check, so the
+    work happened on every request even with debug logging off. `payload`
+    carries base64 DICOM->PNG attachments, so a three-image request built and
+    threw away a multi-megabyte JSON string every time. The F8 fix stopped the
+    bodies being EMITTED; this stops them being MATERIALISED.
+    """
+    # Local import on purpose: `test_no_clinical_content_on_stdout` extracts
+    # these two helpers with ast and execs them in a bare namespace that has
+    # `_log` but not the `logging` module.
+    import logging as _logging
+    if not _log.isEnabledFor(_logging.DEBUG):
+        return
+    try:
+        keys = sorted(payload.keys()) if isinstance(payload, dict) else []
+        size = len(json.dumps(payload, ensure_ascii=False)) if payload else 0
+        _log.debug("[%s] POST %s keys=%s payload_bytes=%d", tag, url, keys, size)
+    except Exception:
+        pass
+
+
+def _dbg_response(tag: str, resp) -> None:
+    """Log an inbound chat response WITHOUT its clinical content.
+
+    2026-07-31 — `requests` does NOT cache `.text`: every access re-decodes the
+    whole body, and with no charset in the header it runs full charset
+    detection over a 100-500 KB report. Prefer the Content-Length header, and
+    do nothing at all when debug logging is off.
+    """
+    # Local import on purpose: `test_no_clinical_content_on_stdout` extracts
+    # these two helpers with ast and execs them in a bare namespace that has
+    # `_log` but not the `logging` module.
+    import logging as _logging
+    if not _log.isEnabledFor(_logging.DEBUG):
+        return
+    try:
+        body_len = -1
+        try:                                  # cheap: header, then raw bytes
+            hdr = getattr(resp, "headers", None)
+            if hdr is not None:
+                body_len = int(hdr.get("Content-Length", -1))
+        except Exception:
+            body_len = -1
+        if body_len < 0:
+            raw = getattr(resp, "content", None)
+            body_len = len(raw) if raw is not None else len(getattr(resp, "text", "") or "")
+        _log.debug(
+            "[%s] status=%s body_bytes=%d", tag, getattr(resp, "status_code", "?"), body_len
+        )
+    except Exception:
+        pass
+
+
+# ── F7 (2026-07-28): ONE place decides which LLM backend serves a feature ────
+# The choice `X if backend == "openai" else Y` was written out at TWELVE call
+# sites in this file (Turbo report, correction ×2, standardize, assist/search,
+# translate ×2, breast, image-quality, ChatGPT modes…). Each one is correct
+# today, but the pattern means a NEW EchoMind feature that forgets the ternary
+# silently ignores the user's LLM selection — with no test that would catch it.
+# `openai_reporter._openai_result` was an abandoned attempt at exactly this
+# unification: fully implemented, never called.
+#
+# These two helpers are the authority. Call sites ask WHICH MODULE and WHICH
+# MODEL; they never re-derive the backend. This is the standing project
+# directive: route decisions through the one authority, not bespoke checks.
+def _ai_backend() -> str:
+    """``"openai"`` or ``"company"`` — the single read of the setting."""
+    return "openai" if get_llm_backend() == "openai" else "company"
+
+
+def _ai_module(backend: str | None = None):
+    """The module implementing the AI features for the ACTIVE backend.
+
+    * ``openai``  -> ``openai_parallel_backend`` (provider-aware, via
+      ``llm_client.chat_completion``);
+    * ``company`` -> ``openai_reporter`` (the GapGPT implementation).
+
+    Both expose the same function names — `reporter`, `correction`,
+    `standardize`, `standard_assist_search`, `translate_text_to_persian`,
+    `translate_report`, `BreastExpertAssistant`, `ImageQualityAnalyzer`.
+    """
+    resolved = backend or _ai_backend()
+    return openai_direct if resolved == "openai" else company_direct
+
+
+def _ai_model(feature: str, company_default: str, backend: str | None = None) -> str:
+    """The model for `feature` on the active backend.
+
+    The company path keeps its historical hard-coded default; the OpenAI path
+    reads the per-feature model from Settings ▸ EchoMind.
+    """
+    resolved = backend or _ai_backend()
+    if resolved == "openai":
+        return get_openai_model_for_feature(feature, company_default)
+    return company_default
 
 
 # ── In-flight ApiWorker QThreads that must OUTLIVE their page ────────────────
@@ -2386,16 +2552,52 @@ class OneChatPage(QWidget):
 
 
     def _ai_chat_dir(self) -> str:
-        """
-        Returns the folder path for current study's AI-Chat data:
-          <project_cwd>/attachment/<study_uid>/AI-Chat
-        Creates it if needed.
+        """This study's AI-Chat folder: ``<ATTACHMENTS_DIR>/<study_uid>/AI-Chat``.
+
+        2026-07-31 — this used to be ``Path(os.getcwd()) / "attachment" / ...``,
+        which is wrong three separate ways:
+
+        * it depends on the directory the process happened to be launched from;
+        * `data_paths.migrate_legacy_data()` MOVES ``<PROJECT_ROOT>/attachment``
+          into ``ATTACHMENTS_DIR`` on **every** startup — so EchoMind was
+          re-creating, every session, the exact tree the migration relocates.
+          A self-inflicted move loop: next launch relocates the files, EchoMind
+          looks in the old place, finds nothing, and the Standard tab silently
+          loads empty;
+        * under PyInstaller the CWD is ``sys._MEIPASS``, a temp directory
+          deleted on exit — 100% silent loss in a frozen build.
+
+        `data_paths` declares itself the authority ("every module that writes or
+        reads user data MUST import paths from here"). EchoMind never did.
+
+        Nothing already saved is abandoned: if the legacy folder still holds
+        this study's data and the new one does not, the legacy folder is used
+        and a warning names both, so a radiologist's saved work cannot vanish
+        because of this change.
         """
         from pathlib import Path
         import os
 
         study_uid = getattr(self, "study_uid", None) or "unknown"
-        base = Path(os.getcwd()) / "attachment" / study_uid / "AI-Chat"
+        legacy = Path(os.getcwd()) / "attachment" / study_uid / "AI-Chat"
+        try:
+            from PacsClient.utils.data_paths import ATTACHMENTS_DIR
+            base = Path(ATTACHMENTS_DIR) / study_uid / "AI-Chat"
+        except Exception:
+            base = legacy
+
+        try:
+            if (base != legacy and not base.exists()
+                    and legacy.is_dir() and any(legacy.iterdir())):
+                _log.warning(
+                    "[AI-Chat] reading the legacy attachment folder %s; "
+                    "move it under %s so the startup migration stops relocating it",
+                    legacy, base.parent.parent,
+                )
+                return str(legacy)
+        except Exception:
+            pass
+
         base.mkdir(parents=True, exist_ok=True)
         return str(base)
 
@@ -2412,7 +2614,20 @@ class OneChatPage(QWidget):
         try:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 json.dump(data, f, ensure_ascii=False, indent=2)
-            shutil.move(tmp, file_path)
+                f.flush()
+                os.fsync(f.fileno())
+            # 2026-07-31 — this function is docstring'd "Atomically writes JSON"
+            # but `shutil.move` is NOT atomic on Windows: it tries `os.rename`
+            # and falls back to `copy2 + unlink` on OSError, and on Windows
+            # `os.rename` raises FileExistsError whenever the destination
+            # exists -- i.e. on every re-save. So it degraded to a
+            # truncate-then-refill copy, and a crash mid-write left a half
+            # file that `_read_json_file`'s bare `except` turns into a silently
+            # blank Standard tab, with the previous good version already gone.
+            # `os.replace` is a real atomic rename-over on NTFS and POSIX; the
+            # rest of this codebase already uses it (settings_store,
+            # api_manager). The fsync above adds power-loss durability.
+            os.replace(tmp, file_path)
         finally:
             try:
                 if os.path.exists(tmp):
@@ -2634,13 +2849,23 @@ class OneChatPage(QWidget):
                     print("VoiceMessageBubble error:", e)
 
             # پس اگر ترنسکریپت از AI آمد → متنش را هم نشان بده
-            if tr_text:
+            # When the continuation runs it merges this transcript into the
+            # outgoing "You" bubble, so printing it here as well would show the
+            # same text twice. Only the legacy (kill-switched) path needs it.
+            if tr_text and not _voice_send_cont_enabled():
                 self.controller.bubble("AI ChatBot", tr_text)
 
             cleanup_ui()
             _finish_worker()
 
-        #    cont(tr_text, server_sid)
+            # ── the send. See `_ENV_VOICE_SEND_CONT` at the top of this module
+            # for why this was missing. `cont` is what actually issues the
+            # request; without it Send-with-a-voice-chip was a no-op.
+            if _voice_send_cont_enabled():
+                try:
+                    cont(tr_text, server_sid)
+                except Exception as exc:
+                    _log.warning("[VOICE-SEND] continuation failed: %s", exc, exc_info=True)
 
         def er(msg: str):
             try:
@@ -2691,12 +2916,14 @@ class OneChatPage(QWidget):
         self.controller.bubble("You (✅ Correction)", note)
         
         def work():
-            correction_fn = openai_direct.correction if backend == "openai" else correction
-            return correction_fn(
+            # Correction is the final targeted-revision step → use the dedicated (stronger)
+            # correction model. On the company/GapGPT path this is gpt-5.4 (was gpt-4.1-mini);
+            # on the OpenAI path it resolves via the "correction" feature in Settings.
+            return _ai_module(backend).correction(
                 user_report=report_text,  # Full JSON report
                 correction_note=note,
                 CENTER_Key=center_key,
-                model=get_openai_model_for_feature("report", "gpt-5.4") if backend == "openai" else "gpt-4.1-mini",
+                model=_ai_model("correction", "gpt-5.4", backend),
             )
         
         def ok(res):
@@ -2711,27 +2938,93 @@ class OneChatPage(QWidget):
                 
                 # Extract corrected report
                 corrected_text = res["content"].strip() if isinstance(res, dict) else str(res).strip()
-                
-                # Remove <|end|> if present
-                if "<|end|>" in corrected_text:
-                    corrected_text = corrected_text.split("<|end|>", 1)[0].strip().strip('```json').strip()
-                
+
+                # ── 2026-08-01: use the shared cleaner ────────────────────────
+                # This used to strip the code fence ONLY INSIDE `if "<|end|>" in
+                # corrected_text`, so a model that returned ```json {...} ```
+                # without the sentinel fell straight through to json.loads and
+                # failed. The OpenAI twin's correction prompt asks for neither a
+                # fence nor the sentinel, so on that backend the failure was the
+                # normal case. (The old `.strip('```json')` was also a character-
+                # set strip, not a prefix strip — it removed any of ` j s o n
+                # from both ends, which is not what it reads as.)
+                # `_clean_model_json_text` strips <|end|> FIRST and then both
+                # fences, unconditionally.
+                try:
+                    from .openai_reporter import _clean_model_json_text as _clean
+                    corrected_text = (_clean(corrected_text) or "").strip()
+                except Exception:
+                    if "<|end|>" in corrected_text:
+                        corrected_text = corrected_text.split("<|end|>", 1)[0].strip()
+
                 # Parse the JSON to ensure it's valid
                 import json
                 try:
                     corrected_json = json.loads(corrected_text)
+
+                    # ── 2026-08-01: a correction is a PATCH; verify it patched ──
+                    # The only check here used to be "does it parse". A response
+                    # that dropped Normal Findings, invented an Impression, or
+                    # emptied a section parsed fine and rendered as a normal
+                    # report — and `_send_to_reception` builds its payload from
+                    # the rendered bubble, so it shipped.
+                    try:
+                        original_json = json.loads(_clean(report_text))
+                    except Exception:
+                        original_json = None
+
+                    if isinstance(original_json, dict) and isinstance(corrected_json, dict):
+                        dropped = [k for k in original_json if k not in corrected_json]
+                        invented = [k for k in corrected_json if k not in original_json]
+                        emptied = [k for k, v in corrected_json.items()
+                                   if original_json.get(k) and not v]
+                        if dropped or invented or emptied:
+                            parts = []
+                            if dropped:
+                                parts.append("removed: " + ", ".join(map(str, dropped)))
+                            if invented:
+                                parts.append("added: " + ", ".join(map(str, invented)))
+                            if emptied:
+                                parts.append("emptied: " + ", ".join(map(str, emptied)))
+                            _log.warning("[CORRECTION] rejected — %s", "; ".join(parts))
+                            self.controller.bubble(
+                                "AI ChatBot",
+                                "❌ <b>Correction rejected — the result did not match the "
+                                "original report's structure.</b><br>"
+                                + "<br>".join(escape(p) for p in parts)
+                                + "<br><i>Your original report is unchanged. Please try "
+                                  "rephrasing the correction.</i>",
+                            )
+                            return
+
                     # Render as HTML report
                     html = self._render_kv_report_html([corrected_json])
                     self._bubble_origin_hint = "report"
-                    self.controller.bubble("AI ChatBot", html)
-                    
-                    # Register corrected report for further corrections
                     raw_json = json.dumps(corrected_json, ensure_ascii=False, indent=2)
+                    # 2026-08-01 — set the pending raw BEFORE bubbling so
+                    # `_append_bubble` persists the CORRECTED report to the DB.
+                    # Without this the correction lived only in the in-memory
+                    # dropdown: one refresh and the dropdown silently reverted to
+                    # the uncorrected text, so the next correction was applied to
+                    # a report that still had the old value.
+                    self._pending_report_raw_en = raw_json
+                    self.controller.bubble("AI ChatBot", html)
+
+                    # Register corrected report for further corrections
                     self.composer.register_correction_report(raw_json)
                 except json.JSONDecodeError as e:
-                    # Fallback if JSON is invalid
-                    self.controller.bubble("AI ChatBot", f"⚠️ <i>Invalid JSON format in corrected report: {str(e)}</i>")
-                    self.controller.bubble("AI ChatBot", f"<pre>{corrected_text}</pre>")
+                    # 2026-08-01 — do NOT bubble the raw text. It was interpolated
+                    # unescaped, so a finding like "lesion <8 mm" was parsed as
+                    # markup and truncated on screen; and every non-user bubble
+                    # carries a live "Send to reception" button, so an unparseable
+                    # dump was shippable. Log it, tell the user plainly.
+                    _log.error("[CORRECTION] unparseable response: %s | %s",
+                               e, (corrected_text or "")[:2000])
+                    self.controller.bubble(
+                        "AI ChatBot",
+                        "⚠️ <i>The correction response was not a valid report and was "
+                        "discarded. Your original report is unchanged — please retry.</i>",
+                    )
             
             except Exception as e:
                 self.controller.bubble("AI ChatBot", f"❌ Error processing correction: {str(e)}")
@@ -2927,13 +3220,12 @@ class OneChatPage(QWidget):
         )
 
         def work():
-            reporter_fn = openai_direct.reporter if backend == "openai" else reporter
-            return reporter_fn(
+            return _ai_module(backend).reporter(
                 user_msg=user_msg,
                 modality=modality,
                 normal_template=(normal_template or None),
                 CENTER_Key=center_key,
-                model=get_openai_model_for_feature("report", "gpt-5.4") if backend == "openai" else "gpt-4.1-mini",
+                model=_ai_model("report", "gpt-4.1-mini", backend),
             )
 
         def ok(res):
@@ -2955,35 +3247,45 @@ class OneChatPage(QWidget):
                 self._pending_report_raw_en = rep_raw_clean
                 items = self._parse_jsonish_list(rep_raw_clean)
 
-                # ✅ Filter out non-report / reasoning keys (we only want report-like fields)
+                # ── 2026-08-01: this was a WHITELIST, and it deleted report sections ──
+                # It kept ONLY the keys named below. "Report Title" is in every
+                # report, so `any(k in d for k in keep_keys)` was always true, so
+                # the whitelist branch ALWAYS ran — and every key not on the list
+                # was dropped before rendering.
+                #
+                # The keys it dropped are the ones that carry the clinical answer:
+                #   mammography → "BI-RADS Category", "Breast Composition",
+                #                 "Axillary Evaluation"
+                #   obstetric   → "Gestational Age & Dating", "Biometry",
+                #                 "Amniotic Fluid", "Placenta & Umbilical Cord",
+                #                 "Fetal Presentation", "Anatomy Survey", "Doppler"
+                # A mammogram rendered with no BI-RADS category at all, and
+                # `_send_to_reception` builds its payload from the rendered bubble,
+                # so the referring clinician received it that way too. The raw JSON
+                # stored in the DB was complete, which is why this was invisible.
+                #
+                # The intent was only ever to strip reasoning/meta keys, and the
+                # blacklist below already did that. So: blacklist only, anchored so
+                # a legitimate section (e.g. "Clinical Correlation") cannot be eaten
+                # by a loose substring.
                 try:
                     import re
-                    keep_keys = {
-                        "Report Title", "Pathological Findings", "Normal Findings",
-                        "Recommendations", "Recommendation",
-                        "Impression", "Impressions", "Conclusion",
-                        "عنوان گزارش", "یافته‌های پاتولوژیک", "یافته های پاتولوژیک",
-                        "یافته‌های طبیعی", "یافته های طبیعی",
-                        "توصیه‌ها", "توصیه ها", "پیشنهادات", "پیشنهادها", "ریکامندیشن",
-                        "نتیجه گیری", "ایمپرشن"
-                    }
-
+                    noisy_pat = re.compile(
+                        r"(?i)^(step_\d+.*|reasoning.*|knowledge.*|mode|clinical|"
+                        r"primary diagnoses.*|terminology.*|differential.*|"
+                        r"note|notes|changes|changes made|explanation|"
+                        r"summary of changes|what i did)$"
+                    )
                     filtered_items = []
                     for d in (items or []):
                         if not isinstance(d, dict):
                             continue
-                        if any(k in d for k in keep_keys):
-                            nd = {k: d[k] for k in d.keys() if k in keep_keys}
-                            filtered_items.append(nd or d)
-                        else:
-                            noisy_pat = re.compile(
-                                r"(?i)(^step_\d+|reasoning|knowledge|mode|clinical|primary diagnoses|terminology|differential)"
-                            )
-                            nd = {k: v for k, v in d.items() if not noisy_pat.search(str(k).strip())}
-                            filtered_items.append(nd if nd else d)
+                        nd = {k: v for k, v in d.items()
+                              if not noisy_pat.match(str(k).strip())}
+                        filtered_items.append(nd if nd else d)
                     items = filtered_items or items
-                except Exception:
-                    pass
+                except Exception as exc:
+                    _log.warning("[REPORT] section filter failed, rendering unfiltered: %s", exc)
                 html = self._render_kv_report_html(items)
                 self._bubble_origin_hint = "report"
                 self.controller.bubble("AI ChatBot", html)
@@ -3693,12 +3995,12 @@ class OneChatPage(QWidget):
                 raise RuntimeError("❌ AI backend is not configured. Please complete EchoMind Settings.")
 
             if self.page_mode in ("Assist", "Search") and callable(globals().get("standard_assist_search", None)):
-                print("[Standardize] using standard_assist_search")
-                fn = openai_direct.standard_assist_search if backend == "openai" else standard_assist_search
-                return fn(user_msg=to_send, CENTER_Key=center_key)
-            print("[Standardize] using standardize")
-            fn = openai_direct.standardize if backend == "openai" else standardize
-            return fn(user_msg=to_send, CENTER_Key=center_key)
+                _log.debug("[Standardize] using standard_assist_search")
+                return _ai_module(backend).standard_assist_search(
+                    user_msg=to_send, CENTER_Key=center_key
+                )
+            _log.debug("[Standardize] using standardize")
+            return _ai_module(backend).standardize(user_msg=to_send, CENTER_Key=center_key)
 
         def ok(resp: dict):
             print(f"\n{'='*80}")
@@ -3832,15 +4134,32 @@ class OneChatPage(QWidget):
             self.list.clear()
             self.history.clear()
 
-            # 3) build list + cache messages
-            for sid, title in ordered:
-                try:
-                    rows = U.ai_fetch_messages_full(sid)
-                except Exception:
-                    rows = []
+            # 3) build list
+            # ── 2026-07-31: this loop used to be an N+1 ───────────────────────
+            # It called `ai_fetch_messages_full(sid)` for EVERY session — a
+            # `SELECT id, who, html, origin` with no LIMIT — to fill
+            # `self.sessions[sid]` and to set `loaded_any`. With 40 sessions x
+            # 30 messages x ~15 KB of report HTML that is ~18 MB read and
+            # retained over 40+ sequential round-trips, inside the mode
+            # button's click handler, before the first bubble paints — to
+            # display exactly ONE session.
+            #
+            # And the payload was never used: every read of `self.sessions` in
+            # this file wants the KEYS (membership at "last in self.sessions",
+            # the first-key fallback) or appends to it. `_open_session` refetches
+            # the messages it renders anyway.
+            #
+            # One GROUP BY replaces the whole loop's I/O.
+            try:
+                _msg_counts = U.ai_count_messages_by_session() or {}
+            except Exception:
+                _msg_counts = {}
 
-                self.sessions[sid] = [(who, html) for _, who, html, _ in (rows or [])]
-                if rows:
+            for sid, title in ordered:
+                # keys only — the message bodies are fetched on demand by
+                # `_open_session`, which is the only thing that renders them.
+                self.sessions[sid] = []
+                if _msg_counts.get(sid):
                     loaded_any = True
 
                 it = QListWidgetItem()
@@ -4031,12 +4350,28 @@ class OneChatPage(QWidget):
         html_content = ""
         try:
             html_content = (bubble.get_html() or "").strip()
-            print(f"✅ HTML content extracted: {len(html_content)} characters")
-            logger.info(f"✅ HTML content extracted: {len(html_content)} characters")
+            logger.info("HTML content extracted: %d characters", len(html_content))
         except Exception as e:
             print(f"❌ Error extracting HTML: {e}")
             logger.error(f"❌ Error extracting HTML: {e}")
             return
+
+        # The OUTGOING copy is built here, on the GUI thread, because it reads
+        # the bubble's font (see F1: the worker must not touch a Qt object).
+        #
+        # `get_html()` returns the hand-built markup, where the assistant
+        # renderer and the RTL wrapper keep their styling in `<style>` blocks
+        # addressed by CSS class. `prepare_report_html_for_server()` is
+        # inline-only by contract and strips those, which is why colours, fonts
+        # and sizes vanished on the way to Reception while the Medical Report
+        # Editor — which sends fully-inline `QTextEdit.toHtml()` — kept them.
+        # `get_export_html()` produces that same fully-inline shape.
+        # The LOCAL DB copy below deliberately still stores `html_content`.
+        try:
+            server_source = (bubble.get_export_html() or "").strip() or html_content
+        except Exception as exc:
+            logger.warning("[RECEPTION_SERVER] export HTML failed; using raw: %s", exc)
+            server_source = html_content
 
         if not html_content:
             print("❌ Report content is empty!")
@@ -4100,8 +4435,25 @@ class OneChatPage(QWidget):
             )
             return
 
-        def _send_with_patient_id(target_patient_id: str) -> bool:
+        # ── F1 (2026-07-28): this runs on a WORKER thread ────────────────────
+        # It used to run inline on the GUI thread and issue a 20 s GET plus a
+        # 30 s POST plus a DB write, with no spinner, no wait cursor and no
+        # cancel — so a slow or unreachable reception server froze the whole
+        # workstation for up to ~50 s ("Not Responding").
+        #
+        # THE RULE THAT MAKES THIS SAFE: **this function must not touch a single
+        # Qt object.** It therefore no longer calls `themed_message_box` and no
+        # longer calls `_propagate_reception_status_to_pacs` (that helper walks
+        # `self.parent()` and may invoke `widget._change_report_status`, i.e.
+        # GUI work). Instead it RETURNS a description of what should be shown /
+        # done, and `_deliver_reception_result` — which always runs on the GUI
+        # thread, in both the async and the legacy path — performs it.
+        #
+        # Return contract: {"ok": bool, "icon", "title", "text",
+        #                   "propagate": (status, send_mode) | None}
+        def _send_with_patient_id(target_patient_id: str) -> dict:
             patient_validated = False
+            propagate_request = None
             try:
                 # Reception/Workflow API base URL - configurable, not hard-coded.
                 from modules.network.reception_api_config import get_reception_api_base_url
@@ -4119,13 +4471,12 @@ class OneChatPage(QWidget):
 
                 if not response.ok:
                     logger.warning("[RECEPTION_SERVER] ❌ Patient ID not found: <patient_id>")
-                    themed_message_box(
-                        self,
-                        QMessageBox.Icon.Warning,
-                        "Patient ID Not Found",
-                        "The patient ID was not found on the server.\nPlease check and try again.",
-                    )
-                    return False
+                    return {
+                        "ok": False,
+                        "icon": QMessageBox.Icon.Warning,
+                        "title": "Patient ID Not Found",
+                        "text": "The patient ID was not found on the server.\nPlease check and try again.",
+                    }
 
                 patient_validated = True
                 try:
@@ -4135,17 +4486,16 @@ class OneChatPage(QWidget):
                     pass
             except Exception as e:
                 logger.error(f"[RECEPTION_SERVER] ❌ Patient validation failed: {e}")
-                themed_message_box(
-                    self,
-                    QMessageBox.Icon.Warning,
-                    "Patient ID Validation Failed",
-                    "Unable to validate the patient ID with the server.\nPlease try again.",
-                )
-                return False
+                return {
+                    "ok": False,
+                    "icon": QMessageBox.Icon.Warning,
+                    "title": "Patient ID Validation Failed",
+                    "text": "Unable to validate the patient ID with the server.\nPlease try again.",
+                }
 
             # Save to database
-            print(f"\n💾 Saving report to database...")
-            print(f"   Patient ID: {target_patient_id}")
+            # 2026-07-31 — the stdout copies are dropped; the logger below is
+            # the one diagnostic channel, and it is rotated and access-controlled.
             logger.info(f"💾 Saving report to database...")
             logger.info(f"   Patient ID: {target_patient_id}")
 
@@ -4211,12 +4561,12 @@ class OneChatPage(QWidget):
                                 from PacsClient.utils.report_server_html import (
                                     prepare_report_html_for_server,
                                 )
-                                server_html = prepare_report_html_for_server(html_content)
+                                server_html = prepare_report_html_for_server(server_source)
                             except Exception as exc:
                                 logger.warning(
                                     f"[RECEPTION_SERVER] HTML normalization failed; sending raw: {exc}"
                                 )
-                                server_html = html_content
+                                server_html = server_source
 
                             payload = {
                                 "receptionId": reception_id,
@@ -4265,18 +4615,22 @@ class OneChatPage(QWidget):
                             except Exception:
                                 pass
                             if response_text:
-                                logger.info(f"[RECEPTION_SERVER]   body={response_text[:2000]}")
+                                # F8: was a 2000-char dump of the echoed report.
+                                logger.info(
+                                    "[RECEPTION_SERVER]   body_bytes=%d", len(response_text)
+                                )
 
                             response_json = None
                             try:
                                 response_json = response.json()
-                                logger.info(f"[RECEPTION_SERVER]   json={response_json}")
-                                # Print complete JSON response to console
-                                print(f"\n{'='*80}")
-                                print("[RECEPTION_SERVER] ✅ Full Server Response JSON:")
-                                print(f"{'='*80}")
-                                print(json.dumps(response_json, indent=2, ensure_ascii=False))
-                                print(f"{'='*80}\n")
+                                # F8: the reception response echoes report
+                                # content — log the SHAPE, not the body.
+                                logger.info(
+                                    "[RECEPTION_SERVER]   json_keys=%s",
+                                    sorted(response_json.keys())
+                                    if isinstance(response_json, dict)
+                                    else type(response_json).__name__,
+                                )
                             except Exception:
                                 response_json = None
 
@@ -4286,14 +4640,14 @@ class OneChatPage(QWidget):
                                 # Mirror the chosen status onto the PACS
                                 # report-status pipeline (same mechanism as
                                 # the patient sync workflow).
-                                try:
-                                    self._propagate_reception_status_to_pacs(
-                                        selected_status, send_mode
-                                    )
-                                except Exception as exc:
-                                    logger.warning(
-                                        f"[RECEPTION_SERVER] PACS status sync skipped: {exc}"
-                                    )
+                                #
+                                # DEFERRED TO THE GUI THREAD (F1): the helper
+                                # walks `self.parent()` and may call
+                                # `widget._change_report_status(...)`. Doing that
+                                # from this worker thread would be a Qt
+                                # violation. The request is handed back and
+                                # `_deliver_reception_result` performs it.
+                                propagate_request = (selected_status, send_mode)
                                 # Sync the INO reception APPROVAL FLAGS to match
                                 # the status. update-report only writes
                                 # report.status; INO shows the patient state from
@@ -4316,15 +4670,8 @@ class OneChatPage(QWidget):
                         server_message = f"Exception: {e}"
                         logger.error(f"[RECEPTION_SERVER] ❌ Exception while sending: {e}")
 
-                    print("\n" + "="*100)
-                    print("✅ ✅ ✅ SUCCESS! Report saved to database")
-                    print("="*100)
-                    print(f"📌 Report ID: {report_id}")
-                    print(f"👤 Patient ID: {target_patient_id}")
-                    print(f"🔬 Modality: {modality}")
-                    print(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
-                    print(f"• Server message: {server_message}")
-                    print("="*100 + "\n")
+                    # 2026-07-31 — stdout copies dropped (see the logger block
+                    # just below, which records the same fields).
 
                     logger.info("="*100)
                     logger.info("✅ ✅ ✅ SUCCESS! Report saved to database")
@@ -4335,21 +4682,23 @@ class OneChatPage(QWidget):
                     logger.info(f"⏱️  Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')}")
                     logger.info("="*100)
 
-                    themed_message_box(
-                        self,
-                        QMessageBox.Icon.Information,
-                        "✅ Report Saved Successfully",
-                        f"📝 The report has been saved successfully.\n\n"
-                        f"📌 Report ID: {report_id}\n"
-                        f"👤 Patient ID: {target_patient_id}\n"
-                        f"⏱️ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
-                        f"📨 Status:\n"
-                        f"• Saved to database\n"
-                        f"• Patient ID validated: {'✅' if patient_validated else '❌'}\n"
-                        f"• Sent to reception: {'✅' if server_sent else '❌'}\n"
-                        f"• Server status: {server_status if server_status is not None else 'N/A'}\n"
-                    )
-                    return True
+                    return {
+                        "ok": True,
+                        "icon": QMessageBox.Icon.Information,
+                        "title": "✅ Report Saved Successfully",
+                        "text": (
+                            f"📝 The report has been saved successfully.\n\n"
+                            f"📌 Report ID: {report_id}\n"
+                            f"👤 Patient ID: {target_patient_id}\n"
+                            f"⏱️ Timestamp: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+                            f"📨 Status:\n"
+                            f"• Saved to database\n"
+                            f"• Patient ID validated: {'✅' if patient_validated else '❌'}\n"
+                            f"• Sent to reception: {'✅' if server_sent else '❌'}\n"
+                            f"• Server status: {server_status if server_status is not None else 'N/A'}\n"
+                        ),
+                        "propagate": propagate_request,
+                    }
 
                 print("\n" + "="*100)
                 print("❌ ❌ ❌ FAILED! Database save failed")
@@ -4359,8 +4708,12 @@ class OneChatPage(QWidget):
                 logger.error("❌ ❌ ❌ FAILED! Database save failed")
                 logger.error("="*100)
 
-                themed_message_box(self, QMessageBox.Icon.Warning, "Error", "Failed to save report!")
-                return False
+                return {
+                    "ok": False,
+                    "icon": QMessageBox.Icon.Warning,
+                    "title": "Error",
+                    "text": "Failed to save report!",
+                }
 
             except Exception as e:
                 print("\n" + "="*100)
@@ -4375,11 +4728,94 @@ class OneChatPage(QWidget):
                 logger.error(traceback.format_exc())
                 logger.error("="*100)
 
-                themed_message_box(self, QMessageBox.Icon.Critical, "Error", f"Error: {str(e)}")
-                return False
+                return {
+                    "ok": False,
+                    "icon": QMessageBox.Icon.Critical,
+                    "title": "Error",
+                    "text": f"Error: {str(e)}",
+                }
 
-        if not _send_with_patient_id(patient_id):
+        # ── GUI-thread consumer, shared by BOTH paths ────────────────────────
+        def _deliver_reception_result(result) -> None:
+            """Perform the GUI work the worker deliberately did not do.
+
+            Runs on the GUI thread in both modes: as the `_run_async` success
+            callback when threaded, and inline when the kill switch is set.
+            """
+            if not isinstance(result, dict):
+                _set_bubble_status("Failed", "❌", "#ff6b6b")
+                return
+            if result.get("ok"):
+                _set_bubble_status("Sent", "✅", "#5cd18e")
+            else:
+                _set_bubble_status("Failed", "❌", "#ff6b6b")
+            propagate = result.get("propagate")
+            if propagate:
+                try:
+                    self._propagate_reception_status_to_pacs(propagate[0], propagate[1])
+                except Exception as exc:
+                    logger.warning(f"[RECEPTION_SERVER] PACS status sync skipped: {exc}")
+            title = result.get("title")
+            if title:
+                themed_message_box(
+                    self,
+                    result.get("icon", QMessageBox.Icon.Information),
+                    title,
+                    str(result.get("text") or ""),
+                )
+
+        # 2026-07-31 — `update_reception_status` / `reset_reception_status`
+        # were written, styled and wired to a real QLabel on the bubble, and had
+        # ZERO call sites. The progress bubble sits at the bottom of the chat,
+        # which the user may have scrolled away from; this is the feedback that
+        # appears next to the button they actually pressed.
+        def _set_bubble_status(status: str, icon: str, color: str) -> None:
+            try:
+                bubble.update_reception_status(status, icon, color)
+            except Exception:
+                pass
+
+        _set_bubble_status("Sending…", "⏳", "#ffb366")
+
+        if _reception_send_async_enabled():
+            # Off the GUI thread. `_run_async` also shows a progress bubble,
+            # locks the composer for the duration, and registers the worker in
+            # `self._workers` so the close-while-in-flight teardown
+            # (`cleanup()` / `_ORPHANED_WORKERS`) can detach it safely.
+            def _reception_error(msg: str) -> None:
+                _set_bubble_status("Failed", "❌", "#ff6b6b")
+                themed_message_box(
+                    self,
+                    QMessageBox.Icon.Critical,
+                    "Send to Reception Failed",
+                    str(msg or "The report could not be sent."),
+                )
+
+            # ── 2026-07-31 ───────────────────────────────────────────────
+            # `lock_btn` disables the button for the duration and re-enables it
+            # in `cleanup()`. It was never passed, so the ONE control the user
+            # had just pressed stayed live for the whole 20 s GET + 30 s POST:
+            # a second click re-opened the reception-ID dialog and started a
+            # second send, giving reception two records for one study.
+            #
+            # `cancel_text` is honest: this work writes to the reception server
+            # AND the local DB, and an in-flight request cannot be interrupted.
+            self._run_async(
+                lambda: _send_with_patient_id(patient_id),
+                _deliver_reception_result,
+                _reception_error,
+                lock_btn=getattr(bubble, "btnSendReception", None),
+                typing="Sending to reception…",
+                cancel_text=(
+                    "⏹️ <i>Stopped waiting for reception. The send may already "
+                    "have completed on the server — check reception before "
+                    "sending again, or you may create a duplicate report.</i>"
+                ),
+            )
             return
+
+        # Kill switch: fully synchronous, exactly as before this fix.
+        _deliver_reception_result(_send_with_patient_id(patient_id))
 
     def _persian_bubble(self, bubble: "MessageBubble"):
         import logging
@@ -4524,16 +4960,32 @@ class OneChatPage(QWidget):
         def work():
             backend, _center_name, center_key = _resolve_active_ai_identity()
             if not center_key:
-                self.history.add_bubble("AI ChatBot", "❌ AI backend is not configured. Please complete EchoMind Settings.")
-                return
+                # 2026-07-31 — this used to call `self.history.add_bubble(...)`
+                # RIGHT HERE, inside `work()`, which `ApiWorker.run` executes on
+                # the QThread. That builds a MessageBubble (a QLabel, six
+                # QToolButtons, layouts, stylesheets) and splices it into the
+                # live layout from a non-GUI thread — undefined behaviour, and
+                # on Windows typically a silent access violation with no Python
+                # frame. Reachable through ordinary configuration: any time the
+                # OpenAI key is empty or the backend has not been validated yet.
+                #
+                # The rule this file already states for the reception worker
+                # applies here too: the worker returns DATA, the GUI thread
+                # renders it. `_run_async`'s error callback is on the GUI
+                # thread, so raising is the correct way out.
+                raise RuntimeError(
+                    "❌ AI backend is not configured. Please complete EchoMind Settings."
+                )
 
             # ✅ Assistant => translate free text
             if is_assistant:
-                fn = openai_direct.translate_text_to_persian if backend == "openai" else translate_text_to_persian
-                return fn(user_msg=english_payload, CENTER_Key=center_key)
+                return _ai_module(backend).translate_text_to_persian(
+                    user_msg=english_payload, CENTER_Key=center_key
+                )
             # ✅ Report => translate structured report
-            fn = openai_direct.translate_report if backend == "openai" else translate_report
-            return fn(user_msg=english_payload, CENTER_Key=center_key)
+            return _ai_module(backend).translate_report(
+                user_msg=english_payload, CENTER_Key=center_key
+            )
 
         # ─────────────────────────────────────────────
         # 3) Handle success
@@ -4566,9 +5018,11 @@ class OneChatPage(QWidget):
 
                 # Persian assist output log (length + preview)
                 try:
-                    preview = txt[:400].replace("\n", " ")
-                    logger.info("[ASSISTANT-FA] len=%d preview=%s", len(txt), preview)
-                    print(f"[ASSISTANT-FA] len={len(txt)} preview={preview}")
+                    # 2026-07-31 — this logged 400 characters of the PERSIAN
+                    # REPORT at INFO (a level that reaches the collected app
+                    # log) and printed it as well. The length is the diagnostic
+                    # signal; the body is patient content.
+                    _log.debug("[ASSISTANT-FA] chars=%d", len(txt))
                 except Exception:
                     pass
 
@@ -4708,7 +5162,17 @@ class OneChatPage(QWidget):
 
     def _run_async(self, work: t.Callable, ok: t.Callable[[dict], None],
                    err: t.Callable[[str], None] | None = None,
-                   lock_btn: QPushButton | None = None, typing="Thinking"):
+                   lock_btn: QPushButton | None = None, typing="Thinking",
+                   cancel_text: str | None = None):
+        # `cancel_text` — what to tell the user when they press Cancel.
+        # The default ("Request cancelled") is TRUE for a read-only AI call:
+        # detaching the worker means the answer never reaches the UI and
+        # nothing changed anywhere. It is FALSE for work with side effects — an
+        # in-flight `requests` call cannot be interrupted, so a reception send
+        # that has already POSTed still writes the report and still updates the
+        # DB. Telling the user it was cancelled invites them to press Send
+        # again and create a duplicate clinical record. Callers whose work
+        # mutates server or DB state MUST pass an honest string.
         # ⬅️ مهم: هر بابل جدیدی (حتی تایپینگ) می‌آید، خوشامد را بردار
         self._drop_welcome_if_any()
 
@@ -4725,6 +5189,31 @@ class OneChatPage(QWidget):
         self._workers = getattr(self, "_workers", [])
         self._workers.append(worker)
 
+        # F5 (2026-07-28): a cancel affordance. There was none — the composer
+        # stayed locked until the request returned, and the chat modes used a
+        # 300 s timeout, so a hung server locked the composer for FIVE MINUTES
+        # with no way out but closing the window. `_transcribe_now` already had
+        # a cancel button; `_run_async` did not.
+        cancelled = {"flag": False}
+        # Only ONE owner of the shared cancel button at a time. A transcription
+        # already wires `cancelClicked` to its own handler and drives
+        # `show_cancel`; if one is in flight we leave the button alone rather
+        # than have a single click cancel two unrelated requests.
+        owns_cancel = {"flag": not getattr(self, "_tr_in_flight", False)}
+
+        def _stop_cancel_wiring():
+            if not owns_cancel["flag"]:
+                return
+            owns_cancel["flag"] = False
+            try:
+                self.composer.cancelClicked.disconnect(_on_cancel)
+            except Exception:
+                pass
+            try:
+                self.composer.show_cancel(False)
+            except Exception:
+                pass
+
         def cleanup():
             self.history.remove_widget(typing_b)
             typing_b.stop()
@@ -4734,25 +5223,73 @@ class OneChatPage(QWidget):
             except ValueError:
                 pass
             self._busy_count = max(0, self._busy_count - 1)
-            if self._busy_count == 0:
+            _stop_cancel_wiring()
+            # Do NOT re-enable the composer while a transcription is still in
+            # flight. `_transcribe_now` locks btn_mic/btn_send/btn_plus through
+            # its OWN mechanism, and `composer.set_enabled(True)` re-enables all
+            # three — so finishing a bubble-triggered translate/correction used
+            # to unlock the mic mid-transcription and let a second request fire.
+            if self._busy_count == 0 and not getattr(self, "_tr_in_flight", False):
                 try:
                     self.btn_new.setEnabled(True)
                     self.composer.set_enabled(True)
                 except Exception:
                     pass
 
+        def _on_cancel():
+            """Stop WAITING for this request; never leave a live QThread parentless.
+
+            An in-flight `requests` call cannot be interrupted, so we use the
+            same proven "detach, don't wait" contract as the close-teardown:
+            disconnect the signals so the result can never reach the UI, keep a
+            module-level reference so Python does not GC a running QThread (that
+            aborts the process), and let it finish harmlessly.
+            """
+            if cancelled["flag"]:
+                return
+            cancelled["flag"] = True
+            try:
+                worker.done.disconnect(_ok)
+            except Exception:
+                pass
+            try:
+                worker.failed.disconnect(_er)
+            except Exception:
+                pass
+            cleanup()
+            try:
+                if worker.isRunning():
+                    worker.setParent(None)
+                    _ORPHANED_WORKERS.append(worker)
+                    worker.finished.connect(lambda _w=worker: _release_orphan_worker(_w))
+            except Exception:
+                pass
+            self.controller.bubble(
+                "AI ChatBot",
+                cancel_text or "⏹️ <i>Request cancelled.</i>",
+            )
+
         def _ok(res: dict):
+            if cancelled["flag"]:
+                return
             cleanup()
             ok(res)
 
         def _er(msg: str):
+            if cancelled["flag"]:
+                return
             cleanup()
             safe = _safe_fa_connection_error(msg)
             (err(safe) if err else self.controller.bubble("AI ChatBot", safe))
 
-
         worker.done.connect(_ok)
         worker.failed.connect(_er)
+        if owns_cancel["flag"]:
+            try:
+                self.composer.cancelClicked.connect(_on_cancel)
+                self.composer.show_cancel(True)
+            except Exception:
+                owns_cancel["flag"] = False
         worker.start()
 
     @Slot(str, str)
@@ -4831,6 +5368,28 @@ class OneChatPage(QWidget):
             on_persian=on_persian,
             on_send_reception=on_send_reception,
         )
+        # ── 2026-07-31: the Retry chip could never appear ────────────────────
+        # `_send_with_mode` seeds `_pending_retry` with {"bubble": None} and
+        # NOTHING ever wrote a bubble back into it, so `_er_for`'s `if bub:` was
+        # always false and `MessageBubble.btnRetry` (built hidden) was never
+        # shown. The whole preserved-text / preserved-images retry path was
+        # unreachable. In Chat mode that also means the dictated text is gone
+        # from the composer (it is cleared on send) and survives only inside a
+        # chat bubble the user has to copy out by hand.
+        #
+        # The user bubble created for THIS send is the one the chip belongs on,
+        # and it is created before `_run_async` is scheduled, so it is always in
+        # place before the error callback can fire.
+        try:
+            if (
+                is_user
+                and isinstance(getattr(self, "_pending_retry", None), dict)
+                and self._pending_retry.get("bubble") is None
+            ):
+                self._pending_retry["bubble"] = b
+        except Exception:
+            pass
+
         # Keep origin on live bubbles (used by Persian/Edit)
         try:
             b._origin = origin
@@ -4953,6 +5512,19 @@ class OneChatPage(QWidget):
         except Exception:
             pass
 
+        # ── 2026-07-31: images must NOT survive a session boundary ───────────
+        # The attachment picker explicitly offers "Other Patient -> Enter
+        # patient id", so `_image_attachments` can hold another patient's
+        # slices. It was cleared in exactly two places, both success-only
+        # callbacks: `clear_attachment()` above clears the VOICE queue only.
+        # So: attach 3 images from patient B -> send fails -> New Chat ->
+        # dictate patient A -> Send, and B's images are POSTed as the basis for
+        # A's report, with the bubble saying only "Attached image(s): 3".
+        try:
+            self.composer.clear_image_attachments()
+        except Exception:
+            pass
+
         # ✅ Correction: clear dropdown for new chat
         try:
             self.composer.clear_correction_reports() 
@@ -5008,6 +5580,13 @@ class OneChatPage(QWidget):
         # 0) set local current sid
         self.current_session_id = sid
         self.controller.switch_session(sid)
+
+        # 2026-07-31 — see `_new_chat`: attachments queued against the previous
+        # session (possibly a different patient) must not follow the user here.
+        try:
+            self.composer.clear_image_attachments()
+        except Exception:
+            pass
 
         # 1) persist last session (per-study + global)
         try:
@@ -5335,7 +5914,24 @@ class OneChatPage(QWidget):
         # --- Create typing bubble ---
         typing_b = self.history.add_typing("AI ChatBot", "Transcribing…")
         self._tr_typing = typing_b
+        # ── 2026-07-31: cancellation must be PER REQUEST ─────────────────────
+        # `self._tr_cancelled` is page-level, but `_transcribe_now` can be
+        # re-entered while a previous worker is still running (the noisy-mode
+        # auto-retry does exactly that, and the user can simply dictate again).
+        # Re-entry reset the flag to False, so the OLD worker then tested the
+        # NEW call's flag: dictate A -> cancel -> dictate B, and worker A comes
+        # back, sees "not cancelled", and inserts transcript A into the report
+        # box next to B. A dictation the user explicitly cancelled ends up in
+        # the report. The token below belongs to THIS call and nothing else can
+        # reset it. `self._tr_cancelled` is kept in sync for any other reader.
+        _tr_token = {"cancelled": False}
+        self._tr_token = _tr_token
         self._tr_cancelled = False
+        _cancel_wiring = {"fn": None}
+        # F5: tells `_run_async`'s cleanup not to re-enable the composer while
+        # this transcription is still running (its buttons are locked below by a
+        # SEPARATE mechanism, and composer.set_enabled(True) would unlock them).
+        self._tr_in_flight = True
 
         # --- Disable UI (except cancel) ---
         self.composer.show_cancel(True)
@@ -5347,6 +5943,20 @@ class OneChatPage(QWidget):
         # Cleanup helper (UI restore)
         # -----------------------------
         def cleanup_ui():
+            self._tr_in_flight = False   # F5: transcription no longer holds the composer
+            # 2026-07-31 — drop THIS call's cancel wiring on EVERY exit path.
+            # It used to be disconnected only inside `on_cancel`, so every
+            # SUCCESSFUL transcription left a live stale handler behind. Three
+            # successful dictations then one Cancel click ran four handlers,
+            # each closing over its own `current_tab` — yanking the composer to
+            # a tab the user never chose, and each marking its own token.
+            fn = _cancel_wiring.get("fn")
+            if fn is not None:
+                _cancel_wiring["fn"] = None
+                try:
+                    self.composer.cancelClicked.disconnect(fn)
+                except Exception:
+                    pass
             if self._tr_typing:
                 try:
                     self._tr_typing.stop()
@@ -5354,10 +5964,18 @@ class OneChatPage(QWidget):
                     pass
                 self.history.remove_widget(self._tr_typing)
                 self._tr_typing = None
-            self.composer.btn_plus.setEnabled(True)
-            self.composer.btn_mic.setEnabled(True)
-            self.composer.btn_send.setEnabled(True)
-            self.composer.show_cancel(False)
+            # 2026-07-31 — do NOT unlock the composer while a `_run_async`
+            # request is still in flight. `_run_async` deliberately declines to
+            # wire the cancel button while a transcription is running
+            # (`owns_cancel`), so hiding it here left that request with NO
+            # cancel affordance at all, and re-enabling Send let a second
+            # request start on top of it. This is the exact mirror of the guard
+            # `_run_async.cleanup` already carries in the other direction.
+            if self._busy_count == 0:
+                self.composer.btn_plus.setEnabled(True)
+                self.composer.btn_mic.setEnabled(True)
+                self.composer.btn_send.setEnabled(True)
+                self.composer.show_cancel(False)
             try:
                 self.composer._apply_mic_mode("record")
             except Exception:
@@ -5383,7 +6001,7 @@ class OneChatPage(QWidget):
             """
             if _is_retry or quality_mode != "clear":
                 return False
-            if getattr(self, "_tr_cancelled", False):
+            if _tr_token["cancelled"]:      # THIS request, not "the newest one"
                 return False
             cleanup_ui()
             self.controller.bubble(
@@ -5439,7 +6057,7 @@ class OneChatPage(QWidget):
                 self._log_irannobat_transcript_usage(resp, [requested_path] if requested_path else None)
             except Exception:
                 pass
-            if self._tr_cancelled:
+            if _tr_token["cancelled"]:      # THIS request, not "the newest one"
                 cleanup_ui()
                 return
 
@@ -5489,6 +6107,21 @@ class OneChatPage(QWidget):
                 sep = "\n" if (existing and not existing.endswith("\n")) else ""
                 new_text = existing + sep + tr
                 self.composer.set_tab_text(target_tab, new_text)
+
+                # ── 2026-07-31: actually save it ─────────────────────────────
+                # `_persist_transcribe` existed, wrote `<sid>-transcribe.json`,
+                # and had ZERO call sites — while BOTH session-restore paths
+                # read that exact file. So the only copy of a completed
+                # dictation lived in a QTextEdit. Made concrete by the voice
+                # adapter: say "generate the report" and
+                # `EchoMindCommandAdapter` calls `_open_mode_page("report")`,
+                # which `deleteLater()`s the page holding the transcript and
+                # builds a fresh empty one. A four-minute dictation, gone.
+                if target_tab == "transcribe":
+                    try:
+                        self._persist_transcribe(new_text)
+                    except Exception as exc:
+                        _log.warning("[AI-Chat] transcript not persisted: %s", exc)
 
                 # ✅ NEW: after successful transcription, remove the voice attachment chip
                 try:
@@ -5547,13 +6180,11 @@ class OneChatPage(QWidget):
         # Cancel button handler
         # -----------------------------
         def on_cancel():
-            self._tr_cancelled = True
-            cleanup_ui()
-            try:
-                self.composer.cancelClicked.disconnect(on_cancel)
-            except Exception:
-                pass
+            _tr_token["cancelled"] = True    # THIS request only
+            self._tr_cancelled = True        # legacy mirror
+            cleanup_ui()                     # also drops the wiring below
 
+        _cancel_wiring["fn"] = on_cancel
         self.composer.cancelClicked.connect(on_cancel)
 
     def _send_with_mode(
@@ -5586,9 +6217,11 @@ class OneChatPage(QWidget):
         sent_text = (text or "").strip()
         self._pending_retry = {"mode": mode, "text": sent_text, "images": images_b64, "bubble": None}
 
-        print(f"\n[MODE] {mode} | session_id={self.controller.session_id!r}")
-        if sent_text:
-            print(f"[PAYLOAD] text={sent_text[:120]}{'...' if len(sent_text) > 120 else ''}")
+        # F8: the dictated text is patient content — log its SIZE, never its body.
+        _log.debug(
+            "[MODE] %s | session=%r | text_chars=%d | images=%d",
+            mode, self.controller.session_id, len(sent_text or ""), len(images_b64),
+        )
 
         def _er_for(target_mode: str):
             def er(msg: str):
@@ -5621,7 +6254,7 @@ class OneChatPage(QWidget):
 
         # ---------- CHAT ----------
         def ok_chat(resp: dict):
-            print("[CHAT] Parsed JSON:", json.dumps(resp, ensure_ascii=False, indent=2))
+            _dbg_response("CHAT-parsed", None)
             self._log_irannobat_usage_from_resp(resp)   # ✅ NEW
             _clear_retry_if("Chat")
             if has_images and hasattr(self.composer, "clear_image_attachments"):
@@ -5646,9 +6279,9 @@ class OneChatPage(QWidget):
                     payload = {"user_message": sent_text}
                 if has_images:
                     payload["images"] = images_b64
-                print(f"[CHAT] POST {URL_CHAT}\n[CHAT] Payload:", json.dumps(payload, ensure_ascii=False))
-                r = requests.post(URL_CHAT, json=payload, timeout=300)
-                print(f"[CHAT] Status={r.status_code}\n[CHAT] Response text:\n{r.text}")
+                _dbg_request("CHAT", URL_CHAT, payload)
+                r = echomind_http.post(URL_CHAT, json=payload)
+                _dbg_response("CHAT", r)
                 r.raise_for_status()
                 return r.json()
 
@@ -5657,7 +6290,7 @@ class OneChatPage(QWidget):
 
         # ---------- REPORT ----------
         def ok_report(resp: dict):
-            print("[REPORT] Parsed JSON:", json.dumps(resp, ensure_ascii=False, indent=2))
+            _dbg_response("REPORT-parsed", None)
             self._log_irannobat_usage_from_resp(resp)   # ✅ NEW
             _clear_retry_if("Report")
             if has_images and hasattr(self.composer, "clear_image_attachments"):
@@ -5721,9 +6354,9 @@ class OneChatPage(QWidget):
                     payload["gpu_id"] = gpu_id
                 except Exception:
                     pass
-                print(f"[REPORT] POST {URL_GEN_REPORT}\n[REPORT] Payload:", json.dumps(payload, ensure_ascii=False))
-                r = requests.post(URL_GEN_REPORT, json=payload, timeout=300)
-                print(f"[REPORT] Status={r.status_code}\n[REPORT] Response text:\n{r.text}")
+                _dbg_request("REPORT", URL_GEN_REPORT, payload)
+                r = echomind_http.post(URL_GEN_REPORT, json=payload)
+                _dbg_response("REPORT", r)
                 r.raise_for_status()
                 return r.json()
 
@@ -5733,7 +6366,7 @@ class OneChatPage(QWidget):
 
         # ---------- ASSISTANT ----------
         def ok_assistant(resp: dict):
-            print("[ASSISTANT] Parsed JSON:", json.dumps(resp, ensure_ascii=False, indent=2))
+            _dbg_response("ASSISTANT-parsed", None)
             self._log_irannobat_usage_from_resp(resp)   # ✅ NEW
 
             sid_new = resp.get("session_id")
@@ -5775,10 +6408,9 @@ class OneChatPage(QWidget):
                 if self.controller.session_id:
                     payload["session_id"] = self.controller.session_id
 
-                print(f"[ASSISTANT] POST {URL_GEN_ASSISTANT}\n[ASSISTANT] Payload:",
-                      json.dumps(payload, ensure_ascii=False))
-                r = requests.post(URL_GEN_ASSISTANT, json=payload, timeout=300)
-                print(f"[ASSISTANT] Status={r.status_code}\n[ASSISTANT] Response text:\n{r.text}")
+                _dbg_request("ASSISTANT", URL_GEN_ASSISTANT, payload)
+                r = echomind_http.post(URL_GEN_ASSISTANT, json=payload)
+                _dbg_response("ASSISTANT", r)
                 r.raise_for_status()
                 return r.json()
 
@@ -5788,7 +6420,7 @@ class OneChatPage(QWidget):
 
         # ---------- SEARCH ----------
         def ok_search(resp: dict):
-            print("[SEARCH] Parsed JSON:", json.dumps(resp, ensure_ascii=False, indent=2))
+            _dbg_response("SEARCH-parsed", None)
             self._log_irannobat_usage_from_resp(resp) 
             _clear_retry_if("Search")
 
@@ -5840,9 +6472,9 @@ class OneChatPage(QWidget):
 
             def work():
                 payload = {"user_query": sent_text}
-                print(f"[SEARCH] POST {URL_SEARCH}\n[SEARCH] Payload:", json.dumps(payload, ensure_ascii=False))
-                r = requests.post(URL_SEARCH, json=payload, timeout=300)
-                print(f"[SEARCH] Status={r.status_code}\n[SEARCH] Response text:\n{r.text}")
+                _dbg_request("SEARCH", URL_SEARCH, payload)
+                r = echomind_http.post(URL_SEARCH, json=payload)
+                _dbg_response("SEARCH", r)
                 r.raise_for_status()
                 return r.json()
 
@@ -7249,11 +7881,12 @@ class ChatGPTPage(OneChatPage):
         if not center_key:
             self.controller.bubble("AI ChatBot", "❌ AI backend is not configured. Please complete EchoMind Settings.")
             return
-        model = getattr(self, "_current_model", None) or self._default_model_for_mode(self._chatgpt_mode)
+        # Correction is the final targeted-revision step; default to the dedicated (stronger)
+        # correction model unless the user explicitly selected a model in ChatGPT mode.
+        model = getattr(self, "_current_model", None) or _ai_model("correction", "gpt-5.4", backend)
 
         def work():
-            correction_fn = openai_direct.correction if backend == "openai" else correction
-            return correction_fn(
+            return _ai_module(backend).correction(
                 user_report=report_text,
                 correction_note=note,
                 CENTER_Key=center_key,
@@ -7378,11 +8011,7 @@ class ChatGPTPage(OneChatPage):
 
             def work():
                 try:
-                    backend_api = openai_direct if backend == "openai" else __import__(
-                        "modules.EchoMind.viewer_chat.openai_reporter",
-                        fromlist=["BreastExpertAssistant"],
-                    )
-                    return backend_api.BreastExpertAssistant(
+                    return _ai_module(backend).BreastExpertAssistant(
                         user_msg=user_text,
                         CENTER_Key=center_key,
                         model=model,
@@ -7454,11 +8083,7 @@ class ChatGPTPage(OneChatPage):
 
             def work():
                 try:
-                    backend_api = openai_direct if backend == "openai" else __import__(
-                        "modules.EchoMind.viewer_chat.openai_reporter",
-                        fromlist=["ImageQualityAnalyzer"],
-                    )
-                    return backend_api.ImageQualityAnalyzer(
+                    return _ai_module(backend).ImageQualityAnalyzer(
                         user_msg=user_note,
                         CENTER_Key=center_key,
                         model=model,
@@ -7517,7 +8142,13 @@ class ChatGPTPage(OneChatPage):
                     pass
                 return
             try:
-                normal_template = (self.composer.get_normal_template_text() or "").strip() or None
+                # 2026-08-01: was `get_normal_template_text()`, which returns
+                # `QTextEdit.toHtml()` — a full HTML document with a <style>
+                # block, <meta>, and a font-family span on every paragraph. The
+                # physician's template reached the model buried in Qt CSS, and
+                # differently from the Turbo path, which has always sent plain
+                # text. Same feature, same shape, on every path.
+                normal_template = (self.composer.get_normal_template_plain_text() or "").strip() or None
             except Exception:
                 normal_template = None
 
@@ -7551,26 +8182,29 @@ class ChatGPTPage(OneChatPage):
                     pass
                 return
             try:
-                normal_template = (self.composer.get_normal_template_text() or "").strip() or None
+                # 2026-08-01: was `get_normal_template_text()`, which returns
+                # `QTextEdit.toHtml()` — a full HTML document with a <style>
+                # block, <meta>, and a font-family span on every paragraph. The
+                # physician's template reached the model buried in Qt CSS, and
+                # differently from the Turbo path, which has always sent plain
+                # text. Same feature, same shape, on every path.
+                normal_template = (self.composer.get_normal_template_plain_text() or "").strip() or None
             except Exception:
                 normal_template = None
 
         def work():
             try:
                 if mode == "chat":
-                    print(f"[ChatGPT] call gapgpt chat model={model}")
-                    backend_api = openai_direct if backend == "openai" else __import__(
-                        "modules.EchoMind.viewer_chat.openai_reporter",
-                        fromlist=["chat"],
+                    _log.debug("[ChatGPT] chat backend=%s model=%s", backend, model)
+                    return _ai_module(backend).chat(
+                        user_msg=user_text, CENTER_Key=center_key, model=model
                     )
-                    return backend_api.chat(user_msg=user_text, CENTER_Key=center_key, model=model)
                 else:
-                    print(f"[ChatGPT] call gapgpt report model={model} modality={modality}")
-                    backend_api = openai_direct if backend == "openai" else __import__(
-                        "modules.EchoMind.viewer_chat.openai_reporter",
-                        fromlist=["reporter"],
+                    _log.debug(
+                        "[ChatGPT] report backend=%s model=%s modality=%s",
+                        backend, model, modality,
                     )
-                    return backend_api.reporter(
+                    return _ai_module(backend).reporter(
                         user_msg=user_text,
                         modality=modality,
                         normal_template=normal_template,
@@ -7586,8 +8220,12 @@ class ChatGPTPage(OneChatPage):
 
             content = result.get("content", "")
             usage = result.get("usage")
-            print(content)
-            print(usage)
+            # 2026-07-31 — this printed the ENTIRE generated report, and the
+            # usage object, to stdout on every ChatGPT-page response. Same rule
+            # as F8: record the SIZE, never the body.
+            _dbg_response("CHATGPT-parsed", None)
+            _log.debug("[CHATGPT] content_chars=%d usage=%s",
+                       len(content or ""), bool(usage))
             if usage:
                 _log_usage_for_ui(center_key, usage)
                 self._token_usage = load_token_usage()

@@ -109,12 +109,29 @@
     // ── Original settings (unchanged) ──
     "github.copilot.advanced": {},
     "github.gitProtocol": "https",
-    "python.defaultInterpreterPath": "${workspaceFolder}\\.venv\\Scripts\\python.exe",
+    "python.defaultInterpreterPath": "e:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv\\Scripts\\python.exe",
+    "python.pythonPath": "e:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv\\Scripts\\python.exe",
     "python.terminal.activateEnvironment": true,
+    "python.useEnvironmentsExtension": true,
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "python-envs.defaultPackageManager": "ms-python.python:pip",
+    "python-envs.workspaceSearchPaths": [".venv"],
+    "python-envs.terminal.autoActivationType": "command",
+    "python-envs.pythonProjects": [
+        {
+            "path": ".",
+            "envManager": "ms-python.python:venv",
+            "packageManager": "ms-python.python:pip"
+        }
+    ],
+    "terminal.integrated.env.windows": {
+        "VIRTUAL_ENV": "${workspaceFolder}\\.venv",
+        "PATH": "${workspaceFolder}\\.venv\\Scripts;${env:PATH}"
+    },
     "terminal.integrated.defaultProfile.windows": "Command Prompt",
     "code-runner.runInTerminal": true,
     "code-runner.executorMap": {
-        "python": "\"${workspaceFolder}\\.venv\\Scripts\\python.exe\" -u"
+        "python": "\"e:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv\\Scripts\\python.exe\" -u"
     },
     "chat.tools.terminal.autoApprove": {
         "/^python(\\.exe)? .*main\\.py\"?$/": {

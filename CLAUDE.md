@@ -243,13 +243,41 @@ between chunks with the container VISIBLE and painting ENABLED, a just-added car
 - `layout.activate()` (not just `updateGeometry()`, which only POSTS a LayoutRequest) is what
   guarantees the cards are positioned before the re-enabled repaint. Cost is negligible (grid geom
   calc, ~7×/open) and merely forces synchronously the layout that would run anyway.
-- The `<=4`-series synchronous fallback and both other paths were already safe (no mid-build yield).
-  Kill switch `AIPACS_SIDEBAR_CHUNK_SUPPRESS=0` = byte-identical legacy (buggy) behaviour; gated
-  alongside the existing `AIPACS_SIDEBAR_BUILD_CHUNKED` / `AIPACS_SIDEBAR_BUILD_CHUNK`.
-- `_pw_thumbnails.py` is NOT plugin-mirrored. Guard:
-  `tests/code/ui_services/test_sidebar_chunk_overlap.py` (5, incl. a real-QGridLayout behavioural
-  test proving overlap-before-`activate()` and distinct rows after). NEEDS live source-build verify
-  (open a >4-series patient → cards appear already in place, no overlap/snap).
+- The `<=4`-series synchronous fallback is safe (no yield). Kill switch
+  `AIPACS_SIDEBAR_CHUNK_SUPPRESS=0` = byte-identical legacy (buggy) behaviour; gated alongside the
+  existing `AIPACS_SIDEBAR_BUILD_CHUNKED` / `AIPACS_SIDEBAR_BUILD_CHUNK`.
+- **CORRECTION (2026-07-29): the multi-study grouped + `show_exist_thumbnails` paths were NOT
+  actually safe.** They used `setUpdatesEnabled(True); updateGeometry()` — but `updateGeometry()`
+  only POSTS a deferred `LayoutRequest`, so the repaint scheduled by `setUpdatesEnabled(True)` can
+  land BEFORE the layout runs → the same occasional overlap-then-snap (reported for multi-study /
+  downloading opens). FIX: both now call `self.thumb_grid.activate()` **synchronously while paint is
+  still off**, before `setUpdatesEnabled(True)` — the same proven bracket as the chunked path. Gated
+  `AIPACS_SIDEBAR_ACTIVATE_ON_RENDER=0` = legacy `updateGeometry`-only. `updateGeometry()` ≠
+  `activate()` — always use `activate()` for a just-populated sidebar grid.
+- `_pw_thumbnails.py` is NOT plugin-mirrored. Guards:
+  `tests/code/ui_services/test_sidebar_chunk_overlap.py` (5, real-QGridLayout behavioural) +
+  `test_thumbnail_panel_ui_fixes.py` (2026-07-29: activate() in all 3 paths). NEEDS live
+  source-build verify (open a >4-series AND a multi-study patient → cards appear already in place,
+  no overlap/snap).
+
+### Thumbnail card — progress bar above glass + stronger active border (2026-07-29)
+Three thumbnail-panel UI fixes in `thumbnail_manager.py` (NOT plugin-mirrored):
+- **Progress bar behind glass (z-order):** the per-series `dl_progress_bar` was inside
+  `content_layout` (a descendant BELOW the full-card `glass_overlay`, which is a direct child of the
+  card raised to top), so the ~78%-opaque dark glass gradient dimmed it. FIX
+  (`AIPACS_THUMB_BAR_ABOVE_GLASS`, default on): create the bar as a DIRECT child of the card `widget`
+  (same parent as `glass_overlay`), absolute bottom-strip geometry `(8, 215-11, 190-16, 4)`,
+  `WA_TransparentForMouseEvents`, and `raise_()` it above the glass at creation AND on every runtime
+  glass re-raise (`_raise_dl_bar_above_glass`, called at both `glass_overlay.raise_()` sites). The %
+  text (`progress_overlay`) is already a child of `glass_overlay` so it stays crisp — unchanged.
+- **Active-series contrast:** the selected card was a uniform 2 px accent border + alpha-30 fill —
+  too faint. FIX (`AIPACS_ACTIVE_THUMB_STRONG`, default on) in `CircularProgressborder.paintEvent`:
+  a thicker `bw = 3.5` stroke for `_is_selected` (border_rect + pen use `bw` so it isn't clipped) +
+  fill alpha 30→64. Colour stays the **accent theme token** (works light+dark). Cyan glow shadow
+  unchanged.
+- Guard: `tests/code/ui_services/test_thumbnail_panel_ui_fixes.py` + updated
+  `test_thumbnail_download_progress_bar.py`; real-widget verified (bar child-of-card, z above glass).
+  NEEDS live source-build verify.
 
 ### Viewport overlay identity reads the DISPLAYED IMAGE's DICOM tags (2026-07-19, clinical-safety)
 The four-corner viewport overlay (Patient Name/ID/Sex/Age, Study Date/Time, Institution) used to be
@@ -404,6 +432,49 @@ Before editing the delete path, know:
   delete-one-keep-rest, multi-patient, single-study-keeps-sibling, no-orphan, rollback-on-failure).
   25 green across offline_cloud_server + dicom_media. NEEDS live source-build verify.
 
+### Per-series export selection — CD burn + Offline export (2026-07-30)
+Both export pop-ups now let the user pick WHICH series to include (Select-All ▸ per-study ▸ per-series
+checkboxes, shown INLINE in the pop-up). Default = every series checked. Before editing the copy/
+enumeration paths, know:
+- **THE RULE: filter at the on-disk COPY/ENUMERATION layer, never at DICOMDIR.** On disk a study is
+  `patients/dicom/<study_uid>/<series_number>/…` (series ARE folders), and package.db + DICOMDIR are
+  built FROM what was copied — so filtering the copy makes all three agree automatically. Selection map
+  shape EVERYWHERE: `{study_uid: {series_number, ...}}`. Numbers are normalized (`'02'`/`2`/`2.0` →
+  `'2'`) so folder names and DB `series_number` compare regardless of leading zeros / int-vs-str.
+- **ONE shared widget in CORE:** `PacsClient/pacs/workstation_ui/home_ui/series_selection_widget.py::`
+  `SeriesSelectionWidget` (tri-state tree; `get_selection()` → the map, or **None** when everything is
+  checked ⇒ the engines take the byte-identical legacy path). CORE because the run_cd plugin may import
+  core, never the reverse. Populated via `database.manager.get_study_info_with_series`.
+- **Offline engine** (`offline_cloud.py`, NOT mirrored): `export_studies_to_offline_cloud` +
+  `_export_single_study` gained `series_selection`; it filters the `series` rows, the nested
+  `instances` rows, AND passes `allowed_top_dirs` to `_copy_tree_replace` (new kwarg — copies only the
+  chosen top-level series subfolders; its existing stale-cleanup pass then DROPS a deselected series on
+  RE-export). Returns `series_summaries` for the "what synced" popup (`_hp_offline._format_series_sync_summary`).
+  Applied to the **explicit Export only** — the background autosync / re-sync paths stay whole-study
+  (one-time filter, deliberately not persisted).
+- **CD burn** (`cd_burn_manager.py`, PLUGIN-MIRRORED — sync after editing): `CDBurnWorker` +
+  `prepare_and_burn`/`prepare_folder` gained `series_selection`; `_collect_study_folders` →
+  `_series_folders_for_study` returns the whole study folder (no selection) or just the selected series
+  subfolders. SAFE because `DicomPreparer.prepare` AND `DicomDirBuilder.build_from_study_folders` both
+  take a flat folder list and group by DICOM TAGS (not folder layout), so feeding series subfolders
+  yields a correctly-grouped, filtered DICOMDIR + staging. Fail-safe: empty/no-match selection → whole
+  study (never an empty disc). `cd_burn_dialog.py` (mirrored) adds a "Series to include" group.
+- **AI-PACS import is unaffected:** `patients/dicom/<study_uid>` still holds exactly the kept series;
+  the importer resolves by UID as before.
+- Flag `AIPACS_EXPORT_SERIES_SELECTION` (default **ON**; `=0` = every series, legacy). Guards:
+  `tests/code/offline_cloud_server/test_series_selection_export.py` (8, real DICOM incl.
+  DICOMDIR-follows + re-export-drops-removed + payload-intact),
+  `tests/code/cd_burner/test_series_selection_burn.py` (8),
+  `tests/code/ui_services/test_series_selection_widget.py` (7). Mirrors 420/420. NEEDS live
+  source-build verify (untick a series in each pop-up → only those series on the disc / in the package
+  folder + DICOMDIR; AI-PACS re-imports the exported folder fine).
+- **⚠ UNRELATED PRE-EXISTING breakage surfaced (NOT fixed here):**
+  `modules/cd_burner/portable_viewer/media_scan.py` at HEAD lacks `scan_paths` (the CD drag-drop-import
+  API) while its committed guard `tests/code/cd_burner/test_lite_viewer_external_drop.py` (+ 2 in
+  `test_cd_defaults_on_fresh_install.py`) require it → 18 `AttributeError` failures. `git diff` shows
+  media_scan.py unmodified vs HEAD; the feature's source fn was dropped from the release commit while
+  its test stayed. Restore from history / `docs/reports/LITE_VIEWER_CD_DRAG_DROP_IMPORT_2026-07-12.md`.
+
 ### Demographic DICOM-tag editor — right-click ▸ "Edit patient / study info…" (2026-07-18)
 The main-page patient context menu gained an **Edit** action beside "Refresh / Sync from server".
 It corrects six demographic tags — PatientName, PatientID, InstitutionName, StudyDate, StudyTime,
@@ -447,6 +518,109 @@ the `force_update_*_demographics` helpers in `database/manager.py`, know:
   that way; it is why this is unit-testable offscreen. The apply runs on a `QThread`, never the GUI
   thread. Guard: `tests/code/ui_services/test_dicom_demographics_edit.py` (34, real synthetic
   DICOM). None of these files are plugin-mirrored. **NEEDS live source-build verify.**
+
+### Local Patient-ID correction alias — corrected ID STAYS SHOWN after a server refresh (2026-07-29)
+The complement to the demographic editor above. A reception typo (server sends `52659` for the
+correct `52658`) is corrected locally, but the server has **no demographic-write endpoint**
+(`server_push_supported()` is `False`), so a re-search re-paints the server's original ID over the
+correction. The fix is a **local display alias**, NOT a server push. Before editing
+`database/patient_overrides.py`, the delegate in `patient_table_widget.py`, or the record site in
+`_hp_patient_edit.py`, know:
+- **THE RULE: the reception/RIS server is the system of record for identity; `PatientID` ==
+  `receptionID` is the immutable cross-service join key. The workstation NEVER writes identity to the
+  server** (no endpoint exists, and it shouldn't — it would diverge RIS/billing/other workstations). A
+  permanent fix is made at reception; the alias is the local bridge (and the permanent answer for
+  local-only / imported studies).
+- **DISPLAY-ONLY, identity preserved.** `database/patient_overrides.py` (new, isolated, self-initializing
+  table — mirrors `identity_db.py`; NOT plugin-mirrored) records `original_server_id -> corrected_id`.
+  The Patient-ID column's `_PatientIdOverrideDelegate` paints the corrected value by setting **only the
+  transient `option.text`** in `initStyleOption` — the cell's `.text()` / DisplayRole stays the
+  **server's original ID**. This is load-bearing: the ID cell text is read at ~25 sites as the
+  `reception_id` (assignment icons, reception payload, report status, `select_patient_by_id`, open,
+  dedup/visited). If you EVER change the cell's DisplayRole/`.text()` to the corrected value you break
+  every one of those against the server. Never do it — the correction lives in the paint layer only.
+- **`resolve_display_patient_id()` is on the paint path** — cache-backed (no disk after first load),
+  never raises, and returns `None` (⇒ caller shows the server value) whenever the flag is off, there is
+  no alias, or on any error. Keep it that way.
+- **The alias is recorded on edit** (`_hp_patient_edit._sync_edited_demographics_to_db`) only when the
+  `patient_id` actually changed, in a try/except that can't break the edit. Recording is allowed even
+  when the display flag is off (it writes only to the new, otherwise-unread table) so enabling the flag
+  later surfaces past corrections. It **self-retires**: once reception fixes the server to `52658`, the
+  `52659` alias simply stops matching (a harmless stale row).
+- **CAVEAT (in the dialog):** the edit re-points studies onto whatever local row owns the corrected ID —
+  if that ID already belongs to a DIFFERENT real person it merges identities. Identity verification
+  belongs to reception (National ID). The dialog now states reception is the system of record and a
+  permanent fix must be made there.
+- Flag `AIPACS_PATIENT_ID_OVERRIDES` (default **OFF** — `=1` to enable; ships opt-in until live-verified,
+  then flip default-on). Off = byte-identical (delegate paints nothing, `resolve_*` returns None). Guard:
+  `tests/code/ui_services/test_patient_id_overrides.py` (13). None of the touched files are
+  plugin-mirrored. **NEEDS live source-build verify** (correct a Patient ID with the flag on → the list
+  keeps showing the corrected ID across a search/refresh; assignment + reception reports + open still
+  work via the original server ID).
+
+### Advanced Search must follow the active Local/Server data source (2026-07-31)
+The Main-Page "More Filters / Advanced Search" popup used to **ignore the Local/Server tab and
+always query the PACS server** — so a Local-mode advanced search hit the server (or errored with
+"select a server first" when none was chosen). Only the 2026-07-24 import-date carve-out ever reached
+the local DB. Before editing `_on_advanced_search_requested` / `_advanced_query_to_local_criteria` /
+`_on_server_tab_changed` (`_hp_search.py`, NOT plugin-mirrored), know:
+- **THE RULE: Advanced Search routes by the SAME authority as the normal search — the DataAccessPanel
+  tab (`data_access_panel_widget.get_result()` → "Local"/"Server"/"Import").** Never cross over: Local
+  mode must never send to a server; Server mode must not read the local DB. The normal search already
+  branches on `get_result()` via `patient_list_function_identifier`; the advanced handler now reads the
+  same. `source_of_patient_load` is only an after-the-fact echo set inside the dispatchers — do NOT use
+  it as the mode; it reflects the LAST search, not the current tab.
+- **Routing:** `_route_to_server = (not _has_import_date) and ((_honor_mode and _is_server_mode) or (not
+  _honor_mode))`. Server tab + no import-date → `search_server_advanced(query)` (byte-identical to the
+  old path; it resolves `get_server_selected()` and targets ONLY that server, aborting if none chosen).
+  Local/Import tab → `search_local(extra_criteria=_advanced_query_to_local_criteria(query))`.
+- **Import date is a LOCAL-only field** (`studies.imported_at`, no server equivalent) → always resolves
+  locally regardless of mode (the "explicitly requested local" case even in Server mode). Keep it that way.
+- **The local mapping (`_advanced_query_to_local_criteria`) only maps fields `search_patients_local`
+  supports** — patient_id (single), acquisition date range, modality, import date. **Body part / age /
+  physician have NO local column** and are intentionally omitted (the server path refines those
+  client-side; the local search does not). Multiple patient IDs can't map to the single-value local
+  `patient_id` filter (a real local gap, not this fix's scope).
+- **Mode-switch clearing:** switching TO Local auto-runs a local search (which clears + repopulates);
+  switching TO Server/Import now **clears the table** (no auto-query — a server search needs a selected
+  server + round-trip) so stale rows from the other source never linger under the new tab. Results
+  always match the active source.
+- Flags default-ON (kill switches, `=0` = legacy): `AIPACS_ADVANCED_SEARCH_HONORS_MODE` (=0 → legacy
+  always-server-except-import-date), `AIPACS_SEARCH_CLEAR_ON_MODE_SWITCH`. Server-mode behavior is
+  byte-identical; only Local/Import advanced search changed (server→local) + the switch-clear is new.
+  Guard: `tests/code/ui_services/test_advanced_search_routing.py` (6; the pure mapping is behaviourally
+  tested via AST-extraction, routing is source-pinned). NEEDS live source-build verify (Local tab +
+  advanced query → local DB only, no server call; Server tab → selected server; switch Local→Server →
+  table clears).
+
+### Local patient-list Status column computed OFF the GUI thread (2026-08-02)
+Rendering the Local list (e.g. right after importing a study) froze the app for **seconds** —
+`[MAIN_THREAD_STALL]` up to 20 s, the F11 sampler pinned inside `os.stat`/`open`/`os.scandir`. Cause:
+`add_patient_data` → `_build_local_status_widget` → `_compute_local_status_flags` did **per-row
+synchronous disk I/O on the GUI thread** for every row — `os.walk(ATTACHMENT_PATH/<study_uid>)` +
+`_read_reception_payload_flags` (`open`+`json.load` of `RECEPTION_REPORTS_DIR/downloads/patient_<id>.json`)
++ several DB queries — across a ~2000-study local DB. Before editing `_build_local_status_widget` /
+`_compute_local_status_flags` / the async helpers (`patient_table_widget.py`, NOT plugin-mirrored), know:
+- **THE RULE: the bulk per-row render must never do disk I/O on the GUI thread.** `_build_local_status_widget`
+  now takes **`allow_async`** (opt-in). `add_patient_data` — the bulk render that froze — passes
+  `allow_async=True`: it reads the status cache ONLY (`_get_cached_status_flags`, never computes), and on
+  a MISS renders an EMPTY Status cell immediately and computes the flags on a **background
+  `ThreadPoolExecutor`** worker; the chips fill in via the `statusFlagsReady` signal (queued to the GUI
+  thread). **Every OTHER caller keeps `allow_async=False` (synchronous)** so `container.status_flags` is
+  populated on return — the refresh paths and the sort tests depend on that contract; do NOT flip their
+  default.
+- **`_compute_local_status_flags` is pure disk+DB (no Qt)** — that is why it is safe to run on the
+  worker. Keep it Qt-free. The only shared state is the `_local_status_cache` dict (atomic get/set under
+  the GIL). Chip building (`_populate_status_chips`) and the result slot (`_on_status_flags_ready`) are
+  GUI-thread only.
+- **Staleness is guarded two ways:** a generation counter (`_status_async_gen`, bumped in `clear_table`)
+  drops results from a prior population pass, and the result slot pops the container from
+  `_pending_status_containers` by `study_uid` and wraps the widget update in `except RuntimeError` (the
+  row may have been re-sorted / refreshed / closed). study_uid is unique so there is no cross-row mixup.
+- Flag `AIPACS_STATUS_ASYNC` (default on; `=0` = always synchronous = byte-identical legacy). Guard:
+  `tests/code/ui_services/test_status_flags_async.py` (8). NEEDS live source-build verify (import a study
+  / switch to Local with a large DB → list paints immediately, Status chips fill a moment later, no
+  multi-second freeze). Same class as OPT-24 (patient-list slow) / OPT-27 (Eagle-Eye scan off-thread).
 
 ### Sortable Status / Report columns — widget-backed cells (2026-07-18)
 Status and Report were the only two unsortable columns for a structural reason: both render a
@@ -710,6 +884,76 @@ Before editing `patient_table_widget.py` click handlers (`_on_patient_clicked`,
 - The debounce interval must be **≥ `doubleClickInterval`** (floor 250 ms); a smaller
   value re-breaks slow double-clicks. Row highlight is Qt-native on press (stays instant);
   only the thumbnail load waits the window.
+
+### `dicom.db` busy_timeout is ROLE-AWARE — main GUI process fails fast, writer subprocess keeps 120 s (OPT-45, sanam PC, 2026-07-28)
+Up-to-**2-minute UI freeze** under a heavy download. `dicom.db` is WAL, so a reader never blocks on a
+writer — only a **GUI-thread WRITE** (or read→write upgrade) can block, for up to `busy_timeout`. That
+ceiling was a flat **`PRAGMA busy_timeout = 120000` (120 s)** on EVERY connection (`database/_pool.py`),
+so a main-process write contending with the download SUBPROCESS's `batch_insert_instances` burst froze
+the UI up to two minutes — the transient "Cross-thread" `AppHangB1` Windows recorded. Before editing
+`database/_pool.py::_resolve_db_timeouts` / `_create_sqlite_connection`, know:
+- **THE RULE: the download subprocess (and ANY spawned mp writer child) keeps the FULL 120 s; only the
+  MAIN GUI process is throttled (default 5 s).** A throttled writer child could drop an instance row
+  under load — a CLINICAL data defect. Detection: `multiprocessing.current_process().name ==
+  "MainProcess"` (a spawned child is `"Process-N"`), plus an explicit `AIPACS_DB_ROLE=download-subprocess`
+  marker set at the top of `download_process_entry._run_download_in_process` (belt-and-suspenders, set
+  BEFORE any DB access). Do **NOT** remove either check, and do **NOT** throttle the subprocess.
+- **SAFE because real WAL write-lock holds during a download are sub-second** (per-batch commit releases
+  the lock), so 5 s ≫ any legitimate contention — a main write virtually never actually raises; the
+  change only caps the pathological freeze. It does **NOT** create a new failure mode: a contended write
+  already raised at the old 120 s ceiling (all main writes funnel through `database.get_db_connection()`
+  with **no** per-site SQLITE_BUSY retry — `manager.py` has zero retry loops); 5 s only surfaces that
+  sooner. A raised main write is recoverable (disk is the authority; the DB is a derived index that
+  reconcile/resync rewrites). **If a live run shows main-process `"database is locked"` ERRORs, raise
+  `AIPACS_DB_MAIN_BUSY_TIMEOUT_MS` or move that specific write off-thread — do NOT lengthen the
+  subprocess.**
+- Flags (default-ON): `AIPACS_DB_SHORT_MAIN_TIMEOUT=0` = byte-identical flat 120 s (kill switch);
+  `AIPACS_DB_MAIN_BUSY_TIMEOUT_MS` tunes the main value (clamped [1000, 120000]). `database/_pool.py` is
+  NOT plugin-mirrored; `download_process_entry.py` **IS** — sync the payload copy after editing (host-side,
+  never via the sandbox sync). Guard: `tests/code/system/test_db_main_busy_timeout.py` (7). NEEDS live
+  verify (heavy multi-series download → responsive UI, no `AppHangB1`, no main-process lock ERRORs).
+- **ORTHOGONAL TO — and NET-POSITIVE FOR — the Download Manager (reviewed 2026-07-28).** OPT-45 touches
+  none of the DM's 12 real-download-manager mechanisms (queue/priority/stall-skip/retry/resume/persist/
+  concurrency/net-aware/failure-isolation): the live DM control plane is **in-memory** (`state_store`; the
+  ONLY registered observer is `UIObserver`, `widget.py:232` — `DatabaseObserver` at `state_store.py:38` is
+  a docstring example, wired nowhere), so queue/priority/`retry_count` never touch `dicom.db`. **Every DM
+  `dicom.db` WRITE runs in the download SUBPROCESS** (`initialize_study`, `batch_insert_instances`) which
+  KEEPS 120 s + its own DM-H5 retry; the lone main-process progress write (`insert_download_progress`) has
+  its own 5-attempt retry (and is currently unused). Downloaded DATA is disk-authoritative (atomic
+  `.part`→`os.replace`; resume re-scans disk). **Net-positive:** the DM control loop is main-GUI-thread
+  QTimers (5 s anti-stuck/net-edge/retry sweep, 100 ms/1 s progress) — a flat-120 s GUI-thread DB freeze
+  would stall THEM for 2 min (can't skip/retry/drain); the 5 s cap restores the DM's control loop ~24×
+  faster under contention. Do NOT throttle the subprocess. SEPARATE pre-existing DM gap (NOT OPT-45): the
+  crash-durable **queue** (PENDING/FAILED/priority) is in-memory only — `get_incomplete_downloads()` /
+  the `download_progress` restore path is BUILT but UNWIRED, so a restart auto-resumes DATA (disk) but not
+  the pending QUEUE (user re-opens the patient). **Wiring that = OPT-46 (below).**
+
+### CRASH-DURABLE download queue — interrupted downloads auto-resume after restart (OPT-46, 2026-07-28)
+Closes the one real "behave like a real download manager" gap from the OPT-45 DM review: the queue
+(PENDING/FAILED/priority/`retry_count`) was in-memory only, so a crash lost it (the DOWNLOADED DATA was
+always safe — disk + atomic `.part`→`os.replace` + resume scan — only the pending queue was not durable).
+Before editing `modules/download_manager/state/queue_persistence.py`, the persist call in
+`_dm_queue.py::add_downloads`, or the deferred `_restore_persisted_queue` trigger in `widget.py`, know:
+- **THE RULE: persist to DISK, never the DB.** Each enqueued study's SANITISED re-enqueue dict (identity +
+  series list w/ image counts; **never** pixel/thumbnail bytes) is written to
+  `<SOURCE_PATH>/<study_uid>/.dm_task.json` (atomic `.part`→`os.replace`). This adds **no main-thread
+  `dicom.db` write** → zero interaction with OPT-45 / the subprocess WAL writes. Do **NOT** "fix" this by
+  registering `DatabaseObserver` — it persists on EVERY progress tick, which reintroduces exactly the
+  main-thread DB load OPT-45 removed.
+- **Restore REUSES `add_downloads`, never a parallel path.** `_restore_persisted_queue` (deferred 9 s
+  post-init) calls `scan_incomplete_task_specs(base_output_dir)` and re-feeds the still-incomplete specs to
+  `add_downloads(..., start_immediately=False)` — so dedup (idempotent), validation, priority and
+  concurrency are the SAME proven machinery; the disk resume scan skips already-downloaded images (never a
+  re-fetch).
+- **Self-cleaning + never over-eager.** The scan DELETES the spec of any study already COMPLETE on disk and
+  skips it (stale specs can't accumulate); a partial study is re-enqueued; an UNKNOWN expected count
+  (0 image_count) is **never** marked complete (re-enqueued so the normal resume logic decides).
+- **Flag-gated DEFAULT-OFF** (`AIPACS_DM_QUEUE_PERSIST=1`): it changes startup behaviour (auto-resume), so
+  it ships opt-in until live-verified, then flips default-on. When off, nothing is written/scanned
+  (byte-identical legacy). All three files ARE plugin-mirrored — the NEW `queue_persistence.py` was
+  `--add`-equivalent copied into the download_manager payload host-side (`diff` byte-verified). Guard:
+  `tests/code/download_manager/test_queue_persistence.py` (8). NEEDS live verify (kill app mid-download →
+  relaunch → interrupted studies resume within ~9 s, no re-fetch, `[DM-QUEUE-RESTORE]`).
 
 ### Database test isolation (tests must never write to the live `dicom.db`)
 Before editing `tests/database/test_database.py`, any other DB-touching test, or
@@ -1067,6 +1311,42 @@ Before editing `PacsClient/utils/single_instance_lock.py`, the lock acquire/rele
   checkpoint, log flush, subprocess kill) BEFORE the `os._exit`. The SHUTDOWN handler quits
   via the event loop (so that `finally` runs) with an 8 s hard-exit failsafe.
 
+#### Shutdown-initiator diagnostic logging — attribute an unexplained "the app just closed" (2026-08-01)
+Triaging "app crashes/closes repeatedly": **a CLEAN close is not a crash.** `app.log`
+`Application shutdown: instance lock released` = orderly exit (ran the full `finally`); a crash/force
+-kill can't produce it. In `native_fault.log`, `access violation` = a real native crash, but code
+**`0x8001010d`** (`RPC_E_CANTCALLOUT_ININPUTSYNCCALL`) = a benign COM re-entrancy warning faulthandler
+catches — NOT fatal. The Windows **Event Viewer** is decisive: Application-log Id=1000 = a real crash
+(with faulting module); System-log Id=41/6008 = a whole-PC power/reboot; Id=4101 = a GPU TDR. And the
+many `=== session start ===` markers in native_fault.log include **download-subprocess prewarm spares**
+(`role=download-subprocess`) — do NOT count them as app launches. (2026-08-01: reported "crashed
+multiple times" → ZERO Event-1000 all day, all sessions clean-shutdown; the real trigger was a
+morning whole-PC unexpected reboot + large-MPR freezes on the Intel UHD 630.)
+- To make the NEXT close attributable, three logging-only hooks (flag `AIPACS_LOG_SHUTDOWN_INITIATOR`,
+  default ON, `=0` = off; `main.py` + `mainwindow_ui.py`, NOT plugin-mirrored; each try/except so it can
+  never block shutdown): (1) `_AIPacsApplication.quit()` override logs the synchronous call-site stack
+  then `super().quit()`; (2) `app.aboutToQuit` logs `reason` + visible windows + stack (keeps the
+  original `loop.stop` connection); (3) the workstation `closeEvent` logs **`event.spontaneous()`** —
+  **True = user/OS closed the window (X, Alt+F4, End-Task, OS shutdown); False = code called
+  `close()`** — and sets `app._shutdown_reason`. Grep `[SHUTDOWN-INITIATOR]`. Guard:
+  `tests/code/system/test_shutdown_initiator_logging.py` (5).
+- **CONFIRMED next day: the "vanish" was the single-instance TAKEOVER, not a crash/MPR.** The
+  instrumentation caught `mainwindow.closeEvent spontaneous=False (code called close())` while the app
+  was IDLE — a SECOND `main.py` launch sent `AIPACS_SHUTDOWN` and `single_instance_lock.
+  _on_new_connection` → `_initiate_shutdown()` closed the running app (default "new launch wins").
+  `_on_new_connection` now logs `[SHUTDOWN-INITIATOR] single-instance received AIPACS_SHUTDOWN …` /
+  `[single-instance] received AIPACS_ACTIVATE …`. **Mitigation: `AIPACS_NO_TAKEOVER=1`** (second launch
+  RAISES the window instead of killing the running one; needs a fresh env — restart the launching
+  terminal/VS Code). The Win32 process tree was decisive: the "14:14 access violation" was a **download
+  SUBPROCESS** (`--multiprocessing-fork`), NOT the GUI, so it never closed the app.
+- **Orphaned download-subprocess LEAK fixed** (`modules/download_manager/workers/prewarm.py`,
+  plugin-mirrored — synced host-side): the prewarm pool spawned an idle spare (`proc.start()`) but never
+  `register_download_subprocess(proc.pid)` — only the worker registers a spare it ADOPTS — so an UNUSED
+  spare was invisible to `terminate_all_download_subprocesses()` and leaked on close (5 orphans observed).
+  `ensure_warm` now registers on spawn (+ drops a replaced dead spare). Guard:
+  `tests/code/download_manager/test_prewarm_registers_subprocess.py` (2). Deeper follow-up: a
+  force-KILLed GUI can't run its `finally`, so a parent-death watchdog in the subprocess is the robust fix.
+
 ### Download-manager reliability + smoothness (2026-06-02)
 See `docs/reports/AUDIT_THUMBNAIL_DOWNLOAD_PIPELINE_2026-06-01.md`. Clinical image integrity verified sound
 (atomic `.part`→`os.replace`, resume rejects partials, DB-lock retry). Applied + test-verified:
@@ -1237,6 +1517,27 @@ viewer drop-intent path (`_vc_load.py` / `_vc_switch.py`), read that report.
   keep downloading. Flag `AIPACS_DL_SKIP_COMPLETE_VIEW_INTENT` (default on; `=0` legacy).
   Guard `tests/code/viewer/test_dl_skip_complete_view_intent.py`. (Deeper: the DM-side
   resume-scan not skipping existing `.dcm` for a re-queued series is a separate follow-up.)
+  - **Expected-count source hardened + UNIFIED (52931 series 602, 2026-08-02):** the guard
+    re-downloaded a fully-on-disk series on EVERY drag/drop because it read the expected count ONLY
+    from the in-memory `_server_series_info[key].image_count`, which is **not populated on some open
+    paths** (single-study fast-cache-hit opens) → `expected=0` → "uncertain, proceed" → re-download
+    (no `[DL-SKIP-COMPLETE]` logged). **THE FIX ROUTES THROUGH THE ONE SHARED AUTHORITY — not a
+    guard-local path.** `series_facts.resolve_series_expected_count` gained a DEFINED, injected
+    `db_count_getter` tier, ordered AFTER the in-memory server/thumbnail tiers and BEFORE the disk
+    fallback (source `"db.image_count"`; the module stays pure — getter injected). The ONE viewer
+    wrapper `_vc_backend._resolve_series_expected_count(series_number, *, include_disk=True)` injects
+    both the DB getter (→ the canonical reader `dicom_db.get_series_image_count`, resolving the
+    series' OWN study via `_resolve_canonical_series_identity`, cached in `_series_expected_db_cache`)
+    and the existing disk getter — so **every** viewer site (`_vc_switch`, `_vc_progressive`,
+    warmup, and the guard) shares the same source hierarchy. The guard calls that wrapper with
+    `include_disk=False` (data-safety: it must NEVER treat the on-disk file count as 'expected').
+    **Do NOT** reintroduce a bespoke `_server_series_info[...].image_count` read or a guard-local DB
+    helper — resolve through `self._resolve_series_expected_count(...)`. Kill switch
+    `AIPACS_DL_COMPLETE_DB_COUNT=0` (read in `_vc_backend`). `_vc_load.py` / `_vc_backend.py` /
+    `series_facts.py` / `dicom_db.py` are NOT plugin-mirrored. Guards:
+    `tests/code/viewer/test_complete_on_disk_db_count.py` (6) + `test_dl_skip_complete_view_intent.py`
+    (updated for the shared routing) + `test_series_facts.py` (DB tier order). NEEDS live verify on
+    52931/602 (drag repeatedly → loads from disk, `[DL-SKIP-COMPLETE]` logs, no re-download).
 - **Rich download notification** (`_vc_progressive.py` + `loading_spinner.py` (mirrored) +
   `loading_overlay.py`, NOT all mirrored): the waiting spinner shows series identity,
   "Downloading N of M · P%", a progress bar, speed/ETA/elapsed, and an inferred connection
@@ -1768,6 +2069,103 @@ Two default-on guards, master plan **OPT-21**:
   the other VTK hosts (Advanced viewer, dental VTK-MPR, curved-MPR picking host). NEEDS live
   sanity on a good GPU (MPR opens unchanged; Settings panel renders/updates) + the PC2 evidence
   collection.
+
+### LARGE-STUDY MPR must not crash on the FIRST open (OPT-47, 700-800 slices, 2026-07-29)
+MPR on a ~700-800 slice study crashed and closed the app on the **first** attempt; after a relaunch
+the SAME study opened fine. THREE compounding causes — before editing `_create_3d_view`
+(`_mpr_views.py`), `convert_itk2vtk` (`PacsClient/pacs/patient_tab/utils/utils.py`), or
+`cleanup()` (`_mpr_layout.py`), know all three:
+- **(1) The GPU budget was below the volume.** `SetMaxMemoryInBytes(1024*1024*512)` was FIXED, and
+  VTK multiplies by its own `MaxMemoryFraction` (default 0.75) ⇒ **~384 MB effective** =
+  `384MiB/(512·512·2B)` = **768 slices** — exactly the reported range. Past it the mapper partitions
+  the volume into several 3D textures while ALSO holding a gradient-opacity texture
+  (`SetDisableGradientOpacity(0)`) and 4× MSAA. **It is `vtkGPUVolumeRayCastMapper`, NOT
+  `vtkSmartVolumeMapper` ⇒ there is NO CPU fallback** — a failed GPU allocation is a driver-level
+  access violation, i.e. a SILENT process death with no Python traceback. FIX: cap =
+  `max(512 MB, volume_bytes × 1.6)`; ≥320 MB also `SetDisableGradientOpacity(1)`; ≥512 MB also
+  `SetMultiSamples(0)`. Normal studies keep the legacy path byte-identical.
+- **(2) The host path made THREE full copies.** `GetArrayFromImage` (copy#1) → `arr[:, ::-1, :]`
+  (a NEGATIVE-STRIDE view) → `if not C_CONTIGUOUS: arr.copy()` (copy#2 — it therefore **always**
+  fired) while the CALLER still held the ITK buffer ⇒ **~1.26 GB transient** at 800 slices. The
+  in-function `del itk_image` freed NOTHING (it dropped only the local name). FIX:
+  `GetArrayViewFromImage` (zero-copy) + ONE `np.ascontiguousarray` ⇒ a single copy.
+  **Do NOT drop the ITK image before that copy exists** — the view aliases its buffer
+  (use-after-free). The result must stay INDEPENDENT: it is pinned as `_numpy_backing_store` and
+  outlives the ITK image.
+- **(3) Teardown released nothing → VRAM accumulated → the FIRST open failed.** `cleanup()` was
+  `Finalize()` ONLY: no `ReleaseGraphicsResources`, no observer/prop/input release, and
+  `self.image_data` (the flipped full-size volume) plus a `VRTInteractorStyle → self` reference
+  CYCLE were never broken. That is exactly why a **relaunch** (fresh VRAM) succeeded. FIX: stop the
+  UNPARENTED `_render_timer` (a pending 5 ms singleShot renders into a dead window — the
+  "already deleted" class), deactivate measurement tools, then per view
+  `SetInputData(None)` → `RemoveAllViewProps` → `RemoveAllObservers` → `Disable` →
+  **`ReleaseGraphicsResources` BEFORE `Finalize()`** (the GL context must still be valid) →
+  `RemoveRenderer`, then `viewers.clear()` + `image_data = None`. Model: the proven
+  `_teardown_curved_mpr_vtk`. Every step individually guarded; idempotent.
+- Flags (default-ON): `AIPACS_MPR_VRT_GPU_BUDGET`, `AIPACS_ITK2VTK_SINGLE_COPY`,
+  `AIPACS_MPR_FULL_TEARDOWN` (`=0` each = legacy). **Reconstruction quality is UNCHANGED** —
+  no spacing/origin/direction-matrix/slice-order/Y-flip/X-flip/interpolation change; the only
+  rendering difference is on LARGE volumes that today simply crash. None of the 3 files is
+  plugin-mirrored. Guard: `tests/code/viewer/test_mpr_large_volume_safety.py` (10, incl. a
+  byte-identity test for the copy reduction). NEEDS live verify on a 700-800 slice study.
+- **STILL OPEN (audited, not fixed):** the OpenGL pre-flight guards **only** `toggle_zeta_mpr` —
+  Curved MPR, CurveMPR, Orthogonal, dental-VTK and `viewer_3d` are unguarded. `CurveMPR`
+  (`curve_mpr_ui.py`) creates 3 `QVTKRenderWindowInteractor`s per open with **zero** teardown.
+  `orthogonal/core/volume_loader.py` holds sitk+numpy+vtk simultaneously with no release.
+  `vtk_widget/` never calls `Finalize()` (`cleanup_widget()` has no production caller).
+  (The `vtkImageFlip` GUI-thread cost listed here was fixed by OPT-48 Phase 2 — it now runs
+  off-thread via `build_lr_flipped_volume` + `_prepare_mpr_flip_offthread`.)
+
+### MPR/VTK LIFECYCLE — one open at a time, and close must be the inverse of open (OPT-49, 2026-08-01)
+Full audit of MPR init / threading / memory / shutdown for high-slice-count studies. Three defects;
+all fixed default-on. Before editing `toggle_zeta_mpr`, `_mpr_layout.cleanup()`, or the deferred
+render/interaction entry points in `_mpr_orientation.py`, **read
+`docs/reports/MPR_VTK_LIFECYCLE_REVIEW_2026-08-01.md`** (it also records what the audit found
+ALREADY CORRECT, so it needn't be re-audited).
+- **THE RULE: exactly ONE MPR open may be in flight.** `toggle_zeta_mpr` had **no re-entrancy
+  guard at all**. It is reachable twice because the modal `QProgressDialog`s **pump the event
+  loop** (`loop.exec()`) and because the open is called *programmatically* by the EchoMind command
+  bus / agent-control surface with no modal in front of it. A second entry built a **SECOND
+  complete pipeline** — 2 volumes, 2 worker pairs, 2 render windows — on top of the first. FIX
+  `_mpr_open_in_progress` (`AIPACS_MPR_LIFECYCLE_GUARD`, default on). It is placed **AFTER the
+  close branch** — closing must never be blockable — and released in a **`finally`**, because a
+  stuck flag would kill the MPR button for the whole session, which is worse than the duplicate it
+  prevents. Both pins are guard-tested.
+- **THE RULE: `cleanup()` sets `_mpr_closed = True` FIRST, before any timer stop or VTK call.**
+  The pre-existing `view_name in self.viewers` checks only start protecting after
+  `self.viewers.clear()`, which runs at the very **END** of teardown — in between, a queued
+  callback still finds live entries but a render window whose graphics resources are already
+  released. **The `try/except` around `_apply_interaction_update` catches NOTHING there: the fault
+  is native, inside VTK.** All five deferred entry points (`_request_render`,
+  `_execute_pending_renders`, `_render_immediately`, `_apply_interaction_update`,
+  `_request_interaction_update`) now begin with `if self._mpr_is_closed(): return`.
+  `_mpr_is_closed()` uses `getattr(self, "_mpr_closed", False)` so a half-built viewer is never
+  mistaken for a closed one. **Any NEW deferred/queued MPR callback must be added to that list.**
+- **THE RULE: close is the inverse of open — clear the graph, not just the volume.** OPT-47
+  released the GPU + `image_data` but cleared only `self.viewers`. Never cleared: `text_actors`,
+  `crosshair_actors`, **`_view_containers`** (a QWidget pins its whole parent chain alive),
+  `_vtk_widget_to_view`, `_toolbar_styles`, `_render_pending`, `_diag`, and
+  **`_viewport_activate_cb`** — a closure over the ToolbarManager **and** the host cell, so a
+  "closed" MPR kept the patient tab reachable from VTK-side state. That is the monotonic memory
+  growth across repeated open→close→open. Also **`_interaction_timer` was never stopped** (its slot
+  walks `self.viewers` and renders ⇒ a stale callback into a finalized window). New step 7 in
+  `cleanup()`, inside the existing `AIPACS_MPR_FULL_TEARDOWN` switch, clears all six containers,
+  drops both cross-module refs, and stops **+ disconnects + NULLS** all three timers — stopping
+  alone is not enough, because `_request_render` can restart a stopped timer.
+- **Workers were already correct — do not "fix" them.** Both MPR QThreads are created *and joined*
+  (`worker.wait()`) inside the function that makes them and are never stored on `self`, so no
+  worker can outlive the open. The worker body touches only the data object, never a widget or
+  render window. `setCancelButton(None)` is deliberate: a half-loaded volume is not a valid MPR
+  input.
+- **NOT changed (and why):** the 2nd full volume copy stays — releasing the source after the flip
+  is unsafe (the caller may reuse it) and folding the flip into the direction matrix is a
+  **geometry change**, not an optimization (see OPT-48 Phase 2).
+- **Geometry safety is enforced mechanically**, not asserted: two guard tests forbid every geometry
+  setter and `ResetCamera` in the added code. None of the four files is plugin-mirrored. Guard:
+  `tests/code/viewer/test_mpr_lifecycle_guard.py` (34); `tests/code/viewer` + `tests/code/system`
+  2331 passed. **NEEDS live verify** (large study → MPR → close → another viewer; MPR open/close ×2
+  → another patient → another reconstruction, watching RSS; rapid double-click must log
+  `[MPR-LIFECYCLE] open ignored`).
 
 ### MPR annotations — smooth FAST-like ruler/arrow (2026-06-28)
 Standard MPR ruler/arrow live in `modules/mpr/zeta_mpr/mpr_measurement_tools.py::MPRMeasurementTools`
@@ -2473,6 +2871,95 @@ Clients detect, download (delta), and install new releases from a static website
   `modules/auto_update/*` is NOT plugin-mirrored. NEEDS live verify: a real vN→vN+1 cycle on an
   installed build (design doc §10 checklist) + first FTPS publish against real Hostinger.
 
+### EchoMind — transport authority, error classification, GUI-thread rules (2026-07-28)
+Full audit + fixes. `pytest tests/code/echomind` = **585 green**; mirrors 419/419. Before
+editing EchoMind, know these five rules — each replaced a real defect:
+- **ONE transport authority: `modules/EchoMind/echomind_http.py`.** Every EchoMind AI/voice
+  call goes through `post()`/`get()`. Before this, `llm_client` and `openai_reporter` each
+  carried a private `_get_requests_proxies()` while the four chat modes (`URL_CHAT`,
+  `URL_GEN_REPORT`, `URL_GEN_ASSISTANT`, `URL_SEARCH`), every voice upload and
+  `openai_transcribe` passed **no `proxies=` at all** — so the Settings promise ("all
+  EchoMind API calls are tunnelled through the local proxy") was false for half the module,
+  and `direct` did NOT bypass a Windows/env proxy for them (`trust_env=True`). Timeout is
+  `(connect 10, read 180)`; a caller's SCALAR is upgraded to a tuple (a scalar applies to
+  connect too — that is why a dead host took 60/300/360 s to report itself). Do NOT add a
+  third proxy copy or a bare `requests.post` in an AI path — a guard test fails the suite.
+  **The reception/RIS calls in `_send_with_patient_id` are EXCLUDED on purpose** (own server;
+  an AI-provisioned SOCKS5 tunnel would break them). Flags `AIPACS_ECHOMIND_PROXY_AUTHORITY`
+  / `AIPACS_ECHOMIND_HTTP_TIMEOUT` / `AIPACS_ECHOMIND_HTTP_RETRY`.
+- **Retry ONLY on a connect-phase failure.** `ConnectTimeout`, or a `ConnectionError` whose
+  text shows a connect-phase marker. A **ReadTimeout is NEVER retried** — the server may
+  already have processed the request, and re-submitting a report generation is a duplicate
+  clinical action. `files=` uploads are never retried (the handle is consumed).
+- **Redacting the endpoint must not cost the diagnosis** (`ai_chat_helpers`). Both branches
+  of `_safe_fa_connection_error` used to emit the SAME "check your internet" sentence, and
+  `ApiWorker` funnels every exception through it — so `LLMAuthError`, `HTTP 429` and "no API
+  key" were indistinguishable. `classify_echomind_error()` now returns a kind
+  (`no_key`/`auth`/`quota`/`model`/`server`/`bad_request`/`malformed`/`network`/`unknown`);
+  EVERY branch still passes through `_redact_endpoint_details` (no URL, IP:port, bearer,
+  `sk-…`). The network branch is byte-identical. `AIPACS_ECHOMIND_ERROR_DETAIL=0` = legacy.
+- **No blocking I/O in a Qt slot, and a worker touches NO Qt object.** `_send_to_reception`
+  ran a 20 s GET + 30 s POST + DB write inline (~50 s freeze); both Settings "Test
+  Connection" buttons ran their probe inline (24 s / up-to-timeout). All now run on workers.
+  The reception worker returns `{"ok","icon","title","text","propagate"}` and
+  `_deliver_reception_result` performs the message box AND
+  `_propagate_reception_status_to_pacs` (which walks `self.parent()`) on the GUI thread.
+  Cancel uses **detach-don't-wait** (`_ORPHANED_WORKERS`) — never `wait()` (freeze), never
+  let Python GC a live QThread (process abort). `_run_async` cleanup is gated on
+  `_busy_count == 0 and not _tr_in_flight` (it used to unlock the mic mid-transcription).
+- **Never print clinical content.** Eight `print()`s dumped the full dictation and the full
+  generated report on every request. Use `_dbg_request`/`_dbg_response` (`echomind.chat`
+  logger): endpoint, status, keys, BYTE COUNTS — never bodies.
+- Backend dispatch is `_ai_module()` / `_ai_model()` (was the same ternary at 12 sites).
+  `load_settings()` is cached on **file identity (mtime_ns, size)**, not a TTL, so per-call
+  resolution still holds. `Manage.update_usage` is under `_USAGE_LOCK`.
+  **`tests/code/echomind/conftest.py` preloads the real PySide6** — four reporter tests stub
+  `sys.modules["PySide6"]` permanently at import and used to abort the whole directory's
+  collection (`QLocalSocket` ImportError), silently losing the 4 IPC guards. Guards:
+  `test_echomind_error_classification` / `test_echomind_http_authority` /
+  `test_reception_send_off_gui_thread` / `test_settings_probe_off_gui_thread` /
+  `test_run_async_cancel_and_busy_state` / `test_no_clinical_content_on_stdout` /
+  `test_backend_authority_and_hardening`. All EchoMind files ARE plugin-mirrored — run
+  `tools/dev/sync_plugin_mirrors.py` (`--add` for a NEW file) after editing.
+  **NEEDS live source-build verify.** NOT done: the embedded per-centre API keys
+  (`api_manager.py:34-114`) still ship every centre's key in every build — product decision.
+- **Send-to-Reception must be fed FULLY-INLINE HTML.** EchoMind reports arrived at Reception
+  stripped of colour/font/size while the Medical Report Editor's arrived intact — even though
+  both build the same payload and both call `prepare_report_html_for_server()`. The transfer
+  was never the problem; the INPUT SHAPE was. The Editor sends `QTextEdit.toHtml()` (every
+  colour/size inline, document font on `<body style>`); EchoMind sent `MessageBubble.get_html()`
+  → `_raw_text`, hand-built markup whose assistant renderer (`_render_assistant_html`) and RTL
+  wrapper (`_wrap_rtl_html` → `.rtl-wrap`) keep their styling in **`<style>` blocks addressed by
+  CSS class**. `prepare_report_html_for_server()` is inline-only *by contract* (it strips
+  `<style>` because the server does) → class rules deleted, `class=` left pointing at nothing.
+  Measured on an assistant bubble: colours `[]`, sizes `[]`. FIX:
+  `MessageBubble.get_export_html()` pushes the markup through a **`QTextDocument`** first, which
+  resolves class rules into inline formats — the Editor's exact shape. Same bubble after:
+  colours `['#1f3b77','#dddddd']`, sizes `['15px','19px']`. Built from `_raw_text`, NOT the
+  displayed HTML (`_wrap_scale_html` strips every inline `font-size` so its A-/A+ wrapper wins,
+  which would flatten a 20px title and 15px body into one size); the reader's A-/A+ scale rides
+  along as the QTextDocument DEFAULT font instead. Qt's generic `<body>` font is dropped
+  (`_drop_generic_body_font`) so the Persian-capable fallback still applies — EchoMind has no
+  user-chosen font, unlike the Editor. **Call it on the GUI thread** (reads the widget font) —
+  `_send_to_reception` computes `server_source` BEFORE dispatching the worker, per the F1 rule.
+  The local DB copy still stores the raw `html_content`. Guard:
+  `tests/gui/test_echomind_reception_formatting.py` (15), incl. a test pinning that the OLD path
+  really did lose the styling, so the guard can't pass vacuously.
+- **Composer height is owned by ONE function** (`UnifiedComposer._sync_composer_heights_for_tab`,
+  `ai_chat_widgets.py`). The Correction / Normal-Template tabs add a 44 px toolbar above the
+  editor; that height must come OUT of the editor, never be added to the composer. The bug:
+  `__init__` pinned the editor with `self.box.setFixedHeight(140)` — which sets the minimum AND
+  the maximum — so the per-tab `setMaximumHeight(96)` was **inert** (a layout honours the minimum
+  when min > max) and the toolbar simply grew the composer until the action row fell out of the
+  window. FIX: set only the editor's MAXIMUM per tab, leave its minimum at `_composer_box_min_h`
+  (56), and give it a **`Preferred`** vertical policy — `Fixed` means "sizeHint is the only
+  acceptable height" and makes min/max inert all over again. **Never re-derive this height from
+  `height()`/`sizeHint()` and a deficit** — the editor's height determines the composer's hint,
+  which determines the height the parent grants, which determines the editor's height again;
+  that loop ratchets it down every pass (measured 140 → 96 → 64 → 62). Guard:
+  `tests/gui/test_composer_tab_layout.py` (18, real offscreen Qt). Known-benign: the Standard
+  tab is ~3 px taller because its EN/PA buttons enlarge the controls row.
+
 ## VS Code Agent Mode environment (configured 2026-06-02)
 
 The VS Code workspace is tuned so both **Copilot Agent Mode** (in VS Code) and
@@ -2541,3 +3028,502 @@ in `docs/for-future-agents/AGENT_CONTROL_AND_TESTING_GUIDE.md` §3.1 +
 
 The Verify lane is a pre-filter for the Clinical lane, not a substitute. It does NOT run the real
 GUI, VTK render windows, or anything Windows-only.
+
+### EchoMind — Phase-1 optimization audit: five dead features + RTL (2026-07-31)
+
+A six-angle audit of EchoMind + Secretary found **five user-facing features that
+were fully written and could not execute**, plus a sixth found by the guard test
+written for the third. All are fixed; the rules below are what stops them coming
+back.
+
+* **`_upload_voices_then` must call `cont(...)` on success.** `cont` IS the send.
+  The call was commented out (since the initial commit), so pressing Send with a
+  voice chip queued transcribed the audio and then did nothing — no report, no
+  error. Kill switch `AIPACS_ECHOMIND_VOICE_SEND_CONT=0`.
+* **`_pending_retry["bubble"]` must be assigned.** `_send_with_mode` seeds it
+  `None`; `_append_bubble` now writes the user bubble back. Without that,
+  `_er_for`'s `if bub:` is always false and `MessageBubble.btnRetry` — built
+  hidden — is never shown, so the whole preserved-text retry path is dead.
+* **NEVER define a method twice in one class.** Python binds the later
+  definition and silently discards the earlier. This had happened three times:
+  `UnifiedComposer.eventFilter` (a 3-line version shadowed the real filter,
+  killing image paste and drag-and-drop) and `MessageBubble._is_probably_html` /
+  `_wrap_rtl_html`. The two `_wrap_rtl_html` bodies **differed**: the copy that
+  bound was the pre-fix one, which returns early on any text already carrying
+  `dir=rtl` — i.e. on Persian translate output, the exact case the wrapper
+  exists for. The fixed version sat above it, shadowed, and had never run.
+  `test_no_class_in_the_composer_module_defines_a_method_twice` guards this
+  generally; it is the test that found the `_wrap_rtl_html` pair.
+* **`QEvent.Paste` does not exist in Qt6.** Referencing it raised
+  `AttributeError` inside a Qt virtual for every event that reached it, which is
+  almost certainly why the working duplicate `eventFilter` was written instead
+  of the original being repaired. Ctrl+V is intercepted in the KeyPress branch;
+  a context-menu paste produces no event at all. A guard now checks every
+  `QEvent.*` / `Qt.*` member named in `ai_chat_widgets.py` against the real
+  PySide6 classes.
+* **`ai_reception_reports` has no `updated_at` column.** Writing it raised
+  `OperationalError` on every status update, so a report could never leave
+  `pending`. A guard now diffs the columns the reception SQL touches against the
+  `CREATE TABLE` in `ai_sessions_db.ai_ensure_schema`.
+* **`resolve_timeout` must consult `AIPACS_ECHOMIND_HTTP_TIMEOUT` even when the
+  caller passes `timeout=`.** It used to return first, so the documented support
+  override was dead for every voice upload and both Settings probes. Product
+  decision, pinned by test: **an explicit caller `timeout=` wins over `read=`**
+  — it is the user's Settings value and an admin who lowers it to fail fast must
+  get that. Passing both `timeout=` and `read_timeout=` is therefore
+  contradictory and is now rejected by a guard.
+* **`_atomic_write_json` uses `os.replace`, never `shutil.move`.** `shutil.move`
+  falls back to `copy2 + unlink`, and on Windows `os.rename` raises
+  `FileExistsError` whenever the destination exists — i.e. on every re-save — so
+  the "atomic" write degraded to truncate-then-refill and a crash mid-write lost
+  the previous good report.
+
+Clinical-safety rules added at the same time:
+
+* **Image attachments must not cross a session boundary.** The picker offers
+  "Other Patient", `clear_attachment()` clears only the VOICE queue, and the two
+  `clear_image_attachments()` calls were success-only — so another patient's
+  slices could ride along on the next report. `_new_chat` and `_open_session`
+  now clear them.
+* **Transcription cancellation is per request.** `self._tr_cancelled` is
+  page-level and `_transcribe_now` is re-entrant, so re-entry reset the flag and
+  an OLD worker tested the NEW call's value — a cancelled dictation could land
+  in the report. Each call now owns a `_tr_token`. Its cancel handler is also
+  disconnected on **every** exit path (it used to be disconnected only inside
+  `on_cancel`, so successful transcriptions accumulated stale handlers), and its
+  cleanup no longer unlocks the composer while `_run_async` is still busy.
+* **`_run_async(cancel_text=...)` for work with side effects.** An in-flight
+  `requests` call cannot be interrupted, so "Request cancelled" is a lie for the
+  reception send — it still writes the report and the DB row. Callers that
+  mutate server or DB state MUST pass an honest string. Reception also now
+  passes `lock_btn=bubble.btnSendReception` (the control the user just pressed
+  was the one control left enabled for the whole ~50 s) and drives
+  `bubble.update_reception_status()`, which had zero call sites.
+* **No clinical content in logs or stdout — this is not once-and-done.** F8
+  (2026-07-28) replaced eight `print()`s; this pass found more: `print(content)`
+  of the entire generated report, and a 400-character preview of the Persian
+  report at `logger.info`, which reaches the collected support log.
+
+**Test-harness rule: a module-scoped Qt fixture must create a `QApplication`,
+not a `QCoreApplication`.** The instance is process-wide and permanent.
+`tests/code/echomind/test_test_server.py` created a bare core app; because
+`tests/code/echomind` sorts before `tests/gui`, the combined gate built widgets
+on a non-GUI application and aborted the interpreter with
+`STATUS_STACK_BUFFER_OVERRUN` (0xC0000409) **after every test had passed**. A
+green run followed by a silent crash is the worst failure mode a gate can have.
+Gate after this pass: `tests/code/echomind + tests/code/reporting + tests/gui` =
+**687 passed**, exit 0, mirrors 420/420.
+
+### EchoMind — Phase 1 batch 2: reception duplicates, file races, orb teardown (2026-07-31)
+
+Driven by a real incident: one report reached reception TWICE for patient 52679
+— two rows, byte-identical `html_content` (SHA-256 match), same `study_uid`,
+same `msg_id`, 7m57s apart, both stuck at `pending`. Third occurrence in the
+table (patient 50304 twice on 07-15).
+
+* **The EchoMind chat surface writes nothing to app.log.**
+  `modules.EchoMind.viewer_chat.*` has produced ZERO lines, ever; only
+  `secretary.registry`, `bus_factory` and `echomind.teardown` appear. The
+  reception row above was written at 20:46:03 and the surrounding minute of log
+  contains only the resource heartbeat. When judging "the log looks fine",
+  check first whether the surface logs at all.
+* **`ai_save_reception_report` refuses a duplicate.** A byte-identical report
+  for the same patient/study/msg that is still `pending` returns the existing
+  id instead of inserting. Scope is deliberate: once reception marks it `read`
+  the report is consumed and a re-send is a NEW report. It also backfills a
+  missing `session_id`/`sender_info` on the existing row (80 of 86 rows in the
+  field had no session link) but never overwrites one that is already set.
+  Kill switch `AIPACS_RECEPTION_DEDUPE=0`.
+* **A lock that protects writer-vs-writer is not enough on Windows.**
+  `ino_assignment_server_state.get_state` read the snapshot OUTSIDE `_LOCK`.
+  `os.replace` fails with ERROR_ACCESS_DENIED when the destination has an open
+  handle not opened with FILE_SHARE_DELETE — and CPython's `open()` does not
+  request it — so a reader defeated the writer's atomic replace (9 failures in
+  one day, swallowed as warnings). The temp name was also a fixed
+  `path + ".part"` shared by every writer, so two writers could interleave into
+  one scratch file. Both fixed. **`_load` must stay lock-free** — `set_state`
+  holds `_LOCK` when it calls it and `threading.Lock` is not reentrant.
+* **`SecretaryButtonWidget` now has a teardown.** It had none — no
+  `closeEvent`, no `cleanup()`, no `deleteLater()` — while creating one
+  `ApiWorker(parent=self)` per voice command. Same detach-don't-wait contract
+  as the chat: disconnect, `setParent(None)`, park in
+  `_ORPHANED_SECRETARY_WORKERS`, release on `finished`. Never `wait()`.
+* **The PortAudio stream is held and aborted deterministically.** It lived only
+  inside a `with`, so `cancel_recording`'s 1.5 s join had no fallback.
+* **Nothing touches a widget from the audio thread.** The recorder's `except`
+  called `_set_active_silent` (blockSignals/setChecked/QTimer) on the audio
+  thread. Also: **two-argument `QTimer.singleShot(0, fn)` creates the timer on
+  the CALLING thread** — from a plain `threading.Thread` with no Qt event loop
+  it never fires, so `_post_log` from the recorder was silently dropped. Use
+  the three-argument form with a context QObject.
+* **`_persian_bubble`'s worker no longer builds widgets.** It called
+  `self.history.add_bubble(...)` inside the function `ApiWorker.run` executes on
+  the QThread. It raises instead; the GUI-thread error callback renders.
+* **The Settings `_ProbeWorker` is no longer parented to the Settings widget.**
+  A parented QObject was never at risk from Python GC — the hazard is the
+  PARENT deleting a running QThread. Held in `_LIVE_PROBES` instead.
+* **`_ensure_rtl_html_wrapper` (currently unreferenced) repaired, not deleted.**
+  It still carried the over-broad "does dir=rtl appear anywhere" early return
+  that `_wrap_rtl_html` was fixed for. The live RTL path was already correct;
+  this removes the trap. The rule for both: the double-wrap test must ask
+  whether OUR OWN wrapper is present (`.rtl-wrap` / `echo-rtl-root`), never
+  whether the substring appears somewhere in the document.
+
+Gate after this batch: `tests/code/echomind + reporting + network + gui` =
+**917 passed**, exit 0, mirrors **420/420**. (`tests/code/network` contributes 5
+pre-existing `XPASS` in `test_ino_report_workflow.py`, quarantined:flaky and
+unrelated.)
+
+### EchoMind — Phase 1 batch 3: the GUI-thread freeze, panel open, DB hygiene (2026-07-31)
+
+* **The Secretary voice command no longer plans on the GUI thread.** Its whole
+  pipeline used to run inside the STT worker's `done` callback — which Qt
+  delivers on the GUI thread, as the modal confirm dialog two lines below it
+  proves. Phase-1 routing (20 s) + Phase-2 planning (30 s) + repair (2 x 25 s)
+  blocked the event loop: 60-95 s of unpaintable workstation on a degraded link.
+  **Only PLANNING moved.** `SecretaryOrchestrator.preplan()` is the parse half
+  and touches no Qt; execution stays on the GUI thread because the executor
+  reaches adapters that legitimately touch widgets — moving it would turn a
+  freeze into an access violation. `_parse_plan` takes `cmd["_preplanned"]` with
+  a deliberate THREE-state contract: absent = plan here (legacy); a plan = use
+  it; falsy = planning already ran and found nothing, so do NOT pay for the LLM
+  twice. Kill switch `AIPACS_ECHOMIND_SECRETARY_ASYNC=0`.
+* **`_secretary_busy` covers the whole pipeline.** The old guard checked only
+  the STT worker, so once that finished a second command could start on top of
+  an in-flight execution — and `home_widget_adapter.search` pumps
+  `processEvents` for up to 45 s, which is exactly what delivers the orb click
+  that starts it. Every early exit must release the lock or the orb wedges for
+  the session; a guard counts the release sites.
+* **Panel open is no longer an N+1.** `_load_from_db_and_render` called
+  `ai_fetch_messages_full(sid)` for EVERY session — `SELECT id, who, html,
+  origin`, no LIMIT — to fill a cache whose payload nothing ever read (every
+  use of `self.sessions` wants the keys) and to set one boolean. With 40
+  sessions x 30 messages x ~15 KB that is ~18 MB over 40+ round-trips inside a
+  click handler, to display ONE session. Replaced by
+  `ai_count_messages_by_session()`, one `GROUP BY`.
+* **`row_factory` no longer leaks between pooled connections.** FIVE call sites
+  set `conn.row_factory = sqlite3.Row` and none reset it; `_return_to_pool` only
+  rolled back, so the next borrower silently got `Row` objects instead of
+  tuples. Fixed in `_return_to_pool` — one place, covers all five and every
+  future one. (`manager.py` already set `row_factory = None` defensively, which
+  is the fingerprint of someone having been bitten.)
+* **The debug helpers are free when debug logging is off.** Both measurements
+  ran BEFORE the level check, so a three-image request built and discarded a
+  multi-megabyte JSON string every time. `_dbg_response` also read `resp.text`,
+  which `requests` does not cache — each access re-decodes the body and, with no
+  charset header, runs full charset detection over a 100-500 KB report. Both now
+  check `isEnabledFor` first, and `Content-Length` is preferred over the body.
+  **They `import logging` locally on purpose**: `test_no_clinical_content_on_stdout`
+  extracts them with `ast` and execs them in a namespace that has `_log` but not
+  `logging`.
+* **Indexes on the two growing tables** — `consultation_events(consultation_id,
+  created_at)` and `notifications(status, created_at)`. The unread badge runs
+  `SELECT COUNT(*) ... WHERE status = ?` on a timer against a table that is
+  never pruned.
+
+**DEFERRED, deliberately: HTTP connection reuse.** A thread-local
+`requests.Session` was implemented and reverted. It moves the call from
+`requests.post` to `Session.post`, and that is the exact seam three test files
+monkeypatch to intercept EchoMind traffic — with the session in place those
+patches stopped intercepting and the tests dialled the real network. Landing it
+means re-pointing those tests at `echomind_http._session` with a fake session
+object. The rationale is recorded in `echomind_http.py` at the point where the
+Session would go. **Do not reintroduce one without doing that test work first**;
+the alternative considered and rejected was an autouse fixture forcing
+keep-alive off in tests, which would leave the suite validating a path users
+never run.
+
+Gate after this batch: `tests/code/echomind + database + network + gui` =
+**911 passed**, exit 0, mirrors **420/420**.
+
+### EchoMind — Phase 1 batch 4: storage location, retention, observability (2026-07-31)
+
+* **`_ai_chat_dir` no longer writes CWD-relative.** It used
+  `Path(os.getcwd()) / "attachment" / <study_uid> / "AI-Chat"` — the exact tree
+  `data_paths.migrate_legacy_data()` RELOCATES into `ATTACHMENTS_DIR` on every
+  startup. EchoMind re-created it every session, the next launch moved it, and
+  EchoMind then looked in the old place and silently loaded an empty Standard
+  tab. Under PyInstaller the CWD is `sys._MEIPASS`, deleted on exit: total
+  silent loss in a frozen build. Now `ATTACHMENTS_DIR`, **with a legacy
+  fallback** — if the old folder still holds this study's data and the new one
+  does not, the old one is used and a warning names both, so nothing a
+  radiologist saved disappears because of the change.
+* **The transcript is actually saved.** `_persist_transcribe` wrote
+  `<sid>-transcribe.json` and had ZERO call sites, while BOTH session-restore
+  paths read that file. The only copy of a completed dictation lived in a
+  QTextEdit — and the voice adapter's `_open_mode_page("report")` calls
+  `deleteLater()` on the page holding it. It is now called on the accept path,
+  guarded, so a disk error cannot lose a transcription that just succeeded.
+* **%TEMP% captures are swept.** `rec_*.wav`, `secretary_*.wav` and
+  `pacs_clip_*.png` were written and never deleted — ~10.6 MB per two-minute
+  dictation, 0.6-1 GB per shift, and Windows does not clean %TEMP% itself.
+  `_sweep_stale_temp_captures()` runs once per process from the first composer.
+  **The 24 h cutoff is deliberate**: the STT read budget is 360 s, so anything
+  in flight is minutes old and cannot be raced. `AIPACS_ECHOMIND_TEMP_SWEEP=0`.
+* **The transport records what it did.** `echomind_http._send` logged only on
+  retry — no status, no elapsed, no connect/read split. Combined with
+  `modules.EchoMind.viewer_chat.*` logging nothing at all, "why was that report
+  slow, and was it us or the server" was unanswerable from app.log; a reception
+  report could be written with no trace of the request that produced it. Now
+  every call logs endpoint + status + `elapsed_ms` + size, and every failure
+  logs `phase=connect|read/other`. **`_endpoint()` strips the query string and
+  any credentials** — an endpoint's query can carry a patient id, and the F8
+  rule holds: sizes and timings, never content.
+
+Gate after this batch: `tests/code/echomind + database + network + reporting +
+gui` = **952 passed**, exit 0, mirrors **420/420**.
+
+### EchoMind — report-generation PROMPT STACK review (2026-08-01)
+
+Reviewed `openai_reporter.py` (~241 KB) across MRI, CT, ultrasound, radiography,
+mammography, standardization and correction. Rules that came out of it:
+
+* **A prompt is product. A worked EXAMPLE is stronger product.** Every defect
+  below was in an example or a tone rule, not in the logic — and examples
+  reliably override the prose rules above them.
+* **`" • Use *extreme exaggeration*—vivid, dramatic phrasing."` was LIVE** in the
+  radiography branch, which fires for the UI value `RADIOLOGY`. Removed. It is a
+  survivor of an older creative-writing scaffold (see the "emulating a typist"
+  framing nearby) and it contradicted "zero speculation" in the same block.
+  Radiography was also the branch with **no temperature clamp**, so it combined
+  the highest-variance sampling in the product with an instruction to overstate.
+* **Never order the model to manufacture pertinent negatives.** Radiography said
+  *"include all relevant normal findings NOT MENTIONED in the original report"*
+  and *"always state at least several normal points"*. That is an instruction to
+  assert observations the radiologist never made, and it is worst on a plain film
+  where the projection often cannot support the negative. No other branch had it.
+* **`_VALIDATED_MODALITIES` must contain the strings the UI actually sends** —
+  `["CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"]`, note the single-"m"
+  mammography. It held only `"mammography"`, so the modality with the strictest
+  structured output (BI-RADS, regex-locked) ran at the provider default
+  temperature with no token cap and no output validation. `"radiology"` was
+  absent entirely. The dispatch branch already accepted four mammography
+  spellings; only this set was out of step — and `_validate_report_json`'s
+  mammography branch had the same single-spelling bug.
+* **Output validation is no longer gated to `("mri", "ct")`.** That gate made
+  `_MAMMOGRAPHY_REQUIRED_KEYS`, `_ULTRASOUND_REQUIRED_KEYS` and
+  `_OB_ULTRASOUND_REQUIRED_KEYS` dead constants. `_validate_report_json` already
+  no-ops outside `_VALIDATED_MODALITIES`, so passing the modality straight
+  through is both correct and narrower than it looks. Kill switch
+  `AIPACS_ECHOMIND_REPORT_VALIDATION=0`.
+* **The report renderer's key filter must be a BLACKLIST, never a whitelist.**
+  `ai_chat_pages` kept only a fixed list of key names; `"Report Title"` is in
+  every report, so the whitelist branch always ran and every other key was
+  dropped before rendering — including mammography's `BI-RADS Category`,
+  `Breast Composition` and `Axillary Evaluation`, and every obstetric section.
+  The DB copy was complete, which is why it was invisible. `_send_to_reception`
+  builds its payload from the rendered bubble, so the referring clinician
+  received it that way too.
+* **A correction mirrors the original key set — it does not impose a schema.**
+  `correction()` hard-coded *"EXACTLY these 5 keys (no more, no less)"*, so
+  correcting a typo on a mammogram deleted the BI-RADS category and invented an
+  empty Impression. It now echoes ORIGINAL_REPORT's keys, order and nesting, and
+  is explicitly forbidden to create a section that did not exist.
+* **BI-RADS is the physician's call.** Two of three mammography examples assigned
+  `"1 – Negative"` to a breast the physician had only called normal in passing.
+  A counter-example now states the rule: calling a breast normal is NOT a BI-RADS
+  assignment; with no dictated category the value is exactly `"Not mentioned"`.
+* **NEVER-PRESUME rule added.** Examples contained `"presumed involved"` and
+  `"presumed normal"` — under the heading *Normal Findings* — and one MRI example
+  asserted midline shift with mass effect and then *"Midline structures are
+  preserved."* in the same rendered report.
+* **The correction response is now verified, not just parsed.** The old handler's
+  entire check was `json.loads`; it also stripped the code fence ONLY inside
+  `if "<|end|>" in text`, so a fenced response without the sentinel — the normal
+  case on the OpenAI twin, whose prompt asks for neither — always failed. It now
+  uses `_clean_model_json_text`, diffs the key set before/after (dropped /
+  invented / emptied → reject and keep the original), persists the corrected
+  report so the dropdown cannot silently revert, and logs rather than bubbling
+  unescaped raw text into a bubble that carries a live Send-to-reception button.
+
+**Still open — see the review document.** Biggest: the obstetric ultrasound
+branch (15 KB of ISUOG rules) is unreachable because the UI cannot send its
+modality strings; the per-region normal-template libraries ship in full on every
+request (~17 KB CT, ~14 KB MRI of dead weight). (The third item — the `openai`
+twin backend running a ~1,100-character generic prompt — was FIXED the same day;
+see the next section.)
+
+Gate after this pass: `tests/code/echomind + reporting + database + network +
+gui` = **979 passed**, exit 0, mirrors **420/420**.
+
+### EchoMind — the two AI backends are ONE product again (2026-08-01)
+
+EchoMind ships two interchangeable implementations of the same feature set,
+chosen by ONE setting and dispatched through `ai_chat_pages._ai_module()`:
+`company` -> `openai_reporter` (GapGPT), `openai` -> `openai_parallel_backend`.
+They were **not** the same product.
+
+* **The twin's `reporter()` sent a ~1,100-character generic prompt** whose
+  entire modality handling was `prompt += f"\nModality: {modality}."`. No
+  BI-RADS rules, no Persian/Finglish term maps, no per-region normal templates,
+  no never-presume or projection-limited-negatives rules, no temperature clamp
+  and no output validation. One settings toggle silently changed CLINICAL
+  CONTENT, and a radiologist had no way to tell which prompt produced the
+  report in front of them.
+* **The twin's `correction()` still hard-coded the fixed 5-key schema** — the
+  one whose removal from the company path was the entire point of the KEY-SET
+  MIRROR rule. On that backend, correcting a typo on a mammogram still deleted
+  the BI-RADS category, the breast composition and the axillary evaluation and
+  invented an empty Impression; an obstetric report lost eight of eleven
+  sections.
+
+**THE RULE: a prompt is a shared authority, never a per-backend copy.** Four new
+module-level functions in `openai_reporter.py` — `build_report_system_prompt`,
+`report_sampling_params`, `build_correction_system_prompt`,
+`build_correction_user_content` — are called by BOTH backends. Do not fork a
+third copy for a new backend; add the backend and call these. A prompt
+improvement has to reach every path, and a radiologist reviewing wording should
+only have to review it once.
+
+* **The extraction changed no prompt text.** The block lifted out of
+  `reporter()` was already a pure function of `(modality, normal_template)` (no
+  network, no `Manage`, no settings) — the patch asserted that from the AST, and
+  the result was verified byte-for-byte across 42 (modality x template)
+  combinations before and after.
+* **`reporter()` KEEPS its two literal `payload["temperature"] = 0.1` /
+  `payload["max_tokens"] = 2500` lines** because four tests source-pin them.
+  `report_sampling_params()` restates the same decision for the twin, and
+  `test_backend_prompt_parity` asserts the two can never drift apart.
+* **ONE deliberate difference: the twin does NOT adopt `max_tokens=2500`.** On
+  that backend the budget must also cover REASONING tokens (gpt-5* with
+  `reasoning_effort`), so the company path's hard cap could truncate a report the
+  company path renders fine — a downgrade, not parity. The clamp that matters
+  clinically is the temperature, and that IS applied.
+* **The correction fix has NO kill switch, deliberately.** A kill switch exists
+  so a regression can be reverted; "revert to the prompt that deletes the BI-RADS
+  category" is never the right answer. The report-prompt swap does have one —
+  `AIPACS_ECHOMIND_BACKEND_PROMPT_PARITY=0` restores the legacy generic prompt
+  byte-identically (preserved in `_legacy_reporter`; do not extend it).
+* **The stricter output format is only safe because of the earlier fix.** The
+  shared correction prompt demands a ```json fence + `<|end|>`; the twin's old
+  prompt asked for neither, and the response handler's fence strip used to run
+  only inside `if "<|end|>" in corrected_text`. That gate was removed the same
+  day, so both shapes now clean correctly. Do not re-gate it.
+* **Two residual "5-key" references repaired** in the correction prompt's
+  HTML-input instructions — they told the model to map HTML onto a 5-key schema
+  three paragraphs above the rule forbidding exactly that.
+
+Test-harness note: `test_report_prompt_preservation.py` exec's the reporter and
+correction sources in a hand-listed whitelist namespace. It now extracts the
+shared builders ALONGSIDE them (`_extract_defs`) instead of stubbing them —
+stubbing would have made every prompt assertion in that file vacuous.
+
+Gate after this pass: `tests/code/echomind + reporting + database + network +
+gui` = **1006 passed**, exit 0, mirrors **420/420**. 27 new guard tests in
+`tests/code/echomind/test_backend_prompt_parity.py`.
+
+**Pre-existing gap surfaced, NOT fixed:** 12 tests in
+`test_mammography_reporter.py` / `test_ultrasound_reporter.py` SKIP with
+"_validate_report_json not importable". They load the module via
+`spec_from_file_location` with no package, so its relative
+`from .api_manager import ...` always raises and the helper comes back `None`.
+The validator those tests exist to check has therefore never actually run there.
+
+### EchoMind — the Normal Template workflow (2026-08-01)
+
+The physician uploads their own normal-report templates, dictates ONLY the
+pathology, and the model merges the two: their pathology inside their template,
+with only the normal statements that CONFLICT with the dictation edited away.
+
+**THE PROMPT.** `template_logic` (in `build_report_system_prompt`) is that
+merge. Four things were wrong with it and each has a guard now
+(`tests/code/echomind/test_normal_template_prompt.py`):
+
+* **The template was interpolated as a BARE, UNLABELLED block** between two
+  instruction blocks — `f"{normal_template}\n\n"`. The rules above it referred
+  to "the provided normal_template", a phrase pointing at nothing the model
+  could identify; it had to infer which lines were the template from position,
+  and a template with its own headings reads like more instructions. It is now
+  fenced `===== NORMAL_TEMPLATE ... ===== END NORMAL_TEMPLATE`, the same
+  treatment `correction()` has always given its inputs. **Fence every physician
+  input you interpolate into a prompt.**
+* **It declared its own JSON key set** (`{Report Title, Pathological Findings,
+  Normal Findings}`) while every modality branch declares a different one. A
+  mammogram with a template was told to emit 3 keys AND 6 keys in one prompt —
+  and since output validation went live for all modalities the same day, the
+  3-key answer stopped rendering partially and started RAISING. The block now
+  defers: *"It does NOT define the JSON key set. Use EXACTLY the keys the
+  MODALITY RULES below specify."* **A cross-cutting block must never restate a
+  schema a per-modality block owns.**
+* **There was NO rule for partially-abnormal paired or grouped structures** —
+  the single most common case in the whole feature. "Both menisci demonstrate
+  normal morphology" + a dictated lateral meniscal tear had to either lose the
+  medial meniscus or contradict itself. The rule now ships as a worked example
+  with BOTH wrong answers shown, because the prompt-stack review's finding was
+  that examples beat prose.
+* **`DO NOT include any anatomical regions not present in the provided
+  template`** was unscoped, so it read as licence to DROP a dictated finding the
+  template happened not to cover. Now: *"The template limits what may appear as
+  NORMAL — never what may appear as ABNORMAL."* Also `You MUST ignore any
+  internal rules or default logic` (broad enough to read as "ignore the rest of
+  this prompt") is scoped to the default RSNA normal-findings generation only.
+
+**⚠ THE MAIN REPORT PATH DOES NOT USE THIS PROMPT.** There are THREE report
+paths and they treat the template differently:
+
+| Path | Template | Prompt built by |
+|---|---|---|
+| Send ▸ "Report" (`_send_with_mode`) | plain text in a POST body | **the company server** (`URL_GEN_REPORT`) — not in this repo |
+| ⚡Turbo (`_on_hq_all_modality_clicked`) | plain text | `openai_reporter` (client) |
+| ChatGPT page, report mode | *was* raw `QTextEdit.toHtml()` | `openai_reporter` (client) |
+
+The ChatGPT path now sends plain text like the others (it was shipping a whole
+HTML document with a `<style>` block and a font-family span per paragraph). The
+server path's prompt cannot be reviewed or fixed from here — **any Normal
+Template rule change has to be mirrored server-side or it only reaches Turbo and
+the ChatGPT page.**
+
+**THE LIBRARY.** `modules/EchoMind/normal_templates.py` is new: the physician's
+templates now live on disk (`<USER_DATA_ROOT>/echomind/normal_templates/
+library.json`) instead of in a list on one widget that was re-uploaded from a
+file dialog on EVERY launch.
+
+* **It is PURE stdlib — no Qt, no network, no app imports** (guard test). That
+  is what makes parsing, metadata inference, search and prompt rendering
+  testable offscreen; same reasoning as `series_ref.py`. Do not import Qt here.
+* **Backward compatibility is the contract:** every field beyond the shipped
+  `{"Name", "Html"}` is OPTIONAL, and a file authored before today imports with
+  no warning and produces a byte-identical prompt. Optional additions:
+  `Number`, `Modality`, `BodyRegion`, `ExamType`, `Sections`, `Impression`.
+  Wrapper objects (`templates`/`items`/`data`/`reports`) and single-quoted
+  Python-literal files still load.
+* **Declared metadata always beats a guess.** Modality/region are inferred from
+  the NAME only when the file left them empty, and the record carries
+  `modality_inferred` / `body_region_inferred` so the UI can say so. Inference
+  is word-boundary matched — `us` must not fire inside `sinus`, because a wrong
+  guess hides a template behind a filter the physician did not know was on.
+* **Every unusable entry is NAMED.** The old loader reported a problem only when
+  a file was a total loss, so a file of 40 templates could import 12 and look
+  like a success.
+* **A name collision NEVER overwrites.** Same name + same body → skipped
+  (re-importing a file is a no-op); same name, different body → imported as
+  "name (2)".
+* Writes go through `os.replace` after an fsync — never `shutil.move`.
+
+**THE TAB.** `nt_bar` stays **44 px** (`_nt_bar_fixed_h` feeds
+`_sync_composer_heights_for_tab`; growing it is what pushed the action row out
+of the window in July), so it carries only Import / a type-to-search picker /
+the active-template badge / ⚙ Manage / Clear. Everything that needs room —
+search, modality + region filters, preview, rename, re-tag, delete — is in
+`viewer_chat/normal_template_dialog.py`.
+
+* **`Clear` now means "use no template", NOT "delete my library".** It used to
+  wipe the loaded templates; against a saved library that would destroy the
+  physician's work.
+* **The badge names the ACTIVE template.** The old label only ever said how many
+  were loaded, so a restored session showed "Upload JSON first…" while a
+  template was actually in effect.
+* **What you see in the editor is what is sent.** Choosing a template puts
+  exactly `template_body_text(record)` in the box; an edit there really does
+  reach the report, and no hidden metadata rides along behind it.
+* Flag `AIPACS_ECHOMIND_TEMPLATE_LIBRARY` (default **ON**; `=0` = the legacy
+  in-memory dropdown, byte-for-byte, including the daily re-upload). Both new
+  files are plugin-mirrored — they were added with
+  `sync_plugin_mirrors.py --add`; mirrors 422/422.
+
+Guards: `tests/code/echomind/test_normal_template_prompt.py`,
+`test_normal_template_library.py`, `tests/gui/test_normal_template_ui.py`.
+Gate: `tests/code/echomind + reporting + database + network + gui` = **1118
+passed**, exit 0. **NEEDS live source-build verify** (import a real template
+file, search it, generate a report from a knee template with a lateral meniscal
+tear dictated, confirm the medial meniscus survives).

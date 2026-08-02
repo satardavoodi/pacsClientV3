@@ -35,12 +35,33 @@ _REPORTER_PY = os.path.normpath(
 )
 
 
+def _extract_defs(path: str, names) -> str:
+    """Return the source of the named TOP-LEVEL functions, in file order.
+
+    2026-08-01: `reporter()` no longer assembles the prompt inline — it calls
+    `build_report_system_prompt()`, the shared authority the OpenAI twin backend
+    also uses. Extracting `reporter` alone would exec a `NameError`, and
+    STUBBING the builder would make every assertion in this file vacuous, so we
+    extract both and keep testing the real prompt text.
+    """
+    import ast as _ast
+
+    with open(path, encoding="utf-8") as fh:
+        src = fh.read()
+    lines = src.split("\n")
+    tree = _ast.parse(src)
+    wanted = set(names)
+    out = []
+    for node in tree.body:
+        if isinstance(node, _ast.FunctionDef) and node.name in wanted:
+            out.append("\n".join(lines[node.lineno - 1 : node.end_lineno]))
+            wanted.discard(node.name)
+    assert not wanted, f"top-level def(s) not found in {path}: {sorted(wanted)}"
+    return "\n\n".join(out)
+
+
 def _extract_reporter_source() -> str:
-    with open(_REPORTER_PY, encoding="utf-8") as fh:
-        lines = fh.read().split("\n")
-    start = next(i for i, l in enumerate(lines) if l.startswith("def reporter("))
-    end = next(i for i, l in enumerate(lines) if l.startswith("def ") and i > start)
-    return "\n".join(lines[start:end])
+    return _extract_defs(_REPORTER_PY, ("build_report_system_prompt", "reporter"))
 
 
 def _build_reporter():
@@ -90,7 +111,22 @@ def _build_reporter():
         "_request_timeout": lambda: (10.0, 180.0),
         "_log_usage_safe": lambda *a, **k: None,
         "_validate_report_json": lambda raw, mod: raw,
-        "_VALIDATED_MODALITIES": {"mri", "ct", "mammography"},
+        # 2026-08-01: post-response validation is no longer gated to ("mri","ct")
+        # — reporter() now asks `_report_validation_enabled()` and hands every
+        # modality to `_validate_report_json`, which no-ops for anything outside
+        # `_VALIDATED_MODALITIES`. Both names therefore belong in this whitelist.
+        "_report_validation_enabled": lambda: True,
+        # Mirrors the real set, which had to grow to cover the values the UI
+        # actually sends: "MAMOGRAPHY" (one "m") and "RADIOLOGY". Before that,
+        # mammography silently lost its temperature clamp and its output check.
+        "_VALIDATED_MODALITIES": {
+            "mri", "ct",
+            "mammography", "mamography", "mammogram", "mamogram",
+            "sonography", "ultrasound",
+            "obstetric ultrasound", "ob ultrasound",
+            "pregnancy ultrasound", "fetal ultrasound",
+            "radiology",
+        },
         "Manage": _FakeMgr,
     }
     exec(compile(_extract_reporter_source(), _REPORTER_PY, "exec"), g)
@@ -219,6 +255,112 @@ def test_non_ob_ultrasound_has_exam_specific_normal_templates():
     assert "ISUOG NORMAL FINDINGS — OBSTETRIC ULTRASOUND" in sp, "OB section must remain"
     assert "SEX-SPECIFIC ANATOMY RULE" in sp
     assert "PRESERVE PHYSICIAN-PROVIDED CONCLUSIONS" in sp
+
+
+def _build_company_correction():
+    """Exec the company-path correction() with the network stubbed; returns (fn, capture)."""
+    import types
+
+    src = _extract_defs(
+        _REPORTER_PY,
+        ("build_correction_system_prompt", "build_correction_user_content", "correction"),
+    )
+    cap = {}
+
+    class _R:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "{}"}}], "usage": {"prompt_tokens": 1, "completion_tokens": 1}}
+
+    def _post(u, headers=None, json=None, proxies=None, timeout=None, **k):
+        cap["payload"] = json
+        return _R()
+
+    class _M:
+        @staticmethod
+        def instance():
+            return _M()
+
+        def get_center_and_gapgpt_key(self):
+            return ("c", "k")
+
+    g = {
+        "__name__": "corr_under_test",
+        "requests": types.SimpleNamespace(post=_post),
+        "_to_str": lambda x: "" if x is None else str(x),
+        "_get_requests_proxies": lambda: {},
+        "_log_usage_safe": lambda *a, **k: None,
+        "_request_timeout": lambda: 30,
+        "Manage": _M,
+        "Optional": typing.Optional,
+        "Dict": dict,
+        "Any": object,
+    }
+    exec(compile(src, _REPORTER_PY, "exec"), g)
+    return g["correction"], cap
+
+
+def test_correction_is_deterministic_and_structured():
+    """Correction (company path) must use a strong model, temperature 0, and a clearly-delimited
+    payload separating the report from the instruction."""
+    correction, cap = _build_company_correction()
+    correction(user_report='{"Report Title":"MRI Lumbar"}', correction_note="change L4-L5 to L5-S1")
+    p = cap["payload"]
+    assert p["model"] == "gpt-5.4", f"correction should default to a strong model, got {p['model']!r}"
+    assert p.get("temperature") == 0, "correction must pin temperature to 0 (surgical patch, not rewrite)"
+    uc = p["messages"][1]["content"]
+    assert "===== ORIGINAL_REPORT" in uc and "===== CORRECTION_NOTE" in uc, "payload blocks not delimited"
+    sp = p["messages"][0]["content"]
+    assert "PATCH, NOT REGENERATE" in sp, "correction system prompt lost its patch principle"
+
+
+def test_correction_target_location_block_is_conditional():
+    correction, cap = _build_company_correction()
+    # absent when no target
+    correction(user_report="{}", correction_note="fix it")
+    assert "TARGET_LOCATION" not in cap["payload"]["messages"][1]["content"]
+    # present, verbatim, when supplied
+    correction(user_report="{}", correction_note="fix it", target_section="Disc bulging at L4-L5.")
+    uc = cap["payload"]["messages"][1]["content"]
+    assert "===== TARGET_LOCATION" in uc and "Disc bulging at L4-L5." in uc
+
+
+def test_correction_backend_uses_correction_feature_and_temp0():
+    """OpenAI-backend correction() must resolve the dedicated 'correction' model feature, pin
+    temperature 0, and carry the full PATCH/preserve system prompt."""
+    _backend_py = os.path.normpath(
+        os.path.join(_THIS, "..", "..", "..", "modules", "EchoMind", "viewer_chat", "openai_parallel_backend.py")
+    )
+    src = _extract_defs(_backend_py, ("correction",))
+    cap = {}
+
+    def _fake_call(**kw):
+        cap.update(kw)
+        return {"content": "{}", "usage": {}}
+
+    g = {"__name__": "corr_backend", "_call": _fake_call, "Any": object, "Optional": typing.Optional,
+         "_to_str": lambda x: "" if x is None else str(x)}
+    # 2026-08-01: the twin backend no longer carries its own correction prompt —
+    # it calls the SAME builders as the company path. Exec the REAL builders in
+    # so the assertions below still check real prompt text, not a stub.
+    exec(
+        compile(
+            _extract_defs(
+                _REPORTER_PY,
+                ("build_correction_system_prompt", "build_correction_user_content"),
+            ),
+            _REPORTER_PY,
+            "exec",
+        ),
+        g,
+    )
+    exec(compile(src, _backend_py, "exec"), g)
+    g["correction"](user_report="{}", correction_note="n", target_section="S")
+    assert cap["feature_name"] == "correction", "backend must use the 'correction' model feature"
+    assert cap.get("temperature") == 0, "backend correction must pin temperature 0"
+    assert "PATCH operation" in cap["system_prompt"], "backend correction lost the patch system prompt"
+    assert "===== TARGET_LOCATION" in cap["user_content"]
 
 
 def test_no_central_single_rule_all_branches_independent():

@@ -620,6 +620,20 @@ class SingleInstanceLock:
             except Exception:
                 data = b""
             if _SHUTDOWN_MSG in data:
+                # Shutdown-initiator diagnostic (2026-08-01): THIS is why a
+                # running app "vanishes" with no crash — a SECOND launch (default
+                # takeover = "new launch wins") told us to close. Make it explicit
+                # in the log so it is never mistaken for a crash again. Set
+                # AIPACS_NO_TAKEOVER=1 to make a second launch RAISE this window
+                # instead of shutting it down.
+                try:
+                    logger.warning(
+                        "[SHUTDOWN-INITIATOR] single-instance received AIPACS_SHUTDOWN "
+                        "from a second launch — closing this instance (takeover). "
+                        "Set AIPACS_NO_TAKEOVER=1 to keep the running instance."
+                    )
+                except Exception:
+                    pass
                 try:
                     conn.disconnectFromServer()
                 except Exception:
@@ -627,6 +641,10 @@ class SingleInstanceLock:
                 self._initiate_shutdown()
                 return
             if _ACTIVATE_MSG in data:
+                try:
+                    logger.info("[single-instance] received AIPACS_ACTIVATE — raising the existing window")
+                except Exception:
+                    pass
                 cb = self._activate_callback
                 if cb is not None:
                     try:

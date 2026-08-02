@@ -129,6 +129,17 @@ class SecretaryPopup(QWidget):
                 cancel()
         except Exception:
             pass
+        # 2026-07-31 — cancelling the recording is not enough. An STT upload
+        # may still be in flight (the upload budget is 360 s), and its QThread
+        # is parented to the inner widget; if that widget is destroyed while it
+        # runs, Qt aborts the process with no traceback. `cleanup()` uses the
+        # detach-don't-wait contract, so this never blocks the GUI.
+        try:
+            cleanup = getattr(self.inner, "cleanup", None)
+            if callable(cleanup):
+                cleanup()
+        except Exception:
+            pass
 
     def request_close(self) -> None:
         """X button / programmatic close: cancel then hide (instance reused)."""

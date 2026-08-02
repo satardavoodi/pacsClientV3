@@ -795,6 +795,25 @@ if __name__ == "__main__":
     # Python traceback for ANY exception thrown during Qt event dispatch
     # (QTimer callbacks, signal slots, paint events, etc.).
     class _AIPacsApplication(QApplication):
+        def quit(self):  # noqa: N802 — Qt override
+            # Shutdown-initiator diagnostic (2026-08-01): a repeated "the app just
+            # closed by itself" with NO crash in the logs is only debuggable if we
+            # know WHO asked it to quit. Log the synchronous call site of every
+            # QApplication.quit() (a user/OS window close routes through here too,
+            # via the workstation closeEvent's deferred quit). Logging-only, never
+            # blocks the quit. Kill switch AIPACS_LOG_SHUTDOWN_INITIATOR=0.
+            try:
+                if os.environ.get("AIPACS_LOG_SHUTDOWN_INITIATOR", "1") != "0":
+                    import traceback as _tb
+                    logging.getLogger(__name__).warning(
+                        "[SHUTDOWN-INITIATOR] QApplication.quit() called — stack "
+                        "(most recent call last):\n%s",
+                        "".join(_tb.format_stack()[:-1])[-2500:],
+                    )
+            except Exception:
+                pass
+            super().quit()
+
         def notify(self, receiver, event):
             _t0_notify = time.perf_counter()
             try:
@@ -1238,7 +1257,7 @@ if __name__ == "__main__":
     app.setApplicationName("AIPacs")
     # app.setApplicationDisplayName("AIPacs - Professional Medical Imaging Suite")
     app.setApplicationDisplayName("AIPacs")
-    app.setApplicationVersion("3.5.6")
+    app.setApplicationVersion("3.5.7")
     app.setOrganizationName("AIPacs")
 
     # Setup font rendering for better quality
@@ -1318,6 +1337,32 @@ if __name__ == "__main__":
         app.aboutToQuit.connect(loop.stop)
     except Exception:
         pass
+
+    # Shutdown-initiator diagnostic (2026-08-01): fires exactly once, for EVERY
+    # quit path (window close, programmatic quit, single-instance takeover, OS
+    # signal). Records the reason set by the more specific hooks + the visible
+    # windows + the initiating stack, so an unexplained close is attributable.
+    # Logging-only; wrapped so it can never affect shutdown.
+    if os.environ.get("AIPACS_LOG_SHUTDOWN_INITIATOR", "1") != "0":
+        def _log_shutdown_initiator():
+            try:
+                import traceback as _tb
+                _reason = getattr(app, "_shutdown_reason", "unknown")
+                try:
+                    _wins = [type(w).__name__ for w in app.topLevelWidgets() if w.isVisible()]
+                except Exception:
+                    _wins = "?"
+                logging.getLogger(__name__).warning(
+                    "[SHUTDOWN-INITIATOR] aboutToQuit reason=%s visible_windows=%s "
+                    "— stack (most recent call last):\n%s",
+                    _reason, _wins, "".join(_tb.format_stack()[:-1])[-2500:],
+                )
+            except Exception:
+                pass
+        try:
+            app.aboutToQuit.connect(_log_shutdown_initiator)
+        except Exception:
+            pass
 
     window = AppHandler(startup_import_folder=startup_import_folder)
     window.show()

@@ -182,7 +182,48 @@ class SecretaryOrchestrator:
         """Public accessor for the memory store (used by the UI button)."""
         return self._get_memory_store_safe()
 
+    def preplan(self, cmd: SecretaryCommand) -> SecretaryActionPlan | None:
+        """Run ONLY the parse/plan half of a command. **Pure network, no Qt.**
+
+        2026-07-31 — the Secretary voice command used to run its whole pipeline
+        inside the STT worker's `done` callback, which Qt delivers on the GUI
+        THREAD (proved by the modal dialog two lines below it). That meant
+        Phase-1 routing (20 s), Phase-2 planning (30 s) and the repair loop
+        (2 x 25 s) all blocked the event loop: 60-95 s of frozen workstation on
+        a degraded link, with the viewer, worklist and download manager
+        unpaintable and Windows greying the title bar.
+
+        Only the PLANNING half can move off the GUI thread. Execution reaches
+        adapters that legitimately touch widgets, so it must stay where it is —
+        moving it would turn a freeze into an access violation. This method is
+        that half, and nothing in it touches a Qt object: `_get_route`,
+        `plan()`, the rule parser, the LLM fallback and the repair loop are all
+        network or pure Python. `progress_cb` is the caller's business; the orb
+        passes one that marshals to the GUI thread with a context object.
+
+        Feed the result back as ``cmd["_preplanned"]`` so `handle()` skips
+        straight to execution instead of re-running the LLM.
+        """
+        _mem = self._get_memory_store_safe()
+        return self._parse_plan(
+            cmd,
+            memory_context=(_mem.get_context_for_llm() if _mem else ""),
+        )
+
     def _parse_plan(self, cmd: SecretaryCommand, memory_context: str = "") -> SecretaryActionPlan | None:
+        # ── 2026-07-31: accept a plan already computed off the GUI thread ────
+        # Three states, so a caller that pre-planned never pays for it twice:
+        #   key absent      -> plan here, exactly as before (legacy path)
+        #   key is a plan   -> use it
+        #   key is falsy    -> planning ALREADY ran on the worker and produced
+        #                      nothing; do NOT run the LLM again here, on the
+        #                      GUI thread, which is the freeze we just removed.
+        if "_preplanned" in cmd:
+            pre = cmd.get("_preplanned")
+            if not pre:
+                return None
+            return self._ensure_source(pre, cmd)
+
         text = cmd.get("text") or ""
         language = cmd.get("language") or "auto"
         progress_cb = cmd.get("progress_cb")  # optional callable(stage: str)

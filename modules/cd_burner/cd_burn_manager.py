@@ -34,6 +34,26 @@ logger = logging.getLogger(__name__)
 _AUTO_LABEL_VALUES = {"", "auto", "[auto label]", "[auto]", "auto label"}
 
 
+def _series_selection_enabled() -> bool:
+    """Kill switch shared with the offline export: AIPACS_EXPORT_SERIES_SELECTION=0
+    disables the per-series burn filter and reverts to whole-study burns."""
+    import os
+    return str(os.getenv("AIPACS_EXPORT_SERIES_SELECTION", "1")).strip().lower() not in ("0", "false", "no")
+
+
+def _normalize_series_number(value) -> str:
+    """Canonical string key for a series number (``'02'`` / ``2`` / ``2.0`` → ``'2'``)."""
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return ""
+    try:
+        if text.replace(".", "", 1).lstrip("-").isdigit():
+            return str(int(float(text)))
+    except (TypeError, ValueError):
+        pass
+    return text
+
+
 @dataclass
 class BurnOptions:
     """Professional burn options (UI ↔ worker contract).
@@ -179,6 +199,7 @@ class CDBurnWorker(QThread):
         parent=None,
         viewer_display_name: Optional[str] = None,
         options: Optional[BurnOptions] = None,
+        series_selection: Optional[Dict[str, Any]] = None,
     ):
         super().__init__(parent)
         self.studies = studies
@@ -189,6 +210,9 @@ class CDBurnWorker(QThread):
         self.burn_to_disc = burn_to_disc
         self.viewer_display_name = viewer_display_name
         self.options = options or BurnOptions()
+        # {study_uid: {series_number, ...}} — burn only these series of a study.
+        # None (or a study absent from the map) → all series (legacy behaviour).
+        self.series_selection = series_selection or None
         self._cancelled = False
         self._preparer: Optional[DicomPreparer] = None
         self._burner: Optional[CDBurner] = None
@@ -643,18 +667,26 @@ class CDBurnWorker(QThread):
         return total_size / (1024 * 1024)
     
     def _collect_study_folders(self) -> List[str]:
-        """Collect paths to downloaded study folders"""
+        """Collect paths to downloaded study folders.
+
+        When a per-study series selection is active, each study contributes ONLY
+        its selected series subfolders instead of the whole study folder. The
+        downstream ``DicomPreparer`` and ``DicomDirBuilder`` both read DICOM tags
+        (they don't rely on folder layout), so passing series subfolders groups
+        patient/study/series correctly and the DICOMDIR + staged tree contain
+        only the chosen series. No selection → the whole study folder (legacy).
+        """
         study_folders = []
-        
+
         for study in self.studies:
             # Try different ways to get the study path
             study_path = None
             study_uid = study.get('study_uid')
-            
+
             # Method 1: Direct path from study data
             if 'study_path' in study and study['study_path']:
                 study_path = self._coerce_study_path(study['study_path'])
-            
+
             # Method 2: Use get_study_source_path function
             if not study_path and study_uid:
                 try:
@@ -662,7 +694,7 @@ class CDBurnWorker(QThread):
                     study_path = self._coerce_study_path(get_study_source_path(study_uid))
                 except Exception as e:
                     logger.warning(f"Could not get study path using get_study_source_path: {e}")
-            
+
             # Method 3: Look in default SOURCE_PATH location
             if not study_path and study_uid:
                 try:
@@ -672,18 +704,54 @@ class CDBurnWorker(QThread):
                         study_path = self._coerce_study_path(possible_path)
                 except Exception as e:
                     logger.warning(f"Could not check SOURCE_PATH: {e}")
-            
+
             if study_path and Path(study_path).exists():
                 # Check if there are actual DICOM files
                 if self._has_dicom_files(study_path):
-                    study_folders.append(study_path)
-                    logger.info(f"Found study folder: {study_path}")
+                    folders_for_study = self._series_folders_for_study(study_path, study_uid)
+                    for folder in folders_for_study:
+                        study_folders.append(folder)
+                        logger.info(f"Found study folder: {folder}")
                 else:
                     logger.warning(f"No DICOM files in: {study_path}")
             else:
                 logger.warning(f"Study path not found for study_uid: {study_uid}")
-        
+
         return study_folders
+
+    def _series_folders_for_study(self, study_path: str, study_uid: Optional[str]) -> List[str]:
+        """Resolve which folder(s) of a study to include, honoring the selection.
+
+        Returns ``[study_path]`` (whole study) unless a selection restricts this
+        study to specific series, in which case it returns those series
+        subfolders. On-disk subfolders are named by series number; leading-zero
+        and int-vs-str differences are tolerated via normalization.
+        """
+        if not _series_selection_enabled() or not self.series_selection or not study_uid:
+            return [study_path]
+        if study_uid not in self.series_selection:
+            return [study_path]  # this study was not filtered → keep everything
+
+        keep = {_normalize_series_number(sn) for sn in (self.series_selection.get(study_uid) or set())}
+        keep.discard("")
+        if not keep:
+            return [study_path]  # empty selection is meaningless → fail safe to all
+
+        selected: List[str] = []
+        try:
+            for child in sorted(Path(study_path).iterdir(), key=lambda p: p.name):
+                if child.is_dir() and _normalize_series_number(child.name) in keep and self._has_dicom_files(str(child)):
+                    selected.append(str(child))
+        except OSError as exc:
+            logger.warning(f"Could not enumerate series for {study_uid}: {exc}")
+            return [study_path]
+
+        if not selected:
+            # Folder names didn't match the selection (unusual) — burn the whole
+            # study rather than silently producing an empty disc.
+            logger.warning(f"No series subfolders matched selection for {study_uid}; using whole study")
+            return [study_path]
+        return selected
     
     def _copy_light_viewer(self, staging_folder: str,
                            fileset_label: Optional[str] = None,
@@ -1089,21 +1157,24 @@ class CDBurnManager(QObject):
         burn_to_disc: bool = True,
         viewer_display_name: Optional[str] = None,
         options: Optional[BurnOptions] = None,
+        series_selection: Optional[Dict[str, Any]] = None,
     ):
         """
         Prepare and burn studies to CD
-        
+
         Args:
             studies: List of study data dictionaries
             light_viewer_path: Path to Light Viewer executable
             disc_label: Label for the disc
             drive_id: ID of the drive to use (None for first available)
             burn_to_disc: If True, burn to disc. If False, just prepare folder
+            series_selection: Optional {study_uid: {series_number, ...}} to burn
+                only the chosen series of a study (None = every series)
         """
         if self.worker and self.worker.isRunning():
             logger.warning("A burn operation is already in progress")
             return
-        
+
         self.worker = CDBurnWorker(
             studies=studies,
             light_viewer_path=light_viewer_path,
@@ -1112,6 +1183,7 @@ class CDBurnManager(QObject):
             burn_to_disc=burn_to_disc,
             viewer_display_name=viewer_display_name,
             options=options,
+            series_selection=series_selection,
         )
         
         # Connect signals
@@ -1130,20 +1202,23 @@ class CDBurnManager(QObject):
         disc_label: str = "DICOM_IMAGES",
         viewer_display_name: Optional[str] = None,
         options: Optional[BurnOptions] = None,
+        series_selection: Optional[Dict[str, Any]] = None,
     ):
         """
         Prepare CD folder structure without burning
-        
+
         Args:
             studies: List of study data dictionaries
             output_folder: Path where to create the CD folder structure
             light_viewer_path: Path to Light Viewer executable
             disc_label: Label for the disc (used in DICOMDIR)
+            series_selection: Optional {study_uid: {series_number, ...}} to
+                include only the chosen series of a study (None = every series)
         """
         if self.worker and self.worker.isRunning():
             logger.warning("An operation is already in progress")
             return
-        
+
         self.worker = CDBurnWorker(
             studies=studies,
             light_viewer_path=light_viewer_path,
@@ -1152,6 +1227,7 @@ class CDBurnManager(QObject):
             burn_to_disc=False,
             viewer_display_name=viewer_display_name,
             options=options,
+            series_selection=series_selection,
         )
         
         # Connect signals

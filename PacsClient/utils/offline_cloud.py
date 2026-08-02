@@ -557,6 +557,56 @@ DICOMDIR_FILESET_ID = "AIPACS_OFFLINE"
 DICOM_INTERCHANGE_DIRNAME = "DICOM"
 
 
+# ---------------------------------------------------------------------------
+# Per-series export selection (2026-07-30)
+# ---------------------------------------------------------------------------
+# A caller may pass ``series_selection`` = {study_uid: {series_number, ...}} to
+# export only SOME series of a study. ``None`` (or a study absent from the map)
+# means "all series" — byte-identical to the historical whole-study export.
+# The filter is applied at three points that MUST agree, or the package,
+# package.db and DICOMDIR would disagree with each other:
+#   1. the ``series`` DB rows written to package.db
+#   2. the ``instances`` DB rows (nested under the kept series)
+#   3. the on-disk DICOM subfolders copied into patients/dicom/<study_uid>/
+# DICOMDIR is then rebuilt from the copied files, so it inherits the filter
+# automatically. Kill switch: AIPACS_EXPORT_SERIES_SELECTION=0 → ignore the map
+# entirely and export every series (legacy behaviour).
+SeriesSelection = dict[str, "set[str]"]
+
+
+def _series_selection_enabled() -> bool:
+    return str(os.getenv("AIPACS_EXPORT_SERIES_SELECTION", "1")).strip().lower() not in ("0", "false", "no")
+
+
+def _normalize_series_number(value: Any) -> str:
+    """Canonical string key for a series number, tolerant of ``'02'`` / ``2`` / ``2.0``.
+
+    Folder names on disk and ``series.series_number`` in the DB are both the
+    series number; this makes the two comparable regardless of how each was
+    stored (leading zeros, int vs str, a stray ``.0``).
+    """
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return ""
+    try:
+        # 2, "2", "02", "2.0" all collapse to "2"; non-numeric stays verbatim.
+        if text.replace(".", "", 1).lstrip("-").isdigit():
+            return str(int(float(text)))
+    except (TypeError, ValueError):
+        pass
+    return text
+
+
+def _selected_series_for(study_uid: str, series_selection: "SeriesSelection | None") -> "set[str] | None":
+    """Return the normalized set of series numbers to KEEP, or ``None`` for all."""
+    if not series_selection or not _series_selection_enabled():
+        return None
+    if study_uid not in series_selection:
+        return None  # caller did not filter this study → keep everything
+    chosen = series_selection.get(study_uid) or set()
+    return {_normalize_series_number(sn) for sn in chosen if _normalize_series_number(sn)}
+
+
 def _dicom_content_signature(dicom_root: Path) -> dict[str, int]:
     """Cheap (file_count, total_bytes) signature of the package's DICOM payload.
 
@@ -861,6 +911,7 @@ def export_studies_to_offline_cloud(
     source_server: dict[str, Any] | None = None,
     operation: str = "export",
     include_dicomdir: bool = False,
+    series_selection: "SeriesSelection | None" = None,
 ) -> dict[str, Any]:
     """Export studies into an Offline-Cloud package.
 
@@ -869,6 +920,12 @@ def export_studies_to_offline_cloud(
     third-party viewers/PACS can import the media. It is OFF by default so the
     cloud-consultation / education packages (which are uploaded) stay exactly as
     they are; the Offline-Sync call site turns it on.
+
+    ``series_selection`` (default **None** = every series) is a
+    ``{study_uid: {series_number, ...}}`` map to export only SOME series of a
+    study. The filter is applied to the package.db series/instance rows, the
+    copied DICOM folders, and (via rebuild) the DICOMDIR — so all three stay
+    consistent. A study absent from the map keeps all its series.
     """
     selected_uids = sorted({str(uid or "").strip() for uid in study_uids if str(uid or "").strip()})
     if not selected_uids:
@@ -883,10 +940,16 @@ def export_studies_to_offline_cloud(
 
         exported: list[str] = []
         errors: list[str] = []
+        series_summaries: list[dict[str, Any]] = []
         for study_uid in selected_uids:
             try:
-                _export_single_study(source_conn, package_conn, paths, study_uid)
+                summary = _export_single_study(
+                    source_conn, package_conn, paths, study_uid,
+                    series_selection=series_selection,
+                )
                 exported.append(study_uid)
+                if isinstance(summary, dict):
+                    series_summaries.append(summary)
             except Exception as exc:
                 errors.append(f"{study_uid}: {exc}")
         package_conn.commit()
@@ -918,6 +981,7 @@ def export_studies_to_offline_cloud(
         "errors": errors,
         "manifest_path": str(paths["manifest"]),
         "study_count": int(manifest.get("study_count") or 0),
+        "series_summaries": series_summaries,
     }
     if dicomdir_result is not None:
         result["dicomdir"] = dicomdir_result
@@ -1598,7 +1662,9 @@ def _export_single_study(
     package_conn: sqlite3.Connection,
     package_root_paths: dict[str, Path],
     study_uid: str,
-) -> None:
+    *,
+    series_selection: "SeriesSelection | None" = None,
+) -> dict[str, Any]:
     study_row = _fetch_one(source_conn, "SELECT * FROM studies WHERE study_uid = ?", (study_uid,))
     if not study_row:
         raise ValueError("Study does not exist in local database.")
@@ -1614,6 +1680,11 @@ def _export_single_study(
     local_study_dir = DICOM_IMAGES_DIR / study_uid
     if not local_study_dir.exists():
         raise ValueError("Study is not available locally and cannot be exported.")
+
+    # None → keep all series (byte-identical legacy). Otherwise the normalized
+    # set of series numbers the user ticked for THIS study.
+    keep_series = _selected_series_for(study_uid, series_selection)
+    summary = {"study_uid": study_uid, "series_kept": 0, "series_skipped": 0, "instances": 0}
 
     _delete_rows_for_study(package_conn, study_uid)
 
@@ -1640,6 +1711,10 @@ def _export_single_study(
 
     series_rows = _fetch_all(source_conn, "SELECT * FROM series WHERE study_fk = ? ORDER BY series_number", (study_row["study_pk"],))
     for series_row in series_rows:
+        if keep_series is not None and _normalize_series_number(series_row.get("series_number")) not in keep_series:
+            summary["series_skipped"] += 1
+            continue  # deselected series → no DB rows, no files (see copy below)
+        summary["series_kept"] += 1
         exported_series = dict(series_row)
         exported_series["study_fk"] = package_study_pk
         exported_series["thumbnail_path"] = _rewrite_path(series_row.get("thumbnail_path"), to_package=True)
@@ -1668,6 +1743,7 @@ def _export_single_study(
                 unique_col="sop_uid",
                 pk_col="instance_pk",
             )
+            summary["instances"] += 1
 
     dp_row = None
     if _has_table(source_conn, "download_progress") and _has_table(package_conn, "download_progress"):
@@ -1745,9 +1821,20 @@ def _export_single_study(
                 tuple(payload[col] for col in insert_cols),
             )
 
-    _copy_tree_replace(local_study_dir, package_root_paths["dicom"] / study_uid)
+    # Translate the kept series NUMBERS into the actual on-disk subfolder names.
+    # Folder names are the series number, but tolerate leading-zero / int-vs-str
+    # differences by normalizing both sides. None → copy the whole study tree.
+    allowed_dirs: "set[str] | None" = None
+    if keep_series is not None:
+        allowed_dirs = set()
+        for child in local_study_dir.iterdir():
+            if child.is_dir() and _normalize_series_number(child.name) in keep_series:
+                allowed_dirs.add(child.name)
+
+    _copy_tree_replace(local_study_dir, package_root_paths["dicom"] / study_uid, allowed_top_dirs=allowed_dirs)
     _copy_tree_replace(ATTACHMENTS_DIR / study_uid, package_root_paths["attachments"] / study_uid)
     _copy_tree_replace(THUMBNAILS_DIR / study_uid, package_root_paths["thumbnails"] / study_uid)
+    return summary
 
 
 def _import_single_study(
@@ -1902,7 +1989,16 @@ def _import_single_study(
             )
 
 
-def _copy_tree_replace(src: Path, dst: Path) -> None:
+def _copy_tree_replace(src: Path, dst: Path, *, allowed_top_dirs: "set[str] | None" = None) -> None:
+    """Mirror ``src`` into ``dst``, deleting anything at ``dst`` not in ``src``.
+
+    ``allowed_top_dirs`` (used for per-series export): when provided, only the
+    named FIRST-LEVEL subdirectories of ``src`` are copied (root-level files are
+    always copied). Because the stale-cleanup pass below removes any dst entry
+    not seen in ``src``, a re-export with fewer series automatically drops the
+    now-deselected series folders from the package — so package, package.db and
+    DICOMDIR stay consistent with each other.
+    """
     if not src.exists():
         if dst.exists():
             shutil.rmtree(dst, ignore_errors=True)
@@ -1917,6 +2013,17 @@ def _copy_tree_replace(src: Path, dst: Path) -> None:
         root_path = Path(root)
         rel_root = root_path.relative_to(src)
         rel_root_text = "" if str(rel_root) == "." else rel_root.as_posix()
+
+        if allowed_top_dirs is not None:
+            if rel_root_text == "":
+                # At the study root, do not descend into deselected series.
+                dirs[:] = [d for d in dirs if d in allowed_top_dirs]
+            else:
+                top = rel_root.parts[0]
+                if top not in allowed_top_dirs:
+                    dirs[:] = []
+                    continue  # skip this excluded series subtree entirely
+
         source_dirs.add(rel_root_text)
 
         target_root = dst if not rel_root_text else dst / rel_root

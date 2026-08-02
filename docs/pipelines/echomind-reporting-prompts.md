@@ -214,6 +214,34 @@ branch are retained. Guard: `test_non_ob_ultrasound_has_exam_specific_normal_tem
 
 ---
 
+## 7d. Correction workflow — final targeted-revision (PATCH) step (2026-07-09)
+
+**What it is:** the last revision stage. The physician selects a previously generated report and
+writes a correction note; the model must apply ONLY that change and return the complete report.
+UI entry points: `_send_report_correction` (Report mode) and `_send_correction` (ChatGPT mode) in
+`ai_chat_pages.py`; both call `correction()` (company path = `openai_reporter.py`, OpenAI path =
+`openai_parallel_backend.py`).
+
+**Problems found & fixed:**
+
+| Problem | Fix |
+|---------|-----|
+| Company/GapGPT path hard-coded the **weak** `gpt-4.1-mini` for correction | Both UI callers now use `_ai_model("correction", "gpt-5.4", backend)`; `correction()` default model raised to `gpt-5.4`. On the OpenAI backend the `correction` feature maps to `report_model` (default `gpt-5.4`), configurable in Settings — set a stronger model there (e.g. `gpt-5.5`) if/when available. |
+| **No temperature** set → API default (~1.0) encouraged rewriting unrelated content | `temperature: 0` pinned on both backends (surgical patch, deterministic). `max_tokens: 3000` on the company path. |
+| Payload was a loose `ORIGINAL_REPORT:… CORRECTION_NOTE:…` string | Restructured into clearly-delimited `===== ORIGINAL_REPORT =====` / `===== CORRECTION_NOTE =====` blocks with an explicit instruction to change only what the note requires and return the complete report. |
+| No channel for the **exact section/sentence/line/finding** to change | Added optional `target_section` param → a separate `===== TARGET_LOCATION =====` block (present only when supplied; the model otherwise locates the target from the note). Prompt gains a "LOCATE the target, then patch" step. The UI can pass a highlighted selection here in future; the field is wired end-to-end. |
+| OpenAI-backend correction used a 1-line system prompt | Replaced with the full PATCH/preserve system prompt (change only the target; keep everything else byte-identical; don't add findings; don't delete valid info; preserve terminology/structure; return all 5 keys). |
+
+The strong company-path PATCH system prompt (PATCH-not-regenerate, preserve-all, minimal-edit,
+literal-dependency-only propagation) was already present and is retained. Response processing
+(strip `<|end|>`, parse JSON, re-register for further corrections) is unchanged and adequate.
+
+Guards: `test_correction_is_deterministic_and_structured`,
+`test_correction_target_location_block_is_conditional`,
+`test_correction_backend_uses_correction_feature_and_temp0`.
+
+---
+
 ## 8. Tests
 
 - **Guard test:** `tests/code/echomind/test_report_prompt_preservation.py`

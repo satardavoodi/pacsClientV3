@@ -45,6 +45,75 @@ _MPR_DEFER_3D = (_os.getenv("AIPACS_MPR_DEFER_3D", "1") or "1").strip().lower() 
 # AIPACS_MPR_PREWARM=0.
 _MPR_PREWARM = (_os.getenv("AIPACS_MPR_PREWARM", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
 
+# ── OPT-48 #4 (2026-08-01): build the 3D VRT ON DEMAND on LARGE volumes ─────
+# Measured on a 672-slice CT (patient 52827): the deferred 3D VRT still cost
+# ~9 s of GUI-thread time (vtkGPUVolumeRayCastMapper + first ray-casts) a moment
+# AFTER the 2D panes appeared — the app froze a second time. L1 (AIPACS_MPR_DEFER_3D)
+# only moved that cost, it did not remove it from the open path.
+# With this ON, a volume at/above the slice threshold keeps the placeholder as a
+# CLICKABLE "Show 3D" cell: the VRT is built the first time the user actually
+# asks for it. Small volumes keep the existing auto-build (their VRT is cheap).
+# Diagnostic 2D MPR (axial/sagittal/coronal) is UNCHANGED — the clinical planes
+# never depended on the 3D pane.
+#   AIPACS_MPR_VRT_ON_DEMAND=0        → legacy auto-build (byte-identical)
+#   AIPACS_MPR_VRT_ON_DEMAND_SLICES=N → threshold (default 200 slices)
+_MPR_VRT_ON_DEMAND = (_os.getenv("AIPACS_MPR_VRT_ON_DEMAND", "1") or "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def _vrt_on_demand_slice_threshold() -> int:
+    try:
+        value = int(str(_os.getenv("AIPACS_MPR_VRT_ON_DEMAND_SLICES", "200")).strip())
+        return value if value > 0 else 200
+    except Exception:
+        return 200
+
+
+def mpr_stable_scroll_enabled() -> bool:
+    """Stack-scroll stability for the RECONSTRUCTED (sag/cor) MPR panes (2026-08-01).
+
+    Reported: after double-click-enlarging a reconstructed pane, scrolling the
+    stack makes the image shake/jitter slightly instead of only advancing the
+    slice.
+
+    MECHANISM: the reconstructed panes were created with
+    ``vtkImageResliceMapper.SetResampleToScreenPixels(True)``, which VTK
+    documents as "the image will be resampled every time the camera changes".
+    Scrolling MOVES the camera (the slice is selected via SliceAtFocalPoint), so
+    every notch re-derives the resampling grid from the camera; sub-pixel
+    differences in that grid shift the sampled image slightly = shimmer. It is
+    invisible in a small pane and becomes visible once the pane is enlarged,
+    because each voxel then covers many screen pixels. The NATIVE pane already
+    used ``False`` — which is exactly why only the reconstructed panes shake.
+
+    With this ON (default) the reconstructed panes resample onto their own
+    data-derived grid (camera-independent → stable across slices) and keep
+    ``SetInterpolationTypeToLinear()``, so the smooth MPR appearance is retained.
+    GEOMETRY IS NOT AFFECTED: the slice plane, position, spacing, origin and the
+    direction matrix are untouched — only the sampling grid the mapper renders
+    onto changes. ``AIPACS_MPR_STABLE_SCROLL=0`` restores the legacy behaviour.
+    """
+    return (_os.getenv("AIPACS_MPR_STABLE_SCROLL", "1") or "1").strip().lower() not in (
+        "0", "false", "no", "off",
+    )
+
+
+def should_defer_vrt_to_demand(slice_count, enabled=None, threshold=None) -> bool:
+    """PURE decision: does this volume build its 3D VRT only on demand?
+
+    ``slice_count`` = the volume's Z dimension. Unknown/garbage → False (build
+    as before), so the safe path is always the legacy one.
+    """
+    if enabled is None:
+        enabled = _MPR_VRT_ON_DEMAND
+    if not enabled:
+        return False
+    if threshold is None:
+        threshold = _vrt_on_demand_slice_threshold()
+    try:
+        return int(slice_count) >= int(threshold)
+    except (TypeError, ValueError):
+        return False
+
 # ── OPT-21 Phase-3/4 step trace (2026-07-07, WoA/Snapdragon investigation) ───
 # On PC2 (Snapdragon X Elite, Windows 11 ARM64) the app dies with a NATIVE
 # access violation somewhere inside the FIRST QVTKRenderWindowInteractor
@@ -186,9 +255,25 @@ class _MprViewsMixin:
             self._create_axial_view(views_layout, 0, 0)
             self._create_sagittal_view(views_layout, 1, 0)
             self._create_coronal_view(views_layout, 1, 1)
+            # OPT-48 #4: on a LARGE volume the VRT is not auto-built — the
+            # placeholder becomes a clickable "Show 3D" cell (the ~9 s GPU cost
+            # is paid only if the user wants 3D). Small volumes: unchanged.
+            try:
+                _zdim = int(self.dims[2]) if getattr(self, 'dims', None) else 0
+            except Exception:
+                _zdim = 0
+            self._vrt_on_demand = should_defer_vrt_to_demand(_zdim)
             self._install_deferred_3d_placeholder(views_layout, 0, 1)
             self._deferred_3d_pending = True
-            QTimer.singleShot(0, self._build_deferred_3d_view)
+            if self._vrt_on_demand:
+                logger.warning(
+                    "[MPR-VRT-ON-DEMAND] slices=%d >= threshold=%d — 3D VRT will be built "
+                    "when the user opens the 3D pane (2D MPR unaffected)",
+                    _zdim, _vrt_on_demand_slice_threshold(),
+                )
+            if not self._vrt_on_demand:
+                # Small volume: unchanged L1 behaviour — auto-build on idle.
+                QTimer.singleShot(0, self._build_deferred_3d_view)
         else:
             self._create_axial_view(views_layout, 0, 0)
             self._create_3d_view(views_layout, 0, 1)
@@ -420,12 +505,20 @@ class _MprViewsMixin:
                         mapper.SetResampleToScreenPixels(False)
                     role = "native(nearest)"
                 else:
-                    # Reconstructed plane: smooth MPR — linear + screen-pixel resample (the
-                    # original sagittal/coronal default).
+                    # Reconstructed plane: smooth MPR — linear interpolation.
+                    # Screen-pixel resampling is camera-DEPENDENT ("resampled every
+                    # time the camera changes"), which makes the image shimmer while
+                    # scrolling the stack — visible once the pane is enlarged. Default
+                    # OFF for a stable stack scroll; linear interpolation keeps the
+                    # smooth appearance. AIPACS_MPR_STABLE_SCROLL=0 = legacy True.
                     prop.SetInterpolationTypeToLinear()
+                    _stable_scroll = mpr_stable_scroll_enabled()
                     if mapper is not None and hasattr(mapper, 'SetResampleToScreenPixels'):
-                        mapper.SetResampleToScreenPixels(True)
-                    role = "reconstructed(linear)"
+                        mapper.SetResampleToScreenPixels(not _stable_scroll)
+                    role = (
+                        "reconstructed(linear,stable-scroll)" if _stable_scroll
+                        else "reconstructed(linear,screen-resample)"
+                    )
                 logger.info("[ZETA_MPR] %s pane interpolation -> %s (look_axis=%d)", view, role, look_axis)
             except Exception as exc:
                 logger.debug("[ZETA_MPR] native-plane interpolation set failed for %s: %r", view, exc)
@@ -690,7 +783,38 @@ class _MprViewsMixin:
         renderer.GradientBackgroundOn()
         vtk_widget.GetRenderWindow().AddRenderer(renderer)
 
-        vtk_widget.GetRenderWindow().SetMultiSamples(4)
+        # ── OPT-47: size the GPU budget to the ACTUAL volume ─────────────────
+        # The 3D VRT used a FIXED SetMaxMemoryInBytes(512 MB). VTK applies its own
+        # MaxMemoryFraction (default 0.75) on top => an effective ~384 MB budget. A
+        # 512x512 int16 study crosses that at 384MiB/(512*512*2B) = 768 slices — exactly the
+        # 700-800 slice range where the FIRST MPR open was observed to kill the app. Beyond
+        # the budget vtkGPUVolumeRayCastMapper must partition the volume into several 3D
+        # textures while ALSO holding a gradient texture (SetDisableGradientOpacity(0)) and
+        # 4x MSAA; and because this is the GPU mapper (not vtkSmartVolumeMapper) there is NO
+        # CPU fallback — a failed GPU allocation surfaces as a driver-level access violation,
+        # i.e. a silent process death with no Python traceback. (Relaunching frees the VRAM a
+        # long session had accumulated, which is why the second attempt succeeded.)
+        # Fix = graceful degradation, largest volumes first:
+        #   1. tell the mapper the volume's REAL size (+ headroom) so it stops partitioning a
+        #      volume that would fit,
+        #   2. above a threshold drop the gradient texture (halves VRAM; shading is kept),
+        #   3. above that, drop MSAA too.
+        # Small/normal volumes take the byte-identical legacy path (quality unchanged).
+        import os as _os47
+        _vrt_budget_on = (_os47.environ.get("AIPACS_MPR_VRT_GPU_BUDGET", "1") or "1").strip() != "0"
+        _vol_bytes = 0
+        try:
+            _d = self.image_data.GetDimensions()
+            _sc = self.image_data.GetScalarSize() or 2
+            _nc = self.image_data.GetNumberOfScalarComponents() or 1
+            _vol_bytes = int(_d[0]) * int(_d[1]) * int(_d[2]) * int(_sc) * int(_nc)
+        except Exception:
+            _vol_bytes = 0
+        # A gradient texture roughly doubles the requirement; MSAA adds framebuffer cost.
+        _heavy = _vrt_budget_on and _vol_bytes >= (320 * 1024 * 1024)   # ~640 slices @512x512x2
+        _very_heavy = _vrt_budget_on and _vol_bytes >= (512 * 1024 * 1024)  # ~1024 slices
+
+        vtk_widget.GetRenderWindow().SetMultiSamples(0 if _very_heavy else 4)
 
         volume_mapper = vtk.vtkGPUVolumeRayCastMapper()
         volume_mapper.SetInputData(self.image_data)
@@ -708,7 +832,13 @@ class _MprViewsMixin:
         volume_mapper.SetAutoAdjustSampleDistances(1 if _vrt_adaptive else 0)
         volume_mapper.SetSampleDistance(0.5)
         volume_mapper.SetImageSampleDistance(1.0)
-        volume_mapper.SetMaxMemoryInBytes(1024 * 1024 * 512)
+        # OPT-47: budget = max(legacy 512 MB, the volume itself + 60% headroom), so a volume
+        # that physically fits is uploaded as ONE texture instead of taking the partitioned
+        # path. VTK still multiplies by its MaxMemoryFraction, so the headroom matters.
+        _vrt_cap = 1024 * 1024 * 512
+        if _vrt_budget_on and _vol_bytes > 0:
+            _vrt_cap = max(_vrt_cap, int(_vol_bytes * 1.6))
+        volume_mapper.SetMaxMemoryInBytes(_vrt_cap)
         volume_mapper.SetBlendModeToComposite()
 
         volume_property = vtk.vtkVolumeProperty()
@@ -718,7 +848,22 @@ class _MprViewsMixin:
         volume_property.SetDiffuse(0.7)
         volume_property.SetSpecular(0.3)
         volume_property.SetSpecularPower(20)
-        volume_property.SetDisableGradientOpacity(0)
+        # OPT-47: the gradient-opacity texture is a SECOND full-volume GPU allocation. On a
+        # large study that is the difference between fitting in VRAM and a driver-level crash,
+        # so disable it above the threshold. Shading (ShadeOn) and the preset's colour/opacity
+        # transfer functions are UNCHANGED — only the gradient-based opacity modulation is
+        # dropped, and only for volumes that would otherwise risk the allocation.
+        volume_property.SetDisableGradientOpacity(1 if _heavy else 0)
+        if _heavy:
+            try:
+                logger.info(
+                    "[MPR-VRT-BUDGET] large volume: bytes=%.0fMB cap=%.0fMB gradient_opacity=off "
+                    "msaa=%d — degrading GPU footprint to avoid a VRAM-exhaustion crash",
+                    _vol_bytes / (1024.0 * 1024.0), _vrt_cap / (1024.0 * 1024.0),
+                    0 if _very_heavy else 4,
+                )
+            except Exception:
+                pass
 
         self.volume_property = volume_property
 
@@ -811,12 +956,38 @@ class _MprViewsMixin:
             placeholder.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
             ph_layout = QVBoxLayout(placeholder)
             ph_layout.setContentsMargins(0, 0, 0, 0)
-            label = QLabel("Rendering 3D…")
-            label.setAlignment(Qt.AlignCenter)
-            label.setStyleSheet(
-                "color: #6b7785; font-size: 12px; background: transparent; border: none;"
-            )
-            ph_layout.addWidget(label)
+            on_demand = bool(getattr(self, '_vrt_on_demand', False))
+            if on_demand:
+                # OPT-48 #4: large volume — offer the 3D pane instead of paying
+                # its ~9 s GPU cost during the open. One click builds it.
+                label = QLabel("3D view\n(click to render)")
+                label.setAlignment(Qt.AlignCenter)
+                label.setStyleSheet(
+                    "color: #9aa7b4; font-size: 12px; background: transparent; border: none;"
+                )
+                ph_layout.addWidget(label)
+                placeholder.setCursor(Qt.PointingHandCursor)
+                placeholder.setToolTip(
+                    "This series is large, so the 3D volume rendering is not built "
+                    "automatically.\nClick to render it (may take a few seconds)."
+                )
+
+                def _on_placeholder_click(event, _self=self, _label=label):
+                    try:
+                        _label.setText("Rendering 3D…")
+                        _label.repaint()
+                    except Exception:
+                        pass
+                    _self._build_deferred_3d_view()
+
+                placeholder.mousePressEvent = _on_placeholder_click
+            else:
+                label = QLabel("Rendering 3D…")
+                label.setAlignment(Qt.AlignCenter)
+                label.setStyleSheet(
+                    "color: #6b7785; font-size: 12px; background: transparent; border: none;"
+                )
+                ph_layout.addWidget(label)
             layout.addWidget(placeholder, row, col)
             self._deferred_3d_placeholder = placeholder
         except Exception as exc:

@@ -117,8 +117,15 @@ def test_cleanup_clears_pending_flag():
     src = _layout_src()
     fn = src.find("def cleanup(self):")
     assert fn != -1
-    body = src[fn:fn + 600]
+    # Window widened 600 -> 3000 on 2026-08-01: the lifecycle work prepended the
+    # `_mpr_closed = True` stop-accepting flag (plus its rationale comment) above
+    # this assignment, pushing it past the old slice. The assertion itself is
+    # unchanged — cleanup() must still clear the deferred-3D pending flag early,
+    # before any VTK teardown, so the idle callback bails.
+    body = src[fn:fn + 3000]
     assert "self._deferred_3d_pending = False" in body
+    # ...and it must still come before the first VTK release.
+    assert body.index("self._deferred_3d_pending = False") < body.index("_full_teardown")
 
 
 # ----------------------------------------------------------------------------

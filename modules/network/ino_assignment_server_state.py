@@ -79,16 +79,55 @@ def _load() -> Dict[str, Any]:
 
 
 def _save(data: Dict[str, Any]) -> bool:
+    """Write the snapshot atomically. CALLER MUST HOLD ``_LOCK``.
+
+    2026-07-31 — this failed ~9 times in one day with
+    ``[WinError 5] Access is denied: 'server_state.json.part' ->
+    'server_state.json'``, three of them within 280 ms on three different
+    threads. Two separate causes, both fixed here:
+
+    1. The temp name was a FIXED ``p + ".part"``. Every writer used the same
+       scratch file, so two writers could interleave into one temp and the
+       "atomic" replace could commit a half-merged document. The name is now
+       unique per call.
+    2. On Windows ``os.replace`` fails with ERROR_ACCESS_DENIED when the
+       DESTINATION has an open handle that was not opened with
+       FILE_SHARE_DELETE — and CPython's ``open()`` does not request it. So a
+       reader merely holding ``server_state.json`` open blocked the writer.
+       ``get_state`` now takes ``_LOCK`` too (see below), which removes the
+       reader/writer overlap; the short retry here covers the remaining
+       out-of-process case (antivirus, search indexer, a backup agent).
+
+    The temp file is always removed, so a failed write cannot litter the
+    directory with ``.part`` files.
+    """
+    tmp = ""
     try:
         p = _path()
-        tmp = p + ".part"
+        tmp = "%s.%d.%d.part" % (p, os.getpid(), threading.get_ident())
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False)
-        os.replace(tmp, p)  # atomic
-        return True
+            fh.flush()
+            os.fsync(fh.fileno())
+        last: Exception | None = None
+        for attempt in range(3):
+            try:
+                os.replace(tmp, p)  # atomic
+                return True
+            except PermissionError as exc:   # WinError 5 / 32 — someone holds it
+                last = exc
+                if attempt < 2:
+                    time.sleep(0.05 * (attempt + 1))
+        raise last if last is not None else RuntimeError("replace failed")
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("[ino-assignment] could not write server state: %s", exc)
         return False
+    finally:
+        try:
+            if tmp and os.path.exists(tmp):
+                os.remove(tmp)
+        except Exception:
+            pass
 
 
 def set_state(
@@ -141,7 +180,19 @@ def get_state(reception_id) -> Optional[Dict[str, Any]]:
     if not rid:
         return None
     try:
-        entry = _load().get(rid)
+        # 2026-07-31 — this read used to run OUTSIDE `_LOCK`. `_load` opens the
+        # destination file, and on Windows an open read handle makes the
+        # writer's `os.replace` fail with ERROR_ACCESS_DENIED, so server
+        # assignment state silently failed to persist (the failure is a
+        # swallowed warning). The lock protected writer-vs-writer but not
+        # writer-vs-READER, which is the case that actually bites here — the
+        # worklist calls this per row from background threads while the refresh
+        # thread is writing. `_load` itself must stay lock-free: `set_state`
+        # already holds `_LOCK` when it calls it, and threading.Lock is not
+        # reentrant.
+        with _LOCK:
+            data = _load()
+        entry = data.get(rid)
         return entry if isinstance(entry, dict) else None
     except Exception:
         return None

@@ -338,15 +338,24 @@ class CircularProgressborder(QFrame):
         
         # Get widget dimensions
         rect = self.rect()
-        
-        # Create rounded rect path for the border
+
+        # Active-series emphasis (2026-07-29): the currently-viewed (selected)
+        # series gets a THICKER border so it is unmistakable next to inactive
+        # cards, in BOTH light and dark themes (the colour is the accent token).
+        # AIPACS_ACTIVE_THUMB_STRONG=0 restores the uniform 2px border.
+        bw = float(self._border_width)
+        if self._is_selected and _os.getenv("AIPACS_ACTIVE_THUMB_STRONG", "1") != "0":
+            bw = 3.5
+
+        # Create rounded rect path for the border (inset by half the stroke so a
+        # thicker active border is not clipped at the widget edge).
         border_rect = QRectF(
-            rect.x() + self._border_width / 2,
-            rect.y() + self._border_width / 2,
-            rect.width() - self._border_width,
-            rect.height() - self._border_width
+            rect.x() + bw / 2,
+            rect.y() + bw / 2,
+            rect.width() - bw,
+            rect.height() - bw
         )
-        
+
         radius = 8  # border radius
         
         # Determine border color and style based on state.
@@ -391,9 +400,11 @@ class CircularProgressborder(QFrame):
             bg_color = QColor(_rc)
             bg_color.setAlpha(34 if (self._is_selected or self._is_ready) else 16)
         elif self._is_selected:
+            # Active series: accent border + a noticeably stronger fill so the
+            # currently-viewed card stands out clearly (was alpha 30 — too faint).
             border_color = QColor(self._theme.get('accent', '#8b5cf6'))
             bg_color = QColor(self._theme.get('accent', '#8b5cf6'))
-            bg_color.setAlpha(30)
+            bg_color.setAlpha(64 if _os.getenv("AIPACS_ACTIVE_THUMB_STRONG", "1") != "0" else 30)
         elif self._viewed and not self._downloading:
             # `success` token — universally "completed" across themes.
             border_color = QColor(self._theme.get('success', '#10b981'))
@@ -452,8 +463,9 @@ class CircularProgressborder(QFrame):
         elif not self._downloading or self._is_ready:
             # Solid border for pending/ready/selected/viewed
             if self._is_ready or self._is_selected or self._viewed:
-                # Solid border
-                pen = QPen(border_color, self._border_width, Qt.SolidLine)
+                # Solid border — the active (selected) series uses the thicker
+                # ``bw`` computed above for a stronger, unmistakable outline.
+                pen = QPen(border_color, bw, Qt.SolidLine)
             else:
                 # Dashed border for pending
                 pen = QPen(border_color, 2, Qt.DashLine)
@@ -1652,7 +1664,19 @@ class ThumbnailManager(QObject):
             # border/status ring (blue->green) is unchanged.
             if _THUMB_DL_PROGRESS_BAR:
                 try:
-                    dl_bar = QProgressBar()
+                    # Z-ORDER FIX (2026-07-29): the download progress bar must sit
+                    # ABOVE the frosted-glass overlay so it stays crisp while the
+                    # glass only dims the IMAGE. Previously the bar lived inside
+                    # content_layout (a descendant BELOW the full-card glass_overlay
+                    # in z-order), so the ~78%-opaque dark glass gradient blurred/
+                    # dimmed it. Now it is a DIRECT child of the card `widget`
+                    # (same parent as glass_overlay), absolutely positioned along
+                    # the bottom edge, and raised above the glass after the glass is
+                    # created. Card size is fixed 190×215 so the geometry is stable.
+                    # Kill switch AIPACS_THUMB_BAR_ABOVE_GLASS=0 restores the legacy
+                    # in-layout (behind-glass) bar.
+                    _bar_above = _os.getenv("AIPACS_THUMB_BAR_ABOVE_GLASS", "1") != "0"
+                    dl_bar = QProgressBar(widget if _bar_above else None)
                     dl_bar.setObjectName("seriesDlBar")
                     dl_bar.setFixedHeight(4)
                     dl_bar.setTextVisible(False)
@@ -1674,8 +1698,15 @@ class ThumbnailManager(QObject):
                             border-radius: 2px;
                         }}
                     """)
-                    content_layout.addWidget(dl_bar)
+                    if _bar_above:
+                        # bottom strip, inset from the rounded corners; clicks pass
+                        # through to the card (drag/retry).
+                        dl_bar.setGeometry(8, 215 - 11, 190 - 16, 4)
+                        dl_bar.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+                    else:
+                        content_layout.addWidget(dl_bar)
                     widget.dl_progress_bar = dl_bar
+                    widget._dl_bar_above_glass = _bar_above
                 except Exception:
                     pass
 
@@ -1737,6 +1768,17 @@ class ThumbnailManager(QObject):
             # Ensure glass overlay is on top
             glass_overlay.raise_()
             progress_overlay.setAutoFillBackground(False)
+
+            # Z-ORDER FIX (2026-07-29): raise the download progress bar ABOVE the
+            # glass so it stays crisp (the glass dims only the image). The % text
+            # (progress_overlay) is already a child of glass_overlay, so it is
+            # drawn on top of the glass; the bar is the one that was behind.
+            try:
+                _bar = getattr(widget, 'dl_progress_bar', None)
+                if _bar is not None and getattr(widget, '_dl_bar_above_glass', False):
+                    _bar.raise_()
+            except Exception:
+                pass
             
             # Add content widget to progress border
             border_layout.addWidget(content_widget)
@@ -2242,6 +2284,7 @@ class ThumbnailManager(QObject):
                             else:
                                 if self._set_widget_visible_if_needed(widget.glass_overlay, True):
                                     widget.glass_overlay.raise_()
+                                    self._raise_dl_bar_above_glass(widget)
                                     widget_changed = True
                         except RuntimeError:
                             # Widget has been deleted, remove from tracking
@@ -2390,6 +2433,18 @@ class ThumbnailManager(QObject):
         except Exception as e:
             _tm_logger.exception("ThumbnailManager: error in update_series_progress: %s", e)
     
+    def _raise_dl_bar_above_glass(self, widget):
+        """Keep the per-series download progress bar ABOVE the frosted-glass
+        overlay (2026-07-29). The glass is re-raised whenever a download shows it,
+        which would re-cover the bar; re-raise the bar right after so it stays
+        crisp. No-op when the bar is the legacy in-layout one. Never raises."""
+        try:
+            bar = getattr(widget, 'dl_progress_bar', None)
+            if bar is not None and getattr(widget, '_dl_bar_above_glass', False):
+                bar.raise_()
+        except Exception:
+            pass
+
     def _hide_overlay(self, widget):
         """Helper method to hide overlay safely (including glass background)"""
         try:
@@ -2609,6 +2664,7 @@ class ThumbnailManager(QObject):
                             else:
                                 if self._set_widget_visible_if_needed(widget.glass_overlay, True):
                                     widget.glass_overlay.raise_()
+                                    self._raise_dl_bar_above_glass(widget)
                         except RuntimeError:
                             # Widget has been deleted, remove from tracking
                             if series_key in self.series_widgets:

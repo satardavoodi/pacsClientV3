@@ -41,6 +41,7 @@ from .db_manager import (
     ai_update_message,
     ai_fetch_messages_full,
     ai_fetch_messages,
+    ai_count_messages_by_session,
 
     # listing / last selected (global fallback)
     ai_fetch_all_sessions,

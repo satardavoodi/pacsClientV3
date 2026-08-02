@@ -1380,6 +1380,44 @@ class MainWindowWidget(QWidget):
             self._normal_geometry = self.geometry()
 
     def closeEvent(self, event):
+        # Shutdown-initiator diagnostic (2026-08-01): `spontaneous()` is True when
+        # the window manager / user / OS closed the window (X, Alt+F4, Task-Manager
+        # End-Task, OS shutdown) and False when code called close(). This is the
+        # decisive signal for an unexplained "the app just closed by itself" (no
+        # crash in the logs). Logging-only; never affects the close.
+        try:
+            import os as _os
+            if _os.environ.get("AIPACS_LOG_SHUTDOWN_INITIATOR", "1") != "0":
+                _spont = bool(event.spontaneous())
+                logger.warning(
+                    "[SHUTDOWN-INITIATOR] mainwindow.closeEvent spontaneous=%s (%s)",
+                    _spont,
+                    "user/OS closed the window" if _spont else "code called close()",
+                )
+                # A PROGRAMMATIC close is the one that needs attribution: the app
+                # "closes by itself" with no crash. Log the synchronous call stack
+                # so the caller of close() is named. (2026-08-01: a live session
+                # showed spontaneous=False with no attribution — this closes that
+                # gap.) An empty/py-frameless stack means the close came from Qt
+                # C++ (e.g. a queued connection or quitOnLastWindowClosed).
+                if not _spont:
+                    try:
+                        import traceback as _tb
+                        _stack = "".join(_tb.format_stack()[:-1])[-2500:]
+                        logger.warning(
+                            "[SHUTDOWN-INITIATOR] programmatic close() call stack "
+                            "(most recent call last):\n%s", _stack,
+                        )
+                    except Exception:
+                        pass
+                _app = QApplication.instance()
+                if _app is not None:
+                    _app._shutdown_reason = (
+                        "mainwindow_close_spontaneous" if _spont
+                        else "mainwindow_close_programmatic"
+                    )
+        except Exception:
+            pass
         # Drain all registered resources in reverse order via lifecycle manager.
         from PacsClient.components.lifecycle_manager import lifecycle_manager
         results = lifecycle_manager.shutdown_all()

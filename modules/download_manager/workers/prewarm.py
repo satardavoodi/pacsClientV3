@@ -76,6 +76,17 @@ class DownloadPrewarmPool:
                 return  # a spare is already booting or ready — never double-spawn
         except Exception:
             pass
+        # Drop a previous (now-dead) spare's PID from the shutdown-terminator set
+        # so it doesn't accumulate stale entries across re-warms.
+        try:
+            _old = spare
+            if _old is not None and _old.get("process") is not None and _old["process"].pid:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import (
+                    unregister_download_subprocess,
+                )
+                unregister_download_subprocess(_old["process"].pid)
+        except Exception:
+            pass
         self._spare = None
         try:
             from .download_process_entry import _prewarmed_download_worker_main
@@ -90,6 +101,19 @@ class DownloadPrewarmPool:
                 daemon=True,
             )
             proc.start()
+            # Register the spare so app shutdown (terminate_all_download_subprocesses)
+            # kills it. An UNUSED prewarm spare was never registered — the download
+            # worker only registers a spare it ADOPTS for a real download — so an
+            # idle spare leaked as an orphaned python.exe when the app closed
+            # (observed 2026-08-01: 5 orphaned mp-fork children from past sessions).
+            try:
+                from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import (
+                    register_download_subprocess,
+                )
+                if proc.pid:
+                    register_download_subprocess(proc.pid)
+            except Exception:
+                pass
             self._spare = {
                 "process": proc, "task_q": task_q, "result_q": result_q,
                 "cancel_evt": cancel_evt, "ready_evt": ready_evt,

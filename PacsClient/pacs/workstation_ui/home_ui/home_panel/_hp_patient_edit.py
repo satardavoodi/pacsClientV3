@@ -118,6 +118,24 @@ class _HPPatientEditMixin:
                     age=values.get("patient_age"),
                 )
 
+        # --- local display alias (server has no demographic-write endpoint) --
+        # Record original_server_id -> corrected_id so the patient list can keep
+        # SHOWING the corrected ID after a server refresh re-sends the original.
+        # This is display-only: the row's real identity stays the server's key
+        # (see database/patient_overrides.py). Never let it break the edit.
+        try:
+            if new_patient_id and str(new_patient_id).strip() != str(patient_id_before or "").strip():
+                from database.patient_overrides import set_patient_id_override
+
+                set_patient_id_override(
+                    patient_id_before,
+                    new_patient_id,
+                    corrected_patient_name=values.get("patient_name"),
+                    source="demographic_edit",
+                )
+        except Exception:
+            logger.exception("[DICOM-EDIT] recording the local Patient-ID alias failed")
+
         # --- study-level --------------------------------------------------
         institution = values.get("institution_name")
         for uid in study_uids:

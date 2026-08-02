@@ -17,6 +17,7 @@ import pytest
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtCore import QCoreApplication  # noqa: E402
+from PySide6.QtWidgets import QApplication  # noqa: E402
 from PySide6.QtNetwork import QLocalSocket  # noqa: E402
 
 from modules.EchoMind.secretary.command_envelope import CommandPlan, CommandResult  # noqa: E402
@@ -27,7 +28,27 @@ from modules.EchoMind.secretary.test_server import maybe_start_test_server  # no
 
 @pytest.fixture(scope="module")
 def qapp():
-    app = QCoreApplication.instance() or QCoreApplication([])
+    """An offscreen **QApplication**, not a bare QCoreApplication.
+
+    2026-07-31 — this used to build a `QCoreApplication`. Nothing in THIS file
+    needs a GUI app, so it looked harmless (and the module docstring above has
+    always claimed "offscreen QApplication"). But the instance is process-wide
+    and lives for the whole session: once it exists, every later
+    `QApplication.instance()` returns a non-GUI application, and any test that
+    then constructs a QWidget on it is undefined behaviour. Since
+    `tests/code/echomind` sorts before `tests/gui`, a combined run —
+    `pytest tests/code/echomind tests/gui` — created the bare core app here and
+    then aborted the interpreter at exit with STATUS_STACK_BUFFER_OVERRUN
+    (0xC0000409), AFTER every test had passed. A green run followed by a silent
+    crash is the worst possible failure mode for a gate.
+
+    `QApplication` IS a `QCoreApplication`, so the IPC tests below are
+    unaffected; the difference is only that whoever comes next gets a usable
+    application object.
+    """
+    app = QCoreApplication.instance()
+    if app is None:
+        app = QApplication([])
     yield app
 
 

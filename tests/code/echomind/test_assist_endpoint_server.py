@@ -56,11 +56,22 @@ def test_central_point_exists_for_future_moves():
 
 
 def test_call_sites_still_log_the_endpoints():
-    """A debug log must show the Assist/Search endpoint used (acceptance #5)."""
+    """A debug log must show the Assist/Search endpoint used (acceptance #5).
+
+    F8 (2026-07-28): this used to be a bare `print(f"[ASSISTANT] POST {url}...")`
+    that ALSO dumped the request payload and the full response body — i.e. the
+    physician's dictation and the generated report — to stdout on every call.
+    The endpoint logging that this acceptance criterion actually asks for is now
+    done by `_dbg_request(tag, url, payload)`, which logs the endpoint, the
+    payload KEYS and its SIZE at DEBUG on the `echomind.chat` logger, and never
+    the content. The criterion is satisfied more precisely than before.
+    """
     pages = Path(c.__file__).resolve().parent / "viewer_chat" / "ai_chat_pages.py"
     src = pages.read_text(encoding="utf-8", errors="replace")
-    assert "[ASSISTANT] POST" in src and "URL_GEN_ASSISTANT" in src
-    assert "[SEARCH] POST" in src and "URL_SEARCH" in src
+    assert '_dbg_request("ASSISTANT", URL_GEN_ASSISTANT' in src
+    assert '_dbg_request("SEARCH", URL_SEARCH' in src
+    # ...and the helper really does put the endpoint in the log record.
+    assert 'POST %s keys=%s payload_bytes=%d' in src
 
 
 def test_assist_search_menu_is_styled_and_iconed():

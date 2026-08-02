@@ -5265,6 +5265,28 @@ class ToolbarManager:
             logger.info("=" * 60)
             return
         
+        # ── MPR lifecycle: RE-ENTRANCY GUARD (2026-08-01) ────────────────────
+        # "The same MPR pipeline cannot be initialized multiple times
+        # simultaneously; repeated clicks cannot create duplicate workers."
+        # The open path is long (volume load + flip workers + VTK window
+        # creation). The modal progress dialogs block *mouse* input during
+        # their own phases, but they pump the event loop, and the open can also
+        # be driven programmatically (EchoMind command bus / agent control),
+        # so a second entry is reachable and would build a SECOND full pipeline
+        # — two volumes, two worker sets, two render windows — on top of the
+        # first. That is the large-study memory/crash multiplier.
+        # The CLOSE branch above is deliberately NOT guarded: closing must
+        # always work. The flag is cleared in a finally, so it cannot stick.
+        _guard_on = os.environ.get("AIPACS_MPR_LIFECYCLE_GUARD", "1") != "0"
+        if _guard_on and getattr(self, "_mpr_open_in_progress", False):
+            logger.warning(
+                "[MPR-LIFECYCLE] open ignored — an MPR open is already in progress "
+                "(re-entrancy guard; duplicate pipeline/workers prevented)"
+            )
+            return
+        if _guard_on:
+            self._mpr_open_in_progress = True
+
         # Otherwise, open Zeta MPR (toggle ON)
         try:
             logger.info("=" * 60)
@@ -5561,21 +5583,74 @@ class ToolbarManager:
                 # the emulation cost of the first VTK/OpenGL window.
                 import time as _time
                 _mpr_open_t0 = _time.perf_counter()
-                zeta_widget = StandardMPRViewer(
-                    vtk_image_data=vtk_image_data,
-                    parent=parent_widget,
-                    window_width=window_width,
-                    window_center=window_center,
-                    layout_views=_proj.get('layout_views'),
-                    slab_mode=_proj.get('slab_mode'),
-                    slab_thickness_mm=_proj.get('slab_thickness_mm'),
-                )
+                # ── OPT-48 #5 (2026-08-01): tell the user what is happening ───
+                # StandardMPRViewer construction is GUI-thread work (VTK render
+                # windows MUST be built there) and takes ~10 s on a 672-slice CT.
+                # Without feedback the window looks hung. A busy dialog shown
+                # BEFORE construction paints once, then stays up while the
+                # (blocking) build runs — no re-entrancy, no behaviour change.
+                # Only for volumes big enough to be slow. AIPACS_MPR_BUILD_PROGRESS=0 = off.
+                _build_dlg = None
+                try:
+                    _zdim = int(vtk_image_data.GetDimensions()[2])
+                except Exception:
+                    _zdim = 0
+                try:
+                    _prog_min = int(os.environ.get("AIPACS_MPR_BUILD_PROGRESS_SLICES", "200"))
+                except Exception:
+                    _prog_min = 200
+                if os.environ.get("AIPACS_MPR_BUILD_PROGRESS", "1") != "0" and _zdim >= _prog_min:
+                    try:
+                        from PySide6.QtWidgets import QProgressDialog
+                        from PySide6.QtCore import Qt as _QtNS
+                        from PySide6.QtWidgets import QApplication as _QApp
+                        _build_dlg = QProgressDialog(
+                            f"Preparing MPR views ({_zdim} slices)…\n"
+                            "Building the reconstruction planes.",
+                            None, 0, 0, self.patient_widget,
+                        )
+                        _build_dlg.setWindowTitle("MPR")
+                        _build_dlg.setWindowModality(_QtNS.WindowModality.ApplicationModal)
+                        _build_dlg.setCancelButton(None)
+                        _build_dlg.setMinimumDuration(0)
+                        _build_dlg.setAutoClose(False)
+                        _build_dlg.setAutoReset(False)
+                        _build_dlg.show()
+                        _QApp.processEvents()   # paint it before the blocking build
+                    except Exception:
+                        _build_dlg = None
+                # OPT-48 Phase 2: hoist the L/R (X) flip onto a worker thread.
+                # Geometry-identical (same build_lr_flipped_volume the viewer
+                # would run inline); None → the viewer flips inline as before.
+                _pre_flipped = self._prepare_mpr_flip_offthread(vtk_image_data)
+                try:
+                    zeta_widget = StandardMPRViewer(
+                        vtk_image_data=vtk_image_data,
+                        parent=parent_widget,
+                        window_width=window_width,
+                        window_center=window_center,
+                        layout_views=_proj.get('layout_views'),
+                        slab_mode=_proj.get('slab_mode'),
+                        slab_thickness_mm=_proj.get('slab_thickness_mm'),
+                        pre_flipped_image_data=_pre_flipped,
+                    )
+                finally:
+                    if _build_dlg is not None:
+                        try:
+                            _build_dlg.close()
+                            _build_dlg.deleteLater()
+                        except Exception:
+                            pass
                 self._mpr_projection_request = None  # consume (one-shot)
                 try:
                     logger.warning(
-                        "[MPR-OPEN-KPI] standard_mpr_construct_ms=%.1f defer_3d=%s",
+                        "[MPR-OPEN-KPI] standard_mpr_construct_ms=%.1f slices=%d defer_3d=%s "
+                        "vrt_on_demand=%s warm_scalar_range=%s",
                         (_time.perf_counter() - _mpr_open_t0) * 1000.0,
+                        _zdim,
                         os.environ.get("AIPACS_MPR_DEFER_3D", "1"),
+                        getattr(zeta_widget, "_vrt_on_demand", "n/a"),
+                        os.environ.get("AIPACS_MPR_WARM_SCALAR_RANGE", "1"),
                     )
                 except Exception:
                     pass
@@ -5660,6 +5735,13 @@ class ToolbarManager:
             # Restore original widget visibility on error
             if selected_widget:
                 selected_widget.setVisible(True)
+        finally:
+            # MPR lifecycle: ALWAYS release the re-entrancy guard — success,
+            # exception, or any of the early `return`s inside the try. A stuck
+            # flag would make the MPR button permanently dead, which is worse
+            # than the duplicate it prevents.
+            if _guard_on:
+                self._mpr_open_in_progress = False
 
     def toggle_new_curve_mpr(self):
         """
@@ -7002,7 +7084,23 @@ class ToolbarManager:
             class _VtkLoadWorker(QThread):
                 def run(_self):
                     try:
-                        box["data"] = load_vtk_from_dicom_paths(dcm_files)
+                        _vol = load_vtk_from_dicom_paths(dcm_files)
+                        # ── OPT-48 #2 (2026-08-01) ─────────────────────────────
+                        # Warm the scalar range HERE, on the worker thread. It is a
+                        # full-volume min/max scan (measured 1.5 s on a 672-slice
+                        # CT) that StandardMPRViewer.__init__ otherwise pays on the
+                        # GUI thread. VTK caches the result inside the data object,
+                        # so the later GetScalarRange() call returns instantly with
+                        # the IDENTICAL value — no API/behaviour change, pure move.
+                        # Safe off-thread: this touches only the data object, never
+                        # a render window (same rule that lets the load run here).
+                        if _os.environ.get("AIPACS_MPR_WARM_SCALAR_RANGE", "1") != "0":
+                            try:
+                                if _vol is not None:
+                                    _vol.GetScalarRange()
+                            except Exception:
+                                pass
+                        box["data"] = _vol
                     except Exception as _e:  # noqa: BLE001 - reported to caller, sync fallback
                         box["error"] = _e
 
@@ -7040,6 +7138,94 @@ class ToolbarManager:
             logger.warning(f"[MPR VTK LOAD] async machinery unavailable ({_e!r}); synchronous load")
             return load_vtk_from_dicom_paths(dcm_files)
 
+
+    def _prepare_mpr_flip_offthread(self, vtk_image_data, label="Preparing MPR volume…"):
+        """OPT-48 Phase 2: compute the MPR left-right (X) flip OFF the GUI thread.
+
+        GEOMETRY SAFETY — this is a THREADING change, not a geometry change:
+        it calls ``StandardMPRViewer.build_lr_flipped_volume``, i.e. the exact
+        same `vtkImageFlip(SetFilteredAxis(0))` + field-data copy the viewer runs
+        inline, so the voxels, dims, spacing, origin and the DirectionMatrix /
+        ZetaAnatA arrays are identical. The radiological L/R convention is
+        untouched — the volume is still physically flipped, exactly as every
+        downstream consumer (reslice mappers, cameras, crosshairs, measurements)
+        expects. Only the thread that computes it differs.
+
+        Measured cost being moved: ~3.3 s of GUI-thread time on a 672-slice CT.
+        Safe off-thread for the same reason the DICOM→VTK build already is: pure
+        data processing, no VTK render window involved.
+
+        Returns the flipped volume, or ``None`` → the viewer flips inline (legacy).
+        Env: AIPACS_MPR_FLIP_OFFTHREAD=0 (off), AIPACS_MPR_FLIP_OFFTHREAD_SLICES=N
+        (min slices to bother, default 200 — small volumes flip in milliseconds).
+        """
+        import os as _os
+        if _os.environ.get("AIPACS_MPR_FLIP_OFFTHREAD", "1") == "0":
+            return None
+        try:
+            n_slices = int(vtk_image_data.GetDimensions()[2])
+        except Exception:
+            return None
+        try:
+            min_slices = int(_os.environ.get("AIPACS_MPR_FLIP_OFFTHREAD_SLICES", "200"))
+        except Exception:
+            min_slices = 200
+        if n_slices < min_slices:
+            return None
+
+        try:
+            from PySide6.QtCore import QThread, QEventLoop, Qt as _Qt
+            from PySide6.QtWidgets import QProgressDialog
+            from modules.mpr.zeta_mpr.mpr_viewer.widget import StandardMPRViewer as _SMV
+
+            box = {"data": None, "error": None}
+
+            class _FlipWorker(QThread):
+                def run(_self):
+                    try:
+                        box["data"] = _SMV.build_lr_flipped_volume(vtk_image_data)
+                    except Exception as _e:  # noqa: BLE001 — caller falls back to inline
+                        box["error"] = _e
+
+            worker = _FlipWorker()
+            loop = QEventLoop()
+            worker.finished.connect(loop.quit)
+
+            dlg = QProgressDialog(label, None, 0, 0, self.patient_widget)
+            dlg.setWindowTitle("MPR")
+            dlg.setWindowModality(_Qt.WindowModality.ApplicationModal)
+            dlg.setCancelButton(None)
+            dlg.setMinimumDuration(0)
+            dlg.setAutoClose(False)
+            dlg.setAutoReset(False)
+            dlg.show()
+
+            import time as _t
+            _t0 = _t.perf_counter()
+            worker.start()
+            if not worker.isFinished():
+                loop.exec()          # pumps paints; modal blocks input => no re-entrancy
+            worker.wait()
+            try:
+                dlg.close()
+                dlg.deleteLater()
+            except Exception:
+                pass
+
+            if box["error"] is not None or box["data"] is None:
+                logger.warning(
+                    "[MPR-FLIP] off-thread flip failed (%r) — viewer will flip inline",
+                    box["error"],
+                )
+                return None
+            logger.warning(
+                "[MPR-FLIP] off-thread L/R flip done slices=%d ms=%.1f",
+                n_slices, (_t.perf_counter() - _t0) * 1000.0,
+            )
+            return box["data"]
+        except Exception as exc:
+            logger.warning("[MPR-FLIP] off-thread machinery unavailable (%r) — inline flip", exc)
+            return None
 
     def handle_buttons_checked(self):
         def _is_tool_active(tool_name: str) -> bool:

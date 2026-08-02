@@ -130,3 +130,11 @@ config/agent_gateway/
 
 # ── Auto-update runtime state (2026-07-19) ──
 generated-files/updates/
+
+# ── Scratch audit snapshot (2026-08-02) — full tree copy + tarballs, named for deletion ──
+_to_delete/
+
+# ── Re-exclude bytecode under tools/build/ (the !tools/build/** negation from v3.5.4
+#    re-included __pycache__; source tooling is tracked, its .pyc cache is not) ──
+tools/build/__pycache__/
+tools/build/**/*.pyc

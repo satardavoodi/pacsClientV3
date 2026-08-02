@@ -45,8 +45,9 @@ import logging
 import os
 from typing import Any, Dict, List, Optional
 
-import requests
+import requests  # noqa: F401  (kept: callers/tests reference the module symbol)
 
+from . import echomind_http
 from .settings_store import (
     STT_HTTP_PROVIDERS,
     STT_PROVIDER_AIPACS_1,
@@ -242,7 +243,7 @@ class VoiceTranscriptionService:
             key = str(cfg.get("auth_token") or "").strip() or AIPACS_SERVER_3_KEY
             headers = {"Authorization": f"Bearer {key}"} if key else {}
             try:
-                r = requests.get(f"{AIPACS_SERVER_3_BASE}/models", headers=headers, timeout=8)
+                r = echomind_http.get(f"{AIPACS_SERVER_3_BASE}/models", headers=headers, timeout=8)
                 if r.status_code < 500:
                     return {"ok": True, "detail": f"AI-PACS Server 3 reachable (HTTP {r.status_code})."}
                 return {"ok": False, "detail": f"AI-PACS Server 3 error (HTTP {r.status_code})."}
@@ -255,19 +256,50 @@ class VoiceTranscriptionService:
         base = endpoint.rsplit("/", 1)[0]
         token = resolve_auth_token(cfg)
         headers = {"Authorization": f"Bearer {token}"} if token else {}
+        # The three probes run CONCURRENTLY (F4, 2026-07-28). They used to run
+        # in sequence at 8 s each, so an unreachable server took 24 s to say so —
+        # and this ran inline in the Settings button's Qt slot, freezing the GUI
+        # for that whole time. Results are still consulted in the SAME priority
+        # order, so the reported outcome is unchanged; only the wall clock is
+        # now bounded by the slowest single probe instead of their sum.
+        probes = (f"{base}/health", f"{base}/status", base)
+
+        def _probe(url: str) -> Any:
+            return echomind_http.get(url, headers=headers, timeout=8)
+
+        results: List[Any] = [None] * len(probes)
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+
+            with ThreadPoolExecutor(max_workers=len(probes)) as pool:
+                futures = [pool.submit(_probe, url) for url in probes]
+                for i, fut in enumerate(futures):
+                    try:
+                        results[i] = fut.result()
+                    except Exception as exc:  # noqa: BLE001
+                        results[i] = exc
+        except Exception:
+            # Executor unavailable for any reason — fall back to sequential.
+            for i, url in enumerate(probes):
+                try:
+                    results[i] = _probe(url)
+                except Exception as exc:  # noqa: BLE001
+                    results[i] = exc
+
         last: Any = "no response"
-        for probe in (f"{base}/health", f"{base}/status", base):
-            try:
-                r = requests.get(probe, headers=headers, timeout=8)
-                if r.status_code < 500:
-                    return {
-                        "ok": True,
-                        "detail": f"Reachable (HTTP {r.status_code}).",
-                        "endpoint": endpoint,
-                    }
-                last = f"HTTP {r.status_code}"
-            except Exception as exc:
-                last = exc
+        for outcome in results:
+            if outcome is None:
+                continue
+            if isinstance(outcome, Exception):
+                last = outcome
+                continue
+            if getattr(outcome, "status_code", 599) < 500:
+                return {
+                    "ok": True,
+                    "detail": f"Reachable (HTTP {outcome.status_code}).",
+                    "endpoint": endpoint,
+                }
+            last = f"HTTP {outcome.status_code}"
         return {"ok": False, "detail": f"Not reachable: {last}", "endpoint": endpoint}
 
     # -- the one upload path -------------------------------------------------
@@ -342,11 +374,19 @@ class VoiceTranscriptionService:
                 "[STT] upload provider=%s files=%d quality=%s",
                 cfg.get("provider"), len(files), quality_mode,
             )
-            r = requests.post(
+            # Routed through the ONE transport authority (F3): before this, a
+            # voice upload passed no `proxies=`, so the Settings connection type
+            # (direct / SOCKS5) was silently ignored for every transcription
+            # while it WAS honoured for the GapGPT/OpenAI chat calls.
+            r = echomind_http.post(
                 endpoint,
                 files=files,
                 data={"quality_mode": quality_mode},
                 headers=headers,
+                # `request_timeout` is the user's configured stt_timeout_seconds,
+                # whose default is already UPLOAD_READ_TIMEOUT_S. Passing
+                # `read_timeout` as well was dead weight: an explicit timeout
+                # wins over it by design, so it could never take effect.
                 timeout=request_timeout,
             )
             r.raise_for_status()
@@ -405,11 +445,12 @@ class VoiceTranscriptionService:
                 continue
             try:
                 with open(p, "rb") as fh:
-                    r = requests.post(
+                    r = echomind_http.post(
                         endpoint,
                         headers=headers,
                         files={"file": (os.path.basename(p), fh, "audio/wav")},
                         data={"model": AIPACS_SERVER_3_MODEL},
+                        # see the note on the sibling upload above.
                         timeout=request_timeout,
                     )
                 r.raise_for_status()

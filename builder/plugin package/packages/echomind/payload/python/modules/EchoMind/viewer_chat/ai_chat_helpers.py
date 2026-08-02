@@ -22,32 +22,268 @@ def _set_icon(btn: QPushButton, name: str, size: int = 20, tooltip: str | None =
         if tooltip and not btn.text(): btn.setText(tooltip)
 
 
-# -----------------------------------------------------------------------------
-def _safe_fa_connection_error(raw: str) -> str:
+# ─────────────────────────────────────────────────────────────────────────────
+# EchoMind user-facing error text  (F2, 2026-07-28)
+#
+# THE DEFECT THIS REPLACES: both return branches of the old
+# ``_safe_fa_connection_error`` emitted the SAME sentence ("check your internet
+# connection") — they differed only by the word *issue* vs *problem*. Every
+# exception escaping an ``ApiWorker`` ``work()`` closure is routed through here
+# (``ai_chat_api.py`` ``ApiWorker.run``), so the rich, actionable errors
+# ``llm_client.py`` already raises — ``LLMNoKeyError`` ("No OpenAI API key is
+# configured"), ``LLMAuthError`` ("<provider> rejected the request"),
+# ``LLMAPIError`` ("<provider> HTTP 429: …") — were all flattened into a network
+# complaint. A physician whose key expired, whose quota ran out, or who typed a
+# model name the provider does not serve was told to check their internet.
+#
+# THE RULE: **redacting the endpoint must not cost us the diagnosis.** Hiding a
+# host name and reporting "HTTP 401 — the server rejected the configured API
+# key" are independent goals; the old code sacrificed the second to achieve the
+# first. Every branch below still passes its text through
+# ``_redact_endpoint_details``, so no URL, IP:port, bearer token or ``sk-…`` key
+# can reach the UI — that property is preserved and unit-tested.
+#
+# The NETWORK branch is deliberately byte-identical to the legacy sentence (same
+# marker list, same text), because that message was correct for that case.
+# Only the previously-indistinguishable *other* half is classified.
+#
+# Flag ``AIPACS_ECHOMIND_ERROR_DETAIL`` (default ON). ``=0`` restores the
+# byte-identical legacy two-branch behaviour.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ENV_ERROR_DETAIL = "AIPACS_ECHOMIND_ERROR_DETAIL"
+
+#: Legacy list — UNCHANGED. Anything matching still gets the legacy sentence.
+_NETWORK_MARKERS = (
+    "httpconnectionpool", "httpsconnectionpool",
+    "max retries exceeded",
+    "newconnectionerror", "nameresolutionerror",
+    "failed to establish a new connection",
+    "failed to resolve", "getaddrinfo failed",
+    "connection refused", "actively refused",
+    "unreachable host",
+    "timed out", "timeout", "read timed out", "connecttimeout",
+    "winerror 10061", "winerror 10065",
+    "temporary failure in name resolution",
+    "connectionerror",
+    "ssl", "certificate verify failed",
+)
+
+_LEGACY_NETWORK_TEXT = (
+    "❌ Error establishing a connection. Please check your internet connection "
+    "and, if the issue persists, contact support."
+)
+_LEGACY_FALLBACK_TEXT = (
+    "❌ Error establishing a connection. Please check your internet connection "
+    "and, if the problem persists, contact support."
+)
+
+# Raised by llm_client before any request is made — unambiguous, check first.
+_NO_KEY_MARKERS = (
+    "no echomind credential",
+    "no openai api key",
+    "no gapgpt key",
+    "api key is not configured",
+    "api key cannot be empty",
+    "backend is not configured",
+    "no validated irannobat api key",
+    "no usable backend key",
+)
+
+_AUTH_MARKERS = (
+    "rejected the request",
+    "authentication failed",
+    "invalid api key",
+    "invalid_api_key",
+    "incorrect api key",
+    "unauthorized",
+    "invalid center api key",
+    "invalid authentication",
+)
+
+_QUOTA_MARKERS = (
+    "insufficient_quota",
+    "rate limit",
+    "rate_limit",
+    "exceeded your current quota",
+    "billing",
+)
+
+# Deliberately NARROW. A loose marker like "the model" would swallow ordinary
+# server prose and mislabel unrelated failures as a model-configuration problem.
+_MODEL_MARKERS = (
+    "model_not_found",
+    "does not exist or you do not have access",
+    "unknown model",
+    "invalid model",
+    "unsupported model",
+    "no such model",
+)
+
+_MALFORMED_MARKERS = (
+    "malformed response",
+    "no assistant content",
+    "missing choices",
+    "expecting value",
+)
+
+# "<provider> HTTP 429: ..."  /  "status=500"  /  "401 Client Error: ..."
+_HTTP_STATUS_RE = re.compile(r"(?:\bhttp[ _]?|\bstatus[ =:]+)(\d{3})\b", re.I)
+_CLIENT_ERR_RE = re.compile(r"\b(\d{3})\s+(?:client|server)\s+error\b", re.I)
+
+# Redaction — nothing that identifies a server or a credential may reach the UI.
+_URL_RE = re.compile(r"https?://[^\s'\"<>)\]}]+", re.I)
+_HOSTPORT_RE = re.compile(r"\b\d{1,3}(?:\.\d{1,3}){3}(?::\d+)?\b")
+_APIKEY_RE = re.compile(r"\bsk-[A-Za-z0-9_\-]{6,}", re.I)
+_BEARER_RE = re.compile(r"\bbearer\s+\S+", re.I)
+
+
+def error_detail_enabled() -> bool:
+    """Kill switch. ``0`` = legacy two-branch behaviour (byte-identical)."""
+    raw = os.environ.get(_ENV_ERROR_DETAIL)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _redact_endpoint_details(text: str, limit: int = 200) -> str:
+    """Strip every server address / credential, collapse whitespace, truncate.
+
+    This is the property the legacy function existed to guarantee, and it is
+    applied to EVERY string this module hands to the UI — including the new
+    classified branches. Never returns a URL, an IP:port, a bearer token or an
+    ``sk-…`` key.
+    """
+    s = str(text or "")
+    s = _URL_RE.sub("<server>", s)
+    s = _HOSTPORT_RE.sub("<host>", s)
+    s = _BEARER_RE.sub("Bearer <key>", s)
+    s = _APIKEY_RE.sub("<key>", s)
+    s = " ".join(s.split())
+    return s[:limit].strip()
+
+
+def _http_status_in(text: str) -> "int | None":
+    """The HTTP status llm_client/requests embedded in the message, if any."""
+    for rx in (_CLIENT_ERR_RE, _HTTP_STATUS_RE):
+        m = rx.search(text or "")
+        if not m:
+            continue
+        try:
+            code = int(m.group(1))
+        except Exception:
+            continue
+        if 100 <= code <= 599:
+            return code
+    return None
+
+
+def classify_echomind_error(raw: str) -> "tuple[str, str]":
+    """``(kind, user_text)`` for an EchoMind failure. Pure — no Qt, no network.
+
+    ``kind`` is one of: ``no_key``, ``auth``, ``quota``, ``model``,
+    ``server``, ``bad_request``, ``malformed``, ``network``, ``unknown``.
+    It exists so callers/tests can assert the classification without matching
+    on display text.
+    """
     s = "" if raw is None else str(raw)
     low = s.lower()
+    detail = _redact_endpoint_details(s)
 
-    # هر چیزی که عملاً شبکه/سرور/ DNS/ timeout باشد:
-    network_markers = (
-        "httpconnectionpool", "httpsconnectionpool",
-        "max retries exceeded",
-        "newconnectionerror", "nameresolutionerror",
-        "failed to establish a new connection",
-        "failed to resolve", "getaddrinfo failed",
-        "connection refused", "actively refused",
-        "unreachable host",
-        "timed out", "timeout", "read timed out", "connecttimeout",
-        "winerror 10061", "winerror 10065",
-        "temporary failure in name resolution",
-        "connectionerror",
-        "ssl", "certificate verify failed",
-    )
+    # 1) No credential at all — raised before any request leaves the machine.
+    if any(k in low for k in _NO_KEY_MARKERS):
+        return "no_key", (
+            "❌ No AI credential is configured. Open Settings ▸ EchoMind and "
+            "authenticate (or enter an OpenAI API key) before using this feature."
+        )
 
-    if any(k in low for k in network_markers):
-        return "❌ Error establishing a connection. Please check your internet connection and, if the issue persists, contact support."
+    # 2) An explicit HTTP status — the most reliable signal we have, and the
+    #    shape llm_client itself formats ("<provider> HTTP 401: …").
+    status = _http_status_in(s)
+    if status is not None:
+        if status in (401, 403):
+            return "auth", (
+                f"❌ The AI server rejected the credential (HTTP {status}). "
+                "Check the API key in Settings ▸ EchoMind — it may be wrong, "
+                "expired, or not permitted for this model."
+            )
+        if status == 429:
+            return "quota", (
+                "❌ The AI server refused the request (HTTP 429): rate limit or "
+                "quota exceeded. Wait a moment and retry, or check the plan/"
+                "billing for this key."
+            )
+        if status == 404:
+            return "model", (
+                "❌ The AI server could not find the requested resource "
+                "(HTTP 404). The configured model name may not exist on this "
+                "provider — check Settings ▸ EchoMind ▸ models."
+            )
+        if 500 <= status <= 599:
+            return "server", (
+                f"❌ The AI server reported an internal error (HTTP {status}). "
+                "This is on the server side — retry shortly; if it persists, "
+                f"contact support.\n\nDetail: {detail}"
+            )
+        if 400 <= status <= 499:
+            return "bad_request", (
+                f"❌ The AI server refused the request (HTTP {status}).\n\n"
+                f"Detail: {detail}"
+            )
 
-    # برای بقیه خطاها هم (برای اینکه endpoint لو نرود) پیام عمومی بده:
-    return "❌ Error establishing a connection. Please check your internet connection and, if the problem persists, contact support."
+    # 3) Text-only auth / quota / model signals (providers word these freely).
+    if any(k in low for k in _AUTH_MARKERS):
+        return "auth", (
+            "❌ The AI server rejected the credential. Check the API key in "
+            "Settings ▸ EchoMind — it may be wrong, expired, or not permitted "
+            "for this model."
+        )
+    if any(k in low for k in _QUOTA_MARKERS):
+        return "quota", (
+            "❌ The AI request was refused: rate limit or quota exceeded. Wait a "
+            "moment and retry, or check the plan/billing for this key."
+        )
+    if any(k in low for k in _MODEL_MARKERS):
+        return "model", (
+            "❌ The configured model is not available on this provider. Check "
+            "Settings ▸ EchoMind ▸ models.\n\n"
+            f"Detail: {detail}"
+        )
+
+    # 4) We reached the server but could not read what came back.
+    if any(k in low for k in _MALFORMED_MARKERS):
+        return "malformed", (
+            "❌ The AI server replied with something EchoMind could not read. "
+            "This usually means the server or the selected model returned an "
+            f"unexpected format.\n\nDetail: {detail}"
+        )
+
+    # 5) Genuine transport failure — legacy text, unchanged.
+    if any(k in low for k in _NETWORK_MARKERS):
+        return "network", _LEGACY_NETWORK_TEXT
+
+    # 6) Anything else: say so honestly instead of blaming the network.
+    if detail:
+        return "unknown", f"❌ The AI request failed.\n\nDetail: {detail}"
+    return "unknown", "❌ The AI request failed."
+
+
+# -----------------------------------------------------------------------------
+def _safe_fa_connection_error(raw: str) -> str:
+    """User-facing text for a failed EchoMind request (endpoint always redacted)."""
+    if not error_detail_enabled():
+        # Legacy path — byte-identical to the pre-2026-07-28 behaviour.
+        s = "" if raw is None else str(raw)
+        low = s.lower()
+        if any(k in low for k in _NETWORK_MARKERS):
+            return _LEGACY_NETWORK_TEXT
+        return _LEGACY_FALLBACK_TEXT
+
+    try:
+        return classify_echomind_error(raw)[1]
+    except Exception:
+        # This function sits on the failure path — it must never raise.
+        return _LEGACY_FALLBACK_TEXT
 
 import re
 from html import unescape
