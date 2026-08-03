@@ -359,6 +359,16 @@ class _MprLayoutMixin:
 
     def cleanup(self):
         """Cleanup"""
+        # ── STEP 1 of the teardown contract: STOP ACCEPTING NEW MPR OPERATIONS ──
+        # Set FIRST, before any timer stop or VTK call, so that anything already
+        # queued on the event loop (a deferred render, an interaction flush, a
+        # wheel event mid-teardown) sees a closed viewer and no-ops instead of
+        # touching half-finalized VTK objects. This is the deterministic version
+        # of the per-call `if view_name in self.viewers` guards — those work only
+        # AFTER `viewers.clear()` runs at the very end of this method, leaving a
+        # window during teardown where a callback still finds live entries.
+        self._mpr_closed = True
+
         # L1 deferred-3D teardown safety: if MPR is closed before the deferred
         # 3D VRT idle callback fires, clear the pending flag so the callback
         # bails instead of building into a finalizing widget (the callback also
@@ -370,6 +380,183 @@ class _MprLayoutMixin:
             self.auto_rotation_timer.stop()
             self.auto_rotation_timer = None
 
+        # ── OPT-47: FULL teardown — release GPU + host memory, not just Finalize() ────────
+        # This used to be `Finalize()` only. That leaves the renderer's props, the mappers'
+        # input, the interactor observers and — critically — the render window's GRAPHICS
+        # RESOURCES (the uploaded 3D texture(s), up to ~400 MB VRAM for a large study) alive.
+        # Across a working session the leaked VRAM accumulates, which is why the FIRST MPR
+        # open on a big study could die in the GPU allocator while the SAME study opened
+        # fine right after an app relaunch (fresh VRAM). It also leaked the flipped host
+        # volume via `self.image_data` + a reference CYCLE (each view holds a
+        # VRTInteractorStyle that holds self), so a second open could build a second full
+        # volume while the first was still resident.
+        # Ordering matters: release GL resources while the context is STILL VALID (before
+        # Finalize()), then drop observers, inputs and props. Modelled on the proven
+        # `_teardown_curved_mpr_vtk`. Every step is individually guarded — a teardown race
+        # (Qt object already deleted) must never raise out of cleanup(). Idempotent.
+        # Kill switch: AIPACS_MPR_FULL_TEARDOWN=0 restores the legacy Finalize()-only path.
+        import os as _os47t
+        _full_teardown = (_os47t.environ.get("AIPACS_MPR_FULL_TEARDOWN", "1") or "1").strip() != "0"
+
+        # Stop the unparented deferred-render timer: a pending 5 ms singleShot firing after
+        # Finalize() renders into a dead window (the "already deleted" RuntimeError class).
+        if _full_teardown:
+            for _tname in ("_render_timer", "_prewarm_timer"):
+                try:
+                    _t = getattr(self, _tname, None)
+                    if _t is not None:
+                        _t.stop()
+                except Exception:
+                    pass
+            try:
+                _mt = getattr(self, "measurement_tools", None)
+                if _mt is not None:
+                    try:
+                        _mt.deactivate_tool()
+                    except Exception:
+                        pass
+                    try:
+                        _mt.clear_measurements()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
         for view_info in self.viewers.values():
-            if 'widget' in view_info:
-                view_info['widget'].Finalize()
+            _w = view_info.get('widget') if isinstance(view_info, dict) else None
+            if _full_teardown:
+                # 1. detach the volume/slice inputs so the mappers stop referencing image_data
+                for _mkey in ('mapper', 'slice_mapper', 'volume_mapper', 'reslice_mapper'):
+                    try:
+                        _m = view_info.get(_mkey) if isinstance(view_info, dict) else None
+                        if _m is not None and hasattr(_m, 'SetInputData'):
+                            _m.SetInputData(None)
+                    except Exception:
+                        pass
+                # 2. drop actors/props from the renderer
+                try:
+                    _r = view_info.get('renderer') if isinstance(view_info, dict) else None
+                    if _r is not None:
+                        _r.RemoveAllViewProps()
+                except Exception:
+                    pass
+                # 3. stop event delivery to a widget that is about to die
+                try:
+                    _i = view_info.get('interactor') if isinstance(view_info, dict) else None
+                    if _i is None and _w is not None:
+                        _i = _w
+                    if _i is not None:
+                        try:
+                            _i.RemoveAllObservers()
+                        except Exception:
+                            pass
+                        try:
+                            _i.Disable()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                # 4. release the GPU textures/FBOs WHILE the GL context is still valid
+                try:
+                    if _w is not None:
+                        _rw = _w.GetRenderWindow()
+                        if _rw is not None:
+                            try:
+                                _rw.ReleaseGraphicsResources(_rw)
+                            except Exception:
+                                pass
+                            try:
+                                _rw.RemoveRenderer(view_info.get('renderer'))
+                            except Exception:
+                                pass
+                except Exception:
+                    pass
+            # 5. finally tear the render window down (legacy behaviour, always runs)
+            try:
+                if _w is not None:
+                    _w.Finalize()
+            except Exception:
+                pass
+
+        if _full_teardown:
+            # 6. break the view dicts (they hold the interactor styles that reference self —
+            #    a reference CYCLE that would otherwise wait for a generational gc.collect(),
+            #    which this codebase deliberately avoids as stop-the-world) and drop the
+            #    flipped full-size volume so its host memory is reclaimed promptly.
+            try:
+                self.viewers.clear()
+            except Exception:
+                pass
+            try:
+                self.image_data = None
+            except Exception:
+                pass
+
+            # ── 7. LIFECYCLE COMPLETION (2026-08-01) ──────────────────────────
+            # OPT-47 released the GPU + the volume, but left a second class of
+            # references alive. `self.viewers` was the only container cleared;
+            # these were assigned once and never cleared, so after "close" the
+            # StandardMPRViewer still held every vtkTextActor, every crosshair
+            # actor, every pane container widget and a widget->view map — and a
+            # Qt widget keeps its whole parent chain alive. Repeated
+            # open → close → open (the exact scenario reported) therefore grew
+            # host memory monotonically even though each open's *volume* was
+            # freed correctly. Clearing them here is what makes close ≈ the
+            # inverse of open.
+            #
+            # `_toolbar_styles` / `_viewport_activate_cb` / `_diag` additionally
+            # close CROSS-MODULE cycles: the activate callback is a closure over
+            # the ToolbarManager and the host cell, so a "closed" MPR kept the
+            # patient tab's toolbar reachable from VTK-side state.
+            for _dict_attr in (
+                "text_actors",          # vtkTextActor per pane (slice info)
+                "crosshair_actors",     # crosshair line actors per pane
+                "_view_containers",     # QWidget per pane
+                "_vtk_widget_to_view",  # QVTKRenderWindowInteractor -> view name
+                "_toolbar_styles",      # per-pane toolbar style state
+                "_render_pending",      # deferred-render bookkeeping
+            ):
+                try:
+                    _d = getattr(self, _dict_attr, None)
+                    if _d is not None and hasattr(_d, "clear"):
+                        _d.clear()
+                except Exception:
+                    pass
+
+            # Drop the cross-module callback + diagnostics sink so nothing in
+            # the patient tab stays reachable through this (closed) viewer.
+            for _ref_attr in ("_viewport_activate_cb", "_diag"):
+                try:
+                    if hasattr(self, _ref_attr):
+                        setattr(self, _ref_attr, None)
+                except Exception:
+                    pass
+
+            # The interaction-throttle timer was the one timer cleanup() never
+            # stopped. It is created lazily in `_request_interaction_update` and
+            # fires `_flush_interaction_update` -> `_apply_interaction_update`,
+            # which walks `self.viewers` and renders. Left running through a
+            # close it is a stale callback into a finalized render window — the
+            # exact use-after-free class this teardown exists to prevent.
+            # `_render_timer`/`_prewarm_timer` are stopped above (step 0); here
+            # they are also DISCONNECTED and dropped so a later
+            # `_request_render` cannot resurrect one against a dead widget.
+            for _tname in ("_interaction_timer", "_render_timer", "_prewarm_timer"):
+                try:
+                    _t = getattr(self, _tname, None)
+                    if _t is None:
+                        continue
+                    try:
+                        _t.stop()
+                    except Exception:
+                        pass
+                    try:
+                        _t.timeout.disconnect()
+                    except Exception:
+                        pass  # not connected / already disconnected
+                    try:
+                        setattr(self, _tname, None)
+                    except Exception:
+                        pass
+                except Exception:
+                    pass

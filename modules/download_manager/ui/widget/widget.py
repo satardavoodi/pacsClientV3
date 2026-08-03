@@ -232,7 +232,21 @@ class DownloadManagerWidget(_DMUISetupMixin, _DMQueueMixin, _DMControlsMixin, _D
         ui_observer = UIObserver(self)
         self.state_store.register_observer(ui_observer)
         self._ui_observer = ui_observer
-        
+
+        # OPT-46: after a crash/restart, re-enqueue interrupted downloads from their persisted
+        # disk specs so they auto-resume (deduped against the disk resume; completed images are
+        # never re-fetched). Flag-gated default-off (AIPACS_DM_QUEUE_PERSIST=1). Deferred well past
+        # startup so it never blocks app launch or competes with the user's first actions.
+        try:
+            from PySide6.QtCore import QTimer as _QTimer46
+            from modules.download_manager.state.queue_persistence import (
+                queue_persist_enabled as _qpe46,
+            )
+            if _qpe46():
+                _QTimer46.singleShot(9000, self._restore_persisted_queue)
+        except Exception:
+            pass
+
         # Theme
         self.theme = get_current_theme()
         

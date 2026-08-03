@@ -102,32 +102,14 @@ def _post_chat(prompt: str, timeout: int = 45) -> Any:
         timeout=timeout,
         reasoning_effort=get_secretary_reasoning_effort(),
     )
-    # Use the EchoMind Settings key only (no per-center override).
-    api_key = (get_echomind_api_key() or "").strip()
-    if not api_key:
-        raise RuntimeError("EchoMind API key is not configured. Set it in Settings -> modules.EchoMind.")
-    payload = {
-        "model": "gpt-5.2",
-        "messages": [
-            {"role": "user", "content": prompt},
-        ],
-    }
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
-    resp = requests.post("https://api.gapgpt.app/v1/chat/completions", headers=headers, json=payload, timeout=timeout)
-    resp.raise_for_status()
-    body = resp.json()
-    raw = body
-    if isinstance(body, dict):
-        choices = body.get("choices")
-        if isinstance(choices, list) and choices:
-            msg = choices[0].get("message") if isinstance(choices[0], dict) else None
-            if isinstance(msg, dict) and msg.get("content"):
-                raw = msg.get("content")
-            elif isinstance(choices[0], dict) and choices[0].get("text"):
-                raw = choices[0].get("text")
+    # NOTE (2026-07-28): ~25 lines of UNREACHABLE code used to sit here, after
+    # the return above. It posted to a HARD-CODED
+    # `https://api.gapgpt.app/v1/chat/completions` and referenced an un-imported
+    # `requests` plus an undefined `get_echomind_api_key` — so it was not merely
+    # dead, it was a `NameError` waiting for whoever removed the early return.
+    # Deleted. The live path is the `gapgpt_chat` call above, which routes
+    # through `llm_client` and therefore honours the Settings LLM backend,
+    # proxy and timeout policy.
 
 
 def _raw_to_plan(raw: Any) -> SecretaryActionPlan | None:

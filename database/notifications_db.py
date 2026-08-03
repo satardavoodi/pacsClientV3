@@ -23,6 +23,11 @@ CREATE TABLE IF NOT EXISTS notifications (
     status          TEXT NOT NULL DEFAULT 'unread',   -- unread | read | archived
     created_at      INTEGER
 );
+-- 2026-07-31: the unread badge runs `SELECT COUNT(*) ... WHERE status = ?` on a
+-- timer, so an unindexed `status` meant a full scan of a monotonically growing
+-- table on every tick. `created_at` rides along because listings order by it.
+CREATE INDEX IF NOT EXISTS idx_notifications_status
+    ON notifications(status, created_at);
 """
 
 

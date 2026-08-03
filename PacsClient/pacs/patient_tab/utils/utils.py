@@ -204,15 +204,29 @@ def convert_itk2vtk(itk_image: sitk.Image):
         for col in range(3):
             direction_matrix.SetElement(row, col, direction[row * 3 + col])
 
-    arr = sitk.GetArrayFromImage(itk_image)
-    
-    # FREE ITK image IMMEDIATELY after extracting numpy array.
-    # This reduces peak memory by ~150 MB per series during conversion.
-    # The caller still holds a reference but we explicitly break it here
-    # since we no longer need the ITK data.
-    del itk_image
-    
-    arr = arr[:, ::-1, :]  # Flip Y axis for VTK
+    # ── OPT-47: one full-volume copy instead of two ───────────────────────────
+    # This used to be: GetArrayFromImage (COPY #1) -> arr[:, ::-1, :] (a NEGATIVE-STRIDE,
+    # non-contiguous VIEW) -> the `if not C_CONTIGUOUS: arr.copy()` below (COPY #2, which
+    # therefore ALWAYS fired). Together with the ITK buffer still held by the CALLER that is
+    # three full-size buffers alive at once — ~1.26 GB for an 800-slice 512x512 int16 study,
+    # a major contributor to the first-open MPR crash on large studies.
+    # `GetArrayViewFromImage` is a zero-copy read-only view over ITK's buffer, so the single
+    # `ascontiguousarray` below produces exactly ONE independent, C-contiguous copy with
+    # byte-identical values. (The ITK image must stay alive until that copy exists — it does:
+    # the caller holds it.) Kill switch: AIPACS_ITK2VTK_SINGLE_COPY=0 restores the legacy path.
+    import os as _os47u
+    _single_copy = (_os47u.environ.get("AIPACS_ITK2VTK_SINGLE_COPY", "1") or "1").strip() != "0"
+    if _single_copy:
+        try:
+            arr = sitk.GetArrayViewFromImage(itk_image)
+        except Exception:
+            arr = sitk.GetArrayFromImage(itk_image)
+    else:
+        arr = sitk.GetArrayFromImage(itk_image)
+
+    # NOTE: `del itk_image` here only drops the LOCAL name — the caller still holds the ITK
+    # image, so it frees nothing. With the view above we must NOT drop it before the copy.
+    arr = arr[:, ::-1, :]  # Flip Y axis for VTK (view; materialised by the copy below)
     
     # Update direction matrix for Y-axis flip
     for col in range(3):
@@ -255,9 +269,13 @@ def convert_itk2vtk(itk_image: sitk.Image):
     dims_arr.SetValue(2, float(z))
     vtk_image.GetFieldData().AddArray(dims_arr)
 
-    # OPTIMIZATION: Only copy if contiguous is required
+    # Materialise ONE independent C-contiguous buffer. The Y-flip above is a negative-stride
+    # view, so this always allocates exactly once — and, with the zero-copy view above, this
+    # is now the ONLY full-size copy this function makes (was two). VTK requires contiguous
+    # memory, and the result must be independent of ITK's buffer because `vtk_image` outlives
+    # the ITK image (it is pinned as `_numpy_backing_store` below).
     if not arr.flags['C_CONTIGUOUS']:
-        arr = arr.copy()
+        arr = np.ascontiguousarray(arr)
 
     # 3) OPTIMIZATION: Direct conversion without deep copy when possible
     if arr.ndim == 4 and arr.shape[-1] == 3 and arr.dtype == np.uint8:

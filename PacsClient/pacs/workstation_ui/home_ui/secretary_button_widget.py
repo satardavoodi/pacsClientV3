@@ -45,6 +45,43 @@ from PacsClient.utils import IMAGES_LOGIN_PATH
 from modules.EchoMind.secretary_bridge import create_secretary_orchestrator
 from modules.EchoMind.api_manager import APIKeyManager, Manage
 from modules.EchoMind.viewer_chat.ai_chat_api import ApiWorker
+
+# ── 2026-07-31: detach-don't-wait, the same contract the EchoMind chat uses ──
+# `SecretaryButtonWidget` had NO teardown at all — no closeEvent, no cleanup, no
+# deleteLater — and created one `ApiWorker(parent=self)` QThread per voice
+# command. Closing the app while an STT upload was in flight (the upload budget
+# is 360 s, so this is ordinary, not a corner case) let Qt destroy a RUNNING
+# QThread: `QThread: Destroyed while thread is still running` -> qFatal ->
+# abort(), with no traceback and no Python frame. app.log simply stops
+# mid-line.
+#
+# The rule: never `wait()` (that re-creates the freeze the worker exists to
+# avoid) and never let Python GC a running QThread (that aborts the process).
+# Disconnect it, unparent it, park it here, and release it when it finishes.
+_ORPHANED_SECRETARY_WORKERS: list = []
+
+# ── 2026-07-31: Phase 2/3 planning off the GUI thread ────────────────────────
+# `AIPACS_ECHOMIND_SECRETARY_ASYNC=0` restores the fully-synchronous pipeline
+# (planning AND execution inline in the STT callback, i.e. the legacy freeze).
+_ENV_SECRETARY_ASYNC = "AIPACS_ECHOMIND_SECRETARY_ASYNC"
+
+
+def _secretary_async_enabled() -> bool:
+    raw = os.environ.get(_ENV_SECRETARY_ASYNC)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+def _release_orphan_secretary_worker(worker) -> None:
+    try:
+        _ORPHANED_SECRETARY_WORKERS.remove(worker)
+    except ValueError:
+        pass
+    try:
+        worker.deleteLater()
+    except Exception:
+        pass
 from modules.EchoMind.secretary.stt.router import SttRouter
 from modules.EchoMind.settings_store import get_secretary_stt_route, load_settings, get_echomind_api_key
 
@@ -908,6 +945,15 @@ class SecretaryButtonWidget(QWidget):
         self._thinking_stage = "Ready"
         self._rec_running = False
         self._rec_thread = None
+        self._rec_stream = None       # live PortAudio stream, for deterministic stop
+        # True from the moment a voice command is accepted until its result is
+        # rendered. The old guard only checked the STT worker, so once THAT had
+        # finished a second command could start on top of an in-flight
+        # execution — and `home_widget_adapter.search` pumps `processEvents`
+        # for up to 45 s, which is exactly what delivers the orb click that
+        # starts it.
+        self._secretary_busy = False
+        self._workers: list = []      # live ApiWorkers, for deterministic teardown
         self._rec_frames = []
         self._rec_fs = 44100
         self._rec_started_at = None
@@ -1459,7 +1505,23 @@ class SecretaryButtonWidget(QWidget):
             pass
 
     def _post_log(self, role: str, text: str) -> None:
-        QTimer.singleShot(0, lambda: self.append_log(role, text))
+        # 2026-07-31 — the two-argument `QTimer.singleShot(0, fn)` creates the
+        # timer on the CALLING thread. The recorder is a plain
+        # `threading.Thread` with no Qt event loop, so a timer created there
+        # never fires and the log line was silently dropped. The three-argument
+        # form takes a context QObject and delivers into THAT object's thread,
+        # which is the GUI thread. Same call from the GUI thread is unchanged.
+        try:
+            QTimer.singleShot(0, self, lambda: self.append_log(role, text))
+        except TypeError:                    # very old PySide6
+            QTimer.singleShot(0, lambda: self.append_log(role, text))
+
+    def _call_on_gui(self, fn) -> None:
+        """Run `fn` on the GUI thread. Safe to call from any thread."""
+        try:
+            QTimer.singleShot(0, self, fn)
+        except TypeError:                    # very old PySide6
+            QTimer.singleShot(0, fn)
 
     def _send_transcript_to_gapgpt(self, transcript: str) -> None:
         text = (transcript or "").strip()
@@ -1508,6 +1570,11 @@ class SecretaryButtonWidget(QWidget):
         worker = ApiWorker(work, parent=self)
         worker.done.connect(done)
         worker.failed.connect(failed)
+        # 2026-07-31 — track it so `cleanup()` can detach it, and free the
+        # QObject when it ends (one per command accumulated for the whole
+        # session otherwise, each pinning its closure).
+        self._workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._retire_worker(w))
         worker.start()
 
     def _ensure_secretary_runtime(self) -> bool:
@@ -1685,13 +1752,31 @@ class SecretaryButtonWidget(QWidget):
                     channels=1,
                     dtype="int16",
                     callback=self._rec_callback,
-                ):
+                ) as stream:
+                    # 2026-07-31 — keep a handle. The stream used to live only
+                    # inside this `with`, so nothing could stop it
+                    # deterministically: cancel_recording only flipped a flag
+                    # and joined for 1.5 s, and if PortAudio did not return in
+                    # time the stream was still live, with a bound method
+                    # pointing at a widget Qt was about to free. This is the
+                    # pre-fix shape of the crash the EchoMind composer's
+                    # `cleanup()` was written for.
+                    self._rec_stream = stream
                     while self._rec_running:
                         sd.sleep(100)
             except Exception as exc:
                 self._rec_running = False
                 self._post_log("system", f"Recording error: {exc}")
-                self._set_active_silent(False)
+                # 2026-07-31 — this ran ON THE AUDIO THREAD. `_set_active_silent`
+                # calls blockSignals/setChecked and `orb_button._apply_state`,
+                # which starts and stops QTimers and calls update() — widget
+                # mutation from a non-GUI thread, i.e. undefined behaviour and
+                # an intermittent access violation on Windows. Reached whenever
+                # the mic is held by another app, unplugged, or the device index
+                # went stale after a dock change.
+                self._call_on_gui(lambda: self._set_active_silent(False))
+            finally:
+                self._rec_stream = None
 
         self._rec_thread = threading.Thread(target=worker, daemon=True)
         self._rec_thread.start()
@@ -1704,6 +1789,23 @@ class SecretaryButtonWidget(QWidget):
             self._rec_frames.append(indata.copy())
         except Exception:
             pass
+
+    def _abort_audio_stream(self) -> None:
+        """Stop PortAudio deterministically. Never raises."""
+        stream = getattr(self, "_rec_stream", None)
+        self._rec_stream = None
+        if stream is None:
+            return
+        for call in ("abort", "close"):
+            try:
+                getattr(stream, call)(ignore_errors=True)
+            except TypeError:
+                try:
+                    getattr(stream, call)()
+                except Exception:
+                    pass
+            except Exception:
+                pass
 
     def cancel_recording(self) -> bool:
         """Stop an in-flight recording WITHOUT processing it.
@@ -1723,6 +1825,9 @@ class SecretaryButtonWidget(QWidget):
             except Exception:
                 pass
             self._rec_thread = None
+        # 2026-07-31 — the join has no fallback: if PortAudio does not return
+        # within 1.5 s the stream is still live. Stop it explicitly.
+        self._abort_audio_stream()
         self._rec_frames = []
         self._rec_started_at = None
         try:
@@ -1781,10 +1886,13 @@ class SecretaryButtonWidget(QWidget):
             self._post_log("system", f"Audio save failed: {exc}")
             return
 
-        if self._worker is not None and self._worker.isRunning():
+        if (self._worker is not None and self._worker.isRunning()) or self._secretary_busy:
             self._set_thinking_status("Ready")
             self._post_log("system", "Secretary is still processing the previous request.")
             return
+        # Covers the WHOLE pipeline (STT -> plan -> execute -> render), not just
+        # the STT worker. See `_secretary_busy` in __init__ for why.
+        self._secretary_busy = True
 
         self._set_thinking_status("Phase 1: Transcribing")
         self._post_log("system", "Phase 1: Sending voice to GPT for transcription...")
@@ -1842,6 +1950,7 @@ class SecretaryButtonWidget(QWidget):
                 self._post_log("system", f"STT request: {stt_req}")
                 self._post_log("system", f"STT response: {stt_resp}")
                 self._post_log("system", f"Secretary failed: {resp.get('error')}")
+                self._finish_secretary_cycle()
                 return
             transcript = (resp.get("transcript") or "").strip()
             stt_req = resp.get("stt_req") or {}
@@ -1861,9 +1970,21 @@ class SecretaryButtonWidget(QWidget):
                 self.append_input(transcript)
 
             if not self._ensure_secretary_runtime():
+                self._finish_secretary_cycle()
                 return
 
-            # Phase 2: the orchestrator will route the text to a module (LLM call).
+            # ── Phase 2/3 now run OFF the GUI thread (2026-07-31) ────────────
+            # `done` is delivered on the GUI thread — the modal confirm dialog
+            # below only works because it is. Running `orchestrator.handle()`
+            # here meant Phase-1 routing (20 s) + Phase-2 planning (30 s) +
+            # repair (2 x 25 s) blocked the event loop: 60-95 s of frozen
+            # workstation on a degraded link, and the staged "Phase 2 / Phase 3"
+            # labels below could not repaint until it was all over, so they
+            # arrived at once, after the fact.
+            #
+            # Only PLANNING moves. Execution reaches adapters that legitimately
+            # touch widgets, so it stays on this thread — moving it would turn a
+            # freeze into an access violation.
             self._set_thinking_status("Phase 2: Module Routing")
             self._post_log("system", "Phase 2: Sending transcript + module catalog to GPT.")
             _elog(f"[EchoMind | Phase 2] {_dt.datetime.now():%H:%M:%S} — sending transcript + catalog to GPT for module routing")
@@ -1872,10 +1993,12 @@ class SecretaryButtonWidget(QWidget):
             requested_route = str(stt_req.get("route") or "native")
             used_route = str(stt_resp.get("route_used") or requested_route)
 
-            # progress_cb is invoked from the worker thread — use singleShot to
-            # update the Qt label safely from the main thread.
+            # `progress_cb` is invoked from the PLANNING thread. The two-argument
+            # `QTimer.singleShot(0, fn)` creates the timer on the calling thread,
+            # which has no Qt event loop, so the stage label would never update —
+            # `_call_on_gui` passes a context object and delivers into ours.
             def _progress(stage: str) -> None:
-                QTimer.singleShot(0, lambda s=stage: self._set_thinking_status(s))
+                self._call_on_gui(lambda s=stage: self._set_thinking_status(s))
 
             payload = {
                 "text": transcript,
@@ -1887,72 +2010,226 @@ class SecretaryButtonWidget(QWidget):
                 "stt_fallback": bool(stt_settings.get("secretary_stt_fallback", True)),
                 "progress_cb": _progress,
             }
-            try:
-                result = self._secretary_orchestrator.handle(payload)  # type: ignore[union-attr]
-            except Exception as exc:
-                self._set_thinking_status("Ready")
-                self._post_log("system", f"Secretary engine error: {exc}")
+
+            if not _secretary_async_enabled():
+                self._secretary_execute_and_render(payload)
                 return
 
-            # ── Popup confirmation dialog ─────────────────────────────────────
-            # Triggered for: download, delete, structural server changes.
-            # All other actions (search, open, navigate, view) execute directly
-            # and will never reach CONFIRM_REQUIRED so the dialog is never shown.
-            if (result or {}).get("error_code") == "CONFIRM_REQUIRED":
-                self._set_thinking_status("Awaiting Confirmation")
-                self._post_log("system", "Confirmation required — showing dialog.")
-                confirmed = self._show_secretary_confirm_dialog(result or {})
-                answer_text = "yes" if confirmed else "no"
-                try:
-                    result = self._secretary_orchestrator.handle({  # type: ignore[union-attr]
-                        "text": answer_text,
-                        "session_id": self._secretary_session_id,
-                    })
-                except Exception as _conf_exc:
-                    result = {
-                        "ok": False,
-                        "action": (result or {}).get("action", "unknown"),
-                        "message": f"Confirmation dispatch failed: {_conf_exc}",
-                        "data": None,
-                        "error_code": "INTERNAL",
-                    }
-                self._post_log(
-                    "system",
-                    f"User {'confirmed' if confirmed else 'cancelled'} — "
-                    f"result: {'OK' if (result or {}).get('ok') else (result or {}).get('error_code', 'error')}",
-                )
+            def plan_work():
+                # PURE NETWORK — must not touch a single Qt object.
+                return {"plan": self._secretary_orchestrator.preplan(payload)}
 
-            import datetime as _dt2
-            import sys as _sys2
-            def _elog2(msg: str) -> None:
-                try:
-                    _sys2.stderr.write(msg + "\n")
-                    _sys2.stderr.flush()
-                except Exception:
-                    pass
-            _elog2(f"[EchoMind | Result ] {_dt2.datetime.now():%H:%M:%S} — pipeline complete")
-            _elog2(f"  ok         : {(result or {}).get('ok')}")
-            _elog2(f"  action     : {(result or {}).get('action')}")
-            _elog2(f"  message    : {str((result or {}).get('message') or '')[:120]}")
-            data = (result or {}).get("data")
-            if isinstance(data, list):
-                _elog2(f"  data rows  : {len(data)}")
-            elif isinstance(data, dict):
-                _elog2(f"  data keys  : {list(data.keys())}")
-            self.append_output(self._format_secretary_result_text(result or {}))
-            self._maybe_surface_home_result(result or {})
-            self._set_thinking_status("Ready")
-            self.set_ui_state("idle")
-            # Update memory label with new cycle count
-            QTimer.singleShot(50, self._refresh_memory_label)
+            def plan_done(res: dict):
+                # Back on the GUI thread. `False` means planning ran and found
+                # nothing, so `handle()` will not re-run the LLM here.
+                payload["_preplanned"] = (res or {}).get("plan") or False
+                self._secretary_execute_and_render(payload)
+
+            def plan_failed(msg: str):
+                self._set_thinking_status("Ready")
+                self._post_log("system", f"Secretary planning failed: {msg}")
+                self._finish_secretary_cycle()
+
+            self._run_worker(plan_work, plan_done, plan_failed)
 
         def failed(msg: str):
             if getattr(self, "_ui_state", "idle") != "error":
                 self.set_ui_state("idle")
             self._set_thinking_status("Ready")
             self._post_log("system", f"Secretary failed: {msg}")
+            self._finish_secretary_cycle()
 
         self._worker = ApiWorker(work, parent=self)
         self._worker.done.connect(done)
         self._worker.failed.connect(failed)
+        self._workers.append(self._worker)
+        self._worker.finished.connect(lambda w=self._worker: self._retire_worker(w))
         self._worker.start()
+
+
+    # ── Secretary pipeline helpers (2026-07-31) ─────────────────────────────
+    def _run_worker(self, work, on_done, on_failed=None):
+        """Run `work` on an ApiWorker and deliver the result to the GUI thread.
+
+        Registers the worker so `cleanup()` can detach it on teardown, and frees
+        the QObject when it ends. `work` MUST NOT touch a single Qt object.
+        """
+        worker = ApiWorker(work, parent=self)
+        worker.done.connect(on_done)
+        if on_failed is not None:
+            worker.failed.connect(on_failed)
+        self._workers.append(worker)
+        worker.finished.connect(lambda w=worker: self._retire_worker(w))
+        worker.start()
+        return worker
+
+    def _finish_secretary_cycle(self) -> None:
+        """Release the pipeline lock. Safe to call more than once."""
+        self._secretary_busy = False
+
+    def _secretary_execute_and_render(self, payload: dict) -> None:
+        """Execute the plan and render the result. **GUI thread only.**
+
+        Everything here is deliberately on this thread: the executor reaches
+        adapters that legitimately touch widgets, and the confirmation dialog is
+        modal. When `payload["_preplanned"]` is set, the LLM work has already
+        happened on a worker, so `handle()` goes straight to execution instead
+        of re-running routing and planning here.
+        """
+        import datetime as _dt2
+        import sys as _sys2
+
+        def _elog2(msg: str) -> None:
+            try:
+                _sys2.stderr.write(msg + "\n")
+                _sys2.stderr.flush()
+            except Exception:
+                pass
+
+        try:
+            result = self._secretary_orchestrator.handle(payload)
+        except Exception as exc:
+            self._set_thinking_status("Ready")
+            self._post_log("system", f"Secretary engine error: {exc}")
+            self._finish_secretary_cycle()
+            return
+
+        # ── Popup confirmation dialog ────────────────────────────────────────
+        # Triggered for: download, delete, structural server changes. All other
+        # actions execute directly and never reach CONFIRM_REQUIRED.
+        if (result or {}).get("error_code") == "CONFIRM_REQUIRED":
+            self._set_thinking_status("Awaiting Confirmation")
+            self._post_log("system", "Confirmation required — showing dialog.")
+            confirmed = self._show_secretary_confirm_dialog(result or {})
+            answer_text = "yes" if confirmed else "no"
+            try:
+                # Resolves a pending choice from session state — no LLM call, so
+                # this one does not need to go back through a worker.
+                result = self._secretary_orchestrator.handle({
+                    "text": answer_text,
+                    "session_id": self._secretary_session_id,
+                })
+            except Exception as _conf_exc:
+                result = {
+                    "ok": False,
+                    "action": (result or {}).get("action", "unknown"),
+                    "message": f"Confirmation dispatch failed: {_conf_exc}",
+                    "data": None,
+                    "error_code": "INTERNAL",
+                }
+            self._post_log(
+                "system",
+                f"User {'confirmed' if confirmed else 'cancelled'} — "
+                f"result: {'OK' if (result or {}).get('ok') else (result or {}).get('error_code', 'error')}",
+            )
+
+        _elog2(f"[EchoMind | Result ] {_dt2.datetime.now():%H:%M:%S} — pipeline complete")
+        _elog2(f"  ok         : {(result or {}).get('ok')}")
+        _elog2(f"  action     : {(result or {}).get('action')}")
+        _elog2(f"  message    : {str((result or {}).get('message') or '')[:120]}")
+        data = (result or {}).get("data")
+        if isinstance(data, list):
+            _elog2(f"  data rows  : {len(data)}")
+        elif isinstance(data, dict):
+            _elog2(f"  data keys  : {list(data.keys())}")
+
+        try:
+            self.append_output(self._format_secretary_result_text(result or {}))
+            self._maybe_surface_home_result(result or {})
+        finally:
+            self._set_thinking_status("Ready")
+            self.set_ui_state("idle")
+            self._finish_secretary_cycle()
+            QTimer.singleShot(50, self._refresh_memory_label)
+
+    # ── deterministic teardown (2026-07-31) ─────────────────────────────────
+    def _retire_worker(self, worker) -> None:
+        try:
+            self._workers.remove(worker)
+        except (ValueError, AttributeError):
+            pass
+        try:
+            worker.deleteLater()
+        except Exception:
+            pass
+
+    def cleanup(self) -> None:
+        """Stop every native and threaded resource BEFORE Qt frees this widget.
+
+        Mirrors `OneChatPage.cleanup` in the EchoMind chat, which exists because
+        destroying a parent while a child ApiWorker QThread is still running
+        aborts the process with no traceback. This class had no teardown at all.
+
+        Never `wait()` — that would freeze the GUI for the remaining read
+        timeout, which is the whole thing the worker exists to avoid.
+        """
+        try:
+            self._rec_running = False
+        except Exception:
+            pass
+        try:
+            self._abort_audio_stream()
+        except Exception:
+            pass
+        thread = getattr(self, "_rec_thread", None)
+        if thread is not None:
+            try:
+                thread.join(timeout=1.0)
+            except Exception:
+                pass
+            self._rec_thread = None
+
+        for worker in list(getattr(self, "_workers", []) or []):
+            try:
+                if not worker.isRunning():
+                    continue
+            except Exception:
+                continue
+            for sig in ("done", "failed", "finished"):
+                try:
+                    getattr(worker, sig).disconnect()
+                except Exception:
+                    pass
+            try:
+                worker.setParent(None)
+                _ORPHANED_SECRETARY_WORKERS.append(worker)
+                worker.finished.connect(
+                    lambda _w=worker: _release_orphan_secretary_worker(_w)
+                )
+            except Exception:
+                pass
+        try:
+            self._workers = []
+        except Exception:
+            pass
+        self._worker = None
+
+        # Any straggler the list missed (a worker created by a future code path
+        # that forgets to register) — same contract.
+        try:
+            from PySide6.QtCore import QThread
+            for child in self.findChildren(QThread):
+                try:
+                    if not child.isRunning():
+                        continue
+                    child.setParent(None)
+                    _ORPHANED_SECRETARY_WORKERS.append(child)
+                    child.finished.connect(
+                        lambda _w=child: _release_orphan_secretary_worker(_w)
+                    )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
+        try:
+            self._fade_timer.stop()
+        except Exception:
+            pass
+
+    def closeEvent(self, event):
+        try:
+            self.cleanup()
+        except Exception:
+            pass
+        super().closeEvent(event)

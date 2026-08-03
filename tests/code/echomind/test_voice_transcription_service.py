@@ -158,7 +158,11 @@ def test_upload_format_and_timeout_and_auth(cfg, captured):
     assert call["fields"] == ["audio_files"]              # multipart field name
     assert call["data"] == {"quality_mode": "noisy"}
     assert call["headers"]["Authorization"] == "Bearer tok-123"
-    assert call["timeout"] == 120
+    # F3/F6 (2026-07-28): the upload now goes through `echomind_http`, which
+    # turns the configured timeout into a (connect, read) pair. The user's value
+    # is still the READ budget — what changed is that an unreachable server now
+    # fails the CONNECT in 10 s instead of waiting the full 120 s.
+    assert call["timeout"] == (10.0, 120.0)
 
 
 # ── the response contract both callers depend on ────────────────────────────

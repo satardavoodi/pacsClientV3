@@ -3,8 +3,9 @@ from __future__ import annotations
 import os
 from typing import Any
 
-import requests
+import requests  # noqa: F401  (kept: module symbol referenced by tests)
 
+from modules.EchoMind import echomind_http
 from modules.EchoMind.llm_client import chat_completion
 from modules.EchoMind.settings_store import get_openai_model_for_feature, get_openai_settings, get_prompt_settings
 
@@ -52,7 +53,18 @@ class OpenAITranscribeProvider:
                     data = {"model": model}
                     if transcript_prompt and "diarize" not in model.lower():
                         data["prompt"] = transcript_prompt[:1000]
-                    resp = requests.post(endpoint, headers=headers, files=files, data=data, timeout=timeout)
+                    # Via the ONE transport authority (F3) — this upload used to
+                    # ignore the Settings proxy/connection type entirely.
+                    resp = echomind_http.post(
+                        endpoint,
+                        headers=headers,
+                        files=files,
+                        data=data,
+                        # An explicit `timeout` wins over `read_timeout` by
+                        # design, so passing both was misleading -- this
+                        # provider's caller already supplies the STT budget.
+                        timeout=timeout,
+                    )
                 resp.raise_for_status()
                 body = resp.json()
                 text = str(body.get("text") or "").strip()

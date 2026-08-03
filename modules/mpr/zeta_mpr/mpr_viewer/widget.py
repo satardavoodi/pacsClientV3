@@ -8,6 +8,7 @@ and the MRO (Method Resolution Order) assembly.
 Extracted from standard_mpr_viewer.py (Phase 5A refactoring).
 """
 import logging
+import os as _os
 
 import vtkmodules.all as vtk
 from PySide6.QtWidgets import QWidget
@@ -97,8 +98,43 @@ class StandardMPRViewer(
       _MprOrientationMixin     — camera vectors, direction matrix, orientation
     """
 
+    @staticmethod
+    def build_lr_flipped_volume(vtk_image_data):
+        """Apply the MPR left-right (X) correction and preserve the geometry contract.
+
+        THE canonical implementation of the flip — the SAME code runs whether it
+        is executed inline on the GUI thread (legacy) or hoisted onto the loader's
+        worker thread (OPT-48 Phase 2). Keeping ONE implementation is what makes
+        the off-thread path provably geometry-identical: same filter, same axis,
+        same field-data copy, therefore the same voxels, dims, spacing, origin and
+        the same ``DirectionMatrix`` / ``ZetaAnatA`` arrays.
+
+        This is pure data processing (no VTK render window), which is exactly the
+        rule that already allows the DICOM→VTK volume build to run off-thread.
+
+        DO NOT "optimize" this into a direction-matrix or camera flip: every
+        downstream consumer (reslice mappers, cameras, crosshairs, measurements,
+        the radiological L/R convention validated on screen) assumes the volume
+        itself is flipped. Changing that is a geometry change, not a speed-up.
+        """
+        image_flip = vtk.vtkImageFlip()
+        image_flip.SetInputData(vtk_image_data)
+        image_flip.SetFilteredAxis(0)  # Flip along X axis (left-right)
+        image_flip.Update()
+
+        flipped = image_flip.GetOutput()
+
+        # Copy field data from original to flipped image (preserves direction matrix)
+        if vtk_image_data.GetFieldData():
+            for i in range(vtk_image_data.GetFieldData().GetNumberOfArrays()):
+                arr = vtk_image_data.GetFieldData().GetArray(i)
+                if arr:
+                    flipped.GetFieldData().AddArray(arr)
+        return flipped
+
     def __init__(self, vtk_image_data, parent=None, window_width=None, window_center=None,
-                 layout_views=None, slab_mode=None, slab_thickness_mm=None):
+                 layout_views=None, slab_mode=None, slab_thickness_mm=None,
+                 pre_flipped_image_data=None):
         super().__init__(parent)
 
         _emit_geometry_contract_missing_guard(
@@ -127,26 +163,60 @@ class StandardMPRViewer(
         logger.info("=" * 80)
 
         # Apply left-right flip to input volume data
-        # This corrects the consistent right-to-left flip in all views
-        image_flip = vtk.vtkImageFlip()
-        image_flip.SetInputData(vtk_image_data)
-        image_flip.SetFilteredAxis(0)  # Flip along X axis (left-right)
-        image_flip.Update()
-
-        # Use the flipped data as our source volume
-        self.image_data = image_flip.GetOutput()
-
-        # Copy field data from original to flipped image (preserves direction matrix)
-        if vtk_image_data.GetFieldData():
-            for i in range(vtk_image_data.GetFieldData().GetNumberOfArrays()):
-                arr = vtk_image_data.GetFieldData().GetArray(i)
-                if arr:
-                    self.image_data.GetFieldData().AddArray(arr)
+        # This corrects the consistent right-to-left flip in all views.
+        # ── OPT-48 Phase 2 (2026-08-01): the flip may already have been computed
+        # OFF the GUI thread by the loader (toolbar_manager) and handed in via
+        # pre_flipped_image_data. It is produced by build_lr_flipped_volume() —
+        # the SAME code path executed below — so the volume, its geometry and the
+        # DirectionMatrix/ZetaAnatA field data are IDENTICAL; only the thread that
+        # computed it differs. On a 672-slice CT this removes a ~3.3 s GUI-thread
+        # full-volume copy from the MPR open. Anything missing/failed → the inline
+        # flip below runs exactly as it always has.
+        # Kill switch: AIPACS_MPR_FLIP_OFFTHREAD=0 (caller stops pre-computing).
+        self._flip_precomputed = False
+        if pre_flipped_image_data is not None:
+            try:
+                _pf_dims = pre_flipped_image_data.GetDimensions()
+                _src_dims = vtk_image_data.GetDimensions()
+                # Defensive identity check: a flip along X cannot change dims.
+                if tuple(_pf_dims) == tuple(_src_dims):
+                    self.image_data = pre_flipped_image_data
+                    self._flip_precomputed = True
+                    logger.info(
+                        "[MPR-FLIP] using pre-computed off-thread L/R flip dims=%s", _pf_dims
+                    )
+                else:
+                    logger.warning(
+                        "[MPR-FLIP] pre-computed flip REJECTED (dims %s != source %s) — "
+                        "recomputing inline", _pf_dims, _src_dims,
+                    )
+            except Exception as exc:
+                logger.warning("[MPR-FLIP] pre-computed flip unusable (%r) — recomputing inline", exc)
+        if not self._flip_precomputed:
+            self.image_data = self.build_lr_flipped_volume(vtk_image_data)
 
         self.dims = self.image_data.GetDimensions()
         self.spacing = self.image_data.GetSpacing()
         self.origin = self.image_data.GetOrigin()
-        self.scalar_range = self.image_data.GetScalarRange()
+        # ── OPT-48 #2 (2026-08-01): scalar range off the GUI thread ──────────
+        # A full-volume min/max scan costs ~1.5 s on a 672-slice CT (measured,
+        # patient 52827) and used to run right here on the GUI thread.
+        # vtkImageFlip only PERMUTES voxels along X — it cannot change the set
+        # of values — so the flipped volume's scalar range is IDENTICAL to the
+        # source's. The source volume is warmed on the loader's worker thread
+        # (toolbar_manager._load_vtk_paths_responsive), so reading it here is a
+        # cached, instant lookup. Falls back to the flipped output on any
+        # problem, and a mismatch is impossible by construction (same values).
+        # Kill switch AIPACS_MPR_SCALAR_RANGE_FROM_SOURCE=0 = legacy scan.
+        _range_from_source = _os.environ.get("AIPACS_MPR_SCALAR_RANGE_FROM_SOURCE", "1") != "0"
+        self.scalar_range = None
+        if _range_from_source:
+            try:
+                self.scalar_range = vtk_image_data.GetScalarRange()
+            except Exception:
+                self.scalar_range = None
+        if self.scalar_range is None:
+            self.scalar_range = self.image_data.GetScalarRange()
 
         # Extract Direction Matrix for proper MPR orientation
         self.direction_matrix = vtk.vtkMatrix4x4()
@@ -291,6 +361,13 @@ class StandardMPRViewer(
         # Performance optimization: batch rendering
         self._render_pending = set()  # Track views that need rendering
         self._render_timer = None  # Timer for batched renders
+
+        # Lifecycle: flipped to True as the FIRST action of cleanup() so every
+        # deferred/queued MPR operation (batched render, throttled interaction
+        # flush, wheel event arriving mid-teardown) no-ops instead of touching a
+        # render window whose graphics resources are already released. See
+        # `_mpr_is_closed()` in _mpr_orientation.py.
+        self._mpr_closed = False
 
         # Toolbar tool routing (Zeta MPR <-> 2D toolbar)
         self.tool_access = ToolAccess()

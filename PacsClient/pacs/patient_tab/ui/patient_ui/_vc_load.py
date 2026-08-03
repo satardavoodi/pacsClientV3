@@ -74,6 +74,15 @@ _DL_SKIP_COMPLETE_VIEW_INTENT = (
     os.getenv("AIPACS_DL_SKIP_COMPLETE_VIEW_INTENT", "1") or "1"
 ).strip() != "0"
 
+# 52931 series 602 (2026-08-02): the complete-on-disk guard re-downloaded a
+# fully-on-disk series on EVERY drag/drop because its expected count was read
+# ONLY from the in-memory `_server_series_info[key].image_count`, which is NOT
+# populated on some open paths (single-study fast-cache-hit opens). The fix
+# routes the guard through the ONE shared viewer resolver
+# `self._resolve_series_expected_count(..., include_disk=False)` (see _vc_backend),
+# which now has a DEFINED, shared DB `image_count` tier — no guard-local read
+# path. Kill switch AIPACS_DL_COMPLETE_DB_COUNT=0 (read in _vc_backend).
+
 # ── OPT-35: SeriesRef — the ONE series-identity authority (2026-07-14) ────────
 # Series identity used to be RE-DERIVED at four stages (disk path, DB study_pk,
 # cache key, render gate), each from MUTABLE TAB STATE (`import_folder_path`,
@@ -2492,20 +2501,21 @@ class _VCLoadMixin:
                         orig_sn = str(_r_series)
                 except Exception:
                     pass
-            # SERVER's authoritative expected image count (display-key keyed). Bail
-            # (never skip) when it is missing/zero.
+            # Expected image count via the ONE shared viewer resolver
+            # (self._resolve_series_expected_count → the series_facts authority):
+            # server info + thumbnail metadata + the persisted DB image_count, in
+            # that defined, shared order. include_disk=False because the guard must
+            # NEVER treat the on-disk file count as 'expected' (that would make
+            # expected==disk and always skip — the data-safety invariant). This is
+            # the SAME authority + fallback hierarchy every other viewer site uses;
+            # no guard-local read path. Reading only `_server_series_info` here made
+            # the guard fail on open paths that don't populate it (52931 series 602).
             expected = 0
-            ssi = getattr(self.parent_widget, '_server_series_info', {}) or {}
-            info = ssi.get(display_key) or ssi.get(orig_sn) if isinstance(ssi, dict) else None
-            if isinstance(info, dict):
-                try:
-                    expected = int(
-                        info.get('image_count')
-                        or (info.get('series') or {}).get('image_count')
-                        or 0
-                    )
-                except (TypeError, ValueError):
-                    expected = 0
+            try:
+                _res = self._resolve_series_expected_count(display_key, include_disk=False)
+                expected = int(getattr(_res, 'expected_count', 0) or 0)
+            except Exception:
+                expected = 0
             if expected <= 0 or not study_uid:
                 return False
             from PacsClient.utils.config import SOURCE_PATH

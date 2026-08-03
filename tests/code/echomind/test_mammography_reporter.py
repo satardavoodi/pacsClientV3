@@ -301,7 +301,13 @@ class TestMammographyInValidatedModalities(unittest.TestCase):
         self.assertIn("mammography", _VALIDATED_MODALITIES)
 
     def test_unrelated_modalities_not_validated(self):
-        for mod in ("Radiology", "XRay", "Nuclear", "PET"):
+        # 2026-08-01 — "Radiology" was removed from this list. It is not an
+        # "unrelated" modality: it is one of the five values the UI can send,
+        # and leaving it out of _VALIDATED_MODALITIES meant X-ray ran at the
+        # provider default temperature with no output validation. The property
+        # under test — modalities outside the set are untouched — is unchanged;
+        # only the example list is corrected.
+        for mod in ("XRay", "Nuclear", "PET", "Fluoroscopy"):
             self.assertNotIn(mod.lower(), _VALIDATED_MODALITIES,
                              f"'{mod}' should NOT be in _VALIDATED_MODALITIES")
 

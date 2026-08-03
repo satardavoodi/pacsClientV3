@@ -1067,6 +1067,29 @@ def get_patient_by_id(patient_id: str) -> dict:
         return dict(row) if row else None
 
 
+def get_series_image_count(study_uid: str, series_number) -> int:
+    """Return the persisted server image_count for a series, or 0 if unknown.
+
+    Reads ``series.image_count`` (populated from the server's gRPC image count via
+    ``update_series_image_count_by_uid`` — NOT disk-derived), joined to the study by
+    ``study_uid``. ``series_number`` is compared as text so an INTEGER column value
+    (e.g. 602) matches a string key ("602"). Never raises."""
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            cur.execute(
+                "SELECT s.image_count FROM series s "
+                "JOIN studies st ON s.study_fk = st.study_pk "
+                "WHERE st.study_uid = ? AND CAST(s.series_number AS TEXT) = ? "
+                "LIMIT 1",
+                (str(study_uid), str(series_number)),
+            )
+            row = cur.fetchone()
+            return int(row[0]) if row and row[0] else 0
+    except Exception:
+        return 0
+
+
 def find_patient_pk(patient_id: str) -> int:
     """Find patient primary key by patient_id. Returns None if not found."""
     with get_db_connection() as conn:

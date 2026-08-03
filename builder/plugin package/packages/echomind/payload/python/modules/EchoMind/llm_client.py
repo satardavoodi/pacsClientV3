@@ -16,6 +16,7 @@ from typing import Any
 
 import requests
 
+from modules.EchoMind import echomind_http
 from modules.EchoMind.ai_chat_config import GAPGPT_API_URL, GAPGPT_DEFAULT_MODEL, GAPGPT_TIMEOUT
 from modules.EchoMind.settings_store import get_echomind_api_key, get_llm_backend, get_openai_settings, get_proxy_settings
 
@@ -26,35 +27,23 @@ _DEFAULT_MODEL = GAPGPT_DEFAULT_MODEL
 _DEFAULT_TIMEOUT = GAPGPT_TIMEOUT
 
 
-def _get_requests_proxies() -> "dict[str, str]":
-    """Return a requests-compatible proxies dict.
+def _get_requests_proxies() -> "dict[str, str] | None":
+    """The proxies dict for an EchoMind call.
 
-    - 'direct': returns {} so requests explicitly bypasses ALL proxy sources
-      (system registry, HTTP_PROXY/HTTPS_PROXY env vars, Windows WinInet).
-      Passing proxies=None would still let requests pick up system proxies.
-    - 'socks5': returns the configured SOCKS5 proxy.
+    DELEGATES to ``echomind_http.requests_proxies`` — this used to be one of TWO
+    identical private copies (the other in ``viewer_chat/openai_reporter.py``)
+    while half the module passed no ``proxies=`` at all. Kept as a name so
+    existing call sites/tests keep working; do not re-implement it here.
     """
-    try:
-        cfg = get_proxy_settings()
-        if cfg.get("connection_type") != "socks5":
-            return {}  # explicit bypass — no system/env proxy
-        port = int(cfg.get("proxy_port") or 2080)
-        proxy_url = f"socks5://127.0.0.1:{port}"
-        return {"http": proxy_url, "https": proxy_url}
-    except Exception:
-        return {}  # fail-safe: no proxy
+    return echomind_http.requests_proxies()
 
 
 def _ensure_socks_proxy_support(proxies: "dict[str, str] | None") -> None:
-    if not proxies:
-        return
+    """Fail with an actionable message when SOCKS5 is on but PySocks is absent."""
     try:
-        import socks  # type: ignore  # noqa: F401
+        echomind_http.ensure_socks_support(proxies)
     except Exception as exc:
-        raise LLMAPIError(
-            "SOCKS5 proxy is selected, but SOCKS support is unavailable in this Python environment. "
-            "Install requests[socks] / PySocks for proxy-based OpenAI connections."
-        ) from exc
+        raise LLMAPIError(str(exc)) from exc
 
 
 class LLMError(Exception):
@@ -401,8 +390,15 @@ def chat_completion(
         if reasoning_effort:
             payload["reasoning_effort"] = str(reasoning_effort).strip()
 
+    # Transport policy (proxy + connect/read split) comes from the ONE authority.
+    # This used to pass a SCALAR timeout, which requests applies to the CONNECT
+    # phase too — so an unreachable host took the full 60 s to report itself
+    # instead of 10 s. `echomind_http` upgrades it to (connect, read).
+    _ensure_socks_proxy_support(_get_requests_proxies())
     try:
-        resp = requests.post(session.api_url, json=payload, headers=headers, timeout=timeout, proxies=_get_requests_proxies())
+        resp = echomind_http.post(
+            session.api_url, json=payload, headers=headers, read_timeout=timeout
+        )
     except requests.exceptions.RequestException as exc:
         raise LLMAPIError(
             f"Network error contacting {session.display_name}: {exc}"
@@ -511,7 +507,7 @@ def test_openai_connection(
         headers["OpenAI-Project"] = str(project).strip()
 
     try:
-        resp = requests.get(
+        resp = echomind_http.get(
             f"{resolved_base_url}/models",
             headers=headers,
             timeout=int(timeout or 15),
@@ -551,7 +547,7 @@ def test_active_backend_connection(timeout: int = 15) -> dict[str, Any]:
     _ensure_socks_proxy_support(proxies)
 
     try:
-        resp = requests.post(
+        resp = echomind_http.post(
             url,
             headers=headers,
             json={

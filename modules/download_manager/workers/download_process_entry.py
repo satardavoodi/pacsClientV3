@@ -100,6 +100,13 @@ def _run_download_in_process(
     # ── 1. Working directory (db path is relative to cwd) ────────────────────
     os.chdir(working_dir)
 
+    # Role marker read by database._pool._resolve_db_timeouts (OPT-45): this child
+    # must keep the FULL 120 s dicom.db busy_timeout so a burst of instance writes
+    # never drops a row, while the main GUI process uses a short ceiling. Set BEFORE
+    # any DB access. (multiprocessing.current_process().name already differs from
+    # "MainProcess" for this spawned child; this is an explicit belt-and-suspenders.)
+    os.environ["AIPACS_DB_ROLE"] = "download-subprocess"
+
     # ── 2. Logging ──────────────────────────────────────────────────────────
     configure_diagnostic_logging(process_role="download-subprocess", force=True)
     logger = logging.getLogger("download_process_entry")

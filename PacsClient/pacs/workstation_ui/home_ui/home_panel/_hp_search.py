@@ -252,10 +252,22 @@ class _HPSearchMixin:
             _logger.error("Error in default search: %s", e, exc_info=True)
 
     def _on_server_tab_changed(self, index):
-        """Auto-trigger search when the user switches tabs in Server Selection."""
+        """Auto-trigger search when the user switches tabs in Server Selection.
+
+        Switching TO Local auto-runs a local search (cheap, no round-trip).
+        Switching TO Server/Import does NOT auto-query (a server search needs a
+        selected server + a round-trip), so — to keep the visible results always
+        matching the active data source — the table is cleared instead of
+        leaving stale rows from the other source under the new tab.
+        """
         tab_name = self.data_access_panel_widget.tabs.tabText(index).lower()
         if tab_name == 'local':
             self.patient_list_function_identifier('local')
+        elif os.getenv("AIPACS_SEARCH_CLEAR_ON_MODE_SWITCH", "1") != "0":
+            try:
+                self.patient_table_widget.clear_table()
+            except Exception:
+                _logger.debug("clear_table on mode switch failed", exc_info=True)
 
     def patient_list_function_identifier(self, tab_selected: str):
         tab_selected = tab_selected.lower()
@@ -295,9 +307,11 @@ class _HPSearchMixin:
         """Run the structured advanced search from the Patient-ID filter popup.
 
         Mirrors patient_list_function_identifier's task handling: cancels any
-        in-flight search task, flips the searching state, and delegates to
-        HomeSearchService.search_server_advanced (server-side id/date/modality,
-        client-side body part/age/physician refinement).
+        in-flight search task and flips the searching state, then routes by the
+        ACTIVE data source (Local/Server tab) — Server mode → the selected
+        server (search_server_advanced); Local/Import mode → the local DB
+        (search_local); an import-date filter is always local (studies.imported_at
+        has no server equivalent). Never crosses Local/Server.
         """
         try:
             if self._search_task and not self._search_task.done():
@@ -309,31 +323,80 @@ class _HPSearchMixin:
         self._cancel_search_requested = False
         self._warmup_download_manager_once()
 
-        # Import-date filter (2026-07-24) is LOCAL-only (studies.imported_at, when
-        # the study entered THIS database — not the acquisition date), so route it
-        # to the local DB search instead of the PACS server. Other advanced fields
-        # (modality, a single Patient ID) refine the same local query.
-        if query.get('import_date_from') or query.get('import_date_to'):
-            extra = {
-                'import_date_from': query.get('import_date_from'),
-                'import_date_to': query.get('import_date_to'),
-            }
-            _mods = query.get('modalities') or []
-            if _mods:
-                extra['modality'] = ",".join(_mods)
-            _pids = query.get('patient_ids') or []
-            if len(_pids) == 1:
-                extra['patient_id'] = _pids[0]
-            self.source_of_patient_load = SourceOfPatientLoad.DB
+        # Advanced Search MUST follow the same data source as the normal search
+        # (the Local/Server tab) and never cross over: a Local-mode advanced
+        # query must never hit a server, and a Server-mode query must not read
+        # the local DB. The authoritative selector is the DataAccessPanel tab —
+        # get_result() — exactly what the normal search reads via
+        # patient_list_function_identifier. Before the fix (2026-07-31) this
+        # method ignored the mode and ALWAYS routed to the server (except the
+        # import-date carve-out), so a Local-mode advanced search hit the PACS
+        # server (or errored when no server was selected).
+        _honor_mode = os.getenv("AIPACS_ADVANCED_SEARCH_HONORS_MODE", "1") != "0"
+        try:
+            _tab = str(self.data_access_panel_widget.get_result() or "").strip().lower()
+        except Exception:
+            _tab = ""
+        _is_server_mode = (_tab == "server")
+
+        # Import date is a LOCAL-only field (studies.imported_at — when the study
+        # entered THIS database), with no server equivalent, so an import-date
+        # filter always resolves against the local DB regardless of mode. This is
+        # the "explicitly requested" local case even while in Server mode.
+        _has_import_date = bool(query.get('import_date_from') or query.get('import_date_to'))
+
+        # Route to the SERVER only when this is NOT an import-date query AND
+        # either mode-honoring says the Server tab is active, or the kill switch
+        # restores the legacy always-server behavior.
+        _route_to_server = (not _has_import_date) and (
+            (_honor_mode and _is_server_mode) or (not _honor_mode)
+        )
+
+        if _route_to_server:
+            # search_server_advanced resolves get_server_selected() and targets
+            # ONLY that server (it aborts if none is selected).
+            self.source_of_patient_load = SourceOfPatientLoad.SERVER
             self._search_task = asyncio.create_task(
-                self.search_service.search_local(extra_criteria=extra)
+                self.search_service.search_server_advanced(query)
             )
             return
 
-        self.source_of_patient_load = SourceOfPatientLoad.SERVER
+        # LOCAL (Local/Import tab, or an import-date filter): search ONLY the
+        # local DB. Map the advanced fields the local query understands; body
+        # part / age / physician have no local column and are not applied — the
+        # server path refines those client-side, the local search does not.
+        extra = self._advanced_query_to_local_criteria(query)
+        self.source_of_patient_load = SourceOfPatientLoad.DB
         self._search_task = asyncio.create_task(
-            self.search_service.search_server_advanced(query)
+            self.search_service.search_local(extra_criteria=extra)
         )
+
+    @staticmethod
+    def _advanced_query_to_local_criteria(query: dict) -> dict:
+        """Map an advanced-search query to ``search_patients_local`` criteria.
+
+        Only the fields the local DB search supports are mapped. Body part, age
+        and physician (server-side client-refinement fields) have no local
+        column and are intentionally omitted.
+        """
+        extra: dict = {}
+        if query.get('import_date_from'):
+            extra['import_date_from'] = query.get('import_date_from')
+        if query.get('import_date_to'):
+            extra['import_date_to'] = query.get('import_date_to')
+        _mods = query.get('modalities') or []
+        if _mods:
+            extra['modality'] = ",".join(_mods)
+        _pids = query.get('patient_ids') or []
+        if len(_pids) == 1:
+            extra['patient_id'] = _pids[0]
+        # Acquisition date range (study_date). search_local nulls the home-page
+        # date fields, so pass these explicitly to honor the advanced filter.
+        if query.get('date_from'):
+            extra['date_from'] = query.get('date_from')
+        if query.get('date_to'):
+            extra['date_to'] = query.get('date_to')
+        return extra
 
     def _warmup_download_manager_once(self) -> None:
         """Pre-build the Download Manager on the FIRST patient search so the first

@@ -22,7 +22,8 @@
 		{
 			"label": "temp edit",
 			"type": "shell",
-			"command": "python tools/dev/_temp_edit2.py"
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": ["tools/dev/_temp_edit2.py"]
 		},
 		{
 			"label": "GitHub: Check connection (auto)",
@@ -74,22 +75,26 @@
 		{
 			"label": "diag_series_pipeline",
 			"type": "shell",
-			"command": "python tools/diagnostics/_diag2.py"
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": ["tools/diagnostics/_diag2.py"]
 		},
 		{
 			"label": "Run DM Test Suite",
 			"type": "shell",
-			"command": "python tests/download_manager/run_dm_test.py"
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": ["tests/download_manager/run_dm_test.py"]
 		},
 		{
 			"label": "Run DM Test v2",
 			"type": "shell",
-			"command": "python tests/download_manager/run_dm_test.py"
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": ["tests/download_manager/run_dm_test.py"]
 		},
 		{
 			"label": "Verify DM Tests",
 			"type": "shell",
-			"command": "python tests/download_manager/run_dm_test.py"
+			"command": "${workspaceFolder}/.venv/Scripts/python.exe",
+			"args": ["tests/download_manager/run_dm_test.py"]
 		},
 		{
 			"label": "AIPacs: Run App (logged)",

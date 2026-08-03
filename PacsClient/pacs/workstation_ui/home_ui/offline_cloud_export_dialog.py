@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -13,11 +15,17 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
+
+from PacsClient.pacs.workstation_ui.home_ui.series_selection_widget import SeriesSelectionWidget
+
+logger = logging.getLogger(__name__)
 
 
 class OfflineCloudExportDialog(QDialog):
@@ -43,7 +51,32 @@ class OfflineCloudExportDialog(QDialog):
         self.setWindowTitle("Offline Cloud Export")
         self.setWindowIcon(QIcon("PacsClient/login/images/favicon.ico"))
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-        self.resize(1040, 700)
+        self._fit_to_screen()
+
+    def _fit_to_screen(self):
+        """Size the dialog to the available screen, never taller than it fits.
+
+        The content lives in a scroll area, so a short screen scrolls instead of
+        clipping the footer/buttons.
+        """
+        from PySide6.QtGui import QGuiApplication
+
+        desired_w, desired_h = 980, 860
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            avail = screen.availableGeometry()
+            w = min(desired_w, int(avail.width() * 0.95))
+            h = min(desired_h, int(avail.height() * 0.92))
+            self.setMinimumWidth(min(720, w))
+            self.setMaximumHeight(avail.height())
+            self.resize(w, h)
+            # Center within the available screen area.
+            self.move(
+                avail.left() + (avail.width() - w) // 2,
+                avail.top() + max(0, (avail.height() - h) // 2),
+            )
+        else:
+            self.resize(desired_w, desired_h)
 
     def selected_server(self) -> dict | None:
         return self._selected_server
@@ -55,6 +88,30 @@ class OfflineCloudExportDialog(QDialog):
             QDialog#OfflineCloudExportDialog {
                 background: #091018;
                 color: #e8eef8;
+            }
+            QScrollArea#ExportScroll, QWidget#ExportScrollBody {
+                background: #091018;
+                border: none;
+            }
+            QScrollBar:vertical {
+                background: #0c141f;
+                width: 12px;
+                margin: 2px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical {
+                background: #2b425d;
+                min-height: 30px;
+                border-radius: 6px;
+            }
+            QScrollBar::handle:vertical:hover { background: #3d5f86; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QFrame#FooterCard {
+                border-top: 1px solid #223245;
+                border-bottom: none;
+                border-left: none;
+                border-right: none;
+                border-radius: 0;
             }
             QFrame#HeroCard {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
@@ -187,9 +244,27 @@ class OfflineCloudExportDialog(QDialog):
             """
         )
 
-        root = QVBoxLayout(self)
-        root.setContentsMargins(24, 22, 24, 22)
-        root.setSpacing(16)
+        # Outer layout: a scroll area (so a short screen scrolls instead of
+        # clipping) + a FIXED footer that always stays visible below it.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        scroll = QScrollArea()
+        scroll.setObjectName("ExportScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        outer.addWidget(scroll, 1)
+
+        content = QWidget()
+        content.setObjectName("ExportScrollBody")
+        scroll.setWidget(content)
+
+        root = QVBoxLayout(content)
+        root.setContentsMargins(24, 22, 24, 12)
+        root.setSpacing(18)
 
         hero = QFrame()
         hero.setObjectName("HeroCard")
@@ -298,15 +373,46 @@ class OfflineCloudExportDialog(QDialog):
         self.study_table.setSelectionMode(QAbstractItemView.NoSelection)
         self.study_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.study_table.setFocusPolicy(Qt.NoFocus)
-        self.study_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.study_table.verticalHeader().setDefaultSectionSize(42)
-        table_layout.addWidget(self.study_table, 1)
-        root.addWidget(table_card, 1)
+        # Preview only — a couple of rows. Keep it compact so the Series panel
+        # (the thing the user actually interacts with) gets the vertical space.
+        self.study_table.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self.study_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.study_table.verticalHeader().setDefaultSectionSize(40)
+        self.study_table.setMinimumHeight(96)
+        self.study_table.setMaximumHeight(200)
+        table_layout.addWidget(self.study_table)
+        root.addWidget(table_card)
 
+        series_card = QFrame()
+        series_card.setObjectName("SelectCard")
+        series_layout = QVBoxLayout(series_card)
+        series_layout.setContentsMargins(18, 16, 18, 16)
+        series_layout.setSpacing(10)
+
+        series_title = QLabel("Series to Include")
+        series_title.setObjectName("SectionTitle")
+        series_layout.addWidget(series_title)
+
+        series_hint = QLabel(
+            "By default every series is exported. Untick any series you do not "
+            "want in the package — only the checked series are copied and written "
+            "to package.db and the DICOMDIR."
+        )
+        series_hint.setObjectName("SectionHint")
+        series_hint.setWordWrap(True)
+        series_layout.addWidget(series_hint)
+
+        self.series_selection_widget = SeriesSelectionWidget()
+        self.series_selection_widget.setMinimumHeight(220)
+        series_layout.addWidget(self.series_selection_widget, 1)
+        root.addWidget(series_card, 1)
+
+        # Footer lives OUTSIDE the scroll area → the action buttons are always
+        # visible no matter how short the screen is.
         footer_card = QFrame()
         footer_card.setObjectName("FooterCard")
         footer_layout = QHBoxLayout(footer_card)
-        footer_layout.setContentsMargins(18, 14, 18, 14)
+        footer_layout.setContentsMargins(24, 14, 24, 16)
         footer_layout.setSpacing(12)
 
         footer_note = QLabel(
@@ -318,15 +424,20 @@ class OfflineCloudExportDialog(QDialog):
 
         cancel_btn = QPushButton("Cancel")
         cancel_btn.setObjectName("SecondaryButton")
+        cancel_btn.setMinimumWidth(120)
         cancel_btn.clicked.connect(self.reject)
 
         export_btn = QPushButton("Start Export")
         export_btn.setObjectName("PrimaryButton")
+        export_btn.setMinimumWidth(160)
+        export_btn.setDefault(True)
         export_btn.clicked.connect(self._accept_export)
 
         footer_layout.addWidget(cancel_btn)
         footer_layout.addWidget(export_btn)
-        root.addWidget(footer_card)
+        # Fixed footer (added to the OUTER layout, not the scroll body).
+        outer = self.layout()
+        outer.addWidget(footer_card)
 
     def _build_metric_chip(self, label_text: str, value_label: QLabel) -> QFrame:
         chip = QFrame()
@@ -392,6 +503,54 @@ class OfflineCloudExportDialog(QDialog):
         if self.server_combo.count() > 0:
             self._update_server_details()
 
+        self._populate_series_selection()
+
+    def _populate_series_selection(self):
+        """Load each study's series list so the user can pick which to include."""
+        try:
+            from database.manager import get_study_info_with_series
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.warning("Series selection unavailable (import failed): %s", exc)
+            return
+
+        series_studies: list[dict] = []
+        for study in self._studies:
+            study_uid = str(study.get("study_uid") or "").strip()
+            if not study_uid:
+                continue
+            series_rows: list[dict] = []
+            try:
+                info = get_study_info_with_series(study_uid) or {}
+                series_rows = info.get("series") or []
+            except Exception as exc:
+                logger.warning("Could not load series for %s: %s", study_uid, exc)
+            title_bits = [
+                str(study.get("patient_name") or "").strip(),
+                str(study.get("modality") or "").strip(),
+                str(study.get("study_uid") or "").strip(),
+            ]
+            series_studies.append({
+                "study_uid": study_uid,
+                "title": "  ·  ".join([b for b in title_bits if b]),
+                "series": [
+                    {
+                        "series_number": s.get("series_number"),
+                        "description": s.get("series_description"),
+                        "modality": s.get("modality"),
+                        "image_count": s.get("image_count"),
+                    }
+                    for s in series_rows
+                ],
+            })
+        self.series_selection_widget.set_studies(series_studies)
+
+    def series_selection(self):
+        """{study_uid: {series_number, ...}} of ticked series, or None for all."""
+        try:
+            return self.series_selection_widget.get_selection()
+        except Exception:
+            return None
+
     def _update_server_details(self):
         server = self.server_combo.currentData()
         folder_path = str((server or {}).get("folder_path") or "").strip()
@@ -412,5 +571,16 @@ class OfflineCloudExportDialog(QDialog):
         if not self._selected_server:
             QMessageBox.warning(self, "Offline Cloud Export", "The selected Offline Cloud Server is invalid.")
             return
+
+        try:
+            if not self.series_selection_widget.has_any_selection():
+                QMessageBox.warning(
+                    self,
+                    "Offline Cloud Export",
+                    "No series are selected. Tick at least one series to export.",
+                )
+                return
+        except Exception:
+            pass
 
         self.accept()

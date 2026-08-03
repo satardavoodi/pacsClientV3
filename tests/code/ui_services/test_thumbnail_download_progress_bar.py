@@ -58,19 +58,27 @@ def test_flag_default_on():
 # ----------------------------------------------------------------------------
 # Card creation — the bar is thin, text-less, hidden, gated, and inside the frame.
 # ----------------------------------------------------------------------------
-def test_card_adds_thin_hidden_bar_in_content_layout():
+def test_card_adds_thin_hidden_bar_above_glass():
+    """2026-07-29: the bar is created before the glass overlay, but as a DIRECT
+    child of the card `widget` (not content_layout) and raised ABOVE the glass so
+    it stays crisp (the glass dims only the image). Legacy in-layout path kept
+    behind AIPACS_THUMB_BAR_ABOVE_GLASS=0."""
     src = _tm_src()
     fn = src.find("def create_thumbnail_widget(")
     assert fn != -1
-    # the bar block lives before the glass overlay (i.e. inside the card content)
     block = src[fn:src.find("# Glass overlay for progress", fn)]
     assert "if _THUMB_DL_PROGRESS_BAR:" in block            # gated
-    assert "QProgressBar()" in block
+    assert 'AIPACS_THUMB_BAR_ABOVE_GLASS' in block          # z-order flag
+    assert "QProgressBar(widget if _bar_above else None)" in block  # child of card when above
     assert "setFixedHeight(4)" in block                      # thin
     assert "setTextVisible(False)" in block                  # minimal, no % text
     assert "setVisible(False)" in block                      # hidden until downloading
-    assert "content_layout.addWidget(dl_bar)" in block       # inside the card frame
+    assert "content_layout.addWidget(dl_bar)" in block       # legacy path preserved
     assert "widget.dl_progress_bar = dl_bar" in block        # stored per-card
+    # the bar is raised above the glass, both at creation and on each glass re-raise
+    assert "_bar.raise_()" in src
+    assert "def _raise_dl_bar_above_glass" in src
+    assert src.count("self._raise_dl_bar_above_glass(widget)") >= 2
 
 
 # ----------------------------------------------------------------------------

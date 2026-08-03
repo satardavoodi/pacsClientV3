@@ -153,8 +153,24 @@ class _MprOrientationMixin:
     # Render batching
     # ------------------------------------------------------------------
 
+    def _mpr_is_closed(self):
+        """True once cleanup() has begun — every deferred/queued MPR operation must
+        no-op from that instant.
+
+        `cleanup()` sets `_mpr_closed` as its FIRST action, before stopping timers or
+        finalizing any render window. The pre-existing `view_name in self.viewers`
+        checks only start protecting after `viewers.clear()`, which runs at the very
+        END of teardown; in between, a queued render/interaction callback still finds
+        live dict entries but a render window whose graphics resources have already
+        been released — a use-after-free that no Python try/except can catch, because
+        it faults natively inside VTK. This flag closes that window.
+        """
+        return bool(getattr(self, "_mpr_closed", False))
+
     def _request_render(self, view_name):
         """Request a render for a specific view (batched for performance)"""
+        if self._mpr_is_closed():
+            return
         self._render_pending.add(view_name)
 
         if self._render_timer is None:
@@ -167,6 +183,8 @@ class _MprOrientationMixin:
 
     def _execute_pending_renders(self):
         """Execute all pending render requests in batch"""
+        if self._mpr_is_closed():
+            return
         for view_name in self._render_pending:
             if view_name in self.viewers:
                 self.viewers[view_name]['renderer'].GetRenderWindow().Render()
@@ -174,6 +192,8 @@ class _MprOrientationMixin:
 
     def _render_immediately(self, view_name):
         """Force immediate render (use sparingly)"""
+        if self._mpr_is_closed():
+            return
         if view_name in self.viewers:
             self.viewers[view_name]['renderer'].GetRenderWindow().Render()
 
@@ -217,6 +237,8 @@ class _MprOrientationMixin:
         kind='rotate' → crosshairs + oblique only; kind='scroll' → crosshairs + oblique +
         slice-info text (mouse-wheel: the scrolled pane's camera/render is done inline by the
         wheel handler; this coalesces the cross-pane sync)."""
+        if self._mpr_is_closed():
+            return
         import time as _t
         _t0 = _t.perf_counter()
         try:
@@ -233,6 +255,8 @@ class _MprOrientationMixin:
 
     def _request_interaction_update(self, kind):
         """Frame-cadence throttle for interactive crosshair updates (see note above)."""
+        if self._mpr_is_closed():
+            return
         budget = self._interaction_budget_ms()
         if budget <= 0:
             # Throttle disabled -> legacy immediate behaviour.

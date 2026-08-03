@@ -453,6 +453,32 @@ def ai_update_message(msg_id: int, new_html: str):
         conn.commit()
 
 
+def ai_count_messages_by_session() -> dict[str, int]:
+    """``{sid: message_count}`` for every session, in ONE query.
+
+    2026-07-31 — the EchoMind panel used to call `ai_fetch_messages_full(sid)`
+    for EVERY session at open, purely to decide "does this session have any
+    messages" and to fill a cache nothing ever read the payload of. That is
+    `SELECT id, who, html, origin` with no LIMIT, once per session: for 40
+    sessions x 30 messages x ~15 KB of report HTML it read and retained ~18 MB
+    over 40+ sequential round-trips before the first bubble painted — to
+    display ONE session.
+
+    The counts are all the caller actually needs.
+    """
+    with get_db_connection() as conn:
+        rows = conn.execute(
+            "SELECT sid, COUNT(*) FROM ai_messages GROUP BY sid"
+        ).fetchall()
+    out: dict[str, int] = {}
+    for row in rows or []:
+        try:
+            out[str(row[0])] = int(row[1])
+        except Exception:
+            continue
+    return out
+
+
 def ai_fetch_messages_full(sid: str) -> list[tuple[int, str, str, str | None]]:
     with get_db_connection() as conn:
         cur = conn.cursor()

@@ -1,10 +1,59 @@
 from __future__ import annotations
 
 import base64
+import os
 from typing import Any, Optional
 
 from modules.EchoMind.llm_client import chat_completion
 from modules.EchoMind.settings_store import get_openai_model_for_feature, get_openai_settings, get_prompt_settings
+
+# ── 2026-08-01: BACKEND PROMPT PARITY ────────────────────────────────────────
+# This module is the AI feature set for `llm_backend == "openai"`. Before this
+# date it was a DIFFERENT PRODUCT from the company path:
+#
+#   * `reporter()` sent a ~1,100-character generic prompt whose entire modality
+#     handling was `prompt += f"\nModality: {modality}."` — no BI-RADS rules, no
+#     Persian/Finglish term maps, no per-region normal templates, no
+#     projection/never-presume rules, no temperature clamp, no output
+#     validation. Flipping ONE setting silently changed CLINICAL CONTENT.
+#   * `correction()` hard-coded *"Return ONLY valid JSON with keys Report Title,
+#     Pathological Findings, Normal Findings, Impression, Recommendations"* —
+#     the fixed 5-key schema that DELETES a mammogram's BI-RADS category, breast
+#     composition and axillary evaluation (and invents an empty Impression) the
+#     moment a physician corrects a typo. Removing that from the company path
+#     was the whole point of the KEY-SET MIRROR rule; this copy still had it.
+#
+# Both now call the ONE authority in `openai_reporter`. Do not re-fork them: a
+# prompt improvement must reach every backend, and a radiologist reviewing the
+# wording must only have to review it once.
+#
+# `openai_reporter` does NOT import this module, so there is no cycle.
+from modules.EchoMind.viewer_chat.openai_reporter import (  # noqa: E402
+    _report_validation_enabled,
+    _validate_report_json,
+    build_correction_system_prompt,
+    build_correction_user_content,
+    build_report_system_prompt,
+    report_sampling_params,
+)
+
+_ENV_PROMPT_PARITY = "AIPACS_ECHOMIND_BACKEND_PROMPT_PARITY"
+
+
+def _prompt_parity_enabled() -> bool:
+    """Kill switch for the shared report prompt (default ON).
+
+    `=0` restores the legacy generic prompt below — byte-identical to what this
+    backend sent before 2026-08-01, including its lack of a temperature clamp
+    and of output validation. It exists so a live regression (token budget,
+    fence/sentinel handling on an unusual provider) can be reverted in the
+    field without a rebuild. It does NOT gate the correction fix: the fixed
+    5-key schema deletes clinical content, and there is no valid use for it.
+    """
+    raw = os.environ.get(_ENV_PROMPT_PARITY)
+    if raw is None:
+        return True
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
 
 
 def _feature_prompt(name: str) -> str:
@@ -81,6 +130,64 @@ def reporter(
     CENTER_Key: Optional[str] = None,
     model: str | None = None,
 ) -> dict[str, Any]:
+    """Report generation on the OpenAI backend — SAME prompt as the company path.
+
+    The system prompt, the temperature clamp for structure-validated modalities
+    and the post-response JSON validation all come from `openai_reporter`, so a
+    radiologist gets the same report whichever backend Settings is on.
+
+    ONE deliberate difference: `max_tokens` stays at the user's configured
+    `max_output_tokens` rather than the company path's hard-coded 2500. On this
+    backend the budget also has to cover REASONING tokens (gpt-5* with
+    `reasoning_effort`), so imposing 2500 here could truncate a report the
+    company path renders fine — a downgrade, not parity. The clamp that matters
+    clinically is the temperature.
+    """
+    modality = str(modality or "")
+    normal_template = str(normal_template or "")
+
+    if _prompt_parity_enabled():
+        system_prompt = build_report_system_prompt(modality, normal_template)
+        temperature = report_sampling_params(modality).get("temperature")
+        result = _call(
+            feature_name="report",
+            system_prompt=_compose_prompt(system_prompt, "report_generation"),
+            user_content=user_msg,
+            user_msg=user_msg,
+            model=model,
+            api_key_override=(CENTER_Key or None),
+            temperature=temperature,
+        )
+        content = result.get("content", "")
+        if modality and _report_validation_enabled():
+            # Same contract as the company path: an incomplete report FAILS
+            # LOUDLY instead of rendering partially. `_validate_report_json`
+            # no-ops for anything outside `_VALIDATED_MODALITIES`.
+            content = _validate_report_json(content, modality.lower())
+        return {"content": content, "usage": result.get("usage", {})}
+
+    return _legacy_reporter(
+        user_msg=user_msg,
+        modality=modality,
+        normal_template=normal_template,
+        CENTER_Key=CENTER_Key,
+        model=model,
+    )
+
+
+def _legacy_reporter(
+    user_msg: str,
+    modality: Optional[str] = "",
+    normal_template: Optional[str] = "",
+    CENTER_Key: Optional[str] = None,
+    model: str | None = None,
+) -> dict[str, Any]:
+    """PRE-2026-08-01 generic prompt. Reachable only via the kill switch.
+
+    Kept byte-identical on purpose — a kill switch that "restores" something
+    slightly different is not a kill switch. Do not extend it; extend the
+    shared authority in `openai_reporter` instead.
+    """
     prompt = (
         "You are EchoMind report generation. Produce a structured radiology report in English. "
         "Return only valid JSON with keys Report Title, Pathological Findings, Normal Findings. "
@@ -247,21 +354,30 @@ def correction(
     correction_note: str,
     CENTER_Key: str = "",
     model: str | None = None,
+    target_section: str = "",
 ) -> dict[str, Any]:
-    payload = (
-        "ORIGINAL_REPORT:\n"
-        f"{user_report}\n\n"
-        "CORRECTION_NOTE:\n"
-        f"{correction_note}\n"
-    )
+    # ── 2026-08-01: the SHARED correction authority ──────────────────────────
+    # The prompt this used to build hard-coded "EXACTLY these 5 keys", so on
+    # this backend a physician correcting a typo on a mammogram got the report
+    # back WITHOUT its BI-RADS category, breast composition and axillary
+    # evaluation — with an empty Impression and Recommendations invented in
+    # their place, because the schema said they had to be there. An obstetric
+    # report (eleven keys) lost eight sections.
+    #
+    # No kill switch, deliberately: the legacy prompt deletes clinical content,
+    # so "revert to it" is never the right answer. The response handler in
+    # `ai_chat_pages` already cleans a ```json fence AND a <|end|> sentinel
+    # unconditionally, so the shared prompt's stricter output format is safe
+    # here (it was NOT before that fix — the fence strip was gated on the
+    # sentinel, which this backend never asked for).
+    system_prompt = build_correction_system_prompt()
+    payload = build_correction_user_content(user_report, correction_note, target_section)
     return _call(
-        feature_name="report",
-        system_prompt=(
-            "You are a medical report editor. Apply only the requested corrections and return only valid JSON with "
-            "keys Report Title, Pathological Findings, Normal Findings, Impression, Recommendations."
-        ),
+        feature_name="correction",
+        system_prompt=system_prompt,
         user_content=payload,
         user_msg=correction_note,
         model=model,
         api_key_override=(CENTER_Key or None),
+        temperature=0,
     )

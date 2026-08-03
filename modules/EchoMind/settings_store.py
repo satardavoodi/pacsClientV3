@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict
 
@@ -30,7 +31,15 @@ def _defaults() -> Dict[str, Any]:
         "openai_reasoning_effort": "",
         "openai_temperature": 0.2,
         "openai_max_output_tokens": 4096,
-        "openai_timeout_seconds": 60,
+        # F6 (2026-07-28): was 60. The company/GapGPT path has always used a
+        # 180 s READ budget (`echomind_http.DEFAULT_READ_TIMEOUT_S`, formerly
+        # `openai_reporter._DEFAULT_READ_TIMEOUT_S`), so the SAME report-
+        # generation request had a 180 s ceiling on one backend and 60 s on the
+        # other — long reports failed on OpenAI with a bogus "network error"
+        # while succeeding on GapGPT. Both backends now default to the same
+        # budget. An explicitly saved value still wins; an install that already
+        # persisted 60 keeps it and can raise it in Settings ▸ EchoMind.
+        "openai_timeout_seconds": 180,
         "prompt_report_generation": "",
         "prompt_breast_assistant": "",
         "prompt_secretary_routing": "",
@@ -56,9 +65,54 @@ def _defaults() -> Dict[str, Any]:
     }
 
 
+# ── F11 (2026-07-28): stop re-parsing the settings file 6× per LLM request ───
+# `load_settings()` opened and JSON-parsed the file on EVERY call, and nothing
+# cached it. A single `openai_parallel_backend._call` triggered roughly six
+# reads: get_prompt_settings → get_openai_model_for_feature → get_openai_settings
+# → get_openai_settings again → then inside chat_completion: get_llm_backend,
+# get_openai_settings, get_proxy_settings.
+#
+# THE CONSTRAINT THIS MUST NOT BREAK: settings are resolved PER CALL on purpose
+# (see the module docstring of voice_transcription.py — a Settings change has to
+# take effect with no restart, and the import-by-value trap is why). So this is
+# NOT a TTL cache: it is keyed on the file's identity (mtime_ns + size), so any
+# write — ours or an external editor's — invalidates it on the very next read.
+# `save_settings` additionally clears it outright, so our own writes can never
+# be served stale even within one filesystem timestamp tick.
+_CACHE_LOCK = threading.Lock()
+_cache_key: Any = None
+_cache_value: Dict[str, Any] | None = None
+
+
+def _invalidate_settings_cache() -> None:
+    """Drop the cached settings (called after every write; safe to call anytime)."""
+    global _cache_key, _cache_value
+    with _CACHE_LOCK:
+        _cache_key = None
+        _cache_value = None
+
+
+def _file_identity(fp: Path):
+    try:
+        st = fp.stat()
+        return (st.st_mtime_ns, st.st_size)
+    except Exception:
+        return None
+
+
 def load_settings() -> Dict[str, Any]:
-    out = _defaults()
+    global _cache_key, _cache_value
     fp = _config_path()
+    identity = _file_identity(fp)
+
+    if identity is not None:
+        with _CACHE_LOCK:
+            if _cache_key == identity and _cache_value is not None:
+                # Copy: callers mutate the result (e.g. save_settings does
+                # `cur.update(patch)`), and the cache must not be poisoned.
+                return dict(_cache_value)
+
+    out = _defaults()
     try:
         if fp.exists():
             with open(fp, "r", encoding="utf-8") as f:
@@ -66,7 +120,12 @@ def load_settings() -> Dict[str, Any]:
             if isinstance(data, dict):
                 out.update(data)
     except Exception:
-        pass
+        return out  # unreadable/corrupt → defaults, and do NOT cache that
+
+    if identity is not None:
+        with _CACHE_LOCK:
+            _cache_key = identity
+            _cache_value = dict(out)
     return out
 
 
@@ -78,6 +137,8 @@ def save_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cur, f, indent=2, ensure_ascii=False)
     os.replace(tmp, fp)
+    # Never serve the pre-write value, even if mtime granularity hides the change.
+    _invalidate_settings_cache()
     return cur
 
 
@@ -130,7 +191,7 @@ def get_openai_settings() -> Dict[str, Any]:
         "reasoning_effort": _as_str("openai_reasoning_effort"),
         "temperature": _as_float("openai_temperature", 0.2),
         "max_output_tokens": max(1, _as_int("openai_max_output_tokens", 4096)),
-        "timeout_seconds": max(5, _as_int("openai_timeout_seconds", 60)),
+        "timeout_seconds": max(5, _as_int("openai_timeout_seconds", 180)),
     }
 
 
@@ -174,7 +235,7 @@ def save_openai_settings(patch: Dict[str, Any]) -> Dict[str, Any]:
         "openai_reasoning_effort": str((patch or {}).get("reasoning_effort") or "").strip(),
         "openai_temperature": float((patch or {}).get("temperature", 0.2) or 0.2),
         "openai_max_output_tokens": int((patch or {}).get("max_output_tokens", 4096) or 4096),
-        "openai_timeout_seconds": int((patch or {}).get("timeout_seconds", 60) or 60),
+        "openai_timeout_seconds": int((patch or {}).get("timeout_seconds", 180) or 180),
     }
     return save_settings(normalized)
 

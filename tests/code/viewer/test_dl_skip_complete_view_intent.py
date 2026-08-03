@@ -7,11 +7,13 @@ priority/download intent (`request_critical_series` storm + `restart_after_done`
 slot. Fix: `_VCLoadMixin._coalesce_dm_view_intent` skips the whole DM intent when
 `_view_intent_series_complete_on_disk` confirms the series is complete.
 
-DATA-SAFE by construction: the expected count comes ONLY from the SERVER series-info
-`image_count` (never a disk fallback), and the guard returns False — i.e. proceeds
-with the download — on any uncertainty (unknown server count, missing folder, or
-disk < expected). The viewer LOAD path is untouched, so a complete series still
-displays from disk. Flag `AIPACS_DL_SKIP_COMPLETE_VIEW_INTENT` (default ON; `=0` legacy).
+DATA-SAFE by construction: the expected count is resolved through the ONE shared
+viewer resolver `_resolve_series_expected_count(..., include_disk=False)` (server
+info + thumbnail metadata + persisted DB image_count — NEVER the on-disk file
+count), and the guard returns False — i.e. proceeds with the download — on any
+uncertainty (unknown count, missing folder, or disk < expected). The viewer LOAD
+path is untouched, so a complete series still displays from disk. Flag
+`AIPACS_DL_SKIP_COMPLETE_VIEW_INTENT` (default ON; `=0` legacy).
 
 Source-pins + a behavioral test of the completeness check against a real temp folder.
 """
@@ -46,9 +48,11 @@ def test_completeness_check_is_data_safe():
     src = _src()
     fn = src.find("def _view_intent_series_complete_on_disk(")
     assert fn != -1
-    body = src[fn:fn + 3200]
-    # expected comes from the SERVER image_count, and the guard bails on unknown/zero
-    assert "info.get('image_count')" in body
+    body = src[fn:src.find("def _coalesce_dm_view_intent(")]
+    # expected comes from the ONE shared viewer resolver with include_disk=False —
+    # so the on-disk file count is NEVER treated as 'expected' (data-safety), and
+    # the guard bails (proceeds to download) on unknown/zero.
+    assert "self._resolve_series_expected_count(display_key, include_disk=False)" in body
     assert "if expected <= 0 or not study_uid:" in body
     assert "return False" in body
     # counts only finished .dcm (not .part)
@@ -93,6 +97,16 @@ def test_complete_on_disk_behavioral(tmp_path, monkeypatch):
             _server_series_info={sn: {"image_count": total}},
         ),
     )
+
+    # The guard now resolves the expected count through the ONE shared viewer
+    # wrapper (_resolve_series_expected_count). Stub it to mirror the shared
+    # resolver's server-info tier from _server_series_info, so this test still
+    # exercises the guard's DISK-completeness decision (the point of the test).
+    def _fake_resolve(series_number, *, include_disk=True):
+        info = (fake.parent_widget._server_series_info or {}).get(str(series_number)) or {}
+        return types.SimpleNamespace(expected_count=int(info.get("image_count") or 0))
+    fake._resolve_series_expected_count = _fake_resolve
+
     check = VC._VCLoadMixin._view_intent_series_complete_on_disk.__get__(fake)
 
     # 94 on disk, server says 94 -> COMPLETE -> True (the intent would be skipped).

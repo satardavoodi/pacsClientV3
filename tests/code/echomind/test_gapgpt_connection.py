@@ -47,30 +47,60 @@ def _read_src(path: str) -> str:
 _CFG_SRC = _read_src(_CFG_PATH)
 _MGR_SRC = _read_src(_MGR_PATH)
 
+_QT_STUB_NAMES = ("PySide6", "PySide6.QtCore", "PySide6.QtWidgets", "PySide6.QtGui")
+
+
 def _load_module_stub(path: str, modname: str):
-    """Exec a module with PySide6/Qt stubs — returns the module object."""
-    for name in ("PySide6", "PySide6.QtCore", "PySide6.QtWidgets", "PySide6.QtGui"):
-        if name not in sys.modules:
-            sys.modules[name] = types.ModuleType(name)
-    # Stub QObject / Signal so the PySide6 import in api_manager.py doesn't crash
-    qt_core = sys.modules["PySide6.QtCore"]
-    if not hasattr(qt_core, "QObject"):
-        class _QObject:
-            def __init__(self, *a, **kw): pass
-        class _Signal:
-            def __init__(self, *a, **kw): pass
-            def emit(self, *a): pass
-            def connect(self, *a): pass
-        qt_core.QObject = _QObject
-        qt_core.Signal = _Signal
-    spec = importlib.util.spec_from_file_location(modname, path)
-    mod = importlib.util.module_from_spec(spec)
-    sys.modules[modname] = mod  # required: dataclasses looks up cls.__module__ in sys.modules
+    """Exec a module with PySide6/Qt stubs — returns the module object.
+
+    THE POLLUTION BUG THIS FIXES (2026-07-28): the stubs used to be installed
+    into ``sys.modules`` PERMANENTLY, at module-import time, with no teardown.
+    Because this file sorts before ``test_test_server.py``, a directory-level
+    run left ``sys.modules["PySide6"]`` pointing at an EMPTY ModuleType — so
+    ``from PySide6.QtNetwork import QLocalSocket`` failed with
+
+        ImportError: cannot import name 'QLocalSocket' ... (unknown location)
+
+    and the 4 EchoMind IPC guards in ``test_test_server.py`` were silently never
+    collected (the whole directory aborted on a collection error). The same
+    breakage hit any later test that needs the real PySide6.
+
+    The stubs are still installed when PySide6 is genuinely absent (this file
+    must work headless), but ONLY around the exec, and ``sys.modules`` is
+    restored to exactly its previous state afterwards. The loaded module keeps
+    its references to the stub classes, so nothing downstream changes.
+    """
+    saved = {name: sys.modules.get(name) for name in _QT_STUB_NAMES}
+    installed = [name for name in _QT_STUB_NAMES if name not in sys.modules]
     try:
-        spec.loader.exec_module(mod)
-    except Exception:
-        pass
-    return mod
+        for name in installed:
+            sys.modules[name] = types.ModuleType(name)
+        # Stub QObject / Signal so the PySide6 import in api_manager.py doesn't crash
+        qt_core = sys.modules["PySide6.QtCore"]
+        if not hasattr(qt_core, "QObject"):
+            class _QObject:
+                def __init__(self, *a, **kw): pass
+            class _Signal:
+                def __init__(self, *a, **kw): pass
+                def emit(self, *a): pass
+                def connect(self, *a): pass
+            qt_core.QObject = _QObject
+            qt_core.Signal = _Signal
+        spec = importlib.util.spec_from_file_location(modname, path)
+        mod = importlib.util.module_from_spec(spec)
+        sys.modules[modname] = mod  # required: dataclasses looks up cls.__module__ in sys.modules
+        try:
+            spec.loader.exec_module(mod)
+        except Exception:
+            pass
+        return mod
+    finally:
+        # Restore EXACTLY what was there. Never leak a stub to another test file.
+        for name in installed:
+            if saved.get(name) is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = saved[name]
 
 _CFG_MOD = _load_module_stub(_CFG_PATH, "_aichat_cfg_test")
 _MGR_MOD = _load_module_stub(_MGR_PATH, "_api_mgr_test")
@@ -231,7 +261,24 @@ class TestLlmClientSourcePin(unittest.TestCase):
         self.assertIn("Bearer", self._src)
 
     def test_socks5_proxy_support_present(self):
-        self.assertIn("socks5", self._src)
+        """SOCKS5 support still exists — it just lives in the ONE authority now.
+
+        F3 (2026-07-28): the literal `socks5://127.0.0.1:...` construction moved
+        out of llm_client.py into `modules/EchoMind/echomind_http.py`, because
+        llm_client and openai_reporter each held an identical private copy while
+        the four chat modes and every voice upload passed no `proxies=` at all.
+        The guarantee this test protects is now STRONGER, not weaker: the
+        preflight also runs on the real chat path (`chat_completion`), which it
+        never did before — it was only on the two Test-Connection helpers.
+        """
+        self.assertIn("_get_requests_proxies", self._src)
+        self.assertIn("_ensure_socks_proxy_support", self._src)
+        self.assertIn("echomind_http.requests_proxies()", self._src)
+
+        authority = _read_src(
+            os.path.join(_ROOT, "modules", "EchoMind", "echomind_http.py")
+        )
+        self.assertIn("socks5", authority)
 
     def test_trim_incomplete_sentence_present(self):
         self.assertIn("_trim_incomplete_sentence", self._src)

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 import typing as t
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -51,6 +51,70 @@ from modules.EchoMind.voice_transcription import (
     VoiceTranscriptionService,
 )
 from PacsClient.utils.database import get_api_usage_rows_for_key, load_api_transcript_usage_for_key
+
+
+# ── F4 (2026-07-28): the "Test Connection" buttons must not freeze the GUI ───
+# Both probes used to run inline in their Qt slot:
+#
+#   * `_on_test_stt_clicked`    -> VoiceTranscriptionService.test_connection(),
+#     which walks THREE probe URLs at 8 s each = up to 24 s frozen;
+#   * `_on_test_openai_clicked` -> test_openai_connection(timeout=<setting>),
+#     up to the configured timeout (now 180 s by default).
+#
+# That is the worst possible moment for a freeze: the user is testing a server
+# precisely BECAUSE they suspect it is unreachable, so the slow path is the
+# common path. Both now run on a one-shot worker thread.
+#
+# `AIPACS_ECHOMIND_SETTINGS_ASYNC=0` restores the inline (blocking) behaviour.
+_ENV_SETTINGS_ASYNC = "AIPACS_ECHOMIND_SETTINGS_ASYNC"
+
+
+def _settings_probe_async_enabled() -> bool:
+    """Kill switch for the off-GUI-thread Settings probes (default ON)."""
+    import os
+
+    raw = os.environ.get(_ENV_SETTINGS_ASYNC)
+    if raw is None:
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
+# Live Settings probes. A QThread must outlive Python's reference to it and
+# must never be destroyed while running; parking them here does both without
+# giving them a parent that could delete them mid-flight.
+_LIVE_PROBES: list = []
+
+
+def _release_probe(worker) -> None:
+    try:
+        _LIVE_PROBES.remove(worker)
+    except ValueError:
+        pass
+    try:
+        worker.deleteLater()
+    except Exception:
+        pass
+
+
+class _ProbeWorker(QThread):
+    """Runs one blocking probe off the GUI thread and hands back its result.
+
+    `finishedWith` carries ``(ok: bool, payload: object)``. `payload` is either
+    the probe's own result object or the raised exception — the GUI slot decides
+    how to render it, so no Qt call ever happens on this thread.
+    """
+
+    finishedWith = Signal(bool, object)
+
+    def __init__(self, fn, parent=None):
+        super().__init__(parent)
+        self._fn = fn
+
+    def run(self):  # pragma: no cover - exercised live, guarded structurally
+        try:
+            self.finishedWith.emit(True, self._fn())
+        except Exception as exc:  # noqa: BLE001 - reported, never raised out
+            self.finishedWith.emit(False, exc)
 
 
 def _mask_key(api_key: str) -> str:
@@ -1036,19 +1100,73 @@ class EchoMindSettingsWidget(QWidget):
         self.style().unpolish(self.stt_status)
         self.style().polish(self.stt_status)
 
+    # ── shared worker plumbing for the two probe buttons (F4) ───────────────
+    def _start_probe(self, button, busy_text: str, work, on_result) -> None:
+        """Run `work()` off the GUI thread; call `on_result(ok, payload)` on it.
+
+        Keeps a reference to the worker on `self` so Qt cannot delete a running
+        QThread (the same hazard that aborted the process in the EchoMind chat —
+        see `_ORPHANED_WORKERS` in ai_chat_pages.py), and re-enables the button
+        in every outcome.
+        """
+        previous_text = button.text()
+        button.setEnabled(False)
+        button.setText(busy_text)
+
+        def _finish(ok: bool, payload: object) -> None:
+            button.setEnabled(True)
+            button.setText(previous_text)
+            self._probe_worker = None
+            on_result(ok, payload)
+
+        # 2026-07-31 — `parent=self` is what makes this dangerous, not what
+        # makes it safe: a QObject with a parent is owned by C++, so Python GC
+        # was never the risk. The real hazard is the PARENT deleting a still
+        # running QThread, and these probes are long (the OpenAI one runs for
+        # the configured timeout, whose default is now 180 s). Closing the
+        # Settings page on a blackholed endpoint destroyed a running thread.
+        # Parent it to nothing and hold it in a module-level list instead —
+        # the probe returns plain data and needs no parent.
+        worker = _ProbeWorker(work, parent=None)
+        _LIVE_PROBES.append(worker)
+        worker.finished.connect(lambda w=worker: _release_probe(w))
+        worker.finishedWith.connect(_finish)
+        worker.finished.connect(worker.deleteLater)
+        self._probe_worker = worker  # strong ref: never let Qt free a live QThread
+        worker.start()
+
     def _on_test_stt_clicked(self):
         # Test what is IN THE FORM, without persisting it.
         patch = self._stt_form_patch()
-        result = VoiceTranscriptionService(settings=patch).test_connection()
-        ok = bool(result.get("ok"))
-        self.stt_status.setProperty("state", "success" if ok else "error")
-        self.stt_status.setText(str(result.get("detail") or ""))
+
+        def _work():
+            return VoiceTranscriptionService(settings=patch).test_connection()
+
+        def _render(ok_call: bool, payload: object) -> None:
+            if not ok_call:
+                result = {"ok": False, "detail": f"Test failed: {payload}"}
+            else:
+                result = payload if isinstance(payload, dict) else {"ok": False, "detail": str(payload)}
+            ok = bool(result.get("ok"))
+            self.stt_status.setProperty("state", "success" if ok else "error")
+            self.stt_status.setText(str(result.get("detail") or ""))
+            self.style().unpolish(self.stt_status)
+            self.style().polish(self.stt_status)
+            if ok:
+                QMessageBox.information(self, "Voice to Text", str(result.get("detail") or "Reachable."))
+            else:
+                QMessageBox.warning(self, "Voice to Text", str(result.get("detail") or "Not reachable."))
+
+        if not _settings_probe_async_enabled():
+            # Kill switch: inline, exactly as before this fix.
+            _render(True, _work())
+            return
+
+        self.stt_status.setProperty("state", "")
+        self.stt_status.setText("Testing…")
         self.style().unpolish(self.stt_status)
         self.style().polish(self.stt_status)
-        if ok:
-            QMessageBox.information(self, "Voice to Text", str(result.get("detail") or "Reachable."))
-        else:
-            QMessageBox.warning(self, "Voice to Text", str(result.get("detail") or "Not reachable."))
+        self._start_probe(self.stt_test_btn, "Testing…", _work, _render)
 
     def _on_authenticate_clicked(self):
         key = (self.key_input.text() or "").strip()
@@ -1074,23 +1192,37 @@ class EchoMindSettingsWidget(QWidget):
             QMessageBox.warning(self, "OpenAI", "Please enter an OpenAI API key first.")
             return
 
-        try:
-            test_openai_connection(
+        def _work():
+            return test_openai_connection(
                 api_key=api_key,
                 base_url=str(patch.get("base_url") or "https://api.openai.com/v1"),
                 organization=str(patch.get("organization") or ""),
                 project=str(patch.get("project") or ""),
                 timeout=int(patch.get("timeout_seconds") or 60),
             )
-        except Exception as exc:
-            self._update_openai_status(str(exc), ok=False)
-            QMessageBox.critical(self, "OpenAI Connection Test", f"OpenAI connection failed:\n\n{exc}")
+
+        def _render(ok_call: bool, payload: object) -> None:
+            if not ok_call:
+                self._update_openai_status(str(payload), ok=False)
+                QMessageBox.critical(
+                    self, "OpenAI Connection Test", f"OpenAI connection failed:\n\n{payload}"
+                )
+                return
+            save_openai_settings(patch)
+            self._update_openai_status("OpenAI connection succeeded.", ok=True)
+            self._refresh_usage_for_active_backend()
+            QMessageBox.information(self, "OpenAI Connection Test", "OpenAI connection succeeded.")
+
+        if not _settings_probe_async_enabled():
+            # Kill switch: inline, exactly as before this fix.
+            try:
+                _render(True, _work())
+            except Exception as exc:  # noqa: BLE001
+                _render(False, exc)
             return
 
-        save_openai_settings(patch)
-        self._update_openai_status("OpenAI connection succeeded.", ok=True)
-        self._refresh_usage_for_active_backend()
-        QMessageBox.information(self, "OpenAI Connection Test", "OpenAI connection succeeded.")
+        self._update_openai_status("Testing the OpenAI connection…")
+        self._start_probe(self.openai_test_btn, "Testing…", _work, _render)
 
     def _on_refresh_clicked(self):
         backend = str(self.backend_combo.currentData() or "company")

@@ -198,7 +198,9 @@ def test_clean_non_string_passthrough():
 def test_validate_non_validated_modality_passthrough():
     """Modalities outside _VALIDATED_MODALITIES must be returned byte-for-byte unchanged."""
     raw = "anything at all -- not checked for this modality"
-    for mod in ("Radiology", "XRay", "Nuclear", "PET"):
+    # 2026-08-01 — "Radiology" removed: it is a live UI modality and is now
+    # validated. See test_mammography_reporter for the same correction.
+    for mod in ("XRay", "Nuclear", "PET", "Fluoroscopy"):
         result = _validate_report_json(raw, mod)
         assert result == raw, f"Modality {mod!r} was mutated"
 

@@ -205,6 +205,14 @@ class VoiceMessageBubble(QWidget):
     def _on_duration(self, d):
         self.slider.setValue(0)
 
+# Marker class for the RTL root wrapper. Mirrors how `_wrap_rtl_html` uses
+# `.rtl-wrap`: the "don't double-wrap" test must ask whether OUR wrapper is
+# already present, never whether the string "dir=rtl" appears somewhere in the
+# document — that is what made the wrapper skip exactly the content it exists
+# for. Carries no CSS rule of its own; the styling is inline.
+_RTL_ROOT_MARKER = "echo-rtl-root"
+
+
 class MessageBubble(QWidget):
     """
     Chat message bubble widget.
@@ -837,14 +845,30 @@ class MessageBubble(QWidget):
         html = self._raw_text or ""
         low = html.lower()
 
-        # اگر قبلاً RTL شده، دوباره wrap نکن
-        if "dir='rtl'" in low or 'dir="rtl"' in low or "direction: rtl" in low:
+        # ── 2026-07-31 ───────────────────────────────────────────────────────
+        # NOTE: this method currently has NO callers — the live RTL path is
+        # `_wrap_rtl_html` (called from `set_text`, `_apply_directionality` and
+        # `_render_assistant_html`). It is repaired rather than deleted so it
+        # cannot reintroduce the bug if anyone ever wires it up.
+        #
+        # THE BUG IT HAD: the guard asked "does dir=rtl appear ANYWHERE in this
+        # document" — the same over-broad test that `_wrap_rtl_html` was fixed
+        # for, and for the same reason it is wrong. Persian translate output
+        # carries dir=rtl on its own inner elements, so the one case this
+        # wrapper exists for was the exact case it skipped; and a single nested
+        # RTL element was enough to make an otherwise-LTR bubble skip it too.
+        #
+        # The correct question is the narrow one, and it is the same question
+        # `.rtl-wrap` answers for the sibling: have I already applied MY OWN
+        # wrapper to this text?
+        if _RTL_ROOT_MARKER in low:
             return
 
         # فقط وقتی HTML داریم wrap کنیم (اگر plain باشد، QLabel خودش می‌چیند ولی باز هم بهتر است)
         if self._looks_like_html(html):
             self._raw_text = (
-                "<div dir='rtl' style='direction: rtl; text-align: right; unicode-bidi: plaintext;'>"
+                f"<div class='{_RTL_ROOT_MARKER}' dir='rtl' "
+                "style='direction: rtl; text-align: right; unicode-bidi: plaintext;'>"
                 f"{html}"
                 "</div>"
             )
@@ -859,6 +883,114 @@ class MessageBubble(QWidget):
 
     def get_html(self) -> str:
         return self._raw_text
+
+    # Qt generics that carry no real typographic intent — if `toHtml()` puts one
+    # of these on <body>, it would OUTRANK the Persian-capable fallback that
+    # `prepare_report_html_for_server` applies, and Persian would render in a
+    # font that cannot shape it.
+    _GENERIC_EXPORT_FONTS = (
+        "sans serif", "sansserif", "serif", "monospace",
+        "ms shell dlg 2", "ms shell dlg", "system",
+    )
+
+    def get_export_html(self) -> str:
+        """Fully-inlined HTML of this bubble, for the Reception server.
+
+        WHY THIS EXISTS (2026-07-28) — "Send to Reception" lost colours, fonts
+        and sizes while the Medical Report Editor kept them, even though BOTH
+        end up calling the same `prepare_report_html_for_server()`.
+
+        The difference was never the transfer; it was the INPUT SHAPE.
+
+        * The Report Editor sends `QTextEdit.toHtml()` — Qt rich text, where
+          every colour/font/size is an INLINE attribute and the document font
+          sits on `<body style=...>`.
+        * EchoMind sent `get_html()` -> `_raw_text`, hand-built markup in which a
+          large part of the styling lives in `<style>` blocks addressed by CSS
+          class (`_render_assistant_html`, `_wrap_rtl_html`'s `.rtl-wrap`).
+
+        `prepare_report_html_for_server()` is inline-CSS-only *by contract* — it
+        strips `<style>` blocks because the server strips them anyway. So every
+        class-based rule was deleted and the `class=` attributes were left
+        pointing at rules that no longer existed. Measured on a real assistant
+        bubble: colours `[]`, sizes `[]`, font = the generic fallback.
+
+        Pushing the same markup through a `QTextDocument` first resolves those
+        class rules into inline character/block formats — i.e. it produces
+        exactly the shape the Report Editor already produces, and the shape the
+        transformer was built for. Measured on the same bubble afterwards:
+        colours `['#1f3b77', '#dddddd']`, sizes `['15px', '19px']`.
+
+        Deliberately built from `_raw_text`, NOT from the displayed HTML:
+        `_wrap_scale_html()` STRIPS every inline `font-size` so its A-/A+ wrapper
+        can win, which would flatten the report's own size hierarchy (a 20px
+        title and 15px body both becoming one size). Instead the user's chosen
+        scale is carried as the document's DEFAULT font, so the hierarchy and
+        the chosen scale both survive.
+
+        Must be called on the GUI thread (it reads this widget's font).
+        """
+        # QFont is NOT among this module's top-level QtGui imports — import it
+        # here explicitly. (Relying on the module namespace raised NameError,
+        # which the fallback below swallowed, silently restoring the very bug
+        # this method exists to fix. Hence the warning log.)
+        from PySide6.QtGui import QFont, QTextDocument
+
+        src = self._ensure_html_text(self._raw_text or "")
+        if not src.strip():
+            return ""
+        try:
+            doc = QTextDocument()
+            font = QFont(self.lbl.font())
+            # `_font_size` is px (it feeds `font-size:{n}px`); QFont wants points.
+            px = max(10, min(int(getattr(self, "_font_size", 15) or 15), 40))
+            font.setPointSizeF(max(6.0, px * 0.75))
+            doc.setDefaultFont(font)
+            doc.setHtml(src)
+            html = doc.toHtml()
+        except Exception as exc:
+            # Never block the send — but say so, loudly. A silent fallback here
+            # looks exactly like "the fix did nothing".
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                "[ECHO-EXPORT] rich-text export failed (%s: %s); sending raw HTML, "
+                "formatting may be lost", type(exc).__name__, exc,
+            )
+            return self._raw_text or ""
+
+        return self._drop_generic_body_font(html)
+
+    @classmethod
+    def _drop_generic_body_font(cls, html: str) -> str:
+        """Remove a meaningless `font-family` from Qt's `<body>` style.
+
+        EchoMind has no user-chosen report font (unlike the editor, where
+        'B Nazanin' is a real choice worth transporting). Leaving Qt's generic
+        default on `<body>` would suppress the Persian-capable stack that
+        `prepare_report_html_for_server` otherwise supplies.
+        """
+        import re as _re
+
+        def _fix(match):
+            style = match.group(2)
+
+            def _strip(decl):
+                value = decl.split(":", 1)[1].strip().strip("'\"").lower()
+                return value in cls._GENERIC_EXPORT_FONTS
+
+            kept = [
+                d for d in style.split(";")
+                if not (d.strip().lower().startswith("font-family") and _strip(d))
+            ]
+            return f"{match.group(1)}{';'.join(kept)}{match.group(3)}"
+
+        try:
+            return _re.sub(
+                r"(<body[^>]*style\s*=\s*\")([^\"]*)(\")", _fix, html, count=1,
+                flags=_re.I,
+            )
+        except Exception:
+            return html
 
     # ----------------- Retry helpers -----------------
     def show_retry(self, on_click: t.Callable[[], None] | None = None, reason: str | None = None):
@@ -963,49 +1095,21 @@ class MessageBubble(QWidget):
         if self.sendReceptionStatus is not None:
             self.sendReceptionStatus.setVisible(False)
 
-    @staticmethod
-    def _is_probably_html(s: str) -> bool:
-        try:
-            return bool(Qt.mightBeRichText(s))
-        except Exception:
-            # fallback ساده
-            return "<" in (s or "") and ">" in (s or "")
+    # ── 2026-07-31: duplicate `_is_probably_html` / `_wrap_rtl_html` removed ──
+    # `MessageBubble` defined both of these TWICE. Python binds the LATER
+    # definition, so the copies that used to live here silently shadowed the
+    # ones above -- and the two `_wrap_rtl_html` bodies were NOT the same.
+    #
+    # The shadowed (upper) version is the FIXED one. Its own docstring records
+    # why: the earlier logic early-returned whenever the text already contained
+    # `dir=rtl`, so `.rtl-wrap` and its CSS were never applied -- and Persian
+    # translate output carries `dir=rtl` itself, so the one case the wrapper
+    # exists for was exactly the case it skipped. That fix was written, and
+    # then shadowed by this stale copy, so it has never run.
+    #
+    # Deleting the duplicates makes the fixed version bind. DO NOT re-add a
+    # second definition of either method -- extend the ones above.
 
-    @classmethod
-    def _wrap_rtl_html(cls, s: str) -> str:
-        """
-        RTL را روی خروجی enforce می‌کند (حتی اگر RichText باشد).
-        همچنین لیست‌ها (ul/ol) را برای RTL اصلاح می‌کند.
-        """
-        s = s or ""
-        if not s.strip():
-            return s
-
-        # اگر قبلاً RTL شده، دوباره wrap نکن
-        low = s.lower()
-        if "dir='rtl'" in low or 'dir="rtl"' in low or "direction: rtl" in low:
-            return s
-
-        # اگر متن plain است، به HTML امن تبدیل کن
-        if not cls._is_probably_html(s):
-            s = escape(s).replace("\n", "<br>")
-
-        rtl_css = """
-        <style>
-            /* enforce RTL + right align */
-            .rtl-wrap { direction: rtl; text-align: right; unicode-bidi: plaintext; }
-            /* lists in RTL should indent on right, not left */
-            .rtl-wrap ul, .rtl-wrap ol { margin-right: 18px; margin-left: 0; padding-right: 0; padding-left: 0; }
-            .rtl-wrap li { text-align: right; }
-        </style>
-        """
-
-        return (
-            rtl_css +
-            "<div class='rtl-wrap' dir='rtl'>"
-            f"{s}"
-            "</div>"
-        )
 
 class TypingBubble(QWidget):
     def __init__(self, who: str, base_text: str = "Thinking"):
@@ -1280,6 +1384,61 @@ class MiniWaveform(QWidget):
             x += step
         p.end()
 
+
+# ── 2026-07-31: EchoMind's abandoned temp captures ───────────────────────────
+# `rec_*.wav` (chat dictation), `secretary_*.wav` (the orb) and
+# `pacs_clip_*.png` (pasted images) were written into %TEMP% and NEVER deleted.
+# At 44.1 kHz mono int16 a two-minute dictation is ~10.6 MB, so a working shift
+# left roughly 0.6-1 GB behind — and Windows does not clean %TEMP% by itself.
+#
+# A generous 24 h cutoff cannot race a live upload: the STT read budget is
+# 360 s, so anything still in flight is minutes old, not hours. Best-effort and
+# silent by design — a janitor must never be the reason the composer fails to
+# build. `AIPACS_ECHOMIND_TEMP_SWEEP=0` turns it off.
+_TEMP_SWEEP_PATTERNS = ("rec_*.wav", "secretary_*.wav", "pacs_clip_*.png")
+_TEMP_SWEEP_MAX_AGE_S = 24 * 3600
+_temp_sweep_done = False
+
+
+def _sweep_stale_temp_captures() -> None:
+    """Delete EchoMind temp captures older than a day. Runs once per process."""
+    global _temp_sweep_done
+    if _temp_sweep_done:
+        return
+    _temp_sweep_done = True
+    if os.environ.get("AIPACS_ECHOMIND_TEMP_SWEEP", "1").strip().lower() in (
+        "0", "false", "no", "off"
+    ):
+        return
+    try:
+        import glob
+        import logging as _logging
+
+        root = tempfile.gettempdir()
+        cutoff = time.time() - _TEMP_SWEEP_MAX_AGE_S
+        removed = 0
+        freed = 0
+        for pattern in _TEMP_SWEEP_PATTERNS:
+            for path in glob.glob(os.path.join(root, pattern)):
+                try:
+                    st = os.stat(path)
+                    if st.st_mtime >= cutoff:
+                        continue
+                    size = st.st_size
+                    os.remove(path)
+                    removed += 1
+                    freed += size
+                except Exception:
+                    continue          # in use, or someone else's — leave it alone
+        if removed:
+            _logging.getLogger("echomind.chat").info(
+                "[TEMP-SWEEP] removed %d stale capture(s), freed %.1f MB",
+                removed, freed / (1024.0 * 1024.0),
+            )
+    except Exception:
+        pass
+
+
 class UnifiedComposer(QWidget):
     """
     Textbox + controls با نوار عمودیِ ضمیمه‌های صوتی در سمت چپ.
@@ -1296,6 +1455,9 @@ class UnifiedComposer(QWidget):
     
     def __init__(self, placeholder: str = "Write/paste report text"):
         super().__init__()
+        # Cheap, once per process, and this module is the only place that knows
+        # those temp files exist — see `_sweep_stale_temp_captures` above.
+        _sweep_stale_temp_captures()
         # ---------- tab state ----------
         self._active_tab = "transcribe"
         self._buf_standard = ""
@@ -1598,11 +1760,25 @@ class UnifiedComposer(QWidget):
         nt_lay.setContentsMargins(8, 4, 8, 4)
         nt_lay.setSpacing(10)
 
+        # ── 2026-08-01: the library rewrite ─────────────────────────────────
+        # `_nt_templates` used to be a plain list on this widget, filled from a
+        # file dialog and thrown away on exit — the physician re-uploaded their
+        # JSON on EVERY launch, could not search it, and could not rename or
+        # delete anything. The library now lives on disk
+        # (`modules.EchoMind.normal_templates`), the combo is type-to-search,
+        # and everything that needs room is in the ⚙ Manage dialog because this
+        # bar must stay 44 px (`_nt_bar_fixed_h` feeds the composer height
+        # maths; growing it is what pushed the action row out of the window).
+        self._nt_records: list[dict] = []
+        self._nt_active_id: str = ""
+
         self.btn_nt_upload = QToolButton(self.nt_bar)
-        self.btn_nt_upload.setText("📁 Upload JSON")
-        self.btn_nt_upload.setProperty("role", "tab")  
+        self.btn_nt_upload.setText("📁 Import JSON")
+        self.btn_nt_upload.setProperty("role", "tab")
         self.btn_nt_upload.setCursor(Qt.PointingHandCursor)
-        self.btn_nt_upload.setToolTip("First, upload the Normal Template (JSON) file.")
+        self.btn_nt_upload.setToolTip(
+            "Import Normal Template(s) from a JSON file into your library."
+        )
         self.btn_nt_upload.clicked.connect(self._on_nt_upload_clicked)
 
         self.cmb_nt_names = QComboBox(self.nt_bar)
@@ -1615,10 +1791,21 @@ class UnifiedComposer(QWidget):
         self.lbl_nt_info.setObjectName("ntinfo")
         self.lbl_nt_info.setStyleSheet("color: rgba(220,220,220,0.7);")
 
+        self.btn_nt_manage = QToolButton(self.nt_bar)
+        self.btn_nt_manage.setText("⚙ Manage")
+        self.btn_nt_manage.setProperty("nt_action", "manage")
+        self.btn_nt_manage.setProperty("role", "tool")
+        self.btn_nt_manage.setProperty("kind", "text")
+        self.btn_nt_manage.setCursor(Qt.PointingHandCursor)
+        self.btn_nt_manage.setToolTip(
+            "Search, preview, rename, re-tag or delete your Normal Templates."
+        )
+        self.btn_nt_manage.clicked.connect(self._on_nt_manage_clicked)
+
         self.btn_nt_clear = QToolButton(self.nt_bar)
         self.btn_nt_clear.setText("Clear")
         self.btn_nt_clear.setProperty("nt_action", "clear")
-        self.btn_nt_clear.setToolTip("Clear files and selections")
+        self.btn_nt_clear.setToolTip("Use no template for this report (your library is kept)")
         self.btn_nt_clear.setProperty("role", "tool")
         self.btn_nt_clear.setProperty("kind", "text")
         self.btn_nt_clear.setCursor(Qt.PointingHandCursor)
@@ -1628,7 +1815,10 @@ class UnifiedComposer(QWidget):
         nt_lay.addWidget(self.btn_nt_upload, 0, Qt.AlignLeft)
         nt_lay.addWidget(self.cmb_nt_names, 1)
         nt_lay.addWidget(self.lbl_nt_info, 0, Qt.AlignLeft)
+        nt_lay.addWidget(self.btn_nt_manage, 0, Qt.AlignLeft)
         nt_lay.addWidget(self.btn_nt_clear, 0, Qt.AlignLeft)
+
+        self._nt_init_library()
 
         # ---------- Correction toolbar (only visible in correction tab) ----------
         # User selects a previously generated report from dropdown and writes correction notes below.
@@ -1696,8 +1886,33 @@ class UnifiedComposer(QWidget):
         self.box.setPlaceholderText(placeholder)
         self.box.setWordWrapMode(QTextOption.WrapAtWordBoundaryOrAnywhere)
         self.box.setLineWrapMode(QTextEdit.WidgetWidth)
-        self.box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        self.box.setFixedHeight(self._composer_box_max_h)
+        # ── Composer height (2026-07-28) ─────────────────────────────────────
+        # THE BUG THIS FIXES: this line used to be
+        #     self.box.setFixedHeight(self._composer_box_max_h)
+        # and `setFixedHeight` sets the minimum AND the maximum. So when
+        # `_sync_composer_heights_for_tab()` later tried to make room for the
+        # Correction / Normal-Template toolbar with `setMaximumHeight(base -
+        # 44)`, the minimum was still 140 — a layout honours the MINIMUM when
+        # min > max, so the editor never shrank. The toolbar's 44 px were
+        # therefore ADDED to the composer instead of taken out of the editor,
+        # the composer grew, and the action-button row (+ / mic / Modalities /
+        # Turbo / send) was pushed past the bottom of the window.
+        #
+        # The height is now owned exclusively by
+        # `_sync_composer_heights_for_tab()`, which is the ONE place that knows
+        # about the toolbars. Do not pin it here again.
+        #
+        # `Preferred` (not `Fixed`) vertically: `Fixed` means "sizeHint is the
+        # ONLY acceptable height", which makes minimum/maximum inert and is why
+        # the editor could never give space back. `Preferred` lets the layout
+        # settle it at its maximum when there is room and shrink it toward the
+        # minimum when there is not — Qt does that in one pass, so we do not
+        # need (and must not add) manual deficit arithmetic that feeds its own
+        # output back in as input.
+        self._composer_box_min_h = 56          # hard floor: still usable, never 0
+        self.box.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.box.setMinimumHeight(self._composer_box_min_h)
+        self.box.setMaximumHeight(self._composer_box_max_h)
         self.box.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.box.installEventFilter(self)
         try:
@@ -1711,6 +1926,11 @@ class UnifiedComposer(QWidget):
             pass
         # Controls bar
         controls = QFrame(self.input_shell)
+        # Kept on `self`: this row (+ / mic / Modalities / Turbo / send) is the
+        # thing that must never be clipped, so tests and any future layout work
+        # need a handle on it. It stays `Fixed` vertically with a real minimum,
+        # so under pressure the layout takes space from the editor, not here.
+        self.controls = controls
         controls.setObjectName("controls")
         controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         controls.setMinimumHeight(52)
@@ -1974,6 +2194,10 @@ class UnifiedComposer(QWidget):
         self._apply_tab_styles()
         self.box.setPlainText(self._buf_standard)
         self._update_attach_width()
+
+        # Apply the editor height for the STARTING tab, so the very first paint
+        # is already correct instead of relying on a later tab switch.
+        self._sync_composer_heights_for_tab()
 
         # Force-create EN/PA buttons early
         QTimer.singleShot(0, self.install_lang_buttons)
@@ -2514,9 +2738,21 @@ class UnifiedComposer(QWidget):
                     return True
 
 
-            if et == QEvent.Paste:
-                if self._handle_clipboard_paste():
-                    return True 
+            # NOTE (2026-07-31): an `if et == QEvent.<Paste>:` branch lived
+            # here. Qt has NO such event type -- pasting from the context menu
+            # or the Edit menu produces no event at all, because QPlainTextEdit
+            # calls paste() directly. So that line raised `AttributeError: type
+            # object 'PySide6.QtCore.QEvent' has no attribute ...` INSIDE a Qt
+            # virtual, for every event that reached it (any mouse move, focus
+            # change or paint on the box that was not Enter).
+            #
+            # That is almost certainly why this whole filter had been shadowed
+            # by a three-line duplicate further down rather than repaired: the
+            # replacement worked, and the broken original was left in place --
+            # taking image paste and drag-and-drop down with it.
+            #
+            # Ctrl+V is intercepted in the KeyPress branch above, which is the
+            # path that actually carries a pasted screenshot.
 
             if et in (QEvent.DragEnter, QEvent.DragMove):
                 mime = ev.mimeData()
@@ -3242,26 +3478,63 @@ class UnifiedComposer(QWidget):
         self.switch_tab(key)
 
 
+    def _tab_toolbar_height(self, tab: str) -> int:
+        """Height the per-tab toolbar occupies above the editor (0 if none)."""
+        if tab == "normal_template":
+            return int(getattr(self, "_nt_bar_fixed_h", 0) or 0)
+        if tab == "correction":
+            return int(getattr(self, "_corr_bar_fixed_h", 0) or 0)
+        return 0
+
     def _sync_composer_heights_for_tab(self, tab: str | None = None) -> None:
-        """
-        Keeps the overall input area height stable across tabs.
-        Normal Template / Correction tabs show a toolbar (nt_bar / corr_bar),
-        so we reduce editor max-height by the same amount.
+        """The ONE authority for the editor's height. Never raises.
+
+        Two guarantees, in priority order:
+
+        1. **The composer's total height does not change between tabs.** The
+           Correction and Normal-Template tabs add a 44 px toolbar above the
+           editor; that 44 px is taken OUT of the editor, not added to the
+           composer. Before this, the toolbar simply grew the composer and the
+           action-button row (+ / mic / Modalities / Turbo / send) was pushed
+           past the bottom of the window — the reported bug. The old code tried
+           to do this with ``setMaximumHeight`` alone, but ``__init__`` had
+           pinned the editor with ``setFixedHeight(140)`` — which also sets the
+           MINIMUM — so the editor could never actually shrink and the attempt
+           was inert.
+
+        2. **The action buttons are never clipped.** If the parent refuses the
+           composer its full requested height (short window, small screen), the
+           deficit is taken out of the editor, down to ``_composer_box_min_h``,
+           never out of the controls row.
+
+        HOW, precisely — set only the editor's MAXIMUM per tab and leave its
+        minimum at the floor. A QLayout clamps a child's size hint to its
+        maximum, so the composer *requests* exactly ``base - bar_h`` (guarantee
+        1) while remaining free to shrink toward the floor when the parent has
+        less to give (guarantee 2). Qt resolves that in a single layout pass.
+
+        DO NOT replace this with arithmetic that reads ``height()`` or
+        ``sizeHint()`` and subtracts a deficit. The editor's height *determines*
+        the composer's size hint, which determines the height the parent grants,
+        which would then determine the editor's height again — a feedback loop
+        that ratchets the editor down on every pass (measured: 140 → 96 → 64 →
+        62 across four passes) and never converges.
         """
         try:
             tab = tab or getattr(self, "_active_tab", "transcribe")
             base = int(getattr(self, "_composer_box_max_h", 140) or 140)
-            nt_h = int(getattr(self, "_nt_bar_fixed_h", 0) or 0)
-            corr_h = int(getattr(self, "_corr_bar_fixed_h", 0) or 0)
+            floor = int(getattr(self, "_composer_box_min_h", 56) or 56)
+            bar_h = self._tab_toolbar_height(tab)
 
-            if tab == "normal_template" and nt_h > 0:
-                self.box.setMaximumHeight(max(90, base - nt_h))
-            elif tab == "correction" and corr_h > 0:
-                self.box.setMaximumHeight(max(90, base - corr_h))
-            else:
-                self.box.setMaximumHeight(base)
+            target = max(floor, base - bar_h)
 
+            self.box.setMinimumHeight(floor)
+            self.box.setMaximumHeight(target)
             self.box.updateGeometry()
+            try:
+                self.input_shell.layout().activate()
+            except Exception:
+                pass
         except Exception:
             pass
 
@@ -3417,7 +3690,212 @@ class UnifiedComposer(QWidget):
         self._buf_normal_template = self._normalize_nt_html(self._buf_normal_template)
         return self._buf_normal_template
 
+    # ── Normal Template library ─────────────────────────────────────────────
+    _ENV_NT_LIBRARY = "AIPACS_ECHOMIND_TEMPLATE_LIBRARY"
+
+    @staticmethod
+    def _nt_library_enabled() -> bool:
+        """Kill switch (default ON).
+
+        `=0` restores the pre-2026-08-01 behaviour exactly: templates live only
+        in memory, the picker is a plain sorted dropdown, and Clear wipes the
+        loaded file. It exists so a field problem with the on-disk library can
+        be worked around without a rebuild — not because that behaviour is
+        worth keeping.
+        """
+        raw = os.environ.get(UnifiedComposer._ENV_NT_LIBRARY)
+        if raw is None:
+            return True
+        return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+    def _nt_init_library(self):
+        """Load the saved library at composer construction.
+
+        Never raises: a corrupt library file must not stop the composer from
+        being built. `load_library()` already degrades to [] on any error; this
+        wrapper covers an unexpected import failure too.
+        """
+        if not self._nt_library_enabled():
+            return
+        try:
+            from modules.EchoMind import normal_templates as _nt
+            self._nt_records = _nt.load_library()
+            self._nt_refresh_combo()
+        except Exception:
+            self._nt_records = []
+
+    def _nt_refresh_combo(self, select_id: str = ""):
+        """Rebuild the picker from `_nt_records`, preserving the active choice."""
+        from modules.EchoMind import normal_templates as _nt
+
+        want = str(select_id or self._nt_active_id or "")
+        records = sorted(
+            self._nt_records,
+            key=lambda r: (str(r.get("modality") or "~"), str(r.get("name") or "").lower()),
+        )
+        try:
+            self.cmb_nt_names.blockSignals(True)
+            self.cmb_nt_names.clear()
+            if records:
+                self.cmb_nt_names.addItem("— no template —", "")
+                for rec in records:
+                    self.cmb_nt_names.addItem(_nt.display_label(rec), str(rec.get("id") or ""))
+            else:
+                self.cmb_nt_names.addItem("Import a JSON file to start your library…", "")
+        finally:
+            self.cmb_nt_names.blockSignals(False)
+
+        self.cmb_nt_names.setEnabled(bool(records))
+        self._nt_make_searchable(bool(records))
+
+        idx = self.cmb_nt_names.findData(want) if want else 0
+        self.cmb_nt_names.blockSignals(True)
+        self.cmb_nt_names.setCurrentIndex(idx if idx >= 0 else 0)
+        self.cmb_nt_names.blockSignals(False)
+        if idx < 0:
+            self._nt_active_id = ""
+
+        self._nt_update_badge()
+
+    def _nt_make_searchable(self, on: bool):
+        """Type-to-search over the picker (substring, case-insensitive).
+
+        A physician with 60 templates cannot scroll a flat combo. Editable +
+        NoInsert + a MatchContains completer is the compact form of a search
+        box; the full search, with modality and region filters, is in ⚙ Manage.
+        """
+        try:
+            from PySide6.QtWidgets import QCompleter
+
+            self.cmb_nt_names.setEditable(bool(on))
+            if not on:
+                return
+            self.cmb_nt_names.setInsertPolicy(QComboBox.NoInsert)
+            le = self.cmb_nt_names.lineEdit()
+            # Wire the line edit ONCE. A blind disconnect-then-connect makes Qt
+            # emit a RuntimeWarning on the first pass (nothing to disconnect
+            # yet), and this runs on every combo refresh — identity-tracking the
+            # widget we already wired is quieter and just as correct.
+            # setEditable() replaces the line edit, so compare the object.
+            if le is not None and getattr(self, "_nt_wired_lineedit", None) is not le:
+                le.setPlaceholderText("Type to search your templates…")
+                le.editingFinished.connect(self._on_nt_search_committed)
+                self._nt_wired_lineedit = le
+            comp = self.cmb_nt_names.completer()
+            if comp is not None:
+                comp.setCompletionMode(QCompleter.PopupCompletion)
+                comp.setFilterMode(Qt.MatchContains)
+                comp.setCaseSensitivity(Qt.CaseInsensitive)
+        except Exception:
+            pass
+
+    def _on_nt_search_committed(self):
+        """Free text that matches no template must not look like a selection."""
+        try:
+            typed = (self.cmb_nt_names.currentText() or "").strip()
+            if self.cmb_nt_names.findText(typed) >= 0:
+                return
+            idx = self.cmb_nt_names.findData(self._nt_active_id) if self._nt_active_id else 0
+            self.cmb_nt_names.blockSignals(True)
+            self.cmb_nt_names.setCurrentIndex(idx if idx >= 0 else 0)
+            self.cmb_nt_names.blockSignals(False)
+        except Exception:
+            pass
+
+    def _nt_update_badge(self):
+        """The bar must say WHICH template is in use, not just how many exist."""
+        from modules.EchoMind import normal_templates as _nt
+
+        total = len(self._nt_records)
+        rec = _nt.find_by_id(self._nt_records, self._nt_active_id) if self._nt_active_id else None
+        if rec is not None:
+            name = str(rec.get("name") or "").strip() or "(unnamed)"
+            short = name if len(name) <= 34 else name[:31] + "…"
+            self.lbl_nt_info.setText(f"● in use: {short}")
+            self.lbl_nt_info.setToolTip(f"Active Normal Template: {_nt.display_label(rec)}")
+            self.lbl_nt_info.setStyleSheet(f"color:{CLR_ACCENT}; font-weight:700;")
+        elif total:
+            self.lbl_nt_info.setText(f"no template · {total} saved")
+            self.lbl_nt_info.setToolTip("Pick one from the list, or ⚙ Manage to search them.")
+            self.lbl_nt_info.setStyleSheet("color: rgba(220,220,220,0.7);")
+        else:
+            self.lbl_nt_info.setText("Import JSON first…")
+            self.lbl_nt_info.setToolTip("")
+            self.lbl_nt_info.setStyleSheet("color: rgba(220,220,220,0.7);")
+        try:
+            self.btn_nt_clear.setEnabled(bool(self._nt_active_id))
+        except Exception:
+            pass
+
+    def _nt_apply_record(self, rec: dict):
+        """Make `rec` the active template and show it in the editor.
+
+        WHAT YOU SEE IS WHAT IS SENT: the box holds exactly the text that goes
+        to the model, so an edit the physician makes here really does reach the
+        report — and no hidden metadata rides along behind it.
+        """
+        from modules.EchoMind import normal_templates as _nt
+
+        body = _nt.template_body_text(rec)
+        self._nt_active_id = str(rec.get("id") or "")
+        self._buf_normal_template = body
+        if getattr(self, "_active_tab", "") == "normal_template":
+            try:
+                self.box.setPlainText(body)
+                cur = self.box.textCursor()
+                cur.movePosition(QTextCursor.End)
+                self.box.setTextCursor(cur)
+                self._apply_box_direction()
+            except Exception:
+                pass
+        self._nt_update_badge()
+
+    def _on_nt_manage_clicked(self):
+        from PySide6.QtWidgets import QMessageBox
+        if not self._nt_library_enabled():
+            themed_message_box(
+                self, QMessageBox.Icon.Information, "Template library disabled",
+                "The Normal Template library is turned off "
+                "(AIPACS_ECHOMIND_TEMPLATE_LIBRARY=0).",
+            )
+            return
+        try:
+            from .normal_template_dialog import NormalTemplateLibraryDialog
+        except Exception as exc:
+            themed_message_box(self, QMessageBox.Icon.Warning, "Unavailable",
+                               f"Could not open the template library:\n{exc}")
+            return
+
+        dlg = NormalTemplateLibraryDialog(self, records=self._nt_records,
+                                          active_id=self._nt_active_id)
+        dlg.templateChosen.connect(self._nt_apply_record)
+        dlg.exec()
+        self._nt_records = dlg.records()
+        self._nt_refresh_combo()
+
     def _on_nt_clear_clicked(self):
+        # 2026-08-01: this used to DELETE the loaded templates. With a saved
+        # library that would mean "throw away my library" — so it now means
+        # "use no template for this report" and the library is untouched.
+        if self._nt_library_enabled():
+            self._nt_active_id = ""
+            self._buf_normal_template = ""
+            if getattr(self, "_active_tab", "") == "normal_template":
+                try:
+                    self.box.setPlainText("")
+                except Exception:
+                    pass
+            try:
+                self.cmb_nt_names.blockSignals(True)
+                self.cmb_nt_names.setCurrentIndex(0)
+                self.cmb_nt_names.blockSignals(False)
+            except Exception:
+                pass
+            self._nt_update_badge()
+            return
+        self._on_nt_clear_clicked_legacy()
+
+    def _on_nt_clear_clicked_legacy(self):
         self._nt_loaded_path = None
         self._nt_templates = []
         self._nt_name_to_html = {}
@@ -3445,6 +3923,53 @@ class UnifiedComposer(QWidget):
                 self.box.setPlainText("")
 
     def _on_nt_upload_clicked(self):
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        if self._nt_library_enabled():
+            return self._nt_import_into_library()
+        return self._on_nt_upload_clicked_legacy()
+
+    def _nt_import_into_library(self):
+        """Import a JSON file INTO the saved library, and say what happened.
+
+        The old loader replaced everything in memory and reported a problem
+        only when the file was a total loss — so a file of 40 templates could
+        import 12 and look like a success. Every unusable entry is now named.
+        """
+        from PySide6.QtWidgets import QFileDialog, QMessageBox
+        from modules.EchoMind import normal_templates as _nt
+        from .normal_template_dialog import import_report, read_template_file
+
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Normal Template JSON", "",
+            "JSON Files (*.json);;All Files (*.*)",
+        )
+        if not path:
+            return
+        try:
+            text = read_template_file(path)
+        except Exception as exc:
+            themed_message_box(self, QMessageBox.Icon.Warning, "Import failed",
+                               f"Could not read the file:\n{exc}")
+            return
+
+        records, problems = _nt.parse_templates(text, source_file=path)
+        merged, notes, added = _nt.merge_into_library(self._nt_records, records)
+        if added:
+            self._nt_records = merged
+            if not _nt.save_library(self._nt_records):
+                notes = list(notes) + [
+                    "NOTE: the library could not be written to disk — this "
+                    "import applies to the current session only."
+                ]
+            self._nt_loaded_path = path
+            self._nt_refresh_combo()
+        themed_message_box(
+            self,
+            QMessageBox.Icon.Information if added else QMessageBox.Icon.Warning,
+            "Import result", import_report(added, problems, notes),
+        )
+
+    def _on_nt_upload_clicked_legacy(self):
         from PySide6.QtWidgets import QFileDialog, QMessageBox
         path, _ = QFileDialog.getOpenFileName(
             self,
@@ -3557,6 +4082,27 @@ class UnifiedComposer(QWidget):
         return out
 
     def _on_nt_name_changed(self, idx: int):
+        if self._nt_library_enabled():
+            from modules.EchoMind import normal_templates as _nt
+            tid = self.cmb_nt_names.itemData(idx) if idx >= 0 else ""
+            if not tid:
+                # "— no template —"
+                self._nt_active_id = ""
+                self._buf_normal_template = ""
+                if getattr(self, "_active_tab", "") == "normal_template":
+                    try:
+                        self.box.setPlainText("")
+                    except Exception:
+                        pass
+                self._nt_update_badge()
+                return
+            rec = _nt.find_by_id(self._nt_records, tid)
+            if rec is not None:
+                self._nt_apply_record(rec)
+            return
+        return self._on_nt_name_changed_legacy(idx)
+
+    def _on_nt_name_changed_legacy(self, idx: int):
         if idx <= 0:
             return
         name = self.cmb_nt_names.currentText().strip()
@@ -3625,12 +4171,20 @@ class UnifiedComposer(QWidget):
         self._input_font_pt = new
         self._apply_input_font()
 
-    def eventFilter(self, obj, ev):
-        if obj is self.box and ev.type() == ev.Type.KeyPress:
-            if ev.key() in (Qt.Key_Return, Qt.Key_Enter) and not (ev.modifiers() & Qt.ShiftModifier):
-                self._emit_send();
-                return True
-        return super().eventFilter(obj, ev)
+    # ── 2026-07-31: duplicate `eventFilter` removed ──────────────────────────
+    # `UnifiedComposer` defined `eventFilter` TWICE. Python binds the LATER
+    # definition, so a three-line version here silently shadowed the real filter
+    # above and killed every branch it handles except Enter: Ctrl+V of an image,
+    # QEvent.Paste, DragEnter, DragMove and Drop. Pasting a screenshot into the
+    # composer did nothing at all; dropping a PNG fell through to
+    # QPlainTextEdit's default handling and typed `file:///C:/...` into the
+    # middle of the report text.
+    #
+    # The Enter / Shift+Enter branch it carried is already implemented
+    # identically in the surviving filter, so deleting it changes NOTHING about
+    # keyboard behaviour -- it only un-shadows paste and drag-and-drop.
+    #
+    # DO NOT add a second `eventFilter` to this class. Extend the one above.
 
     def _emit_send(self):
         # جدید: حتی با متن خالی هم ارسال کن

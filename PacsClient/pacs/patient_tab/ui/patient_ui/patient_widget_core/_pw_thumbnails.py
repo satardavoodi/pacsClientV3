@@ -840,6 +840,18 @@ class _PWThumbnailsMixin:
         finally:
             if thumb_container:
                 try:
+                    # Overlap-on-open fix (2026-07-29): compute the grid geometry
+                    # SYNCHRONOUSLY (activate) while painting is still suppressed,
+                    # BEFORE re-enabling updates. updateGeometry() only POSTS a
+                    # LayoutRequest, so a repaint scheduled by setUpdatesEnabled(True)
+                    # could land before the layout runs → cards paint stacked at
+                    # (0,0) for <1s then snap. This mirrors the single-study chunked
+                    # path's proven bracket. Kill switch AIPACS_SIDEBAR_ACTIVATE_ON_RENDER=0.
+                    if os.getenv("AIPACS_SIDEBAR_ACTIVATE_ON_RENDER", "1") != "0":
+                        try:
+                            self.thumb_grid.activate()
+                        except Exception:
+                            pass
                     thumb_container.setUpdatesEnabled(True)
                     thumb_container.updateGeometry()
                     thumb_container.update()
@@ -1225,7 +1237,17 @@ class _PWThumbnailsMixin:
                         self.thumbnail_manager.set_series_pending(series_number)
 
             # ── END BATCH: re-enable painting and force one layout pass ──
+            # Overlap-on-open fix (2026-07-29): activate() the grid SYNCHRONOUSLY
+            # while paint is still off, so cards are positioned before the
+            # re-enabled repaint (updateGeometry() alone only posts a deferred
+            # LayoutRequest → occasional stacked-at-(0,0)-then-snap overlap).
+            # Kill switch AIPACS_SIDEBAR_ACTIVATE_ON_RENDER=0.
             if thumb_container:
+                if os.getenv("AIPACS_SIDEBAR_ACTIVATE_ON_RENDER", "1") != "0":
+                    try:
+                        self.thumb_grid.activate()
+                    except Exception:
+                        pass
                 thumb_container.setUpdatesEnabled(True)
                 thumb_container.updateGeometry()
                 thumb_container.update()

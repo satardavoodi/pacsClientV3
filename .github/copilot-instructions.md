@@ -1,8 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.5.6 (2026-07-26) - Minor release: OS light/dark theme immunity for popups and dialogs (OPT-44), local patient-list incremental loading + Advanced-Search import-date filter (OPT-43), and EchoMind reporting/voice work (report-prompt preservation, a new assist endpoint, and an added voice-transcription provider). See `docs/releases/VERSION_3.5.6_RELEASE.md`.
+**Current Stable Version:** v3.5.7 (2026-08-02) - Minor release: MPR lifecycle + large-study crash/perf hardening (OPT-47/48/49), role-aware DB busy-timeout (OPT-45) + crash-durable download queue (OPT-46), a large EchoMind Phase-1 reliability overhaul (single HTTP transport authority, error classification, off-GUI-thread reception send, backend prompt parity, Normal Template workflow), per-series CD/offline export selection, local Patient-ID display alias, status-column off-thread render, and Advanced-Search Local/Server routing. See `docs/releases/VERSION_3.5.7_RELEASE.md`.
 
-**Previous Stable:** v3.5.5 (2026-07-25) - Minor release: multi-frame DICOM geometry (OPT-42 — cine/enhanced MR-CT), Offline Service patient-delete management, Report Editor "Previous Exams" (cross-PatientID) header, previous-exam mid-download grow (OPT-39), and the first test-suite KPI baseline. See `docs/releases/VERSION_3.5.5_RELEASE.md`.
+**Previous Stable:** v3.5.6 (2026-07-26) - Minor release: OS light/dark theme immunity for popups and dialogs (OPT-44), local patient-list incremental loading + Advanced-Search import-date filter (OPT-43), and EchoMind reporting/voice work. See `docs/releases/VERSION_3.5.6_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 

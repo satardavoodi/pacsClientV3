@@ -4,7 +4,7 @@
   "module_id": "education",
   "title": "Education Module",
   "tier": "basic",
-  "version": "3.5.6",
+  "version": "3.5.7",
   "package_kind": "core",
   "payload_dir": "payload",
   "python_paths": [

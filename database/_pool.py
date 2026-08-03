@@ -241,6 +241,19 @@ def _return_to_pool(conn: sqlite3.Connection) -> None:
         if len(conns) < _max_pool_size:
             try:
                 conn.rollback()
+                # 2026-07-31 — reset the row factory before the connection goes
+                # back in the pool. FIVE call sites set
+                # `conn.row_factory = sqlite3.Row` and none of them reset it
+                # (ai_sessions_db, dicom_db x3, data_paths), so the next caller
+                # to borrow that connection silently got sqlite3.Row objects
+                # instead of tuples — not JSON-serialisable, not tuple-
+                # comparable, and wrong in a way that only shows up in whichever
+                # unlucky caller runs next. `manager.py` already sets
+                # `row_factory = None` defensively, which is the fingerprint of
+                # someone having been bitten by exactly this.
+                #
+                # Fixing it HERE covers all five and every future one.
+                conn.row_factory = None
                 conns.append(conn)
             except Exception:
                 try:
@@ -260,6 +273,55 @@ def _return_to_pool(conn: sqlite3.Connection) -> None:
             _evict_dead_thread_connections_locked()
 
 
+def _resolve_db_timeouts() -> tuple:
+    """(connect_timeout_s, busy_timeout_ms) — role-aware SQLite lock-wait ceilings.
+
+    OPT-45 (sanam PC 2026-07-28): the shared ``dicom.db`` is WAL. In WAL a reader never
+    blocks on a writer, so only a WRITE (or a read that upgrades to a write) can block on
+    the write lock — for up to ``busy_timeout``. That ceiling used to be a flat **120 000 ms
+    (2 minutes)** on EVERY connection, so a MAIN-process (GUI-thread) ``dicom.db`` write that
+    momentarily contended with the download SUBPROCESS's instance-write burst could freeze
+    the UI for up to two minutes — the transient "Cross-thread" Application Hang Windows
+    recorded under a heavy download.
+
+    Fix: keep the **download subprocess** (and any non-main spawned child) at the full
+    120 s so a burst of ``batch_insert_instances`` never drops a row (clinical integrity; the
+    DM-H5 "database is locked" retry depends on that wait). Give the **main GUI process** a
+    SHORT ceiling (default 5 000 ms) so a contended write FAILS FAST and defers instead of
+    freezing the UI. Real WAL write-lock holds during a download are sub-second (per-batch
+    commit releases the lock), so 5 s is far longer than any legitimate contention — writes
+    virtually never actually raise; the change only caps the pathological freeze. And a
+    lost/raised main-process write is recoverable anyway (disk is the authority; the DB is a
+    derived index that reconcile/resync rewrites — see CLAUDE.md).
+
+    Flags: ``AIPACS_DB_SHORT_MAIN_TIMEOUT=0`` restores the flat 120 s for the main process too
+    (byte-identical legacy); ``AIPACS_DB_MAIN_BUSY_TIMEOUT_MS`` tunes the main-process value
+    (clamped to [1000, 120000]).
+    """
+    LEGACY_CONNECT_S = 300.0
+    LEGACY_BUSY_MS = 120000
+    # Only the MAIN (GUI) process is throttled. The download subprocess is a spawned
+    # multiprocessing child ("Process-N"), so name != "MainProcess"; the explicit role
+    # marker (set by download_process_entry) is belt-and-suspenders.
+    try:
+        import multiprocessing as _mp
+        is_main = _mp.current_process().name == "MainProcess"
+    except Exception:
+        is_main = True
+    if os.getenv("AIPACS_DB_ROLE", "") == "download-subprocess":
+        is_main = False
+    if not is_main:
+        return LEGACY_CONNECT_S, LEGACY_BUSY_MS
+    if (os.getenv("AIPACS_DB_SHORT_MAIN_TIMEOUT", "1") or "1").strip() == "0":
+        return LEGACY_CONNECT_S, LEGACY_BUSY_MS  # kill switch → legacy 120 s
+    try:
+        busy_ms = int(os.getenv("AIPACS_DB_MAIN_BUSY_TIMEOUT_MS", "5000") or "5000")
+    except ValueError:
+        busy_ms = 5000
+    busy_ms = max(1000, min(busy_ms, LEGACY_BUSY_MS))
+    return busy_ms / 1000.0, busy_ms
+
+
 def _create_sqlite_connection() -> sqlite3.Connection:
     """Create a brand-new raw sqlite3.Connection with standard PRAGMAs.
 
@@ -272,19 +334,20 @@ def _create_sqlite_connection() -> sqlite3.Connection:
 
     db = str(DATABASE_FILE)
     max_retries = 15
+    connect_timeout_s, busy_timeout_ms = _resolve_db_timeouts()
 
     for attempt in range(max_retries):
         try:
             conn = sqlite3.connect(
                 db,
-                timeout=300.0,
+                timeout=connect_timeout_s,
                 check_same_thread=False,
                 isolation_level="DEFERRED",
             )
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute("PRAGMA journal_mode = WAL;")
             conn.execute("PRAGMA synchronous = NORMAL;")
-            conn.execute("PRAGMA busy_timeout = 120000;")
+            conn.execute(f"PRAGMA busy_timeout = {busy_timeout_ms};")
             conn.execute("PRAGMA temp_store = MEMORY;")
             conn.execute("PRAGMA cache_size = -10000;")
             conn.execute("PRAGMA mmap_size = 104857600;")
@@ -294,9 +357,10 @@ def _create_sqlite_connection() -> sqlite3.Connection:
         except sqlite3.OperationalError as e:
             if "database is locked" in str(e) and attempt < max_retries - 1:
                 # Cap the Python-level backoff. SQLite's own busy_timeout
-                # (120s, set above) already handles lock waiting; without this
-                # cap, attempt 14 would sleep 2**14 ≈ 4.5 hours and freeze the
-                # caller (and the UI thread, if it acquired here) indefinitely.
+                # (role-aware — see _resolve_db_timeouts: 120s subprocess /
+                # short on the main GUI process) already handles lock waiting;
+                # without this cap, attempt 14 would sleep 2**14 ≈ 4.5 hours and
+                # freeze the caller (and the UI thread, if it acquired here).
                 wait_time = min((2 ** attempt) + random.uniform(0, 3), 10.0)
                 logger.warning(
                     "Database locked, retrying in %.1fs (attempt %d/%d)",

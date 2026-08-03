@@ -14,8 +14,25 @@ from datetime import datetime
 import os
 import json
 import hashlib
+import threading
 
 from PySide6.QtCore import QObject, Signal
+
+
+# ── F10 (2026-07-28): the usage file is a read-modify-write with no lock ─────
+# `update_usage` / `update_usage_total` run on whatever ApiWorker thread just
+# received a response: they `_load_usage()` (full JSON read), increment in
+# memory, then `_save_usage()` (full rewrite). Concurrent workers are entirely
+# possible — `ai_chat_pages._run_async` tracks workers in a LIST with a
+# `_busy_count` that can exceed 1, and `_ORPHANED_WORKERS` holds detached
+# in-flight workers from closed pages. Two overlapping responses therefore raced
+# and one increment was silently lost (last writer wins).
+#
+# `os.replace` in `_save_usage` already makes each WRITE atomic, so the file was
+# never torn — the defect is lost counts, i.e. under-reported token usage. This
+# lock closes the read-modify-write window. It is process-local, which is the
+# right scope: the usage file is per-user and only this process writes it.
+_USAGE_LOCK = threading.Lock()
 
 
 # ============================================================
@@ -419,16 +436,18 @@ class Manage:
         api_key = self.get_irannobat_key()
         key_id = self._key_id(api_key)
 
-        data = self._load_usage()
-        node = self._ensure_nodes(data, key_id, info, model)
+        # F10: read-modify-write must be atomic across ApiWorker threads.
+        with _USAGE_LOCK:
+            data = self._load_usage()
+            node = self._ensure_nodes(data, key_id, info, model)
 
-        node["requests"] += 1
-        node["prompt_tokens"] += p
-        node["completion_tokens"] += c
-        node["total_tokens"] += (p + c)
-        node["last_used"] = self._now_iso()
+            node["requests"] += 1
+            node["prompt_tokens"] += p
+            node["completion_tokens"] += c
+            node["total_tokens"] += (p + c)
+            node["last_used"] = self._now_iso()
 
-        self._save_usage(data)
+            self._save_usage(data)
 
                 # --- ALSO persist to SQLite DB (for Welcome UI) ---
         try:
@@ -484,14 +503,16 @@ class Manage:
         api_key = self.get_irannobat_key()
         key_id = self._key_id(api_key)
 
-        data = self._load_usage()
-        node = self._ensure_nodes(data, key_id, info, model)
+        # F10: read-modify-write must be atomic across ApiWorker threads.
+        with _USAGE_LOCK:
+            data = self._load_usage()
+            node = self._ensure_nodes(data, key_id, info, model)
 
-        node["requests"] += 1
-        node["total_tokens"] += t
-        node["last_used"] = self._now_iso()
+            node["requests"] += 1
+            node["total_tokens"] += t
+            node["last_used"] = self._now_iso()
 
-        self._save_usage(data)
+            self._save_usage(data)
 
                 # --- ALSO persist to SQLite DB (for Welcome UI) ---
         try:

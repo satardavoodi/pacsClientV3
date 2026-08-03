@@ -178,20 +178,40 @@ class TestValidateReportJsonCT:
 # ─────────────────────────────────────────────────────────────────
 class TestCTPayloadSettings:
     def test_temperature_set_for_ct(self):
-        src = _src()
-        # Must appear in the in ("mri", "ct") guard context
-        assert 'modality.lower() in ("mri", "ct")' in src
-        assert 'payload["temperature"] = 0.1' in src
+        # 2026-08-01 — this used to source-pin the literal gate
+        # `modality.lower() in ("mri", "ct")`. That gate was the defect: it left
+        # mammography (UI sends the misspelled "MAMOGRAPHY") and radiography
+        # running at the provider default temperature. Pin the PROPERTY — CT is
+        # clamped — not the expression that happens to implement it.
+        from modules.EchoMind.viewer_chat.openai_reporter import _VALIDATED_MODALITIES
+        assert "ct" in _VALIDATED_MODALITIES
+        assert 'payload["temperature"] = 0.1' in _src()
 
     def test_max_tokens_set_for_ct(self):
         src = _src()
         assert 'payload["max_tokens"] = 2500' in src
 
+    def test_every_ui_modality_is_clamped(self):
+        """The clamp must cover the values the UI can actually send.
+
+        `ai_chat_widgets._modality_options` is
+        ["CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"] — note the
+        single-"m" mammography. Each must be in the set, or that modality runs
+        unclamped and unvalidated.
+        """
+        from modules.EchoMind.viewer_chat.openai_reporter import _VALIDATED_MODALITIES
+        for ui_value in ("CT", "MRI", "SONOGRAPHY", "RADIOLOGY", "MAMOGRAPHY"):
+            assert ui_value.lower() in _VALIDATED_MODALITIES, (
+                f"{ui_value!r} is a live UI modality but is not clamped/validated"
+            )
+
     def test_validate_called_for_ct_in_reporter(self):
         src = _src()
-        # The validate guard must cover CT
-        assert 'modality.lower() in ("mri", "ct")' in src
+        # The response must be handed to the validator; the validator itself
+        # no-ops for anything outside _VALIDATED_MODALITIES.
         assert '_validate_report_json(raw_content, modality.lower())' in src
+        from modules.EchoMind.viewer_chat.openai_reporter import _VALIDATED_MODALITIES
+        assert "ct" in _VALIDATED_MODALITIES
 
 
 # ─────────────────────────────────────────────────────────────────

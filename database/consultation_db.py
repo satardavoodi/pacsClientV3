@@ -71,6 +71,11 @@ CREATE TABLE IF NOT EXISTS consultation_events (
     details         TEXT,
     created_at      INTEGER
 );
+-- 2026-07-31: `consultation_id` is the ONLY column this table is ever queried
+-- by, and the table grows for the life of the install (one row per event, never
+-- pruned). Without an index every timeline lookup was a full scan.
+CREATE INDEX IF NOT EXISTS idx_consultation_events_cid
+    ON consultation_events(consultation_id, created_at);
 """
 
 _CONSULTATION_COLUMNS = {

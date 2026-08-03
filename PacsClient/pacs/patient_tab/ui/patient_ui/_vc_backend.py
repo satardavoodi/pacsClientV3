@@ -30,7 +30,16 @@ logger = logging.getLogger(__name__)
 class _VCBackendMixin:
     """Auto-split mixin — see patient_widget_viewer_controller.py for history."""
 
-    def _resolve_series_expected_count(self, series_number: str):
+    def _resolve_series_expected_count(self, series_number: str, *, include_disk: bool = True):
+        """The ONE viewer-side expected-count resolver. Feeds the shared
+        ``series_facts`` authority the widget's in-memory maps plus two INJECTED
+        fallbacks in a defined order: the persisted DB ``image_count``
+        (authoritative server count, non-disk) then — only when ``include_disk``
+        (default True) — a capped on-disk count. The completeness guard passes
+        ``include_disk=False`` so it never treats the on-disk file count as the
+        'expected' (that would make expected==disk and always skip); every other
+        viewer site keeps the disk last-resort. One authority, one fallback order —
+        no module invents its own."""
         sn = str(series_number)
         scan_cap = max(int(self._warmup_max_slices or 0), int(self._prefetch_skip_slices_threshold or 0), 0) + 1
 
@@ -57,6 +66,45 @@ class _VCBackendMixin:
                 pass
             return 0
 
+        def _db_count_getter(series_key: str) -> int:
+            """Persisted server ``image_count`` for THIS series' OWN study
+            (multi-study safe via canonical identity), cached per (study, series).
+            Authoritative + non-disk. Shared by every caller of this wrapper, so the
+            DB is a DEFINED tier of the one authority — not a per-guard side path.
+            Kill switch AIPACS_DL_COMPLETE_DB_COUNT=0."""
+            try:
+                if os.getenv("AIPACS_DL_COMPLETE_DB_COUNT", "1").strip() == "0":
+                    return 0
+                study_uid = str(getattr(self.parent_widget, 'study_uid', '') or '')
+                orig_sn = str(series_key or '')
+                try:
+                    _rs, _rn, _ = self._resolve_canonical_series_identity(series_key)
+                    if _rs:
+                        study_uid = str(_rs)
+                    if _rn:
+                        orig_sn = str(_rn)
+                except Exception:
+                    pass
+                if not study_uid or not orig_sn:
+                    return 0
+                cache = getattr(self, '_series_expected_db_cache', None)
+                if cache is None:
+                    cache = {}
+                    self._series_expected_db_cache = cache
+                ckey = (study_uid, orig_sn)
+                if ckey in cache:
+                    return cache[ckey]
+                val = 0
+                try:
+                    from database.dicom_db import get_series_image_count
+                    val = int(get_series_image_count(study_uid, orig_sn) or 0)
+                except Exception:
+                    val = 0
+                cache[ckey] = val
+                return val
+            except Exception:
+                return 0
+
         return resolve_series_expected_count(
             sn,
             uid_to_number_map=getattr(self.parent_widget, '_series_uid_to_number', {}) or {},
@@ -64,7 +112,8 @@ class _VCBackendMixin:
             metadata_flat_map=getattr(self, '_metadata_flat_cache', {}) or {},
             thumbnail_items=getattr(self.parent_widget, 'lst_thumbnails_data', []) or [],
             series_number_to_index=getattr(self, '_series_number_to_index', {}) or {},
-            disk_count_getter=_disk_count_fallback,
+            db_count_getter=_db_count_getter,
+            disk_count_getter=(_disk_count_fallback if include_disk else None),
         )
 
     def _get_requested_viewer_backend(self) -> str:
