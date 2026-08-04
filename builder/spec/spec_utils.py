@@ -18,6 +18,55 @@ PROJECT_ROOT = BUILDER_DIR.parent
 INVENTORY_DIR = BUILDER_DIR / "inventory"
 
 
+# ---------------------------------------------------------------------------
+# Compressed-DICOM codec plugins  (TS-1, 2026-08-04)
+# ---------------------------------------------------------------------------
+# pylibjpeg does NOT find its decoder plugins by importing them. It builds its
+# decoder table from ``importlib.metadata`` ENTRY POINTS declared in each
+# plugin's dist-info. Bundling the modules alone therefore leaves pylibjpeg
+# reporting ZERO decoders in a frozen build, and every JPEG / JPEG 2000 /
+# JPEG-LS image silently fails to decode — while any import-based capability
+# check still reports "all codecs present". Measured on this repo:
+#
+#     decoders registered (normal):            12
+#     decoders registered (metadata stripped):  0
+#
+# So BOTH the import name AND the distribution metadata must be bundled.
+# Keep this the single source of truth; see AIPacs.spec, AIPacs_nuitka.spec.py
+# and tools/build/build_lite_viewer.py for the other consumers.
+#
+# import name -> distribution name
+CODEC_PACKAGES: dict[str, str] = {
+    "pylibjpeg": "pylibjpeg",
+    "libjpeg": "pylibjpeg-libjpeg",     # JPEG baseline/extended/lossless + JPEG-LS
+    "openjpeg": "pylibjpeg-openjpeg",   # JPEG 2000 (lossless + lossy) and HTJ2K
+    "rle": "pylibjpeg-rle",             # RLE Lossless
+}
+
+
+def codec_hiddenimports() -> list[str]:
+    """Import names of the compressed-DICOM codec plugins."""
+    return list(CODEC_PACKAGES)
+
+
+def codec_metadata_datas(copy_metadata) -> list[tuple[str, str]]:
+    """``copy_metadata`` results for every codec distribution that is installed.
+
+    ``copy_metadata`` is passed in rather than imported so this module stays
+    importable outside a PyInstaller build (tests, tooling).
+
+    A codec missing from the build environment is reported and skipped — never
+    fatal — but the release gate is what stops such a build from shipping.
+    """
+    out: list[tuple[str, str]] = []
+    for import_name, dist_name in CODEC_PACKAGES.items():
+        try:
+            out.extend(copy_metadata(dist_name))
+        except Exception as exc:  # not installed in this build environment
+            print(f"[spec][codecs] metadata skipped for {dist_name} ({import_name}): {exc}")
+    return out
+
+
 def _load_json(name: str) -> dict:
     path = INVENTORY_DIR / name
     if not path.exists():

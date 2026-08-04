@@ -48,6 +48,92 @@ _LOCAL_SEARCH_BATCH = 100
 _LOCAL_PROGRESSIVE_MIN = 20
 
 
+# ── OPT-50 (2026-08-03): keep the row renderer off the disk ───────────────────
+# `render_one` used to resolve each study's on-disk path INLINE on the GUI
+# thread: a Path.exists(), a has_subfolders() opendir, and sometimes a thumbnail
+# directory scan — 1–3 blocking syscalls per row. Across a 2000-study Local list
+# that is thousands of filesystem round-trips interleaved with widget building,
+# which is what makes the list stutter while it fills.
+#
+# The resolution is pure disk + DB with no Qt in it, so it can run on the worker
+# pool. `AIPACS_LIST_PATHS_OFFTHREAD=0` restores the inline behaviour.
+# How many rows are resolved BEFORE the first paint. Small on purpose: enough to
+# cover the first visible page plus one background batch, so first paint is not
+# delayed, while the remainder is resolved on a worker that easily outruns the
+# 50 ms-per-batch streamer.
+_PATHS_HEAD = 60
+
+
+def _paths_offthread_enabled() -> bool:
+    return _os.environ.get("AIPACS_LIST_PATHS_OFFTHREAD", "").strip().lower() not in (
+        "0", "false", "off",
+    )
+
+
+def _db_prefetch_enabled() -> bool:
+    return _os.environ.get("AIPACS_LIST_DB_PREFETCH", "").strip().lower() not in (
+        "0", "false", "off",
+    )
+
+
+def _resolve_renderable_study_path(patient: dict):
+    """Resolve a study's on-disk path and decide whether its row is renderable.
+
+    This is the EXACT logic that used to live inline in ``render_one`` — path
+    fallback to ``SOURCE_PATH/<study_uid>``, the self-healing
+    ``force_update_study_path`` write, and the "skip rows with neither DICOM nor
+    thumbnails on disk" rule — lifted out unchanged so it can run off the GUI
+    thread and so there is exactly ONE implementation of it.
+
+    Returns the resolved ``study_path``, or ``None`` when the row must be
+    skipped. Mutates ``patient['study_path']`` in place, as before.
+    """
+    from PacsClient.pacs.patient_tab.utils.utils import has_subfolders, THUMBNAIL_PATH
+    from PacsClient.utils.db_manager import find_study_pk_with_study_uid
+
+    study_path = patient.get('study_path')
+    study_uid = patient.get('study_uid')
+
+    _need_fallback = False
+    if not study_path:
+        _need_fallback = True
+    elif study_uid:
+        try:
+            if not Path(study_path).exists():
+                _need_fallback = True
+        except Exception:
+            _need_fallback = True
+
+    if _need_fallback and study_uid:
+        try:
+            fallback_path = SOURCE_PATH / study_uid
+            if fallback_path.exists() and has_subfolders(fallback_path):
+                study_path = str(fallback_path)
+                patient['study_path'] = study_path
+                study_pk = find_study_pk_with_study_uid(study_uid)
+                if study_pk:
+                    from database.manager import force_update_study_path
+                    force_update_study_path(study_pk, study_path)
+        except Exception:
+            pass
+
+    if not study_path and study_uid:
+        study_path = str(SOURCE_PATH / study_uid)
+    if not study_path:
+        return None
+
+    _has_dicom = False
+    try:
+        _has_dicom = has_subfolders(study_path)
+    except Exception:
+        pass
+    if not _has_dicom:
+        _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
+        if not (_thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir())):
+            return None
+    return study_path
+
+
 # ── OPT-24 (2026-07-11): patient-search client-side waste removal ──────────────
 # MEASURED (2026-07-11 logs): the ~5 s patient-list latency is SERVER-side —
 # [NET_TIMING] endpoint=GetPatientList server_wait_ms=5016..5941 transfer_ms=0-1
@@ -193,6 +279,65 @@ class HomeSearchService:
 
         return patients
 
+    # ── OPT-50: worker-side preparation of a Local result set ────────────────
+
+    @staticmethod
+    def _resolve_display_paths(patients: list | None) -> list:
+        """Resolve every row's on-disk path + renderable verdict on a worker.
+
+        Stamps ``_aipacs_renderable`` on each dict. ``render_one`` reads that
+        instead of hitting the filesystem itself; any row the worker has not
+        reached yet simply falls back to the inline resolve, so this can never
+        make a row disappear or block the GUI.
+        """
+        for patient in (patients or []):
+            try:
+                path = _resolve_renderable_study_path(patient)
+            except Exception:
+                path = None
+            if path:
+                patient['study_path'] = path
+            patient['_aipacs_renderable'] = path is not None
+        return patients or []
+
+    @staticmethod
+    def _collect_list_prefetch(patients: list | None) -> dict:
+        """ONE batched query for each lookup the row renderer used to do per row.
+
+        The patient table resolved two things per rendered row, each opening its
+        own SQLite connection: the Imported-On stamp
+        (``_resolve_imported_on`` → ``get_imported_at_map`` with a single UID)
+        and the visited flag (``check_patient_visited`` → ``find_patient_pk``).
+        On a 2000-study list that is ~4000 connections on the GUI thread. Two
+        batched queries replace all of them.
+
+        Never raises — an empty result just means the table falls back to its
+        original per-row lookups.
+        """
+        uids, pids = [], []
+        seen_u, seen_p = set(), set()
+        for p in (patients or []):
+            u = str(p.get('study_uid') or '').strip()
+            if u and u not in seen_u:
+                seen_u.add(u)
+                uids.append(u)
+            i = str(p.get('patient_id') or '').strip()
+            if i and i not in seen_p:
+                seen_p.add(i)
+                pids.append(i)
+        out = {'uids': uids, 'imported_at': {}, 'known_patient_ids': set()}
+        try:
+            from database.dicom_db import get_imported_at_map
+            out['imported_at'] = get_imported_at_map(uids)
+        except Exception:
+            _logger.debug("[OPT-50] imported_at prefetch failed", exc_info=True)
+        try:
+            from database.dicom_db import get_existing_patient_ids
+            out['known_patient_ids'] = get_existing_patient_ids(pids)
+        except Exception:
+            _logger.debug("[OPT-50] visited prefetch failed", exc_info=True)
+        return out
+
     @staticmethod
     def _normalize_sort_date(value: object) -> str:
         """Return YYYYMMDD-like sortable string; unknown dates go to the end."""
@@ -313,6 +458,20 @@ class HomeSearchService:
                     self._sort_studies_by_date_time_ascending,
                     patients,
                 )
+                # OPT-50: two batched queries replace the ~2 SQLite connections
+                # the renderer opened PER ROW (Imported-On stamp + visited flag).
+                # Runs on a worker; the table then answers both from memory.
+                if _db_prefetch_enabled():
+                    _pref = await loop.run_in_executor(
+                        self._thread_pool(), self._collect_list_prefetch, patients,
+                    )
+                    try:
+                        home.patient_table_widget.prime_imported_on_cache(
+                            _pref.get('uids'), _pref.get('imported_at'))
+                        home.patient_table_widget.prime_visited_patient_ids(
+                            _pref.get('known_patient_ids'))
+                    except Exception:
+                        _logger.debug("[OPT-50] cache prime skipped", exc_info=True)
 
             if self._cancelled:
                 raise asyncio.CancelledError()
@@ -322,54 +481,22 @@ class HomeSearchService:
             home.search_progress.setValue(0)
 
             if patients:
-                from PacsClient.pacs.patient_tab.utils.utils import has_subfolders, THUMBNAIL_PATH
-                from PacsClient.utils.db_manager import find_study_pk_with_study_uid
-
                 # Render exactly ONE study row; returns True if a row was added
                 # (False = skipped: no DICOM/thumbnails on disk). Shared by the
-                # progressive path AND the legacy render-all path so the
-                # path-resolution + skip filtering lives in one place.
+                # progressive path AND the legacy render-all path.
+                #
+                # OPT-50: the path resolution + skip filtering moved into the
+                # module-level `_resolve_renderable_study_path`, and is normally
+                # done AHEAD of this call on a worker thread — so the common case
+                # here is pure widget work with ZERO disk I/O on the GUI thread.
+                # A row the worker has not reached yet (or the kill switch being
+                # off) falls back to resolving inline, exactly as before.
                 def render_one(patient):
-                    study_path = patient.get('study_path')
-                    study_uid = patient.get('study_uid')
-
-                    _need_fallback = False
-                    if not study_path:
-                        _need_fallback = True
-                    elif study_uid:
-                        try:
-                            if not Path(study_path).exists():
-                                _need_fallback = True
-                        except Exception:
-                            _need_fallback = True
-
-                    if _need_fallback and study_uid:
-                        try:
-                            fallback_path = SOURCE_PATH / study_uid
-                            if fallback_path.exists() and has_subfolders(fallback_path):
-                                study_path = str(fallback_path)
-                                patient['study_path'] = study_path
-                                study_pk = find_study_pk_with_study_uid(study_uid)
-                                if study_pk:
-                                    from database.manager import force_update_study_path
-                                    force_update_study_path(study_pk, study_path)
-                        except Exception:
-                            pass
-
-                    if not study_path and study_uid:
-                        study_path = str(SOURCE_PATH / study_uid)
-                    if not study_path:
-                        return False
-
-                    _has_dicom = False
-                    try:
-                        _has_dicom = has_subfolders(study_path)
-                    except Exception:
-                        pass
-                    if not _has_dicom:
-                        _thumb_dir = THUMBNAIL_PATH / study_uid if study_uid else None
-                        if not (_thumb_dir and _thumb_dir.exists() and any(_thumb_dir.iterdir())):
+                    if '_aipacs_renderable' in patient:
+                        if not patient['_aipacs_renderable']:
                             return False
+                    elif _resolve_renderable_study_path(patient) is None:
+                        return False
 
                     home.add_data2patient_list_table(
                         patient_id=patient.get('patient_id'),
@@ -396,6 +523,26 @@ class HomeSearchService:
                     # the first batch is the newest studies (matches the table's
                     # default date-desc sort).
                     patients_display = list(reversed(patients))
+                    if _paths_offthread_enabled():
+                        # OPT-50: resolve the FIRST page's paths now (a few dozen
+                        # rows — milliseconds) so first paint is not delayed, then
+                        # let a worker resolve the remainder while the background
+                        # streamer renders. The worker comfortably outruns the
+                        # 40-rows-per-50 ms streamer; anything it has not reached
+                        # yet falls back to the inline resolve in render_one, so
+                        # the race is harmless by construction.
+                        await loop.run_in_executor(
+                            self._thread_pool(), self._resolve_display_paths,
+                            patients_display[:_PATHS_HEAD],
+                        )
+                        _tail = patients_display[_PATHS_HEAD:]
+                        if _tail:
+                            _fut = loop.run_in_executor(
+                                self._thread_pool(), self._resolve_display_paths, _tail)
+                            # Consume any exception so asyncio never warns about a
+                            # never-retrieved future; per-row failures are already
+                            # swallowed inside _resolve_display_paths.
+                            _fut.add_done_callback(lambda f: f.exception())
                     home.search_progress.setVisible(False)
                     home.patient_table_widget.load_progressive(
                         patients_display, render_one

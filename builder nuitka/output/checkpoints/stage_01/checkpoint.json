@@ -2,7 +2,7 @@
   "stage": 1,
   "key": "minimal_core",
   "title": "Minimal Core Smoke Build",
-  "created_at_utc": "2026-07-16T08:19:45.078496+00:00",
+  "created_at_utc": "2026-08-02T18:16:29.284248+00:00",
   "marker_only": true,
   "command": [
     "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
@@ -12,7 +12,7 @@
     "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_01_minimal_core",
     "--output-filename=AIPacs.exe",
     "--product-name=AIPacs",
-    "--product-version=3.5.3",
+    "--product-version=3.5.7",
     "--company-name=AIPacs",
     "--file-description=AIPacs - staged Nuitka build",
     "--windows-console-mode=attach",
@@ -21,7 +21,6 @@
     "--python-flag=static_hashes",
     "--python-flag=safe_path",
     "--lto=auto",
-    "--msvc=latest",
     "builder nuitka/stage_entrypoints/stage1_minimal_bootstrap.py"
   ],
   "output_paths": [

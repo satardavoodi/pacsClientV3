@@ -32,8 +32,41 @@ C.7.6.17 (Dimension Organization).
 
 from __future__ import annotations
 
+import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, List, Optional, Sequence, Tuple
+
+# Derive per-frame geometry for a single-file multi-frame that carries NO
+# functional groups but whose TOP-LEVEL tags describe a uniform 2D slice stack
+# (Siemens "syngo" multi-frame Secondary Capture: one file per series, top-level
+# IOP + IPP(frame 0) + SpacingBetweenSlices, no Per-Frame Functional Groups). The
+# stack is real (verified: top-level IPP.normal == SliceLocation) but every frame
+# shares the one top-level position, so reference lines / slice-location / sync
+# cannot tell the frames apart. Default OFF: this SYNTHESISES clinical geometry
+# (the overall stack DIRECTION cannot be proven from the file alone), so it ships
+# opt-in until the reference-line direction is visually verified, then the default
+# is flipped. `=0` = byte-identical legacy (frames stay geometry-less → classified
+# `unknown`). Direction flip: AIPACS_FAST_MULTIFRAME_STACK_SIGN=-1.
+_DERIVE_STACK_GEOMETRY = str(
+    os.environ.get("AIPACS_FAST_MULTIFRAME_DERIVE_GEOMETRY", "1")
+).strip().lower() not in ("0", "false", "no", "off")
+
+# Use the vendor protocol's REAL per-slice positions. This is the ONLY source in such
+# a file that PROVES where each frame sits, so it is the default and the uniform guess
+# below is not used unless explicitly asked for.
+_DERIVE_FROM_PROTOCOL = str(
+    os.environ.get("AIPACS_FAST_MULTIFRAME_PROTOCOL_GEOMETRY", "1")
+).strip().lower() not in ("0", "false", "no", "off")
+
+# The UNPROVEN uniform-step guess (IPP_0 + k*step*normal) for files where nothing
+# describes the frame layout. Default OFF: measured against this scanner's own data it
+# put the coronal stack ~160 mm outside the patient and the sagittal stack off-midline,
+# because neither the anchor end nor the step direction is actually fixed. Opt in only
+# for a vendor whose layout you have verified.
+_DERIVE_UNIFORM_FALLBACK = str(
+    os.environ.get("AIPACS_FAST_MULTIFRAME_UNIFORM_GUESS", "0")
+).strip().lower() not in ("0", "false", "no", "off")
 
 # ── Classification kinds ────────────────────────────────────────────────────
 KIND_SINGLE = "single_frame"              # NumberOfFrames <= 1 (not multi-frame)
@@ -197,6 +230,17 @@ def read_frame_geometries(ds: Any) -> List[FrameGeometry]:
             stack_id=stack_id, in_stack_position=in_stack,
             dimension_index_values=dim_idx, temporal_position_index=temporal,
         ))
+
+    # Fallback: a multi-frame file with NO usable per-frame functional-group
+    # geometry, but whose TOP-LEVEL tags describe a uniform 2D slice stack
+    # (Siemens syngo multi-frame Secondary Capture). Derive per-frame positions so
+    # reference lines / sync / slice-location work. Opt-in; skipped entirely when
+    # the functional groups already yielded geometry, so the Enhanced path is
+    # byte-identical.
+    if _DERIVE_STACK_GEOMETRY and n > 1 and not any(f.has_spatial_geometry for f in out):
+        derived = derive_stack_frame_geometries(ds, n)
+        if derived is not None:
+            return derived
     return out
 
 
@@ -246,6 +290,245 @@ def _position_along(ipp: Sequence[float], normal: Sequence[float]) -> float:
 
 def _iop_key(iop: Sequence[float], ndigits: int = 2) -> Tuple[float, ...]:
     return tuple(round(float(x), ndigits) for x in iop)
+
+
+def _stack_step_sign() -> float:
+    """+1 (default) or -1: the direction frame index steps along the slice normal.
+    Overridable at runtime via AIPACS_FAST_MULTIFRAME_STACK_SIGN for the case where
+    the synthesised stack runs opposite to the acquisition order."""
+    try:
+        v = float(os.environ.get("AIPACS_FAST_MULTIFRAME_STACK_SIGN", "1") or 1.0)
+    except (TypeError, ValueError):
+        v = 1.0
+    return -1.0 if v < 0 else 1.0
+
+
+_ASCCONV_RE = re.compile(r"### ASCCONV BEGIN(.*?)### ASCCONV END ###", re.S)
+_SLICE_POS_RE = re.compile(
+    r"sSliceArray\.asSlice\[(\d+)\]\.sPosition\.d(Sag|Cor|Tra)\s*=\s*(-?[\d.eE+]+)"
+)
+_SLICE_ANY_RE = re.compile(r"sSliceArray\.asSlice\[(\d+)\]\.")
+_SLICE_NORMAL_RE = re.compile(
+    r"sSliceArray\.asSlice\[(\d+)\]\.sNormal\.d(Sag|Cor|Tra)\s*=\s*(-?[\d.eE+]+)"
+)
+
+
+def _ascconv_block(ds: Any) -> Optional[str]:
+    try:
+        for tag in ((0x0029, 0x1020), (0x0029, 0x1010)):
+            if tag not in ds:
+                continue
+            try:
+                raw = bytes(ds[tag].value)
+            except Exception:
+                continue
+            m = _ASCCONV_RE.search(raw.decode("latin-1", errors="ignore"))
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+    return None
+
+
+def protocol_is_multi_orientation(ds: Any) -> bool:
+    """True when the vendor protocol says the slices do NOT share one orientation.
+
+    A 3-plane localizer / survey packs axial+sagittal+coronal frames into ONE
+    multi-frame file, but a Secondary Capture keeps only a SINGLE top-level
+    ImageOrientationPatient — the per-frame orientations are lost. Such a series can
+    never be reconstructed into one stack, so deriving geometry for it would place
+    most of its frames somewhere they never were. Detect it from
+    ``sSliceArray.asSlice[i].sNormal`` and refuse. Never raises.
+    """
+    try:
+        asc = _ascconv_block(ds)
+        if not asc:
+            return False
+        norms: dict = {}
+        for m in _SLICE_NORMAL_RE.finditer(asc):
+            norms.setdefault(int(m.group(1)), {"Sag": 0.0, "Cor": 0.0, "Tra": 0.0})[m.group(2)] = float(m.group(3))
+        if len(norms) < 2:
+            return False
+        vecs = []
+        for i in sorted(norms):
+            d = norms[i]
+            v = (d["Sag"], d["Cor"], d["Tra"])
+            if _norm(v) < 1e-6:
+                continue
+            m = _norm(v)
+            vecs.append((v[0] / m, v[1] / m, v[2] / m))
+        if len(vecs) < 2:
+            return False
+        first = vecs[0]
+        for v in vecs[1:]:
+            if abs(_dot(first, v)) < 0.99:      # >~8 deg apart ⇒ a different plane
+                return True
+        return False
+    except Exception:
+        return False
+
+
+def read_protocol_slice_positions(ds: Any) -> List[Tuple[float, float, float]]:
+    """TRUE per-slice CENTRES from the Siemens CSA protocol block, in LPS mm.
+
+    A Siemens multi-frame Secondary Capture carries no functional groups, but its
+    private CSA header still embeds the acquisition protocol
+    (``### ASCCONV BEGIN ... END ###``) including
+    ``sSliceArray.asSlice[i].sPosition.d{Sag,Cor,Tra}`` — the real position of every
+    slice in the stack. That is the ONLY ground truth in the file for how the frames
+    are laid out; without it the stack direction and origin have to be guessed (and
+    guessing is what put the coronal stack ~160 mm off the anatomy).
+
+    Siemens omits zero-valued fields, so a slice referenced anywhere in the block but
+    missing a component defaults that component to 0.0. Returns [] when absent.
+    Never raises.
+    """
+    try:
+        for tag in ((0x0029, 0x1020), (0x0029, 0x1010)):
+            if tag not in ds:
+                continue
+            try:
+                raw = bytes(ds[tag].value)
+            except Exception:
+                continue
+            m = _ASCCONV_RE.search(raw.decode("latin-1", errors="ignore"))
+            if not m:
+                continue
+            asc = m.group(1)
+            pos: dict = {}
+            for mm in _SLICE_POS_RE.finditer(asc):
+                idx = int(mm.group(1))
+                pos.setdefault(idx, {"Sag": 0.0, "Cor": 0.0, "Tra": 0.0})[mm.group(2)] = float(mm.group(3))
+            for mm in _SLICE_ANY_RE.finditer(asc):
+                pos.setdefault(int(mm.group(1)), {"Sag": 0.0, "Cor": 0.0, "Tra": 0.0})
+            if pos:
+                return [
+                    (pos[i]["Sag"], pos[i]["Cor"], pos[i]["Tra"])
+                    for i in sorted(pos)
+                ]
+    except Exception:
+        pass
+    return []
+
+
+def _derive_from_protocol_positions(ds, n, iop, ipp0, normal, px, thick, sbs):
+    """Per-frame geometry anchored on the CSA protocol slice array.
+
+    THE RULE: take the DISPLACEMENTS from the protocol (exact, including direction and
+    any non-uniform spacing) and anchor them on the file's own top-level IPP. The
+    protocol stores slice CENTRES while IPP is the first-voxel corner, but that offset
+    is constant across the stack, so anchoring on IPP and adding only
+    ``pos[k] - pos[anchor]`` is exact and needs no corner/centre conversion.
+
+    The anchor is the protocol slice whose position along the normal matches the
+    top-level IPP — it is NOT always slice 0: on this scanner the axial and sagittal
+    series anchor on the FIRST protocol slice while the coronal anchors on the LAST,
+    which is exactly why a fixed +1 step direction placed the coronal stack outside
+    the patient. Frames then march monotonically AWAY from the anchor.
+    """
+    positions = read_protocol_slice_positions(ds)
+    if len(positions) != n or n < 2:
+        return None
+    proj = [_dot(p, normal) for p in positions]
+    a_proj = _dot(ipp0, normal)
+    anchor = min(range(n), key=lambda i: abs(proj[i] - a_proj))
+    far = max(range(n), key=lambda i: abs(proj[i] - proj[anchor]))
+    ascending = proj[far] > proj[anchor]
+    order = sorted(range(n), key=lambda i: proj[i], reverse=not ascending)
+    if _stack_step_sign() < 0:
+        order = list(reversed(order))
+    base = positions[order[0]]
+    out: List[FrameGeometry] = []
+    for k, i in enumerate(order):
+        p = positions[i]
+        ipp_k = (
+            ipp0[0] + (p[0] - base[0]),
+            ipp0[1] + (p[1] - base[1]),
+            ipp0[2] + (p[2] - base[2]),
+        )
+        out.append(FrameGeometry(
+            frame_index=k, ipp=ipp_k, iop=iop, pixel_spacing=px,
+            slice_thickness=thick, spacing_between_slices=sbs,
+        ))
+    return out
+
+
+def derive_stack_frame_geometries(ds: Any, n: int) -> Optional[List[FrameGeometry]]:
+    """Synthesise per-frame geometry for a multi-frame file that has NO functional
+    groups but whose TOP-LEVEL tags describe a uniform 2D slice stack.
+
+    IOP is constant (top-level). Position comes from the BEST available source:
+
+    1. **The Siemens CSA protocol slice array** (``_derive_from_protocol_positions``)
+       — the file's own ground truth for where each slice sits, including the stack
+       DIRECTION and which end the top-level IPP anchors. Always preferred.
+    2. Uniform-step fallback: ``IPP_k = IPP_0 + k*step*normal`` with
+       step = SpacingBetweenSlices (else SliceThickness). **This assumes frame 0 is the
+       top-level IPP and that the stack runs along +normal — and that assumption is NOT
+       universally true** (on the same scanner the coronal series anchors on the LAST
+       slice and runs the other way, which put its plane ~160 mm outside the patient).
+       So it is only a last resort, and `AIPACS_FAST_MULTIFRAME_STACK_SIGN=-1` exists to
+       flip it.
+
+    Returns a list of length ``n`` or None when the top-level is insufficient or the
+    file looks temporal (cine / angio, which must NEVER be treated as a spatial
+    stack). Never raises — a None return leaves the caller on the legacy path.
+    """
+    try:
+        iop = _float_tuple(getattr(ds, "ImageOrientationPatient", None), 6)
+        ipp0 = _float_tuple(getattr(ds, "ImagePositionPatient", None), 3)
+        if iop is None or ipp0 is None or not _iop_is_valid(iop):
+            return None
+        # A cine / temporal multi-frame (one location over time) is NOT a stack.
+        if getattr(ds, "FrameTime", None) not in (None, "") or \
+                getattr(ds, "CineRate", None) not in (None, ""):
+            return None
+        # A 3-plane localizer is not ONE stack and its per-frame orientations are not
+        # recoverable from a Secondary Capture — never invent geometry for it.
+        if protocol_is_multi_orientation(ds):
+            return None
+        sbs = _to_float(getattr(ds, "SpacingBetweenSlices", None))
+        thick = _to_float(getattr(ds, "SliceThickness", None))
+        normal = slice_normal(iop)
+        if normal is None:
+            return None
+        px = _float_tuple(getattr(ds, "PixelSpacing", None), 2)
+
+        # Preferred: real per-slice positions from the acquisition protocol.
+        if _DERIVE_FROM_PROTOCOL:
+            from_protocol = _derive_from_protocol_positions(
+                ds, n, iop, ipp0, normal, px, thick, sbs,
+            )
+            if from_protocol is not None:
+                return from_protocol
+            if read_protocol_slice_positions(ds):
+                # The protocol EXISTS but does not enumerate these frames — a scout, a
+                # reformat ("MPR Thick Range"), a multi-b-value DWI, or a 3D slab.
+                # Those frames are NOT a plain stack of the protocol's slices, and
+                # every heuristic tried for them (uniform step from the top-level IPP,
+                # slab-centre reconciliation) produced confidently-wrong positions on
+                # real data. Refuse: no geometry is safe, invented geometry is not.
+                return None
+
+        if not _DERIVE_UNIFORM_FALLBACK:
+            return None
+
+        step = sbs if (sbs is not None and sbs > 1e-4) else (
+            thick if (thick is not None and thick > 1e-4) else None)
+        if step is None:
+            return None  # no slice step → cannot place frames along the normal
+        sign = _stack_step_sign()
+        out: List[FrameGeometry] = []
+        for k in range(n):
+            d = sign * float(k) * step
+            ipp_k = (ipp0[0] + d * normal[0], ipp0[1] + d * normal[1], ipp0[2] + d * normal[2])
+            out.append(FrameGeometry(
+                frame_index=k, ipp=ipp_k, iop=iop, pixel_spacing=px,
+                slice_thickness=thick, spacing_between_slices=sbs,
+            ))
+        return out
+    except Exception:
+        return None
 
 
 # ── Classification ──────────────────────────────────────────────────────────

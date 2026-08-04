@@ -12,6 +12,7 @@ from functools import partial
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QLabel, QProgressDialog, QSlider, QWidget
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
+from PacsClient.utils.series_pairing import can_pair_series_names
 from PacsClient.pacs.patient_tab.utils import NodeViewer
 from modules.viewer.viewer_backend_config import BACKEND_PYDICOM_QT
 
@@ -394,8 +395,10 @@ class _PWViewersMixin:
                     try:
                         item = self.lst_thumbnails_data[i]
                         series_name_2 = item.get('metadata', {}).get('series', {}).get('series_name', '')
-                        
-                        if series_name_2 == series_name:
+
+                        # MG-PAIR-1: bare `==` matched None==None / 'None'=='None'
+                        # and combined unrelated MG views into one stack.
+                        if can_pair_series_names(series_name, series_name_2):
                             flag_open_combine_viewer = True
                             vtk_widget_data_2 = item.get('vtk_image_data')
                             metadata_2 = item.get('metadata')

@@ -36,16 +36,16 @@ from PySide6.QtWidgets import (
 # disagree with the running build.
 RELEASE_INFO = {
     "app_name": "AI-PACS Viewer",
-    "version": "3.5.7",
-    "build_date": "2026-08-02",
-    "release_date": "2026-08-02",
+    "version": "3.5.8",
+    "build_date": "2026-08-04",
+    "release_date": "2026-08-04",
     "status": "Stable",          # Stable | Beta | Internal Testing
     "changes": [
-        "MPR is faster and no longer crashes on very large studies",
-        "The app stays responsive during heavy downloads; interrupted downloads resume",
-        "EchoMind reporting overhauled: reliable transport, safer prompts, voice templates",
-        "Choose which series to include when burning a CD or offline package",
-        "Corrected patient IDs stay corrected after a server refresh",
+        "Refreshed, more consistent interface across Home, login, and settings",
+        "Reference lines now track in every view, not just the one you clicked",
+        "The local patient list opens far faster on large archives",
+        "Multi-frame studies show correct reference lines and scroll smoothly",
+        "Numerous stability, layout, and Persian-text refinements",
     ],
     "modules": ["Viewer", "Download Manager", "MPR", "EchoMind", "EagleEye"],
 }
@@ -80,7 +80,7 @@ COMPANY_INFO = {
 PERSIAN_EDITION = {
     "title": "Persian Customized Edition",
     "en": [
-        "AI-PACS Version 3.5.7",
+        "AI-PACS Version 3.5.8",
         "This edition has been customized and localized for Persian-speaking "
         "users at the request of our business partner, Iran Nobat, in Iran.",
         "This customized version includes workflow, language, and usability "
@@ -89,7 +89,7 @@ PERSIAN_EDITION = {
         "Developed by AI-PACS in collaboration with Iran Nobat.",
     ],
     "fa": [
-        "AI-PACS نسخهٔ ۳.۵.۷",
+        "AI-PACS نسخهٔ ۳.۵.۸",
         "این نسخه بنا به درخواست شریک تجاری ما، «ایران نوبت»، به‌طور اختصاصی "
         "برای کاربران فارسی‌زبان در ایران سفارشی‌سازی و بومی‌سازی شده است.",
         "این نسخهٔ سفارشی شامل تطبیق‌های گردش‌کار، زبان و کاربری است که به‌طور "

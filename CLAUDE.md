@@ -622,6 +622,83 @@ synchronous disk I/O on the GUI thread** for every row — `os.walk(ATTACHMENT_P
   / switch to Local with a large DB → list paints immediately, Status chips fill a moment later, no
   multi-second freeze). Same class as OPT-24 (patient-list slow) / OPT-27 (Eagle-Eye scan off-thread).
 
+### Local patient list is O(N)-per-row, not O(N²) — OPT-50 (2026-08-03)
+The Status column above was one of FOUR per-row costs. The list was **quadratic** and became unusable
+past ~2000 studies: OPT-43 (2026-07-24) fixed only the FIRST PAINT; the background streamer still paid
+the whole bill. Before touching `add_patient_data`, `_finalize_bulk_insert_ui`, `load_progressive` or
+the Assign/Report columns, know these four rules — each has a kill switch and a guard test in
+`tests/code/ui_services/test_local_list_render_opt50.py` (46), and the numbers come from
+`tests/bench/bench_local_patient_list.py` (run it with and without `--legacy` before and after any
+change here):
+
+- **Never scan the table from inside a per-row path.** The per-study dedup did (1 999 000 `item()`
+  lookups @2000 rows), and so did `report_status_for_reception` (called once per row from
+  `_assign_icon_state`). Now: a `study_uid` presence **set** (`_may_have_study_uid`) gates the dedup
+  scan, and `report_status_for_reception` uses a render-pass memo. Both preserve the original
+  semantics exactly — a set *False* is authoritative, a *True* still scans; the memo caches only a
+  NON-empty result and `setdefault`s the first row per patient, because a patient's first row asks
+  before its own row exists. Flags `AIPACS_LIST_UID_INDEX`, `AIPACS_LIST_REPORT_MEMO`.
+- **Never open a DB connection per row.** `check_patient_visited` and `_resolve_imported_on` each did
+  (4000 connections @2000 rows). `search_local` now runs `get_existing_patient_ids` +
+  `get_imported_at_map` ONCE on the worker and primes the widget (`prime_visited_patient_ids` /
+  `prime_imported_on_cache`). Misses are primed as `""` so a study with no stamp does not re-query.
+  Un-primed callers keep the legacy lookup. Flag `AIPACS_LIST_DB_PREFETCH`.
+- **`_finalize_bulk_insert_ui` runs once per BATCH (~50× per load), so nothing whole-table belongs in
+  it while streaming.** It used to anti-alias the entire table (N×C `setFont`, each emitting
+  `dataChanged`), re-sort the entire table, and recompute an O(N) count — every batch. Now: incremental
+  anti-alias over the new row range only (`apply_anti_aliasing_to_rows`; a non-growing refresh still
+  gets the full pass), no count while streaming, and ONE debounced `_on_stream_settled` sort 140 ms
+  after the last batch. **That settle sort uses the ACTIVE sort column** — the old code only sorted
+  when NO user sort was active, so with a saved sort every streamed row was appended UNSORTED at the
+  bottom. Flag `AIPACS_LIST_BATCH_FINALIZE`.
+- **A JSON store read per row is disk I/O per row.** `ino_assignment_server_state._load`,
+  `ino_assignment_history.read_all` and `ino_assignment._config` were re-opened and re-parsed **three
+  times per row** by the Assign/Report columns — 6.7 s / 2400 calls @800 rows, HALF the whole render.
+  All three now have **mtime+size-guarded** read caches with explicit write invalidation and copy-out.
+  `_save` invalidates in its `finally`, not on success: `set_state` mutates the dict `_load` returned,
+  so a FAILED save must not leave that change visible. Flag `AIPACS_INO_STORE_CACHE`.
+
+Also: `render_one`'s per-row `stat`/`opendir` moved to the worker via module-level
+`_resolve_renderable_study_path` (head-of-list before paint, tail in the background, **inline fallback
+so the worker is never a precondition**) — `AIPACS_LIST_PATHS_OFFTHREAD`; `_programmatic_sort` reads one
+field per row (`_row_study_uid`) instead of building a ~30-lookup dict, which speeds every user column
+sort; and five missing indexes were added (`studies.patient_fk` — the LEFT JOIN key — `study_date`,
+`imported_at`, `modality`, `patients.patient_name`).
+
+Result @2000 studies: full load **42.7 s → 13.9 s**, worst GUI block **1139 → 271 ms**, first paint
+**285 → 114 ms**, SQLite round-trips **4000 → 1**. What remains is LINEAR ~6 ms/row of genuine widget
+construction (4 `setCellWidget`, ~16 items, a per-row `setStyleSheet` = a CSS parse per row). **Going
+materially faster needs DB-side paging (`ORDER BY … LIMIT`) or a QAbstractTableModel + delegates —
+deliberately NOT done** (paging breaks select-all / download-selected / column sort covering the whole
+result set, plus the pinned overlay and persisted sort settings). Report:
+`docs/reports/LOCAL_PATIENT_LIST_RENDER_OPT50_2026-08-03.md`.
+
+### Form-field trailing icon buttons live in TWO functions (2026-08-04)
+Every blue icon button at the right of a field — the server picker's chevron, the
+Patient-ID advanced-search button, the Patient-Name icon, the date-preset chevron and
+both calendar buttons, on Home AND login AND settings — is built by exactly two helpers in
+`PacsClient/utils/login_form_styles.py`: `_configure_icon_rail_button` (geometry) and
+`_icon_rail_btn_qss` (appearance), used by `LoginComboField` / `LoginLineField` /
+`LoginDateField`. **A change there is never local — it restyles the login screen too.**
+Render `tests/bench/render_field_chips.py` before and after; guard:
+`tests/code/ui_services/test_field_icon_chip.py` (15).
+
+They were a "rail" — meant to sit flush against the field's right edge, square on the
+left, rounded only on the right. It never landed flush: the button was
+`34 x (field_h - 4)` inside a shell of `field_h` with a 1px border, so at the Home page's
+`field_h=36` it floated inside the shell and its 5px right corners never lined up with the
+shell's 6px ones (5px on a 32px block barely reads as a curve). The user reported it as
+"sharp corners and slightly too large". Two authorities also disagreed about the width —
+`setFixedSize` said 34px and the QSS `min-width`/`max-width` repeated it.
+
+Now a **chip**: a square button (`field_h - 12`, floor 22 → 24px at Home, 28px at login)
+with one uniform `border-radius`, no separator, inset from the field edge by the root
+layout's right margin (`icon_rail_right_margin()`). **The QSS no longer sets any width or
+height — `setFixedSize` is the single authority**, and an oversized glyph is clamped to
+`side - 8` so the smaller chip never looks stuffed. `AIPACS_FIELD_ICON_CHIP=0` restores
+the rail exactly (including the shell stylesheet's 6px vs the themed 5px, via
+`legacy_radius`).
+
 ### Sortable Status / Report columns — widget-backed cells (2026-07-18)
 Status and Report were the only two unsortable columns for a structural reason: both render a
 **cell widget**, and a widget carries **no item data**, so `sortItems` had nothing to compare.
@@ -701,6 +778,50 @@ import of an old study. **Hidden by default**, opt-in via the gear ▸ Column Se
   settings files have no key `"15"` → the column keeps its shipped default (hidden, width 140).
 - Guard: `tests/code/ui_services/test_imported_on_column.py` (18). Neither file is plugin-mirrored.
   **NEEDS live source-build verify** (enable via gear, import from CD, sort by the column).
+
+### Reference lines are BIDIRECTIONAL — a line belongs to a PAIR of planes (2026-08-03)
+Axial→sagittal/coronal worked, but sagittal→axial/coronal and coronal→anything never
+appeared. Before editing `manage_reference_line` / `_manage_reference_line_all_pairs` /
+`_rl_collect_viewport_records` / `_rl_get_target_widgets` (`_pw_sync.py`) or
+`rl_ensure_line_actor` / `rl_hide_actor_if_any` (`reference_line.py`), know:
+- **ROOT: the engine was structurally SINGLE-SOURCE.** `manage_reference_line` took ONE
+  source — `self.selected_widget` — computed its plane once, then looped over the other
+  viewports as targets. There was no (source, target) pair loop anywhere. And **selection
+  is CLICK-only** (`qt_slice_viewer.mousePressEvent` → `change_container_border`;
+  `wheelEvent` never selects), so wheel-scrolling the sagittal view left the source pinned
+  to the last-clicked (axial) viewport. A slice change in a NON-selected viewport *did*
+  schedule an update — it just recomputed the SAME axial plane. Not hardcoded to axial:
+  hardcoded to *whichever viewport was clicked last*, which in practice is the axial.
+- **THE RULE: every viewport is BOTH a source and a target.** `_manage_reference_line_all_pairs`
+  resolves each viewport's plane + geometry-instance list ONCE
+  (`_rl_collect_viewport_records`), then for each TARGET intersects its slice quad against
+  every OTHER viewport's plane and accumulates the segments. A viewport never draws its own
+  plane on itself (`if srec is trec: continue`). So Axial↔Sagittal↔Coronal all update when
+  ANY of them changes slice.
+- **Cost is unchanged where it matters:** the per-viewport work (`_geometry_instances_for_viewer`,
+  the O(N log N) instance sort, the quad build) stays V calls — the legacy code already did
+  V+1. Only the cheap plane×quad intersection is per-pair (V² of small numpy on ≤4 viewports).
+- **Qt needed NO API change** — `set_overlay_lines(list)` already stores and paints N
+  segments with per-segment colour/width; only its single call site ever passed a 1-element
+  list. **VTK did**: `rl_ensure_line_actor` cached ONE actor per viewer, so it gained a
+  `slot` arg — **slot 0 keeps the original `_ref_line_src`/`_ref_actor` attributes
+  (byte-identical single-line path)**, extra slots live in `_ref_line_slots`, and
+  `rl_hide_actor_if_any` now hides EVERY slot so a pair that stops intersecting cannot
+  leave a stale line. The VTK path hides all slots before redrawing.
+- **`_rl_get_target_widgets` must include the selected widget** when all-pairs is on — it
+  is now a target too, and excluding it would leave its own lines unpainted by the 50 ms
+  round-robin repaint. The legacy path still excludes the source.
+- Flag `AIPACS_REFERENCE_LINES_ALL_PAIRS` (default **ON**; `=0` = the legacy single-source
+  body, preserved verbatim as the kill switch). Neither `_pw_sync.py` nor
+  `reference_line.py` is plugin-mirrored (mirrors verified 422/422). Guard:
+  `tests/code/viewer/test_reference_lines_all_pairs.py` (14 — incl. "the never-selected
+  viewports still broadcast" and "scrolling a non-selected viewport moves the line
+  elsewhere"). NEEDS live source-build verify (3 orthogonal series in 3 viewports → scroll
+  each in turn; the other two lines must track every time).
+- **Related micro-fix:** `_sort_instances_by_instance_number` ran a full N-key sort per
+  viewport per tick even though a multi-frame series gives every frame the SAME
+  `instance_number` AND the same `instance_path` (so the sort provably cannot reorder). It
+  now returns the list unchanged when already ordered.
 
 ### Multi-study viewer (patients with >1 study under one Patient ID)
 Before editing the viewer thumbnail sidebar, the series-load path
@@ -1773,6 +1894,108 @@ one `SliceMeta` per FILE and the decoder did `arr = arr[0]`. Before editing
   `tests/code/viewer/test_fast_multiframe.py` (real synthetic multi-frame DICOM: header
   captures N, `arr[k]` selects frame k, + wiring pins). NEEDS live verify when a cine
   series is available. Neither file is plugin-mirrored.
+- **STACKING was O(N²) — reuse the decoded `ds` per file (2026-08-02, patient 9202182227
+  series 11).** An imported study with ONE file per series, each file holding many frames
+  (`NumberOfFrames>1`), stacked SLOWLY. The expansion turns the file into N `SliceMeta`
+  sharing one `sm.path`, but `_decode_slice` did a fresh `pydicom.dcmread(sm.path)` +
+  `ds.pixel_array` for EACH frame — and `ds.pixel_array` decodes ALL N frames — so scrolling
+  through the series re-read + re-decoded the WHOLE file at every step = **O(N²)**. FIX (flag
+  `AIPACS_FAST_MULTIFRAME_WHOLE_CACHE`, default ON; `=0` = legacy per-frame decode): a bounded
+  LRU `_mf_ds_cache` (path → decoded `ds`, size `AIPACS_FAST_MULTIFRAME_WHOLE_CACHE_MAX`=2)
+  caches the `ds` after the first frame's read; frames 2..N reuse pydicom's cached
+  `ds.pixel_array` (no re-read, no re-decode) → **O(N)**. `_mf_ds_cache_get/put` never raise
+  (a miss / any error falls back to a fresh read); cleared in `open_series`. **Only reached for
+  multi-frame slices** (`frame_index is not None`) — single-frame series NEVER populate it
+  (byte-identical). The L2 disk-cache lookup runs FIRST (unchanged), so a warm re-open is still
+  a disk hit; the ds-cache only helps the first cold stack-through. Frame SELECTION
+  (`arr[_frame]`) and the subproc-guard are unchanged, so decoded pixels are identical (the
+  `test_background_prefetch_does_not_poison_multiframe_with_frame0` regression still passes).
+  `lightweight_2d_pipeline.py` IS plugin-mirrored — synced host-side (SHA256 verified). Guard:
+  `tests/code/viewer/test_multiframe_ds_cache.py` (2: one file read for N frames + flag-off
+  re-reads). NEEDS live source-build verify (scroll series 11 → smooth stacking; the foreground
+  probe logs `source=multiframe_ds_cache` cache hits after the first frame).
+- **REFERENCE LINES / geometry on a TOP-LEVEL-ONLY multi-frame stack (2026-08-03, patient
+  9202182227).** The OPT-42 pt3 per-frame geometry reader (`multiframe_geometry.read_frame_geometries`)
+  reads geometry ONLY from the Shared/Per-Frame Functional Groups (Enhanced MR/CT). A **Siemens
+  "syngo" multi-frame Secondary Capture** (SOP `1.2.840.10008.5.1.4.1.1.7`, one file per series, N
+  frames) packs a real 2D slice stack but stores geometry in the **TOP-LEVEL** tags (IOP + IPP of
+  frame 0 + `SpacingBetweenSlices`) with **NO functional groups** → the reader returned all-None →
+  classified `unknown` (confirmed live: `multiframe-expand files=1 -> slices=34 kind=unknown`) → the
+  expansion stamped **every frame with the identical frame-0 position** (the bridge still swapped
+  `[MULTIFRAME-SYNC-INSTANCES] 1 -> 34`, but all 34 were coplanar) → reference lines / sync /
+  slice-location could not tell frames apart (static line). The MR was verified: `IPP·normal ==
+  SliceLocation`, so frame 0 IS the top-level IPP and the stack is real.
+  - **THE FIX IS THE VENDOR PROTOCOL, NOT A GUESS (corrected 2026-08-03 after live testing).** The
+    first cut synthesised `IPP_k = IPP_0 + k·step·normal`, assuming frame 0 == top-level IPP and a
+    +normal march. **Measured against this scanner's own data that is wrong for most series**: the
+    coronal stack landed ~160 mm outside the patient (all 6 plane-pair intersections failed) and the
+    sagittal stack sat off-midline. The top-level IPP anchors the **FIRST** protocol slice for
+    axial/sagittal but the **LAST** for coronal, and the sagittal steps along **−normal** — so neither
+    the anchor end nor the direction is fixed, and no global sign flag can fix it.
+  - **`read_protocol_slice_positions(ds)`** parses the Siemens CSA private tag's ASCCONV block
+    (`sSliceArray.asSlice[i].sPosition.d{Sag,Cor,Tra}`) — the file's ONLY ground truth for where each
+    slice sits. `_derive_from_protocol_positions` then takes only the **DISPLACEMENTS** from the
+    protocol and anchors them on the file's own top-level IPP (the protocol stores slice CENTRES and
+    IPP is the first-voxel corner, but that offset is constant across the stack, so anchoring cancels
+    it exactly — no corner/centre conversion needed). The anchor is the protocol slice whose
+    projection matches the IPP; frames then march monotonically away from it. This also preserves
+    genuinely non-uniform spacing.
+  - **Verified on the real study:** all 6 ordered pairs (axial/sagittal/coronal) now intersect, and
+    the 15-slice sagittal stack straddles the midline (x −24.9…+25.4, mid frame x = 0.3).
+  - **REFUSE rather than invent.** If the protocol exists but does NOT enumerate the frames — a
+    3-plane scout (`lSize=1` for 128 frames), a reformat (`<MPR Thick Range>`), a multi-b-value DWI,
+    or a 3D slab (SWI, `t1_mpr_sag`) — the frames are not a plain stack of protocol slices and BOTH
+    heuristics tried (uniform step; slab-centre reconciliation) produced confidently-wrong positions
+    on real data. Those series stay geometry-less (`unknown`) and simply show no reference line.
+    `protocol_is_multi_orientation` additionally refuses a localizer via `sSliceArray[i].sNormal`.
+  - Flags: `AIPACS_FAST_MULTIFRAME_DERIVE_GEOMETRY` **default ON** (everything it now does is proven),
+    `AIPACS_FAST_MULTIFRAME_PROTOCOL_GEOMETRY=0` disables the protocol path,
+    `AIPACS_FAST_MULTIFRAME_UNIFORM_GUESS=1` re-enables the **unproven** uniform guess for a vendor
+    whose layout you have verified (default OFF — it is what caused this bug). A cine/temporal
+    multi-frame (`FrameTime`/`CineRate`) is NEVER derived. Wired at the tail of `read_frame_geometries`
+    only when `not any(has_spatial_geometry)`, so the Enhanced functional-group path and
+    single-frame/standard series stay **byte-identical**.
+  - **MPR stays blocked** — `classify_series_files` still returns non-None for any single multi-frame
+    file (the MPR gate aborts regardless of kind), so the derived `spatial_volume` does NOT feed a
+    degenerate VTK volume. `multiframe_geometry.py` IS plugin-mirrored — synced host-side (SHA256
+    verified). Guard: `tests/code/viewer/test_multiframe_derived_stack_geometry.py` (19 — incl. the
+    anchor-on-LAST coronal case, non-uniform protocol spacing, and "a protocol that does not
+    enumerate the frames is refused"). NEEDS live source-build verify (open this study → reference
+    lines track in all three planes).
+- **SCROLLING re-read the DICOM header on EVERY slice — the choppy-large-series cause
+  (2026-08-03, series 5 = 192 frames laggy, series 6 = 34 smooth).** `_set_slice_impl`
+  calls `pipeline.get_default_window_level(idx)` on every slice change
+  (`_FAST_PER_INSTANCE_WINDOW`, default on) and that resolver
+  (`dicom_windowing.resolve_cornerstone_like_window_level_from_dicom`) has **no cache** —
+  it does a full `pydicom.dcmread(path, stop_before_pixels=True)` **on the GUI thread per
+  wheel tick**. For a single-file multi-frame series all N slices share ONE path, so the
+  identical header was re-opened + re-parsed N times per scroll-through (and for an
+  Enhanced file the parse walks the N-item PerFrameFunctionalGroupsSequence ⇒ O(N²)).
+  FIX (flag `AIPACS_FAST_WL_MEMO`, default ON; `=0` = legacy uncached): the ONE external
+  call is routed through `_resolve_cs_window_level_cached(sm)`, memoised per
+  `(path, photometric)` — the resolver's inputs are fixed per file for the life of the
+  series so the answer cannot change. **Memo only: the resolver result and every
+  downstream branch are byte-identical** (guard test compares memoised vs legacy values
+  across slices). Series-scoped (reset in `open_series`), bounded at 4096. Applied to all
+  3 call sites (2 in `get_default_window_level`, 1 in `_resolve_window_level`).
+- **L2 disk cache is pure overhead once the multi-frame `ds` is in memory (2026-08-03).**
+  `_decode_slice` consulted the L2 `DiskPixelCache` FIRST — a real file open + read per
+  frame in, and a full-frame `np.ascontiguousarray(arr).copy()` on the calling thread per
+  frame out (192 `.apc` files, ~100 MB, for one series). But once the whole-file `ds` is
+  cached in-process, extracting frame k costs NO I/O, so L2 can only ADD work. FIX (flag
+  `AIPACS_FAST_MULTIFRAME_BYPASS_L2`, default ON): the ds cache is peeked FIRST (a dict
+  lookup) and, on a hit, `disk_cache` is swapped for `_NULL_DISK_PIXEL_CACHE` (get→None,
+  put→no-op) so **every existing get/put call site stays byte-identical** — no per-put
+  edits. Non-multi-frame and cold-first-frame decodes keep the legacy L2 path.
+- **`_mf_ds_cache` is LOCKED.** It is touched by the 4 decode/prefetch worker threads AND
+  the GUI thread; `OrderedDict.move_to_end` racing another thread's `popitem` is not safe.
+  `_mf_ds_lock` (created in `__init__`, not `open_series`, so a decode before the first
+  open is still safe). Guard: `tests/code/viewer/test_scroll_wl_memo.py` (6). Also
+  measured-but-NOT-changed (documented for the next pass): the N≥50 cliff
+  (`use_stack_drag_scheduler`, surrogate frames, `fast_prefetch_radius` 4→18) means a
+  192-slice series structurally runs more work per tick than a 34-slice one, the linear
+  cache scans in `_find_nearest_cached_pixel` / `_try_surrogate_frame` grow with N, and
+  `QPixmap.fromImage` reallocates per slice.
 - **SOP class + cine timing + PLAYBACK (2026-07-01).** The header scan also captures
   `sop_class_uid` + `frame_time_ms` (FrameTime) + `cine_rate` (CineRate) +
   `recommended_display_frame_rate` (all free during the existing read;
@@ -2959,6 +3182,39 @@ editing EchoMind, know these five rules — each replaced a real defect:
   that loop ratchets it down every pass (measured 140 → 96 → 64 → 62). Guard:
   `tests/gui/test_composer_tab_layout.py` (18, real offscreen Qt). Known-benign: the Standard
   tab is ~3 px taller because its EN/PA buttons enlarge the controls row.
+
+### Eagle Eye MG/DX server worker — never GC/overwrite a running QThread (OPT-51, 2026-08-03)
+Running Eagle Eye's mammography (or bone-age) server analysis could **crash the Python process** mid-
+request. Before editing `start_mg_process` / `start_dx_process` / `MamoWorker` / `BoneAgeWorker`
+(`modules/viewer/interactor_styles/ai_chat_interactorstyle.py`, **plugin-mirrored**), **read
+`docs/reports/EAGLE_EYE_MG_WORKER_CRASH_OPT51_2026-08-03.md`**.
+- **SCOPE FIRST: the client does NOT prepare/decode/upload pixels.** It POSTs a tiny JSON
+  `{study_id, det_eval_thr, …}` to `{breast_url}/api/v1/run_full_analysis`; the **AI server pulls the
+  DICOM from its own PACS** and returns result-CSV URLs the worker downloads. So "image preparation /
+  multi-view upload / native decode crash / large buffers" are **not on the client** (no `pixel_array`/
+  `cv2`/`Image.open` in this path). A crash here is a **worker-lifecycle** bug, not networking/imaging.
+- **ROOT: `self._current_worker = worker` was the ONLY strong ref to the running QThread — never
+  cleared, never `deleteLater`-d, no re-entrancy guard.** ⇒ `QThread: Destroyed while thread is still
+  running` (Qt `abort()`): (1) a 2nd Eagle Eye run OVERWROTE the ref to the first still-running thread →
+  GC of a live QThread → abort (the overlay auto-hid at 120 s while the request ran to 240 s, so the UI
+  looked idle and the user re-clicked); (2) closing the patient/tab mid-request dropped the only ref —
+  same abort. Same class as EchoMind `_ORPHANED_WORKERS` + the curved-MPR deleted-object crash.
+- **THE RULE: a started QThread must stay strongly referenced until it ACTUALLY ends, and a second run
+  must be refused while one is in flight.** Fix (flag `AIPACS_EAGLE_WORKER_LIFECYCLE`, default on; `=0`
+  = legacy single-ref): `_LIVE_AI_WORKERS` (module set) holds every worker until `finished`/`error`
+  (then `deleteLater`); `_register_ai_worker` wires exactly-once GUI-thread cleanup that clears
+  `_current_worker` only if it still points at that worker; `_ai_worker_busy()` (tracked worker
+  `isRunning()`, `RuntimeError`→not-busy) gates BOTH `start_mg_process` and `start_dx_process`. Do NOT
+  reintroduce a bare `self._current_worker = worker` (it is the crash) and do NOT `wait()` on the worker
+  (freeze) — detach-don't-wait.
+- **Also: fail-fast `(connect, read)` timeouts** — `(10, 240)` MG / `(10, 360)` DX (a scalar applies to
+  BOTH phases ⇒ a dead host hung the thread for the full budget = "stuck request"); and the overlay
+  safety timer is **260 s > the 240 s read budget** so it can't vanish mid-request and invite the
+  re-click. `run()`'s try/except boundary, the non-OK-body-before-raise (502 detail), and the atomic
+  streamed download (`with requests.get(stream=True)` + `with open()` → handles always closed) were
+  already correct — keep them. Guard: `tests/code/ai_imaging/test_eagle_worker_lifecycle.py` (11);
+  ai_imaging 236 passed. Mirror synced 422/422. NEEDS live verify (re-click during a run → "already
+  running", no 2nd job, no crash; dead host → controlled error ~10 s; close tab mid-request → no abort).
 
 ## VS Code Agent Mode environment (configured 2026-06-02)
 

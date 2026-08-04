@@ -10,6 +10,7 @@ from PyInstaller.utils.hooks import (
     collect_data_files,
     collect_dynamic_libs,
     collect_submodules,
+    copy_metadata,
 )
 
 
@@ -23,6 +24,8 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from spec_utils import (  # noqa: E402
     app_a_datas,
+    codec_hiddenimports,
+    codec_metadata_datas,
     graphics_runtime_binaries,
     icon_path_app_a,
     load_hiddenimports,
@@ -148,6 +151,12 @@ hiddenimports = load_hiddenimports(
         "pydicom.uid",
         "pydicom.dataset",
         "pydicom.charset",
+        # TS-1 (2026-08-04): compressed-DICOM codec plugins. The modules alone
+        # are NOT enough — pylibjpeg resolves decoders through entry points in
+        # the dist-info, which `codec_metadata_datas()` bundles below. Without
+        # BOTH, JPEG 2000 / JPEG-lossless / JPEG-LS decode to nothing in the
+        # frozen build, silently. See spec_utils.CODEC_PACKAGES.
+        *codec_hiddenimports(),
         "grpc._cython.cygrpc",
         "qtawesome.iconic_font",
         "qtawesome.fonts",
@@ -222,6 +231,14 @@ for package_name in ["qtawesome"]:
         datas.extend(collect_data_files(package_name))
     except Exception:
         pass
+
+
+# TS-1 (2026-08-04): compressed-DICOM codec ENTRY-POINT metadata. This is the
+# half that was missing from the shipped installer while the Nuitka spec, the
+# legacy AIPacs.spec and the Lite Viewer all had it. Without the dist-info,
+# pylibjpeg builds an EMPTY decoder table and JPEG 2000 / JPEG-lossless /
+# JPEG-LS images fail to decode with no error the operator can act on.
+_safe_extend(datas, codec_metadata_datas(copy_metadata))
 
 
 datas = list(dict.fromkeys(datas))

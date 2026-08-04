@@ -14,6 +14,7 @@ from pathlib import Path
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QApplication, QMessageBox, QSlider
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
+from PacsClient.utils.series_pairing import can_pair_series_names
 import logging
 logger = logging.getLogger(__name__)
 
@@ -146,9 +147,11 @@ class _PWSeriesMixin:
             metadata_2 = None
 
             # Look for paired series (same series name, different data)
+            # MG-PAIR-1: only a genuine, non-placeholder shared name may pair;
+            # see PacsClient/utils/series_pairing.py.
             series_name = metadata['series']['series_name']
             for data in self.lst_thumbnails_data:
-                if (data['metadata']['series']['series_name'] == series_name and
+                if (can_pair_series_names(series_name, data['metadata']['series'].get('series_name')) and
                     data['metadata']['series']['series_number'] != series_number):
                     vtk_widget_data_2 = data['vtk_image_data']
                     metadata_2 = data['metadata']
@@ -689,7 +692,8 @@ class _PWSeriesMixin:
                 if str(data_series_number) == str(series_number):
                     series_idx = i
                 # Check if same series name but different data
-                if (self.lst_thumbnails_data[i]['metadata']['series'].get('series_name') == series_name and
+                # MG-PAIR-1: guarded equality — see _series_pairing.py.
+                if (can_pair_series_names(series_name, self.lst_thumbnails_data[i]['metadata']['series'].get('series_name')) and
                     data_series_number != series_number and 
                     id(self.lst_thumbnails_data[i]['vtk_image_data']) != id(vtk_image_data)):
                     vtk_widget_data_2 = self.lst_thumbnails_data[i]['vtk_image_data']

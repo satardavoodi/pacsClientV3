@@ -797,8 +797,154 @@ def check_stage_binary_architecture(
     return _failed(name, *detail) if enforce else _warned(name, *detail)
 
 
+# ---------------------------------------------------------------------------
+# TS-1 (2026-08-04) — compressed-DICOM codec plugins
+# ---------------------------------------------------------------------------
+# pylibjpeg builds its decoder table from importlib.metadata ENTRY POINTS, not
+# from importability. A build that bundles the codec MODULES but omits their
+# dist-info produces an app where `pylibjpeg` reports ZERO decoders and every
+# JPEG 2000 / JPEG-lossless / JPEG-LS image fails to decode — silently, because
+# any import-based capability probe still reports the codecs present. That is
+# precisely the defect these two checks exist to make un-shippable.
+#
+# import name -> distribution name (mirrors builder/spec/spec_utils.py)
+CODEC_DISTRIBUTIONS = {
+    "pylibjpeg": "pylibjpeg",
+    "libjpeg": "pylibjpeg-libjpeg",
+    "openjpeg": "pylibjpeg-openjpeg",
+    "rle": "pylibjpeg-rle",
+}
+
+# The transfer syntaxes the shipped app must be able to decode.
+REQUIRED_DECODER_UIDS = {
+    "1.2.840.10008.1.2.4.50": "JPEG Baseline",
+    "1.2.840.10008.1.2.4.51": "JPEG Extended",
+    "1.2.840.10008.1.2.4.70": "JPEG Lossless SV1",
+    "1.2.840.10008.1.2.4.80": "JPEG-LS Lossless",
+    "1.2.840.10008.1.2.4.90": "JPEG 2000 Lossless",
+    "1.2.840.10008.1.2.4.91": "JPEG 2000",
+    "1.2.840.10008.1.2.5": "RLE Lossless",
+}
+
+
+def check_codec_plugins_available() -> GateCheck:
+    """PRE-BUILD: the build environment can actually decode compressed DICOM.
+
+    A codec absent here cannot possibly be present in the frozen output, so
+    this fails fast rather than shipping a silently-undecodable build.
+    """
+    name = "codec_plugins_build_env"
+    try:
+        from importlib import metadata
+    except Exception as exc:  # pragma: no cover - stdlib
+        return _failed(name, f"importlib.metadata unavailable: {exc}")
+
+    missing_dists = []
+    for import_name, dist in sorted(CODEC_DISTRIBUTIONS.items()):
+        try:
+            metadata.version(dist)
+        except Exception:
+            missing_dists.append(f"{dist} (imports as '{import_name}')")
+
+    try:
+        from pylibjpeg.utils import get_pixel_data_decoders
+
+        decoders = set(get_pixel_data_decoders() or {})
+    except Exception as exc:
+        return _failed(
+            name,
+            f"pylibjpeg decoder table unavailable in the build environment: {exc}",
+            "install: pip install pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg pylibjpeg-rle",
+        )
+
+    missing_uids = [
+        f"{uid} ({label})"
+        for uid, label in sorted(REQUIRED_DECODER_UIDS.items())
+        if uid not in decoders
+    ]
+
+    if missing_dists or missing_uids:
+        detail = []
+        if missing_dists:
+            detail.append("codec distributions missing from the build environment:")
+            detail.extend(f"  - {d}" for d in missing_dists)
+        if missing_uids:
+            detail.append("transfer syntaxes with NO decoder registered:")
+            detail.extend(f"  - {u}" for u in missing_uids)
+        detail.append(
+            "install: pip install pylibjpeg pylibjpeg-libjpeg pylibjpeg-openjpeg pylibjpeg-rle"
+        )
+        return _failed(name, *detail)
+
+    return _passed(
+        name,
+        f"{len(CODEC_DISTRIBUTIONS)} codec distributions present; "
+        f"{len(decoders)} decoders registered, covering all "
+        f"{len(REQUIRED_DECODER_UIDS)} required transfer syntaxes",
+    )
+
+
+def check_stage_codec_metadata(stage_core: Path | None = None) -> GateCheck:
+    """POST-STAGE: the staged tree carries each codec's ENTRY-POINT metadata.
+
+    Bundling the modules alone is the exact failure this guards: the app looks
+    complete, imports fine, and decodes nothing.
+    """
+    name = "codec_entrypoint_metadata"
+    core = stage_core or STAGE_CORE_DIR
+    if not core.exists():
+        return _failed(name, f"stage core missing: {core}")
+
+    missing: list[str] = []
+    found: list[str] = []
+    for import_name, dist in sorted(CODEC_DISTRIBUTIONS.items()):
+        # PyInstaller lays dist-info out under the app root (and sometimes
+        # under _internal/), so search the whole staged core tree.
+        patterns = (
+            f"{dist.replace('-', '_')}-*.dist-info",
+            f"{dist}-*.dist-info",
+            f"{dist.replace('-', '_')}-*.egg-info",
+        )
+        hits = []
+        for pattern in patterns:
+            hits.extend(core.rglob(pattern))
+        if not hits:
+            missing.append(f"{dist} (imports as '{import_name}')")
+            continue
+        # Metadata present is necessary but not sufficient: pylibjpeg reads
+        # entry_points.txt, so an empty/absent one is the same failure.
+        if dist == "pylibjpeg":
+            found.append(dist)
+            continue
+        has_eps = any((h / "entry_points.txt").exists() for h in hits)
+        if not has_eps:
+            missing.append(f"{dist} — dist-info present but entry_points.txt MISSING")
+        else:
+            found.append(dist)
+
+    if missing:
+        return _failed(
+            name,
+            "compressed-DICOM codecs would register ZERO decoders in this build:",
+            *(f"  - {m}" for m in missing),
+            "JPEG 2000 / JPEG-lossless / JPEG-LS images would fail to decode with no",
+            "operator-visible error. Fix: builder/spec/appA_workstation.spec must call",
+            "codec_metadata_datas(copy_metadata) (see builder/spec/spec_utils.py).",
+        )
+
+    return _passed(
+        name,
+        f"entry-point metadata staged for {len(found)} codec distributions: "
+        + ", ".join(found),
+    )
+
+
 def run_pre_build_gate() -> list[GateCheck]:
-    return [check_source_freshness(), check_plugin_mirrors()]
+    return [
+        check_source_freshness(),
+        check_plugin_mirrors(),
+        check_codec_plugins_available(),
+    ]
 
 
 def run_post_stage_gate(stage_dir: Path | None = None) -> list[GateCheck]:
@@ -808,6 +954,7 @@ def run_post_stage_gate(stage_dir: Path | None = None) -> list[GateCheck]:
         check_frozen_runtime(core),
         check_stage_config_parity(core),
         check_stage_plugin_packages(stage),
+        check_stage_codec_metadata(core),
         check_education_payload_set(),
     ]
 

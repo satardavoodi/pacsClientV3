@@ -124,6 +124,59 @@ _FAST_MULTIFRAME_SUBPROC_GUARD = str(
     os.environ.get("AIPACS_FAST_MULTIFRAME_SUBPROC_GUARD", "1")
 ).strip().lower() not in ("0", "false", "no", "off")
 
+# Multi-frame O(N^2) decode fix (2026-08-02): a NumberOfFrames>1 file decodes EVERY
+# frame on each `ds.pixel_array` access, so STACKING through the frames re-read +
+# re-decoded the WHOLE file at every step — slow on a large cine/enhanced series
+# (patient 9202182227 series 11). Cache the decoded ``ds`` per file path (pydicom
+# caches the decoded array on the ds object), so frames 2..N of the SAME file reuse
+# it — O(N) total instead of O(N^2). Bounded LRU, cleared on open_series. `=0` =
+# legacy (decode per frame). Single-frame series never populate it (no-op).
+_FAST_MULTIFRAME_WHOLE_CACHE = str(
+    os.environ.get("AIPACS_FAST_MULTIFRAME_WHOLE_CACHE", "1")
+).strip().lower() not in ("0", "false", "no", "off")
+
+# SCROLL HOT PATH: memoise the per-slice default-W/L header resolution. Without it
+# `get_default_window_level` (called on EVERY slice change) does an uncached
+# `pydicom.dcmread(path, stop_before_pixels=True)` on the GUI thread — and for a
+# multi-frame series all N slices share ONE path, so the SAME header was re-read on
+# every wheel tick. Inputs are fixed per (path, photometric), so the answer cannot
+# change. `=0` = legacy uncached read.
+_FAST_WL_MEMO = str(
+    os.environ.get("AIPACS_FAST_WL_MEMO", "1")
+).strip().lower() not in ("0", "false", "no", "off")
+
+# Once a multi-frame file's decoded ``ds`` is in memory, extracting frame k from it
+# costs NO disk I/O — while the L2 disk cache would do a real file open + read per
+# frame on the way in and a full-frame copy on the calling thread on the way out.
+# That is pure per-scroll-tick overhead for a series whose every frame lives in the
+# one already-decoded file, so we bypass L2 for that decode. `=0` = legacy (L2 first).
+_MF_BYPASS_L2 = str(
+    os.environ.get("AIPACS_FAST_MULTIFRAME_BYPASS_L2", "1")
+).strip().lower() not in ("0", "false", "no", "off")
+
+
+class _NullDiskPixelCache:
+    """No-op stand-in for the L2 disk cache: every ``get`` misses and every ``put``
+    is dropped. Substituted for the real cache ONLY when the decoded multi-frame
+    ``ds`` is already in memory, so every existing get/put call site stays untouched."""
+
+    __slots__ = ()
+
+    def get(self, *args, **kwargs):
+        return None
+
+    def put(self, *args, **kwargs) -> None:
+        return None
+
+
+_NULL_DISK_PIXEL_CACHE = _NullDiskPixelCache()
+try:
+    _FAST_MULTIFRAME_WHOLE_CACHE_MAX = max(
+        1, int(os.environ.get("AIPACS_FAST_MULTIFRAME_WHOLE_CACHE_MAX", "2"))
+    )
+except (TypeError, ValueError):
+    _FAST_MULTIFRAME_WHOLE_CACHE_MAX = 2
+
 # Per-frame geometry for Enhanced multi-frame files. An Enhanced MR/CT/angio file
 # leaves the top-level IPP/IOP/PixelSpacing EMPTY and stores geometry in the
 # Shared + Per-Frame Functional Groups. Without this, every expanded frame inherits
@@ -760,6 +813,12 @@ class Lightweight2DPipeline(QObject):
         self._last_prefetch_direction: int = 0       # F3.2: last non-zero scroll direction (-1/0/+1)
         self._prefetch_prepared_index: Optional[int] = None
 
+        # Multi-frame whole-file ds cache (shared by the GUI thread and the decode
+        # / prefetch worker threads — see _mf_ds_cache_get).
+        self._mf_ds_lock = threading.Lock()
+        self._mf_ds_cache = None
+        self._cs_wl_cache = {}
+
         # Metrics
         self._metrics_lock = threading.Lock()
         self._metrics = {
@@ -884,6 +943,12 @@ class Lightweight2DPipeline(QObject):
         # cannot leak into an ordinary single-frame series.
         self._multiframe_classification = None
         self._mf_geometry_cache = {}
+        # Drop any cached multi-frame ds objects from a previous series so their
+        # decoded pixel arrays (tens of MB each) are freed on a series switch.
+        self._mf_ds_cache = None
+        # Per-(path, photometric) default-W/L memo — series-scoped (the resolver's
+        # answer is fixed per file, but a new series must not inherit stale entries).
+        self._cs_wl_cache = {}
         self._slices = self._expand_multiframe_slices(self._slices)
 
         self._hydrate_series_display_metadata(metadata)
@@ -1300,18 +1365,61 @@ class Lightweight2DPipeline(QObject):
     def get_window_level(self) -> Tuple[Optional[float], Optional[float]]:
         return self._window, self._level
 
-    def get_default_window_level(self, slice_index: int) -> Tuple[float, float]:
-        """Get the default W/L for a slice from DICOM header or auto-calc."""
-        idx = self._clamp(slice_index)
-        sm = self._slices[idx]
+    def _resolve_cs_window_level_cached(self, sm):
+        """`resolve_cornerstone_like_window_level_from_dicom` memoised per (path,
+        photometric).
 
-        ww_cs, wc_cs, src_cs = resolve_cornerstone_like_window_level_from_dicom(
+        SCROLL HOT PATH: `get_default_window_level` is called on EVERY slice change
+        (qt_viewer_bridge `_set_slice_impl`, `_FAST_PER_INSTANCE_WINDOW` default-on)
+        and that resolver does an UNCACHED `pydicom.dcmread(path, stop_before_pixels
+        =True)` — a real file open + header parse on the GUI thread per wheel tick.
+        For a MULTI-FRAME series every one of the N slices shares ONE path, so the
+        identical header was re-read N times per scroll-through. The inputs here are
+        fixed per (path, photometric) for the life of the series, so the answer can
+        never change between calls. Memo only — the resolver's result and every
+        downstream branch are untouched. `=0` = legacy uncached call.
+        """
+        if not _FAST_WL_MEMO:
+            return resolve_cornerstone_like_window_level_from_dicom(
+                sm.path,
+                modality=self._series_modality,
+                presentation_intent_type=self._series_presentation_intent_type,
+                photometric=sm.photometric,
+                enable_pixel_fallback=False,
+            )
+        key = (sm.path, sm.photometric)
+        try:
+            cache = getattr(self, "_cs_wl_cache", None)
+            if cache is None:
+                cache = {}
+                self._cs_wl_cache = cache
+            hit = cache.get(key)
+            if hit is not None:
+                return hit
+        except Exception:
+            cache = None
+        val = resolve_cornerstone_like_window_level_from_dicom(
             sm.path,
             modality=self._series_modality,
             presentation_intent_type=self._series_presentation_intent_type,
             photometric=sm.photometric,
             enable_pixel_fallback=False,
         )
+        try:
+            if cache is not None:
+                if len(cache) > 4096:      # bounded: a huge multi-file series
+                    cache.clear()
+                cache[key] = val
+        except Exception:
+            pass
+        return val
+
+    def get_default_window_level(self, slice_index: int) -> Tuple[float, float]:
+        """Get the default W/L for a slice from DICOM header or auto-calc."""
+        idx = self._clamp(slice_index)
+        sm = self._slices[idx]
+
+        ww_cs, wc_cs, src_cs = self._resolve_cs_window_level_cached(sm)
         if ww_cs is not None and wc_cs is not None and src_cs == "dicom_tag":
             # Keep DICOM-tag defaults as-is for parity with Advanced path.
             sm.window_width = float(ww_cs)
@@ -1344,13 +1452,7 @@ class Lightweight2DPipeline(QObject):
         )
 
         if ww is None or wc is None:
-            ww_cs, wc_cs, src_cs = resolve_cornerstone_like_window_level_from_dicom(
-                sm.path,
-                modality=self._series_modality,
-                presentation_intent_type=self._series_presentation_intent_type,
-                photometric=sm.photometric,
-                enable_pixel_fallback=False,
-            )
+            ww_cs, wc_cs, src_cs = self._resolve_cs_window_level_cached(sm)
             if ww_cs is not None and wc_cs is not None:
                 if src_cs == "dicom_tag":
                     sm.window_width = float(ww_cs)
@@ -1372,13 +1474,7 @@ class Lightweight2DPipeline(QObject):
                         ww, wc = float(ww_norm), float(wc_norm)
 
         if ww is None or wc is None:
-            ww_cs, wc_cs, src_cs = resolve_cornerstone_like_window_level_from_dicom(
-                sm.path,
-                modality=self._series_modality,
-                presentation_intent_type=self._series_presentation_intent_type,
-                photometric=sm.photometric,
-                enable_pixel_fallback=False,
-            )
+            ww_cs, wc_cs, src_cs = self._resolve_cs_window_level_cached(sm)
             if ww_cs is not None and wc_cs is not None:
                 if src_cs == "dicom_tag":
                     sm.window_width = float(ww_cs)
@@ -2501,6 +2597,46 @@ class Lightweight2DPipeline(QObject):
             self.decode_failed.emit(str(e))
             return None
 
+    def _mf_ds_cache_get(self, path):
+        """Return a cached, already-decoded multi-frame ``ds`` for ``path`` (LRU),
+        or None. Never raises — a miss just falls back to a fresh read.
+
+        Locked: the decode ThreadPoolExecutor (prefetch workers) and the GUI thread
+        both reach this, and ``OrderedDict.move_to_end`` during another thread's
+        ``popitem`` is not safe."""
+        if not _FAST_MULTIFRAME_WHOLE_CACHE:
+            return None
+        try:
+            with self._mf_ds_lock:
+                c = getattr(self, "_mf_ds_cache", None)
+                if not c:
+                    return None
+                ds = c.get(path)
+                if ds is not None:
+                    c.move_to_end(path)
+                return ds
+        except Exception:
+            return None
+
+    def _mf_ds_cache_put(self, path, ds) -> None:
+        """Cache the decoded ``ds`` for a multi-frame file so the remaining frames
+        reuse it (bounded LRU). Never raises. Locked — see ``_mf_ds_cache_get``."""
+        if not _FAST_MULTIFRAME_WHOLE_CACHE:
+            return
+        try:
+            from collections import OrderedDict
+            with self._mf_ds_lock:
+                c = getattr(self, "_mf_ds_cache", None)
+                if not isinstance(c, OrderedDict):
+                    c = OrderedDict()
+                    self._mf_ds_cache = c
+                c[path] = ds
+                c.move_to_end(path)
+                while len(c) > _FAST_MULTIFRAME_WHOLE_CACHE_MAX:
+                    c.popitem(last=False)
+        except Exception:
+            pass
+
     def _decode_slice(self, idx: int) -> np.ndarray:
         """Decode a single DICOM slice using pydicom.
 
@@ -2516,8 +2652,21 @@ class Lightweight2DPipeline(QObject):
         """
         sm = self._slices[idx]
 
+        # Multi-frame O(N^2) fix: reuse a cached, already-decoded ds for the SAME
+        # file so frames 2..N don't re-read + re-decode the whole file each stack
+        # step. `ds.pixel_array` on the cached ds returns pydicom's cached array.
+        # Peeked BEFORE the L2 disk cache (a dict lookup, no I/O): when the whole
+        # file is already in memory the L2 cache can only ADD work — a file open +
+        # read per frame in, a full-frame copy per frame out — so it is bypassed for
+        # this decode via a null cache, leaving every get/put call site unchanged.
+        _fi0 = getattr(sm, "frame_index", None)
+        _is_mf = bool(_FAST_MULTIFRAME and _fi0 is not None)
+        _mf_ds = self._mf_ds_cache_get(sm.path) if _is_mf else None
+
         # B3.12: Disk cache lookup (L2 cache)
         disk_cache = get_disk_pixel_cache()
+        if _mf_ds is not None and _MF_BYPASS_L2:
+            disk_cache = _NULL_DISK_PIXEL_CACHE
         study_uid = self._series_path or ""
         t_lookup = time.perf_counter()
         cached = disk_cache.get(
@@ -2531,43 +2680,57 @@ class Lightweight2DPipeline(QObject):
             self._mark_foreground_probe(source="disk_cache", cache_hit=True, disk_cache_hit=True)
             return cached
 
-        t_read = time.perf_counter()
-        with warnings.catch_warnings():
-            _ignore_unknown_encoding_warning()
-            ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
-        read_ms = (time.perf_counter() - t_read) * 1000.0
-        file_size = 0
-        try:
-            file_size = int(os.path.getsize(sm.path) or 0)
-        except Exception:
-            file_size = 0
-        self._mark_foreground_probe(
-            source="direct_dicom_read",
-            cache_hit=False,
-            disk_wait_ms=read_ms,
-            file_open_count=1,
-            foreground_disk_reads=1,
-            foreground_bytes_read=file_size,
-        )
-        _sanitize_specific_character_set(ds)
-        try:
-            with warnings.catch_warnings():
-                _ignore_unknown_encoding_warning()
-                arr = np.asarray(ds.pixel_array)
-        except Exception as exc:
-            msg = str(exc)
-            if "Unknown encoding" in msg:
-                _sanitize_specific_character_set(ds)
+        ds = _mf_ds
+        if ds is not None:
+            self._mark_foreground_probe(source="multiframe_ds_cache", cache_hit=True)
+            try:
                 with warnings.catch_warnings():
                     _ignore_unknown_encoding_warning()
                     arr = np.asarray(ds.pixel_array)
-                logger.warning(
-                    "lw2d-pipeline charset-normalized idx=%d scs=%s",
-                    idx,
-                    getattr(ds, "SpecificCharacterSet", None),
-                )
-            else:
-                raise
+            except Exception:
+                ds = None  # fall through to a fresh read on any trouble
+
+        if ds is None:
+            t_read = time.perf_counter()
+            with warnings.catch_warnings():
+                _ignore_unknown_encoding_warning()
+                ds = pydicom.dcmread(sm.path, stop_before_pixels=False, force=True)
+            read_ms = (time.perf_counter() - t_read) * 1000.0
+            file_size = 0
+            try:
+                file_size = int(os.path.getsize(sm.path) or 0)
+            except Exception:
+                file_size = 0
+            self._mark_foreground_probe(
+                source="direct_dicom_read",
+                cache_hit=False,
+                disk_wait_ms=read_ms,
+                file_open_count=1,
+                foreground_disk_reads=1,
+                foreground_bytes_read=file_size,
+            )
+            _sanitize_specific_character_set(ds)
+            try:
+                with warnings.catch_warnings():
+                    _ignore_unknown_encoding_warning()
+                    arr = np.asarray(ds.pixel_array)
+            except Exception as exc:
+                msg = str(exc)
+                if "Unknown encoding" in msg:
+                    _sanitize_specific_character_set(ds)
+                    with warnings.catch_warnings():
+                        _ignore_unknown_encoding_warning()
+                        arr = np.asarray(ds.pixel_array)
+                    logger.warning(
+                        "lw2d-pipeline charset-normalized idx=%d scs=%s",
+                        idx,
+                        getattr(ds, "SpecificCharacterSet", None),
+                    )
+                else:
+                    raise
+            # Cache the decoded ds for the remaining frames of this multi-frame file.
+            if _is_mf:
+                self._mf_ds_cache_put(sm.path, ds)
 
         # Multi-frame frame selection: for a multi-frame file this SliceMeta's
         # frame_index picks its OWN frame; single-frame slices (frame_index None)
@@ -3650,13 +3813,7 @@ class Lightweight2DPipeline(QObject):
 
         if ww is None or wc is None:
             wl_source = "none"
-            ww_cs, wc_cs, src_cs = resolve_cornerstone_like_window_level_from_dicom(
-                sm.path,
-                modality=self._series_modality,
-                presentation_intent_type=self._series_presentation_intent_type,
-                photometric=sm.photometric,
-                enable_pixel_fallback=False,
-            )
+            ww_cs, wc_cs, src_cs = self._resolve_cs_window_level_cached(sm)
             if ww_cs is not None and wc_cs is not None:
                 ww_norm, wc_norm = _normalize_resolved_candidate(ww_cs, wc_cs, src_cs)
                 if ww_norm is not None and wc_norm is not None:

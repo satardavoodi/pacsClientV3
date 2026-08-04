@@ -100,18 +100,41 @@ _PERMISSION_PHRASES = ("مجاز نیست", "دسترسی", "مجوز", "permiss
 
 
 # --- Config ------------------------------------------------------------------
+# OPT-50 (2026-08-03): `is_enabled()` calls this, and the patient list calls
+# is_enabled() several times PER RENDERED ROW — 4000 config-file opens + JSON
+# parses for an 800-row render. Cached on the file's (mtime_ns, size) so an
+# edited config is still picked up on the next call.
+# Kill switch: AIPACS_INO_STORE_CACHE=0.
+_CFG_CACHE_KEY = None
+_CFG_CACHE_VALUE: Dict[str, Any] = {}
+
+
 def _config() -> Dict[str, Any]:
+    global _CFG_CACHE_KEY, _CFG_CACHE_VALUE
     try:
         from PacsClient.utils.config import SOCKET_CONFIG_PATH
 
         path = os.path.join(str(SOCKET_CONFIG_PATH), _CONFIG_FILENAME)
-        if os.path.exists(path):
+        if not os.path.exists(path):
+            _CFG_CACHE_KEY = None
+            return {}
+        if (os.getenv("AIPACS_INO_STORE_CACHE", "1") or "1").strip() == "0":
             with open(path, "r", encoding="utf-8") as fh:
                 data = json.load(fh)
                 if isinstance(data, dict):
                     return data
+            return {}
+        st = os.stat(path)
+        key = (path, st.st_mtime_ns, st.st_size)
+        if key != _CFG_CACHE_KEY:
+            with open(path, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            _CFG_CACHE_VALUE = data if isinstance(data, dict) else {}
+            _CFG_CACHE_KEY = key
+        # Copy out so a caller cannot mutate the cached config.
+        return dict(_CFG_CACHE_VALUE)
     except Exception:
-        pass
+        _CFG_CACHE_KEY = None
     return {}
 
 

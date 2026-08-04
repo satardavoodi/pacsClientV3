@@ -161,32 +161,63 @@ def rl_lps_to_target_index(P_lps, pos2, col2, row2, sx, sy, t_slice):
     return np.array([i, j, float(t_slice)], dtype=float)
 
 
-def rl_ensure_line_actor(iv, color=(1.0, 0.2, 0.2), width=2.5):
+def _rl_new_line_actor(iv, color, width):
+    ls = vtk.vtkLineSource()
+    mapper = vtk.vtkPolyDataMapper()
+    mapper.SetInputConnection(ls.GetOutputPort())
+    actor = vtk.vtkActor()
+    actor.SetMapper(mapper)
+    actor.GetProperty().SetColor(*color)
+    actor.GetProperty().SetLineWidth(width)
+    actor.GetProperty().SetLighting(False)
+    actor.PickableOff()
+    iv.renderer.AddActor(actor)
+    return ls, actor
+
+
+def rl_ensure_line_actor(iv, color=(1.0, 0.2, 0.2), width=2.5, slot=0):
     """
     Create (once) and return the VTK line source/actor used as the reference line overlay for a viewer.
+
+    ``slot`` selects one of several lines coexisting on the SAME viewer: with
+    bidirectional reference lines a viewport shows one line per OTHER viewport.
+    Slot 0 keeps the original ``_ref_line_src`` / ``_ref_actor`` attributes, so the
+    single-line path is byte-identical; extra slots live in ``_ref_line_slots``.
     """
-    if not hasattr(iv, "_ref_line_src"):
-        ls = vtk.vtkLineSource()
-        mapper = vtk.vtkPolyDataMapper()
-        mapper.SetInputConnection(ls.GetOutputPort())
-        actor = vtk.vtkActor()
-        actor.SetMapper(mapper)
-        actor.GetProperty().SetColor(*color)
-        actor.GetProperty().SetLineWidth(width)
-        actor.GetProperty().SetLighting(False)
-        actor.PickableOff()
-        iv.renderer.AddActor(actor)
-        iv._ref_line_src = ls
-        iv._ref_actor = actor
-    return iv._ref_line_src, iv._ref_actor
+    if int(slot or 0) == 0:
+        if not hasattr(iv, "_ref_line_src"):
+            ls, actor = _rl_new_line_actor(iv, color, width)
+            iv._ref_line_src = ls
+            iv._ref_actor = actor
+        return iv._ref_line_src, iv._ref_actor
+
+    slots = getattr(iv, "_ref_line_slots", None)
+    if slots is None:
+        slots = {}
+        iv._ref_line_slots = slots
+    pair = slots.get(int(slot))
+    if pair is None:
+        pair = _rl_new_line_actor(iv, color, width)
+        slots[int(slot)] = pair
+    return pair
 
 
 def rl_hide_actor_if_any(iv):
-    """Hide the reference-line actor if it exists.
+    """Hide the reference-line actor(s) if any exist.
 
     v2.2.3.3.5: No longer calls Render() — just toggles visibility.
     Caller is responsible for scheduling a repaint (e.g. vtk_widget.update()).
     This avoids an 8-30ms synchronous Render per target on software GL.
+
+    Hides EVERY slot, so a viewport that previously showed several reference lines
+    is fully cleared.
     """
     if hasattr(iv, "_ref_actor"):
         iv._ref_actor.VisibilityOff()
+    slots = getattr(iv, "_ref_line_slots", None)
+    if slots:
+        for _ls, _act in slots.values():
+            try:
+                _act.VisibilityOff()
+            except Exception:
+                pass

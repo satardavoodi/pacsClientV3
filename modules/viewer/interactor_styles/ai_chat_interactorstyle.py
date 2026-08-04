@@ -39,6 +39,52 @@ breast_url = get_server_url("breast") if SERVERS_FILE.exists() else None
 boneage_url = get_server_url("boneage") if SERVERS_FILE.exists() else None
 
 
+def _eagle_worker_lifecycle_enabled() -> bool:
+    """AIPACS_EAGLE_WORKER_LIFECYCLE (default ON; =0 = legacy single-ref behaviour).
+
+    Guards the crash-hardening for the Eagle Eye MG/DX server workers:
+      * a re-entrancy guard (no duplicate concurrent run for the same study), and
+      * keeping every started QThread strongly referenced until it ACTUALLY
+        finishes, so it can never be garbage-collected — or deleted with its
+        parent — while still running (that is a Qt `qFatal`/abort =
+        "the Python process crashes").
+    """
+    raw = os.environ.get("AIPACS_EAGLE_WORKER_LIFECYCLE")
+    if raw is None:
+        return True
+    return str(raw).strip().lower() not in ("0", "false", "no", "off")
+
+
+# THE CRASH THIS PREVENTS
+# -----------------------
+# `AIChatInteractorStyle._current_worker` used to be the ONLY strong reference to
+# the running `MamoWorker` / `BoneAgeWorker` QThread, and it was never cleared and
+# never `deleteLater()`-d. Two consequences, both of which abort the interpreter
+# with "QThread: Destroyed while thread is still running":
+#   1. A SECOND Eagle Eye run overwrote `_current_worker = worker` while the first
+#      thread was still talking to the server → the first thread's refcount hit 0
+#      → Python GC finalized a *running* QThread → Qt calls abort().
+#   2. Closing the patient / tab mid-request deleted the style object, dropping the
+#      only ref to the running thread — same abort.
+# The set below keeps a process-level strong ref to every started worker until it
+# emits finished/error, so neither can happen. Same proven idiom as EchoMind's
+# `_ORPHANED_WORKERS` (ai_chat_pages.py) and the documented curved-MPR
+# deleted-object teardown fix.
+_LIVE_AI_WORKERS: set = set()
+
+
+def _retire_ai_worker(worker) -> None:
+    """A worker finished on its own — drop the process-level ref and let Qt free it."""
+    try:
+        _LIVE_AI_WORKERS.discard(worker)
+    except Exception:
+        pass
+    try:
+        worker.deleteLater()
+    except Exception:
+        pass
+
+
 
 class MGCSVSelectionDialog(QDialog):
     """
@@ -341,7 +387,10 @@ class MamoWorker(QThread):
                 # "save_png16": True
 
             }
-            resp = requests.post(URL, json=payload, timeout=240)
+            # (connect, read) — a DEAD host now fails in ~10 s instead of blocking
+            # this worker thread for the full 240 s (a "stuck request"). The server
+            # analysis itself is allowed the full 240 s read budget.
+            resp = requests.post(URL, json=payload, timeout=(10, 240))
 
             print("============================")
             print(f"[MG][REQ] url={URL}")
@@ -540,11 +589,13 @@ class BoneAgeWorker(QThread):
             print(f"Bone age payload is : {payload}")
             print("==========================")
 
+            # (connect, read) — a dead host fails in ~10 s instead of hanging the
+            # worker thread for the full budget (a "stuck request").
             resp = requests.post(
                 url,
                 json=payload,
                 headers=self.headers,
-                timeout=360
+                timeout=(10, 360)
             )
             print("[DX] resp:", resp)
 
@@ -663,7 +714,48 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         # نگه داشتن رفرنس به worker ها برای جلوگیری از gc
         self._current_worker = None
 
+    # ------------------------------------------------------------------
+    # Eagle Eye worker lifecycle (crash-hardening — see _LIVE_AI_WORKERS)
+    # ------------------------------------------------------------------
+    def _ai_worker_busy(self) -> bool:
+        """True while an Eagle Eye MG/DX worker for this style is still running."""
+        w = getattr(self, "_current_worker", None)
+        if w is None:
+            return False
+        try:
+            return bool(w.isRunning())
+        except RuntimeError:
+            # underlying C++ QThread already gone → treat as not busy
+            self._current_worker = None
+            return False
 
+    def _register_ai_worker(self, worker) -> None:
+        """Track a worker so it is never GC'd/deleted while running, and is cleaned
+        up exactly once when it finishes.
+
+        Keeps `self._current_worker` (the re-entrancy sentinel) AND a process-level
+        strong ref in `_LIVE_AI_WORKERS`. Both are released on finished/error.
+        """
+        if not _eagle_worker_lifecycle_enabled():
+            self._current_worker = worker
+            return
+
+        self._current_worker = worker
+        _LIVE_AI_WORKERS.add(worker)
+
+        def _cleanup(*_args, _w=worker):
+            # runs on the GUI thread (queued from the worker's finished/error)
+            if getattr(self, "_current_worker", None) is _w:
+                self._current_worker = None
+            _retire_ai_worker(_w)
+
+        # connect AFTER the caller's own on_finished/error so the worker object
+        # outlives those slots; cleanup only drops references.
+        try:
+            worker.finished.connect(_cleanup)
+            worker.error.connect(_cleanup)
+        except Exception as e:
+            print(f"[EAGLE] worker cleanup wiring failed (non-fatal): {e}")
 
     def _save_mg_manifest(self, study_uid: str, det_csv: str, cls_csv: str):
         """
@@ -845,6 +937,18 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
     def start_mg_process(self, study_uid: str):
         print(f'[MG] start processing on the server for {study_uid}')
 
+        # Re-entrancy guard: never start a second server job while one is still
+        # running. Without this, a second run overwrote the ONLY reference to the
+        # first (still-running) QThread → GC → "Destroyed while thread is still
+        # running" → the Python process aborts. It also prevents duplicate uploads
+        # / duplicate server jobs for the same study.
+        if _eagle_worker_lifecycle_enabled() and self._ai_worker_busy():
+            show_message(
+                "An Eagle Eye analysis is already running for this study.\n"
+                "Please wait for it to finish before starting another."
+            )
+            return
+
         # 1) Threshold dialog
         dlg = AISettingsDialog(self._live_dialog_parent(), initial=0.45)
         if dlg.exec() != QDialog.Accepted:
@@ -876,7 +980,6 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             )
             return
         worker = MamoWorker(study_uid, breast_url, det_eval_thr=det_thr)
-        self._current_worker = worker
 
         def on_finished(out: dict):
             # Cancel safety timeout
@@ -922,28 +1025,45 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             overlay_ref.update({'overlay': None}),
             show_message(msg)
         ))
-        
-        # Safety timeout: Force remove loading after 120 seconds (server processing can take 60s+)
+
+        # Safety timeout: force-remove the overlay only AFTER the worker's own read
+        # budget (240 s) has elapsed — not before. The old 120 s value hid the modal
+        # overlay while the request was STILL running for up to another 120 s, so the
+        # UI looked idle and the user re-clicked Eagle Eye → a duplicate run that
+        # overwrote the still-running worker → the abort described above. Keep the
+        # safety net well beyond the request timeout.
         def force_hide_overlay():
             if overlay_ref.get('overlay'):
                 try:
-                    print("⚠️ [MG Analysis] Force removing loading after 120s timeout")
+                    print("⚠️ [MG Analysis] Force removing loading after safety timeout")
                     AiPacsLoadingOverlay.hide_overlay(overlay_ref['overlay'], fade_ms=0, delay_ms=0)
                 except RuntimeError:
                     pass
                 overlay_ref['overlay'] = None
-        
+
         safety_timer = QTimer()
         safety_timer.setSingleShot(True)
         safety_timer.timeout.connect(force_hide_overlay)
-        safety_timer.start(120000)  # 120 seconds for server-side analysis
+        safety_timer.start(260000)  # 260 s > the worker's 240 s read timeout
         overlay_ref['timer'] = safety_timer
 
+        # Track the worker so it can never be GC'd/deleted while running, and is
+        # cleaned up exactly once when it finishes (sets self._current_worker).
+        self._register_ai_worker(worker)
         worker.start()
 
     # --------- DX (Bone Age) pipeline  ---------
     def start_dx_process(self, study_uid: str):
         print(f'[DX] start bone-age processing for {study_uid}')
+
+        # Same re-entrancy guard as MG — a second run must not overwrite the only
+        # reference to a still-running worker (→ GC of a live QThread → abort).
+        if _eagle_worker_lifecycle_enabled() and self._ai_worker_busy():
+            show_message(
+                "An Eagle Eye analysis is already running for this study.\n"
+                "Please wait for it to finish before starting another."
+            )
+            return
 
         # اگر در متادیتا جنسیت لازم است، اینجا بخوان:
         patient_sex = self.image_viewer.metadata_fixed.get('patient_sex', None)
@@ -1000,7 +1120,6 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
             boneage_url=boneage_url,
             metadata_context=metadata_context,
         )
-        self._current_worker = worker
 
         def on_finished(data: dict):
             # Cancel safety timeout
@@ -1061,7 +1180,9 @@ class AIChatInteractorStyle(AbstractInteractorStyle):
         safety_timer.timeout.connect(force_hide_overlay)
         safety_timer.start(60000)  # 60 seconds for bone age analysis
         overlay_ref['timer'] = safety_timer
-        
+
+        # Track the worker so it can never be GC'd/deleted while running.
+        self._register_ai_worker(worker)
         worker.start()
 
 

@@ -67,6 +67,9 @@ def record(entry: AssignmentRecord) -> bool:
         with _LOCK:
             with open(path, "a", encoding="utf-8") as fh:
                 fh.write(line + "\n")
+        # OPT-50: the append changes mtime+size so the guard would catch it, but
+        # invalidate explicitly so a read in the same mtime tick can't miss it.
+        _invalidate_cache()
         logger.info(
             "[ino-assignment] history: %s reception=%s type=%s assignee=%s ok=%s",
             entry.action, entry.reception_id, entry.assign_type, entry.assignee_name, entry.server_ok,
@@ -77,25 +80,68 @@ def record(entry: AssignmentRecord) -> bool:
         return False
 
 
+# ── OPT-50 (2026-08-03): mtime-guarded read cache ─────────────────────────────
+# `read_all` re-opened and re-parsed the whole JSONL log on EVERY call, and the
+# patient list calls it three times per rendered row (via read_for_reception /
+# current_assignment_details from _assign_icon_state and
+# _apply_report_status_display). Profiling an 800-row render: 2400 calls, 1.3 s
+# on the GUI thread — and it grows with the history file.
+#
+# Keyed on the file's (mtime_ns, size); `record()` appends, so both change and
+# the next read re-parses. Kill switch: AIPACS_INO_STORE_CACHE=0.
+_ALL_CACHE_KEY = None
+_ALL_CACHE_ROWS: List[Dict[str, Any]] = []
+
+
+def _store_cache_enabled() -> bool:
+    return (os.getenv("AIPACS_INO_STORE_CACHE", "1") or "1").strip() != "0"
+
+
+def _invalidate_cache() -> None:
+    """Drop the parsed-history cache — called after an append."""
+    global _ALL_CACHE_KEY
+    _ALL_CACHE_KEY = None
+
+
+def _parse_history(path: str) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    with _LOCK:
+        with open(path, "r", encoding="utf-8") as fh:
+            for raw in fh:
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    rows.append(json.loads(raw))
+                except Exception:
+                    continue
+    return rows
+
+
 def read_all(limit: Optional[int] = None) -> List[Dict[str, Any]]:
     """Return history entries (most recent last). Best-effort; [] on any error."""
+    global _ALL_CACHE_KEY, _ALL_CACHE_ROWS
     path = _history_path()
     rows: List[Dict[str, Any]] = []
     try:
         if not os.path.exists(path):
+            _ALL_CACHE_KEY = None
             return []
-        with _LOCK:
-            with open(path, "r", encoding="utf-8") as fh:
-                for raw in fh:
-                    raw = raw.strip()
-                    if not raw:
-                        continue
-                    try:
-                        rows.append(json.loads(raw))
-                    except Exception:
-                        continue
+        if not _store_cache_enabled():
+            rows = _parse_history(path)
+        else:
+            st = os.stat(path)
+            key = (path, st.st_mtime_ns, st.st_size)
+            if key != _ALL_CACHE_KEY:
+                _ALL_CACHE_ROWS = _parse_history(path)
+                _ALL_CACHE_KEY = key
+            # Copy out: callers own their rows and must not be able to mutate
+            # the cache. The dicts are small, and this is still far cheaper than
+            # re-reading and re-parsing the file.
+            rows = [dict(r) for r in _ALL_CACHE_ROWS]
     except Exception as exc:  # pragma: no cover - defensive
         logger.warning("[ino-assignment] could not read history: %s", exc)
+        _ALL_CACHE_KEY = None
         return []
     if limit and limit > 0:
         return rows[-limit:]

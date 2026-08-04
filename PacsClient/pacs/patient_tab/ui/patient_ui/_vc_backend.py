@@ -22,6 +22,7 @@ from modules.viewer.boost_viewer_config import load_boost_viewer_enabled
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 from PacsClient.utils.series_facts import resolve_series_expected_count
 from modules.viewer.fast.lazy_volume_registry import get_loader as get_lazy_loader
+from PacsClient.utils.series_pairing import normalize_series_name
 import logging
 
 logger = logging.getLogger(__name__)
@@ -635,7 +636,13 @@ class _VCBackendMixin:
                 series_info = metadata.get('series', {})
                 series_number = str(series_info.get('series_number', ''))
                 series_name = str(series_info.get('series_name', ''))
-                
+                # MG-PAIR-1: `str(None)` is the truthy literal 'None'.  Using it
+                # as a pairing key bucketed every MG series of a study with NULL
+                # series_name together, which combined CC into the MLO viewport.
+                # The flat cache below keeps the raw value; only the pairing key
+                # is normalised.
+                series_pair_key = normalize_series_name(series_info.get('series_name', ''))
+
                 if series_number:
                     # Fast index: series_number -> list index
                     self._series_number_to_index[series_number] = idx
@@ -649,11 +656,12 @@ class _VCBackendMixin:
                     }
                     
                     # Paired series map: series_name -> list of numbers
-                    if series_name:
-                        if series_name not in self._paired_series_map:
-                            self._paired_series_map[series_name] = []
-                        if series_number not in self._paired_series_map[series_name]:
-                            self._paired_series_map[series_name].append(series_number)
+                    # MG-PAIR-1: only a genuine, non-placeholder name may pair.
+                    if series_pair_key:
+                        if series_pair_key not in self._paired_series_map:
+                            self._paired_series_map[series_pair_key] = []
+                        if series_number not in self._paired_series_map[series_pair_key]:
+                            self._paired_series_map[series_pair_key].append(series_number)
         except Exception as e:
             self.logger.debug(f"Error rebuilding series index: {e}")
 

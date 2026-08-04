@@ -203,6 +203,12 @@ def _progressive_stub(bg_delay_ms=0):
         _progressive_background_step = P._progressive_background_step
         _progressive_bg_enabled = staticmethod(P._progressive_bg_enabled)
         _on_progressive_scroll = P._on_progressive_scroll
+        # OPT-50 (2026-08-03): load_progressive now arms the render-pass
+        # report-status memo, so the double has to provide that collaborator.
+        # Borrowed from the real class rather than stubbed out, so the double
+        # cannot silently drift from it.
+        _report_memo_enabled = staticmethod(P._report_memo_enabled)
+        _begin_report_status_memo = P._begin_report_status_memo
 
         def __init__(self):
             self.results_table = MagicMock()

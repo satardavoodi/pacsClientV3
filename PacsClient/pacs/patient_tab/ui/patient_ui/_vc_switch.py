@@ -23,6 +23,7 @@ from PacsClient.utils.series_display_state import (
 from modules.viewer.fast.lazy_volume_registry import get_loader as get_lazy_loader
 from modules.viewer.viewer_backend_config import BACKEND_VTK, BACKEND_PYDICOM
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
+from PacsClient.utils.series_pairing import normalize_series_name
 from PacsClient.pacs.patient_tab.utils.image_io import load_series_preview
 from modules.zeta_boost import ImageSliceBooster
 from PacsClient.utils.diagnostic_logging import new_correlation_id, set_log_context
@@ -1369,6 +1370,9 @@ class _VCSwitchMixin:
             series_number = str(metadata.get('series', {}).get('series_number', ''))
             series_uid = str(metadata.get('series', {}).get('series_uid', '') or '')
             series_name = str(metadata.get('series', {}).get('series_name', ''))
+            # MG-PAIR-1: `str(None)` -> the truthy literal 'None'. Keep the raw
+            # value for logging, but pair only on a real (normalised) name.
+            series_pair_key = normalize_series_name(metadata.get('series', {}).get('series_name', ''))
             _t_psso = time.perf_counter()
             switch_start_mono_ms = _corr_now_mono_ms()
             switch_corr_id = f"switch-{series_number}-{int(switch_start_mono_ms)}"
@@ -1442,10 +1446,10 @@ class _VCSwitchMixin:
             current_modality = metadata.get('series', {}).get('modality', '').upper() if metadata else ''
             is_mg_modality = current_modality == 'MG'
             
-            # Only pair series for MG modality
-            if allow_paired and is_mg_modality and series_name in self._paired_series_map:
+            # Only pair series for MG modality, and only on a real series name
+            if allow_paired and is_mg_modality and series_pair_key and series_pair_key in self._paired_series_map:
                 # Find first paired series that's not the current one
-                paired_list = self._paired_series_map[series_name]
+                paired_list = self._paired_series_map[series_pair_key]
                 for paired_num in paired_list:
                     if str(paired_num) != series_number:
                         vtk_data, meta, _ = self._get_series_by_number_fast(str(paired_num))
@@ -1458,7 +1462,7 @@ class _VCSwitchMixin:
                                 break
             
             # Log debug info when pairing is skipped
-            if allow_paired and not is_mg_modality and series_name in self._paired_series_map:
+            if allow_paired and not is_mg_modality and series_pair_key and series_pair_key in self._paired_series_map:
                 print(
                     f"â„¹ï¸ڈ [PAIRED SKIP] series={series_number} modality={current_modality} - "
                     f"Skipping pairing (only MG modality uses paired series)"

@@ -472,6 +472,28 @@ def ensure_report_status_schema():
         except Exception as e:
             _logger.warning(f"⚠️ Could not create indexes: {e}")
 
+        # ── OPT-50 (2026-08-03): Local patient-list query indexes ─────────────
+        # `search_patients_local` LEFT JOINs studies on patient_fk and filters /
+        # orders on study_date, imported_at, modality and patient_name. NONE of
+        # those columns was indexed, so every Local search on a multi-thousand
+        # study database made SQLite build a transient automatic index for the
+        # join and a temp b-tree for the ORDER BY.
+        #
+        # These are pure READ-PATH accelerators: no column is added, no row is
+        # touched, no schema semantics change, and IF NOT EXISTS makes the
+        # migration idempotent + safe to run on every startup. Write cost is a
+        # few extra b-tree inserts per imported study, which is negligible next
+        # to the DICOM I/O that surrounds it.
+        try:
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_patient_fk ON studies(patient_fk)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_study_date ON studies(study_date)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_imported_at ON studies(imported_at)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_studies_modality ON studies(modality)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_patients_patient_name ON patients(patient_name)")
+            _logger.info("✅ Created local patient-list query indexes (OPT-50)")
+        except Exception as e:
+            _logger.warning(f"⚠️ Could not create patient-list indexes: {e}")
+
         conn.commit()
 
 
@@ -1151,6 +1173,41 @@ def get_imported_at_map(study_uids) -> dict:
     except Exception:
         logger.debug("[IMPORTED-ON] lookup failed; column renders blank", exc_info=True)
         return {}
+    return out
+
+
+def get_existing_patient_ids(patient_ids) -> set:
+    """Return the subset of ``patient_ids`` that exist in the patients table.
+
+    ONE query for a whole result set, instead of ``find_patient_pk`` once per
+    row. The patient table's "visited" colouring called that per row, which
+    opened a fresh SQLite connection for every study rendered — 2000 connections
+    for a 2000-study Local list (OPT-50). Same pattern, same reasoning as
+    ``get_imported_at_map``.
+
+    Never raises: an empty set simply means the caller falls back to its own
+    per-row lookup, so a DB hiccup can only cost speed, never correctness.
+    """
+    ids = [str(p or "").strip() for p in (patient_ids or []) if str(p or "").strip()]
+    if not ids:
+        return set()
+    out = set()
+    try:
+        with get_db_connection() as conn:
+            cur = conn.cursor()
+            # Chunked to stay under SQLite's variable limit (default 999).
+            for start in range(0, len(ids), 500):
+                chunk = ids[start:start + 500]
+                placeholders = ",".join("?" * len(chunk))
+                cur.execute(
+                    f"SELECT patient_id FROM patients WHERE patient_id IN ({placeholders})",
+                    chunk,
+                )
+                for (pid,) in cur.fetchall():
+                    out.add(str(pid))
+    except Exception:
+        logger.debug("[VISITED] batched patient_id lookup failed", exc_info=True)
+        return set()
     return out
 
 

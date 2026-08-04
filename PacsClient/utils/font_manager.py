@@ -422,3 +422,37 @@ def apply_anti_aliasing_to_table(table_widget):
     except Exception as e:
         print(f"Error applying anti-aliasing to table: {str(e)}")
         return False
+
+
+def apply_anti_aliasing_to_rows(table_widget, first_row, last_row):
+    """Anti-alias ONLY rows ``[first_row, last_row)`` — the incremental variant.
+
+    ``apply_anti_aliasing_to_table`` walks every row × every column and calls
+    ``item.setFont()`` on each cell, and every ``setFont`` emits a model
+    ``dataChanged``. The patient list called it after EVERY batch of a
+    progressive stream, so a 2000-row / 15-column load re-styled the whole table
+    ~50 times — roughly 1.5 M redundant signals, all on the GUI thread (OPT-50).
+
+    The font settings are per-item and never change once applied, so re-styling
+    an already-styled row is pure waste. Headers and the table widget itself are
+    NOT touched here — the caller does the full pass once for the first batch,
+    which covers them.
+    """
+    try:
+        start = max(0, int(first_row))
+        end = min(int(last_row), int(table_widget.rowCount()))
+        if start >= end:
+            return True
+        cols = table_widget.columnCount()
+        for row in range(start, end):
+            for col in range(cols):
+                item = table_widget.item(row, col)
+                if item:
+                    font = item.font()
+                    font.setStyleStrategy(QFont.PreferAntialias)
+                    font.setHintingPreference(QFont.PreferFullHinting)
+                    item.setFont(font)
+        return True
+    except Exception as e:
+        print(f"Error applying anti-aliasing to rows: {str(e)}")
+        return False

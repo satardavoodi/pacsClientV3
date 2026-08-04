@@ -1,8 +1,8 @@
 # AIPacs Copilot Instructions
 
-**Current Stable Version:** v3.5.7 (2026-08-02) - Minor release: MPR lifecycle + large-study crash/perf hardening (OPT-47/48/49), role-aware DB busy-timeout (OPT-45) + crash-durable download queue (OPT-46), a large EchoMind Phase-1 reliability overhaul (single HTTP transport authority, error classification, off-GUI-thread reception send, backend prompt parity, Normal Template workflow), per-series CD/offline export selection, local Patient-ID display alias, status-column off-thread render, and Advanced-Search Local/Server routing. See `docs/releases/VERSION_3.5.7_RELEASE.md`.
+**Current Stable Version:** v3.5.8 (2026-08-04) - Minor release: the redesigned UI is merged into the stable line (server-profile switch RESTARTs, gated exit-confirm, typeable Port/Timeout, single-authority add-server, identity refresh, drag surfaces, Persian strings, UI perf pass), plus bidirectional reference lines (series pairing), Siemens multi-frame CSA-protocol geometry, the local patient-list O(N²)→O(N) render (OPT-50), the form-field icon-chip restyle, and the ARM64 Nuitka restore patch. Built on v3.5.7. See `docs/releases/VERSION_3.5.8_RELEASE.md`.
 
-**Previous Stable:** v3.5.6 (2026-07-26) - Minor release: OS light/dark theme immunity for popups and dialogs (OPT-44), local patient-list incremental loading + Advanced-Search import-date filter (OPT-43), and EchoMind reporting/voice work. See `docs/releases/VERSION_3.5.6_RELEASE.md`.
+**Previous Stable:** v3.5.7 (2026-08-02) - Minor release: MPR lifecycle + large-study crash/perf hardening (OPT-47/48/49), role-aware DB busy-timeout (OPT-45) + crash-durable download queue (OPT-46), a large EchoMind Phase-1 reliability overhaul, per-series CD/offline export selection, and Advanced-Search Local/Server routing. See `docs/releases/VERSION_3.5.7_RELEASE.md`.
 
 **Previous Stable:** v3.3.3 (2026-06-17) - Minor release: latest stable consolidation build with current local changes. See `docs/releases/VERSION_3.3.3_RELEASE.md`.
 

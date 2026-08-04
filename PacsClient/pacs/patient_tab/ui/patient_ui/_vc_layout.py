@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QTimer
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
 from PacsClient.pacs.patient_tab.ui.patient_ui._slice_tick_slider import SliceTickSlider
+from PacsClient.utils.series_pairing import can_pair_series_names
 from PacsClient.pacs.patient_tab.utils import NodeViewer
 from modules.viewer.viewer_backend_config import BACKEND_VTK, BACKEND_PYDICOM, BACKEND_PYDICOM_QT
 import logging
@@ -755,7 +756,10 @@ class _VCLayoutMixin:
                         item = self.parent_widget.lst_thumbnails_data[i]
                         series_name_2 = item.get('metadata', {}).get('series', {}).get('series_name', '')
 
-                        if series_name_2 == series_name:
+                        # MG-PAIR-1: the bare `==` matched None==None and
+                        # 'None'=='None', combining CC into the MLO viewport for
+                        # studies whose series rows have a NULL series_name.
+                        if can_pair_series_names(series_name, series_name_2):
                             flag_open_combine_viewer = True
                             vtk_widget_data_2 = item.get('vtk_image_data')
                             metadata_2 = copy.deepcopy(item.get('metadata'))

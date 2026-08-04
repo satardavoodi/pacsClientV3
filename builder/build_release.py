@@ -962,8 +962,27 @@ def compile_installer(version: str) -> Path | None:
     print_step("Compiling Inno Setup installer")
     iscc = find_iscc()
     if iscc is None:
-        print("[WARN] Inno Setup compiler (ISCC.exe) was not found. Installer script was prepared but not compiled.")
-        return None
+        # A release run that was ASKED for an installer (i.e. --skip-installer-compile
+        # was NOT passed) and produced none must not report success: the old
+        # behaviour printed a WARN, returned None, and let the build exit 0 while
+        # publishing an update feed whose core entry is available:false — a
+        # "successful" build with no shippable artifact. Deliberate installer-less
+        # runs already have --skip-installer-compile; the env escape hatch is for
+        # a machine that intentionally has no Inno Setup.
+        message = (
+            "Inno Setup compiler (ISCC.exe) was not found. Install Inno Setup 6, or "
+            "use --skip-installer-compile if you deliberately want a staging-only "
+            "build. (Bypass with AIPACS_ALLOW_MISSING_ISCC=1.)"
+        )
+        if os.environ.get("AIPACS_ALLOW_MISSING_ISCC", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }:
+            print(f"[WARN] {message}")
+            return None
+        raise SystemExit(f"[INSTALLER] {message}")
 
     INSTALLER_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     compile_stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")

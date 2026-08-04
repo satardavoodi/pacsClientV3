@@ -18,6 +18,7 @@ from PySide6.QtWidgets import QApplication, QFrame, QGridLayout, QSlider
 from PacsClient.pacs.patient_tab.utils.image_io import load_single_series_by_number, load_series_preview
 from PacsClient.utils.diagnostic_logging import now_ms, log_stage_timing
 from PacsClient.pacs.patient_tab.ui.patient_ui.widget_viewer import VTKWidget
+from PacsClient.utils.series_pairing import normalize_series_name
 from PacsClient.pacs.patient_tab.utils import delete_widgets_in_layout
 from modules.zeta_boost import ZetaBoostEngine, ImageSliceBooster
 import logging
@@ -776,12 +777,14 @@ class _VCWarmupMixin:
             vtk_widget_data_2 = None
             metadata_2 = None
 
-            series_name = str(metadata.get('series', {}).get('series_name', ''))
+            # MG-PAIR-1: `str(None)` -> the truthy literal 'None'. Pair only on a
+            # real (normalised) series name; see PacsClient/utils/series_pairing.py.
+            series_pair_key = normalize_series_name(metadata.get('series', {}).get('series_name', ''))
             current_modality = str(metadata.get('series', {}).get('modality', '') or '').upper()
             is_mg_modality = current_modality == 'MG'
 
-            if is_mg_modality and series_name in self._paired_series_map:
-                paired_list = self._paired_series_map[series_name]
+            if is_mg_modality and series_pair_key and series_pair_key in self._paired_series_map:
+                paired_list = self._paired_series_map[series_pair_key]
                 for paired_num in paired_list:
                     if str(paired_num) != str(series_number):
                         vtk_data, meta, _ = self._get_series_by_number_fast(str(paired_num))
@@ -795,7 +798,7 @@ class _VCWarmupMixin:
                                     metadata_2 = meta
                                 break
 
-            if (not is_mg_modality) and series_name in self._paired_series_map:
+            if (not is_mg_modality) and series_pair_key and series_pair_key in self._paired_series_map:
                 logger.debug(
                     "[PAIRED SKIP] first-display series=%s modality=%s - skipping paired lookup (MG only)",
                     series_number,

@@ -1,9 +1,89 @@
 # AIPacs Release Notes (Consolidated)
 
-**Current Stable Version:** v3.5.7 (2026-08-02)
-**Previous Stable:** v3.5.6 (2026-07-26)
-**Release Date:** 2026-08-02
+**Current Stable Version:** v3.5.8 (2026-08-04)
+**Previous Stable:** v3.5.7 (2026-08-02)
+**Release Date:** 2026-08-04
 **Branch:** beta-version
+
+---
+
+## v3.5.8 (2026-08-04) - Minor release: redesigned UI merged into stable, bidirectional reference lines, multi-frame geometry, local-list O(N) render
+
+### Summary
+
+This release brings the **redesigned interface into the stable line** — the
+`satar-ui` UI work, reviewed and blocker-fixed, is merged on top of v3.5.7 (nothing
+from v3.5.7 is lost; it is preserved in history). On top of the merge sit several
+substantial viewer and performance fixes: **bidirectional reference lines** (a line
+now belongs to a pair of planes, not just the last-clicked view), **Siemens
+multi-frame geometry** read from the vendor CSA protocol, the **local patient list
+made linear** instead of quadratic (OPT-50), and a **form-field icon restyle** that
+also touches the login and settings screens.
+
+### Included — redesigned UI (merged from satar-ui, reviewed + fixed)
+
+- **A server-profile switch RESTARTS the app** rather than rebinding data paths at
+  runtime (BLOCKER-1) — the paths are resolved once at startup, so a live rebind
+  left stale handles.
+- **The exit-confirmation dialog is gated** — it never prompts on a programmatic
+  close (BLOCKER-2).
+- **Port and Connection-Timeout fields are typeable again** (HIGH-3/HIGH-7), and the
+  two red guard tests that covered them are repaired.
+- **Single-authority add-server, identity refresh, drag surfaces, and Persian
+  strings** (HIGH-6/HIGH-8, M1/M12), plus a **UI performance pass**.
+- The colleague's local env config was dropped in the merge; our config
+  (razi/mehr, `active_profile_id: razi`, socket `…:50052`) is preserved, and the
+  consultation plugin mirror was re-synced.
+
+### Included — viewer
+
+- **Reference lines are bidirectional.** A reference line belongs to a *pair* of
+  planes: previously only the last-clicked viewport broadcast its plane (selection
+  is click-only, so wheel-scrolling a non-selected view changed nothing), so
+  axial→others worked but sagittal/coronal→others did not. Every viewport is now
+  both a source and a target — scrolling any of three orthogonal series updates the
+  other two lines. New pure `series_pairing.py`; the VTK path gained per-pair actor
+  slots so a pair that stops intersecting can't leave a stale line. Default-on.
+- **Siemens multi-frame geometry from the CSA protocol.** A Siemens "syngo"
+  multi-frame Secondary Capture stores a real slice stack with geometry in the
+  **top-level** tags + the private CSA protocol, not the functional groups — so the
+  earlier reader classified it geometry-less and every frame shared the frame-0
+  position. The reader now parses the CSA ASCCONV protocol for the true per-slice
+  positions (a uniform-step guess was measured wrong on this scanner and is
+  disabled). A protocol that doesn't enumerate the frames (a localizer/scout,
+  reformat, or 3D slab) is refused rather than guessed. Default-on; MPR stays
+  gated.
+- **Smoother scrolling on large / multi-frame series** — a per-instance
+  window/level resolver that used to re-read the DICOM header on every wheel tick is
+  memoised, and a multi-frame file's decoded dataset is cached instead of
+  re-decoded per frame.
+
+### Included — performance
+
+- **Local patient list is O(N), not O(N²) (OPT-50).** The list became unusable past
+  ~2000 studies. The per-row dedup scanned the whole table, several columns opened a
+  DB connection per row, and per-batch passes re-did whole-table work while
+  streaming. Fixed with a presence-set-gated dedup, one-query prefetch maps,
+  incremental per-batch finalization, and mtime-guarded caches for the
+  assignment/report JSON stores. Result at 2000 studies: full load **42.7 s → 13.9
+  s**, worst GUI block **1139 → 271 ms**, SQLite round-trips **4000 → 1**.
+
+### Included — UI polish & build
+
+- **Form-field trailing icon buttons restyled** from a never-flush "rail" to a
+  clean rounded chip — one change in `login_form_styles.py` that deliberately
+  covers Home, login, and settings (they share the two builder helpers).
+- **ARM64 Nuitka restore patch** (`builder/docs/ARM64_RESTORE_nuitka_2026-08-02.patch`)
+  toward restoring the dual-arch build.
+
+### Notes
+
+- The redesigned UI and the viewer changes are default-on with legacy kill
+  switches where applicable.
+- This release merges a large UI change and needs a full live source-build /
+  clinical-lane pass: the redesigned Home/login/settings, a server-profile switch
+  (must restart), reference lines across three orthogonal series, and multi-frame
+  reference lines on a Siemens series.
 
 ---
 

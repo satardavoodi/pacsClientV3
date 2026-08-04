@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "created_at_utc": "2026-07-16T08:18:42.178351+00:00",
+  "created_at_utc": "2026-08-02T18:15:47.172062+00:00",
   "completed_stages": [
     0,
     1,
@@ -18,9 +18,9 @@
     "0": {
       "name": "Preflight",
       "status": "completed",
-      "started_at_utc": "2026-07-16T08:18:42.179487+00:00",
+      "started_at_utc": "2026-08-02T18:15:47.547381+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_00_preflight.log",
-      "finished_at_utc": "2026-07-16T08:19:00.097446+00:00",
+      "finished_at_utc": "2026-08-02T18:15:48.489806+00:00",
       "command": [],
       "output_paths": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output"
@@ -37,9 +37,9 @@
     "1": {
       "name": "Minimal Core Smoke Build",
       "status": "completed",
-      "started_at_utc": "2026-07-16T08:19:00.098620+00:00",
+      "started_at_utc": "2026-08-02T18:15:48.491175+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_01_minimal_core.log",
-      "finished_at_utc": "2026-07-16T08:19:45.078151+00:00",
+      "finished_at_utc": "2026-08-02T18:16:29.283988+00:00",
       "command": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
         "-m",
@@ -48,7 +48,7 @@
         "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_01_minimal_core",
         "--output-filename=AIPacs.exe",
         "--product-name=AIPacs",
-        "--product-version=3.5.3",
+        "--product-version=3.5.7",
         "--company-name=AIPacs",
         "--file-description=AIPacs - staged Nuitka build",
         "--windows-console-mode=attach",
@@ -57,7 +57,6 @@
         "--python-flag=static_hashes",
         "--python-flag=safe_path",
         "--lto=auto",
-        "--msvc=latest",
         "builder nuitka/stage_entrypoints/stage1_minimal_bootstrap.py"
       ],
       "output_paths": [
@@ -74,9 +73,9 @@
     "2": {
       "name": "Qt Shell Build",
       "status": "completed",
-      "started_at_utc": "2026-07-16T08:19:45.079590+00:00",
+      "started_at_utc": "2026-08-02T18:42:31.045813+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_02_qt_shell.log",
-      "finished_at_utc": "2026-07-16T08:20:14.828067+00:00",
+      "finished_at_utc": "2026-08-02T18:42:50.135102+00:00",
       "command": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
         "-m",
@@ -85,7 +84,7 @@
         "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_02_qt_shell",
         "--output-filename=AIPacs.exe",
         "--product-name=AIPacs",
-        "--product-version=3.5.3",
+        "--product-version=3.5.7",
         "--company-name=AIPacs",
         "--file-description=AIPacs - staged Nuitka build",
         "--windows-console-mode=attach",
@@ -114,9 +113,9 @@
     "3": {
       "name": "Core Package Inclusion",
       "status": "completed",
-      "started_at_utc": "2026-07-16T08:20:14.829727+00:00",
+      "started_at_utc": "2026-08-02T18:42:50.136787+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_03_core_packages.log",
-      "finished_at_utc": "2026-07-16T08:46:31.546582+00:00",
+      "finished_at_utc": "2026-08-02T19:02:10.180667+00:00",
       "command": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
         "-m",
@@ -125,7 +124,7 @@
         "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_03_core_packages",
         "--output-filename=AIPacs.exe",
         "--product-name=AIPacs",
-        "--product-version=3.5.3",
+        "--product-version=3.5.7",
         "--company-name=AIPacs",
         "--file-description=AIPacs - staged Nuitka build",
         "--windows-console-mode=attach",
@@ -154,9 +153,9 @@
     "4": {
       "name": "DICOM Basic Viewer Dependencies",
       "status": "completed",
-      "started_at_utc": "2026-07-16T08:46:31.548585+00:00",
+      "started_at_utc": "2026-08-02T19:02:10.193862+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_04_dicom_basic.log",
-      "finished_at_utc": "2026-07-16T08:52:49.790404+00:00",
+      "finished_at_utc": "2026-08-02T19:06:15.424420+00:00",
       "command": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
         "-m",
@@ -165,7 +164,7 @@
         "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_04_dicom_basic",
         "--output-filename=AIPacs.exe",
         "--product-name=AIPacs",
-        "--product-version=3.5.3",
+        "--product-version=3.5.7",
         "--company-name=AIPacs",
         "--file-description=AIPacs - staged Nuitka build",
         "--windows-console-mode=attach",
@@ -204,9 +203,9 @@
     "5": {
       "name": "Heavy Native Imaging Stack",
       "status": "completed",
-      "started_at_utc": "2026-07-16T08:52:49.792332+00:00",
+      "started_at_utc": "2026-08-02T19:06:15.426265+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_05_heavy_native.log",
-      "finished_at_utc": "2026-07-16T09:03:40.128047+00:00",
+      "finished_at_utc": "2026-08-02T19:14:08.445312+00:00",
       "command": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
         "-m",
@@ -215,7 +214,7 @@
         "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_05_heavy_native",
         "--output-filename=AIPacs.exe",
         "--product-name=AIPacs",
-        "--product-version=3.5.3",
+        "--product-version=3.5.7",
         "--company-name=AIPacs",
         "--file-description=AIPacs - staged Nuitka build",
         "--windows-console-mode=attach",
@@ -272,9 +271,9 @@
     "6": {
       "name": "Full Core Build",
       "status": "completed",
-      "started_at_utc": "2026-07-16T09:03:40.130052+00:00",
+      "started_at_utc": "2026-08-02T19:14:08.457900+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_06_full_core.log",
-      "finished_at_utc": "2026-07-16T09:19:25.343728+00:00",
+      "finished_at_utc": "2026-08-02T19:27:05.047786+00:00",
       "command": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\.venv_build\\Scripts\\python.exe",
         "-m",
@@ -283,7 +282,7 @@
         "--output-dir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\dist\\stage_06_full_core",
         "--output-filename=AIPacs.exe",
         "--product-name=AIPacs",
-        "--product-version=3.5.3",
+        "--product-version=3.5.7",
         "--company-name=AIPacs",
         "--file-description=AIPacs - staged Nuitka build",
         "--windows-console-mode=attach",
@@ -340,9 +339,9 @@
     "7": {
       "name": "Runtime Resources",
       "status": "completed",
-      "started_at_utc": "2026-07-16T09:19:25.345001+00:00",
+      "started_at_utc": "2026-08-02T19:27:05.049841+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_07_runtime_resources.log",
-      "finished_at_utc": "2026-07-16T09:22:23.885563+00:00",
+      "finished_at_utc": "2026-08-02T19:30:15.064800+00:00",
       "command": [],
       "output_paths": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\core"
@@ -379,9 +378,9 @@
     "8": {
       "name": "External Plugin Package Staging",
       "status": "completed",
-      "started_at_utc": "2026-07-16T09:22:23.886500+00:00",
+      "started_at_utc": "2026-08-02T19:30:15.228810+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_08_plugin_staging.log",
-      "finished_at_utc": "2026-07-16T09:24:28.057161+00:00",
+      "finished_at_utc": "2026-08-02T19:32:12.201523+00:00",
       "command": [],
       "output_paths": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\plugin_packages"
@@ -398,9 +397,9 @@
     "9": {
       "name": "Installer Staging",
       "status": "completed",
-      "started_at_utc": "2026-07-16T09:24:28.058289+00:00",
+      "started_at_utc": "2026-08-02T19:32:13.286983+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_09_installer_staging.log",
-      "finished_at_utc": "2026-07-16T09:24:28.060554+00:00",
+      "finished_at_utc": "2026-08-02T19:32:14.333420+00:00",
       "command": [],
       "output_paths": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage\\manifest",
@@ -419,12 +418,12 @@
     "10": {
       "name": "Inno Setup Installer",
       "status": "completed",
-      "started_at_utc": "2026-07-16T09:24:28.061398+00:00",
+      "started_at_utc": "2026-08-02T19:32:14.404647+00:00",
       "log_path": "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\logs\\stage_10_inno_setup.log",
-      "finished_at_utc": "2026-07-16T09:51:41.220865+00:00",
+      "finished_at_utc": "2026-08-02T19:59:19.285445+00:00",
       "command": [
         "C:\\Program Files (x86)\\Inno Setup 6\\ISCC.exe",
-        "/DMyAppVersion=3.5.3",
+        "/DMyAppVersion=3.5.7",
         "/DStageDir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\stage",
         "/DInstallerOutputDir=E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer",
         "/DInstallerBaseName=ai-pacs installer",
@@ -435,7 +434,7 @@
       ],
       "artifact_paths": [
         "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer\\ai-pacs installer.exe",
-        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer\\ai-pacs installer v3.5.3.exe"
+        "E:\\ai-pacs\\ai-pacs codes\\ai-pacs beta version\\builder nuitka\\output\\installer\\ai-pacs installer v3.5.7.exe"
       ],
       "report_path": null,
       "issues": [],
@@ -444,8 +443,8 @@
       ]
     }
   },
-  "updated_at_utc": "2026-07-16T09:51:41.221353+00:00",
-  "mode": "fresh",
+  "updated_at_utc": "2026-08-02T19:59:19.285902+00:00",
+  "mode": "from_stage",
   "failed_stage": null,
   "current_stage": null,
   "clean_mode": "none"

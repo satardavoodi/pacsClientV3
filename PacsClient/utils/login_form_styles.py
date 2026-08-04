@@ -62,6 +62,47 @@ def _field_icon(name: str, color: str = _ICON_COLOR):
     return qta.icon(name, color=color)
 
 
+# ── Trailing icon button geometry (2026-08-04) ───────────────────────────────
+# The blue icon buttons at the right of every field (server chevron, Patient-ID
+# advanced-search, Patient-Name, date-preset chevron, the two calendar buttons)
+# are ALL built by the two helpers below, so their look is decided in exactly
+# these two places.
+#
+# The original "rail" design meant the button to sit flush against the field's
+# right edge: full-bleed, square on the left, rounded only on the right
+# (`border-radius: 0 5px 5px 0`) with a 1px separator line. It never actually
+# landed flush — the button is 34x(field_h-4) inside a shell of field_h with a
+# 1px border, so at the Home page's field_h=36 it floated 1px inside the shell
+# and its 5px right corners never lined up with the shell's 6px ones. A 5px
+# radius on a 32px block is also barely a curve. Net effect: a chunky blue
+# rectangle with visibly sharp corners, slightly too big for its field.
+#
+# It is now a CHIP: a square button, inset from the field edge, with a uniform
+# radius on all four corners and no separator. Geometry comes from `setFixedSize`
+# ONLY — the QSS no longer sets min/max-width, so there is a single authority for
+# the size instead of two that could disagree.
+#
+# `AIPACS_FIELD_ICON_CHIP=0` restores the exact pre-2026-08-04 rail.
+_CHIP_RADIUS = 6
+_CHIP_INSET = 5          # gap between the chip and the field's inner right edge
+_CHIP_MIN_SIDE = 22
+
+
+def _icon_chip_enabled() -> bool:
+    import os as _os
+    return (_os.getenv("AIPACS_FIELD_ICON_CHIP", "1") or "1").strip() != "0"
+
+
+def _chip_side(field_h: int) -> int:
+    """Square chip side for a field of height ``field_h`` (36 -> 24, 40 -> 28)."""
+    return max(_CHIP_MIN_SIDE, int(field_h) - 12)
+
+
+def icon_rail_right_margin(field_h: int = FIELD_H) -> int:
+    """Right contents-margin a field's root layout needs to inset the chip."""
+    return _CHIP_INSET if _icon_chip_enabled() else 0
+
+
 def _configure_icon_rail_button(
     btn: QToolButton,
     *,
@@ -73,11 +114,22 @@ def _configure_icon_rail_button(
     interactive: bool = True,
 ) -> None:
     btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+    if _icon_chip_enabled():
+        side = _chip_side(field_h)
+        # Keep at least 4px of breathing room around the glyph, so the smaller
+        # chip never looks stuffed (the calendar button asks for 18px).
+        icon_size = min(int(icon_size), side - 8)
     btn.setIcon(_field_icon(icon_name, icon_color))
     btn.setIconSize(QSize(icon_size, icon_size))
     btn.setToolTip(tooltip)
     btn.setAutoRaise(False)
-    btn.setFixedSize(_ICON_RAIL_W, max(28, field_h - 4))
+    if _icon_chip_enabled():
+        side = _chip_side(field_h)
+        # A fixed-size widget in the field's QHBoxLayout is centred vertically,
+        # so a square chip is automatically inset by the same amount top+bottom.
+        btn.setFixedSize(side, side)
+    else:
+        btn.setFixedSize(_ICON_RAIL_W, max(28, field_h - 4))
     if interactive:
         btn.setCursor(Qt.CursorShape.PointingHandCursor)
         btn.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -90,13 +142,43 @@ def _configure_icon_rail_button(
     btn.style().polish(btn)
 
 
-def _icon_rail_btn_qss(selector: str, *, border: str, accent_soft: str, accent: str) -> str:
+def _icon_rail_btn_qss(selector: str, *, border: str, accent_soft: str, accent: str,
+                       legacy_radius: int = 5) -> str:
+    """QSS for a field's trailing icon button.
+
+    ``legacy_radius`` only affects the kill-switch (rail) path, where the shell
+    stylesheet used 6px and the themed one 5px — kept distinct so
+    ``AIPACS_FIELD_ICON_CHIP=0`` reproduces the old look exactly.
+    """
+    if _icon_chip_enabled():
+        # Uniform radius on all four corners, no separator, and NO width/height
+        # rules — `_configure_icon_rail_button`'s setFixedSize is the only
+        # authority for the geometry.
+        return f"""
+            {selector} {{
+                background-color: {accent_soft};
+                border: none;
+                border-radius: {_CHIP_RADIUS}px;
+                margin: 0;
+                padding: 0;
+            }}
+            {selector}:hover {{
+                background-color: {accent};
+            }}
+            {selector}:pressed {{
+                background-color: {accent};
+            }}
+            {selector}[decorative="true"]:hover,
+            {selector}[decorative="true"]:pressed {{
+                background-color: {accent_soft};
+            }}
+        """
     return f"""
         {selector} {{
             background-color: {accent_soft};
             border: none;
             border-left: 1px solid {border};
-            border-radius: 0 5px 5px 0;
+            border-radius: 0 {legacy_radius}px {legacy_radius}px 0;
             margin: 0;
             padding: 0 2px;
             min-width: {_ICON_RAIL_W}px;
@@ -170,23 +252,13 @@ _FIELD_SHELL_QSS = f"""
     QWidget#LoginComboField QToolButton#LoginFieldStep:pressed {{
         background-color: rgba(29, 78, 216, 0.55);
     }}
-    QWidget#LoginComboField QToolButton#LoginFieldChevron {{
-        background-color: #1e3a5f;
-        border: none;
-        border-left: 1px solid #64748b;
-        border-radius: 0 6px 6px 0;
-        padding: 0 2px;
-        margin: 0;
-        min-width: {_ICON_RAIL_W}px;
-        max-width: {_ICON_RAIL_W}px;
-        min-height: 28px;
-    }}
-    QWidget#LoginComboField QToolButton#LoginFieldChevron:hover {{
-        background-color: #2563eb;
-    }}
-    QWidget#LoginComboField QToolButton#LoginFieldChevron:pressed {{
-        background-color: #2563eb;
-    }}
+    {_icon_rail_btn_qss(
+        "QWidget#LoginComboField QToolButton#LoginFieldChevron",
+        border="#64748b",
+        accent_soft="#1e3a5f",
+        accent="#2563eb",
+        legacy_radius=6,
+    )}
 """
 
 _COMBO_INNER_QSS = """
@@ -433,7 +505,9 @@ class LoginComboField(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        # Right margin insets the trailing chip from the field's inner edge (0 on
+        # the legacy flush-rail path) — see _configure_icon_rail_button.
+        root.setContentsMargins(0, 0, icon_rail_right_margin(self._field_h), 0)
         root.setSpacing(0)
 
         self._combo = QComboBox(self)
@@ -624,7 +698,9 @@ class LoginLineField(QWidget):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        # Right margin insets the trailing chip from the field's inner edge (0 on
+        # the legacy flush-rail path) — see _configure_icon_rail_button.
+        root.setContentsMargins(0, 0, icon_rail_right_margin(self._field_h), 0)
         root.setSpacing(0)
 
         self._line = QLineEdit(self)
@@ -971,7 +1047,9 @@ class LoginDateField(QWidget):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         root = QHBoxLayout(self)
-        root.setContentsMargins(0, 0, 0, 0)
+        # Right margin insets the trailing chip from the field's inner edge (0 on
+        # the legacy flush-rail path) — see _configure_icon_rail_button.
+        root.setContentsMargins(0, 0, icon_rail_right_margin(self._field_h), 0)
         root.setSpacing(0)
 
         self._date_edit = QDateEdit(self)

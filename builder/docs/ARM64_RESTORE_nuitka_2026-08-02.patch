@@ -1,0 +1,294 @@
+﻿diff --git a/builder nuitka/build_nuitka_release.py b/builder nuitka/build_nuitka_release.py
+index c988a457..941a585c 100644
+--- a/builder nuitka/build_nuitka_release.py	
++++ b/builder nuitka/build_nuitka_release.py	
+@@ -1413,12 +1413,50 @@ def stage_09_installer_staging(ctx: BuildContext, stage: Stage, log_path: Path)
+     )
+ 
+ 
++def _compile_nuitka_woa_installer(iscc: Path, ctx: BuildContext, log_path: Path) -> None:
++    """Compile the Windows-on-ARM emulation Nuitka SKU from the SAME x64 stage.
++
++    Best-effort ظ¤ a failure here must NOT sink the primary x64 artifact
++    (parity with build_release.compile_woa_installer)."""
++    woa_script = INSTALLER_DIR / "AIPacs_Nuitka_Setup_woa.iss"
++    if not woa_script.exists():
++        print(f"[WARN] missing {woa_script} ظ¤ Nuitka WoA installer skipped.")
++        return
++    base_name = "ai-pacs-nuitka-installer arm64-emulated"
++    cmd = [
++        str(iscc),
++        f"/DMyAppVersion={ctx.version}",
++        f"/DStageDir={STAGE_DIR}",
++        f"/DInstallerOutputDir={INSTALLER_OUTPUT_DIR}",
++        f"/DInstallerBaseName={base_name} v{ctx.version}",
++        str(woa_script),
++    ]
++    try:
++        rc = run_command_with_log(cmd, cwd=INSTALLER_DIR, log_path=log_path)
++        produced = INSTALLER_OUTPUT_DIR / f"{base_name} v{ctx.version}.exe"
++        if rc != 0 or not produced.exists():
++            print("[WARN] Nuitka WoA installer compile did not produce the expected .exe "
++                  "(primary x64 artifact unaffected).")
++            return
++        copy2_with_retry(produced, INSTALLER_OUTPUT_DIR / f"{base_name}.exe")
++        print(f"[OK] Nuitka WoA installer: {produced}")
++    except Exception as exc:
++        print(f"[WARN] Nuitka WoA installer compile failed (primary x64 artifact unaffected): {exc}")
++
++
+ def stage_10_inno_setup(ctx: BuildContext, stage: Stage, log_path: Path) -> StageResult:
+     iscc = find_iscc()
+     if iscc is None:
+         raise StageError("Inno Setup compiler (ISCC.exe) not found")
+ 
+-    installer_script = INSTALLER_DIR / "AIPacs_Nuitka_Setup.iss"
++    # ظ¤ظ¤ ARM64 parity (2026-07-08): arch-aware installer script + names ظ¤ظ¤ظ¤ظ¤ظ¤ظ¤
++    arch = getattr(ctx.args, "arch", "x64")
++    if arch == "arm64":
++        installer_script = INSTALLER_DIR / "AIPacs_Nuitka_Setup_arm64.iss"
++        base_name = "ai-pacs-nuitka-installer arm64"
++    else:
++        installer_script = INSTALLER_DIR / "AIPacs_Nuitka_Setup.iss"
++        base_name = "ai-pacs-nuitka-installer"
+     if not installer_script.exists():
+         raise StageError(f"Installer script missing: {installer_script}")
+ 
+@@ -1427,29 +1465,30 @@ def stage_10_inno_setup(ctx: BuildContext, stage: Stage, log_path: Path) -> Stag
+         f"/DMyAppVersion={ctx.version}",
+         f"/DStageDir={STAGE_DIR}",
+         f"/DInstallerOutputDir={INSTALLER_OUTPUT_DIR}",
+-        "/DInstallerBaseName=ai-pacs installer",
++        f"/DInstallerBaseName={base_name}",
+         str(installer_script),
+     ]
+ 
+     rc = run_command_with_log(cmd, cwd=INSTALLER_DIR, log_path=log_path)
+-    primary = INSTALLER_OUTPUT_DIR / "ai-pacs installer.exe"
++    primary = INSTALLER_OUTPUT_DIR / f"{base_name}.exe"
+     if rc != 0:
+         log_text = log_path.read_text(encoding="utf-8", errors="replace") if log_path.exists() else ""
+         if "Successful compile" not in log_text or not primary.exists():
+             raise StageError(f"Installer compile failed with exit code {rc}")
+ 
+-    compiled = sorted(INSTALLER_OUTPUT_DIR.glob("*.exe"), key=lambda p: p.stat().st_mtime, reverse=True)
+-    if not compiled:
+-        raise StageError("Installer compilation finished but no output executable was found")
+-
+-    compiled_installer = compiled[0]
+-    versioned = INSTALLER_OUTPUT_DIR / f"ai-pacs installer v{ctx.version}.exe"
+-    if compiled_installer.resolve() != primary.resolve():
+-        copy2_with_retry(compiled_installer, primary)
+-    else:
+-        primary = compiled_installer
++    if not primary.exists():
++        compiled = sorted(INSTALLER_OUTPUT_DIR.glob("*.exe"), key=lambda p: p.stat().st_mtime, reverse=True)
++        if not compiled:
++            raise StageError("Installer compilation finished but no output executable was found")
++        primary = compiled[0]
++    compiled_installer = primary
++    versioned = INSTALLER_OUTPUT_DIR / f"{base_name} v{ctx.version}.exe"
+     copy2_with_retry(primary, versioned)
+ 
++    # ظ¤ظ¤ WoA emulation SKU (x64 pipeline only): same stage, ARM64-only .exe ظ¤ظ¤
++    if arch == "x64" and getattr(ctx.args, "with_woa_installer", False):
++        _compile_nuitka_woa_installer(iscc, ctx, log_path)
++
+     metadata = {
+         "version": ctx.version,
+         "generated_at_utc": utc_now(),
+@@ -1864,9 +1903,55 @@ def parse_args() -> argparse.Namespace:
+         default="builder nuitka/AIPacs_nuitka.spec.py",
+         help="Nuitka spec path",
+     )
++    parser.add_argument(
++        "--arch",
++        choices=["x64", "arm64"],
++        default="x64",
++        help=(
++            "Target architecture (parity with build_release.py). 'x64' (default) "
++            "= the historical Nuitka pipeline, byte-identical names. 'arm64' = "
++            "native Windows-on-ARM package (MUST run on an ARM64 builder ظ¤ Nuitka "
++            "cannot cross-compile; see the ARM64 platform plan)."
++        ),
++    )
++    parser.add_argument(
++        "--with-woa-installer",
++        action="store_true",
++        help=(
++            "Additionally compile the Windows-on-ARM emulation SKU "
++            "(AIPacs_Nuitka_Setup_woa.iss) from the same x64 stage ظ¤ ARM64-only "
++            "installer of the x64 payload, stamps install_package=x64_on_arm64. "
++            "x64 pipeline only."
++        ),
++    )
+     return parser.parse_args()
+ 
+ 
++def validate_nuitka_build_arch(arch: str) -> None:
++    """Refuse impossible Nuitka builds early (parity with build_release.py).
++
++    Nuitka compiles native code for the ARCHITECTURE OF THE RUNNING PYTHON ظ¤
++    no cross-compilation. An 'arm64' build requires an ARM64 host + ARM64
++    CPython."""
++    import platform
++
++    machine = (platform.machine() or "").upper()
++    if arch == "arm64":
++        if machine != "ARM64":
++            raise StageError(
++                "--arch arm64 requires an ARM64 Windows builder running an ARM64 "
++                f"CPython (this interpreter reports machine={machine!r}). Nuitka "
++                "cannot cross-build."
++            )
++        if not (INSTALLER_DIR / "AIPacs_Nuitka_Setup_arm64.iss").exists():
++            raise StageError("missing installer variant: AIPacs_Nuitka_Setup_arm64.iss")
++        print("[ARCH] Building the Windows ARM64 (native) Nuitka package.")
++    elif machine == "ARM64":
++        print("[WARN] [ARCH] Building the x64 Nuitka package ON an ARM64 host ظ¤ the "
++              "build runs under emulation and the produced package is x64. Use "
++              "--arch arm64 for the native package.")
++
++
+ def validate_stage_number(value: int | None, arg_name: str) -> None:
+     if value is None:
+         return
+@@ -1985,6 +2070,8 @@ def main() -> int:
+     if not spec_path.exists():
+         raise StageError(f"Spec not found: {spec_path}")
+ 
++    validate_nuitka_build_arch(getattr(args, "arch", "x64"))
++
+     spec = load_spec(spec_path)
+     ctx = BuildContext(args, spec)
+ 
+diff --git a/builder nuitka/installer/AIPacs_Nuitka_Setup.iss b/builder nuitka/installer/AIPacs_Nuitka_Setup.iss
+index 80c5366b..cb395ef9 100644
+--- a/builder nuitka/installer/AIPacs_Nuitka_Setup.iss	
++++ b/builder nuitka/installer/AIPacs_Nuitka_Setup.iss	
+@@ -1,4 +1,4 @@
+-#define MyAppName "AIPacs"
++#define MyAppName "AIPacs (Nuitka)"
+ #ifndef MyAppVersion
+   #define MyAppVersion "0.0.0"
+ #endif
+@@ -9,18 +9,34 @@
+   #define InstallerOutputDir "..\output\installer"
+ #endif
+ #ifndef InstallerBaseName
+-  #define InstallerBaseName "ai-pacs installer"
++  #define InstallerBaseName "ai-pacs-nuitka-installer"
+ #endif
+ #define AdvancedMprPayloadExe StageDir + "\plugin_packages\advanced_mpr\payload\AIPacsAdvancedViewer.exe"
+ #define AdvancedMprAvailable FileExists(AdvancedMprPayloadExe)
+ 
++; ظ¤ظ¤ ARM64 / Windows-on-ARM variants (parity with the PyInstaller installer) ظ¤ظ¤
++; Single-source: AIPacs_Nuitka_Setup_arm64.iss / _woa.iss set one of these
++; symbols and #include this file. Without them this compiles byte-identical to
++; the historical x64 Nuitka installer.
++#ifdef ARM64_BUILD
++  #define ArchSuffix " (ARM64)"
++  #define InstallPackageKind "arm64"
++#elif defined WOA_EMULATED_BUILD
++  #define ArchSuffix " (ARM64 emulated)"
++  #define InstallPackageKind "x64_on_arm64"
++#else
++  #define ArchSuffix ""
++  #define InstallPackageKind "x64"
++#endif
++
+ [Setup]
+-; Same product identity as the standard installer; Nuitka is only the build backend.
++; DIFFERENT GUID from PyInstaller version to allow coexistence
+ AppId={{3E7B29F2-22DF-4B2C-8D3A-1E7C25772F76}
+ AppName={#MyAppName}
+ AppVersion={#MyAppVersion}
+ AppVerName={#MyAppName} {#MyAppVersion}
+-DefaultDirName={autopf}\AIPacs
++; Install to a different directory to avoid conflicts
++DefaultDirName={autopf}\AIPacs_Nuitka
+ DefaultGroupName={#MyAppName}
+ DisableProgramGroupPage=yes
+ OutputDir={#InstallerOutputDir}
+@@ -28,12 +44,21 @@ OutputBaseFilename={#InstallerBaseName}
+ Compression=lzma2/ultra64
+ SolidCompression=yes
+ WizardStyle=modern
++#ifdef ARM64_BUILD
++ArchitecturesAllowed=arm64
++ArchitecturesInstallIn64BitMode=arm64
++#elif defined WOA_EMULATED_BUILD
++ArchitecturesAllowed=arm64
++ArchitecturesInstallIn64BitMode=x64compatible
++#else
+ ArchitecturesInstallIn64BitMode=x64compatible
++#endif
+ PrivilegesRequired=admin
+ DisableReadyMemo=no
+ SetupIconFile=..\..\Qss\images\favicon.ico
+ LicenseFile=..\..\LICENSE
+ UninstallDisplayIcon={app}\AIPacs.exe
++UninstallDisplayName={#MyAppName} {#MyAppVersion}{#ArchSuffix}
+ 
+ [Languages]
+ Name: "english"; MessagesFile: "compiler:Default.isl"
+@@ -137,6 +162,22 @@ begin
+   Result := WizardIsComponentSelected('optional\' + ModuleId);
+ end;
+ 
++function ResolvedInstallPackageKind(): String;
++begin
++  // Auto-detect at INSTALL time so ONE Nuitka installer stamps the correct
++  // package kind for the machine (parity with the PyInstaller installer;
++  // user directive 2026-07-08). Same x64 payload; on ARM64 the app then
++  // applies the Windows-on-ARM emulation runtime profile + hardware-GL fix.
++#ifdef ARM64_BUILD
++  Result := 'arm64';
++#else
++  if IsArm64 then
++    Result := 'x64_on_arm64'
++  else
++    Result := 'x64';
++#endif
++end;
++
+ function OptionalModuleStatusValue(const ModuleId: String): String;
+ begin
+   if OptionalModuleSelected(ModuleId) then
+@@ -579,6 +620,7 @@ begin
+     '  "app_name": "AIPacs",' + #13#10 +
+     '  "app_version": "{#MyAppVersion}",' + #13#10 +
+     '  "generated_at_utc": "",' + #13#10 +
++    '  "install_package": "' + ResolvedInstallPackageKind() + '",' + #13#10 +
+     '  "installer": {' + #13#10 +
+     '    "current_version": "{#MyAppVersion}",' + #13#10 +
+     '    "detected_existing_version": "' + InstalledVersionValue() + '",' + #13#10 +
+@@ -653,3 +695,28 @@ begin
+   end;
+ end;
+ 
++#ifdef WOA_EMULATED_BUILD
++// ARM64 emulation SKU (Nuitka) ظ¤ informative first page; always continues.
++function InitializeSetup(): Boolean;
++begin
++  Result := True;
++  SuppressibleMsgBox(
++    'AIPacs (Nuitka) for Windows on ARM (emulated x64 package).' + #13#10 + #13#10 +
++    'The application runs through Windows'' built-in x64 emulation. First launches are slower while Windows translates the application; later launches are faster.' + #13#10 + #13#10 +
++    '3D/MPR rendering uses the system hardware OpenGL. If MPR reports a graphics problem, update the GPU driver and re-run the test in Settings > Viewer Configuration > Hardware Requirements Check.',
++    mbInformation, MB_OK, IDOK);
++end;
++#elif !defined ARM64_BUILD
++// Standard x64 Nuitka package on a Windows-on-ARM host: point at the WoA package.
++function InitializeSetup(): Boolean;
++begin
++  Result := True;
++  if IsArm64 then
++    Result := SuppressibleMsgBox(
++      'This computer uses Windows on ARM (ARM64), but this is the standard x64 Nuitka package of AIPacs.' + #13#10 + #13#10 +
++      'A dedicated "AIPacs (ARM64 emulated)" Nuitka package exists for ARM64 computers. Please use that package if available.' + #13#10 + #13#10 +
++      'Continue installing the standard x64 package on this ARM64 computer?',
++      mbConfirmation, MB_YESNO, IDYES) = IDYES;
++end;
++#endif
++

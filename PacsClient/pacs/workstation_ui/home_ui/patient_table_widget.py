@@ -1009,6 +1009,31 @@ class PatientTableWidget(QWidget):
             pass
 
 
+    # ── Why the patient table's corners are square (investigated 2026-08-04) ──
+    # The V2 stylesheet (`v2_style.results_table_qss`) has carried
+    # `border-radius: 8px` on the frame since V2 shipped, yet the table still
+    # renders as a hard rectangle. Qt does NOT clip a scroll area's children to a
+    # stylesheet border-radius, and THREE separate children each paint an opaque
+    # square rect over the frame's corners:
+    #   * QHeaderView       — the whole top strip, over both top corners
+    #   * the viewport      — the body, over both bottom corners
+    #   * the vertical scrollbar — the right edge, over BOTH right corners
+    #
+    # Measured with `tests/bench/probe_table_corners.py` (page-colour px per 4x4
+    # corner block; 16 = fully rounded, 0 = square):
+    #   frame radius alone .......... TL 0/16  TR 0/16  BL 0/16  BR 0/16
+    #   + section:first/:last ....... TL 7/16  TR 0/16  BL 0/16  BR 0/16
+    #   + rounded header VIEW ....... TL 10/16 TR 0/16  BL 0/16  BR 0/16
+    # `QHeaderView::section:last` never fires (confirmed: still 0 with every
+    # column unhidden), and nothing reaches the right-hand corners because the
+    # scrollbar owns them.
+    #
+    # So a QSS-only fix can round the top-LEFT and nothing else — an asymmetric
+    # table, worse than the uniform square. Rounding this properly means
+    # re-parenting `results_table` into a rounded container frame with the table
+    # inset a few px inside the curve (and the scrollbar inset with it). That is
+    # a layout change to the app's busiest surface, so it is NOT done here.
+
     def setup_ui(self):
         """Setup the Patient Table UI"""
         # Enhanced table widget with checkbox column
@@ -3716,7 +3741,128 @@ class PatientTableWidget(QWidget):
         except Exception as e:
             print(f"Error centering checkbox in cell: {e}")
 
+    # ── OPT-50 (2026-08-03): large Local-list render costs ────────────────────
+    # Three independently kill-switchable accelerators for the patient list.
+    # Each defaults ON; set the env var to "0" to fall back to the exact
+    # pre-OPT-50 behaviour of that one piece.
+    #   AIPACS_LIST_UID_INDEX     — study_uid presence set (kills the O(N²) scan)
+    #   AIPACS_LIST_DB_PREFETCH   — batched imported_at / visited lookups
+    #   AIPACS_LIST_BATCH_FINALIZE— per-batch whole-table passes → one settle pass
+
+    @staticmethod
+    def _uid_index_enabled() -> bool:
+        import os as _os
+        return (_os.getenv("AIPACS_LIST_UID_INDEX", "1") or "1").strip() != "0"
+
+    @staticmethod
+    def _db_prefetch_enabled() -> bool:
+        import os as _os
+        return (_os.getenv("AIPACS_LIST_DB_PREFETCH", "1") or "1").strip() != "0"
+
+    @staticmethod
+    def _batch_finalize_enabled() -> bool:
+        import os as _os
+        return (_os.getenv("AIPACS_LIST_BATCH_FINALIZE", "1") or "1").strip() != "0"
+
+    def _uid_set(self) -> set:
+        """Lazily-created set of study_uids currently rendered in the table."""
+        s = getattr(self, '_present_study_uids', None)
+        if s is None:
+            s = set()
+            self._present_study_uids = s
+        return s
+
+    def _may_have_study_uid(self, study_uid: str) -> bool:
+        """True when the table MIGHT already hold ``study_uid``.
+
+        The per-study dedup guard in ``add_patient_data`` used to scan EVERY
+        existing row for EVERY inserted row — O(N²), about 2 M ``item()`` +
+        ``.text()`` calls while populating a 2000-study Local list, all on the
+        GUI thread. That is the single biggest reason the list is fine at 200
+        studies and unusable at 2000.
+
+        The overwhelmingly common answer is "no", and a set gives it in O(1).
+        Note the asymmetry that makes this safe: a **False is authoritative**
+        (the uid was never inserted, so there is nothing to find and the scan
+        would have returned None anyway), while a **True only means "go scan"**.
+        So a stale set can never produce a duplicate row — at worst it costs one
+        redundant scan, and the scan's own result still decides.
+        """
+        if not self._uid_index_enabled():
+            return True
+        try:
+            return str(study_uid) in self._uid_set()
+        except Exception:
+            return True   # fail OPEN → full scan → legacy behaviour
+
+    def _note_study_uid_present(self, study_uid: str) -> None:
+        """Register a study_uid that has just been inserted as a row."""
+        try:
+            if study_uid:
+                self._uid_set().add(str(study_uid))
+        except Exception:
+            pass
+
+    def _rebuild_study_uid_index(self) -> None:
+        """Re-derive the presence set from the rows actually still in the table.
+
+        ``clear_table`` keeps PINNED rows, so the set cannot simply be emptied.
+        Rebuilt from the surviving rows (normally 0–3), which also self-heals any
+        drift from a path that removed rows without telling us.
+        """
+        uids = set()
+        try:
+            for row in range(self.results_table.rowCount()):
+                it = self.results_table.item(row, COL['study_uid'])
+                if it is not None:
+                    text = str(it.text()).strip()
+                    if text:
+                        uids.add(text)
+        except Exception:
+            uids = set()
+        self._present_study_uids = uids
+
+    def prime_imported_on_cache(self, study_uids, imported_at_map) -> None:
+        """Seed the Imported-On memo from ONE batched query (OPT-50).
+
+        ``_resolve_imported_on`` memoises per search, but a freshly-searched
+        study is ALWAYS a miss, so it issued a single-UID ``get_imported_at_map``
+        — i.e. a fresh SQLite connection — for every row rendered. Priming the
+        whole result set up front turns N queries into 1.
+
+        UIDs with no ``imported_at`` are recorded as "" so the per-row path
+        treats them as resolved-and-empty rather than re-querying.
+        """
+        try:
+            if not hasattr(self, '_imported_on_cache'):
+                self._imported_on_cache = {}
+            found = imported_at_map or {}
+            for uid in (study_uids or []):
+                key = str(uid or '').strip()
+                if key:
+                    self._imported_on_cache[key] = found.get(key) or ""
+        except Exception:
+            pass
+
+    def prime_visited_patient_ids(self, patient_ids) -> None:
+        """Seed ``check_patient_visited`` from ONE batched query (OPT-50).
+
+        Pass ``None`` to drop the prime and go back to the per-row DB lookup.
+        """
+        try:
+            self._visited_patient_cache = (
+                {str(p) for p in patient_ids} if patient_ids is not None else None
+            )
+        except Exception:
+            self._visited_patient_cache = None
+
     def check_patient_visited(self, patient_id):
+        # OPT-50: answer from the batched prime when the caller supplied one.
+        # Every other caller (single-row refresh, server path, tests) still gets
+        # the original per-row DB lookup, so the contract is unchanged.
+        cache = getattr(self, '_visited_patient_cache', None)
+        if cache is not None and self._db_prefetch_enabled():
+            return str(patient_id) in cache
         patient_pk = find_patient_pk(patient_id)
         if patient_pk is None:
             return False
@@ -3960,8 +4106,11 @@ class PatientTableWidget(QWidget):
         # This preserves the existing _merge_patient_row server-grouping
         # path (which is unchanged below) and adds a defensive guard for
         # the single-study path so the table stays at one row per study.
+        # OPT-50: `_may_have_study_uid` answers the common "not in the table"
+        # case from a set in O(1); the row scan below runs ONLY for a genuine
+        # duplicate. Behaviour is identical — see _may_have_study_uid.
         incoming_study_uid = str(kwargs.get('study_uid', '') or '').strip()
-        if incoming_study_uid:
+        if incoming_study_uid and self._may_have_study_uid(incoming_study_uid):
             for _row in range(self.results_table.rowCount()):
                 _uid_item = self.results_table.item(_row, COL['study_uid'])
                 if _uid_item and _uid_item.text().strip() == incoming_study_uid:
@@ -3985,6 +4134,9 @@ class PatientTableWidget(QWidget):
 
         row = self.results_table.rowCount()
         self.results_table.insertRow(row)
+        # OPT-50: register the uid the moment the row really exists, so the next
+        # insert's dedup guard can answer from the set instead of scanning.
+        self._note_study_uid_present(incoming_study_uid)
 
         visited_patient = self.check_patient_visited(patient_id)
 
@@ -4073,6 +4225,11 @@ class PatientTableWidget(QWidget):
             report_status = 'completed'
         if not report_status or report_status not in REPORT_STATUSES:
             report_status = 'pending'
+        # OPT-50: feed the render-pass memo. `setdefault` keeps the FIRST row of a
+        # patient, which is exactly what report_status_for_reception's scan returns.
+        _rs_memo = getattr(self, '_report_status_by_reception', None)
+        if _rs_memo is not None and patient_id:
+            _rs_memo.setdefault(str(patient_id).strip(), report_status)
         
         # Create clickable report status widget
         report_container = QWidget()
@@ -4339,15 +4496,115 @@ class PatientTableWidget(QWidget):
                 self._finalize_bulk_insert_ui()
             self._bulk_insert_dirty = False
 
+    # ── OPT-50: per-batch whole-table work → ONE pass when the stream settles ──
+    # A progressive Local load calls _finalize_bulk_insert_ui after EVERY 40-row
+    # batch (~50 times for 2000 studies). Each call used to run three passes over
+    # the WHOLE table: apply_anti_aliasing_to_table (N×C setFont, each emitting
+    # dataChanged), _programmatic_sort (a full sortItems PLUS an _extract_row_data
+    # on every row), and _update_results_count (an O(N) modality summary). That
+    # is a second quadratic term on top of the dedup scan.
+    #
+    # While a stream is in flight we now: anti-alias only the rows just added,
+    # skip the count (the progressive label replaces it immediately anyway), and
+    # debounce the sort into a single settle pass.
+    _STREAM_SETTLE_MS = 140
+
+    def _stream_in_flight(self) -> bool:
+        """True while a progressive load still has rows left to render."""
+        try:
+            return int(getattr(self, '_prog_cursor', 0)) < int(getattr(self, '_prog_total', 0))
+        except Exception:
+            return False
+
+    def _arm_stream_settle_sort(self) -> None:
+        """(Re)start the debounced settle pass.
+
+        Batches arrive every _PROGRESSIVE_BG_DELAY_MS (50 ms) and each one
+        restarts this 140 ms timer, so it fires exactly once — after the last
+        batch — rather than once per batch.
+        """
+        try:
+            from PySide6.QtCore import QTimer
+            t = getattr(self, '_stream_settle_timer', None)
+            if t is None:
+                t = QTimer(self)
+                t.setSingleShot(True)
+                t.timeout.connect(self._on_stream_settled)
+                self._stream_settle_timer = t
+            t.start(int(self._STREAM_SETTLE_MS))
+        except Exception:
+            # No timer available → sort now, so ordering is never left wrong.
+            try:
+                if getattr(self, '_active_sort_col', None) is None:
+                    self._programmatic_sort(COL['date'], Qt.DescendingOrder)
+            except Exception:
+                pass
+
+    def _on_stream_settled(self) -> None:
+        """Sort the finished table ONCE, honouring the ACTIVE sort column.
+
+        BUG FIX (OPT-50): the old per-batch code only re-sorted when NO user sort
+        was active, so rows streamed in behind a user's "sort by Imported On"
+        were appended UNSORTED at the bottom and stayed there until the user
+        clicked the header again. Sorting by the active column here is what makes
+        a column sort actually cover the whole result set.
+        """
+        if self._stream_in_flight():
+            self._arm_stream_settle_sort()   # more rows still on the way
+            return
+        # Stream finished → every later report-status read goes live again.
+        self._end_report_status_memo()
+        try:
+            col = getattr(self, '_active_sort_col', None)
+            if col is None:
+                self._programmatic_sort(COL['date'], Qt.DescendingOrder)
+            else:
+                state = int((getattr(self, '_sort_states', {}) or {}).get(col, 2) or 2)
+                order = Qt.AscendingOrder if state == 1 else Qt.DescendingOrder
+                self._programmatic_sort(int(col), order)
+        except Exception:
+            pass
+        try:
+            self._update_results_count()
+        except Exception:
+            pass
+
+    def _refresh_anti_aliasing_incremental(self) -> None:
+        """Anti-alias only the rows added since the last finalize.
+
+        Falls back to the full-table pass whenever the row count did NOT grow
+        (an in-place refresh, which may have replaced items) or when the
+        bookkeeping is unusable — so no row can ever be left unstyled.
+        """
+        table = self.results_table
+        total = int(table.rowCount() or 0)
+        done = int(getattr(self, '_aa_done_upto', 0) or 0)
+        if self._batch_finalize_enabled() and total > done > 0:
+            try:
+                from PacsClient.utils.font_manager import apply_anti_aliasing_to_rows
+                apply_anti_aliasing_to_rows(table, done, total)
+            except Exception:
+                self.refresh_table_anti_aliasing()
+        else:
+            # done == 0 → first batch of a search: the full pass also styles the
+            # headers and the table widget itself, which the row variant skips.
+            self.refresh_table_anti_aliasing()
+        self._aa_done_upto = total
+
     def _finalize_bulk_insert_ui(self):
-        self._update_results_count()
-        self.refresh_table_anti_aliasing()
+        _streaming = self._batch_finalize_enabled() and self._stream_in_flight()
+        if not _streaming:
+            self._update_results_count()
+        self._refresh_anti_aliasing_incremental()
         row_count = int(self.results_table.rowCount() or 0)
         # resizeColumnsToContents is expensive on large tables; keep fixed widths then.
         if row_count <= 120:
             self.auto_resize_columns()
+        if _streaming:
+            # Defer the whole-table sort to one settle pass (see above).
+            self._arm_stream_settle_sort()
         # Apply default date-descending sort when no user-selected sort is active
-        if getattr(self, '_active_sort_col', None) is None:
+        elif getattr(self, '_active_sort_col', None) is None:
             self._programmatic_sort(COL['date'], Qt.DescendingOrder)
         self.results_table.viewport().update()
 
@@ -4387,6 +4644,9 @@ class PatientTableWidget(QWidget):
         self._prog_total = len(self._prog_items)
         self._prog_loading = False
         self._prog_bg_gen = int(getattr(self, '_prog_bg_gen', 0)) + 1  # invalidates old bg timers
+        # OPT-50: arm the render-pass report-status memo for the whole stream; it
+        # is disarmed by _on_stream_settled (and by clear_table).
+        self._begin_report_status_memo()
         if not getattr(self, '_prog_scroll_connected', False):
             try:
                 self.results_table.verticalScrollBar().valueChanged.connect(
@@ -4622,9 +4882,14 @@ class PatientTableWidget(QWidget):
             # "active, needs action" one. Without this, every reception that has a
             # reporting radiologist (which the RIS sets for most of them) rendered
             # the same red active icon — the whole Assign column went red.
+            # OPT-50: report_status_for_reception scans EVERY table row. It used
+            # to be called twice here, and _assign_icon_state itself runs once
+            # per rendered row — two full scans per row is O(N²). Resolve it
+            # once and reuse; identical value, half the scans.
+            _report_status = self.report_status_for_reception(reception_id)
             status = _m.effective_assign_status(
                 merged.get("status", ""),
-                self.report_status_for_reception(reception_id),
+                _report_status,
             )
             state = _m.assign_icon_for_status(status, merged.get("assignee_name", ""))
             # Replace the terse tooltip ("Assigned (active) — X") with the FULL server
@@ -4633,7 +4898,7 @@ class PatientTableWidget(QWidget):
                 from modules.network import ino_assignment_details as _d
                 details = _d.get_assignment_details(
                     reception_id,
-                    report_status=self.report_status_for_reception(reception_id),
+                    report_status=_report_status,   # OPT-50: reuse, don't rescan
                     resolve_names=False,   # never block the paint on a REST call
                 )
                 state['tooltip'] = _d.format_tooltip(details)
@@ -4766,20 +5031,56 @@ class PatientTableWidget(QWidget):
             self.refresh_report_cell_for_patient(rid)
 
     def report_status_for_reception(self, reception_id) -> str:
-        """The report-workflow status currently shown for a reception ("" if none)."""
+        """The report-workflow status currently shown for a reception ("" if none).
+
+        OPT-50: this is a FULL table scan, and `_assign_icon_state` calls it once
+        per rendered row — the last O(N²) term in the render path (~5 s of scanning
+        alone at 2000 rows). While a progressive stream is in flight a memo answers
+        it in O(1); outside a stream the memo does not exist and every call is a
+        live scan, exactly as before.
+
+        The memo reproduces the scan's semantics precisely: the scan returns the
+        FIRST row matching the reception, and `add_patient_data` records each
+        patient's status with `setdefault`, so the first row inserted for a patient
+        is what later rows see. A MISS falls back to the scan, and only a NON-EMPTY
+        scan result is cached — caching "" would poison the very first row of a
+        patient (whose own row is not inserted yet when this is called).
+        """
         rid = str(reception_id or '').strip()
         if not rid:
             return ""
+        memo = getattr(self, '_report_status_by_reception', None)
+        if memo is not None:
+            cached = memo.get(rid)
+            if cached is not None:
+                return cached
+        result = ""
         try:
             for row in range(self.results_table.rowCount()):
                 pid_item = self.results_table.item(row, COL['patient_id'])
                 if not pid_item or pid_item.text().strip() != rid:
                     continue
                 w = self.results_table.cellWidget(row, COL['report'])
-                return str(getattr(w, 'report_status', '') or '')
+                result = str(getattr(w, 'report_status', '') or '')
+                break
         except Exception:
-            pass
-        return ""
+            return ""
+        if memo is not None and result:
+            memo[rid] = result
+        return result
+
+    @staticmethod
+    def _report_memo_enabled() -> bool:
+        import os as _os
+        return (_os.getenv("AIPACS_LIST_REPORT_MEMO", "1") or "1").strip() != "0"
+
+    def _begin_report_status_memo(self) -> None:
+        """Arm the render-pass memo (see report_status_for_reception)."""
+        self._report_status_by_reception = {} if self._report_memo_enabled() else None
+
+    def _end_report_status_memo(self) -> None:
+        """Disarm it, so every later call reads the live table again."""
+        self._report_status_by_reception = None
 
     def assignment_display_for(self, reception_id):
         """Merged (server + local) assignment for a reception, or None.
@@ -6523,6 +6824,23 @@ class PatientTableWidget(QWidget):
             self._prog_total = 0
             self._prog_loading = False
             self.select_all_state = False
+            # ── OPT-50 per-search state ──────────────────────────────────────
+            # The uid presence set is REBUILT (not emptied): this clear keeps the
+            # pinned rows, and those study_uids are still on screen.
+            self._rebuild_study_uid_index()
+            # Drop the batched "visited" prime so the next search re-primes it
+            # (or, if nothing primes it, falls back to the per-row DB lookup).
+            self._visited_patient_cache = None
+            self._end_report_status_memo()
+            # Next finalize does a FULL anti-alias pass again (headers included).
+            self._aa_done_upto = 0
+            # A settle sort armed by the previous search must not fire into this one.
+            try:
+                _st = getattr(self, '_stream_settle_timer', None)
+                if _st is not None:
+                    _st.stop()
+            except Exception:
+                pass
             # Bound the per-search report-status cache so it does not grow
             # unbounded across a long session of repeated searches.
             if hasattr(self, '_report_status_cache'):
@@ -6568,6 +6886,18 @@ class PatientTableWidget(QWidget):
         self._prog_total = 0
         self._prog_loading = False
         self.select_all_state = False
+        # OPT-50 per-search state — kept in step with clear_table() so the kill
+        # switch cannot leave a stale uid set / visited prime behind.
+        self._rebuild_study_uid_index()
+        self._visited_patient_cache = None
+        self._end_report_status_memo()
+        self._aa_done_upto = 0
+        try:
+            _st = getattr(self, '_stream_settle_timer', None)
+            if _st is not None:
+                _st.stop()
+        except Exception:
+            pass
         if hasattr(self, '_report_status_cache'):
             self._report_status_cache.clear()
         select_header = self.results_table.horizontalHeaderItem(COL['select'])
@@ -6578,6 +6908,31 @@ class PatientTableWidget(QWidget):
             self._arm_pin_overlay_refresh()
         except Exception:
             pass
+
+    def _row_study_uid(self, row: int):
+        """The row's effective study_uid, or None.
+
+        OPT-50: `_programmatic_sort`'s checkbox-restore pass called
+        `_extract_row_data()` for EVERY row — ~30 `item()` lookups to build a dict
+        of which exactly one field is used. On a 2000-row sort that is ~60 000
+        lookups; this is 1–2, and it reproduces `_extract_row_data`'s resolution
+        rule exactly (visible cell text first, else the first UserRole+10 entry).
+        """
+        if not (0 <= row < self.results_table.rowCount()):
+            return None
+        it = self.results_table.item(row, COL['study_uid'])
+        if it is None:
+            return None
+        text = str(it.text()).strip()
+        if text:
+            return text
+        stored = it.data(Qt.UserRole + 10)
+        if isinstance(stored, list):
+            for uid in stored:
+                u = str(uid or '').strip()
+                if u:
+                    return u
+        return None
 
     def _extract_row_data(self, row: int):
         if not (0 <= row < self.results_table.rowCount()):
@@ -7987,9 +8342,9 @@ class PatientTableWidget(QWidget):
             for row in range(self.results_table.rowCount()):
                 cb = self._get_checkbox_for_row(row)
                 if cb is not None and cb.isChecked():
-                    rd = self._extract_row_data(row)
-                    if rd and rd.get('study_uid'):
-                        checked_uids.add(rd['study_uid'])
+                    _uid = self._row_study_uid(row)   # OPT-50: 1 lookup, not ~30
+                    if _uid:
+                        checked_uids.add(_uid)
         except Exception:
             checked_uids = set()
 
@@ -8016,8 +8371,9 @@ class PatientTableWidget(QWidget):
                 cb = self._get_checkbox_for_row(row)
                 if cb is None:
                     continue
-                rd = self._extract_row_data(row)
-                should_check = bool(rd and rd.get('study_uid') in checked_uids)
+                # OPT-50: only the study_uid is needed here — see _row_study_uid.
+                _uid = self._row_study_uid(row)
+                should_check = bool(_uid and _uid in checked_uids)
                 if cb.isChecked() != should_check:
                     cb.setChecked(should_check)
         except Exception:

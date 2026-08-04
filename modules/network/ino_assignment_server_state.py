@@ -66,15 +66,57 @@ def _path() -> str:
     return os.path.join(d, _FILENAME)
 
 
+# ── OPT-50 (2026-08-03): mtime-guarded read cache ─────────────────────────────
+# `get_state` is called PER PATIENT-LIST ROW (three times per row, via
+# _assign_icon_state / _apply_report_status_display / get_assignment_details), and
+# each call re-opened and re-parsed this whole JSON file. Profiling an 800-row
+# render: 2400 _load() calls = 6.7 s, i.e. HALF the cost of building the list, all
+# on the GUI thread — the same defect class as the Status column (2026-08-02).
+#
+# The cache key is the file's (mtime_ns, size), so a changed file is always
+# re-read: staleness is impossible short of two writes inside one mtime tick with
+# an identical size, and `_save` invalidates explicitly anyway. It also REDUCES
+# open handles on this file, which is exactly what `_save`'s os.replace fights
+# with on Windows (see its docstring).
+#
+# Kill switch: AIPACS_INO_STORE_CACHE=0 restores the read-every-time behaviour.
+_CACHE_KEY = None
+_CACHE_VALUE: Dict[str, Any] = {}
+
+
+def _store_cache_enabled() -> bool:
+    return (os.getenv("AIPACS_INO_STORE_CACHE", "1") or "1").strip() != "0"
+
+
+def _invalidate_cache() -> None:
+    """Drop the read cache — called after a successful write."""
+    global _CACHE_KEY
+    _CACHE_KEY = None
+
+
 def _load() -> Dict[str, Any]:
+    global _CACHE_KEY, _CACHE_VALUE
     try:
         p = _path()
         if not os.path.exists(p):
+            _CACHE_KEY = None
             return {}
+        if not _store_cache_enabled():
+            with open(p, "r", encoding="utf-8") as fh:
+                data = json.load(fh)
+            return data if isinstance(data, dict) else {}
+        st = os.stat(p)
+        key = (p, st.st_mtime_ns, st.st_size)
+        if key == _CACHE_KEY:
+            return _CACHE_VALUE
         with open(p, "r", encoding="utf-8") as fh:
             data = json.load(fh)
-        return data if isinstance(data, dict) else {}
+        data = data if isinstance(data, dict) else {}
+        _CACHE_VALUE = data
+        _CACHE_KEY = key
+        return data
     except Exception:
+        _CACHE_KEY = None
         return {}
 
 
@@ -123,6 +165,11 @@ def _save(data: Dict[str, Any]) -> bool:
         logger.warning("[ino-assignment] could not write server state: %s", exc)
         return False
     finally:
+        # OPT-50: drop the read cache after ANY write attempt. On success the
+        # mtime guard would catch it anyway; on FAILURE this is what matters —
+        # `set_state` mutates the dict `_load` handed it, so without this a
+        # failed save could leave an unwritten change visible to readers.
+        _invalidate_cache()
         try:
             if tmp and os.path.exists(tmp):
                 os.remove(tmp)
@@ -193,7 +240,9 @@ def get_state(reception_id) -> Optional[Dict[str, Any]]:
         with _LOCK:
             data = _load()
         entry = data.get(rid)
-        return entry if isinstance(entry, dict) else None
+        # OPT-50: hand back a COPY — `data` may now be the shared read cache,
+        # and a caller mutating the returned dict must not poison it.
+        return dict(entry) if isinstance(entry, dict) else None
     except Exception:
         return None
 

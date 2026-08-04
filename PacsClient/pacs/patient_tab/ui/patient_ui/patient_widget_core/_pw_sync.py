@@ -624,10 +624,19 @@ class _PWSyncMixin:
         if not instances or len(instances) <= 1:
             return instances
         try:
-            return sorted(instances, key=lambda s: (
-                int(s["instance_number"]) if s.get("instance_number") is not None else 10**9,
-                str(s.get("instance_path", ""))
-            ))
+            keys = [
+                (int(s["instance_number"]) if s.get("instance_number") is not None else 10**9,
+                 str(s.get("instance_path", "")))
+                for s in instances
+            ]
+            # SCROLL HOT PATH: this runs per viewport per reference-line tick. When
+            # the list is already ordered — always true for a single-file MULTI-FRAME
+            # series, where every frame shares one instance_number AND one path, so
+            # the sort provably cannot reorder anything — skip building a new
+            # N-element list on every tick.
+            if all(keys[i] <= keys[i + 1] for i in range(len(keys) - 1)):
+                return instances
+            return [inst for _k, inst in sorted(zip(keys, instances), key=lambda p: p[0])]
         except (KeyError, TypeError, ValueError):
             # Fallback if instance_number is missing or invalid
             return instances
@@ -1558,15 +1567,199 @@ class _PWSyncMixin:
             self._rl_drag_session['fired_vtk'] += 1
 
     def _rl_get_target_widgets(self):
-        """Get list of VTK widgets that are reference-line targets (not source)."""
+        """Get list of VTK widgets that are reference-line targets.
+
+        With bidirectional lines EVERY viewport is a target (it shows the other
+        viewports' planes), so none may be excluded from the round-robin repaint —
+        otherwise the selected viewport's own lines would never be painted. The
+        legacy single-source path still excludes the source.
+        """
+        _all_pairs = self._rl_all_pairs_enabled()
         targets = []
         for node in self.lst_nodes_viewer:
             vtk_widget = getattr(node, 'vtk_widget', None)
-            if vtk_widget is None or vtk_widget is self.selected_widget:
+            if vtk_widget is None:
+                continue
+            if (not _all_pairs) and vtk_widget is self.selected_widget:
                 continue
             if getattr(vtk_widget, 'image_viewer', None) is not None:
                 targets.append(vtk_widget)
         return targets
+
+    # ── Bidirectional (all-pairs) reference lines ──────────────────────────
+    #
+    # THE RULE: a reference line is a property of a PAIR of planes, not of the
+    # "selected" viewport. The legacy engine took ONE source (`self.selected_widget`)
+    # and drew its plane on every other viewport, so only the last-CLICKED viewport
+    # ever broadcast — and wheel-scrolling never changes the selection (selection is
+    # click-only, `qt_slice_viewer.mousePressEvent` → `change_container_border`).
+    # Result: axial→sagittal/coronal worked, sagittal→axial and coronal→anything
+    # never appeared. Here every viewport is BOTH a source and a target: each one is
+    # drawn with one line per OTHER viewport, so Axial↔Sagittal↔Coronal all update
+    # whenever any of them changes slice.
+    #
+    # Cost note: each viewport's plane + geometry-instance list is resolved ONCE per
+    # call (V lookups, as before — the legacy code already did V+1), and only the
+    # cheap plane×quad intersection runs per pair (V² of pure numpy on ≤4 viewports).
+    _RL_ALL_PAIRS_ENV = "AIPACS_REFERENCE_LINES_ALL_PAIRS"
+
+    def _rl_all_pairs_enabled(self) -> bool:
+        try:
+            import os as _os
+            return str(_os.environ.get(self._RL_ALL_PAIRS_ENV, "1")).strip().lower() \
+                not in ("0", "false", "no", "off")
+        except Exception:
+            return True
+
+    def _rl_collect_viewport_records(self):
+        """One record per live viewport: widget, viewer, current slice, and its own
+        slice PLANE (point + normal) in LPS. Never raises; a viewport whose geometry
+        is unusable simply carries ``plane=None`` (it can still be a target)."""
+        records = []
+        for node in self.lst_nodes_viewer:
+            vtk_widget = getattr(node, 'vtk_widget', None)
+            if vtk_widget is None:
+                continue
+            iv = getattr(vtk_widget, "image_viewer", None)
+            if iv is None:
+                continue
+            try:
+                t_slice = int(iv.GetSlice())
+            except Exception:
+                continue
+            try:
+                instances = self._geometry_instances_for_viewer(
+                    iv,
+                    caller="_PWSyncMixin._rl_collect_viewport_records",
+                    current_slice_index=int(t_slice),
+                )
+            except Exception:
+                instances = []
+            rec = {
+                'widget': vtk_widget, 'iv': iv, 'slice': t_slice,
+                'instances': instances, 'inst': None, 'plane': None,
+            }
+            try:
+                inst = instances[t_slice]
+                rec['inst'] = inst
+                iop = inst.get('image_orientation_patient')
+                ipp = inst.get('image_position_patient')
+                if iop is not None and ipp is not None:
+                    row = np.asarray(iop[3:6], dtype=float)
+                    col = np.asarray(iop[0:3], dtype=float)
+                    n = np.cross(row, col)
+                    n = n / (np.linalg.norm(n) + reference_line.rl_eps())
+                    rec['plane'] = (np.asarray(ipp, dtype=float), n)
+            except Exception:
+                pass
+            records.append(rec)
+        return records
+
+    def _manage_reference_line_all_pairs(self, repaint=True):
+        """Draw, on EVERY viewport, one reference line per OTHER viewport."""
+        records = self._rl_collect_viewport_records()
+        if len(records) < 2:
+            return
+
+        _rl_color = (1.0, 0.85, 0.12)
+        _rl_width = 3.0
+        try:
+            from PacsClient.pacs.patient_tab.utils.tools_settings import (
+                get_reference_line_style,
+            )
+            _rl_st = get_reference_line_style()
+            _rl_color = tuple(_rl_st.color)[:3]
+            _rl_width = max(1.0, float(_rl_st.line_width))
+        except Exception:
+            pass
+
+        for trec in records:
+            iv = trec['iv']
+            vtk_widget = trec['widget']
+            t_slice = trec['slice']
+            is_qt = bool(getattr(iv, 'IS_QT_BRIDGE', False))
+            try:
+                t_inst = trec['inst']
+                if t_inst is None:
+                    raise ValueError("no target instance")
+                target_iop = t_inst.get('image_orientation_patient')
+                target_ipp = t_inst.get('image_position_patient')
+                if (target_iop is None) or (target_ipp is None):
+                    raise ValueError("target has no geometry")
+
+                # Target slice rectangle — depends only on the TARGET, so it is
+                # built once and intersected against every source plane.
+                dims = iv.vtk_image_data.GetDimensions()
+                sp = iv.vtk_image_data.GetSpacing()
+                rows = int(dims[1])
+                cols = int(dims[0])
+                sx = float(sp[0])
+                sy = float(sp[1])
+                row2 = np.asarray(target_iop[3:6], dtype=float)
+                col2 = np.asarray(target_iop[0:3], dtype=float)
+                pos2 = np.asarray(target_ipp, dtype=float)
+                quad = reference_line.rl_quad_corners_lps(rows, cols, pos2, row2, col2, sy, sx)
+                center = reference_line.rl_center_of_slice(rows, cols, pos2, row2, col2, sy, sx)
+                spacing = np.asarray(iv.vtk_image_data.GetSpacing(), dtype=float)
+                origin = np.asarray(iv.vtk_image_data.GetOrigin(), dtype=float)
+
+                qt_segments = []
+                vtk_segments = []
+                for srec in records:
+                    if srec is trec:
+                        continue  # a viewport never draws its own plane on itself
+                    plane = srec.get('plane')
+                    if plane is None:
+                        continue
+                    p1, n1 = plane
+                    ok, seg = reference_line.rl_clip_plane_with_quad(p1, n1, quad)
+                    if not ok:
+                        continue  # parallel / non-intersecting → no line for this pair
+                    P0_lps, P1_lps = seg
+                    # Flip-Y compensates for VTK's bottom-left origin (Y-up).
+                    # Qt viewers use top-left origin (same as DICOM) → skip flip.
+                    if getattr(self, 'RL_APPLY_FLIP_Y', True) and not is_qt:
+                        P0_lps = reference_line.rl_apply_flip_y_in_plane(P0_lps, center, col2, row2)
+                        P1_lps = reference_line.rl_apply_flip_y_in_plane(P1_lps, center, col2, row2)
+                    I0 = reference_line.rl_lps_to_target_index(P0_lps, pos2, col2, row2, sx, sy, t_slice)
+                    I1 = reference_line.rl_lps_to_target_index(P1_lps, pos2, col2, row2, sx, sy, t_slice)
+                    if is_qt:
+                        qt_segments.append((
+                            float(I0[0]), float(I0[1]), float(I1[0]), float(I1[1]),
+                            float(_rl_color[0]), float(_rl_color[1]), float(_rl_color[2]),
+                            _rl_width,
+                        ))
+                    else:
+                        vtk_segments.append((origin + spacing * I0, origin + spacing * I1))
+
+                if is_qt:
+                    if qt_segments:
+                        iv.qt_viewer.set_overlay_lines(qt_segments)
+                    else:
+                        iv.qt_viewer.clear_overlay_lines()
+                else:
+                    # Hide every slot first so a pair that stopped intersecting
+                    # cannot leave a stale line behind.
+                    reference_line.rl_hide_actor_if_any(iv)
+                    for _slot, (P0_w, P1_w) in enumerate(vtk_segments):
+                        ls, act = reference_line.rl_ensure_line_actor(
+                            iv, color=_rl_color, width=_rl_width, slot=_slot,
+                        )
+                        ls.SetPoint1(float(P0_w[0]), float(P0_w[1]), float(P0_w[2]))
+                        ls.SetPoint2(float(P1_w[0]), float(P1_w[1]), float(P1_w[2]))
+                        act.VisibilityOn()
+                if repaint:
+                    vtk_widget.update()
+            except Exception:
+                try:
+                    if is_qt:
+                        iv.qt_viewer.clear_overlay_lines()
+                    else:
+                        reference_line.rl_hide_actor_if_any(iv)
+                    if repaint:
+                        vtk_widget.update()
+                except Exception:
+                    pass
 
     def manage_reference_line(self, repaint=True):
         """
@@ -1599,6 +1792,14 @@ class _PWSyncMixin:
 
         if not hasattr(self, "RL_APPLY_FLIP_Y"):
             self.RL_APPLY_FLIP_Y = True  # mirror along row axis    (y -> -y); matches your Reslice Flip-Y
+
+        # Bidirectional: every viewport is both a source and a target, so a slice
+        # change in ANY viewport updates the lines in the other two. The legacy
+        # single-source path below is preserved verbatim as the kill switch
+        # (AIPACS_REFERENCE_LINES_ALL_PAIRS=0).
+        if self._rl_all_pairs_enabled():
+            self._manage_reference_line_all_pairs(repaint=repaint)
+            return
 
         # No selected source viewer → nothing to do
         if not self.selected_widget or not getattr(self.selected_widget, "image_viewer", None):
